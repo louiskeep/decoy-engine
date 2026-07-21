@@ -31,7 +31,7 @@ from decoy_engine.execution.out_of_core._relation import (
     ParentKeyRelation,
     build_parent_key_relation_from_tables,
 )
-from decoy_engine.execution.out_of_core._stream_join import FkOutputCursor, StreamFkJoiner
+from decoy_engine.execution.out_of_core._stream_join import JoinRowCursor, StreamFkJoiner
 from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
 
@@ -515,12 +515,14 @@ def test_resolve_batch_genuinely_irreconcilable_mix_fails_closed(tmp_path) -> No
 
 
 # ---------------------------------------------------------------------------
-# FkOutputCursor: the row-aligned forward zip primitive (Task 3)
+# JoinRowCursor: the single-read identity-guarded forward zip primitive (Task 3)
 # ---------------------------------------------------------------------------
 
+_JOIN_COLS = ("__decoy_row_nr", "customer_id")
 
-def _fk_batch(start: int, values: list[object]) -> pa.RecordBatch:
-    """One iter_output-shaped batch: contiguous row_nr + one FK column."""
+
+def _join_row_batch(start: int, values: list[object]) -> pa.RecordBatch:
+    """One iter_join_rows-shaped batch: contiguous row_nr + one raw column."""
     n = len(values)
     return pa.record_batch(
         [
@@ -533,55 +535,57 @@ def _fk_batch(start: int, values: list[object]) -> pa.RecordBatch:
     )
 
 
-def _reader(*batches: pa.RecordBatch):
+def _join_reader(*batches: pa.RecordBatch):
     return iter(batches)
 
 
-def test_cursor_slices_across_misaligned_reader_batches() -> None:
+def test_join_row_cursor_slices_across_reader_batches() -> None:
     # Reader yields 100-row batches; the cursor is asked for 40 then 90 then 70:
     # takes must slice across batch boundaries and conserve every row in order.
     vals = [f"v{i}" for i in range(200)]
-    r = _reader(_fk_batch(0, vals[:100]), _fk_batch(100, vals[100:]))
-    cursor = FkOutputCursor(r, ("customer_id",), (pa.string(),))
-    a = cursor.take(40)
-    b = cursor.take(90)
-    c = cursor.take(70)
-    assert [x.as_py() for x in a[0]] == vals[:40]
-    assert [x.as_py() for x in b[0]] == vals[40:130]
-    assert [x.as_py() for x in c[0]] == vals[130:200]
+    r = _join_reader(_join_row_batch(0, vals[:100]), _join_row_batch(100, vals[100:]))
+    cursor = JoinRowCursor(r, _JOIN_COLS)
+    a = cursor.take(40, 0)
+    b = cursor.take(90, 40)
+    c = cursor.take(70, 130)
+    assert a.column("customer_id").to_pylist() == vals[:40]
+    assert b.column("customer_id").to_pylist() == vals[40:130]
+    assert c.column("customer_id").to_pylist() == vals[130:200]
+    cursor.assert_exhausted()
 
 
-def test_cursor_take_zero_returns_empty() -> None:
-    cursor = FkOutputCursor(_reader(_fk_batch(0, ["a", "b"])), ("customer_id",), (pa.string(),))
-    out = cursor.take(0)
-    assert out[0].to_pylist() == []
-    # A following non-zero take still starts at row 0.
-    assert cursor.take(2)[0].to_pylist() == ["a", "b"]
-
-
-def test_cursor_early_exhaustion_raises_fail_closed() -> None:
-    cursor = FkOutputCursor(_reader(_fk_batch(0, ["a", "b"])), ("customer_id",), (pa.string(),))
+def test_join_row_cursor_identity_mismatch_fails_closed() -> None:
+    # The payload store claims the next batch starts at row_nr 5, but the join
+    # reader is still positioned at 0 -- a genuine cross-artifact disagreement,
+    # not merely the join reader's own internal contiguity.
+    cursor = JoinRowCursor(_join_reader(_join_row_batch(0, ["a", "b", "c"])), _JOIN_COLS)
     with pytest.raises(ExecutionError) as exc:
-        cursor.take(3)  # only 2 rows available
+        cursor.take(3, 5)
     assert exc.value.code == "out_of_core_fk_row_alignment"
 
 
-def test_cursor_row_nr_gap_trips_guard() -> None:
+def test_join_row_cursor_early_exhaustion_raises_fail_closed() -> None:
+    cursor = JoinRowCursor(_join_reader(_join_row_batch(0, ["a", "b"])), _JOIN_COLS)
+    with pytest.raises(ExecutionError) as exc:
+        cursor.take(3, 0)  # only 2 rows available
+    assert exc.value.code == "out_of_core_fk_row_alignment"
+
+
+def test_join_row_cursor_row_nr_gap_trips_guard() -> None:
     # Second batch starts at 100 but only 2 rows were emitted: a reorder/gap in
     # the ordered join output must trip the fail-closed guard, not silently
     # misalign the zip.
-    cursor = FkOutputCursor(
-        _reader(_fk_batch(0, ["a", "b"]), _fk_batch(100, ["c", "d"])),
-        ("customer_id",),
-        (pa.string(),),
+    cursor = JoinRowCursor(
+        _join_reader(_join_row_batch(0, ["a", "b"]), _join_row_batch(100, ["c", "d"])),
+        _JOIN_COLS,
     )
-    cursor.take(2)
+    cursor.take(2, 0)
     with pytest.raises(ExecutionError) as exc:
-        cursor.take(2)
+        cursor.take(2, 2)
     assert exc.value.code == "out_of_core_fk_row_alignment"
 
 
-def test_cursor_non_contiguous_within_batch_trips_guard() -> None:
+def test_join_row_cursor_non_contiguous_within_batch_trips_guard() -> None:
     bad = pa.record_batch(
         [
             pa.array([0, 2, 1], type=pa.int64()),  # not contiguous ascending
@@ -591,28 +595,24 @@ def test_cursor_non_contiguous_within_batch_trips_guard() -> None:
             [pa.field("__decoy_row_nr", pa.int64()), pa.field("customer_id", pa.string())]
         ),
     )
-    cursor = FkOutputCursor(_reader(bad), ("customer_id",), (pa.string(),))
+    cursor = JoinRowCursor(_join_reader(bad), _JOIN_COLS)
     with pytest.raises(ExecutionError) as exc:
-        cursor.take(3)
+        cursor.take(3, 0)
     assert exc.value.code == "out_of_core_fk_row_alignment"
 
 
-def test_cursor_assert_exhausted_ok_and_detects_leftovers() -> None:
-    cursor = FkOutputCursor(
-        _reader(_fk_batch(0, ["a", "b", "c"])), ("customer_id",), (pa.string(),)
-    )
-    cursor.take(3)
+def test_join_row_cursor_assert_exhausted_ok_and_detects_leftovers() -> None:
+    cursor = JoinRowCursor(_join_reader(_join_row_batch(0, ["a", "b", "c"])), _JOIN_COLS)
+    cursor.take(3, 0)
     cursor.assert_exhausted()  # fully drained, no raise
-    leftover = FkOutputCursor(
-        _reader(_fk_batch(0, ["a", "b", "c"])), ("customer_id",), (pa.string(),)
-    )
-    leftover.take(2)
+    leftover = JoinRowCursor(_join_reader(_join_row_batch(0, ["a", "b", "c"])), _JOIN_COLS)
+    leftover.take(2, 0)
     with pytest.raises(ExecutionError) as exc:
         leftover.assert_exhausted()
     assert exc.value.code == "out_of_core_fk_row_alignment"
 
 
-def test_cursor_multi_column() -> None:
+def test_join_row_cursor_multi_column() -> None:
     batch = pa.record_batch(
         [
             pa.array([0, 1, 2], type=pa.int64()),
@@ -627,10 +627,19 @@ def test_cursor_multi_column() -> None:
             ]
         ),
     )
-    cursor = FkOutputCursor(_reader(batch), ("country", "account_id"), (pa.string(), pa.int64()))
-    out = cursor.take(2)
-    assert out[0].to_pylist() == ["a", "b"]
-    assert out[1].to_pylist() == [10, 20]
+    cursor = JoinRowCursor(_join_reader(batch), ("country", "account_id"))
+    out = cursor.take(2, 0)
+    assert out.column("country").to_pylist() == ["a", "b"]
+    assert out.column("account_id").to_pylist() == [10, 20]
+
+
+def test_join_row_cursor_take_zero_does_not_consume() -> None:
+    cursor = JoinRowCursor(_join_reader(_join_row_batch(0, ["a", "b"])), _JOIN_COLS)
+    out = cursor.take(0, 0)
+    assert out.num_rows == 0
+    assert out.schema == _join_row_batch(0, ["a", "b"]).schema
+    # A following non-zero take still starts at row 0 (the peek did not consume).
+    assert cursor.take(2, 0).column("customer_id").to_pylist() == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------

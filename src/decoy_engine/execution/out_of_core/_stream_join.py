@@ -397,74 +397,77 @@ class StreamFkJoiner:
         return pa.record_batch(columns, schema=result.schema)
 
 
-class FkOutputCursor:
-    """Forward-only, row-aligned cursor over one edge's ordered FK output.
+class JoinRowCursor:
+    """Forward-only cursor over one edge's ordered raw join-row reader.
 
-    Zips `StreamFkJoiner.iter_output` (ordered by global `__decoy_row_nr`) to
-    the runner's mask stream, whose batch sizes need NOT match the join
-    reader's (parquet row-group boundaries, `batch_rows` chunking). `take(n)`
-    returns exactly `n` rows of each FK output column, slicing across reader
-    batch boundaries, holding at most one reader batch plus a slice offset, so
-    memory stays bounded regardless of alignment.
+    Wraps `StreamFkJoiner.iter_join_rows`, whose own batch boundaries are
+    DuckDB's (not the payload store's). `take(n, expected_row_nr_start)`
+    returns exactly `n` raw join rows as one `pa.RecordBatch`, slicing across
+    reader batch boundaries, holding at most one reader batch plus a slice
+    offset, so memory stays bounded regardless of alignment. The result is fed
+    straight to `StreamFkJoiner.resolve_batch`.
 
     Correctness backbone: the join output covers every child row exactly once,
-    contiguously numbered 0..N-1 in `ORDER BY` order, so the k-th emitted row
-    MUST carry row_nr k. This cursor asserts that invariant (contiguous within a
-    reader batch, and each new batch starting exactly where the last left off)
-    rather than trusting it, and fails closed on any mismatch or early
-    exhaustion instead of silently misaligning the zip.
+    contiguously numbered 0..N-1 in `ORDER BY` order. Unlike the removed
+    `FkOutputCursor` (which only checked that the join reader was contiguous
+    with ITS OWN running count -- a check that a two-read design's second pass
+    could satisfy even while silently misaligned to the first), `take` also
+    asserts the join reader's current position equals `expected_row_nr_start`,
+    the row_nr the DRIVER read off the payload store -- an artifact of the
+    SAME single source read as the join keys. That makes this an identity
+    check between two artifacts of one read, not a hope that two reads agree.
     """
 
-    def __init__(
-        self,
-        reader: Iterator[pa.RecordBatch],
-        child_columns: tuple[str, ...],
-        output_types: tuple[pa.DataType, ...],
-    ) -> None:
+    def __init__(self, reader: Iterator[pa.RecordBatch], join_columns: tuple[str, ...]) -> None:
         self._reader = reader
-        self._child_columns = child_columns
-        self._output_types = output_types
+        self._join_columns = join_columns
         self._batch: pa.RecordBatch | None = None
         self._offset = 0
         self._emitted = 0
 
-    def take(self, n: int) -> tuple[pa.Array, ...]:
-        """Return exactly `n` rows of each FK output column, in edge order."""
+    def take(self, n: int, expected_row_nr_start: int) -> pa.RecordBatch:
+        """Return exactly `n` raw join rows starting at `expected_row_nr_start`."""
+        if self._emitted != expected_row_nr_start:
+            raise _row_alignment_error(
+                f"the join reader is positioned at row_nr {self._emitted}, but the "
+                f"payload store's next batch starts at row_nr {expected_row_nr_start}"
+            )
         if n == 0:
-            # A zero-row mask batch never touches the reader; the fixed output
-            # types give the empty FK arrays their writable type directly.
-            return tuple(pa.array([], type=dtype) for dtype in self._output_types)
-        collected: list[list[pa.Array]] = [[] for _ in self._child_columns]
+            return self._schema_probe().slice(0, 0)
+        collected: list[pa.RecordBatch] = []
         remaining = n
         while remaining > 0:
             batch = self._current()
             available = batch.num_rows - self._offset
             take_k = min(available, remaining)
-            for idx, col in enumerate(self._child_columns):
-                collected[idx].append(batch.column(col).slice(self._offset, take_k))
+            collected.append(batch.slice(self._offset, take_k))
             self._offset += take_k
             self._emitted += take_k
             remaining -= take_k
-        return tuple(
-            pa.concat_arrays(chunks) if len(chunks) != 1 else chunks[0] for chunks in collected
-        )
+        return collected[0] if len(collected) == 1 else _concat_join_row_batches(collected)
 
     def assert_exhausted(self) -> None:
-        """Fail closed unless every FK output row has been consumed.
+        """Fail closed unless every raw join row has been consumed.
 
-        The other half of the alignment guard: the mask stream must not be
-        SHORTER than the join output either, or the tail FK rows would be
+        The other half of the alignment guard: the payload store must not be
+        SHORTER than the join output either, or the tail join rows would be
         silently dropped.
         """
         if self._batch is not None and self._offset < self._batch.num_rows:
             raise _row_alignment_error(
-                f"{self._batch.num_rows - self._offset} FK output row(s) left unconsumed"
+                f"{self._batch.num_rows - self._offset} join row(s) left unconsumed"
             )
         try:
             next(self._reader)
         except StopIteration:
             return
-        raise _row_alignment_error("FK output reader has rows the mask stream never consumed")
+        raise _row_alignment_error("join row reader has rows the payload store never consumed")
+
+    def _schema_probe(self) -> pa.RecordBatch:
+        # A zero-row take still needs a batch of the right schema; reuse the
+        # last-seen reader batch if there is one, otherwise pull the next one
+        # (its rows are left untouched, offset stays where it was).
+        return self._batch if self._batch is not None else self._current()
 
     def _current(self) -> pa.RecordBatch:
         batch = self._batch
@@ -479,32 +482,39 @@ class FkOutputCursor:
             batch = next(self._reader)
         except StopIteration:
             raise _row_alignment_error(
-                "FK output reader exhausted before the mask stream did "
-                "(join output shorter than the child re-read)"
+                "join row reader exhausted before the payload store did "
+                "(join output shorter than the masked payload)"
             ) from None
         row_nr = batch.column("__decoy_row_nr")
         first = row_nr[0].as_py()
         last = row_nr[len(row_nr) - 1].as_py()
         # Each ordered batch must start exactly where the running count left off
         # and be a contiguous ascending run, so positional slicing equals
-        # row_nr slicing. A gap/reorder means the two source passes disagreed.
+        # row_nr slicing. This is the join reader's OWN internal contiguity,
+        # independent of (and in addition to) the cross-artifact check in take().
         if first != self._emitted or last != self._emitted + len(row_nr) - 1:
             raise _row_alignment_error(
-                f"FK output row_nr [{first}..{last}] does not match the expected "
+                f"join row_nr [{first}..{last}] does not match the expected "
                 f"contiguous range starting at {self._emitted}"
             )
         return batch
+
+
+def _concat_join_row_batches(batches: list[pa.RecordBatch]) -> pa.RecordBatch:
+    table = pa.Table.from_batches(batches).combine_chunks()
+    return table.to_batches()[0]
 
 
 def _row_alignment_error(detail: str) -> ExecutionError:
     return ExecutionError(
         code="out_of_core_fk_row_alignment",
         message=(
-            "out-of-core FK output could not be row-aligned to the mask stream: "
-            f"{detail}. The two source re-reads must yield identical row order and "
-            "count; this is a fail-closed internal guard, never silent truncation."
+            "out-of-core FK join output could not be row-aligned to the masked "
+            f"payload: {detail}. The join row_nr must match the payload row_nr "
+            "captured in the single source read; this is a fail-closed internal "
+            "guard, never silent truncation or misalignment."
         ),
     )
 
 
-__all__ = ["FkOutputCursor", "StreamFkJoiner"]
+__all__ = ["JoinRowCursor", "StreamFkJoiner"]
