@@ -93,10 +93,17 @@ class StreamFkJoiner:
        `_join.py::mask_child_fk` stages its child side.
     3. `total_orphans()`: the FAIL-policy anti-join precount over the whole
        child (the runner raises before any output if it is non-zero).
-    4. `iter_output(batch_rows)`: run the single ordered LEFT JOIN and yield
-       `(row_nr, FK output columns)` result batches, accumulating `orphan_total`
-       and `observed_types`.
-    5. `close()`.
+    4. `iter_join_rows(batch_rows)`: run the single ordered LEFT JOIN and yield
+       RAW join-result batches (row_nr, join key, source components, parent
+       match indicator, parent masked components) -- no resolution.
+    5. `resolve_batch(join_rows)`: resolve one payload-aligned slice of those
+       raw join rows into FK output arrays, accumulating `orphan_total` and
+       `observed_types`. Called by the driver once per payload-store batch
+       (the same source-chunk granularity `main` resolves at), never once per
+       `iter_join_rows` reader batch -- those boundaries can differ, and a
+       reader batch that coalesces a matched-bool run beside an orphan-int run
+       cannot always be resolved as a single unit (Codex HIGH finding).
+    6. `close()`.
     """
 
     def __init__(
@@ -200,7 +207,7 @@ class StreamFkJoiner:
     def orphan_total(self) -> int:
         """Running orphan total over the output emitted so far.
 
-        Fully populated once `iter_output` is drained; the runner reads it for
+        Fully populated once every `resolve_batch` call is made; the runner reads it for
         the WARN aggregation, matching whole-table reporting.
         """
         return self._orphan_total
@@ -277,18 +284,21 @@ class StreamFkJoiner:
         ).fetchone()[0]
         return int(count)
 
-    def iter_output(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
-        """Yield ordered FK-output batches: `(__decoy_row_nr, <fk columns...>)`.
+    def iter_join_rows(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
+        """Yield ordered RAW join-result batches: no resolution, no casting.
 
         Runs the single `LEFT JOIN child_keys x parent_keys ORDER BY
         __decoy_row_nr` and reads the ordered result back through
         `to_arrow_reader(batch_rows)` (DuckDB owns the sort + spill; Python sees
-        one result batch at a time). Each batch's FK columns are produced by
-        `_append_output_batch` (the shared orphan-policy code) and cast to the
-        fixed `output_types`, with per-batch REMAP minting.
+        one result batch at a time). Each batch carries `__decoy_row_nr`,
+        `__decoy_fk_join_key`, one `__decoy_src_i` per child column,
+        `__decoy_parent_match`, and one `__decoy_parent_masked_i` per child
+        column -- exactly the columns `resolve_batch` needs. This reader's own
+        batch boundaries are DuckDB's, not the source's; the driver is
+        responsible for re-batching via `JoinRowCursor.take` before resolving.
         """
         if not self._staged:
-            raise AssertionError("begin_staging must run before iter_output")
+            raise AssertionError("begin_staging must run before iter_join_rows")
         edge = self._edge
         n_components = len(edge.child_columns)
         join_key = self._relation.join_key_column
@@ -308,31 +318,38 @@ class StreamFkJoiner:
               ON c.__decoy_fk_join_key = p.{_q(join_key)}
             ORDER BY c.__decoy_row_nr
         """
-        output_schema = pa.schema(
-            [pa.field("__decoy_row_nr", pa.int64())]
-            + [pa.field(col, self._output_types[idx]) for idx, col in enumerate(edge.child_columns)]
+        yield from self._conn.execute(query).to_arrow_reader(batch_rows)
+
+    def resolve_batch(self, join_rows: pa.RecordBatch) -> tuple[pa.Array, ...]:
+        """Resolve one payload-aligned slice of raw join rows into FK output.
+
+        `join_rows` must be a single, internally consistent slice (typically a
+        `JoinRowCursor.take` result sized to one payload-store batch, the same
+        source-chunk granularity `main` resolved at). FK columns are produced
+        by `_append_output_batch` (the shared orphan-policy code) and cast to
+        the fixed `output_types`, with per-slice REMAP minting; `orphan_total`
+        and `observed_types` accumulate across every call.
+        """
+        edge = self._edge
+        n_components = len(edge.child_columns)
+        remap_values = self._batch_remap_values(join_rows)
+        # REMAP indexes remap_values by row_nr; re-base to positional 0..n so
+        # the per-slice mint aligns (row_nr is used ONLY as the REMAP index).
+        source = self._with_positional_row_nr(join_rows) if remap_values is not None else join_rows
+        output_chunks: list[list[pa.Array]] = [[] for _ in range(n_components)]
+        self._orphan_total += _append_output_batch(
+            source,
+            edge=edge,
+            remap_values=remap_values,
+            output_chunks=output_chunks,
         )
-        for result in self._conn.execute(query).to_arrow_reader(batch_rows):
-            row_nr = result.column("__decoy_row_nr")
-            remap_values = self._batch_remap_values(result)
-            # REMAP indexes remap_values by row_nr; re-base to positional 0..n so
-            # the per-batch mint aligns (row_nr is used ONLY as the REMAP index).
-            source = self._with_positional_row_nr(result) if remap_values is not None else result
-            output_chunks: list[list[pa.Array]] = [[] for _ in range(n_components)]
-            self._orphan_total += _append_output_batch(
-                source,
-                edge=edge,
-                remap_values=remap_values,
-                output_chunks=output_chunks,
-            )
-            for idx in range(n_components):
-                for chunk in output_chunks[idx]:
-                    self._observed_types[idx].add(chunk.type)
-            fk_arrays = [
-                _cast_chunks(output_chunks[idx], self._output_types[idx])
-                for idx in range(n_components)
-            ]
-            yield pa.record_batch([row_nr, *fk_arrays], schema=output_schema)
+        for idx in range(n_components):
+            for chunk in output_chunks[idx]:
+                self._observed_types[idx].add(chunk.type)
+        return tuple(
+            _cast_chunks(output_chunks[idx], self._output_types[idx])
+            for idx in range(n_components)
+        )
 
     def close(self) -> None:
         if self._conn is not None:

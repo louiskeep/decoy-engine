@@ -138,15 +138,18 @@ def _stream_output(
     FIXED table keeps the schema-fixed FK types (what a Parquet sink writes);
     the NARROWED table applies `_fk_resident_column` (exactly what the resident
     runner does) to recover the value-derived type for oracle comparison.
-    `iter_output` yields FK batches in global row_nr order, which is source
-    order, so concatenating in iteration order restores the child's rows.
+    `iter_join_rows` yields raw join rows in global row_nr order, which is
+    source order; each reader batch is resolved directly (whole-child test
+    helper, no payload-store alignment needed here), so concatenating in
+    iteration order restores the child's rows.
     """
     with _stream_joiner(plan, edge, relation, temp_dir, child) as joiner:
         joiner.stage_keys(child.to_batches(max_chunksize=batch_rows))
         fk_chunks: list[list[pa.Array]] = [[] for _ in edge.child_columns]
-        for out_batch in joiner.iter_output(batch_rows):
-            for idx, col in enumerate(edge.child_columns):
-                fk_chunks[idx].append(out_batch.column(col))
+        for join_rows in joiner.iter_join_rows(batch_rows):
+            fk_arrays = joiner.resolve_batch(join_rows)
+            for idx, array in enumerate(fk_arrays):
+                fk_chunks[idx].append(array)
         orphans = joiner.orphan_total
         output_types = joiner.output_types
         observed = joiner.observed_types
@@ -342,7 +345,7 @@ def test_empty_child_yields_no_output(tmp_path) -> None:
     with _stream_joiner(plan, edge, relation, tmp_path / "s", child) as joiner:
         joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
         assert joiner.total_orphans() == 0
-        out = list(joiner.iter_output(_BATCH))
+        out = list(joiner.iter_join_rows(_BATCH))
     assert out == []
     assert joiner.orphan_total == 0
     assert joiner.output_types == (pa.string(),)
@@ -403,6 +406,112 @@ def test_strategy_parent_matches_batch_joiner(
             joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
             assert joiner.total_orphans() == 0
     _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path / "cmp")
+
+
+# ---------------------------------------------------------------------------
+# resolve_batch: the relocated per-slice resolution kernel (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _bool_preserve_joiner_with_join_rows(tmp_path):
+    """A bool parent covering only False, joined against 2 matched + 2 orphan
+    child rows (the Codex HIGH shape). Returns `(joiner, [matched_rows,
+    orphan_rows])`, each a SEPARATE 2-row raw join-row batch -- the same
+    source-chunk granularity the redesigned driver resolves at (never one
+    coalesced 4-row batch mixing a real bool with an fk_key_value-normalized
+    int, which even the whole-child oracle cannot resolve as one unit; see
+    `mask_child_fk` raising `out_of_core_fk_key_dtype_unsupported` for that
+    exact combined shape).
+    """
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("id",),
+        child_table="orders",
+        child_columns=("id",),
+        namespace="cust_bool",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    parent = pa.table({"id": pa.array([False, False], type=pa.bool_())})
+    child = pa.table({"id": pa.array([False, False, True, True], type=pa.bool_())})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    joiner = _stream_joiner(plan, edge, relation, tmp_path / "s", child)
+    joiner.stage_keys(child.to_batches(max_chunksize=2))
+    # batch_rows=2 caps the join reader at 2 rows per batch, matching the
+    # driver's real usage: it resolves per payload-store batch (source-chunk
+    # sized), never per whatever size DuckDB's own reader happens to coalesce.
+    join_row_batches = list(joiner.iter_join_rows(2))
+    assert [b.num_rows for b in join_row_batches] == [2, 2]
+    return joiner, join_row_batches
+
+
+def test_resolve_batch_mixed_bool_int_preserve(tmp_path) -> None:
+    """Each payload-aligned slice resolves to the FIXED int64 type (the
+    bool/int64 special case in `_fixed_schema_typing.py`), even though one
+    slice is purely bool-valued and the other purely int-valued: concatenating
+    the two slices' resolved arrays reproduces the oracle's [0, 0, 1, 1] --
+    the HIGH repro, now succeeding because resolution runs per source-chunk
+    slice, not per coalesced join-reader batch.
+    """
+    joiner, (matched_rows, orphan_rows) = _bool_preserve_joiner_with_join_rows(tmp_path)
+    try:
+        (matched_fk,) = joiner.resolve_batch(matched_rows)
+        (orphan_fk,) = joiner.resolve_batch(orphan_rows)
+    finally:
+        joiner.close()
+    assert matched_fk.type == pa.int64()
+    assert orphan_fk.type == pa.int64()
+    assert matched_fk.to_pylist() + orphan_fk.to_pylist() == [0, 0, 1, 1]
+
+
+def test_resolve_batch_genuinely_irreconcilable_mix_fails_closed(tmp_path) -> None:
+    """A single slice that mixes a matched float parent value with an orphan
+    integer child key beyond exactly-representable float precision (> 2**53)
+    cannot be resolved as one array by ANY chunking -- the whole-child oracle
+    raises on this exact combination too (`_append_output_batch`'s own
+    fail-closed guard). `resolve_batch` must raise the same coded error, not
+    silently drift or crash uncoded.
+    """
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("id",),
+        child_table="orders",
+        child_columns=("id",),
+        namespace="cust_bigfloat",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    parent = pa.table({"id": pa.array([1.0], type=pa.float64())})
+    # Row 0 matches (float 1.0); row 1 is a whole-float orphan beyond 2**53,
+    # in the SAME 2-row slice so resolve_batch sees the mix in one call.
+    child = pa.table({"id": pa.array([1.0, 9007199254740994.0], type=pa.float64())})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    joiner = _stream_joiner(plan, edge, relation, tmp_path / "s", child)
+    try:
+        joiner.stage_keys(child.to_batches(max_chunksize=2))
+        (join_rows,) = list(joiner.iter_join_rows(2))
+        assert join_rows.num_rows == 2
+        with pytest.raises(ExecutionError) as exc:
+            joiner.resolve_batch(join_rows)
+        assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+    finally:
+        joiner.close()
 
 
 # ---------------------------------------------------------------------------
@@ -547,8 +656,9 @@ def _hand_built_relation(tmp_path) -> ParentKeyRelation:
 def _stream_fk_column(joiner, child, batch_rows: int = _BATCH) -> tuple[list, int]:
     joiner.stage_keys(child.to_batches(max_chunksize=batch_rows))
     values: list = []
-    for out_batch in joiner.iter_output(batch_rows):
-        values.extend(out_batch.column("customer_id").to_pylist())
+    for join_rows in joiner.iter_join_rows(batch_rows):
+        (fk_array,) = joiner.resolve_batch(join_rows)
+        values.extend(fk_array.to_pylist())
     return values, joiner.orphan_total
 
 
@@ -588,8 +698,9 @@ def test_masked_null_parent_key_fail_policy_does_not_false_positive(tmp_path) ->
         joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
         assert joiner.total_orphans() == 0
         values: list = []
-        for out_batch in joiner.iter_output(_BATCH):
-            values.extend(out_batch.column("customer_id").to_pylist())
+        for join_rows in joiner.iter_join_rows(_BATCH):
+            (fk_array,) = joiner.resolve_batch(join_rows)
+            values.extend(fk_array.to_pylist())
     assert values == [None, "MASKED_C1", None]
 
 
