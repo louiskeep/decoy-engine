@@ -178,12 +178,11 @@ _GLIBC_TLS_OOM_MARKER = "cannot allocate memory for thread-local data"
 #
 # That ~80% is the budget BEFORE `resolve_ooc_memory_limit` divides by the
 # run's concurrency to size the per-DuckDB-instance memory_limit. The probe
-# passes the fixture's ACTUAL concurrency (`_PROBE_MAX_CONCURRENT_INSTANCES`,
-# the linear-chain worst case of 2), so one DuckDB instance's limit is
-# cap / 1.25 / 2 = ~40% of the cap, and the two instances that can be live at
-# once (a joiner plus a concurrent relation build) sum to ~80% -- NOT the
-# default divisor of 4, which would have handed each instance only ~20% (below
-# even the old cap/4 that already failed).
+# runs the SINK route, whose peak co-live is ONE instance
+# (`_PROBE_MAX_CONCURRENT_INSTANCES` == 1: `emit_to_sink` closes each joiner
+# before the relation build opens), so that instance's limit is
+# cap / 1.25 / 1 = ~80% of the cap -- NOT the default divisor of 4, which
+# would have handed it only ~20% (below even the old cap/4 that already failed).
 _DUCKDB_CAP_FRACTION = 1.25
 
 # Allocator pinning for capped workers. Arrow's default (jemalloc/mimalloc)
