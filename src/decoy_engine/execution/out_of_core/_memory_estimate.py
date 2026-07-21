@@ -207,7 +207,8 @@ def resolve_phase_memory_limits(
     `budget_bytes`; this split fixes that (co-live sum is now
     `(incoming_edges + 1) * (budget // (incoming_edges + 1)) <=
     budget_bytes`). Zero incoming edges means no joiner opens, so the
-    active path's joiner value goes unused.
+    active path's joiner value goes unused. (OOC-B / fix#1: the joiner cap now
+    bounds a SPILLABLE streamed join, not a pinned parent TEMP TABLE.)
     """
     if budget_bytes is None:
         return memory_limit, memory_limit, memory_limit, memory_limit
@@ -306,9 +307,7 @@ _OOC_MEM_WARN_FRACTION = 0.6
 # ~= 7.625 GB > 512e6; floor(33.3M) ~= 6.35 GB >= 2457e6 (a ~2.6x envelope
 # over the cloud completion level, heavier over-refusal than round 1's ~1.5x
 # -- the SAFE direction per the never-under-predict rule; a DOCUMENTED KNOWN
-# carry-forward, not a new blocker). Two acceptance points stay REFUSED at a
-# 4 GiB host (2048 MiB cap after reserve): floor(20M) ~= 3.825 GB and
-# floor(100M) ~= 19.02 GB, both > 2.048 GB.
+# carry-forward, not a new blocker).
 _BUILD_FLOOR_BYTES_PER_ROW = 190.0
 
 # BASE is the fixed DuckDB relation-build overhead at ~zero rows, and unlike
@@ -362,6 +361,9 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
     only refuses a job that might have completed. `max(0, max_parent_rows)`
     guards a caller-supplied negative row count from producing a smaller
     (wrong-direction) floor.
+
+    SCOPE (OOC-B / fix#1): prices the relation-BUILD phase only (`_relation.py`,
+    untouched by fix#1, so UNCHANGED), never the now-spillable FK-joiner phase.
     """
     rows = max(0, max_parent_rows)
     return _BUILD_FLOOR_BASE_BYTES + int(_BUILD_FLOOR_BYTES_PER_ROW * rows)

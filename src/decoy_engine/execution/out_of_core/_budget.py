@@ -89,13 +89,13 @@ share.
 CONCURRENCY (a second, independent divisor `resolve_ooc_memory_limit` alone
 applies): `connect_duckdb` opens a FRESH `:memory:` DuckDB instance per call,
 and `memory_limit` bounds only THAT ONE instance -- DuckDB has no
-cross-instance accounting. `_runner.py` can hold several instances open at
-once: `_stream_table` opens one `ChildFkBatchJoiner` connection PER INCOMING
-FK EDGE up front (`_batch_join.py`). On the sink path, joiners close after
-the rewrite stream drains (via `on_stream_consumed` in `_emit.py`), before
+cross-instance accounting. The route can hold several instances open at once:
+`_stream_driver.stream_table` opens one `StreamFkJoiner` connection PER
+INCOMING FK EDGE up front (`_stream_join.py`). On the sink path, joiners close
+after the mask stream drains (via `on_stream_consumed` in `_emit.py`), before
 `_relation.py::build_parent_key_relation` opens for OUTGOING edges; on the
 resident path (no sink), joiners stay open during the build (both live in the
-same `_stream_table` try block). So the sink path peaks at max(incoming_edges,
+same `stream_table` try block). So the sink path peaks at max(incoming_edges,
 1), the resident path at incoming_edges + 1. `_max_concurrent_ooc_instances`
 computes the resident peak (incoming_edges + 1) as the divisor for both paths:
 it is exact for residents and conservative (over-provisions) for sinks. Only
