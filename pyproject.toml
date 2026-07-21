@@ -237,6 +237,15 @@ ml = [
     "scikit-learn==1.7.2",
     "lightgbm==4.6.0",
 ]
+# CI/perf-tooling: CodSpeed instrumented microbenchmarks (tests/codspeed/).
+# Optional: the `codspeed` pytest marker keeps that suite out of the default
+# loop (see addopts above) precisely so most contributors never need this
+# installed. With the extra present, `pytest tests/codspeed/ -m codspeed`
+# runs the suite as ordinary timed tests; the CodSpeed GH Action additionally
+# passes `--codspeed` to capture instrumented measurements and upload them.
+perf = [
+    "pytest-codspeed>=3.0",
+]
 
 # Project URLs surfaced on the PyPI sidebar.
 [project.urls]
@@ -287,9 +296,18 @@ pythonpath = ["src"]
 # explicit `pytest -m packaging`.
 # The `perf` marker is intentionally NOT excluded: perf tests run in the
 # default regression gate (see the perf marker description below).
-addopts = "-m 'not benchmark and not testflight and not packaging'"
+# `codspeed` is excluded for the same reason as `benchmark`: tests/codspeed/
+# uses the pytest-codspeed `benchmark` fixture, which only exists when the
+# optional `perf` extra is installed. Deselecting via marker (rather than
+# relying on an importorskip) means the fixture is never resolved in an
+# environment that lacks the plugin, so the default gate cannot fail on a
+# missing optional dependency. Run explicitly via the codspeed workflow
+# (`pytest tests/codspeed/ -m codspeed`), matching the ml-gate / packaging-gate
+# explicit `-m` override pattern below.
+addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed'"
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
+    "codspeed: pytest-codspeed instrumented microbenchmarks (tests/codspeed/); needs the [perf] extra; run only by the codspeed CI workflow, gated on the CODSPEED_TOKEN secret",
     "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
