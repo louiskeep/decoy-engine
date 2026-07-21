@@ -198,7 +198,7 @@ def fk_join_key_tuple(values: tuple[object, ...]) -> str:
 # The SAME stable code every route raises for "no dtype can hold this FK
 # output column losslessly": originally minted by the out-of-core route
 # (`out_of_core/_join.py::cast_fk_chunk` / `_append_output_batch`,
-# `out_of_core/_batch_join.py`) for the one shape it cannot resolve from
+# `out_of_core/_fixed_schema_typing.py`) for the one shape it cannot resolve from
 # Arrow types alone. DE-10 reuses the identical string (not a new code) so a
 # caller branching on `ExecutionError.code` sees one contract regardless of
 # which route ran the job; the name keeps its historical `out_of_core_`

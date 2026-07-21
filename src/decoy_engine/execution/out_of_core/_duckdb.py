@@ -45,9 +45,9 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
     # here only because of a route-wide invariant this connection's callers
     # all honor: any DuckDB result whose row order reaches this route's
     # OUTPUT carries an explicit `ORDER BY` at the point it is read back
-    # (`_batch_join.py` and `_join.py` both `ORDER BY __decoy_row_nr`), and
+    # (`_stream_join.py` and `_join.py` both `ORDER BY __decoy_row_nr`), and
     # `_relation.py`'s dedup result is consumed only as a hash-join build
-    # side (`_batch_join.py`'s `parent_keys` view), never order-sensitively.
+    # side (`_stream_join.py`'s `parent_keys` view), never order-sensitively.
     # A future caller of `connect_duckdb` that reads unordered output would
     # violate this invariant, not this setting.
     config["preserve_insertion_order"] = False

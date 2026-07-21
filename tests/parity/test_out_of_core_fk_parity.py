@@ -981,7 +981,7 @@ def test_decimal_fractional_scale_mismatch_matches_oracle(strategy: str) -> None
 
     hash/redact/truncate (not passthrough) are required to reach the bug: a
     passthrough parent key stays decimal-typed end to end, which the
-    fixed-schema output-type resolver (`_batch_join.py::_resolve_output_types`)
+    fixed-schema output-type resolver (`_fixed_schema_typing.py::_resolve_output_types`)
     already rejects fail-closed for ANY orphan policy (a decimal masked type
     has no fixed Python round-trip image) -- a real, unrelated, pre-existing
     fail-closed path, not this bug. hash/redact/truncate mask the parent
