@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 def emit_to_sink(
     plan: Plan,
     table_name: str,
-    raw: pa.Table | LazySource,
+    raw_parent_source: pa.Table | LazySource,
     rewritten: Iterator[pa.RecordBatch],
     *,
     fixed_schema: pa.Schema,
@@ -115,7 +115,7 @@ def emit_to_sink(
     if stager.rows:
         for edge in outgoing_edges:
             parent_relations[edge] = build_parent_key_relation_aligned(
-                source_parent=raw,
+                source_parent=raw_parent_source,
                 masked_parent=stager.source(),
                 edge=edge,
                 masked_types=_relation_masked_types(edge, fk_components, stager, fixed_schema),
@@ -129,7 +129,7 @@ def emit_to_sink(
     empty = empty_output_table(plan, table_name, source_schema, fk_components)
     for edge in outgoing_edges:
         parent_relations[edge] = build_parent_key_relation_aligned(
-            source_parent=raw,
+            source_parent=raw_parent_source,
             masked_parent=empty,
             edge=edge,
             temp_dir=relation_dir,

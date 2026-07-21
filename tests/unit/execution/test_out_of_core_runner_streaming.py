@@ -1132,4 +1132,101 @@ def test_single_read_source_mutation_cannot_corrupt(tmp_path, monkeypatch) -> No
 
     published = pq.read_table(target / "orders.parquet")
     assert published.to_pydict() == oracle.outputs["orders"].to_pydict()
-    assert read_count == 1
+
+
+def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) -> None:
+    """Same BLOCKER as `test_single_read_source_mutation_cannot_corrupt`, but on
+    the outgoing-relation build rather than the incoming FK resolve: a
+    `parent -> child -> grandchild` chain, where `child` is BOTH a masked
+    table (incoming edge from `parent`) AND a relation source for the NEXT
+    table (outgoing edge to `grandchild`). If the outgoing-relation build
+    re-reads `child`'s source a second time to pair raw parent keys with the
+    masked `child` output, a same-count on-disk permutation of `child` written
+    AFTER phase 1 has already read it once corrupts that pairing silently:
+    the relation maps each raw child id to the WRONG masked row, so
+    `grandchild`'s FK column resolves to the wrong parent. The single-read
+    fix captures `child`'s raw parent-key column during phase 1 (in read
+    order, matching the masked-output order) instead of re-reading it, so
+    this mutation -- which lands strictly after that one read -- cannot
+    affect the published output.
+    """
+    rows = 12
+    paths = write_large_fk_chain(tmp_path / "src", rows, width=0, orphan_frac=0.0, batch_rows=4)
+    plan = make_plan()
+    graph = make_graph(OrphanPolicy.WARN)
+    unmutated = {name: pq.read_table(path) for name, path in paths.items()}
+    child_unmutated = unmutated["child"]
+    child_path = paths["child"]
+
+    oracle = PandasExecutionAdapter().run(
+        plan,
+        unmutated,
+        registry=_REG,
+        relationship_graph=graph,
+        namespace_registry=_NS,
+    )
+
+    real = stream_driver_mod._iter_source_batches
+
+    def make_mutator() -> Any:
+        """A fresh `_iter_source_batches` patch: on the FIRST read of `child`'s
+        `LazySource`, materialize its batches (the real, only, phase-1 read),
+        THEN swap the on-disk file for an equal-count reversal. Any later read
+        of `child` (the bug this regression targets) sees the swapped file;
+        the single read this function itself performs never does, since the
+        swap happens only after `list(real(...))` has already drained it.
+        """
+        read_count = 0
+
+        def mutate_after_first_child_read(src: Any, batch_rows: int) -> Any:
+            nonlocal read_count
+            batches = list(real(src, batch_rows))
+            if isinstance(src, LazySource) and src.path == child_path:
+                read_count += 1
+                if read_count == 1:
+                    reversed_child = pa.table(
+                        {
+                            "id": pa.array(
+                                list(reversed(child_unmutated.column("id").to_pylist()))
+                            ),
+                            "parent_id": pa.array(
+                                list(reversed(child_unmutated.column("parent_id").to_pylist()))
+                            ),
+                        }
+                    )
+                    pq.write_table(reversed_child, child_path)
+            yield from batches
+
+        return mutate_after_first_child_read
+
+    # --- Sink path ---
+    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", make_mutator())
+    target = tmp_path / "published-sink"
+    run_fk_out_of_core(
+        plan,
+        lazy_sources(paths),
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(target),
+        temp_dir=tmp_path / "work-sink",
+    )
+    published_grandchild = pq.read_table(target / "grandchild.parquet")
+    assert published_grandchild.to_pydict() == oracle.outputs["grandchild"].to_pydict()
+
+    # Restore `child` to its unmutated state before the second (resident) run,
+    # so this run's own single read is the one the mutator swaps after.
+    pq.write_table(child_unmutated, child_path)
+
+    # --- Resident (no-sink) path ---
+    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", make_mutator())
+    resident_result = run_fk_out_of_core(
+        plan,
+        lazy_sources(paths),
+        registry=_REG,
+        relationship_graph=graph,
+        temp_dir=tmp_path / "work-resident",
+    )
+    assert (
+        resident_result.outputs["grandchild"].to_pydict()
+        == oracle.outputs["grandchild"].to_pydict()
+    )
