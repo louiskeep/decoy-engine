@@ -15,9 +15,8 @@ from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
-from decoy_engine.execution import ExecutionError, PandasExecutionAdapter, ParquetTransactionalSink
+from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import LazySource, run_fk_out_of_core
 from decoy_engine.execution.out_of_core import _join as join_mod
 from decoy_engine.execution.out_of_core import _stream_driver as stream_driver_mod
