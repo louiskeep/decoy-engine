@@ -41,13 +41,15 @@ otherwise-identical FK-linked frame:
 
     .venv/bin/python scripts/fk_memory_probe.py --rows 500000 --strategy fpe
 
-Default is `hash` (see `tests/perf_fixtures/fk_relational.py`'s
-`DEFAULT_PAYLOAD_STRATEGY` docstring for why) -- payload columns were never
-masked before this knob existed, so a default run's masked bytes and cost now
-include the payload columns too; the JSON shape (all pre-existing fields, plus
-the new `strategy` field) is unchanged. Not supported together with
-`--source-dir` or `--capability`: both may point at a real/shared corpus whose
-schema is not guaranteed to carry `payload_NN`-named columns.
+The knob is purely ADDITIVE: when `--strategy` is OMITTED, payload columns are
+not masked at all (only the FK keys are, as before this knob existed), so a
+no-flags run is byte-identical in cost to the pre-BENCH-CODE-1 probe and stays
+directly comparable to the harvested BENCH baseline. Passing a strategy opts
+into masking the `payload_NN` columns to measure that strategy's per-column
+cost; the emitted JSON reports `strategy: null` on a no-flags run and the
+chosen name otherwise (the only schema addition is the `strategy` field). Not
+supported together with `--source-dir` or `--capability`: both may point at a
+real/shared corpus whose schema is not guaranteed to carry `payload_NN` columns.
 
 Capability proof (Sprint C5): `--mem-cap-mb N` applies a hard
 `resource.setrlimit` ceiling to the worker process before it runs (RLIMIT_DATA
@@ -100,7 +102,6 @@ import duckdb  # noqa: E402
 import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 from tests.perf_fixtures.fk_relational import (  # noqa: E402
-    DEFAULT_PAYLOAD_STRATEGY,
     PAYLOAD_STRATEGIES,
     build_fk_relational,
     lazy_loader,
@@ -323,7 +324,7 @@ def _run_full(
     orphan_frac: float,
     policy,
     source_dir: Path | None,
-    strategy: str = DEFAULT_PAYLOAD_STRATEGY,
+    strategy: str | None = None,
 ) -> dict:
     """Full-frame run: all tables built (or read whole from Parquet) and
     resident, then masked at once."""
@@ -334,7 +335,7 @@ def _run_full(
         # that way so every OTHER caller of it stays byte-identical to before
         # BENCH-CODE-1); the probe's synthetic path overrides it with one that
         # does, matching the `width` payload columns `fixture.sources` holds.
-        plan = make_plan(width=width, strategy=strategy)
+        plan = make_plan(width=width, strategy=strategy) if strategy is not None else make_plan()
     else:
         fixture = _fixture_from_dir(source_dir)
         plan = fixture.plan
@@ -367,7 +368,7 @@ def _run_sequential(
     orphan_frac: float,
     policy,
     source_dir: Path | None,
-    strategy: str = DEFAULT_PAYLOAD_STRATEGY,
+    strategy: str | None = None,
 ) -> dict:
     """Option 2: lazy per-table load + per-table emit + evict, so the three tables
     are never resident at once (each loaded table is still whole while current).
@@ -375,7 +376,7 @@ def _run_sequential(
     true single-table ceiling. Correctness is proven by
     tests/unit/execution/test_sequential_eviction.py, so no FK verify here."""
     if source_dir is None:
-        plan = make_plan(width=width, strategy=strategy)
+        plan = make_plan(width=width, strategy=strategy) if strategy is not None else make_plan()
         loader = lazy_loader(rows, width=width, orphan_frac=orphan_frac)
     else:
         plan = make_plan()
@@ -580,7 +581,7 @@ def _run_out_of_core(
     policy,
     source_dir: Path | None,
     mem_cap_mb: int | None = None,
-    strategy: str = DEFAULT_PAYLOAD_STRATEGY,
+    strategy: str | None = None,
 ) -> dict:
     """Option 4 route, streaming end to end (post-C3): each source table lives
     on disk as Parquet and enters `run_fk_out_of_core` as a `LazySource`, so no
@@ -638,7 +639,11 @@ def _run_out_of_core(
             # (a real/shared corpus), so the strategy knob applies only to the
             # in-probe-generated chain -- matches `_run_full`/`_run_sequential`
             # and is enforced up front in `main()`.
-            plan = make_plan(width=width, strategy=strategy) if source_dir is None else make_plan()
+            plan = (
+                make_plan(width=width, strategy=strategy)
+                if (source_dir is None and strategy is not None)
+                else make_plan()
+            )
             run_fk_out_of_core(
                 plan,
                 lazy_sources(src_paths),
@@ -693,7 +698,7 @@ def _run_one(
     mode: str,
     source_dir: Path | None = None,
     mem_cap_mb: int | None = None,
-    strategy: str = DEFAULT_PAYLOAD_STRATEGY,
+    strategy: str | None = None,
 ) -> dict:
     policy = _POLICIES[policy_name]
     header = {
@@ -772,7 +777,12 @@ def _worker_cmd(
 
 
 def _sweep(
-    sizes: list[int], width: int, orphan_frac: float, policy_name: str, mode: str, strategy: str
+    sizes: list[int],
+    width: int,
+    orphan_frac: float,
+    policy_name: str,
+    mode: str,
+    strategy: str | None,
 ) -> None:
     records = []
     for rows in sizes:
@@ -1013,9 +1023,11 @@ def main() -> None:
         default=None,
         help=(
             "BENCH-CODE-1: masking strategy for payload_NN filler columns "
-            f"(FK key columns always stay hash-masked). Default {DEFAULT_PAYLOAD_STRATEGY!r} "
-            "-- see tests/perf_fixtures/fk_relational.py's DEFAULT_PAYLOAD_STRATEGY "
-            "docstring for why. Not supported with --source-dir or --capability: "
+            "(FK key columns always stay hash-masked). When OMITTED, payload "
+            "columns are NOT masked at all -- byte-identical to the pre-knob "
+            "probe, so a no-flags run stays comparable to the harvested BENCH "
+            "baseline; pass a strategy to opt into masking them and measure its "
+            "per-column cost. Not supported with --source-dir or --capability: "
             "neither guarantees a payload_NN-named schema to mask."
         ),
     )
@@ -1027,7 +1039,7 @@ def main() -> None:
             "(BENCH-CODE-1 option (a) scope: a real/shared corpus schema is not "
             "guaranteed to carry payload_NN-named columns to mask)"
         )
-    strategy = args.strategy or DEFAULT_PAYLOAD_STRATEGY
+    strategy = args.strategy
 
     if args.capability:
         if args.rows is None or args.mem_cap_mb is None:

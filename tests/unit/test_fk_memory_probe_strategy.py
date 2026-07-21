@@ -67,20 +67,17 @@ def test_strategy_run_emits_valid_json_with_strategy_field(strategy: str) -> Non
     assert rec.keys() >= _EXPECTED_KEYS
 
 
-def test_default_strategy_run_matches_pre_bench_code_1_shape() -> None:
-    """No `--strategy` flag: the default-run JSON keeps every field the probe
-    emitted before this knob existed, plus the new `strategy` field (hash,
-    per DEFAULT_PAYLOAD_STRATEGY -- see tests/perf_fixtures/fk_relational.py).
-    Shape, not exact values: masking payload columns by default is new
-    behavior (they were unmasked filler before), documented in both that
-    module's docstring and scripts/fk_memory_probe.py's module docstring.
+def test_default_run_does_not_mask_payloads_and_reports_null_strategy() -> None:
+    """No `--strategy` flag: the knob is additive, so a default run masks NO
+    payload columns (only the FK keys, exactly as before this knob existed) and
+    reports `strategy: null`. This keeps a no-flags run byte-comparable to the
+    harvested BENCH baseline (dennis BLOCKER, 2026-07-21) -- the only schema
+    change is the additive `strategy` field.
     """
     rec = _run_probe()
-    assert rec["strategy"] == "hash"
+    assert rec["strategy"] is None
     assert rec["completed"] is True
-    assert rec.keys() >= _EXPECTED_KEYS
-    # No field lost relative to the pre-BENCH-CODE-1 shape (strategy is the
-    # only addition).
+    # The only field added relative to the pre-BENCH-CODE-1 shape is `strategy`.
     assert rec.keys() == _EXPECTED_KEYS
 
 
