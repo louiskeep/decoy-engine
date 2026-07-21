@@ -9,6 +9,36 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (DPS-1..3: marginal differential privacy for `generate`, 2026-07-21)
+
+Decoy's `mode: generate` output can now carry an honest (epsilon, delta)-DP
+guarantee over per-column MARGINALS, when the consumed snapshot was produced
+by a DP fit. Three pieces:
+
+- **DPS-1: data-independent support.** Numeric bin ranges come from a
+  caller-supplied `numeric_domains` entry (not the real min/max), and the
+  categorical label set is released through a stable-histogram threshold
+  (`tau = 1 + ceil((1/epsilon) * ln(1/(2*delta)))`), so the released SUPPORT
+  is itself epsilon-DP rather than noised counts over the real support
+  (`quality/snapshot.py`, `quality/dp.py`).
+- **DPS-2: privacy-budget accountant.** `PrivacyBudget` composes every noisy
+  release into one stated `(epsilon_total, delta_total)` by sequential
+  composition (Dwork & Roth, *Algorithmic Foundations of DP*, Thm 3.16),
+  emitted in the snapshot's `dp` block (`quality/dp_budget.py`).
+- **DPS-3: consume-only contract + fail-closed gates.** `generate` reads only
+  the snapshot artifact (post-processing immunity, regression-locked);
+  `compile_plan` rejects the anti-DP knobs (`allow_real_categories`,
+  `high_cardinality`) and a DP-declared pipeline pointed at a non-DP-fit
+  snapshot (`plan/_checks_dp.py`). The honest-limits disclaimer is narrowed to
+  the proven marginal claim (`docs/what-we-cannot-prove.md`).
+
+Scope: MARGINALS only (not joint structure), numeric and categorical columns
+only (not datetime/freetext), `generate` only (masked output carries no
+epsilon). The noise is drawn from fresh OS entropy, so DP-fit snapshots are
+deliberately not reproducible run to run; see `docs/what-we-cannot-prove.md`.
+The fit-time entry point (`decoy fit --epsilon`) lives in the CLI repo; the
+engine ships the mechanism and the consume-side enforcement.
+
 ### Added (TX-1: activate + document `text_redact` NER, 2026-07-20)
 
 The `text_redact` `ner` option (spaCy person-name/location detection) was

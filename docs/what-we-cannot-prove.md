@@ -138,6 +138,22 @@ as "the engine can produce and correctly gate a DP snapshot when asked
 directly," not as "the `decoy fit --epsilon` CLI command is a turnkey DP
 workflow."
 
+**DP-fit output is not reproducible run to run, by design.** The Laplace
+noise in `apply_dp_noise` (`quality/dp.py`) is drawn from fresh OS entropy
+(`numpy.random.default_rng()`), never from the job seed. This is deliberate:
+seeding the noise from material the config holder controls would let them
+subtract it back out and recover the true counts, voiding the guarantee, so
+the `rng` parameter exists only for tests. Two `decoy fit --epsilon` runs
+over identical source data and config therefore produce a different noisy
+snapshot every time. This is separate from Decoy's normal determinism
+contract, not a weakening of it: once a specific noisy snapshot artifact
+exists, GENERATING synthetic rows from it is fully seed-reproducible as usual
+(the samplers are seeded; the snapshot is just weights). So do not expect
+byte-identical DP snapshots across repeated fits, and do not treat the job
+seed as a privacy-relevant secret for the DP mechanism, since it plays no
+part in the noise draw. Tracking total epsilon across repeated fits stays
+the operator's responsibility (the budget-composition precondition above).
+
 If your use case requires a formal privacy guarantee over MASKED data, over
 generated JOINT structure, or over a datetime/freetext column, Decoy alone
 does not supply it.
