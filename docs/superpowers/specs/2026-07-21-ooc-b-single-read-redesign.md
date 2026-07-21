@@ -116,10 +116,12 @@ unchanged in intent (mask/payload stream must consume every join row).
   overwrites FK columns, emits. The row_nr identity assertion lives here.
 - Resident vs sink selects the store implementation. `emit_to_sink` and `assemble_resident`
   signatures are unchanged (they still consume a batch iterator).
-- Note (pre-existing, out of scope): outgoing-edge relation build still reads `source_parent=raw`.
-  That read predates OOC-B and is shared with the resident/relation contract; it is not the
-  mask/FK-resolve double read the BLOCKER identified. Called out so the review knows it was
-  considered and deliberately left.
+- Closed follow-up: the outgoing-edge relation build no longer reads `source_parent=raw`. Phase 1
+  now captures every outgoing edge's raw parent-key columns into `temp_dir/"raw_parent_keys.parquet"`
+  in read order (== the masked-output order), and the relation build reads that spill via
+  `LazySource` instead (`emit_to_sink`'s `raw` parameter is renamed `raw_parent_source`). `raw` is
+  read exactly once end to end; `_relation.py` is unchanged. See
+  `docs/superpowers/plans/2026-07-21-ooc-b-relation-build-single-read.md`.
 
 ## Byte-parity and regression tests
 
