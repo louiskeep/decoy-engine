@@ -228,3 +228,121 @@ def build_icd10cm_zip(
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(member, text)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# HCPCS fixtures
+# ---------------------------------------------------------------------------
+
+# Lines below reproduce (trimmed to the columns the parser reads) real rows
+# from a live CMS HCPCS Level II 2026Q3 (July) ANWEB download, pulled
+# 2026-07-21 -- see parsers/_hcpcs.py's module docstring for the verified
+# column layout. Real RIC='3' first lines are right-padded to a fixed 80-char
+# long-description field (later detail fields sit at fixed offsets after
+# it); real RIC='4' continuation lines are NOT re-padded by the export, which
+# is exactly the case that breaks a naive "concatenate the raw slices" join
+# (see _HCPCS_MULTILINE below) -- so the two line shapes are deliberately
+# reproduced here, not both padded for tidiness.
+
+
+def _hcpcs_first_line(code: str, seq: str, long_desc: str, short_desc: str = "") -> str:
+    return code + seq + "3" + long_desc.ljust(80) + short_desc.ljust(28)
+
+
+def _hcpcs_cont_line(code: str, seq: str, long_desc_chunk: str) -> str:
+    # Real continuation lines are right-trimmed by the export -- no padding.
+    return code + seq + "4" + long_desc_chunk
+
+
+def _hcpcs_modifier_line(code: str, seq: str, long_desc: str) -> str:
+    # A modifier's 2-char code occupies cols 4-5; cols 1-3 are FILLER
+    # (blank) -- see module docstring's COBOL-REDEFINES explanation.
+    return "   " + code + seq + "7" + long_desc.ljust(80)
+
+
+# Single-line procedure codes across several letter prefixes.
+_HCPCS_SINGLE_LINE: dict[str, str] = {
+    "G0008": "Administration of influenza virus vaccine",
+    "J0013": "Esketamine, nasal spray, 1 mg",
+    "V2020": "Frames, purchases",
+}
+
+# A0080: real 2-line record. The first line's long-desc field is padded to
+# 80 (so the natural word-break space survives the raw slice); the single
+# continuation line is NOT padded (real export behavior) -- this exercises
+# the per-chunk-strip-then-join-with-a-single-space logic on its simplest
+# case (exactly one join boundary).
+_HCPCS_A0080_LINES = [
+    _hcpcs_first_line(
+        "A0080",
+        "00100",
+        "Non-emergency transportation, per mile - vehicle provided by volunteer",
+    ),
+    _hcpcs_cont_line("A0080", "00200", "(individual or organization), with no vested interest"),
+]
+
+# A0384: real 3-line record, chosen specifically because its middle
+# continuation chunk ends mid-sentence ("...defibrillation is") with NO
+# trailing pad in the real export -- naively concatenating raw slices here
+# collapses the word boundary into "ispermitted". This is the case that
+# caught the bug during development; kept as its own fixture so a
+# regression on the join logic fails loudly.
+_HCPCS_A0384_LINES = [
+    _hcpcs_first_line(
+        "A0384",
+        "00100",
+        "Bls specialized service disposable supplies; defibrillation (used by als",
+    ),
+    _hcpcs_cont_line(
+        "A0384", "00200", "ambulances and bls ambulances in jurisdictions where defibrillation is"
+    ),
+    _hcpcs_cont_line("A0384", "00300", "permitted in bls ambulances)"),
+]
+
+#: Expected code -> joined long description for every procedure record
+#: `build_hcpcs_zip()` emits (modifier records are deliberately excluded).
+HCPCS_EXPECTED_DESCRIPTIONS: dict[str, str] = {
+    **_HCPCS_SINGLE_LINE,
+    "A0080": (
+        "Non-emergency transportation, per mile - vehicle provided by volunteer "
+        "(individual or organization), with no vested interest"
+    ),
+    "A0384": (
+        "Bls specialized service disposable supplies; defibrillation (used by als "
+        "ambulances and bls ambulances in jurisdictions where defibrillation is "
+        "permitted in bls ambulances)"
+    ),
+}
+
+
+def build_hcpcs_zip(
+    *,
+    extra_lines: list[str] | None = None,
+    member: str = "HCPC2026_JUL_ANWEB_06172026.txt",
+    include_modifier: bool = True,
+) -> bytes:
+    """Build a small ``hcpc*_anweb_*.zip``-shaped archive for tests.
+
+    Includes every procedure record in HCPCS_EXPECTED_DESCRIPTIONS plus, by
+    default, one real modifier record (RIC='7', code "A1") to exercise the
+    modifier-skip path -- callers that pass `extra_lines` replace nothing,
+    they only append (used for the malformed/edge-case tests).
+    """
+    lines = [_hcpcs_first_line(code, "00100", desc) for code, desc in _HCPCS_SINGLE_LINE.items()]
+    lines += _HCPCS_A0080_LINES
+    lines += _HCPCS_A0384_LINES
+    if include_modifier:
+        lines.append(_hcpcs_modifier_line("A1", "00100", "Dressing for one wound"))
+    if extra_lines:
+        lines += extra_lines
+
+    text = "\r\n".join(lines) + "\r\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, text)
+        # A second, real non-ANWEB member (the bundled record-layout doc) --
+        # present in every real download alongside the ANWEB export, so the
+        # member-lookup test fixture matches what a real zip actually
+        # contains, not an idealized single-file archive.
+        zf.writestr("HCPC2026_recordlayout.txt", "not the codes file\r\n")
+    return buf.getvalue()
