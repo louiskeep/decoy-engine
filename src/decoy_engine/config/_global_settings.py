@@ -20,6 +20,16 @@ class DpGenerateSettings(BaseModel):
     generate columns, which release real vocabulary and would silently
     void the guarantee this block declares.
 
+    Finding 4 (2026-07-21 DPS remediation): `epsilon`/`delta` here are an
+    ENFORCED CEILING, not an annotation. `plan._checks_dp.check_dp_snapshot_
+    provenance` composes the (epsilon_total, delta_total) actually spent by
+    every distinct DP snapshot artifact this pipeline consumes (basic
+    sequential composition, Dwork & Roth Thm 3.16) and rejects the config
+    (`dp_budget_exceeded`) if that composed spend exceeds these declared
+    values. Before this, an operator could declare epsilon=1e-6 and the
+    engine would accept an artifact whose real epsilon_total was 5 --
+    presence of this block was checked, its VALUES were not.
+
     Gate remediation Fix 5 (LOW #5): a `numeric_domains` field used to live
     here as a documented-informational mirror of
     `quality/snapshot.compute_distribution_snapshot`'s fit-time param --

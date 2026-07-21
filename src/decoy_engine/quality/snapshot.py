@@ -57,10 +57,24 @@ clamp (Dwork & Roth Sec. 3.3) rather than vanish from `row_count`.
 Gate remediation Fix 1 (P0): `dp_mode` also bypasses `categorical_top_k`
 SELECTION (itself data-dependent, Korolova et al. WWW 2009) -- every
 observed label becomes a tau-threshold candidate, unlike
-`high_cardinality_columns` (full vocabulary, no threshold).
+`high_cardinality_columns` (full vocabulary, no threshold). Scope narrowed
+by Option A below: only the bool branch reaches this candidacy widening
+now; object/string columns are rejected before Fix 1 applies.
 
 Gate remediation Fix 2 (P0): `dp_mode` rejects datetime/freetext columns
 outright (data-dependent support, no caller override).
+
+Option A (2026-07-21 DPS remediation, Codex privacy-gate block on
+`feat/dps-marginal-dp`): the categorical release mechanism
+(`quality/dp.py::apply_dp_noise`'s stable-histogram branch) does not yet
+satisfy the (epsilon, delta) bound it claims (unnoised rank leakage,
+suppressed mass folded into an observable `other_count`, rounding before
+the threshold test) -- see CHANGELOG.md. Rather than ship a broken
+guarantee, `dp_mode` now rejects every object/string column outright
+(`dp_mode_categorical_unsupported`), which also removes Fix 1/Fix 2's
+prior data-dependent split (30-distinct cardinality cliff) as an observable
+fit-success signal for that dtype family. Bool is unaffected -- its
+candidate set is dtype-determined (`{True, False}`), never data-dependent.
 """
 
 from __future__ import annotations
@@ -78,13 +92,17 @@ DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
 
 
 class DistributionSnapshotError(Exception):
-    """Fit-time `high_cardinality` contract violation. Machine-readable code.
+    """Fit-time contract violation this module cannot silently degrade past.
+    Machine-readable code.
 
-    Raised in place of silently degrading: a column marked
+    Originally scoped to `high_cardinality` (a column marked
     `high_cardinality` promises FULL-fidelity vocabulary retention, so a
-    request this module cannot honor (wrong dtype, or a vocabulary/label
-    size the JSON artifact should not carry) fails the fit loudly instead
-    of falling back to the ordinary top-K/freetext behavior.
+    request this module cannot honor -- wrong dtype, or a vocabulary/label
+    size the JSON artifact should not carry -- fails the fit loudly instead
+    of falling back to the ordinary top-K/freetext behavior). Also raised
+    for `dp_mode`'s object/string rejection (`dp_mode_categorical_unsupported`,
+    Option A DPS remediation): both are "this fit request cannot be honored
+    as declared" failures, coded for the same reason.
     """
 
     def __init__(self, *, code: str, message: str) -> None:
@@ -163,8 +181,12 @@ def compute_distribution_snapshot(
         numeric_domains: DPS-1 (module docstring). `{column: (lo, hi)}`;
             bin_edges/min/max derive from the (clamped) domain when set.
         dp_mode: DPS-1. Fail-closed: numeric requires `numeric_domains`;
-            datetime/freetext are rejected outright (Fix 2); categorical
-            bypasses `categorical_top_k` (Fix 1, module docstring).
+            datetime/freetext are rejected outright (Fix 2); every object/
+            string column (would-be categorical or freetext) is rejected
+            outright regardless of cardinality (Option A, 2026-07-21 DPS
+            remediation -- categorical DP is not yet implemented correctly,
+            see CHANGELOG.md). Bool stays categorical (dtype-determined, not
+            data-dependent) and still bypasses `categorical_top_k`.
 
     Returns:
         A dict matching schema `distribution-snapshot/v1` (module
@@ -173,10 +195,12 @@ def compute_distribution_snapshot(
         identical to every prior engine version).
 
     Raises:
-        DistributionSnapshotError: bad `high_cardinality_columns` shape
-            or safety-limit violation (see that arg's docs above).
+        DistributionSnapshotError: bad `high_cardinality_columns` shape or
+            safety-limit violation (see that arg's docs above); or
+            `dp_mode=True` with any object/string column
+            (`dp_mode_categorical_unsupported`, Option A).
         ValueError: `dp_mode=True` with a numeric column that has no
-            `numeric_domains` entry, or with any datetime/freetext column.
+            `numeric_domains` entry, or with any datetime column.
     """
     # MED-3: a bare str satisfies `Collection[str]` structurally, so
     # `high_cardinality_columns="code"` would silently iterate characters
@@ -306,12 +330,37 @@ def _stats_for(
             _raise_dp_mode_unsupported_kind(non_null.name, "datetime", "year_bins")
         return "datetime", _datetime_stats(non_null), "data"
 
+    # Option A (2026-07-21 DPS remediation): every remaining dtype is
+    # object/string-family (would otherwise become categorical-by-cardinality
+    # or freetext below). apply_dp_noise's categorical release does not yet
+    # satisfy the (epsilon, delta) bound it claims -- unnoised rank leakage,
+    # suppressed mass folded into an observable other_count, and rounding
+    # before the threshold test all understate the true release probability
+    # (tracked follow-up; not fixed here). dp_mode therefore rejects EVERY
+    # object/string column outright, BEFORE distinct_count is computed: the
+    # prior split at _CATEGORICAL_DISTINCT_CAP made fit SUCCESS itself a
+    # function of the private data (neighboring 30- and 31-distinct datasets
+    # produced "artifact exists" vs "typed error" at zero privacy cost).
+    # Rejecting unconditionally removes that data-dependent success signal;
+    # no cardinality makes this succeed. Bool (above) and numeric/datetime
+    # keep their existing dp_mode rules -- only object/string is new here.
+    if dp_mode:
+        raise DistributionSnapshotError(
+            code="dp_mode_categorical_unsupported",
+            message=(
+                f"dp_mode does not support object/string column {non_null.name!r}: "
+                "categorical differential privacy is not yet implemented correctly "
+                "(see CHANGELOG.md) -- dp_mode rejects every object/string column "
+                "regardless of its distinct-value count, so fit success never "
+                "depends on the private data. Mask or exclude this column from the "
+                "dp_mode fit, or fit it outside dp_mode (its release will not carry "
+                "a DP guarantee)."
+            ),
+        )
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
         stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
         return "categorical", stats, cat_support
-    if dp_mode:  # Fix 2: length min/max derive from the real observed lens.
-        _raise_dp_mode_unsupported_kind(non_null.name, "freetext", "length bin edges")
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins), "data"
 
 

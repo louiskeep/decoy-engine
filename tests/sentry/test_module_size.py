@@ -108,7 +108,12 @@ ALLOWLIST: dict[str, int] = {
     # checks_passed/returned-tuple entries; dp_snapshot_provenance runs but is
     # not recorded in checks_passed. Same per-strategy check-module pattern;
     # same decomposition target stands.
-    "src/decoy_engine/plan/_compile.py": 679,
+    # Option A DPS remediation (2026-07-21): +11 LOC (679 -> 690) for
+    # `check_dp_categorical_unsupported`'s import + two call sites
+    # (compile_plan's no_profile/full branches share one call + comment,
+    # run_config_only_checks its own). Not recorded in checks_passed (same
+    # convention as dp_snapshot_provenance). Same decomposition target stands.
+    "src/decoy_engine/plan/_compile.py": 690,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
@@ -324,7 +329,13 @@ ALLOWLIST: dict[str, int] = {
     # dp-declared pipeline -- closes the categorical hole the Fix 3 residual
     # disclosed. Decompose `_stats_for`'s per-kind branches into a
     # `_dp_mode_stats.py` sibling when the next DP-scope change lands.
-    "src/decoy_engine/quality/snapshot.py": 635,
+    # Option A DPS remediation (2026-07-21): +49 LOC (635 -> 684) for the
+    # fail-closed `dp_mode_categorical_unsupported` rejection (every
+    # object/string column, regardless of cardinality -- the categorical
+    # release mechanism does not satisfy its stated DP bound, see
+    # CHANGELOG.md) plus the docstring updates explaining the narrowed
+    # scope. Same `_dp_mode_stats.py` decomposition target stands.
+    "src/decoy_engine/quality/snapshot.py": 684,
 }
 
 

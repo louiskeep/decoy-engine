@@ -73,7 +73,11 @@ from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
-from decoy_engine.plan._checks_dp import check_dp_generate_contract, check_dp_snapshot_provenance
+from decoy_engine.plan._checks_dp import (
+    check_dp_categorical_unsupported,
+    check_dp_generate_contract,
+    check_dp_snapshot_provenance,
+)
 
 # DE-03 sibling: reject `strategy: faker` with no provider at compile (the
 # seed-envelope builder otherwise silently drops it, leaking the raw value).
@@ -182,6 +186,10 @@ def compile_plan(
     # runs in both branches right after unknown_provider so a missing
     # provider still surfaces as row 2 first.
     check_non_poolable_provider_with_pool_backend(config)
+    # Option A (2026-07-21): categorical DP not yet supported -- runs first
+    # so a categorical-under-dp config always sees this one clear code,
+    # regardless of allow_real_categories.
+    check_dp_categorical_unsupported(config)
     check_dp_generate_contract(config)  # Row 31 (DPS-3): before row 12 (see below)
     # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate
     # columns vs their snapshot artifacts. Config + artifact only, so it
@@ -490,6 +498,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     _check_when_with_coherent_with(config)
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
+    # Option A (2026-07-21): categorical DP not yet supported -- runs first,
+    # same rationale as the compile_plan branch above.
+    check_dp_categorical_unsupported(config)
     check_dp_generate_contract(config)  # Row 31 (DPS-3)
     # Row 12 (WS3): consumes the config plus its referenced snapshot
     # artifact (a fitted-model JSON, not source data), so config-only
