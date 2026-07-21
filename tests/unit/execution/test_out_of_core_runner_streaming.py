@@ -301,6 +301,68 @@ def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
     assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
 
 
+def test_remap_orphans_across_batches_sink_matches_oracle(tmp_path, monkeypatch) -> None:
+    """OOC-B dennis LOW-2: REMAP end-to-end through the full three-phase zip at a
+    small batch, with orphans split across multiple result batches.
+
+    The streamed join numbers rows globally but REMAP mints per OUTPUT batch, so
+    each `FkOutputCursor`-sliced batch must re-base row_nr and re-mint from its
+    own keys and still equal the whole-child oracle. `_JOIN_BATCH_ROWS=2` forces
+    the five child rows (matched + genuine orphans interleaved) across several
+    batches; the streamed-sink, resident, and pandas oracle outputs must be
+    byte-identical.
+    """
+    monkeypatch.setattr(join_mod, "_JOIN_BATCH_ROWS", 2, raising=False)
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                (
+                    "customers",
+                    TableSeed(
+                        per_column=(("customer_id", _col("hash", namespace="cust")),), per_group=()
+                    ),
+                ),
+                (
+                    "orders",
+                    TableSeed(
+                        per_column=(("customer_id", _col("hash", namespace="cust")),), per_group=()
+                    ),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(edges=(_edge(OrphanPolicy.REMAP),), ordering=())
+    sources = {
+        "customers": pa.table({"customer_id": pa.array(["c1", "c2"], type=pa.string())}),
+        # "zz1"/"zz2" reference no parent -> genuine orphans, interleaved with
+        # matches and split across 2-row batches so REMAP mints in >1 batch.
+        "orders": pa.table(
+            {"customer_id": pa.array(["c1", "zz1", "c2", "zz2", "c1"], type=pa.string())}
+        ),
+    }
+    target = tmp_path / "published"
+
+    run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(target),
+        temp_dir=tmp_path / "work-sink",
+    )
+    in_memory = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+    )
+    pandas = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+
+    published = pq.read_table(target / "orders.parquet")
+    assert published.to_pydict() == in_memory.outputs["orders"].to_pydict()
+    assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
+
+
 def test_large_whole_float_orphan_sink_matches_oracle(tmp_path, monkeypatch) -> None:
     """SC1 round-6 P2 (int/float sink-parity) regression.
 

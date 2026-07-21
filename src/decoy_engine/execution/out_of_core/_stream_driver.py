@@ -155,8 +155,10 @@ def stream_table(
                 joiner_memory_limit,
                 mask_key=mask_key,
             )
-            joiner.begin_staging()
+            # Register for cleanup BEFORE begin_staging so a DDL/temp-dir failure
+            # there cannot leak the just-opened DuckDB connection.
             joiners.append(joiner)
+            joiner.begin_staging()
         if joiners:
             # A table with no incoming edges has nothing to stage; skip the read.
             for raw_batch in _iter_source_batches(raw, batch_rows):
