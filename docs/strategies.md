@@ -647,9 +647,67 @@ is added or removed. Do not assume cross-version MASK output stability for
 **Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
 NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation; an
 out-of-corpus-input `QualityWarning` signal (currently, an out-of-corpus input
-is silently remapped to a real code); the full-data replacement for today's
-abbreviated seed corpora (HC-1 slice 2). HIPAA-pack default wiring shipped in
+is silently remapped to a real code). HIPAA-pack default wiring shipped in
 SP-11.
+
+#### Full public-domain corpora (opt-in ETL)
+
+Decoy ships a Python ETL under `scripts/codeset_etl/` that fetches, normalizes,
+and writes the complete public-domain US federal healthcare code sets from their
+authoritative sources (FDA, CDC, CMS). A pipeline is not limited to the tiny
+shipped seed corpora; it can point `corpus_source` at the full real data.
+
+Available corpora:
+
+| Corpus | Source agency | ~Row count | Chapter support |
+|---|---|---|---|
+| `ndc` | FDA National Drug Code Directory | 217,000 | No |
+| `icd10` | CDC/NCHS ICD-10-CM (FY2026) | 74,719 | Yes (22 clinical chapters) |
+| `icd10pcs` | CMS ICD-10-PCS (FY2026) | 79,115 | Yes (17 sections) |
+| `hcpcs` | CMS HCPCS Level II (2026Q3) | 8,725 | No |
+| `msdrg` | CMS MS-DRG Definitions (v43.0) | 772 | No |
+
+To fetch and cache a corpus:
+
+```bash
+python -m scripts.codeset_etl.update ndc
+python -m scripts.codeset_etl.update icd10
+python -m scripts.codeset_etl.update icd10pcs
+```
+
+Each command writes a Parquet file to the cache directory (default:
+`~/.cache/decoy-engine/codesets/`; override with `DECOY_CODESET_CACHE_DIR`). A
+pipeline opts in by setting `corpus_source` to the output file using the
+existing customer-corpus syntax:
+
+```yaml
+columns:
+  - name: drug_code
+    strategy: code_set
+    provider_config:
+      code_set: ndc
+      corpus_source: customer:~/.cache/decoy-engine/codesets/ndc.parquet
+```
+
+**Why opt-in, not bundled.** The ETL lives under `scripts/`, which the wheel
+build excludes (`pyproject.toml` specifies `packages = ["src/decoy_engine"]`).
+This keeps the wheel small and fetching explicit: a user who never runs the
+update command sees exactly the current shipped-seed behavior, unchanged.
+
+**License and coverage.** These five are public domain (17 U.S.C. 105, US
+federal government works). Licensed code sets that coexist in this space
+(CPT by the AMA, CDT Dental codes by the ADA, APR-DRG by 3M, SNOMED CT) are
+never bundled; the ETL parsers reject copyrighted codes fail-closed. A customer
+licensed for any of these can supply their own file via `corpus_source:
+customer:<path>` just as they would for any other custom corpus.
+
+**Chapter preservation availability.** The `chapter_preserve` config option
+works for `icd10` and `icd10pcs` because every code in those corpora carries a
+chapter field (ICD-10-CM has 22 clinical chapters; PCS has 17 sections derived
+from each code's first character). HCPCS and MS-DRG have no chapter field in
+their source data, so `chapter_preserve: true` on those corpora fails closed at
+plan-compile time (`code_set_chapter_column_missing`). Set `chapter_preserve:
+true` only when the corpus is known to carry a chapter column.
 
 ```yaml
 # Mask ICD-10 diagnosis codes, preserving chapter grouping.
@@ -658,15 +716,25 @@ columns:
     strategy: code_set
     provider_config:
       code_set: icd10
+      corpus_source: customer:~/.cache/decoy-engine/codesets/icd10.parquet
       chapter_preserve: true
 
-# Use a customer-supplied corpus; any label name is accepted.
+# Mask ICD-10-PCS procedure codes, preserving section (chapter).
 columns:
-  - name: procedure_code
+  - name: proc_code
     strategy: code_set
     provider_config:
-      code_set: cpt_local
-      corpus_source: customer:/data/cpt_subset.parquet
+      code_set: icd10pcs
+      corpus_source: customer:~/.cache/decoy-engine/codesets/icd10pcs.parquet
+      chapter_preserve: true
+
+# NDC, HCPCS, MS-DRG: no chapter field, chapter_preserve not applicable.
+columns:
+  - name: drug_code
+    strategy: code_set
+    provider_config:
+      code_set: ndc
+      corpus_source: customer:~/.cache/decoy-engine/codesets/ndc.parquet
 ```
 
 Use it for diagnosis codes, procedure codes, and other controlled-vocabulary
