@@ -143,9 +143,10 @@ noise in `apply_dp_noise` (`quality/dp.py`) is drawn from fresh OS entropy
 (`numpy.random.default_rng()`), never from the job seed. This is deliberate:
 seeding the noise from material the config holder controls would let them
 subtract it back out and recover the true counts, voiding the guarantee, so
-the `rng` parameter exists only for tests. Two `decoy fit --epsilon` runs
-over identical source data and config therefore produce a different noisy
-snapshot every time. This is separate from Decoy's normal determinism
+the `rng` parameter exists only for tests. So each DP release draws fresh
+noise: applying the mechanism twice to identical counts, at the same seed and
+config, yields a different noisy snapshot every time. This is separate from
+Decoy's normal determinism
 contract, not a weakening of it: once a specific noisy snapshot artifact
 exists, GENERATING synthetic rows from it is fully seed-reproducible as usual
 (the samplers are seeded; the snapshot is just weights). So do not expect

@@ -79,7 +79,7 @@ class TestRunConfigOnlyChecks:
             "when_with_coherent_with",
             "deterministic_namespace_completeness",
             "non_poolable_provider_with_pool_backend",
-            # Row 30 (DPS-3): dp generate-contract mutual exclusion.
+            # Row 31 (DPS-3): dp generate-contract mutual exclusion.
             "dp_generate_contract",
             "statistical_columns",
             "text_redact_ner_available",
