@@ -1,6 +1,6 @@
 """Single-streaming-join FK joiner for the batch-streaming sink path (OOC-B).
 
-This replaces `_batch_join.ChildFkBatchJoiner`'s per-child-batch join against a
+This replaces the removed per-child-batch `ChildFkBatchJoiner`'s join against a
 MATERIALIZED parent TEMP TABLE. That table held one row per distinct parent
 key and, being a DuckDB temp table, could not fully evict its
 buffer-manager/control state, so on a large parent it pinned an
@@ -25,7 +25,7 @@ sink path writes one Parquet file under one schema fixed before the first
 batch:
 
 - Fixed output schema. `output_types` is resolved from schemas alone at
-  construction (`_batch_join._resolve_output_types`), fail-closing on any mix
+  construction (`_fixed_schema_typing._resolve_output_types`), fail-closing on any mix
   that cannot be typed byte-identically to whole-column inference, and
   `observed_types` records the pre-cast chunk types so `_emit.py` can replay
   the whole-column narrowing on the resident/relation sides. Neither the
@@ -40,7 +40,7 @@ batch:
   index; the values are identical to the whole-child mint because the kernels
   are per-value deterministic.
 
-See `_batch_join.py`'s module docstring for the full inventory of documented
+See `_fixed_schema_typing.py`'s module docstring for the full inventory of documented
 typing divergences (all preserved), and `tests/parity/` for the byte-parity
 gate against the pandas oracle.
 """
@@ -55,8 +55,11 @@ import pyarrow.parquet as pq
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
-from decoy_engine.execution.out_of_core._batch_join import _cast_chunks, _resolve_output_types
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+from decoy_engine.execution.out_of_core._fixed_schema_typing import (
+    _cast_chunks,
+    _resolve_output_types,
+)
 from decoy_engine.execution.out_of_core._join import (
     _append_output_batch,
     _child_key_batches,

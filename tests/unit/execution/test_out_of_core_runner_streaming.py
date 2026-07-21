@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import LazySource, run_fk_out_of_core
 from decoy_engine.execution.out_of_core import _join as join_mod
-from decoy_engine.execution.out_of_core import _runner as runner_mod
+from decoy_engine.execution.out_of_core import _stream_driver as stream_driver_mod
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -140,13 +140,13 @@ def test_streaming_runner_reads_lazy_sources_in_bounded_batches(tmp_path, monkey
     monkeypatch.setattr(LazySource, "to_table", forbidden_to_table)
 
     masked_sizes: list[int] = []
-    real_mask_batch = runner_mod.mask_batch
+    real_mask_batch = stream_driver_mod.mask_batch
 
     def spy_mask_batch(*args: Any, **kwargs: Any) -> pa.RecordBatch:
         masked_sizes.append(args[2].num_rows)
         return real_mask_batch(*args, **kwargs)
 
-    monkeypatch.setattr(runner_mod, "mask_batch", spy_mask_batch)
+    monkeypatch.setattr(stream_driver_mod, "mask_batch", spy_mask_batch)
 
     target = tmp_path / "published"
     run_fk_out_of_core(
@@ -242,7 +242,7 @@ def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
     oracle's value is 1/1 -- a real wrong-output divergence on the ONE path
     this bug can only show up on (`emit_to_sink`'s fixed-schema write; the
     no-sink resident path accidentally self-heals via
-    `ChildFkBatchJoiner.observed_types`, so a sink is required to catch this).
+    `StreamFkJoiner.observed_types`, so a sink is required to catch this).
 
     A small `_JOIN_BATCH_ROWS` splits the (here, uniformly orphan) rows
     across multiple batches, proving the fixed int64 type is applied

@@ -4,10 +4,10 @@
 materialized parent TEMP TABLE with ONE streamed `LEFT JOIN child_keys x
 parent_keys(read_parquet VIEW) ORDER BY __decoy_row_nr` per edge (the
 `_join.py::mask_child_fk` shape), so no O(distinct-parent-key) structure stays
-resident. The oracle for these unit tests is `ChildFkBatchJoiner` itself: for
-the same relation/edge/child, the streamed joiner's rebuilt output table,
-orphan total, and fixed/observed types must equal the per-batch joiner's,
-which the parity suite already pins against the whole-child pandas oracle.
+resident. The oracle is the whole-child resident path `mask_child_fk`:
+the streamed joiner's output, after the same resident narrowing
+`_emit.assemble_resident` applies, must be byte-identical to it (types and
+values), and `mask_child_fk` is itself parity-pinned to the pandas oracle.
 """
 
 from __future__ import annotations
@@ -17,14 +17,20 @@ from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution import ExecutionError
+from decoy_engine.execution._fk_keys import fk_join_key_tuple
 from decoy_engine.execution.out_of_core import _runner as runner_mod
 from decoy_engine.execution.out_of_core import _stream_join as stream_join_mod
-from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
+from decoy_engine.execution.out_of_core._emit import _fk_resident_column
+from decoy_engine.execution.out_of_core._join import mask_child_fk
 from decoy_engine.execution.out_of_core._mask import mask_table
-from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_from_tables
+from decoy_engine.execution.out_of_core._relation import (
+    ParentKeyRelation,
+    build_parent_key_relation_from_tables,
+)
 from decoy_engine.execution.out_of_core._stream_join import FkOutputCursor, StreamFkJoiner
 from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
@@ -90,17 +96,6 @@ def _relation_for(plan: Any, edge: RelationshipEdge, parent: pa.Table, temp_dir)
     )
 
 
-def _batch_joiner(plan, edge, relation, temp_dir, child):
-    return ChildFkBatchJoiner(
-        edge=edge,
-        parent_relation=relation,
-        child_key_types=tuple(child.column(col).type for col in edge.child_columns),
-        temp_dir=temp_dir,
-        remap_seeds=_remap_seeds(plan, edge),
-        job_seed=plan.seed_envelope.job_seed,
-    )
-
-
 def _stream_joiner(plan, edge, relation, temp_dir, child):
     return StreamFkJoiner(
         edge=edge,
@@ -112,29 +107,39 @@ def _stream_joiner(plan, edge, relation, temp_dir, child):
     )
 
 
-def _batched_output(plan, edge, relation, child, temp_dir) -> tuple[pa.Table, int]:
-    batches: list[pa.RecordBatch] = []
-    orphans = 0
-    with _batch_joiner(plan, edge, relation, temp_dir, child) as joiner:
-        for batch in child.to_batches(max_chunksize=_BATCH):
-            out, batch_orphans = joiner.join_batch(batch)
-            batches.append(out)
-            orphans += batch_orphans
-        observed = tuple(frozenset(s) for s in joiner.observed_types)
-        output_types = joiner.output_types
-    return pa.Table.from_batches(batches), orphans, observed, output_types
+def _whole_child_oracle(plan, edge, relation, child, temp_dir) -> pa.Table:
+    """The whole-child resident path (`mask_child_fk`), the gold oracle.
+
+    It carries VALUE-derived column types (the documented narrowing), so the
+    streamed joiner's FIXED-schema output is compared to it only AFTER the same
+    resident narrowing `_emit.assemble_resident` applies.
+    """
+    remap_values = (
+        runner_mod._remap_values(plan, edge, child)
+        if edge.orphan_policy is OrphanPolicy.REMAP
+        else None
+    )
+    out, _warnings = mask_child_fk(
+        child=child,
+        edge=edge,
+        parent_relation=relation,
+        temp_dir=temp_dir,
+        remap_values=remap_values,
+    )
+    return out
 
 
 def _stream_output(
     plan, edge, relation, child, temp_dir, *, batch_rows: int = _BATCH
-) -> tuple[pa.Table, int]:
-    """Rebuild the child table with FK columns replaced from the streamed join.
+) -> tuple[pa.Table, pa.Table, int, tuple]:
+    """Run the streamed joiner over the whole child.
 
-    `iter_output` yields FK output batches ordered by global `__decoy_row_nr`,
-    which for a source read in row order is positional, so concatenating the FK
-    columns in iteration order restores source order and can overwrite the
-    child's FK columns directly (the whole-child equivalent the runner drives
-    per-batch via a cursor).
+    Returns (fixed_table, narrowed_table, orphan_total, output_types). The
+    FIXED table keeps the schema-fixed FK types (what a Parquet sink writes);
+    the NARROWED table applies `_fk_resident_column` (exactly what the resident
+    runner does) to recover the value-derived type for oracle comparison.
+    `iter_output` yields FK batches in global row_nr order, which is source
+    order, so concatenating in iteration order restores the child's rows.
     """
     with _stream_joiner(plan, edge, relation, temp_dir, child) as joiner:
         joiner.stage_keys(child.to_batches(max_chunksize=batch_rows))
@@ -143,38 +148,36 @@ def _stream_output(
             for idx, col in enumerate(edge.child_columns):
                 fk_chunks[idx].append(out_batch.column(col))
         orphans = joiner.orphan_total
-        observed = tuple(frozenset(s) for s in joiner.observed_types)
         output_types = joiner.output_types
-    result = child
+        observed = joiner.observed_types
+    fixed = child
+    narrowed = child
     for idx, col in enumerate(edge.child_columns):
-        arrays = fk_chunks[idx]
-        merged = pa.concat_arrays(arrays) if arrays else pa.array([], type=output_types[idx])
-        child_idx = result.schema.get_field_index(col)
-        fields = list(result.schema)
-        fields[child_idx] = pa.field(col, output_types[idx])
-        cols = list(result.columns)
-        cols[child_idx] = merged
-        result = pa.table(
-            {f.name: c for f, c in zip(fields, cols, strict=True)},
-            schema=pa.schema(fields, metadata=result.schema.metadata),
-        )
-    return result, orphans, observed, output_types
+        chunks = fk_chunks[idx]
+        fixed_col = pa.concat_arrays(chunks) if chunks else pa.array([], type=output_types[idx])
+        narrowed_col = _fk_resident_column(chunks, observed[idx]).combine_chunks()
+        fixed = _set_col(fixed, col, fixed_col)
+        narrowed = _set_col(narrowed, col, narrowed_col)
+    return fixed, narrowed, orphans, output_types
 
 
-def _assert_stream_matches_batch(plan, edge, parent, child, tmp_path) -> tuple[pa.Table, int]:
+def _set_col(table: pa.Table, name: str, array: pa.Array) -> pa.Table:
+    idx = table.schema.get_field_index(name)
+    return table.set_column(idx, name, array)
+
+
+def _assert_stream_matches_oracle(
+    plan, edge, parent, child, tmp_path
+) -> tuple[pa.Table, int, tuple]:
+    """The streamed joiner's narrowed output is byte-identical to `mask_child_fk`."""
     relation = _relation_for(plan, edge, parent, tmp_path / "rel")
-    batch_tbl, batch_orphans, batch_obs, batch_types = _batched_output(
-        plan, edge, relation, child, tmp_path / "batch"
-    )
-    stream_tbl, stream_orphans, stream_obs, stream_types = _stream_output(
+    oracle = _whole_child_oracle(plan, edge, relation, child, tmp_path / "oracle")
+    fixed, narrowed, orphans, output_types = _stream_output(
         plan, edge, relation, child, tmp_path / "stream"
     )
-    assert stream_types == batch_types
-    assert stream_tbl.schema == batch_tbl.schema
-    assert stream_tbl.equals(batch_tbl)
-    assert stream_orphans == batch_orphans
-    assert stream_obs == batch_obs
-    return stream_tbl, stream_orphans
+    assert narrowed.schema == oracle.schema
+    assert narrowed.equals(oracle)
+    return fixed, orphans, output_types
 
 
 _CROSS = ["c2", "missing1", None, "c1", "missing2", "c2", None, "missing1", "c1", "c2"]
@@ -187,7 +190,7 @@ def test_single_edge_matches_batch_joiner(tmp_path, policy: OrphanPolicy) -> Non
     edge = _edge(policy)
     parent = pa.table({"customer_id": ["c1", "c2"]})
     child = pa.table({"customer_id": _CROSS, "amount": list(range(len(_CROSS)))})
-    _tbl, orphans = _assert_stream_matches_batch(plan, edge, parent, child, tmp_path)
+    _tbl, orphans, _types = _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path)
     assert orphans == 3
 
 
@@ -213,7 +216,9 @@ def test_fail_policy_clean_child_matches_batch_joiner(tmp_path) -> None:
     with _stream_joiner(plan, edge, relation, tmp_path / "s", child) as joiner:
         joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
         assert joiner.total_orphans() == 0
-    _tbl, orphans = _assert_stream_matches_batch(plan, edge, parent, child, tmp_path / "cmp")
+    _tbl, orphans, _types = _assert_stream_matches_oracle(
+        plan, edge, parent, child, tmp_path / "cmp"
+    )
     assert orphans == 0
 
 
@@ -276,7 +281,7 @@ def test_composite_fk_matches_batch_joiner(tmp_path, policy: OrphanPolicy) -> No
         with _stream_joiner(plan, edge, relation, tmp_path / "s", child) as joiner:
             joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
             assert joiner.total_orphans() == 0
-    _assert_stream_matches_batch(plan, edge, parent, child, tmp_path / "cmp")
+    _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path / "cmp")
 
 
 def test_remap_mints_per_output_batch_not_per_child(tmp_path, monkeypatch) -> None:
@@ -296,7 +301,7 @@ def test_remap_mints_per_output_batch_not_per_child(tmp_path, monkeypatch) -> No
     edge = _edge(OrphanPolicy.REMAP)
     parent = pa.table({"customer_id": ["c1", "c2"]})
     child = pa.table({"customer_id": _CROSS})
-    _assert_stream_matches_batch(plan, edge, parent, child, tmp_path)
+    _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path)
     assert lengths
     assert max(lengths) <= _BATCH
 
@@ -311,7 +316,7 @@ def test_numeric_cross_batch_split_matches_batch_joiner(tmp_path) -> None:
     child = pa.table(
         {"customer_id": pa.array([1.0, 3.0, 1.0, 4.0, 6.0, 7.0, 2.5, 8.5, 1.0], type=pa.float64())}
     )
-    _tbl, orphans = _assert_stream_matches_batch(plan, edge, parent, child, tmp_path)
+    _tbl, orphans, _types = _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path)
     assert _tbl.column("customer_id").type == pa.float64()
     assert orphans == 5
 
@@ -321,7 +326,7 @@ def test_all_null_fk_child_column_keeps_fixed_type(tmp_path) -> None:
     edge = _edge(OrphanPolicy.PRESERVE)
     parent = pa.table({"customer_id": ["c1"]})
     child = pa.table({"customer_id": pa.array([None, None], type=pa.null())})
-    tbl, orphans = _assert_stream_matches_batch(plan, edge, parent, child, tmp_path)
+    tbl, orphans, _types = _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path)
     assert tbl.column("customer_id").type == pa.string()
     assert orphans == 0
 
@@ -397,7 +402,7 @@ def test_strategy_parent_matches_batch_joiner(
         with _stream_joiner(plan, edge, relation, tmp_path / "s", child) as joiner:
             joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
             assert joiner.total_orphans() == 0
-    _assert_stream_matches_batch(plan, edge, parent, child, tmp_path / "cmp")
+    _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path / "cmp")
 
 
 # ---------------------------------------------------------------------------
@@ -517,3 +522,86 @@ def test_cursor_multi_column() -> None:
     out = cursor.take(2)
     assert out[0].to_pylist() == ["a", "b"]
     assert out[1].to_pylist() == [10, 20]
+
+
+# ---------------------------------------------------------------------------
+# Migrated pinned sentinels (were in the removed test_out_of_core_batch_join.py)
+# ---------------------------------------------------------------------------
+
+
+def _hand_built_relation(tmp_path) -> ParentKeyRelation:
+    """A parent relation with ONE key masking to null and one to a normal
+    string, built directly so the masked-key column is string-typed with a null
+    entry (an all-null masked column hits an orthogonal Parquet round-trip
+    quirk). Isolates the match-vs-orphan sentinel from that concern.
+    """
+    join_keys = [fk_join_key_tuple(("c0",)), fk_join_key_tuple(("c1",))]
+    masked = pa.array([None, "MASKED_C1"], type=pa.string())
+    parent_table = pa.table({"__decoy_fk_join_key": join_keys, "__decoy_masked_key": masked})
+    rel_path = tmp_path / "relation.parquet"
+    rel_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(parent_table, rel_path)
+    return ParentKeyRelation(path=rel_path)
+
+
+def _stream_fk_column(joiner, child, batch_rows: int = _BATCH) -> tuple[list, int]:
+    joiner.stage_keys(child.to_batches(max_chunksize=batch_rows))
+    values: list = []
+    for out_batch in joiner.iter_output(batch_rows):
+        values.extend(out_batch.column("customer_id").to_pylist())
+    return values, joiner.orphan_total
+
+
+def test_masked_null_parent_key_is_not_treated_as_orphan(tmp_path) -> None:
+    """A parent key that legitimately masks to null must resolve a MATCHED child
+    row to that masked null value, not fall through to the orphan branch (the
+    LEFT JOIN match indicator uses the join key's nullness, not the masked
+    value's). Shared `_append_output_batch` sentinel, carried to the new joiner.
+    """
+    edge = _edge(OrphanPolicy.PRESERVE)
+    relation = _hand_built_relation(tmp_path / "rel")
+    child = pa.table({"customer_id": ["c0", "orphan1", "c1"], "amount": [1, 2, 3]})
+    with StreamFkJoiner(
+        edge=edge,
+        parent_relation=relation,
+        child_key_types=(pa.string(),),
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        values, orphans = _stream_fk_column(joiner, child)
+    assert values == [None, "orphan1", "MASKED_C1"]
+    assert orphans == 1
+
+
+def test_masked_null_parent_key_fail_policy_does_not_false_positive(tmp_path) -> None:
+    """Same repro under FAIL: every child key matches (one masked value is null),
+    so the anti-join precount must not count the matched-but-null-masked row.
+    """
+    edge = _edge(OrphanPolicy.FAIL)
+    relation = _hand_built_relation(tmp_path / "rel")
+    child = pa.table({"customer_id": ["c0", "c1", "c0"], "amount": [1, 2, 3]})
+    with StreamFkJoiner(
+        edge=edge,
+        parent_relation=relation,
+        child_key_types=(pa.string(),),
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
+        assert joiner.total_orphans() == 0
+        values: list = []
+        for out_batch in joiner.iter_output(_BATCH):
+            values.extend(out_batch.column("customer_id").to_pylist())
+    assert values == [None, "MASKED_C1", None]
+
+
+def test_string_masked_with_binary_child_key_rejected_at_construction(tmp_path) -> None:
+    # A promotable mix outside {int64, float64}: string+binary would merge to
+    # binary, but only when the data mixes; an all-string run would drift, so
+    # the mix is rejected fail-closed at construction.
+    plan = _two_table_plan(_col("hash", namespace="cust"), "customers", "orders", "customer_id")
+    edge = _edge(OrphanPolicy.PRESERVE)
+    parent = pa.table({"customer_id": ["c1"]})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    child = pa.table({"customer_id": pa.array([b"c1", b"c2"], type=pa.binary())})
+    with pytest.raises(ExecutionError) as exc:
+        _stream_joiner(plan, edge, relation, tmp_path / "s", child)
+    assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"

@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
-    from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
     from decoy_engine.execution.out_of_core._source import LazySource
+    from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships._graph import RelationshipEdge
 
@@ -43,7 +43,7 @@ def emit_to_sink(
     rewritten: Iterator[pa.RecordBatch],
     *,
     fixed_schema: pa.Schema,
-    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
+    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
     outgoing_edges: tuple[RelationshipEdge, ...],
     parent_relations: dict[RelationshipEdge, ParentKeyRelation],
     relation_dir: Path,
@@ -129,7 +129,7 @@ def emit_to_sink(
 
 def _relation_masked_types(
     edge: RelationshipEdge,
-    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
+    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
     stager: MaskedKeyStager,
     fixed_schema: pa.Schema,
 ) -> tuple[pa.DataType, ...]:
@@ -158,7 +158,7 @@ def empty_output_table(
     plan: Plan,
     table_name: str,
     source_schema: pa.Schema,
-    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
+    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
 ) -> pa.Table:
     """Zero-row output with whole-table column types.
 
@@ -196,7 +196,7 @@ def reconcile_batch(batch: pa.RecordBatch, fixed_schema: pa.Schema) -> pa.Record
 
 def assemble_resident(
     batches: list[pa.RecordBatch],
-    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
+    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
 ) -> pa.Table:
     """Reassemble streamed batches into a table with whole-column types.
 

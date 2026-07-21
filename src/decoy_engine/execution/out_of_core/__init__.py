@@ -1,6 +1,5 @@
 """Out-of-core relationship execution support."""
 
-from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._budget import (
     OutOfCoreBudget,
     check_temp_disk_budget,
@@ -36,7 +35,6 @@ __all__ = [
     "SPILL_OVERHEAD",
     "SUPPORTED_STRATEGIES",
     "UNKNOWN_WIDTH_CEILING_BYTES",
-    "ChildFkBatchJoiner",
     "LazySource",
     "OocDiskPrediction",
     "OutOfCoreBudget",
