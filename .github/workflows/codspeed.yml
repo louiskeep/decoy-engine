@@ -8,14 +8,15 @@
 # for tracking the shape of a regression over time, but it is not a merge
 # gate.
 #
-# No-op until Cam sets the CODSPEED_TOKEN repo secret (Settings -> Secrets
-# and variables -> Actions -> New repository secret, name from
-# https://codspeed.io after linking the repo). The job-level `if` below
+# No-op until Cam sets the CODSPEED_ENABLED repo variable to 'true' (Settings
+# -> Secrets and variables -> Actions -> Variables). The job-level `if` below
 # skips the whole job -- no checkout, no install, no runner minutes spent --
-# when the secret is absent, so this file changes nothing for contributors
-# who don't have it. Forked-repo PRs never see the secret either (GitHub
-# does not expose secrets to fork PR runs), so the guard also holds there
-# without any extra condition.
+# when the variable is unset, so this file changes nothing for contributors.
+# Activation also needs the CODSPEED_TOKEN secret (the action reads it below),
+# whose value comes from https://codspeed.io after linking the repo. Gating on
+# a variable rather than the secret is deliberate: the `secrets` context is not
+# available in a job-level `if`, so a secret-based gate here would never fire
+# even once the token is set (same reliable variable-gate pattern as docs.yml).
 
 name: codspeed
 
@@ -40,11 +41,11 @@ permissions:
 
 jobs:
   benchmarks:
-    # No CODSPEED_TOKEN secret -> skip entirely. This is the sole gate; there
-    # is no separate repo-variable toggle because the CodSpeed action itself
-    # is a no-op without a token (it would just fail auth), so gating on the
-    # secret's presence is both necessary and sufficient.
-    if: ${{ secrets.CODSPEED_TOKEN != '' }}
+    # Gated on the CODSPEED_ENABLED repo variable, which is reliably available
+    # in a job-level `if` (unlike the `secrets` context). Unset -> whole job
+    # skipped, zero runner minutes. Cam sets both the variable (to enable) and
+    # the CODSPEED_TOKEN secret (read by the action step below).
+    if: ${{ vars.CODSPEED_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

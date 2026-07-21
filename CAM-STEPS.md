@@ -10,24 +10,29 @@ the others.
 What it is: instrumented microbenchmarks in `tests/codspeed/`, wired to
 `.github/workflows/codspeed.yml`.
 
-Steps:
+Steps (needs BOTH a variable and a secret):
 1. Go to codspeed.io and sign in with GitHub, then link the
    `louiskeep/decoy-engine` repo.
 2. CodSpeed gives you a token. In GitHub: Settings > Secrets and variables >
-   Actions > Secrets > New repository secret.
-3. Name it exactly `CODSPEED_TOKEN`, paste the value, save.
+   Actions > Secrets > New repository secret. Name it exactly `CODSPEED_TOKEN`,
+   paste the value, save.
+3. In the same page under the Variables tab: New repository variable. Name it
+   exactly `CODSPEED_ENABLED`, set the value to `true`, save. This variable is
+   what turns the job on; the workflow gates on it (not on the secret, because
+   the secrets context is not reliably available at the job-gate level).
 
 Verify it is live:
 - Open a PR that touches `src/decoy_engine/**` or `tests/codspeed/**`, or run
   the `codspeed` workflow manually from the Actions tab (Run workflow
   button). The `benchmarks` job should now run instead of being skipped, and
   results should show up on your CodSpeed dashboard within a few minutes.
-- Before the secret is set, the same workflow run shows the `benchmarks` job
-  as skipped, not failed. That is the expected no-op state.
+- Before `CODSPEED_ENABLED` is set to `true`, the same workflow run shows the
+  `benchmarks` job as skipped, not failed. That is the expected no-op state.
 
 Disable / roll back:
-- Remove the `CODSPEED_TOKEN` secret. The job goes back to skipped on the
-  next run. No code change needed.
+- Set `CODSPEED_ENABLED` to `false` (or delete the variable). The job goes back
+  to skipped on the next run. No code change needed. You can leave the
+  `CODSPEED_TOKEN` secret in place or remove it.
 
 ## 2. Mergify merge queue + JUnit results
 
