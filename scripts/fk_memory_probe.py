@@ -110,13 +110,15 @@ _TABLE_NAMES = ("parent", "child", "grandchild")
 _MIB = 1024 * 1024
 
 # The probe's own worst-case count of simultaneously-live DuckDB instances,
-# computed exactly from the fixture's parent->child->grandchild chain (the
-# middle table's incoming joiner runs concurrently with its outgoing relation
-# build = 2). Passed to `resolve_ooc_memory_limit` so the per-instance
-# memory_limit matches the real route, NOT the module's conservative default
-# of 4. The policy does not change the edge structure, so any policy's graph
-# gives the same count.
-_PROBE_MAX_CONCURRENT_INSTANCES = _max_concurrent_ooc_instances(make_graph(OrphanPolicy.PRESERVE))
+# computed exactly from the fixture's parent->child->grandchild chain. This
+# probe runs the SINK route, where `emit_to_sink` closes each joiner before the
+# relation build opens, so joiners and build never co-live: the sink peak is
+# max(incoming, 1) = 1 per table, not 2. Passed to `resolve_ooc_memory_limit`
+# so the per-instance memory_limit matches the real sink route, NOT the module's
+# conservative default. The policy does not change the edge structure.
+_PROBE_MAX_CONCURRENT_INSTANCES = _max_concurrent_ooc_instances(
+    make_graph(OrphanPolicy.PRESERVE), sink=True
+)
 
 _RLIMITS = {"as": resource.RLIMIT_AS, "data": resource.RLIMIT_DATA}
 

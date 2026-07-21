@@ -299,7 +299,8 @@ def run_out_of_core_route(
         # THIS job's own relationship graph, not left at the module's
         # conservative default -- the graph is already in hand here.
         budget = resolve_ooc_memory_limit(
-            budget_bytes, max_concurrent_instances=_max_concurrent_ooc_instances(graph)
+            budget_bytes,
+            max_concurrent_instances=_max_concurrent_ooc_instances(graph, sink=sink is not None),
         )
         memory_limit, batch_rows = budget.memory_limit, budget.batch_rows
         # SPRINT-1 Part A: the UNDIVIDED total, threaded alongside the legacy
@@ -417,29 +418,34 @@ def _incoming_edge_counts(graph: RelationshipGraph) -> dict[str, int]:
     return counts
 
 
-def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
-    """Conservative upper bound on concurrent full-budget DuckDB instances,
-    sizing `resolve_ooc_memory_limit`'s `max_concurrent_instances` precisely
-    instead of falling back to that function's conservative default.
+def _max_concurrent_ooc_instances(graph: RelationshipGraph, *, sink: bool) -> int:
+    """Exact upper bound on concurrent full-budget DuckDB instances, sizing
+    `resolve_ooc_memory_limit`'s `max_concurrent_instances` from a job's own
+    graph instead of that function's conservative default.
 
     One table streams at a time, holding one `ChildFkBatchJoiner` per INCOMING
-    edge. On the sink path, `emit_to_sink` closes joiners after the stream
-    drains (via `on_stream_consumed` in `_emit.py`) before the relation build,
-    peaking at max(incoming_edges, 1). On the resident path (no sink), joiners
-    stay open during the relation build, peaking at incoming_edges + 1. This
-    function returns the resident peak: exact for the resident path, conservative
-    (over-provisions) for the sink path. The run's worst case is the max over
-    every table the graph touches -- a schema-level property, safe to compute
-    once up front (never re-derived per batch or scaled by row count).
+    edge. Sink path: `emit_to_sink` closes every joiner (`on_stream_consumed`
+    in `_emit.py`) BEFORE the relation build opens, so joiners and build never
+    co-live -- the peak is whichever single phase is wider, max(incoming, 1).
+    Resident path (no sink): joiners stay open THROUGH the build, so they sum
+    to incoming + 1. `sink` selects the correct model; returning the resident
+    peak for a sink job over-counts liveness that never exists, which
+    `resolve_ooc_memory_limit`'s fail-closed fan-in guard then reads as a false
+    refusal. The run's worst case is the max over every table the graph touches
+    -- a schema-level property, safe to compute once up front.
     """
     incoming_counts = _incoming_edge_counts(graph)
     has_outgoing: set[str] = {edge.parent_table for edge in graph.edges}
     tables = set(incoming_counts) | has_outgoing
     if not tables:
         return 1
-    return max(
-        incoming_counts.get(table, 0) + (1 if table in has_outgoing else 0) for table in tables
-    )
+
+    def _peak(table: str) -> int:
+        incoming = incoming_counts.get(table, 0)
+        build = 1 if table in has_outgoing else 0
+        return max(incoming, build) if sink else incoming + build
+
+    return max(_peak(table) for table in tables)
 
 
 def _parent_table_row_counts(

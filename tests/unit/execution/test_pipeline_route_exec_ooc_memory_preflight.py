@@ -36,6 +36,12 @@ def _graph(*edges: RelationshipEdge) -> RelationshipGraph:
     return RelationshipGraph(edges=tuple(edges), ordering=())
 
 
+class _ReachedDispatchError(Exception):
+    """Raised by a spied `run_fk_out_of_core` to prove the route ADMITTED a job
+    all the way to dispatch (vs. refusing it earlier), without needing a valid
+    `ExecutionResult` back."""
+
+
 class TestParentTableRowCounts:
     def test_no_edges_yields_empty(self) -> None:
         assert _parent_table_row_counts({}, _graph()) == {}
@@ -142,6 +148,49 @@ class TestMemoryPreflightWiring:
             budget_bytes=512 * 1024 * 1024,
         )
         assert result.outputs["parent"].num_rows == 2
+
+    def test_sink_high_fanin_admits_to_runner_not_falsely_refused(self, monkeypatch) -> None:
+        # 67 tiny parents -> hub -> leaf under a 64 MiB budget, WITH a sink.
+        # On the sink path the peak co-live is 67 joiners (each relation build
+        # runs solo after `emit_to_sink` closes the joiners), and
+        # 67 * 1_000_000 <= 67_108_864, so the job fits at a "1MB" per-instance
+        # cap. Before the sink-aware `_max_concurrent_ooc_instances` fix, the
+        # route counted the RESIDENT peak (68) even for this sink job, and
+        # `resolve_ooc_memory_limit`'s fan-in guard raised
+        # `out_of_core_fanin_exceeds_budget` -- a false refusal.
+        from decoy_engine.execution import _pipeline_route_exec as route_exec_mod
+        from decoy_engine.execution import out_of_core as ooc_pkg
+
+        seen: dict = {}
+
+        def spy(*args, **kwargs):
+            seen.update(kwargs)
+            raise _ReachedDispatchError
+
+        monkeypatch.setattr(ooc_pkg, "run_fk_out_of_core", spy)
+
+        edges = [_edge(f"p{i}", "hub") for i in range(67)]
+        edges.append(_edge("hub", "leaf"))
+        graph = _graph(*edges)
+        names = [f"p{i}" for i in range(67)] + ["hub", "leaf"]
+        sources = {n: pa.table({"id": pa.array([], type=pa.string())}) for n in names}
+
+        with pytest.raises(_ReachedDispatchError):
+            route_exec_mod.run_out_of_core_route(
+                plan=object(),
+                sources=sources,
+                registry=object(),
+                graph=graph,
+                sink=object(),  # non-None: selects the sink concurrency model
+                route_reason="test",
+                table_kinds={},
+                source_loader=None,
+                sources_resident=True,
+                budget_bytes=64 * 1024 * 1024,
+            )
+        # The sink 67-joiner peak resolves to a valid "1MB" per-instance cap.
+        assert seen["memory_limit"] == "1MB"
+        assert seen["budget_bytes"] == 64 * 1024 * 1024
 
 
 def _tiny_plan():
