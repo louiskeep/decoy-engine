@@ -53,6 +53,7 @@ def emit_to_sink(
     sink: TransactionalSink,
     source_schema: pa.Schema,
     on_stream_consumed: Callable[[], None] | None = None,
+    masked_observed_types: Mapping[str, set[pa.DataType]] | None = None,
 ) -> None:
     """Stream the rewritten batches to the sink, then build outgoing relations.
 
@@ -74,6 +75,11 @@ def emit_to_sink(
     the linear chain at one full-budget instance at a time. `_relation_masked_types`
     reads only the joiners' Python-side observed/output types, which survive the
     connection close, so the relation build below is unaffected.
+
+    `masked_observed_types` (default None): the driver's own pre-reconciliation
+    per-column type observations (see `MaskedKeyStager`'s docstring for why the
+    single-source-read payload store needs this threaded through rather than
+    derived from the batches this function sees).
     """
     staged_columns = tuple(sorted({col for edge in outgoing_edges for col in edge.parent_columns}))
     if not staged_columns:
@@ -85,7 +91,12 @@ def emit_to_sink(
         if on_stream_consumed is not None:
             on_stream_consumed()
         return
-    stager = MaskedKeyStager(staging_path, columns=staged_columns, fixed_schema=fixed_schema)
+    stager = MaskedKeyStager(
+        staging_path,
+        columns=staged_columns,
+        fixed_schema=fixed_schema,
+        masked_observed_types=masked_observed_types,
+    )
     try:
 
         def emitted() -> Iterator[pa.RecordBatch]:

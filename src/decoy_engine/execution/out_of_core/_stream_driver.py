@@ -5,29 +5,35 @@ single-streaming-join restructure has room. `_runner.py` owns run-wide
 orchestration (topological table order, relation registry, run teardown);
 this module owns ONE table's rewrite.
 
-The fix#1 shape: rather than fusing the FK join into the per-batch mask loop
-(one `LEFT JOIN` per child batch against a materialized parent, the removed
-`ChildFkBatchJoiner`), each table streams in THREE phases so the per-edge join
-is a single streamed operation with no O(distinct-parent-key) resident
-structure:
+Single-source-read shape (supersedes the earlier two-read design after a
+cross-model gate found it could silently misalign FK-to-row on a same-count
+source permutation, and separately shift the value-inference batch boundary):
+the raw child is read exactly ONCE. Masking and FK-key staging fuse into that
+one pass; FK resolution runs later, from an artifact of that SAME read, never
+from the source again.
 
-1. Key pre-pass. One pass over the raw child stages every incoming edge's
-   `(row_nr, join_key, src)` keys into that edge's spillable `child_keys` TEMP
-   TABLE (`StreamFkJoiner.stage_batch`), numbering rows globally. FAIL policies
-   run their anti-join precount here and raise before any output.
-2. One streamed join per edge. Each edge opens its ordered FK-output reader
-   (`StreamFkJoiner.iter_output`), wrapped in an `FkOutputCursor`.
-3. Mask pass, zipped to the sink. A SECOND pass over the raw child masks the
-   non-FK columns per batch; each edge's cursor supplies exactly that batch's
-   FK values (slicing across the join reader's own batch boundaries), the FK
-   columns are overwritten, and the batch is emitted. The cursor's row_nr
-   alignment guard fails closed if the two source re-reads ever disagree.
+1. Phase 1 -- the ONLY raw source pass. Per raw batch: stage every incoming
+   edge's `(row_nr, join_key, src)` keys into that edge's spillable
+   `child_keys` TEMP TABLE (`StreamFkJoiner.stage_batch`), mask the non-FK
+   columns (`mask_batch`), and append the masked batch to the **payload
+   store** (`ResidentPayloadStore` in memory when there is no sink,
+   `SpillPayloadStore` -- a lossless Arrow-IPC record-batch stream -- when
+   there is). FAIL policies run their anti-join precount here and raise
+   before any output.
+2. Phase 2 -- one streamed join per edge. Each edge opens its ordered raw
+   join-row reader (`StreamFkJoiner.iter_join_rows`), wrapped in a
+   `JoinRowCursor`.
+3. Phase 3 -- resolve from the payload store, no source read. For each masked
+   payload batch, `cursor.take(m, row_nr_start)` pulls exactly that batch's
+   raw join rows (asserting their row_nr against the payload's OWN row_nr --
+   two artifacts of the same read, not a hope that two reads agree), then
+   `joiner.resolve_batch` produces that batch's FK output at the SAME
+   source-chunk granularity phase 1 masked at (the boundary `main` used),
+   which the FK columns overwrite before the batch is emitted.
 
-The cost is two READS of the source bytes (not double masking): masking runs
-once, in phase 3. Every heavy relational operation (the join, its spill, the
-sort) is delegated to DuckDB via `StreamFkJoiner`; nothing here re-implements
-memory management. Byte-parity to the pandas oracle is unchanged and pinned by
-`tests/parity/`.
+Every heavy relational operation (the join, its spill, the sort) is delegated
+to DuckDB via `StreamFkJoiner`; nothing here re-implements memory management.
+Byte-parity to the pandas oracle is unchanged and pinned by `tests/parity/`.
 """
 
 from __future__ import annotations
@@ -49,13 +55,19 @@ from decoy_engine.execution.out_of_core._emit import (
     assemble_resident,
     emit_to_sink,
     empty_output_table,
+    reconcile_batch,
 )
 from decoy_engine.execution.out_of_core._join import orphan_fk_error, orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import mask_batch, masked_output_type, table_seed
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
+from decoy_engine.execution.out_of_core._payload_store import (
+    PayloadStore,
+    ResidentPayloadStore,
+    SpillPayloadStore,
+)
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._source import LazySource
-from decoy_engine.execution.out_of_core._stream_join import FkOutputCursor, StreamFkJoiner
+from decoy_engine.execution.out_of_core._stream_join import JoinRowCursor, StreamFkJoiner
 from decoy_engine.relationships._graph import OrphanPolicy
 from decoy_engine.transforms.code_set import (
     CodeSetConfig,
@@ -124,6 +136,24 @@ def stream_table(
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    # A masked (non-FK) column's per-batch inferred type can vary (e.g. redact
+    # infers null on an all-null batch, the replacement scalar's type on any
+    # other), which the resident path's own narrowing handles later -- but the
+    # Arrow IPC spill format fixes ONE schema for its whole stream, so the
+    # SINK path's payload batches must already agree before they are stored.
+    # FK child columns are untouched here (still raw, `mask_batch` skips them;
+    # phase 3 overwrites them with the resolved FK arrays after read-back).
+    payload_schema = _payload_schema(plan, table_name, source_schema, skip_columns)
+    # Reconciling to `payload_schema` erases the true per-batch masked type an
+    # outgoing relation's narrowing needs (an all-null column stays null-typed
+    # only if nothing ever re-derives the fixed analytic type from it); track
+    # the TRUE natural type here, before reconciliation, so it can be handed
+    # to `emit_to_sink` instead of losing it to the payload store's fixed
+    # spill schema. See `MaskedKeyStager`'s docstring for the full reasoning.
+    outgoing_parent_columns = frozenset(col for edge in outgoing_edges for col in edge.parent_columns)
+    payload_masked_observed: dict[str, set[pa.DataType]] = {
+        col: set() for col in outgoing_parent_columns
+    }
     code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
         plan, table_name, source_schema.names, skip_columns=skip_columns
     )
@@ -143,8 +173,15 @@ def stream_table(
     )
     joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
     joiners: list[StreamFkJoiner] = []
+    store: PayloadStore = (
+        ResidentPayloadStore() if sink is None else SpillPayloadStore(temp_dir / "payload.arrow")
+    )
     try:
-        # --- Phase 1: key pre-pass. One raw source pass stages every edge. ---
+        # --- Phase 1: the ONLY raw source pass. Stages every edge's keys AND
+        # masks the non-FK columns into the payload store, keyed by the SAME
+        # __decoy_row_nr the FK join numbers by. Runs unconditionally (even
+        # with no incoming edges) because masking, not just key staging, needs
+        # this one pass now. ---
         for idx, edge in enumerate(incoming_edges):
             joiner = _open_joiner(
                 plan,
@@ -159,11 +196,43 @@ def stream_table(
             # there cannot leak the just-opened DuckDB connection.
             joiners.append(joiner)
             joiner.begin_staging()
-        if joiners:
-            # A table with no incoming edges has nothing to stage; skip the read.
-            for raw_batch in _iter_source_batches(raw, batch_rows):
-                for joiner in joiners:
-                    joiner.stage_batch(raw_batch)
+        for raw_batch in _iter_source_batches(raw, batch_rows):
+            for joiner in joiners:
+                joiner.stage_batch(raw_batch)
+            for column, seen in code_set_null_seen.items():
+                if seen:
+                    continue
+                idx = raw_batch.schema.get_field_index(column)
+                if idx < 0:
+                    continue
+                col = raw_batch.column(idx)
+                # "Missing" == null OR float NaN, matching the mask kernel's
+                # `_is_missing`: an all-NaN float column masks nothing, so a
+                # plain null_count would over-stamp evidence it never emits.
+                n_missing = col.null_count
+                if pa.types.is_floating(col.type):
+                    # pc.* funcs are dynamically generated; stubs miss them.
+                    n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
+                if n_missing < raw_batch.num_rows:
+                    code_set_null_seen[column] = True
+            masked_batch = mask_batch(
+                plan,
+                table_name,
+                raw_batch,
+                skip_columns=skip_columns,
+                mask_key=mask_key,
+                code_set_corpus_records=code_set_corpus_records,
+            )
+            for col in payload_masked_observed:
+                idx = masked_batch.schema.get_field_index(col)
+                if idx >= 0:
+                    payload_masked_observed[col].add(masked_batch.column(idx).type)
+            if sink is not None:
+                # Resident path keeps the naturally-inferred per-batch types
+                # (assemble_resident narrows from them); the spill path needs
+                # one stable schema across every write to its Arrow IPC stream.
+                masked_batch = reconcile_batch(masked_batch, payload_schema)
+            store.append(masked_batch)
         # FAIL reports the whole child's orphan count before any output exists.
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
             if edge.orphan_policy is OrphanPolicy.FAIL:
@@ -187,51 +256,31 @@ def stream_table(
             )
         )
 
-        # --- Phase 2: open each edge's ordered FK-output cursor. ---
-        cursors: list[FkOutputCursor] = [
-            FkOutputCursor(joiner.iter_output(batch_rows), edge.child_columns, joiner.output_types)
+        # --- Phase 2: open each edge's ordered raw join-row cursor. ---
+        cursors: list[JoinRowCursor] = [
+            JoinRowCursor(joiner.iter_join_rows(batch_rows), edge.child_columns)
             for edge, joiner in zip(incoming_edges, joiners, strict=True)
         ]
 
-        # --- Phase 3: mask pass, zipped row_nr-aligned to the sink. ---
+        # --- Phase 3: resolve FK columns from the payload store; no source read. ---
         def rewritten() -> Iterator[pa.RecordBatch]:
-            for raw_batch in _iter_source_batches(raw, batch_rows):
-                for column, seen in code_set_null_seen.items():
-                    if seen:
-                        continue
-                    idx = raw_batch.schema.get_field_index(column)
-                    if idx < 0:
-                        continue
-                    col = raw_batch.column(idx)
-                    # "Missing" == null OR float NaN, matching the mask kernel's
-                    # `_is_missing`: an all-NaN float column masks nothing, so a
-                    # plain null_count would over-stamp evidence it never emits.
-                    n_missing = col.null_count
-                    if pa.types.is_floating(col.type):
-                        # pc.* funcs are dynamically generated; stubs miss them.
-                        n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
-                    if n_missing < raw_batch.num_rows:
-                        code_set_null_seen[column] = True
-                out = mask_batch(
-                    plan,
-                    table_name,
-                    raw_batch,
-                    skip_columns=skip_columns,
-                    mask_key=mask_key,
-                    code_set_corpus_records=code_set_corpus_records,
-                )
+            for row_nr_start, masked_batch in store.iter_batches():
+                out = masked_batch
                 for edge, joiner, cursor in zip(incoming_edges, joiners, cursors, strict=True):
                     # Each edge's FK values were staged from the RAW child in
                     # phase 1, so overlapping edges never key off an earlier
                     # edge's rewrite; a later edge still overwrites the shared
-                    # column last, matching the whole-child contract.
-                    fk_arrays = cursor.take(out.num_rows)
+                    # column last, matching the whole-child contract. `take`
+                    # asserts the join reader's row_nr against this SAME
+                    # payload batch's row_nr -- both artifacts of one read.
+                    join_rows = cursor.take(out.num_rows, row_nr_start)
+                    fk_arrays = joiner.resolve_batch(join_rows)
                     out = _replace_fk_columns(
                         out, edge.child_columns, fk_arrays, joiner.output_types
                     )
                 yield out
-            # Row_nr alignment backbone: the mask stream must have consumed
-            # every FK output row (neither longer nor shorter than the join).
+            # Row_nr alignment backbone: the payload store must have consumed
+            # every join row (neither longer nor shorter than the join).
             for cursor in cursors:
                 cursor.assert_exhausted()
 
@@ -257,6 +306,7 @@ def stream_table(
                 sink=sink,
                 source_schema=source_schema,
                 on_stream_consumed=_release_joiners,
+                masked_observed_types=payload_masked_observed,
             )
         else:
             batches = list(rewritten())
@@ -288,6 +338,7 @@ def stream_table(
     finally:
         for joiner in joiners:
             joiner.close()
+        store.close()
 
 
 def _open_joiner(
@@ -350,6 +401,33 @@ def _fk_component_map(
         for idx, child_col in enumerate(edge.child_columns):
             components[child_col] = (joiner, idx)
     return components
+
+
+def _payload_schema(
+    plan: Plan,
+    table_name: str,
+    source_schema: pa.Schema,
+    skip_columns: frozenset[str],
+) -> pa.Schema:
+    """The phase-1 masked-payload schema: FK columns untouched, others fixed.
+
+    Mirrors `mask_batch`'s own skip logic exactly (never `_fixed_output_schema`'s
+    FK substitution, which needs joiner output types this schema is built
+    without any batch data): an FK child column is skipped by masking and
+    stays at its raw source type until phase 3 overwrites it, so reconciling
+    it here would risk a cast against a value that is about to be discarded.
+    """
+    seed = table_seed(plan, table_name)
+    seeds = dict(seed.per_column) if seed is not None else {}
+    fields: list[pa.Field] = []
+    for field in source_schema:
+        if field.name in skip_columns:
+            fields.append(field)
+        elif field.name in seeds:
+            fields.append(pa.field(field.name, masked_output_type(seeds[field.name], field.type)))
+        else:
+            fields.append(field)
+    return pa.schema(fields, metadata=source_schema.metadata)
 
 
 def _fixed_output_schema(
