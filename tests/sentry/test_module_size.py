@@ -101,12 +101,14 @@ ALLOWLIST: dict[str, int] = {
     # branches) + one call site + one return-tuple entry in
     # `run_config_only_checks`. Same per-strategy check-module pattern as
     # every prior addition here; same decomposition target stands.
-    # DPS-3 (2026-07-20): +6 LOC (671 -> 677) for the dp generate-contract
-    # gate (Row 31): the import + 3 call sites (compile_plan x2 branches +
-    # run_config_only_checks) + their checks_passed/returned-tuple entries,
-    # all single-line. Same per-strategy check-module pattern; same
-    # decomposition target stands.
-    "src/decoy_engine/plan/_compile.py": 677,
+    # DPS (2026-07-20): +8 LOC (671 -> 679) for the two dp compile checks --
+    # dp_generate_contract (Row 31, DPS-3) + dp_snapshot_provenance (Row 32,
+    # gate remediation Fix 3): the import + their call sites (compile_plan x2
+    # branches + run_config_only_checks). dp_generate_contract also adds its
+    # checks_passed/returned-tuple entries; dp_snapshot_provenance runs but is
+    # not recorded in checks_passed. Same per-strategy check-module pattern;
+    # same decomposition target stands.
+    "src/decoy_engine/plan/_compile.py": 679,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
