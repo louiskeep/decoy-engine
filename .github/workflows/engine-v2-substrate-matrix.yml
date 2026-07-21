@@ -42,4 +42,11 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Execution tests under DECOY_SUBSTRATE=${{ matrix.substrate }}
         # Benchmark suite excluded per resolved question #19 (dedicated SKU).
-        run: pytest tests -m "not benchmark" --tb=short
+        # `codspeed` is excluded for the same reason the regression gate excludes
+        # it (ci.yml): tests/codspeed/ uses the pytest-codspeed `benchmark`
+        # fixture, which only exists with the `perf` extra installed. This job
+        # installs `.[dev]`, not `.[perf]`, so collecting that suite errors with
+        # `fixture 'benchmark' not found`. The `-m "not benchmark"` command line
+        # overrides the addopts default `-m`, so codspeed must be named here
+        # explicitly. The dedicated codspeed workflow is its unambiguous owner.
+        run: pytest tests -m "not benchmark and not codspeed" --tb=short

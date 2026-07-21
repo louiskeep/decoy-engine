@@ -260,28 +260,12 @@ ALLOWLIST: dict[str, int] = {
     # beside; decompose that publish cluster into a `_quarantine_transaction.py`
     # sibling when the next quarantine-sidecar change lands.
     "src/decoy_engine/quarantine.py": 619,
-    # HC-1 slice 1 (2026-07-17): crossed the 600 cap (639) wiring the code_set
-    # corpus provenance stamp + pinned-record lookup into the out-of-core route
-    # -- the per-chunk evidence stamp and the job-wide pinned corpus record are
-    # threaded through the streaming runner so masking and evidence cannot
-    # diverge on a mid-job corpus swap (parity with the pandas/sequential
-    # routes). Decompose the chunk-drain / evidence-merge cluster into a sibling
-    # when the next out-of-core route change lands.
-    # phase-aware build budget (2026-07-20): +24 LOC (639 -> 663) threading a
-    # `budget_bytes` param through `run_fk_out_of_core` / `_stream_table` and
-    # computing per-phase DuckDB memory_limit caps (joiner / sink-path build /
-    # resident-path build) instead of one flat cap for every connection --
-    # fixes a starved sink-path relation build that measurably OOMed under a
-    # divided-by-global-peak cap even with most of the run's budget idle. The
-    # phase-cap derivation itself lives in the sibling `_memory_estimate.py`
-    # (new module, not appended here) to avoid growing this file further; only
-    # the three call-site substitutions and the param plumbing live here. Same
-    # chunk-drain / evidence-merge decomposition target stands.
-    # round-3 Fix C SUB-FIX 2 (2026-07-20): +2 LOC (663 -> 665) passing the
-    # new `sink=sink is not None` param to `resolve_phase_memory_limits` so
-    # it computes only the opened path's pair instead of raising for the
-    # unused one. Same chunk-drain / evidence-merge decomposition target.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 665,
+    # NOTE: out_of_core/_runner.py was allowlisted at 665 through the
+    # phase-aware-budget work; OOC-B / fix#1 (single-streaming-join) then split
+    # the per-table three-phase driver out into out_of_core/_stream_driver.py
+    # (and the FK joiner into _stream_join.py), bringing _runner.py down to 276
+    # LOC -- under the 600 cap, so it is no longer allowlisted. The new modules
+    # are each under 600. Do not re-add _runner.py without cause.
     # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
     # schema-invariant checker (_check_corpus_schema, shared by the load path
     # and the new standalone verify_corpus primitive), the

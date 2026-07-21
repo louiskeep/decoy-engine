@@ -527,17 +527,17 @@ class TestRunnerBatchRows:
             assert capped.outputs[name].equals(default.outputs[name]), name
 
     def test_batch_rows_override_bounds_streamed_batches(self, tmp_path, monkeypatch) -> None:
-        from decoy_engine.execution.out_of_core import _runner as runner_mod
+        from decoy_engine.execution.out_of_core import _stream_driver as driver_mod
 
         paths = write_large_fk_chain(tmp_path / "src", 400, width=1, batch_rows=200)
         sizes: list[int] = []
-        real_mask_batch = runner_mod.mask_batch
+        real_mask_batch = driver_mod.mask_batch
 
         def spy(*args: object, **kwargs: object) -> pa.RecordBatch:
             sizes.append(args[2].num_rows)  # type: ignore[union-attr]
             return real_mask_batch(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(runner_mod, "mask_batch", spy)
+        monkeypatch.setattr(driver_mod, "mask_batch", spy)
         self._run(paths, tmp_path, "bounded", batch_rows=64)
         assert sizes and max(sizes) <= 64
 

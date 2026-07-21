@@ -21,8 +21,8 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import ParquetTransactionalSink
-from decoy_engine.execution.out_of_core import _batch_join as batch_join_mod
 from decoy_engine.execution.out_of_core import _relation as relation_mod
+from decoy_engine.execution.out_of_core import _stream_join as stream_join_mod
 from decoy_engine.execution.out_of_core import run_fk_out_of_core
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -120,18 +120,18 @@ def _capture_connect_duckdb(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[s
     DuckDB connection opens with, while still opening the REAL connection so
     the run completes normally."""
     seen: dict[str, list[str | None]] = {"joiner": [], "relation": []}
-    real_batch_join_connect = batch_join_mod.connect_duckdb
+    real_stream_join_connect = stream_join_mod.connect_duckdb
     real_relation_connect = relation_mod.connect_duckdb
 
-    def fake_batch_join_connect(*, temp_dir: Any, memory_limit: str | None = None) -> Any:
+    def fake_stream_join_connect(*, temp_dir: Any, memory_limit: str | None = None) -> Any:
         seen["joiner"].append(memory_limit)
-        return real_batch_join_connect(temp_dir=temp_dir, memory_limit=memory_limit)
+        return real_stream_join_connect(temp_dir=temp_dir, memory_limit=memory_limit)
 
     def fake_relation_connect(*, temp_dir: Any, memory_limit: str | None = None) -> Any:
         seen["relation"].append(memory_limit)
         return real_relation_connect(temp_dir=temp_dir, memory_limit=memory_limit)
 
-    monkeypatch.setattr(batch_join_mod, "connect_duckdb", fake_batch_join_connect)
+    monkeypatch.setattr(stream_join_mod, "connect_duckdb", fake_stream_join_connect)
     monkeypatch.setattr(relation_mod, "connect_duckdb", fake_relation_connect)
     return seen
 
