@@ -377,4 +377,114 @@ class StreamFkJoiner:
         return pa.record_batch(columns, schema=result.schema)
 
 
-__all__ = ["StreamFkJoiner"]
+class FkOutputCursor:
+    """Forward-only, row-aligned cursor over one edge's ordered FK output.
+
+    Zips `StreamFkJoiner.iter_output` (ordered by global `__decoy_row_nr`) to
+    the runner's mask stream, whose batch sizes need NOT match the join
+    reader's (parquet row-group boundaries, `batch_rows` chunking). `take(n)`
+    returns exactly `n` rows of each FK output column, slicing across reader
+    batch boundaries, holding at most one reader batch plus a slice offset, so
+    memory stays bounded regardless of alignment.
+
+    Correctness backbone: the join output covers every child row exactly once,
+    contiguously numbered 0..N-1 in `ORDER BY` order, so the k-th emitted row
+    MUST carry row_nr k. This cursor asserts that invariant (contiguous within a
+    reader batch, and each new batch starting exactly where the last left off)
+    rather than trusting it, and fails closed on any mismatch or early
+    exhaustion instead of silently misaligning the zip.
+    """
+
+    def __init__(
+        self,
+        reader: Iterator[pa.RecordBatch],
+        child_columns: tuple[str, ...],
+        output_types: tuple[pa.DataType, ...],
+    ) -> None:
+        self._reader = reader
+        self._child_columns = child_columns
+        self._output_types = output_types
+        self._batch: pa.RecordBatch | None = None
+        self._offset = 0
+        self._emitted = 0
+
+    def take(self, n: int) -> tuple[pa.Array, ...]:
+        """Return exactly `n` rows of each FK output column, in edge order."""
+        if n == 0:
+            # A zero-row mask batch never touches the reader; the fixed output
+            # types give the empty FK arrays their writable type directly.
+            return tuple(pa.array([], type=dtype) for dtype in self._output_types)
+        collected: list[list[pa.Array]] = [[] for _ in self._child_columns]
+        remaining = n
+        while remaining > 0:
+            batch = self._current()
+            available = batch.num_rows - self._offset
+            take_k = min(available, remaining)
+            for idx, col in enumerate(self._child_columns):
+                collected[idx].append(batch.column(col).slice(self._offset, take_k))
+            self._offset += take_k
+            self._emitted += take_k
+            remaining -= take_k
+        return tuple(
+            pa.concat_arrays(chunks) if len(chunks) != 1 else chunks[0] for chunks in collected
+        )
+
+    def assert_exhausted(self) -> None:
+        """Fail closed unless every FK output row has been consumed.
+
+        The other half of the alignment guard: the mask stream must not be
+        SHORTER than the join output either, or the tail FK rows would be
+        silently dropped.
+        """
+        if self._batch is not None and self._offset < self._batch.num_rows:
+            raise _row_alignment_error(
+                f"{self._batch.num_rows - self._offset} FK output row(s) left unconsumed"
+            )
+        try:
+            next(self._reader)
+        except StopIteration:
+            return
+        raise _row_alignment_error("FK output reader has rows the mask stream never consumed")
+
+    def _current(self) -> pa.RecordBatch:
+        batch = self._batch
+        if batch is None or self._offset >= batch.num_rows:
+            batch = self._advance()
+            self._batch = batch
+            self._offset = 0
+        return batch
+
+    def _advance(self) -> pa.RecordBatch:
+        try:
+            batch = next(self._reader)
+        except StopIteration:
+            raise _row_alignment_error(
+                "FK output reader exhausted before the mask stream did "
+                "(join output shorter than the child re-read)"
+            ) from None
+        row_nr = batch.column("__decoy_row_nr")
+        first = row_nr[0].as_py()
+        last = row_nr[len(row_nr) - 1].as_py()
+        # Each ordered batch must start exactly where the running count left off
+        # and be a contiguous ascending run, so positional slicing equals
+        # row_nr slicing. A gap/reorder means the two source passes disagreed.
+        if first != self._emitted or last != self._emitted + len(row_nr) - 1:
+            raise _row_alignment_error(
+                f"FK output row_nr [{first}..{last}] does not match the expected "
+                f"contiguous range starting at {self._emitted}"
+            )
+        return batch
+
+
+def _row_alignment_error(detail: str) -> ExecutionError:
+    return ExecutionError(
+        code="out_of_core_fk_row_alignment",
+        message=(
+            "out-of-core FK output could not be row-aligned to the mask stream: "
+            f"{detail}. The two source re-reads must yield identical row order and "
+            "count; this is a fail-closed internal guard, never silent truncation."
+        ),
+    )
+
+
+__all__ = ["FkOutputCursor", "StreamFkJoiner"]
