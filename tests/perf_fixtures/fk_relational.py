@@ -78,6 +78,97 @@ def _hash_col(namespace: str) -> ColumnSeed:
     )
 
 
+# BENCH-CODE-1 (roadmap OOC-C sibling; decoy-platform NEXT-RUNS-HANDOFF.md R4):
+# the masking strategies `scripts/fk_memory_probe.py`'s `--strategy` knob can
+# apply to `payload_NN` filler columns, so one run measures per-strategy cost
+# on an otherwise-identical FK-linked frame. FK key columns always use
+# `_hash_col` above regardless of this choice -- RI must hold no matter which
+# strategy the payload columns exercise.
+PAYLOAD_STRATEGIES = ("hash", "fpe", "faker", "categorical")
+
+# hash is the only strategy this fixture module exercised before this knob
+# existed (it is what `_hash_col` already applies to every FK key column), so
+# it is the default: the closest reading of "preserve today's behavior" the
+# fixed 4-choice knob allows. Masking payload columns AT ALL by default is new
+# (they previously passed through unmasked -- `make_plan`'s `width=0` default
+# below reproduces that exactly), but extending the one strategy the probe
+# already exercised, rather than introducing a second one as the default, is
+# the smallest behavior change; see `fk_memory_probe.py --help` for the same
+# note at the CLI surface.
+DEFAULT_PAYLOAD_STRATEGY = "hash"
+
+# Bounded category pool for the `categorical` strategy. Arbitrary labels: the
+# strategy remaps ANY source value onto this pool via
+# `derive_index(job_seed, namespace, value, pool_size=len(categories))`
+# (`CategoricalStrategyHandler`), so the pool's content is irrelevant to the
+# cost being measured, only its size.
+_PAYLOAD_CATEGORIES = [f"cat_{i:02d}" for i in range(32)]
+
+
+def _payload_col(strategy: str, namespace: str) -> ColumnSeed:
+    """A `payload_NN` filler-column `ColumnSeed` for one of `PAYLOAD_STRATEGIES`.
+
+    Each config mirrors a working example already proven in this repo's own
+    strategy tests (fpe: tests/unit/execution/test_fpe_strategy.py; faker:
+    tests/unit/execution/test_faker_strategy.py; categorical:
+    tests/unit/execution/test_categorical_weighted.py), so the probe measures
+    the real engine transform cost, not a probe-local reimplementation.
+    """
+    if strategy == "hash":
+        return ColumnSeed(
+            namespace=namespace,
+            strategy="hash",
+            provider="hash",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=True,
+            provider_config=(),
+            coherent_with=(),
+        )
+    if strategy == "fpe":
+        # "alphanum" == "0123456789abcdefghijklmnopqrstuvwxyz" (fpe.py's
+        # _CHARSETS), the exact alphabet `_string_pool` draws from below, so
+        # every payload value round-trips through the Feistel permutation
+        # instead of hitting the out-of-charset fail-closed path.
+        return ColumnSeed(
+            namespace=namespace,
+            strategy="fpe",
+            provider="fpe",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=True,
+            provider_config=(("charset", "alphanum"),),
+            coherent_with=(),
+        )
+    if strategy == "faker":
+        return ColumnSeed(
+            namespace=namespace,
+            strategy="faker",
+            provider="person_email",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=True,
+            provider_config=(("pool_size", 256),),
+            coherent_with=(),
+        )
+    if strategy == "categorical":
+        return ColumnSeed(
+            namespace=namespace,
+            strategy="categorical",
+            provider=None,
+            backend_type="decoy_native",
+            backend_version="1",
+            cardinality_mode="bijective",
+            deterministic=True,
+            provider_config=(("categories", _PAYLOAD_CATEGORIES),),
+            coherent_with=(),
+        )
+    raise ValueError(f"unknown payload strategy {strategy!r}; choose one of {PAYLOAD_STRATEGIES}")
+
+
 def _string_pool(rng: np.random.Generator, n: int, width: int = 12) -> np.ndarray:
     """A pool of `n` fixed-width ASCII strings for filler columns."""
     alphabet = np.frombuffer(b"abcdefghijklmnopqrstuvwxyz0123456789", dtype="S1")
@@ -153,26 +244,51 @@ def build_table(
     return pa.table({"child_id": _fk("c", "orphan_c"), **_filler_columns(rng, rows, width)})
 
 
-def make_plan() -> Any:
-    """The (data-independent) seed plan for the 3-table chain."""
+def make_plan(width: int = 0, strategy: str = DEFAULT_PAYLOAD_STRATEGY) -> Any:
+    """The seed plan for the 3-table chain.
+
+    FK key columns are always hash-masked (RI-preserving, independent of
+    `strategy`). `width` additionally seeds that many `payload_NN` columns per
+    table with `strategy` (BENCH-CODE-1's `--strategy` knob). `width=0` (the
+    default, and what every caller that predates BENCH-CODE-1 still passes
+    implicitly) omits payload seeding entirely -- the per_table tuples below
+    are then byte-identical to this function's shape before BENCH-CODE-1.
+    """
+    payload = {
+        table: tuple(
+            (f"payload_{i:02d}", _payload_col(strategy, f"fk_ns_payload_{table}"))
+            for i in range(width)
+        )
+        for table in _TABLE_NAMES
+    }
     return SimpleNamespace(
         seed_envelope=SeedEnvelope(
             job_seed=_SEED,
             per_table=(
-                ("parent", TableSeed(per_column=(("id", _hash_col(_NS_PARENT)),), per_group=())),
+                (
+                    "parent",
+                    TableSeed(
+                        per_column=(("id", _hash_col(_NS_PARENT)), *payload["parent"]),
+                        per_group=(),
+                    ),
+                ),
                 (
                     "child",
                     TableSeed(
                         per_column=(
                             ("id", _hash_col(_NS_CHILD)),
                             ("parent_id", _hash_col(_NS_PARENT)),
+                            *payload["child"],
                         ),
                         per_group=(),
                     ),
                 ),
                 (
                     "grandchild",
-                    TableSeed(per_column=(("child_id", _hash_col(_NS_CHILD)),), per_group=()),
+                    TableSeed(
+                        per_column=(("child_id", _hash_col(_NS_CHILD)), *payload["grandchild"]),
+                        per_group=(),
+                    ),
                 ),
             ),
         )

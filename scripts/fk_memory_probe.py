@@ -33,6 +33,24 @@ Run one tier per process for a clean per-tier high-water mark:
 
 Each sweep size runs in a fresh subprocess so its RSS peak is isolated.
 
+BENCH-CODE-1 (decoy-platform NEXT-RUNS-HANDOFF.md R4, option (a)): `--strategy
+{hash,fpe,faker,categorical}` selects the masking strategy applied to the
+`payload_NN` filler columns (FK key columns stay hash-masked regardless), so a
+run measures the per-strategy cost of the SAME real engine transform on an
+otherwise-identical FK-linked frame:
+
+    .venv/bin/python scripts/fk_memory_probe.py --rows 500000 --strategy fpe
+
+The knob is purely ADDITIVE: when `--strategy` is OMITTED, payload columns are
+not masked at all (only the FK keys are, as before this knob existed), so a
+no-flags run is byte-identical in cost to the pre-BENCH-CODE-1 probe and stays
+directly comparable to the harvested BENCH baseline. Passing a strategy opts
+into masking the `payload_NN` columns to measure that strategy's per-column
+cost; the emitted JSON reports `strategy: null` on a no-flags run and the
+chosen name otherwise (the only schema addition is the `strategy` field). Not
+supported together with `--source-dir` or `--capability`: both may point at a
+real/shared corpus whose schema is not guaranteed to carry `payload_NN` columns.
+
 Capability proof (Sprint C5): `--mem-cap-mb N` applies a hard
 `resource.setrlimit` ceiling to the worker process before it runs (RLIMIT_DATA
 by default: on Linux >= 4.7 it covers brk plus private anonymous mmaps, i.e.
@@ -84,6 +102,7 @@ import duckdb  # noqa: E402
 import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 from tests.perf_fixtures.fk_relational import (  # noqa: E402
+    PAYLOAD_STRATEGIES,
     build_fk_relational,
     lazy_loader,
     lazy_sources,
@@ -299,21 +318,34 @@ def _fixture_from_dir(source_dir: Path) -> SimpleNamespace:
     )
 
 
-def _run_full(rows: int, width: int, orphan_frac: float, policy, source_dir: Path | None) -> dict:
+def _run_full(
+    rows: int,
+    width: int,
+    orphan_frac: float,
+    policy,
+    source_dir: Path | None,
+    strategy: str | None = None,
+) -> dict:
     """Full-frame run: all tables built (or read whole from Parquet) and
     resident, then masked at once."""
     build_t0 = time.perf_counter()
     if source_dir is None:
         fixture = build_fk_relational(rows=rows, width=width, orphan_frac=orphan_frac)
+        # `build_fk_relational`'s own plan never seeds payload columns (kept
+        # that way so every OTHER caller of it stays byte-identical to before
+        # BENCH-CODE-1); the probe's synthetic path overrides it with one that
+        # does, matching the `width` payload columns `fixture.sources` holds.
+        plan = make_plan(width=width, strategy=strategy) if strategy is not None else make_plan()
     else:
         fixture = _fixture_from_dir(source_dir)
+        plan = fixture.plan
     build_s = time.perf_counter() - build_t0
 
     gc.collect()
     tracemalloc.start()
     mask_t0 = time.perf_counter()
     result = PandasExecutionAdapter().run(
-        fixture.plan,
+        plan,
         fixture.sources,
         registry=fixture.registry,
         relationship_graph=fixture.graph(policy),
@@ -331,17 +363,23 @@ def _run_full(rows: int, width: int, orphan_frac: float, policy, source_dir: Pat
 
 
 def _run_sequential(
-    rows: int, width: int, orphan_frac: float, policy, source_dir: Path | None
+    rows: int,
+    width: int,
+    orphan_frac: float,
+    policy,
+    source_dir: Path | None,
+    strategy: str | None = None,
 ) -> dict:
     """Option 2: lazy per-table load + per-table emit + evict, so the three tables
     are never resident at once (each loaded table is still whole while current).
     The sink discards each masked table (keeps only its row count) to measure the
     true single-table ceiling. Correctness is proven by
     tests/unit/execution/test_sequential_eviction.py, so no FK verify here."""
-    plan = make_plan()
     if source_dir is None:
+        plan = make_plan(width=width, strategy=strategy) if strategy is not None else make_plan()
         loader = lazy_loader(rows, width=width, orphan_frac=orphan_frac)
     else:
+        plan = make_plan()
         paths = _source_paths(source_dir)
 
         def loader(table: str) -> pa.Table:
@@ -543,6 +581,7 @@ def _run_out_of_core(
     policy,
     source_dir: Path | None,
     mem_cap_mb: int | None = None,
+    strategy: str | None = None,
 ) -> dict:
     """Option 4 route, streaming end to end (post-C3): each source table lives
     on disk as Parquet and enters `run_fk_out_of_core` as a `LazySource`, so no
@@ -596,8 +635,17 @@ def _run_out_of_core(
         tracemalloc.start()
         mask_t0 = time.perf_counter()
         try:
+            # source_dir schema is not guaranteed to carry payload_NN columns
+            # (a real/shared corpus), so the strategy knob applies only to the
+            # in-probe-generated chain -- matches `_run_full`/`_run_sequential`
+            # and is enforced up front in `main()`.
+            plan = (
+                make_plan(width=width, strategy=strategy)
+                if (source_dir is None and strategy is not None)
+                else make_plan()
+            )
             run_fk_out_of_core(
-                make_plan(),
+                plan,
                 lazy_sources(src_paths),
                 registry=get_default_registry(),
                 relationship_graph=make_graph(policy),
@@ -635,7 +683,7 @@ def _run_out_of_core(
 
 # out_of_core is dispatched separately (it takes the extra mem_cap_mb arg); this
 # table is the two baselines that share the (rows, width, orphan_frac, policy,
-# source_dir) signature.
+# source_dir, strategy) signature.
 _MODE_RUNNERS = {
     "full": _run_full,
     "sequential": _run_sequential,
@@ -650,6 +698,7 @@ def _run_one(
     mode: str,
     source_dir: Path | None = None,
     mem_cap_mb: int | None = None,
+    strategy: str | None = None,
 ) -> dict:
     policy = _POLICIES[policy_name]
     header = {
@@ -660,12 +709,18 @@ def _run_one(
         "orphan_frac": orphan_frac,
         "orphan_policy": policy_name,
         "mem_cap_mb": mem_cap_mb,
+        # None when source_dir is set: the strategy knob never applies there
+        # (see `main()`'s gate), so the JSON is honest about no payload
+        # masking having run rather than naming a strategy that didn't act.
+        "strategy": strategy if source_dir is None else None,
     }
     try:
         if mode == "out_of_core":
-            metrics = _run_out_of_core(rows, width, orphan_frac, policy, source_dir, mem_cap_mb)
+            metrics = _run_out_of_core(
+                rows, width, orphan_frac, policy, source_dir, mem_cap_mb, strategy=strategy
+            )
         else:
-            metrics = _MODE_RUNNERS[mode](rows, width, orphan_frac, policy, source_dir)
+            metrics = _MODE_RUNNERS[mode](rows, width, orphan_frac, policy, source_dir, strategy)
     except BaseException as exc:
         if mem_cap_mb is not None and _is_memory_failure(exc):
             # The expected shape under a hard cap: report it as data, exit 0.
@@ -695,6 +750,7 @@ def _worker_cmd(
     mem_cap_mb: int | None = None,
     rlimit_kind: str = "data",
     source_dir: Path | None = None,
+    strategy: str | None = None,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -715,13 +771,22 @@ def _worker_cmd(
         cmd += ["--mem-cap-mb", str(mem_cap_mb), "--rlimit-kind", rlimit_kind]
     if source_dir is not None:
         cmd += ["--source-dir", str(source_dir)]
+    if strategy is not None:
+        cmd += ["--strategy", strategy]
     return cmd
 
 
-def _sweep(sizes: list[int], width: int, orphan_frac: float, policy_name: str, mode: str) -> None:
+def _sweep(
+    sizes: list[int],
+    width: int,
+    orphan_frac: float,
+    policy_name: str,
+    mode: str,
+    strategy: str | None,
+) -> None:
     records = []
     for rows in sizes:
-        cmd = _worker_cmd(rows, width, orphan_frac, policy_name, mode)
+        cmd = _worker_cmd(rows, width, orphan_frac, policy_name, mode, strategy=strategy)
         proc = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
         line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
         if proc.returncode != 0 or not line:
@@ -952,7 +1017,29 @@ def main() -> None:
             "--mem-cap-mb)"
         ),
     )
+    ap.add_argument(
+        "--strategy",
+        choices=PAYLOAD_STRATEGIES,
+        default=None,
+        help=(
+            "BENCH-CODE-1: masking strategy for payload_NN filler columns "
+            "(FK key columns always stay hash-masked). When OMITTED, payload "
+            "columns are NOT masked at all -- byte-identical to the pre-knob "
+            "probe, so a no-flags run stays comparable to the harvested BENCH "
+            "baseline; pass a strategy to opt into masking them and measure its "
+            "per-column cost. Not supported with --source-dir or --capability: "
+            "neither guarantees a payload_NN-named schema to mask."
+        ),
+    )
     args = ap.parse_args()
+
+    if args.strategy is not None and (args.source_dir is not None or args.capability):
+        ap.error(
+            "--strategy is not supported together with --source-dir or --capability "
+            "(BENCH-CODE-1 option (a) scope: a real/shared corpus schema is not "
+            "guaranteed to carry payload_NN-named columns to mask)"
+        )
+    strategy = args.strategy
 
     if args.capability:
         if args.rows is None or args.mem_cap_mb is None:
@@ -972,9 +1059,10 @@ def main() -> None:
         sizes = [int(s) for s in args.sweep.split(",") if s.strip()]
         print(
             f"FK memory sweep: mode={args.mode}, width={args.width}, "
-            f"orphan_frac={args.orphan_frac}, policy={args.orphan_policy}, 3-table chain\n"
+            f"orphan_frac={args.orphan_frac}, policy={args.orphan_policy}, "
+            f"strategy={strategy}, 3-table chain\n"
         )
-        _sweep(sizes, args.width, args.orphan_frac, args.orphan_policy, args.mode)
+        _sweep(sizes, args.width, args.orphan_frac, args.orphan_policy, args.mode, strategy)
         return
 
     if args.rows is None:
@@ -991,6 +1079,7 @@ def main() -> None:
         args.mode,
         source_dir=args.source_dir,
         mem_cap_mb=args.mem_cap_mb,
+        strategy=strategy,
     )
     if args.json:
         print(json.dumps(rec))
