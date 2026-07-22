@@ -29,8 +29,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
-    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
-    from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
+    from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
+    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
+    from decoy_engine.execution.out_of_core._source import LazySource
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships._graph import RelationshipEdge
 
@@ -38,11 +39,11 @@ if TYPE_CHECKING:
 def emit_to_sink(
     plan: Plan,
     table_name: str,
-    raw_parent_source: ParentSource,
+    raw: pa.Table | LazySource,
     rewritten: Iterator[pa.RecordBatch],
     *,
     fixed_schema: pa.Schema,
-    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
+    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
     outgoing_edges: tuple[RelationshipEdge, ...],
     parent_relations: dict[RelationshipEdge, ParentKeyRelation],
     relation_dir: Path,
@@ -52,7 +53,6 @@ def emit_to_sink(
     sink: TransactionalSink,
     source_schema: pa.Schema,
     on_stream_consumed: Callable[[], None] | None = None,
-    masked_observed_types: Mapping[str, set[pa.DataType]] | None = None,
 ) -> None:
     """Stream the rewritten batches to the sink, then build outgoing relations.
 
@@ -74,11 +74,6 @@ def emit_to_sink(
     the linear chain at one full-budget instance at a time. `_relation_masked_types`
     reads only the joiners' Python-side observed/output types, which survive the
     connection close, so the relation build below is unaffected.
-
-    `masked_observed_types` (default None): the driver's own pre-reconciliation
-    per-column type observations (see `MaskedKeyStager`'s docstring for why the
-    single-source-read payload store needs this threaded through rather than
-    derived from the batches this function sees).
     """
     staged_columns = tuple(sorted({col for edge in outgoing_edges for col in edge.parent_columns}))
     if not staged_columns:
@@ -90,12 +85,7 @@ def emit_to_sink(
         if on_stream_consumed is not None:
             on_stream_consumed()
         return
-    stager = MaskedKeyStager(
-        staging_path,
-        columns=staged_columns,
-        fixed_schema=fixed_schema,
-        masked_observed_types=masked_observed_types,
-    )
+    stager = MaskedKeyStager(staging_path, columns=staged_columns, fixed_schema=fixed_schema)
     try:
 
         def emitted() -> Iterator[pa.RecordBatch]:
@@ -114,7 +104,7 @@ def emit_to_sink(
     if stager.rows:
         for edge in outgoing_edges:
             parent_relations[edge] = build_parent_key_relation_aligned(
-                source_parent=raw_parent_source,
+                source_parent=raw,
                 masked_parent=stager.source(),
                 edge=edge,
                 masked_types=_relation_masked_types(edge, fk_components, stager, fixed_schema),
@@ -128,7 +118,7 @@ def emit_to_sink(
     empty = empty_output_table(plan, table_name, source_schema, fk_components)
     for edge in outgoing_edges:
         parent_relations[edge] = build_parent_key_relation_aligned(
-            source_parent=raw_parent_source,
+            source_parent=raw,
             masked_parent=empty,
             edge=edge,
             temp_dir=relation_dir,
@@ -139,7 +129,7 @@ def emit_to_sink(
 
 def _relation_masked_types(
     edge: RelationshipEdge,
-    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
+    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
     stager: MaskedKeyStager,
     fixed_schema: pa.Schema,
 ) -> tuple[pa.DataType, ...]:
@@ -168,7 +158,7 @@ def empty_output_table(
     plan: Plan,
     table_name: str,
     source_schema: pa.Schema,
-    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
+    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
 ) -> pa.Table:
     """Zero-row output with whole-table column types.
 
@@ -206,7 +196,7 @@ def reconcile_batch(batch: pa.RecordBatch, fixed_schema: pa.Schema) -> pa.Record
 
 def assemble_resident(
     batches: list[pa.RecordBatch],
-    fk_components: Mapping[str, tuple[StreamFkJoiner, int]],
+    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
 ) -> pa.Table:
     """Reassemble streamed batches into a table with whole-column types.
 

@@ -404,7 +404,7 @@ def run_out_of_core_route(
 
 def _incoming_edge_counts(graph: RelationshipGraph) -> dict[str, int]:
     """Fan-in per table: the count of edges where the table is the CHILD
-    side, i.e. how many `StreamFkJoiner` connections are co-live while
+    side, i.e. how many `ChildFkBatchJoiner` connections are co-live while
     that table streams.
 
     Shared by `_max_concurrent_ooc_instances` (the run's single global-peak
@@ -423,7 +423,7 @@ def _max_concurrent_ooc_instances(graph: RelationshipGraph, *, sink: bool) -> in
     `resolve_ooc_memory_limit`'s `max_concurrent_instances` from a job's own
     graph instead of that function's conservative default.
 
-    One table streams at a time, holding one `StreamFkJoiner` per INCOMING
+    One table streams at a time, holding one `ChildFkBatchJoiner` per INCOMING
     edge. Sink path: `emit_to_sink` closes every joiner (`on_stream_consumed`
     in `_emit.py`) BEFORE the relation build opens, so joiners and build never
     co-live -- the peak is whichever single phase is wider, max(incoming, 1).

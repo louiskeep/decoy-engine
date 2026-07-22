@@ -144,7 +144,7 @@ _ROUTES = {
 
 # `uint64` FK-column tests below deliberately exclude out_of_core: it rejects
 # EVERY uint64-typed relationship key column unconditionally, regardless of
-# magnitude (`out_of_core/_fixed_schema_typing.py::_python_roundtrip_type` -- "its
+# magnitude (`out_of_core/_batch_join.py::_python_roundtrip_type` -- "its
 # Python round trip is value-dependent"), a pre-existing, deliberate,
 # documented design choice ("A compatibility rejection beats byte drift")
 # unrelated to the 2**53 precision story DE-10 is about; it is NOT part of
@@ -296,7 +296,7 @@ def test_narrow_int_key_column_preserves_width(route: str) -> None:
     which is rebuilt fresh at write-back for every route -- including
     out_of_core, whose own FK-child output is unconditionally widened to
     int64 by a separate, pre-existing, documented design
-    (`out_of_core/_fixed_schema_typing.py::_python_roundtrip_type`), unrelated to and
+    (`out_of_core/_batch_join.py::_python_roundtrip_type`), unrelated to and
     out of scope for this fix)."""
     parent = pa.table({"pk": pa.array([1, None, _NARROW_INT32_VALUE], type=pa.int32())})
     child = pa.table({"fk": pa.array([1, _NARROW_INT32_VALUE], type=pa.int32())})

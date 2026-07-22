@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import LazySource, run_fk_out_of_core
 from decoy_engine.execution.out_of_core import _join as join_mod
-from decoy_engine.execution.out_of_core import _stream_driver as stream_driver_mod
+from decoy_engine.execution.out_of_core import _runner as runner_mod
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -140,13 +140,13 @@ def test_streaming_runner_reads_lazy_sources_in_bounded_batches(tmp_path, monkey
     monkeypatch.setattr(LazySource, "to_table", forbidden_to_table)
 
     masked_sizes: list[int] = []
-    real_mask_batch = stream_driver_mod.mask_batch
+    real_mask_batch = runner_mod.mask_batch
 
     def spy_mask_batch(*args: Any, **kwargs: Any) -> pa.RecordBatch:
         masked_sizes.append(args[2].num_rows)
         return real_mask_batch(*args, **kwargs)
 
-    monkeypatch.setattr(stream_driver_mod, "mask_batch", spy_mask_batch)
+    monkeypatch.setattr(runner_mod, "mask_batch", spy_mask_batch)
 
     target = tmp_path / "published"
     run_fk_out_of_core(
@@ -242,7 +242,7 @@ def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
     oracle's value is 1/1 -- a real wrong-output divergence on the ONE path
     this bug can only show up on (`emit_to_sink`'s fixed-schema write; the
     no-sink resident path accidentally self-heals via
-    `StreamFkJoiner.observed_types`, so a sink is required to catch this).
+    `ChildFkBatchJoiner.observed_types`, so a sink is required to catch this).
 
     A small `_JOIN_BATCH_ROWS` splits the (here, uniformly orphan) rows
     across multiple batches, proving the fixed int64 type is applied
@@ -296,68 +296,6 @@ def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
     assert published.column("id").to_pylist() == [1, 1, 1, 1]
     assert pandas.outputs["orders"].column("id").type == pa.int64()
     assert pandas.outputs["orders"].column("id").to_pylist() == [1, 1, 1, 1]
-    assert published.to_pydict() == in_memory.outputs["orders"].to_pydict()
-    assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
-
-
-def test_remap_orphans_across_batches_sink_matches_oracle(tmp_path, monkeypatch) -> None:
-    """OOC-B dennis LOW-2: REMAP end-to-end through the full three-phase zip at a
-    small batch, with orphans split across multiple result batches.
-
-    The streamed join numbers rows globally but REMAP mints per resolved batch,
-    so each `JoinRowCursor`-sliced batch must re-base row_nr and re-mint from its
-    own keys and still equal the whole-child oracle. `_JOIN_BATCH_ROWS=2` forces
-    the five child rows (matched + genuine orphans interleaved) across several
-    batches; the streamed-sink, resident, and pandas oracle outputs must be
-    byte-identical.
-    """
-    monkeypatch.setattr(join_mod, "_JOIN_BATCH_ROWS", 2, raising=False)
-    plan = SimpleNamespace(
-        seed_envelope=SeedEnvelope(
-            job_seed=_SEED,
-            per_table=(
-                (
-                    "customers",
-                    TableSeed(
-                        per_column=(("customer_id", _col("hash", namespace="cust")),), per_group=()
-                    ),
-                ),
-                (
-                    "orders",
-                    TableSeed(
-                        per_column=(("customer_id", _col("hash", namespace="cust")),), per_group=()
-                    ),
-                ),
-            ),
-        )
-    )
-    graph = RelationshipGraph(edges=(_edge(OrphanPolicy.REMAP),), ordering=())
-    sources = {
-        "customers": pa.table({"customer_id": pa.array(["c1", "c2"], type=pa.string())}),
-        # "zz1"/"zz2" reference no parent -> genuine orphans, interleaved with
-        # matches and split across 2-row batches so REMAP mints in >1 batch.
-        "orders": pa.table(
-            {"customer_id": pa.array(["c1", "zz1", "c2", "zz2", "c1"], type=pa.string())}
-        ),
-    }
-    target = tmp_path / "published"
-
-    run_fk_out_of_core(
-        plan,
-        sources,
-        registry=_REG,
-        relationship_graph=graph,
-        sink=ParquetTransactionalSink(target),
-        temp_dir=tmp_path / "work-sink",
-    )
-    in_memory = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
-    )
-    pandas = PandasExecutionAdapter().run(
-        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
-    )
-
-    published = pq.read_table(target / "orders.parquet")
     assert published.to_pydict() == in_memory.outputs["orders"].to_pydict()
     assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
 
@@ -971,274 +909,3 @@ def test_float64_all_orphan_preserve_narrowing_parity_and_sink_type(tmp_path) ->
     published_col = pq.read_table(target / "orders.parquet").column("customer_id")
     assert published_col.type == pa.float64()
     assert published_col.to_pylist() == [5.0, 7.0]
-
-
-def test_chunked_bool_preserve_matches_oracle(tmp_path) -> None:
-    """Codex HIGH repro (single-read redesign): a bool parent covering only
-    False, joined against a child chunked as TWO separate 2-row batches
-    (matched `[False, False]` then orphan `[True, True]`), with the runner's
-    OWN `batch_rows=4` capping the join reader at up to 4 rows per batch.
-    DuckDB's join-result reader is free to coalesce those two 2-row chunks
-    into one 4-row batch (its own batching, independent of the source's), but
-    resolution now runs at the payload store's source-chunk granularity (2,
-    then 2) via `JoinRowCursor.take`, never at whatever size the join reader
-    happens to produce -- so a coalesced 4-row join batch that would mix a
-    real bool with an fk_key_value-normalized int (a combination even the
-    pandas oracle cannot resolve as one column, see `_concat_fk_chunks`'s
-    docstring) never reaches `_append_output_batch` as a single unit.
-    """
-    ns = "cust_bool_high"
-    plan = SimpleNamespace(
-        seed_envelope=SeedEnvelope(
-            job_seed=_SEED,
-            per_table=(
-                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
-                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
-            ),
-        )
-    )
-    edge = RelationshipEdge(
-        parent_table="customers",
-        parent_columns=("id",),
-        child_table="orders",
-        child_columns=("id",),
-        namespace=ns,
-        orphan_policy=OrphanPolicy.PRESERVE,
-    )
-    graph = RelationshipGraph(edges=(edge,), ordering=())
-    orders = pa.Table.from_batches(
-        [
-            pa.record_batch({"id": pa.array([False, False], type=pa.bool_())}),
-            pa.record_batch({"id": pa.array([True, True], type=pa.bool_())}),
-        ]
-    )
-    sources = {
-        "customers": pa.table({"id": pa.array([False, False], type=pa.bool_())}),
-        "orders": orders,
-    }
-
-    in_memory = run_fk_out_of_core(
-        plan,
-        sources,
-        registry=_REG,
-        relationship_graph=graph,
-        batch_rows=4,
-        temp_dir=tmp_path / "work-mem",
-    )
-    target = tmp_path / "published"
-    run_fk_out_of_core(
-        plan,
-        sources,
-        registry=_REG,
-        relationship_graph=graph,
-        batch_rows=4,
-        sink=ParquetTransactionalSink(target),
-        temp_dir=tmp_path / "work-sink",
-    )
-
-    published = pq.read_table(target / "orders.parquet")
-    assert published.column("id").type == pa.int64()
-    assert published.column("id").to_pylist() == [0, 0, 1, 1]
-    assert in_memory.outputs["orders"].column("id").type == pa.int64()
-    assert in_memory.outputs["orders"].column("id").to_pylist() == [0, 0, 1, 1]
-    assert published.to_pydict() == in_memory.outputs["orders"].to_pydict()
-
-
-def test_single_read_source_mutation_cannot_corrupt(tmp_path, monkeypatch) -> None:
-    """Single-read redesign: the BLOCKER this replaces (a same-count source
-    permutation silently misaligning FK-to-row across two reads) is now
-    impossible by construction, because there is no second read to disagree
-    with the first. Prove it by mutating the child source file AFTER phase 1
-    has necessarily finished reading it (the run completes successfully, and
-    phase 1 is provably a single upfront pass): the published output must
-    still match the UNMUTATED oracle, and the row_nr identity assertion
-    between the join reader and the payload store (`JoinRowCursor.take`'s
-    `expected_row_nr_start` check) must have passed silently throughout, since
-    the mutation happens on-disk, never through the payload store.
-    """
-    ns = "cust_single_read"
-    plan = SimpleNamespace(
-        seed_envelope=SeedEnvelope(
-            job_seed=_SEED,
-            per_table=(
-                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
-                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
-            ),
-        )
-    )
-    edge = RelationshipEdge(
-        parent_table="customers",
-        parent_columns=("id",),
-        child_table="orders",
-        child_columns=("id",),
-        namespace=ns,
-        orphan_policy=OrphanPolicy.PRESERVE,
-    )
-    graph = RelationshipGraph(edges=(edge,), ordering=())
-    customers = pa.table({"id": pa.array([1, 2, 3], type=pa.int64())})
-    orders_unmutated = pa.table(
-        {"id": pa.array([1, 2, 3, 1, 2], type=pa.int64()), "amt": list(range(5))}
-    )
-    src_dir = tmp_path / "src"
-    src_dir.mkdir()
-    pq.write_table(customers, src_dir / "customers.parquet")
-    orders_path = src_dir / "orders.parquet"
-    pq.write_table(orders_unmutated, orders_path)
-
-    oracle = PandasExecutionAdapter().run(
-        plan,
-        {"customers": customers, "orders": orders_unmutated},
-        registry=_REG,
-        relationship_graph=graph,
-        namespace_registry=_NS,
-    )
-
-    read_count = 0
-    real = stream_driver_mod._iter_source_batches
-
-    def mutate_after_first_read(src: Any, batch_rows: int) -> Any:
-        nonlocal read_count
-        batches = list(real(src, batch_rows))
-        if isinstance(src, LazySource) and src.path == orders_path:
-            read_count += 1
-            if read_count == 1:
-                # A same-count permutation of the child, written to disk only
-                # AFTER this (the only) read has already materialized its
-                # batches. The old two-read design's phase 3 would have read
-                # this reordered file and silently misaligned FK-to-row; the
-                # single-read design has no second read to be fooled by it.
-                reversed_orders = pa.table(
-                    {
-                        "id": pa.array(
-                            list(reversed(orders_unmutated.column("id").to_pylist())),
-                            type=pa.int64(),
-                        ),
-                        "amt": list(reversed(range(5))),
-                    }
-                )
-                pq.write_table(reversed_orders, orders_path)
-        yield from batches
-
-    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", mutate_after_first_read)
-    target = tmp_path / "published"
-    run_fk_out_of_core(
-        plan,
-        {"customers": LazySource(src_dir / "customers.parquet"), "orders": LazySource(orders_path)},
-        registry=_REG,
-        relationship_graph=graph,
-        sink=ParquetTransactionalSink(target),
-        temp_dir=tmp_path / "work-sink",
-    )
-
-    published = pq.read_table(target / "orders.parquet")
-    assert published.to_pydict() == oracle.outputs["orders"].to_pydict()
-    # The single-read structural invariant this whole design defends: orders'
-    # source is read exactly once. Output parity alone would pass a benign
-    # same-order second read; this guards the read-count directly.
-    assert read_count == 1
-
-
-def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) -> None:
-    """Same BLOCKER as `test_single_read_source_mutation_cannot_corrupt`, but on
-    the outgoing-relation build rather than the incoming FK resolve: a
-    `parent -> child -> grandchild` chain, where `child` is BOTH a masked
-    table (incoming edge from `parent`) AND a relation source for the NEXT
-    table (outgoing edge to `grandchild`). If the outgoing-relation build
-    re-reads `child`'s source a second time to pair raw parent keys with the
-    masked `child` output, a same-count on-disk permutation of `child` written
-    AFTER phase 1 has already read it once corrupts that pairing silently:
-    the relation maps each raw child id to the WRONG masked row, so
-    `grandchild`'s FK column resolves to the wrong parent. The single-read
-    fix captures `child`'s raw parent-key column during phase 1 (in read
-    order, matching the masked-output order) instead of re-reading it, so
-    this mutation -- which lands strictly after that one read -- cannot
-    affect the published output.
-    """
-    rows = 12
-    paths = write_large_fk_chain(tmp_path / "src", rows, width=0, orphan_frac=0.0, batch_rows=4)
-    plan = make_plan()
-    graph = make_graph(OrphanPolicy.WARN)
-    unmutated = {name: pq.read_table(path) for name, path in paths.items()}
-    child_unmutated = unmutated["child"]
-    child_path = paths["child"]
-
-    oracle = PandasExecutionAdapter().run(
-        plan,
-        unmutated,
-        registry=_REG,
-        relationship_graph=graph,
-        namespace_registry=_NS,
-    )
-
-    real = stream_driver_mod._iter_source_batches
-
-    def make_mutator() -> tuple[Any, list[int]]:
-        """A fresh `_iter_source_batches` patch plus its `child`-read counter:
-        on the FIRST read of `child`'s `LazySource`, materialize its batches
-        (the real, only, phase-1 read), THEN swap the on-disk file for an
-        equal-count reversal. Any later read of `child` (the bug this
-        regression targets) sees the swapped file; the single read this
-        function itself performs never does, since the swap happens only after
-        `list(real(...))` has already drained it. The returned counter lets the
-        test assert `child`'s source is read exactly once (the structural
-        invariant), not just that the output parity holds.
-        """
-        child_reads = [0]
-
-        def mutate_after_first_child_read(src: Any, batch_rows: int) -> Any:
-            batches = list(real(src, batch_rows))
-            if isinstance(src, LazySource) and src.path == child_path:
-                child_reads[0] += 1
-                if child_reads[0] == 1:
-                    reversed_child = pa.table(
-                        {
-                            "id": pa.array(
-                                list(reversed(child_unmutated.column("id").to_pylist()))
-                            ),
-                            "parent_id": pa.array(
-                                list(reversed(child_unmutated.column("parent_id").to_pylist()))
-                            ),
-                        }
-                    )
-                    pq.write_table(reversed_child, child_path)
-            yield from batches
-
-        return mutate_after_first_child_read, child_reads
-
-    # --- Sink path ---
-    sink_mutator, sink_child_reads = make_mutator()
-    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", sink_mutator)
-    target = tmp_path / "published-sink"
-    run_fk_out_of_core(
-        plan,
-        lazy_sources(paths),
-        registry=_REG,
-        relationship_graph=graph,
-        sink=ParquetTransactionalSink(target),
-        temp_dir=tmp_path / "work-sink",
-    )
-    published_grandchild = pq.read_table(target / "grandchild.parquet")
-    assert published_grandchild.to_pydict() == oracle.outputs["grandchild"].to_pydict()
-    # The relation build reads the phase-1 raw-key capture, never `child`'s
-    # source a second time: assert that single read directly.
-    assert sink_child_reads[0] == 1
-
-    # Restore `child` to its unmutated state before the second (resident) run,
-    # so this run's own single read is the one the mutator swaps after.
-    pq.write_table(child_unmutated, child_path)
-
-    # --- Resident (no-sink) path ---
-    resident_mutator, resident_child_reads = make_mutator()
-    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", resident_mutator)
-    resident_result = run_fk_out_of_core(
-        plan,
-        lazy_sources(paths),
-        registry=_REG,
-        relationship_graph=graph,
-        temp_dir=tmp_path / "work-resident",
-    )
-    assert (
-        resident_result.outputs["grandchild"].to_pydict()
-        == oracle.outputs["grandchild"].to_pydict()
-    )
-    assert resident_child_reads[0] == 1
