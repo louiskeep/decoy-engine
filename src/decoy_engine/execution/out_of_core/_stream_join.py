@@ -373,7 +373,17 @@ class StreamFkJoiner:
         try:
             yield from self._conn.execute(query).to_arrow_reader(batch_rows)
         finally:
-            self._conn.unregister("child_keys")
+            # An abandoned (never fully drained) generator's cleanup can run
+            # AFTER `close()` has already torn down the connection -- e.g. a
+            # sibling edge's fail-closed error unwinds `stream_table` while
+            # THIS edge's cursor is mid-batch, and Python finalizes this
+            # generator (GeneratorExit) whenever the `JoinRowCursor` holding
+            # it is garbage-collected, which is not ordered against
+            # `stream_table`'s own `finally` block closing every joiner.
+            # `unregister` is meaningless on an already-closed connection, so
+            # skip it rather than raise past a GeneratorExit.
+            if self._conn is not None:
+                self._conn.unregister("child_keys")
             reader.close()
 
     def resolve_batch(self, join_rows: pa.RecordBatch) -> tuple[pa.Array, ...]:

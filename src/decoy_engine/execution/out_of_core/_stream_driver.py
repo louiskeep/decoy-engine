@@ -277,6 +277,11 @@ def stream_table(
         # marker before any reader opens it.
         if raw_parent_spill is not None:
             raw_parent_spill.finalize()
+        # Same reasoning, per edge: each joiner's child-key spill must carry
+        # its end-of-stream marker before total_orphans (below) or
+        # iter_join_rows (phase 2) opens the first reader over it.
+        for joiner in joiners:
+            joiner.finalize_staging()
         # FAIL reports the whole child's orphan count before any output exists.
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
             if edge.orphan_policy is OrphanPolicy.FAIL:
@@ -380,7 +385,15 @@ def stream_table(
             if joiner.orphan_total and edge.orphan_policy is OrphanPolicy.WARN:
                 warnings.append(orphan_fk_warning(edge, joiner.orphan_total))
     finally:
+        # Guard only, mirroring the raw_parent_spill re-finalize below: the
+        # normal path already finalizes every joiner's child-key spill right
+        # after phase 1. This catches an exception raised mid-phase-1 (a
+        # LATER batch in the same table's own loop, or FAIL's orphan-count
+        # SELECT), where that finalize call was never reached;
+        # `finalize_staging` is idempotent, so re-running it here is safe
+        # whether or not the primary call already ran.
         for joiner in joiners:
+            joiner.finalize_staging()
             joiner.close()
         store.close()
         # Guard only: the normal path already finalizes this right after phase 1

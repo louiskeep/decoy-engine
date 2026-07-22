@@ -15,6 +15,7 @@ from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import LazySource, run_fk_out_of_core
@@ -123,6 +124,59 @@ def test_lazy_source_sink_run_matches_resident_run_and_oracle(tmp_path) -> None:
     preserved = [value for value in child_fk if value not in masked_parent_ids]
     assert len(preserved) == orphans_per_edge
     assert all(value.startswith("orphan_p") for value in preserved)
+
+
+def test_mid_phase1_exception_still_finalizes_child_key_spill(tmp_path, monkeypatch) -> None:
+    """OOC-B fix#1b (Task 4): a mid-phase-1 exception must not leak the
+    child-key spill's writer. `stream_table`'s `finally` guard calls
+    `finalize_staging()` on every joiner it opened, mirroring the existing
+    `raw_parent_spill.finalize()` re-finalize guard -- both are idempotent
+    safety nets for the case where the primary post-phase-1-loop call is
+    never reached because an earlier batch in the SAME table already raised.
+    """
+    rows = 12
+    paths = write_large_fk_chain(tmp_path / "src", rows, width=0, orphan_frac=0.0, batch_rows=4)
+    plan = make_plan()
+    graph = make_graph(OrphanPolicy.WARN)
+
+    finalize_calls: list[int] = []
+    real_finalize_staging = stream_driver_mod.StreamFkJoiner.finalize_staging
+
+    def spy_finalize_staging(self):
+        finalize_calls.append(1)
+        return real_finalize_staging(self)
+
+    monkeypatch.setattr(
+        stream_driver_mod.StreamFkJoiner, "finalize_staging", spy_finalize_staging
+    )
+
+    real_mask_batch = stream_driver_mod.mask_batch
+    call_count = {"n": 0}
+
+    def failing_mask_batch(*args, **kwargs):
+        call_count["n"] += 1
+        # Table order is parent -> child -> grandchild (customers/orders/
+        # grandchild), 3 raw batches per table at batch_rows=4/rows=12. The
+        # 5th call lands on child's (orders's) 2nd batch -- a joiner is open
+        # and mid-phase-1 for a table WITH an incoming edge (unlike the root
+        # parent table, which opens none), the exact shape this guard exists
+        # for.
+        if call_count["n"] == 5:
+            raise RuntimeError("synthetic mid-phase-1 failure")
+        return real_mask_batch(*args, **kwargs)
+
+    monkeypatch.setattr(stream_driver_mod, "mask_batch", failing_mask_batch)
+
+    with pytest.raises(RuntimeError, match="synthetic mid-phase-1 failure"):
+        run_fk_out_of_core(
+            plan,
+            lazy_sources(paths),
+            registry=_REG,
+            relationship_graph=graph,
+            batch_rows=4,
+            temp_dir=tmp_path / "work",
+        )
+    assert finalize_calls == [1]
 
 
 def test_streaming_runner_reads_lazy_sources_in_bounded_batches(tmp_path, monkeypatch) -> None:
