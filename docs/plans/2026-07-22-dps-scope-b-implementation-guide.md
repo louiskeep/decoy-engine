@@ -4,6 +4,8 @@
 
 This rebuild replaces the parked Option A Differential Privacy Synthesis implementation at `feat/dps-option-a` commit `fafbb7500fa97dd8b5fa5a5b1fee01324a1dc713`.
 
+**Revised 2026-07-22.** The first revision routed every release through OpenDP's Polars-integrated `Context` compositor. That design is dead: the compositor FFI-locks to a Polars version Decoy does not run. Sections 3, 4.3, 4.4, 4.5, 4.6, 5 (steps 1 to 3 and 6), 6, 7, 8, and 9 now specify per-column OpenDP measurements composed by Google `dp_accounting`. Section 3.4 records the closed spike, and section 4.3.5 states plainly which guarantee that costs. Do not reconstruct the compositor design from an older copy of this document.
+
 The two prior implementations were blocked because they leaked private predicates during fitting, implemented categorical thresholding incorrectly, allowed generation to bypass compilation, did not pin verified snapshot contents, and undercharged independent releases whose serialized contents happened to collide. This implementation must remove those failure modes structurally and pin each one with an assertion test before production code changes.
 
 Verified Option A source anchors:
@@ -72,77 +74,123 @@ The implementer may not renegotiate these decisions:
 10. Mint a data-independent release ID for every independent fit. Byte-for-byte copies retain it. Independent fits compose even when their released bytes are identical.
 11. Keep DP production randomness unseeded. No public seed, RNG, or deterministic-noise parameter may exist.
 12. Reject unsupported DP joint behavior explicitly. Do not silently fall back to non-DP sampling.
+13. Do not import `opendp.extras.polars`, install `opendp[polars]`, or use any OpenDP `Context`, `LazyFrame`, or table-domain API. The 2026-07-22 spike closed that route permanently; section 3.4 records the outcome so it is not re-litigated.
+14. Every privacy quantity that reaches the artifact is read back from an OpenDP `Measurement.map()` or from a `dp_accounting` privacy-loss-distribution composition. Decoy computes no epsilon, no delta, no noise scale, and no threshold from a formula of its own.
+15. Rows become counts inside OpenDP. Each column's measurement is a chained OpenDP `Transformation >> Measurement` whose input metric is `symmetric_distance()` and whose input is the column's normalized value vector. Decoy must not pre-aggregate counts in Python and hand a count vector to a bare mechanism, because that moves the sensitivity derivation out of the library and into Decoy.
 
 ## 3. Dependency decision
 
 ### 3.1 Package selection
 
-Add this core runtime dependency:
+Add these two core runtime dependencies:
 
 ```toml
 opendp==0.15.1
+dp-accounting==0.6.0
 ```
 
-Use an exact pin for this rebuild because the implementation depends on privacy-critical APIs currently marked `contrib`, including stable-key thresholded grouping. Upgrade only through a separate dependency review with mechanism regression tests.
+`opendp` supplies every mechanism and every per-measurement privacy map. Its published license is MIT, compatible with Decoy's Apache-2.0. OpenDP 0.15.1 declares Python 3.10 or newer and publishes an `abi3` wheel covering the Python 3.10 through 3.12 range declared at `pyproject.toml:13` (`requires-python`) and `:21-39` (classifiers). See [OpenDP 0.15.1 on PyPI](https://pypi.org/project/opendp/0.15.1/).
 
-Do not request the `opendp[polars]` extra initially. The repository already declares `polars>=1,<2`, while the OpenDP extra may constrain Polars more narrowly. Import OpenDP’s Polars integration against Decoy’s resolved dependency set during the dependency spike.
+`dp-accounting` is Google's standalone, pure-Python privacy accountant from `google/differential-privacy`. Its license is Apache-2.0, identical to Decoy's own, so there is no compatibility question. It has no native build step. It is the composition accountant for this build, in the accounting-only role the DPS established-library survey already blessed (`docs/plans/2026-07-22-dps-established-library-survey.md`, section 2 "Google differential-privacy / dp-accounting / PipelineDP" and the composition row of the section 3 mapping table). It supplies no mechanism and no noise.
 
-OpenDP 0.15.1 declares Python 3.10 or newer and publishes wheels covering the Python 3.10 through 3.12 range declared at `pyproject.toml:13` (`requires-python`) and `:21-39` (classifiers). Its published license is MIT, which is compatible with Decoy’s Apache-2.0 license. See [OpenDP 0.15.1 on PyPI](https://pypi.org/project/opendp/0.15.1/).
+Use exact pins for both. The implementation depends on privacy-critical OpenDP APIs marked `contrib`, and on `dp_accounting.pld`'s dominating-pair construction. Upgrade either package only through a separate dependency review with mechanism and composition regression tests.
+
+**STOP condition, absolute.** Do not install the `opendp[polars]` extra. Do not import `opendp.extras.polars`. Do not narrow, pin, or otherwise change Decoy's existing `polars>=1,<2` range for any reason arising from this build. `opendp[polars]` pins `polars==1.36.1` exactly and its compiled core embeds a Polars DSL schema hash for that release; Decoy resolves `polars==1.42.0`. That conflict is what killed the previous design (section 3.4). This build touches Polars not at all: neither mechanism path in section 4 involves a `LazyFrame`, a Polars expression, or an OpenDP table domain. If a step appears to require one, you have deviated from the design; stop and escalate rather than reintroducing the extra.
 
 Use only dependencies licensed under Apache-2.0 or MIT for this feature.
 
 ### 3.2 Mandatory resolution spike
 
-Complete this spike before editing `quality/dp.py`:
+Complete this spike before editing `quality/dp.py`. It is a fresh spike for the new dependency shape; the compositor spike it replaces is closed and recorded in section 3.4.
 
-1. For Python 3.10, 3.11, and 3.12, ask pip to resolve a binary distribution without allowing an sdist:
+1. For Python 3.10, 3.11, and 3.12, ask pip to resolve binary distributions without allowing an sdist:
 
    ```bash
    dps_wheel_dir="$(mktemp -d)"
-   python3.10 -m pip download --only-binary=:all: --no-deps \
-     --dest "$dps_wheel_dir/py310" "opendp==0.15.1"
-   python3.11 -m pip download --only-binary=:all: --no-deps \
-     --dest "$dps_wheel_dir/py311" "opendp==0.15.1"
-   python3.12 -m pip download --only-binary=:all: --no-deps \
-     --dest "$dps_wheel_dir/py312" "opendp==0.15.1"
+   for py in python3.10 python3.11 python3.12; do
+     "$py" -m pip download --only-binary=:all: --no-deps \
+       --dest "$dps_wheel_dir/$py" "opendp==0.15.1" "dp-accounting==0.6.0"
+   done
    ```
 
-2. In clean virtual environments for every available supported interpreter, install Decoy with its development dependencies plus `opendp==0.15.1`.
+2. In clean virtual environments for every available supported interpreter, install Decoy with its development dependencies plus both pins. Record the resolved `polars` version and assert it is unchanged from the pre-spike resolution. A spike that moves Polars has already failed.
 
 3. Run a smoke program that:
 
-   - Imports `opendp.prelude`.
-   - Enables only the OpenDP `contrib` feature.
-   - Builds and invokes a bounded numeric histogram query.
-   - Builds and invokes an unknown-key categorical count query.
-   - Uses one OpenDP Context compositor for multiple releases.
-   - Reads the compositor’s accumulated privacy loss.
-   - Demonstrates that an additional unscheduled query cannot exceed the declared budget.
+   - Imports `opendp.prelude` and `dp_accounting`.
+   - Enables only the OpenDP `contrib` feature. Do not enable `honest-but-curious`; every constructor this build uses is reachable under `contrib` alone, and that has been verified.
+   - Builds the numeric chain of section 4.4 and invokes it on a vector, including an empty vector.
+   - Builds the categorical chain of section 4.5 and invokes it on a vector, including an empty vector.
+   - Reads `Measurement.map(1)` from each chain and confirms the numeric chain reports a scalar epsilon and the categorical chain reports an `(epsilon, delta)` pair.
+   - Composes those reported losses through `dp_accounting.pld` per section 3.3 and reads back a composed epsilon at the fit-wide delta.
+   - Asserts that nothing in the program imports `polars` or `opendp.extras`.
 
 4. Add the same import and construction smoke to the supported CI matrix. A successful local wheel download is not proof that every CI platform resolves.
 
-5. Record the exact Polars version resolved in the spike output. Do not tighten Decoy’s Polars constraint unless the current range fails the smoke test.
+The relevant OpenDP patterns are its [transformation user guide](https://docs.opendp.org/en/stable/api/user-guide/transformations/index.html), [thresholded noise mechanisms](https://docs.opendp.org/en/stable/api/user-guide/measurements/thresholded-noise-mechanisms.html), and [parameter search utilities](https://docs.opendp.org/en/stable/api/user-guide/utilities/parameter-search.html). The relevant `dp_accounting` pattern is `dp_accounting.pld.privacy_loss_distribution.from_privacy_parameters`, the dominating-pair construction for a mechanism known only by its `(epsilon, delta)`. Cite these patterns in the implementing module's docstring as required by `CLAUDE.md`.
 
-The relevant OpenDP patterns are its [bounded histogram example](https://docs.opendp.org/en/stable/api/user-guide/transformations/aggregation-quantile.html), [thresholded noise mechanism](https://docs.opendp.org/en/stable/api/user-guide/measurements/thresholded-noise-mechanisms.html), and [grouping compositor](https://docs.opendp.org/en/stable/getting-started/tabular-data/grouping.html). Cite these patterns in the implementing module’s docstring as required by `CLAUDE.md`.
+### 3.3 Accountant choice
 
-### 3.3 Accountant choice and fallback
+There is no single object that both hosts every mechanism and accounts for the whole fit. The architecture splits that responsibility across two libraries, and the split is the part of this design most in need of care.
 
-Use the OpenDP Context compositor as both the mechanism host and fit-time privacy accountant. Build the complete query schedule from public declarations before reading values. Give the compositor the fit-wide `(epsilon, delta)` limit and a fixed number of scheduled queries. Every mechanism release must go through that compositor.
+**OpenDP certifies each column.** Every column's release is one chained `Transformation >> Measurement`. `Measurement.map(d_in)` is what reports that release's privacy loss, with `d_in = 1` under `symmetric_distance()`, meaning one added or removed row. The adapter must read the loss back from `map()` on the exact measurement object it invoked. It must never assume the loss it calibrated for; calibration proposes, `map()` certifies.
 
-Do not invoke a resolved OpenDP `Measurement` directly after creating the Context. That would bypass the accountant.
+**`dp_accounting` composes those certificates.** For each certified `(epsilon_i, delta_i)`, build the dominating-pair privacy loss distribution:
 
-Do not retain `PrivacyBudget.charge()` arithmetic as the mechanism accountant. Compile-time summation of already certified release losses remains a policy ceiling check, not a replacement mechanism accountant.
+```python
+from dp_accounting.pld import common
+from dp_accounting.pld import privacy_loss_distribution as pldist
 
-Google `dp-accounting` is not an active fallback for this implementation. Stable `dp-accounting==0.6.0` does not provide the verified generic approximate-DP event support needed to replace OpenDP’s mixed thresholded-mechanism composition. It may become an accounting-only fallback after a stable release provides that support and passes Decoy’s Python, license, and composition tests. It cannot replace OpenDP’s mechanisms.
+pld = pldist.from_privacy_parameters(
+    common.DifferentialPrivacyParameters(epsilon_i, delta_i),
+    value_discretization_interval=_PLD_DISCRETIZATION,  # module constant, 1e-4
+)
+```
+
+Compose them with `PrivacyLossDistribution.compose` (and `self_compose(k)` for `k` identical certificates, which is the same result and much faster). Read the fit-wide loss with `composed.get_epsilon_for_delta(delta)` at the caller's requested `delta`.
+
+`from_privacy_parameters` is the correct constructor precisely because Decoy knows each OpenDP measurement only by its certified `(epsilon_i, delta_i)`. The resulting PLD dominates any mechanism satisfying those parameters, so the composed result is a valid upper bound. It is looser than a mechanism-specific PLD would be. Accept that looseness; do not attempt to hand-build a tighter mechanism-specific PLD for OpenDP's thresholded Laplace.
+
+`dp_accounting` 0.6.0 has no generic approximate-DP `DpEvent`, so the `DpEventBuilder` / `PrivacyAccountant` path cannot carry the thresholded categorical release. Verified by enumerating `dp_accounting.dp_event`: there is no `EpsilonDeltaDpEvent`. Use the `pld` module directly, as above. Do not route pure-epsilon columns through `LaplaceDpEvent` and thresholded columns through something else; one uniform representation for every column keeps the composition argument reviewable.
+
+Do not retain `PrivacyBudget.charge()` arithmetic as the mechanism accountant. Compile-time summation of already certified release totals across artifacts remains a policy ceiling check, not a replacement mechanism accountant.
+
+**What Decoy owns, and it is exactly this much.** Naming it precisely is the point; anything beyond this list is a defect:
+
+1. Recordwise value normalization, and the claim that it is recordwise, so one input row contributes at most one element to each column vector. This is the one stability claim that is not OpenDP's. It is structural rather than numeric, and section 7.1 pins it with a test.
+2. The public budget-allocation policy of section 4.3, which decides how the fit-wide budget is divided across queries. Allocation is a utility decision over library-computed quantities, not a privacy derivation.
+3. Wiring OpenDP's certified losses into `dp_accounting`'s composition and asserting the result against the request.
+
+Nothing else. No noise is sampled by Decoy, no scale or threshold is computed by a Decoy formula, no epsilon or delta is added, multiplied, or converted by Decoy arithmetic.
 
 Stop before adapter work if:
 
-- A supported Decoy platform cannot resolve an OpenDP binary wheel.
-- OpenDP cannot construct the mixed numeric and categorical schedule under one compositor.
-- OpenDP’s required Polars integration conflicts with Decoy’s supported dependency range.
-- The accountant cannot report a composed loss bounded by the requested `(epsilon, delta)`.
+- A supported Decoy platform cannot resolve an `opendp` or `dp-accounting` binary wheel.
+- Installing either package moves Decoy's resolved `polars` version.
+- Any constructor in section 4.4 or 4.5 requires the `honest-but-curious` feature, an `opendp.extras` import, or a user-defined measurement.
+- `Measurement.map(1)` cannot be read back from a constructed chain.
+- The `dp_accounting` composition of the certified losses exceeds the requested `(epsilon, delta)` for a schedule the allocation policy claims is feasible.
 
 Do not respond to those failures with manual Laplace noise, manual threshold calibration, or manual floating-point composition.
+
+### 3.4 Resolved spike outcome: the Polars Context is closed
+
+This is settled. Do not re-open it, do not re-run the compositor spike, and do not propose a variant of it.
+
+`docs/plans/2026-07-22-dps-scope-b-spike-result.md` ran the previous revision's section 3.2 spike and returned STOP. Findings that remain true and that this revision is built on:
+
+- `opendp==0.15.1` resolves one `abi3` wheel covering Python 3.10, 3.11, and 3.12, and installs into Decoy's dependency set with one new transitive dependency (`deprecated`) and no resolver conflict.
+- `make_laplace_threshold`, `make_gaussian_threshold`, and `make_count_by` all exist under the assumed names.
+- The only OpenDP API that composes heterogeneous per-column queries against one shared table object is `opendp.extras.polars`'s `Context.compositor`, and it FFI-locks to `polars==1.36.1` through an embedded DSL schema hash. Against Decoy's resolved `polars==1.42.0` it fails at `Context.compositor()` construction, before any query runs. The same failure reproduces on `polars==1.43.0`. No current OpenDP release, including pre-releases, widens that pin.
+
+The product owner's decision on that result: drop the Polars Context, keep OpenDP core mechanisms per column, and use `dp_accounting` as the composition accountant. That is spike-result option 4, and it is the design this document now specifies. Options 1 (pin Polars to 1.36.1) and 2 (wait for upstream) are rejected.
+
+Facts verified in the build venv after that decision, which the implementer may rely on without re-deriving:
+
+- `opendp 0.15.1`, `dp-accounting 0.6.0`, and `polars 1.42.0` install and coexist.
+- Both mechanism chains build and run under `contrib` alone, with zero Polars involvement.
+- `make_laplace_threshold` takes `metrics.l01inf_distance(dp.absolute_distance(T=int))` as its input metric, not `l1_distance`. Passing `l1_distance` is a hard FFI cast error, not a graceful rejection. When the mechanism is reached through `make_count_by` as section 4.5 requires, `make_count_by`'s own output metric is already `L01InfDistance(AbsoluteDistance(i32))`, so `then_laplace_threshold` picks it up and the error cannot occur. Constructing the measurement standalone is where the mistake happens.
+- `make_laplace_threshold`'s `threshold` argument is the count type, `i32`. Values above `2**31 - 1` raise `ValueError: ... is not representable by i32`. Section 4.3 bounds the threshold search accordingly.
 
 ## 4. Target architecture
 
@@ -156,7 +204,9 @@ fit_dp_snapshot(dataframe, categorical_columns, numeric_domains,
                 epsilon, delta)
         |
         | fixed public query schedule
-        | OpenDP Context compositor
+        | one OpenDP Transformation >> Measurement per query
+        | each certified by its own Measurement.map(1)
+        | dp_accounting PLD composition over those certificates
         v
 DP snapshot artifact
   - released numeric marginals
@@ -205,6 +255,8 @@ Contract requirements:
 
 - `categorical_columns` and `numeric_domains` are mandatory, even when one is empty.
 - `epsilon` and `delta` are mandatory keyword-only arguments.
+- `epsilon` must be finite and strictly positive. `delta` must be finite and strictly positive; `delta = 0` is rejected with a typed error even for a numeric-only fit, and `delta >= 1` is rejected as well.
+- `numeric_bins` must be an integer of at least 2. Its default is 10 and its actual value is recorded in the artifact.
 - The union of categorical names and numeric-domain keys must equal `frame.columns`.
 - The two sets must be disjoint.
 - Every numeric lower and upper bound must be finite and satisfy `lower < upper`.
@@ -248,7 +300,10 @@ No other derivation is permitted, and no exact fallback is permitted when a deri
 A numeric `stats` block contains exactly:
 
 ```text
-bin_edges   from the declared public domain and numeric_bins; never from data
+bin_edges   the full numeric_bins + 1 boundary list spanning [lower, upper],
+            derived from the declared public domain and numeric_bins; never
+            from data. Note the OpenDP chain in section 4.4 is constructed
+            from the numeric_bins - 1 interior cut points of this same list.
 bin_counts  released counts, serialized with max(0, int(round(v)))
 min         the declared domain lower bound
 max         the declared domain upper bound
@@ -268,13 +323,15 @@ Do not emit the `high_cardinality` provenance marker (`quality/snapshot.py:510`)
 
 `support_origin` is not emitted by `fit_dp_snapshot`. It existed to prove a non-DP fit had used caller domains; under Scope B every column in the artifact came from a declaration by construction, and the `dp` block is the provenance. Compile-time checks must key off the `dp` block and the declared `categorical_columns`/`numeric_domains` recorded in it, not off `support_origin`.
 
-### 4.3 Fixed query schedule
+### 4.3 Fixed query schedule, budget allocation, and composition
+
+#### 4.3.1 The schedule
 
 Construct the schedule before examining column values:
 
 ```text
 1 table row-count query
-1 bounded histogram query per numeric column
+1 binned-count query per numeric column
 2 queries per categorical column:
   - thresholded unknown-key grouped count
   - noised non-null total
@@ -286,15 +343,129 @@ Thus:
 query_count = 1 + numeric_column_count + 2 * categorical_column_count
 ```
 
-Use a single OpenDP Context compositor with a public, deterministic query order:
+The query order is public and deterministic:
 
 1. Table row count.
 2. Numeric columns sorted by column name.
 3. Categorical columns sorted by column name, with grouped count before non-null total.
 
-The Context receives the fit-wide `(epsilon, delta)` and `split_evenly_over=query_count`, unless the dependency spike proves that a different public fixed weight vector is required by the stable grouping API. Any alternative weighting must be written as a constant policy, tested against column order, and documented before implementation. It may not depend on values, nullness, cardinality, or mechanism output.
+Every query is an independent OpenDP measurement over its own column vector. There is no shared compositor object, because OpenDP 0.15.1 offers no non-Polars way to build one across heterogeneous per-column domains (section 3.4). Composition happens after the fact, over the certificates each measurement issues.
 
-After all scheduled queries, obtain the actual composed privacy loss from the OpenDP compositor. Assert that it does not exceed the requested `(epsilon, delta)` before serializing the artifact.
+Sequential composition over per-column measurements is sound here for the ordinary reason: each measurement is applied to a projection of the same dataset, one added or removed row perturbs each projection by at most one element, and every measurement's map is evaluated at that same `d_in = 1`. What Decoy must guarantee, and what section 3.3 item 1 names, is that the projection really is recordwise.
+
+#### 4.3.2 Budget allocation
+
+Allocation is a fixed public policy. It depends only on `epsilon`, `delta`, `numeric_column_count`, and `categorical_column_count`. It may not depend on values, nullness, cardinality, dtype, or any mechanism output.
+
+Delta is consumed only by thresholded categorical grouping queries. Allocate:
+
+```text
+delta_threshold_per_categorical = (delta / 2) / categorical_column_count
+```
+
+The unallocated half of `delta` is composition headroom, spent by `get_epsilon_for_delta` when the certificates are composed. When `categorical_column_count` is zero, no query consumes delta and the whole of it is headroom. `delta = 0` is rejected at the API boundary regardless (section 4.2 and section 9.10 item 2).
+
+Epsilon is allocated as a single per-query value `eps_q`, identical for every query in the schedule. Do not compute `eps_q` as `epsilon / query_count`. Instead select the largest `eps_q` whose resulting schedule composes within the request, by monotone search over the accountant:
+
+```python
+def _composed_epsilon(eps_q: float) -> float:
+    """Fit-wide loss for a schedule built at per-query epsilon eps_q."""
+    certificates = _certify_schedule(eps_q, delta_threshold_per_categorical)
+    return _compose(certificates).get_epsilon_for_delta(delta)
+
+
+eps_q = _search_largest(lambda e: _composed_epsilon(e) <= epsilon,
+                        lower=_EPS_Q_FLOOR, upper=epsilon)
+```
+
+`_certify_schedule` builds the measurements and reads their maps; it does not touch data. `_search_largest` is a fixed-iteration bisection over a monotone predicate, `_PLD_SEARCH_ITERATIONS = 40`, with `_EPS_Q_FLOOR = 1e-9`. Fix both as module constants and comment the derivation.
+
+Two reasons this is a search and not a division. It is exact rather than approximately safe: `epsilon / query_count` overshoots the request by roughly the PLD discretization interval on some schedules, which would make the section 4.3.4 assertion fail on a correct implementation and invite someone to weaken the assertion. And it recovers the composition benefit the accountant provides. For a 20-numeric, 10-categorical fit at `epsilon = 1.0`, even division yields `eps_q = 0.0244` and a composed loss of `0.64`, leaving a third of the budget unspent; the search yields `eps_q = 0.0372` and a composed loss of `0.998`.
+
+The search is data-independent, so its result is a pure function of the four public inputs. Caching it is permitted. Making it depend on anything else is not.
+
+If the predicate is false even at `_EPS_Q_FLOOR`, the requested budget cannot fund the schedule. Raise a typed `dp_budget_infeasible` error naming `query_count`, `epsilon`, and `delta`. Do not silently widen the request.
+
+#### 4.3.3 Calibrating one measurement to its allocation
+
+Calibration searches OpenDP's own privacy map. It never inverts a mechanism formula.
+
+Numeric and count queries, which report a scalar epsilon:
+
+```python
+scale = dp.binary_search(
+    lambda s: (transformation >> meas.then_laplace(scale=s)).map(1) <= eps_q,
+    bounds=(1e-12, 1e12),
+)
+```
+
+The thresholded categorical query reports an `(epsilon, delta)` pair, so calibrate the two parameters in two separate scalar searches. Do not pass a tuple `d_out` to `binary_search_param`: the pair carries only a partial order, and OpenDP raises `FailedFunction("unknown ordering between ...")` when the candidates are incomparable.
+
+```python
+_I32_MAX = 2**31 - 1
+
+
+def _chain(scale: float, threshold: int) -> dp.Measurement:
+    return count_by >> meas.then_laplace_threshold(scale=scale, threshold=threshold)
+
+
+scale = dp.binary_search(
+    lambda s: _chain(s, _I32_MAX).map(1)[0] <= eps_q,
+    bounds=(1e-12, 1e12),
+)
+threshold = dp.binary_search(
+    lambda t: _chain(scale, t).map(1)[1] <= delta_threshold_per_categorical,
+    bounds=(1, _I32_MAX),
+    T=int,
+)
+```
+
+`threshold` is the count type `i32`; a bound above `_I32_MAX` raises `ValueError: ... is not representable by i32`. If no threshold within that range reaches the allocated delta, raise `dp_budget_infeasible` rather than accepting a larger delta.
+
+After construction, read the certificate back from the constructed object:
+
+```python
+certified_loss = measurement.map(1)
+```
+
+The certificate, not the allocation target, is what enters composition and what the artifact's totals derive from. A calibration search that lands slightly under its target must show up as a slightly smaller certified loss, not as the target.
+
+#### 4.3.4 Composition and the fit-wide assertion
+
+Compose every certificate in the schedule through `dp_accounting.pld` exactly as section 3.3 specifies, then:
+
+```python
+epsilon_total = composed.get_epsilon_for_delta(delta)
+delta_total = delta
+```
+
+Assert `epsilon_total <= epsilon` and that `epsilon_total` is finite before serializing the artifact. A non-finite `epsilon_total` means the composed mechanism's delta floor exceeds the requested delta; that is a real failure, so raise `dp_budget_infeasible` rather than reporting infinity.
+
+The number of certificates composed must equal `query_count`. Assert that too. This assertion is what replaces the OpenDP Context's runtime refusal of an unscheduled query, and section 4.3.5 explains why the replacement is weaker.
+
+#### 4.3.5 What dropping the Context costs, stated plainly
+
+One guarantee genuinely weakened, and it must not be papered over.
+
+Under the previous design, OpenDP's `Context` was the only route to a release: an unscheduled query was refused by the library at runtime with an exhausted-allowance error, and the accumulated loss was maintained by the same library that owned the mechanisms. Enforcement of the schedule was external to Decoy.
+
+Under this design, nothing outside Decoy prevents a Decoy code path from constructing an OpenDP measurement and invoking it without registering a certificate. The schedule is enforced by `OpenDpReleaseSession` (section 5, step 2), which is Decoy code. A bug in that class is a budget bug that no library will catch.
+
+What did not weaken, and must stay that way:
+
+- Per-measurement privacy loss is still computed entirely by OpenDP's own privacy maps.
+- Sensitivity and stability are still derived by OpenDP, because the row-to-counts aggregation runs inside chained OpenDP transformations under `symmetric_distance()` (binding decision 15). Feeding pre-aggregated Python counts to a bare mechanism would move that derivation into Decoy and would be a second, larger weakening. Do not do it.
+- Composition is still computed by a library, `dp_accounting`, over a dominating-pair representation that upper-bounds each certified mechanism.
+- No epsilon, delta, scale, or threshold is produced by a Decoy formula.
+
+The mitigations that make the remaining exposure reviewable, all mandatory:
+
+1. `OpenDpReleaseSession` is the sole construction and invocation site for OpenDP measurements in the codebase. `quality/dp.py` calls the session; it does not call `opendp` directly. Pin this with an import-shape test so a later contributor cannot quietly add a second call site.
+2. The session refuses any release whose query name is not in the frozen schedule, and refuses a second release under a name already used.
+3. The session refuses to report a fit-wide loss until every scheduled query has released exactly once.
+4. The certificate count is asserted against `query_count` before serialization (section 4.3.4).
+
+Record this shift in `docs/what-we-cannot-prove.md` per section 8.1. A reader is entitled to know that the schedule boundary is Decoy-enforced.
 
 ### 4.4 Numeric marginal
 
@@ -304,7 +475,7 @@ For every declared numeric column:
 2. Clamp finite and infinite numeric values to the declared public domain.
 3. Exclude normalized nulls.
 4. Create fixed public bin edges from the domain and `numeric_bins`.
-5. Use OpenDP’s bounded histogram/count construction.
+5. Build the OpenDP chain below and invoke it on the normalized `list[float]`.
 6. Include every public bin in the output even when its released count rounds to zero.
 7. Convert released counts for serialization with:
 
@@ -314,7 +485,29 @@ For every declared numeric column:
 
 8. Derive any displayed total, distinct-bin count, or null count only from released quantities.
 
-All-null and all-inf columns therefore have the same kind, bin edges, output shape, query count, and budget schedule as any other values under the same declarations.
+The chain, verified end to end in the build venv:
+
+```python
+domain = dp.vector_domain(dp.atom_domain(T=float, nan=False))
+metric = dp.symmetric_distance()
+
+# interior cut points only: B bins over [lower, upper] means B - 1 edges,
+# which makes find_bin's category range exactly 0..B-1 with no overflow bin.
+transformation = (
+    tf.make_find_bin(domain, metric, edges=interior_edges)
+    >> tf.then_count_by_categories(categories=list(range(numeric_bins)),
+                                   null_category=False)
+)
+measurement = transformation >> meas.then_laplace(scale=scale)
+```
+
+Three properties of this chain the implementer must not reorganize away:
+
+- `make_find_bin` maps a value below the first edge to bin 0 and a value at or above the last edge to bin `numeric_bins - 1`. Combined with the clamp in step 2, that is exactly the declared public domain's semantics, and it handles `+inf` and `-inf` without a special case.
+- `null_category=False` is required. Leaving it at its default appends a null bucket the artifact schema has no slot for.
+- `atom_domain(T=float, nan=False)` forbids NaN, so step 3 must have removed every NaN. Passing a NaN through is a domain violation, not silent behavior.
+
+Invoking the chain on an empty list returns a full-length count vector of noise, so all-null and all-inf columns have the same kind, bin edges, output shape, query count, and budget schedule as any other values under the same declarations. Do not add a short-circuit for the empty case; the whole point of F2's closure is that there is no branch to take.
 
 ### 4.5 Categorical marginal
 
@@ -322,8 +515,8 @@ For every declared categorical column:
 
 1. Normalize values recordwise without inspecting cardinality.
 2. Exclude nulls from label grouping.
-3. Submit unknown-key grouped counts through OpenDP’s stable thresholded grouping mechanism.
-4. Submit a separate noised non-null total through the same compositor.
+3. Submit unknown-key grouped counts through OpenDP's stable thresholded grouping chain below.
+4. Submit a separate noised non-null total through the count chain below, as its own scheduled query with its own certificate.
 5. Receive only the labels retained by OpenDP. Decoy must never receive a list of suppressed noisy label counts for use in output construction.
 6. Serialize retained counts only after OpenDP has completed threshold selection.
 7. Sort output pairs only after release, by:
@@ -346,6 +539,23 @@ For every declared categorical column:
 
 9. Never calculate `other_count` from suppressed labels, exact cardinality, exact counts, or exact totals.
 
+The two chains, verified end to end in the build venv:
+
+```python
+domain = dp.vector_domain(dp.atom_domain(T=str))
+metric = dp.symmetric_distance()
+
+count_by = tf.make_count_by(domain, metric)
+grouped = count_by >> meas.then_laplace_threshold(scale=scale, threshold=threshold)
+
+counter = tf.make_count(domain, metric, TO=int)
+non_null_total = counter >> meas.then_laplace(scale=total_scale)
+```
+
+`make_count_by`'s output metric is already `L01InfDistance(AbsoluteDistance(i32))`, which is what `make_laplace_threshold` requires. Reaching the measurement through the chain is therefore also what keeps you out of the `l1_distance` cast error described in section 3.4. If you find yourself writing `dp.map_domain(...)` and `metrics.l01inf_distance(...)` by hand to construct the measurement standalone, you have left the design.
+
+`grouped` returns a plain dict of retained labels to noisy counts. On an empty input it returns `{}`, which is the no-retained-labels case section 4.5's closing paragraph and section 9.5 already cover. It has no separate empty branch and must not acquire one.
+
 OpenDP owns the continuous threshold comparison. Decoy must not calculate `tau`, compare to `tau`, or round a value before OpenDP’s selection. The adapter may only serialize an already selected release.
 
 If no labels survive, the released marginal may contain only `other_count`. `other_mode: emit` can sample the existing other token. A configuration requiring redistribution with no kept labels fails during compilation based on the already-DP-released artifact. That failure is post-processing and spends no additional privacy budget.
@@ -361,10 +571,11 @@ Use a versioned block:
     "release_id": "32-lowercase-hex-characters",
     "scope": "single-column-marginals",
     "adjacency": "add-remove-one-row",
-    "epsilon_total": 1.0,
+    "epsilon_total": 0.999995,
     "delta_total": 0.000001,
-    "accountant": "OpenDP Context compositor",
+    "accountant": "dp_accounting PLD composition over OpenDP privacy maps",
     "opendp_version": "0.15.1",
+    "dp_accounting_version": "0.6.0",
     "query_count": 4,
     "numeric_bins": 10,
     "categorical_columns": ["country"],
@@ -377,7 +588,15 @@ Use a versioned block:
 
 `query_count` in this example is `1 + 1 numeric + 2 * 1 categorical = 4`. It is recorded so a compile-time check can recompute it from `categorical_columns` and `numeric_domains` and reject an artifact whose declared schedule does not match its declared columns. `numeric_bins` is recorded for the same reason: bin edges must be reproducible from public metadata alone.
 
-The artifact must not contain exact row counts, exact distinct counts, suppressed label names, suppressed noisy counts, inferred kinds, or an RNG seed. It must not carry a per-release `charges` breakdown of the kind `quality/dp.py:284` emits today; the fit-wide `(epsilon_total, delta_total)` reported by the compositor is the whole receipt, and a per-query breakdown invites a consumer to re-derive a per-column claim the scope does not support.
+`epsilon_total` is the accountant's composed result, `composed.get_epsilon_for_delta(delta)`, not the requested epsilon. It is normally slightly below the request, as in the example above. Do not round it up to the request, and do not write the request in its place; the receipt must state what was actually certified.
+
+`delta_total` is the caller's requested delta, because that is the delta at which the composed epsilon was evaluated. The pair is only meaningful together.
+
+`accountant` and `dp_accounting_version` are recorded so a consumer can tell which composition produced the totals. Both versions are checked at compile time against the running environment, and a mismatch is a rejection, not a warning: a receipt composed by a different accountant version is a receipt this build cannot reproduce.
+
+The artifact must not contain exact row counts, exact distinct counts, suppressed label names, suppressed noisy counts, inferred kinds, or an RNG seed. It must not carry a per-release `charges` breakdown of the kind `quality/dp.py:284` emits today, and it must not carry the per-query certificates that fed the accountant. The fit-wide `(epsilon_total, delta_total)` is the whole receipt; a per-query breakdown invites a consumer to re-derive a per-column claim the scope does not support. Per-query certificates live inside `OpenDpReleaseSession` for the duration of the fit and are not serialized.
+
+It must not record the calibrated noise scales or thresholds either. Those are public in the sense that they follow from the allocation policy, but writing them into the artifact creates a second apparent source of truth for the privacy claim, and the section 4.3.4 receipt is the only one.
 
 ### 4.7 Pinned Plan types
 
@@ -475,7 +694,7 @@ Retain the top-level `generate_tables` export, but make it Plan-only. This keeps
 
 ## 5. Module-by-module work plan
 
-### Step 1: Add and prove the OpenDP dependency
+### Step 1: Add and prove the OpenDP and dp-accounting dependencies
 
 Files:
 
@@ -483,20 +702,24 @@ Files:
 - Dependency lock or generated metadata used by this repository
 - New `tests/unit/quality/test_opendp_dependency.py`
 
-Assertion first:
+Assertions first:
 
 - `test_opendp_supported_python_and_core_mechanisms_import`
+- `test_dp_accounting_composes_mixed_epsilon_and_epsilon_delta_certificates`
+- `test_dp_stack_does_not_import_polars_or_opendp_extras`
 
 Before:
 
-- No OpenDP dependency.
+- No OpenDP or dp-accounting dependency.
 - Decoy owns mechanism and accounting calculations.
 
 After:
 
-- `opendp==0.15.1` is a core dependency.
-- The test imports the required API and constructs numeric, categorical, and composed measurements.
-- No production adapter work starts until the wheel and compositor spike passes.
+- `opendp==0.15.1` and `dp-accounting==0.6.0` are core dependencies.
+- The first test builds both section 4.4 and 4.5 chains under `contrib` alone and reads `map(1)` from each.
+- The second test composes one scalar-epsilon certificate and one `(epsilon, delta)` certificate through `dp_accounting.pld` and reads back an epsilon at a fixed delta.
+- The third test asserts that importing `decoy_engine.quality.dp` pulls in neither `polars` nor `opendp.extras`, and that `opendp[polars]` is absent from the resolved environment. This is the mechanical form of the section 3.1 STOP condition and it must land in this step, before any adapter code exists to violate it.
+- No production adapter work starts until all three pass on the supported matrix.
 
 ### Step 2: Replace manual budget accounting
 
@@ -507,9 +730,14 @@ Files:
 
 Assertions first:
 
-- `test_release_session_reports_opendp_composed_privacy_loss`
+- `test_release_session_reports_dp_accounting_composed_privacy_loss`
+- `test_release_session_certificates_come_from_measurement_maps`
 - `test_release_session_refuses_unscheduled_query`
+- `test_release_session_refuses_duplicate_release_of_one_query`
+- `test_release_session_refuses_loss_report_before_schedule_is_complete`
 - `test_release_session_query_schedule_is_column_order_independent`
+- `test_release_session_budget_allocation_is_data_independent`
+- `test_release_session_raises_dp_budget_infeasible_when_schedule_cannot_be_funded`
 
 Before:
 
@@ -517,12 +745,15 @@ Before:
 
 After:
 
-- Replace them with a thin `OpenDpReleaseSession` around one OpenDP Context compositor.
-- The session receives a frozen public query schedule at construction.
-- The session releases each resolved `Measurement` through the Context.
-- The session exposes the composed privacy loss reported by OpenDP.
-- The session refuses query names or counts outside the schedule.
-- No mechanism formulas or manual fit-time composition remain in this module.
+- Replace them with `OpenDpReleaseSession`, the single owner of the fit's privacy bookkeeping.
+- The session receives a frozen public query schedule and the fit-wide `(epsilon, delta)` at construction, and runs the section 4.3.2 allocation search there. Construction touches no data.
+- The session is the only place in the codebase that constructs or invokes an OpenDP `Measurement` (section 4.3.5 mitigation 1). It exposes a release method per scheduled query name; callers hand it a normalized value vector and get back the mechanism's output.
+- For each release the session records the certificate read from `measurement.map(1)`, keyed by query name.
+- The session composes those certificates through `dp_accounting.pld` and exposes `(epsilon_total, delta_total)` per section 4.3.4.
+- The session refuses an unscheduled query name, a second release under a used name, and a loss report requested before every scheduled query has released.
+- No mechanism formulas, no epsilon or delta arithmetic, and no manual composition remain in this module. The only numeric expressions permitted are the allocation policy of section 4.3.2, which operates on the request and the query counts, never on a mechanism output.
+
+`test_release_session_certificates_come_from_measurement_maps` is the load-bearing one: it must prove that a certificate the session records equals `measurement.map(1)` for the object actually invoked, not the allocation target the session calibrated toward. Substitute a measurement whose map returns a value below the target and assert the recorded certificate follows the map.
 
 If `PrivacyBudget` remains for compile-time policy ceilings, rename it to `ReleaseLedger` and make its role explicit. It may sum already certified release totals by release ID, but it must not claim to be the mechanism accountant.
 
@@ -549,6 +780,9 @@ Assertions first:
 - `test_categorical_other_count_is_derived_only_from_noised_total_and_kept_counts`
 - `test_adapter_never_rounds_or_compares_before_release`
 - `test_dp_artifact_emits_no_exact_column_scalars`
+- `test_dp_artifact_totals_are_the_accountant_result_not_the_request`
+- `test_dp_artifact_records_opendp_and_dp_accounting_versions`
+- `test_dp_fit_certificate_count_equals_query_count`
 - `test_count_one_release_probability_upper_bound` (statistical, section 7.2)
 - `test_independent_dp_fits_are_not_deterministic` (statistical, section 7.2)
 
@@ -565,10 +799,11 @@ After:
 - Delete manual Laplace sampling and manual threshold tests.
 - Delete `apply_dp_noise`.
 - Add `fit_dp_snapshot` with the binding contract from section 4.
-- Add a private adapter seam, such as `_OpenDpBackend`, for mechanism-level test doubles.
+- `quality/dp.py` normalizes values, drives `OpenDpReleaseSession` through the schedule, and serializes the result. It does not import `opendp` or `dp_accounting`. Both imports live in `quality/dp_budget.py` alongside the session.
+- Add a private adapter seam, such as `_OpenDpBackend`, inside the session module for mechanism-level test doubles. A double supplies released values and a certificate; it never supplies an epsilon or delta that did not come from a map-shaped object.
 - Production construction always uses unseeded OpenDP randomness.
 - Test doubles return already released measurements. They do not accept a random seed.
-- Add the OpenDP source-pattern citations to the module docstring.
+- Add the OpenDP and `dp_accounting` source-pattern citations from section 3.2 to the module docstrings, in both `quality/dp.py` and `quality/dp_budget.py`.
 
 Do not route the DP fit through `compute_distribution_snapshot`. That function materializes exact statistics and has value-dependent kind behavior unsuitable for DP.
 
@@ -672,6 +907,8 @@ Assertions first:
 - `test_same_release_id_with_different_digest_is_rejected`
 - `test_dp_snapshot_without_release_id_is_rejected`
 - `test_composed_release_budget_above_declared_ceiling_is_rejected`
+- `test_dp_artifact_query_count_inconsistent_with_declared_columns_is_rejected`
+- `test_dp_artifact_from_a_different_library_version_is_rejected`
 
 Before:
 
@@ -699,6 +936,8 @@ After:
 - The same ID and a different digest is `dp_release_id_conflict`.
 - Different IDs always compose, regardless of equal bytes or equal released values.
 - Compare the release-ID ledger total to the configuration ceiling.
+- Recompute `query_count` from the artifact's own `dp.categorical_columns` and `dp.numeric_domains` and reject a mismatch.
+- Reject an artifact whose `dp.opendp_version` or `dp.dp_accounting_version` differs from the running environment's. A receipt this build cannot reproduce is not a receipt it may accept.
 - Accept already-read artifact bytes from the compiler. Do not open paths here.
 - Delete the `support_origin == "caller"` eligibility rule at `_checks_dp.py:442-459` and the `dp_snapshot_numeric_support_data_dependent` code with it. `fit_dp_snapshot` does not emit `support_origin` (section 4.2.1), so leaving that rule in place rejects every artifact this build produces. Replace it with a check that the column appears in the artifact's own `dp.categorical_columns` or `dp.numeric_domains` under the right kind, which is the same guarantee sourced from the new provenance block.
 - Replace the blanket categorical rejection at `_checks_dp.py:438-441` and `check_dp_categorical_unsupported` (`:147-221`). Categorical DP is now supported. Keep a rejection for every kind that is neither declared-numeric nor declared-categorical, so the allow-list stays default-reject.
@@ -832,6 +1071,8 @@ Every row names an observable the test reads. A row whose test would still pass 
 | F4, snapshot TOCTOU | Plan embeds verified bytes and compiled spec; runtime never reopens the path | `test_generate_tables_uses_pinned_snapshot_after_file_swap` and `test_compile_plan_reads_each_snapshot_path_once` | Post-compile file swap plus a patched `open` that raises. Generated values match the original artifact and no read occurs. The second test counts opens per path so an in-compile swap window cannot reopen. |
 | F5, content-hash undercharge | Deduplicate by fit-time release ID; distinct IDs always compose | `test_distinct_release_ids_with_identical_released_values_compose_budget` and `test_same_release_id_referenced_twice_is_charged_once` | Two artifacts whose released counts, epsilon, and delta are all equal but whose `release_id` differs. Charged total is 2x. Note that distinct release IDs can never produce identical bytes, since the ID is inside the artifact; the observable is identical released values, not identical bytes. A digest-keyed ledger charges 1x and fails. |
 | F6, falsy `dp: {}` fail-open | Presence is detected by key membership; malformed present values fail closed | `test_empty_dp_block_fails_closed_with_dp_budget_declaration_malformed` and `test_non_mapping_dp_block_fails_closed` | Compilation raises `dp_budget_declaration_malformed` for `{}`, `null`, and a list. A truthiness check returns `None` and compiles clean. |
+| A1, unscheduled or uncertified release (new with this revision, see section 4.3.5) | `OpenDpReleaseSession` is the sole OpenDP call site, refuses unscheduled and duplicate query names, refuses to report a loss before the schedule completes, and the fit asserts certificate count equals `query_count` | `test_release_session_refuses_unscheduled_query`, `test_release_session_refuses_duplicate_release_of_one_query`, `test_release_session_refuses_loss_report_before_schedule_is_complete`, `test_dp_fit_certificate_count_equals_query_count`, and the import-shape half of `test_dp_stack_does_not_import_polars_or_opendp_extras` | The session raises on an out-of-schedule name, on a repeated name, and on an early loss request; the fit raises when certificates and `query_count` disagree; and no module outside `quality/dp_budget.py` imports `opendp`. The OpenDP Context used to refuse an extra query itself. It no longer exists, so a release path that skips the session is charged nothing and nothing outside Decoy notices. Deleting any one of these four checks reopens that hole. |
+| A2, hand-derived privacy parameter (new with this revision) | Every epsilon, delta, scale, and threshold is read from an OpenDP privacy map or a `dp_accounting` PLD; allocation policy operates only on the request and public query counts | `test_release_session_certificates_come_from_measurement_maps` and `test_dp_artifact_totals_are_the_accountant_result_not_the_request` | A substituted measurement whose map returns less than the calibration target: the recorded certificate must follow the map. And an artifact whose `epsilon_total` equals the accountant's composed result rather than the requested epsilon. An implementation that records the target, or that sums per-query epsilons itself, fails both. |
 | F7, documentation overclaim | Claims state approximate marginal DP, pinned-Plan boundary, composition, and joint exclusion | `test_dp_claim_copy_is_marginal_and_names_joint_exclusion` | The canonical limitations page contains the required semantic phrases and none of the removed Option A claims. The test lands with the code, not after it. It is a repo test, not a sign-off gate; see section 9.9. |
 
 ## 7. Test plan
@@ -847,7 +1088,9 @@ Use this seam to prove:
 - Serialization rounds only values already retained by OpenDP.
 - The public fit signature has no seed or RNG.
 - Query schedule names and counts derive only from declarations.
-- Release metadata records the loss reported by the compositor.
+- Release metadata records the accountant's composed loss, and each certificate records its measurement's map result.
+- Budget allocation is a pure function of `(epsilon, delta, numeric_column_count, categorical_column_count)`. Run the allocation twice over two datasets that differ in every value under one declaration and assert identical scales, thresholds, and certificates.
+- Value normalization is recordwise. Feed a fixture through the normalizer and assert `len(output) == len(input)` for the row-count vector, and that removing one input row removes at most one element from every derived column vector. This is the one stability claim Decoy makes on its own (section 3.3 item 1), so it needs a test rather than an argument.
 
 Do not mock private data into a hand-written threshold implementation. Decoy must have no such implementation to test.
 
@@ -866,11 +1109,11 @@ The count-one test must:
 2. Fix the trial count `N` and the one-sided confidence level `1 - alpha` with `alpha = 1e-6` as test constants.
 3. Run the real OpenDP threshold mechanism `N` times and count releases of the count-one label.
 4. Compute a one-sided upper Clopper-Pearson bound on the release probability at level `1 - alpha`.
-5. Assert **only** that this upper bound does not exceed the mechanism's configured per-query delta times a documented slack factor.
-6. Report `N`, releases, observed rate, the bound, and the configured per-query delta on failure.
+5. Assert **only** that this upper bound does not exceed the measurement's certified delta times a documented slack factor.
+6. Report `N`, releases, observed rate, the bound, and the certified delta on failure.
 7. Carry a `statistical` marker if its runtime is unsuitable for every unit-test invocation, and still run in the required CI job.
 
-Step 5 is one-sided on purpose. A correctly calibrated threshold mechanism may release a count-one label far less often than delta, including never in `N` trials. Do not assert a two-sided band, a lower bound, or "close to delta"; that assertion fails on a correct implementation and the natural fix is to weaken the threshold, which is the exact defect 1c describes. Compare against the **per-query** delta the compositor allocated to the thresholded grouping query, not the fit-wide delta; using the fit-wide delta makes the bound loose enough to miss a real regression when several queries are scheduled. Choose `N` so that the bound at `alpha = 1e-6` is tight enough to catch a mechanism whose effective release probability is an order of magnitude above the per-query delta, and state that sensitivity target in the test docstring.
+Step 5 is one-sided on purpose. A correctly calibrated threshold mechanism may release a count-one label far less often than delta, including never in `N` trials. Do not assert a two-sided band, a lower bound, or "close to delta"; that assertion fails on a correct implementation and the natural fix is to weaken the threshold, which is the exact defect 1c describes. Compare against the **certified** delta of the thresholded grouping measurement itself, the second element of its `map(1)`, not the fit-wide delta and not the allocation target from section 4.3.2. The certificate is normally below the allocation target because the threshold search lands on an integer. Using the fit-wide delta makes the bound loose enough to miss a real regression when several queries are scheduled; using the allocation target makes it loose by the rounding gap. using the fit-wide delta makes the bound loose enough to miss a real regression when several queries are scheduled. Choose `N` so that the bound at `alpha = 1e-6` is tight enough to catch a mechanism whose effective release probability is an order of magnitude above the per-query delta, and state that sensitivity target in the test docstring.
 
 `test_independent_dp_fits_are_not_deterministic` must not compare two fits for inequality on a single scalar; independently noised discrete counts collide often enough to make that flaky. Run `k = 5` independent fits over a fixture with at least 20 released numeric bin counts, and assert that the `k` released-count vectors are not all identical. Justify in a comment why the collision probability under the configured noise scale is below `1e-6`; if the fixture cannot meet that, widen the fixture rather than lowering `k`.
 
@@ -923,15 +1166,17 @@ Cover:
 - Composed epsilon above the declared ceiling fails.
 - Composed delta above the declared ceiling fails.
 - `dp: {}`, `dp: null`, incomplete DP settings, NaN budget values, and negative budget values fail closed.
+- An artifact whose `query_count` disagrees with its own declared columns fails.
+- An artifact whose recorded `opendp_version` or `dp_accounting_version` differs from the running environment fails.
 
-Use `math.fsum` or `Decimal` for compile-time ceiling summation and define one conservative comparison tolerance. This arithmetic checks a policy ceiling over certified releases; it does not replace OpenDP’s fit-time accountant.
+Use `math.fsum` or `Decimal` for compile-time ceiling summation and define one conservative comparison tolerance. This arithmetic checks a policy ceiling over certified releases; it does not replace the fit-time accountant of section 4.3.4, and it must never recompute or adjust an artifact's recorded totals.
 
 ### 7.6 Full verification
 
 Before review, run the repository’s required formatting, linting, type-checking, and complete test suite from `CONTRIBUTING.md`. Then run:
 
 1. The unseeded statistical suite multiple times.
-2. The supported Python matrix.
+2. The supported Python matrix, confirming the resolved `polars` version is unchanged and that neither `polars` nor `opendp.extras` is imported by the DP path.
 3. Plan serialization round trips.
 4. The exact entrypoint-bypass and file-swap PoCs.
 5. Tests with DP categorical-only, numeric-only, and mixed fits.
@@ -966,6 +1211,8 @@ Document these limits:
 - Serialized Plan files are integrity-checked internally but not authenticated against hostile replacement.
 - A Plan embedding an exact non-DP snapshot inherits that snapshot’s sensitivity.
 - DP artifacts reveal the labels and counts deliberately released by OpenDP.
+- Each column's privacy loss is computed by OpenDP's own privacy map, and the fit-wide loss is composed by Google's `dp_accounting` from those per-column certificates. The composition uses a dominating-pair representation of each certified `(epsilon, delta)`, so the reported total is a valid upper bound rather than the tightest achievable one.
+- The fixed query schedule is enforced by Decoy, not by the DP library. Earlier drafts of this feature planned to route every release through an OpenDP compositor that would itself refuse an unscheduled query; that route is unavailable (it requires a Polars version Decoy does not run). A defect in Decoy's release session could therefore under-count a release, and no library would catch it. The mitigations are a single release call site, refusal of unscheduled and repeated queries, and an assertion that certificates match the declared schedule length.
 - A DP artifact’s recorded `epsilon_total` and `delta_total` are self-declared. Decoy verifies that the artifact is internally consistent and that its release ID is unique, but a hand-edited artifact can understate what it actually spent. The compile-time ceiling check is a policy control over artifacts Decoy itself produced, not a defense against a caller who edits their own artifacts.
 
 ### 8.2 Exact claim sentences
@@ -984,7 +1231,7 @@ Product review of this wording happens in the pre-release docs pass, not here, a
 
 Record:
 
-- OpenDP 0.15.1 as the mechanism and accountant dependency.
+- OpenDP 0.15.1 as the mechanism dependency and Google `dp-accounting` 0.6.0 as the composition accountant.
 - Numeric and categorical marginal support.
 - The accepted breaking `fit_dp_snapshot` contract.
 - Required public categorical and numeric declarations.
@@ -1013,27 +1260,30 @@ The test should protect required semantic phrases, not the entire prose verbatim
 
 The required stable-key categorical machinery is exposed through OpenDP’s `contrib` feature. This is an accepted consequence of the locked OpenDP choice, but it raises review requirements.
 
-Enable only `contrib`. Do not enable `honest-but-curious`, construct user-defined measurements, or bypass OpenDP checks. Record the exact OpenDP constructors used in `quality/dp.py` and submit those calls to dennis for adversarial review.
+Enable only `contrib`. Every constructor in sections 4.4 and 4.5 has been verified to build and run under `contrib` alone. Do not enable `honest-but-curious`, construct user-defined measurements, or bypass OpenDP checks. Record the exact OpenDP constructors used in `quality/dp_budget.py` and submit those calls to dennis for adversarial review.
 
-Stop if the implementation requires copying an OpenDP formula into Decoy.
+Stop if the implementation requires copying an OpenDP formula into Decoy, or if any required constructor turns out to need `honest-but-curious`.
 
-### 9.2 Mixed-mechanism composition
+### 9.2 Cross-library composition
 
-The spike must demonstrate that numeric histograms, categorical stable grouping, and categorical non-null totals run under one fit-wide compositor and that OpenDP reports the composed loss.
+The spike must demonstrate that each numeric chain, each categorical grouping chain, and each count chain reports its own loss through `Measurement.map(1)`, and that `dp_accounting`'s PLD composition over those reported losses returns a fit-wide epsilon at the requested delta.
 
 Stop if:
 
-- Any query must execute outside that compositor.
-- The adapter cannot prove every planned query was charged.
-- Query allocation depends on observed values.
-- The reported loss exceeds the requested fit budget.
-- A manual threshold or manual mechanism composition appears necessary.
+- Any measurement's loss cannot be read back from `map(1)` on the invoked object.
+- A release path exists that does not go through `OpenDpReleaseSession`.
+- The adapter cannot prove every scheduled query released exactly once.
+- Budget allocation depends on observed values.
+- The composed loss exceeds the requested fit budget for a schedule the allocation policy declared feasible.
+- A manual threshold, a manual scale formula, or manual floating-point composition appears necessary.
 
-### 9.3 Polars compatibility
+Composition is the seam this revision introduces. Section 4.3.5 states what it costs and section 6 rows A1 and A2 pin it. Treat any change to how certificates are produced, recorded, or composed as a privacy change requiring the same review as a mechanism change.
 
-The exact OpenDP Polars compatibility range was not verified from repository source during authorship beyond the published 0.15.1 package metadata and official examples. The implementer must verify it in the mandatory spike.
+### 9.3 Polars must not move
 
-Stop and escalate before changing Decoy’s existing `polars>=1,<2` constraint or adding `opendp[polars]`.
+Resolved and closed; see section 3.4. `opendp[polars]` pins `polars==1.36.1` exactly, Decoy resolves 1.42.0, and the mismatch is a hard FFI failure at Context construction. This build has no Polars dependency of its own.
+
+Stop and escalate before changing Decoy’s existing `polars>=1,<2` constraint, adding `opendp[polars]`, or importing `opendp.extras` for any reason. Adding a Polars-integrated OpenDP path is a redesign of section 4.3, not an implementation detail, and the implementer may not make that call. `test_dp_stack_does_not_import_polars_or_opendp_extras` (step 1) is the mechanical guard; do not skip or weaken it.
 
 ### 9.4 Value normalization
 
@@ -1051,7 +1301,9 @@ Support the already defined other token when configuration permits it. Otherwise
 
 Pinning full artifacts increases Plan size and may embed sensitive exact snapshots in non-DP workflows. This is required for the generation capability but must be documented.
 
-Stop if existing Plan transport imposes a hard size limit that cannot hold realistic snapshots. Escalate a bounded embedded-artifact format rather than reverting to runtime path reads.
+The embedded-artifact cap is 16 MiB per snapshot payload, following the HC-5 precedent for a fail-closed size fence. Exceeding it is a typed compile error, not a truncation and not a fallback to a runtime path read.
+
+Stop if existing Plan transport imposes a limit below that cap. Escalate a bounded embedded-artifact format rather than reverting to runtime path reads.
 
 ### 9.7 Release-ID handling
 
@@ -1072,14 +1324,16 @@ The change is not complete until:
 1. Every named assertion test lands before its corresponding production change.
 2. All BLOCKER and HIGH findings from dennis are resolved.
 3. The exact bypass, TOCTOU, collision, all-null, all-inf, falsy-DP, rank-order, and count-one calibration regressions pass.
-4. The supported Python dependency matrix passes.
+4. The supported Python dependency matrix passes with both `opendp==0.15.1` and `dp-accounting==0.6.0`, and Decoy's resolved `polars` version is unchanged from before this branch.
 5. Documentation is synchronized to the shipped behavior in the same changeset: `docs/what-we-cannot-prove.md` and the CHANGELOG carry the section 8 wording, every Option A overclaim listed in section 8.1 is gone, and `test_dp_claim_copy_is_marginal_and_names_joint_exclusion` passes. This is barry's normal post-ship pass over shipped behavior, not a review gate. Decoy is pre-release and docs are kept best-effort current, with the full docs review happening before release, so no doc sign-off blocks this merge. What does block it is F7: the code must not land while the docs still claim more than the code delivers, and the assertion test is what proves that.
-6. The final cross-model gate confirms that generation has no public raw-config path and no runtime snapshot-path read.
+6. The final cross-model gate confirms that generation has no public raw-config path and no runtime snapshot-path read, that `OpenDpReleaseSession` is the only OpenDP call site, and that no module imports `polars` or `opendp.extras` on the DP path.
 
-### 9.10 Decisions still owed by a human
+### 9.10 Decisions settled by a human, closed
 
-These are not implementer choices. Escalate rather than picking one.
+Nothing in this guide is owed a human decision. These three were open in the previous revision and are now answered. Implement them as written; do not reopen them.
 
-1. `numeric_bins` is a public parameter with a default of 10 that lands in the artifact and shapes every bin edge. Under DP its value is a utility knob with no privacy cost, but the default silently determines resolution for every caller. Confirm 10 stays the default, or set a different one, before the artifact schema is written; changing it later invalidates artifacts.
-2. Whether `delta` must be strictly positive at the fit API. Scope B always schedules a thresholded categorical query when any categorical column is declared, which requires `delta > 0`; a numeric-only fit does not. Decide whether a numeric-only fit may pass `delta = 0` (pure epsilon-DP, a stronger and honest claim) or whether the API always demands a positive delta for uniformity. The guide currently assumes a positive delta everywhere.
-3. Plan size. Section 9.6 flags that embedding artifacts grows Plan files without bound. There is no stated limit today. If the platform's Plan transport has one, it must be surfaced before Step 7, not discovered during it.
+1. **`numeric_bins` default stays 10**, and the value used is recorded in the artifact's `dp` block so bin edges are reproducible from public metadata alone.
+2. **`delta = 0` is rejected** at the fit API with a typed error, for numeric-only fits too. Uniformity wins over the marginally stronger pure-epsilon claim a numeric-only fit could have carried. Section 4.2 states this as a contract requirement.
+3. **Embedded artifacts are capped at 16 MiB** per snapshot payload, following the HC-5 precedent, enforced as a typed compile error. Section 9.6 states it.
+
+The dependency-shape question that the previous revision's spike opened is also closed; see section 3.4.
