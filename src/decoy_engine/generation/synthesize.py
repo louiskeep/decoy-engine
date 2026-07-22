@@ -37,6 +37,7 @@ import numpy as np
 import pyarrow as pa
 from faker import Faker
 
+from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
@@ -73,23 +74,29 @@ def _get_default_faker() -> Faker:
     return fake
 
 
-def generate_tables(
+def _generate_tables_from_config(
     config: dict[str, Any],
     derive_key: Any = None,
     instance_default_locale: str | None = None,
+    *,
+    statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
+    snapshot_index_for_column: dict[tuple[str, str], int] | None = None,
+    snapshot_artifacts: list[dict[str, Any]] | None = None,
 ) -> dict[str, pa.Table]:
-    """Build one Arrow table per generate table in ``config``.
+    """The actual generation logic, over a plain config dict recovered
+    from ``GenerationPlan.config_json``. Not part of the public surface
+    (guide section 4.8: keep lower-level generation helpers private).
 
-    ``config`` is a validated, ``model_dump``-ed generate-mode ``PipelineConfig``.
-    Returns ``{table_name: pa.Table}`` for every table that declares
-    ``generate_columns`` (mask tables, if any, are skipped). ``derive_key`` is the
-    pipeline-bound key resolver V1 ``ColumnGenerator`` threads -- ALWAYS ``None`` in
-    S6-ENG-2 (parity-tested against V1 seed-only path); S6-ENG-4 wires the real
-    ``pipeline_derive_key`` so generation + masking share one determinism envelope.
-
-    The platform run path (S6-PLT) writes these through the same ``write_v2_outputs``
-    + ``build_v2_target_node_runs`` path the mask spine uses.
+    ``statistical_specs`` is ``{(table_name, column_name): StatisticalSpec}``,
+    already validated and pinned at compile time (guide section 4.7/4.8):
+    the ``statistical`` dispatch below (``_statistical``) consumes it
+    directly and never reopens a snapshot path. ``snapshot_index_for_
+    column``/``snapshot_artifacts`` feed the fidelity gate the same pinned
+    artifacts, keyed the same way.
     """
+    statistical_specs = statistical_specs or {}
+    snapshot_index_for_column = snapshot_index_for_column or {}
+    snapshot_artifacts = snapshot_artifacts or []
     # F5 (2026-06-26): use the single shared seed validator so a bool/float
     # seed is rejected identically to the plan compiler + profile path
     # (QA-7 F8 / QA-3 F1 lineage), instead of int(True) silently coercing
@@ -138,7 +145,15 @@ def generate_tables(
         data: dict[str, list[Any]] = {}
         for col in gcols:
             data[col["name"]] = _generate_column(
-                col, n, seed, derive_key, pools, instance_default_locale, data
+                col,
+                n,
+                seed,
+                derive_key,
+                pools,
+                instance_default_locale,
+                data,
+                table_name=name,
+                statistical_specs=statistical_specs,
             )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
@@ -167,7 +182,13 @@ def generate_tables(
             )
 
             warn_on_low_fidelity(
-                gcols, data, table_name=name, threshold=fidelity_warn_threshold(config)
+                gcols,
+                data,
+                table_name=name,
+                threshold=fidelity_warn_threshold(config),
+                statistical_specs=statistical_specs,
+                snapshot_index_for_column=snapshot_index_for_column,
+                snapshot_artifacts=snapshot_artifacts,
             )
         pools[name] = tbl
         out[name] = tbl
@@ -220,6 +241,9 @@ def _generate_column(
     pools: dict[str, pa.Table] | None = None,
     instance_default_locale: str | None = None,
     generated: dict[str, list[Any]] | None = None,
+    *,
+    table_name: str = "",
+    statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -228,7 +252,10 @@ def _generate_column(
     generated parent tables for ``reference`` columns (S6-ENG-3 mint-a-pool).
     ``instance_default_locale`` (S6-ENG-4 M1) flows the platform's
     ``AppSettings.default_faker_locale`` into the shared-Faker path for the
-    no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``."""
+    no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``.
+    ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
+    lookup for the ``statistical`` branch -- no snapshot path is reopened
+    here (guide section 4.8)."""
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)
@@ -241,7 +268,9 @@ def _generate_column(
     elif kind == "reference":
         values = _reference(col, n, seed, derive_key, pools or {})
     elif kind == "statistical":
-        values = _statistical(col, n, seed, derive_key, generated or {})
+        values = _statistical(
+            col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}
+        )
     elif kind == "derived":
         values = _derived_generate(col, n, generated or {})
     elif kind == "derived_aggregate":
@@ -295,17 +324,39 @@ def _statistical(
     seed: int,
     derive_key: Any,
     generated: dict[str, list[Any]],
+    table_name: str,
+    statistical_specs: dict[tuple[str, str], StatisticalSpec],
 ) -> list[Any]:
     """WS3 statistical synthesis: sample from a distribution-snapshot/v1
     artifact (see generation/statistical for the methodology + privacy
     gate). ADDITIVE generator type -- the existing types stay
     parity-frozen to V1. `generated` carries the table's already-built
     columns so `condition_on` can read its conditioning sibling
-    (declared-order sequential conditional sampling)."""
-    from decoy_engine.generation.statistical import load_spec, sample_column
+    (declared-order sequential conditional sampling).
+
+    DPS Scope B (guide section 4.8): the spec comes from the Plan's
+    already-validated, already-pinned ``statistical_specs`` mapping, keyed
+    by ``(table_name, column_name)`` -- this function never opens a
+    snapshot path itself. The mapping is built once by ``generate_tables``
+    from ``GenerationPlan.statistical_specs``, which `compile_plan` froze
+    from the exact bytes it read at compile time (guide section 4.7),
+    closing the TOCTOU window a raw ``load_spec(col)`` call would reopen.
+    """
+    from decoy_engine.generation.statistical import sample_column
     from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
-    spec = load_spec(col)
+    col_name = str(col.get("name"))
+    spec = statistical_specs.get((table_name, col_name))
+    if spec is None:
+        raise StatisticalSpecError(
+            code="statistical_spec_not_pinned",
+            message=(
+                f"statistical column {col_name!r} in table {table_name!r} has no pinned "
+                "spec in this Plan's GenerationPlan. This should be unreachable through "
+                "compile_plan -- every type: statistical column that compiles "
+                "successfully is pinned."
+            ),
+        )
     parent_values: list[Any] | None = None
     if spec.condition_on is not None:
         parent_values = generated.get(spec.condition_on)
@@ -318,8 +369,14 @@ def _statistical(
                     f"{spec.condition_on!r} BEFORE {spec.column!r} in generate_columns."
                 ),
             )
+    # Reuse the Plan's already-pinned digest (guide section 4.7/4.8, defect
+    # F4) instead of letting the fingerprint step reopen snapshot_file.
+    digest = f"sha256:{spec.snapshot_digest}" if spec.snapshot_digest else None
     col_seed = GenDeriveContext.for_column(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
+        derive_key=derive_key,
+        column_config=col,
+        fallback_seed=seed,
+        snapshot_content_digest=digest,
     ).base_int("np")
     return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
 
@@ -598,3 +655,14 @@ def _reference(
             rng=rng,
         )
     return values
+
+
+# Re-exported at the bottom (not the top) to avoid a real import cycle:
+# `_plan_entry.py` imports `_generate_tables_from_config` FROM this module,
+# so importing `_plan_entry` back at module-top here would import this
+# not-yet-finished module from inside itself. By the time this line runs,
+# `_generate_tables_from_config` above is already defined, so the cycle
+# resolves cleanly. `generate_tables` stays importable from its documented
+# path (`decoy_engine.generation.synthesize.generate_tables`,
+# `decoy_engine/__init__.py`) even though the implementation moved.
+from decoy_engine.generation._plan_entry import generate_tables as generate_tables  # noqa: E402
