@@ -360,4 +360,18 @@ exclude_patterns = [
     # the `security/*` glob toctree in index.md; excluded so that glob keeps
     # matching only the curated reference docs.
     "security/de-0*-*-design.md",
+    # Working buckets and archive (Tier 3/4): engine-internal planning,
+    # decision records, review artifacts, and shipped-work history. These are
+    # git-tracked working docs, not reader-facing product reference, so they
+    # stay out of the published nav (same reasoning as the de-0* briefs above).
+    # The published site is the curated reference only (guides + security/* +
+    # api/**). Reorganizing these on disk does not change what the site shows.
+    "archive/**",
+    "backlog/**",
+    "plans/**",
+    "superpowers/**",
+    "decisions/**",
+    "v2/**",
+    "review-notes/**",
+    "remediation-source.md",
 ]
