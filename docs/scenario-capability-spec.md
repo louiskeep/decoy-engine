@@ -41,17 +41,20 @@ Common setups, and what each actually produces.
 
 | # | Scenario | Column distributions | Cross-column | FK integrity | FK fanout | Privacy claim |
 |---|---|---|---|---|---|---|
-| 1 | Mask one table | Preserved (real rows, values transformed) | Preserved | n/a | n/a | None. Masking is not DP |
-| 2 | Mask N linked tables | Preserved | Preserved | Preserved | Preserved | None |
+| 1 | Mask one table | **Strategy-dependent** (see 3.1) | Row alignment preserved | n/a | n/a | None. Masking is not DP |
+| 2 | Mask N linked tables | **Strategy-dependent** | Row alignment preserved | Legitimate joins preserved | Preserved from source | None |
 | 3 | Generate one table, providers only | Not matched to source | Independent | n/a | n/a | None |
 | 4 | Generate one table from a fitted snapshot | Matched per column | Independent unless `condition_on` | n/a | n/a | None |
-| 5 | Generate N linked tables from snapshots | Matched per column | Independent unless `condition_on` | Guaranteed | **Config-only** | None |
-| 6 | Mask 2 tables, generate a 3rd that references them | Preserved in masked, matched in generated | As above | Guaranteed | **Config-only** | None |
-| 7 | Any of 4 to 6 with `global_settings.dp` | Approximate, noised | **Independent only**, `condition_on` refused | Guaranteed | **Config-only** | (epsilon, delta)-DP, marginal, in flight |
+| 5 | Generate N linked tables from snapshots | Approximated per column | Independent unless `condition_on` | Scalar acyclic generate-to-generate only | **Config-only** | None |
+| 6 | Mask 2 tables, generate a 3rd that references them | **NOT SUPPORTED** | n/a | n/a | n/a | n/a |
+| 7 | Scenario 4 or 5 with `global_settings.dp` | Approximate, noised, numeric + categorical only | **Independent only**, `condition_on` refused | As row 5 | **Config-only** | (epsilon, delta)-DP on DP-verified generated marginals only, in flight |
 
-Scenario 6 is your worked example. The answer to "is distribution preserved in
-that FK column" is: referential validity yes, fanout no, unless the operator
-supplies weights.
+**Scenario 6 is rejected at config validation.** A generated child referencing a
+mask-kind parent is deferred to V2.1 (`config/_pipeline.py:172`, regression test
+`test_v2_generation.py:1396`). Mixed mask-parent to generate-child is not a
+supported topology. It is listed here because it is an obvious thing to attempt.
+
+Scenario 7 does not extend to scenario 6, and DP never covers masked output.
 
 ## 3. Column value source
 
@@ -64,17 +67,32 @@ and volume. Wrong if anyone expects the output to resemble the input
 statistically.
 
 **Fitted snapshot, non-DP.** `decoy fit` builds a distribution snapshot, and
-`type: statistical` columns generate from it. Column distributions match the
-source. This, not DP, is what makes generated data look like your data.
+`type: statistical` columns generate from it. Column distributions **approximate**
+the source. The fit is lossy by construction: numeric values are drawn uniformly
+inside histogram bins, categorical tail mass is redistributed or emitted as
+`__other__`, datetimes are uniform within a selected year, and free text preserves
+length only. A correct sampler can legitimately score below the default fidelity
+threshold. This, not DP, is what makes generated data resemble your data.
 
-**DP snapshot.** The same fit with noise added and a privacy budget accounted.
-Distributions match approximately. **Turning DP on always reduces fidelity
-relative to the same non-DP fit.** What it buys is a provable statement that the
-released distribution does not leak any individual row.
+**DP snapshot.** Not the non-DP fit with noise bolted on. Scope B never builds an
+exact snapshot; it runs a separate OpenDP measurement schedule. Supported kinds are
+numeric and categorical only, and datetime and free text are rejected. **Turning DP
+on normally reduces expected fidelity** relative to the same non-DP fit. What it
+buys is a bounded, approximate `(epsilon, delta)` privacy loss under
+add-or-remove-one-row adjacency. It does not mean zero leakage.
 
 A recurring misconception worth stating plainly in customer-facing copy: DP is
 not the feature that makes output resemble the source. Fitting is. DP is the
 feature that makes the resemblance safe to publish.
+
+### 3.1 Masking is not automatically distribution-preserving
+
+Mask mode preserves row alignment and, when configured correctly, legitimate
+joins. Statistical fidelity depends entirely on the chosen strategy. The engine
+classifies its own strategies in `execution/_distribution_behavior.py`: faker and
+uniform categorical destroy frequency, redact collapses, truncate and bucketize
+coarsen, and shuffle preserves the marginal while breaking row identity. Never
+claim blanket distribution preservation for mask mode.
 
 ## 4. Cross-column fidelity
 
@@ -84,8 +102,11 @@ on a row suits the age on that row.
 
 **`condition_on` (shipped, non-DP only).** A column can be generated conditioned
 on another column's value, backed by a joint distribution in the snapshot. The
-conditioning column must be generated first, which the compiler enforces. This is
-the existing answer to "make drug type depend on age."
+conditioning column must be generated first, which the compiler enforces.
+
+It is narrower than it sounds: **pairwise, categorical-dependent only, and
+approximate.** Joint snapshots retain only top cells, and a parent value missing
+from the joint falls back to the marginal. It is not a general cross-column model.
 
 **Under DP: refused.** `condition_on` on a `type: statistical` column under a
 declared `dp` block is a hard compile error (`dp_joint_unsupported`). This is
@@ -99,11 +120,17 @@ Joint distributions **under** DP are DPS-4 (PrivBayes, MST, AIM). Not built.
 
 Three distinct properties, routinely collapsed into "does it handle relationships."
 
-**Referential validity: guaranteed.** Generated foreign keys are drawn from the
-parent table's already-generated key column ("mint-a-pool"), with the compiler
-enforcing parent-before-child ordering. Every child FK points at a real parent.
-In mask mode, FK preservation keeps the relationships intact across the masked
-key space.
+**Referential validity: guaranteed within a supported topology.** Generated foreign
+keys are drawn from the parent's already-generated key column ("mint-a-pool"), with
+the compiler enforcing parent-before-child ordering. The precise claim is: *non-null
+scalar FKs in supported acyclic generate-to-generate topologies reference an emitted
+parent value.* The carve-outs are real:
+
+- An empty parent pool yields nulls.
+- `null_probability` can null FK values after sampling.
+- Composite FKs are not sampled tuple-wise, so multi-column keys are not jointly valid.
+- Generate-child to mask-parent is rejected outright (scenario 6).
+- In mask mode, configured orphan policies may intentionally retain invalid source keys.
 
 **Fanout shape: config-only.** How many children each parent gets is an operator
 knob, not a learned property:
@@ -112,6 +139,12 @@ knob, not a learned property:
 - `distribution: sequential`: round robin
 - `distribution: weighted`: operator-supplied weights
 - `min_per_parent` / `max_per_parent`: optional cardinality repair
+
+These **fail soft**, which is worse than failing loud. A wrong-length weight vector
+silently becomes uniform, an unknown `distribution` name silently becomes random,
+and infeasible min/max bounds warn and then emit violating output. Bounds also do
+not compose with `sequential`, and later null injection can invalidate
+`min_per_parent`.
 
 Nothing measures the real fanout from the source. If production has most patients
 with one or two claims and a few with fifty, the default output flattens that.
@@ -124,8 +157,8 @@ that child attribute."
 
 ## 6. What Decoy refuses
 
-Refusals are a feature. Each of these fails closed at compile time rather than
-producing output that quietly voids a claim.
+Refusals are a feature. Each of these fails closed at fit or compile time rather
+than producing output that quietly voids a claim.
 
 | Refusal | Trigger | Why |
 |---|---|---|
@@ -142,9 +175,25 @@ The per-column releases are DP and compose into a total. Everything outside that
 release set is treated as **public** and carries no guarantee:
 
 - schema, column names, column types
-- row counts
+- the configured synthetic output row count (public). Note the *source* fit row
+  count is DP-noised and does spend budget; these are different numbers
 - FK graph structure, parent key sets, children per parent
 - the column kinds and domains the caller declares as public metadata
+- all masked output. DP covers DP-verified generated marginals and their
+  post-processing, nothing else
+- datetime and free-text columns, which are rejected rather than covered
+- joints and conditional synthesis
+
+Two further limits deserve their own statement:
+
+**Adjacency is one ROW, not one PERSON.** A patient with fifty claims contributes
+fifty rows, and nothing bounds that person-level contribution. Row-level DP being
+read as patient-level privacy is the single most likely misunderstanding in a
+healthcare sale, and entity-level contribution bounds are not built.
+
+**Composition is per compiled plan, not lifetime.** Release IDs compose within one
+plan. Repeated fits against the same source population over time are not tracked,
+so cumulative privacy spend can silently exceed any intended ceiling.
 
 The last point is deliberate. Requiring the caller to declare kinds and domains is
 what makes them defensible as public, instead of Decoy silently deriving them from
