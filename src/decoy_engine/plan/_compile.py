@@ -74,9 +74,8 @@ from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import (
-    check_dp_categorical_unsupported,
     check_dp_generate_contract,
-    check_dp_snapshot_provenance,
+    verify_dp_snapshots,
 )
 
 # DE-03 sibling: reject `strategy: faker` with no provider at compile (the
@@ -107,6 +106,7 @@ from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._generation import build_generation_plan, read_and_pin_snapshots
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 
 # Seed normalization lives in `plan/_seed.py` (single shared validator, F5).
@@ -119,7 +119,11 @@ from decoy_engine.plan._types import (
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
-PLAN_VERSION = 1
+# DPS Scope B (guide 4.7): bumped 1 -> 2 for the pinned `GenerationPlan`
+# payload. A plan_version 1 YAML predates `generation` entirely and
+# deserializes with `generation=None` -- the correct pre-GA hard-delete
+# behavior (`generate_tables` raises the moment it's asked to generate).
+PLAN_VERSION = 2
 
 
 def compile_plan(
@@ -186,16 +190,16 @@ def compile_plan(
     # runs in both branches right after unknown_provider so a missing
     # provider still surfaces as row 2 first.
     check_non_poolable_provider_with_pool_backend(config)
-    # Option A (2026-07-21): categorical DP not yet supported -- runs first
-    # so a categorical-under-dp config always sees this one clear code,
-    # regardless of allow_real_categories.
-    check_dp_categorical_unsupported(config)
-    check_dp_generate_contract(config)  # Row 31 (DPS-3): before row 12 (see below)
+    # DPS Scope B (guide 4.7/5): read-and-pin once so every check below
+    # sees the same bytes; DP verification runs before check_statistical_
+    # columns, which needs its dp_verified verdict per column.
+    _pinned_snapshots = read_and_pin_snapshots(config)
+    check_dp_generate_contract(config)  # Row 31 (DPS-3): anti-DP knob + condition_on reject
+    _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate
     # columns vs their snapshot artifacts. Config + artifact only, so it
     # runs in both branches and in run_config_only_checks.
-    check_statistical_columns(config)
-    check_dp_snapshot_provenance(config)  # Row 32 (gate remediation Fix 3, see _checks_dp.py)
+    _column_specs = check_statistical_columns(config, _pinned_snapshots, _dp_verified_columns)
     # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in
     # requires the spacy extra + model on THIS host. Config + installed
     # packages only; both branches + run_config_only_checks.
@@ -440,6 +444,9 @@ def compile_plan(
     namespaces = _build_namespaces(config)
     ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
     seed_envelope, stamp_warnings = _build_seed_envelope(config, profile)
+    generation_plan = build_generation_plan(
+        config, _pinned_snapshots, column_specs=_column_specs, dp_verification=_dp_verification
+    )
 
     return Plan(
         plan_version=PLAN_VERSION,
@@ -459,6 +466,7 @@ def compile_plan(
             + fpe_join_warnings
             + freetext_advisory_warnings,
         ),
+        generation=generation_plan,
     )
 
 
@@ -498,15 +506,14 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     _check_when_with_coherent_with(config)
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
-    # Option A (2026-07-21): categorical DP not yet supported -- runs first,
-    # same rationale as the compile_plan branch above.
-    check_dp_categorical_unsupported(config)
+    # DPS Scope B (guide 4.7/5): same read-verify-validate order as above.
+    _pinned_snapshots = read_and_pin_snapshots(config)
     check_dp_generate_contract(config)  # Row 31 (DPS-3)
+    _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (WS3): consumes the config plus its referenced snapshot
     # artifact (a fitted-model JSON, not source data), so config-only
     # callers catch a missing/incompatible artifact before a long run.
-    check_statistical_columns(config)
-    check_dp_snapshot_provenance(config)  # Row 32 (gate remediation Fix 3)
+    check_statistical_columns(config, _pinned_snapshots, _dp_verified_columns)
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.
     check_text_redact_ner_available(config)
     # Row 30 (TX-2, 2026-07-20): text_mask `ner` opt-in needs the same

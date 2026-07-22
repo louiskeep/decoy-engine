@@ -22,9 +22,12 @@ class TestCompilePlanHappyPath:
     def test_compile_stamps_versions(self, simple_config: dict, simple_profile: Profile) -> None:
         """S3 bumped seed_protocol_version 0 -> 1; F-series 1 -> 2;
         QA walks/gen F3 2 -> 3; formula-hash 3 -> 4 (2026-06-01);
-        WS1 FPE detokenization 4 -> 5 (2026-06-12)."""
+        WS1 FPE detokenization 4 -> 5 (2026-06-12).
+
+        plan_version bumped 1 -> 2 for the DPS Scope B pinned
+        `GenerationPlan` payload (guide section 4.7)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_version == 1
+        assert plan.plan_version == 2
         assert plan.seed_protocol_version == 6
         assert plan.engine_version == "0.1.0"
 
@@ -137,7 +140,7 @@ class TestYamlRoundTrip:
     ) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "plan_version: 1" in y
+        assert "plan_version: 2" in y
         assert "seed_protocol_version: 6" in y
 
     def test_yaml_emits_seed_protocol_version_six(
