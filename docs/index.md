@@ -45,11 +45,16 @@ link to GitHub rather than into the rendered API reference.
 
 - [Methodology registry](methodology-registry.yaml): citations for non-trivial domain primitives (per the "use established methodology" rule in the [CLAUDE](https://github.com/louiskeep/decoy-engine/blob/main/CLAUDE.md) guide).
 
+## Reference
+
+- [Capability matrix](capability-matrix.md): what the engine can and cannot do, by strategy and route.
+- [Compatibility contract](compatibility-contract.md): the frozen public surface and what changing it means.
+
 ## Development & planning
 
 - [CI regression gate](ci-regression-gate.md): the performance / regression gate contract.
-- Engine-scoped implementation plans and decision records live in `docs/plans/` and `docs/decisions/` (working docs, not guides).
-- [Job-performance sprints](job-performance-sprints.md) and [relationship out-of-core sprints](relationships-out-of-core-sprints.md) are historical sprint-planning records kept for context; the work they describe has largely shipped. They are not current how-to guides.
+- Engine-scoped implementation plans, decision records, and the findings register live in `docs/plans/`, `docs/decisions/`, and `docs/remediation-source.md` (working docs, not guides).
+- Shipped-work history (sprint plans, review snapshots, superseded design discussions) is kept in `docs/archive/` for context; see `docs/archive/README.md`. None of it is current how-to guidance.
 
 ---
 
@@ -73,11 +78,17 @@ acceptance-test-flight
 
 ```{toctree}
 :hidden:
+:caption: Reference
+
+capability-matrix
+compatibility-contract
+```
+
+```{toctree}
+:hidden:
 :caption: Development
 
 ci-regression-gate
-job-performance-sprints
-relationships-out-of-core-sprints
 ```
 
 ```{toctree}
