@@ -14,7 +14,6 @@ from decoy_engine.execution import ExecutionError, PandasExecutionAdapter, Parqu
 from decoy_engine.execution._fk_keys import fk_join_key_tuple
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import _runner as _out_of_core_runner
-from decoy_engine.execution.out_of_core import _stream_driver as _out_of_core_driver
 from decoy_engine.execution.out_of_core import (
     build_parent_key_relation,
     check_out_of_core_compatibility,
@@ -353,13 +352,13 @@ def test_run_fk_out_of_core_sink_writes_interleaved_in_topo_order(tmp_path, monk
     # mask immediately, rather than all staging clustering after every mask.
     plan, graph, sources = _chain_plan_graph_sources()
     events: list[str] = []
-    original_mask_batch = _out_of_core_driver.mask_batch
+    original_mask_batch = _out_of_core_runner.mask_batch
 
     def recording_mask_batch(*args: Any, **kwargs: Any) -> pa.RecordBatch:
         events.append(f"mask:{args[1]}")
         return original_mask_batch(*args, **kwargs)
 
-    monkeypatch.setattr(_out_of_core_driver, "mask_batch", recording_mask_batch)
+    monkeypatch.setattr(_out_of_core_runner, "mask_batch", recording_mask_batch)
 
     class RecordingSink:
         def write(self, table: str, data: pa.Table) -> None:

@@ -368,10 +368,10 @@ def _concat_fk_chunks(chunks: list[pa.Array]) -> pa.Array:
     whole column still fails one-shot `pa.array()` inference the same way a
     mixed bool/int Python list always does -- see
     test_out_of_core_join_chunked.py::test_concat_fk_chunks_raises_where_whole_column_raises).
-    The FIXED schema the streaming joiner commits to up front cannot defer
+    The FIXED schema `ChildFkBatchJoiner` commits to up front cannot defer
     that "would the whole column actually crash" question the way this
     after-the-fact concatenation can, so ITS bool/int64 resolution is a
-    separate, narrower rule local to `_fixed_schema_typing.py::_fixed_component_type`,
+    separate, narrower rule local to `_batch_join.py::_fixed_component_type`,
     not routed through this shared helper.
     """
     if not chunks:
