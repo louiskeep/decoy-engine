@@ -713,6 +713,88 @@ def test_masked_null_parent_key_fail_policy_does_not_false_positive(tmp_path) ->
     assert values == [None, "MASKED_C1", None]
 
 
+# ---------------------------------------------------------------------------
+# OOC-B fix#1b: SpillChildKeys-backed staging (Task 3) -- the child-key
+# DuckDB INGESTION path (not just an IPC round-trip), plus the reopen-per-scan
+# contract the two-scan lifecycle (total_orphans then iter_join_rows) relies on.
+# ---------------------------------------------------------------------------
+
+
+def test_binary_child_key_ingests_through_duckdb_and_matches_oracle(tmp_path) -> None:
+    # A schema-admitted child key type this file's existing coverage never
+    # exercises alone (only mixed with string, and rejected there): proves
+    # DuckDB actually INGESTS a registered RecordBatchReader over `binary`
+    # through a real LEFT JOIN + ORDER BY (not merely an IPC round-trip --
+    # `test_out_of_core_child_key_spill.py` already pins that in isolation,
+    # for a type Parquet cannot even encode). Every schema-fixed-typeable
+    # child key type (`_fixed_schema_typing._python_roundtrip_type`) happens
+    # to be Parquet-representable, so this test's job is DuckDB ingestion
+    # breadth beyond string/int, not a Parquet-hostile type specifically.
+    plan = _two_table_plan(_col("passthrough"), "customers", "orders", "customer_id")
+    edge = _edge(OrphanPolicy.PRESERVE)
+    parent = pa.table({"customer_id": pa.array([b"k1", b"k2"], type=pa.binary())})
+    child = pa.table(
+        {"customer_id": pa.array([b"k1", b"orphan", b"k2", b"k1"], type=pa.binary())}
+    )
+    _tbl, orphans, _types = _assert_stream_matches_oracle(plan, edge, parent, child, tmp_path)
+    assert orphans == 1
+
+
+def test_two_scans_each_open_their_own_fresh_reader(tmp_path, monkeypatch) -> None:
+    # The reopen-per-scan contract: total_orphans (scan 1) and iter_join_rows
+    # (scan 2) must each call SpillChildKeys.open_reader() exactly once, never
+    # share a registration -- a DuckDB-registered RecordBatchReader is
+    # single-pass, so a shared reader would return zero rows on the second scan.
+    from decoy_engine.execution.out_of_core import _payload_store as payload_store_mod
+
+    open_calls: list[int] = []
+    real_open_reader = payload_store_mod.SpillChildKeys.open_reader
+
+    def spy(self):
+        reader = real_open_reader(self)
+        open_calls.append(1)
+        return reader
+
+    monkeypatch.setattr(payload_store_mod.SpillChildKeys, "open_reader", spy)
+
+    plan = _two_table_plan(_col("hash", namespace="cust"), "customers", "orders", "customer_id")
+    edge = _edge(OrphanPolicy.FAIL)
+    parent = pa.table({"customer_id": ["c1", "c2"]})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    child = pa.table({"customer_id": ["c1", "c2", "c1"]})
+    with _stream_joiner(plan, edge, relation, tmp_path / "s", child) as joiner:
+        joiner.stage_keys(child.to_batches(max_chunksize=_BATCH))
+        assert len(open_calls) == 0  # staging alone opens no reader
+        assert joiner.total_orphans() == 0
+        assert len(open_calls) == 1  # scan 1
+        rows = list(joiner.iter_join_rows(_BATCH))
+        assert len(open_calls) == 2  # scan 2, its OWN fresh reader
+        total = sum(b.num_rows for b in rows)
+    assert total == 3
+
+
+def test_begin_staging_writes_spill_file_finalized_before_any_scan(tmp_path) -> None:
+    # Structural pairing for the perf plateau sentinel (TQ-0): the spill lands
+    # at the documented path and carries an end-of-stream marker (readable)
+    # only once finalize_staging has run.
+    plan = _two_table_plan(_col("hash", namespace="cust"), "customers", "orders", "customer_id")
+    edge = _edge(OrphanPolicy.PRESERVE)
+    parent = pa.table({"customer_id": ["c1", "c2"]})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    child = pa.table({"customer_id": ["c1", "c2"]})
+    join_dir = tmp_path / "join"
+    with _stream_joiner(plan, edge, relation, join_dir, child) as joiner:
+        joiner.begin_staging()
+        spill_path = join_dir / "child_keys.arrow"
+        assert spill_path.exists()  # the writer opens eagerly (schema known up front)
+        for batch in child.to_batches(max_chunksize=_BATCH):
+            joiner.stage_batch(batch)
+        joiner.finalize_staging()
+        assert spill_path.exists()
+        joiner.finalize_staging()  # idempotent
+        assert joiner.total_orphans() == 0
+
+
 def test_string_masked_with_binary_child_key_rejected_at_construction(tmp_path) -> None:
     # A promotable mix outside {int64, float64}: string+binary would merge to
     # binary, but only when the data mixes; an all-string run would drift, so

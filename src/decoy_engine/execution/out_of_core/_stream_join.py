@@ -7,18 +7,32 @@ buffer-manager/control state, so on a large parent it pinned an
 O(distinct-parent-key) resident structure for the whole child stream -- the
 floor that made out-of-core peak memory rise with parent row count.
 
-Instead, this joiner uses the SAME shape the whole-child resident path
+fix#1b (this module): the FIRST fix (above) made the child side a DuckDB
+`child_keys` TEMP TABLE fed by per-batch `INSERT` -- itself an O(child)
+resident structure for the SAME reason (a DuckDB temp table cannot fully evict
+its buffer-manager/control state), so peak memory rose with CHILD row count
+instead. The child side is now symmetric with the parent: staged once into a
+`SpillChildKeys` Arrow-IPC file (`_payload_store.py`, mirroring
+`RawParentKeySpill`) during phase 1, then each of this joiner's two scans
+(`total_orphans`'s FAIL precount, `iter_join_rows`'s join) opens a FRESH
+`pa.ipc.open_stream` reader and `conn.register()`s it for that scan alone. A
+DuckDB-registered `pyarrow.RecordBatchReader` is SINGLE-PASS (rows on the
+first query against it, zero on a second -- observed on DuckDB 1.5.4's Python
+Arrow integration), which is exactly why each scan needs its own reader
+rather than one shared registration.
+
+This joiner uses the SAME shape the whole-child resident path
 (`_join.py::mask_child_fk`) already proves: the parent relation is a
-`read_parquet` VIEW (never materialized), the child keys are staged once into a
-spillable `child_keys` TEMP TABLE, and ONE `LEFT JOIN child_keys x parent_keys
-ORDER BY __decoy_row_nr` per edge is read back through `to_arrow_reader`. The
-join build, hash table, and external sort are DuckDB's established
-larger-than-memory (grace / hybrid hash join + external merge sort) operations
-under `memory_limit`, spilling to `temp_directory`; we delegate all
-memory-management, spill, and ordering to DuckDB and do not roll our own. The
-one difference from `_join.py` is that this joiner EMITS incrementally (an
-ordered FK-output reader the runner zips to its mask stream) rather than
-setting columns into a whole resident `pa.Table`.
+`read_parquet` VIEW (never materialized), the child keys are a file-backed
+streaming scan (never a resident structure), and ONE `LEFT JOIN child_keys x
+parent_keys ORDER BY __decoy_row_nr` per edge is read back through
+`to_arrow_reader`. The join build, hash table, and external sort are DuckDB's
+established larger-than-memory (grace / hybrid hash join + external merge
+sort) operations under `memory_limit`, spilling to `temp_directory`; we
+delegate all memory-management, spill, and ordering to DuckDB and do not roll
+our own. The one difference from `_join.py` is that this joiner EMITS
+incrementally (an ordered FK-output reader the runner zips to its mask
+stream) rather than setting columns into a whole resident `pa.Table`.
 
 Two invariants carried over UNCHANGED from `ChildFkBatchJoiner`, because the
 sink path writes one Parquet file under one schema fixed before the first
@@ -67,6 +81,7 @@ from decoy_engine.execution.out_of_core._join import (
     _sql_string,
 )
 from decoy_engine.execution.out_of_core._mask import mask_column
+from decoy_engine.execution.out_of_core._payload_store import SpillChildKeys
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
@@ -88,22 +103,32 @@ class StreamFkJoiner:
        fail-closed before any connection is opened), then open the connection
        and register the parent relation as a `read_parquet` VIEW.
     2. `begin_staging()` then `stage_batch(source_batch)` per raw child batch
-       (or `stage_keys(iter)` for the whole child at once): materialize the
-       `child_keys` TEMP TABLE with GLOBAL row numbers, exactly as
-       `_join.py::mask_child_fk` stages its child side.
-    3. `total_orphans()`: the FAIL-policy anti-join precount over the whole
-       child (the runner raises before any output if it is non-zero).
-    4. `iter_join_rows(batch_rows)`: run the single ordered LEFT JOIN and yield
+       (or `stage_keys(iter)` for the whole child at once): append the
+       `(row_nr, join_key, src)` keys, GLOBALLY numbered, to a `SpillChildKeys`
+       Arrow-IPC file -- never a resident structure, so the child's own row
+       count no longer sets a memory floor.
+    3. `finalize_staging()`: close the spill's writer so its stream carries
+       its end-of-stream marker; idempotent. Must run before either scan
+       below opens a reader over it (the driver calls this once, at the
+       phase-1/phase-2 boundary; `stage_keys` calls it automatically for a
+       single-shot caller).
+    4. `total_orphans()`: the FAIL-policy anti-join precount over the whole
+       child (the runner raises before any output if it is non-zero). Opens
+       its OWN fresh reader over the spill (scan 1 of 2).
+    5. `iter_join_rows(batch_rows)`: run the single ordered LEFT JOIN and yield
        RAW join-result batches (row_nr, join key, source components, parent
-       match indicator, parent masked components) -- no resolution.
-    5. `resolve_batch(join_rows)`: resolve one payload-aligned slice of those
+       match indicator, parent masked components) -- no resolution. Opens
+       its OWN fresh reader over the spill (scan 2 of 2); a shared reader
+       would return zero rows here since a DuckDB-registered
+       `RecordBatchReader` is single-pass.
+    6. `resolve_batch(join_rows)`: resolve one payload-aligned slice of those
        raw join rows into FK output arrays, accumulating `orphan_total` and
        `observed_types`. Called by the driver once per payload-store batch
        (the same source-chunk granularity `main` resolves at), never once per
        `iter_join_rows` reader batch -- those boundaries can differ, and a
        reader batch that coalesces a matched-bool run beside an orphan-int run
        cannot always be resolved as a single unit (Codex HIGH finding).
-    6. `close()`.
+    7. `close()`.
     """
 
     def __init__(
@@ -171,6 +196,8 @@ class StreamFkJoiner:
         self._orphan_total = 0
         self._staged_rows = 0
         self._staged = False
+        self._temp_dir = temp_dir
+        self._child_keys: SpillChildKeys | None = None
         # Typing is settled; only now acquire the connection so a fail-closed
         # rejection never leaks one.
         self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
@@ -213,24 +240,19 @@ class StreamFkJoiner:
         return self._orphan_total
 
     def begin_staging(self) -> None:
-        """Create the empty, typed `child_keys` TEMP TABLE.
+        """Open the empty, typed `SpillChildKeys` file-backed store.
 
-        Separate from `stage_batch` so the runner can open one table per edge
+        Separate from `stage_batch` so the runner can open one store per edge
         and feed every incoming edge from a SINGLE raw source pass (phase 1),
         rather than re-reading the source once per edge.
         """
         if self._staged:
             raise AssertionError("child_keys already staged")
-        empty = self._key_schema.empty_table()
-        self._conn.register("child_keys_init", empty)
-        try:
-            self._conn.execute("CREATE TEMP TABLE child_keys AS SELECT * FROM child_keys_init")
-        finally:
-            self._conn.unregister("child_keys_init")
+        self._child_keys = SpillChildKeys(self._temp_dir / "child_keys.arrow", self._key_schema)
         self._staged = True
 
     def stage_batch(self, source_batch: pa.RecordBatch) -> None:
-        """Stage one raw child batch's keys into `child_keys` with global row_nr.
+        """Append one raw child batch's keys to the spill with global row_nr.
 
         The `(row_nr, join_key, src_i)` encoding is `_join.py::_child_key_batches`
         verbatim (reused, not reimplemented); only the row numbers are shifted
@@ -249,45 +271,69 @@ class StreamFkJoiner:
             # pc.* funcs are dynamically generated; stubs miss them.
             columns[0] = pc.add(columns[0], self._staged_rows)  # type: ignore[attr-defined, unused-ignore]
             shifted = pa.record_batch(columns, schema=self._key_schema)
-            self._conn.register("child_keys_batch", pa.Table.from_batches([shifted]))
-            try:
-                self._conn.execute("INSERT INTO child_keys SELECT * FROM child_keys_batch")
-            finally:
-                self._conn.unregister("child_keys_batch")
+            assert self._child_keys is not None  # begin_staging guarantees this
+            self._child_keys.append(shifted)
         self._staged_rows += length
+
+    def finalize_staging(self) -> None:
+        """Close the child-key spill's writer so its stream carries its
+        end-of-stream marker before either scan below opens a reader over it.
+
+        Idempotent, and safe to call even when `begin_staging` never ran (the
+        driver's cleanup guard calls this unconditionally on every joiner it
+        opened, mirroring `RawParentKeySpill.finalize()`'s own guard use).
+        """
+        if self._child_keys is not None:
+            self._child_keys.finalize()
 
     def stage_keys(self, source_batches: Iterable[pa.RecordBatch]) -> None:
         """Stage a whole child (convenience for a single-edge caller/tests)."""
         self.begin_staging()
         for batch in source_batches:
             self.stage_batch(batch)
+        self.finalize_staging()
 
     def total_orphans(self) -> int:
         """Whole-child anti-join orphan count (the FAIL-policy precount).
 
         Mirrors `_join.py::mask_child_fk`'s FAIL count (`_join.py:129-138`): a
         null child key is never an orphan; a non-null key with no matching
-        parent row is. Only the count is resident.
+        parent row is. Only the count is resident. Opens its OWN fresh reader
+        over the child-key spill (scan 1 of the joiner's two child scans; see
+        `iter_join_rows` for scan 2 and why each needs its own reader).
         """
         if not self._staged:
             raise AssertionError("begin_staging must run before total_orphans")
+        assert self._child_keys is not None
         join_key = self._relation.join_key_column
-        count = self._conn.execute(
-            f"""
-            SELECT count(*)
-            FROM child_keys c
-            LEFT JOIN parent_keys p
-              ON c.__decoy_fk_join_key = p.{_q(join_key)}
-            WHERE c.__decoy_fk_join_key IS NOT NULL
-              AND p.{_q(join_key)} IS NULL
-            """
-        ).fetchone()[0]
+        reader = self._child_keys.open_reader()
+        try:
+            self._conn.register("child_keys", reader)
+            try:
+                count = self._conn.execute(
+                    f"""
+                    SELECT count(*)
+                    FROM child_keys c
+                    LEFT JOIN parent_keys p
+                      ON c.__decoy_fk_join_key = p.{_q(join_key)}
+                    WHERE c.__decoy_fk_join_key IS NOT NULL
+                      AND p.{_q(join_key)} IS NULL
+                    """
+                ).fetchone()[0]
+            finally:
+                self._conn.unregister("child_keys")
+        finally:
+            reader.close()
         return int(count)
 
     def iter_join_rows(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
         """Yield ordered RAW join-result batches: no resolution, no casting.
 
-        Runs the single `LEFT JOIN child_keys x parent_keys ORDER BY
+        Opens its OWN fresh reader over the child-key spill (scan 2 of the
+        joiner's two child scans) and registers it as `child_keys` for this
+        query alone -- a DuckDB-registered `RecordBatchReader` is single-pass,
+        so reusing `total_orphans`'s reader here would silently return zero
+        rows. Runs the single `LEFT JOIN child_keys x parent_keys ORDER BY
         __decoy_row_nr` and reads the ordered result back through
         `to_arrow_reader(batch_rows)` (DuckDB owns the sort + spill; Python sees
         one result batch at a time). Each batch carries `__decoy_row_nr`,
@@ -296,9 +342,13 @@ class StreamFkJoiner:
         column -- exactly the columns `resolve_batch` needs. This reader's own
         batch boundaries are DuckDB's, not the source's; the driver is
         responsible for re-batching via `JoinRowCursor.take` before resolving.
+        The registration and the child-key reader stay open for as long as
+        this generator is (the `finally` below runs on normal exhaustion AND
+        on early abandonment, since Python closes a live generator on GC).
         """
         if not self._staged:
             raise AssertionError("begin_staging must run before iter_join_rows")
+        assert self._child_keys is not None
         edge = self._edge
         n_components = len(edge.child_columns)
         join_key = self._relation.join_key_column
@@ -318,7 +368,13 @@ class StreamFkJoiner:
               ON c.__decoy_fk_join_key = p.{_q(join_key)}
             ORDER BY c.__decoy_row_nr
         """
-        yield from self._conn.execute(query).to_arrow_reader(batch_rows)
+        reader = self._child_keys.open_reader()
+        self._conn.register("child_keys", reader)
+        try:
+            yield from self._conn.execute(query).to_arrow_reader(batch_rows)
+        finally:
+            self._conn.unregister("child_keys")
+            reader.close()
 
     def resolve_batch(self, join_rows: pa.RecordBatch) -> tuple[pa.Array, ...]:
         """Resolve one payload-aligned slice of raw join rows into FK output.
