@@ -179,6 +179,101 @@ def test_mid_phase1_exception_still_finalizes_child_key_spill(tmp_path, monkeypa
     assert finalize_calls == [1]
 
 
+def test_disk_checkpoint_fires_mid_table_not_only_at_table_boundary(
+    tmp_path, monkeypatch
+) -> None:
+    """OOC-B fix#1b (Task 5): `_runner.py` only re-checks `temp_disk_budget_bytes`
+    at TABLE boundaries (after `stream_table` returns), so
+    `child_keys.arrow + raw_parent_keys.arrow + payload.arrow` can exceed the
+    budget mid-table, before that boundary is ever reached, on a table with
+    many raw batches. `stream_table` must ALSO checkpoint during phase 1, not
+    only rely on the runner's post-table check.
+    """
+    rows = 12
+    paths = write_large_fk_chain(tmp_path / "src", rows, width=0, orphan_frac=0.0, batch_rows=4)
+    plan = make_plan()
+    graph = make_graph(OrphanPolicy.WARN)
+
+    # Force a checkpoint on every batch so a tiny fixture can trip it well
+    # before any table finishes (the production interval is much coarser).
+    monkeypatch.setattr(stream_driver_mod, "_DISK_CHECKPOINT_BATCH_INTERVAL", 1)
+
+    mask_batch_calls = {"n": 0}
+    real_mask_batch = stream_driver_mod.mask_batch
+
+    def counting_mask_batch(*args, **kwargs):
+        mask_batch_calls["n"] += 1
+        return real_mask_batch(*args, **kwargs)
+
+    monkeypatch.setattr(stream_driver_mod, "mask_batch", counting_mask_batch)
+
+    with pytest.raises(Exception) as excinfo:  # noqa: PT011 - asserting the coded ExecutionError below
+        run_fk_out_of_core(
+            plan,
+            lazy_sources(paths),
+            registry=_REG,
+            relationship_graph=graph,
+            batch_rows=4,
+            temp_dir=tmp_path / "work",
+            # A budget essentially zero: any spill write at all trips it, so
+            # the checkpoint must fire on the very first batch it inspects.
+            temp_disk_budget_bytes=1,
+        )
+    assert getattr(excinfo.value, "code", None) == "out_of_core_temp_disk_exceeded"
+    # 3 tables x 3 batches (rows=12, batch_rows=4) = 9 total mask_batch calls
+    # if every table ran to completion; the checkpoint must have stopped the
+    # run well short of that, proving it fired WITHIN a table's own phase-1
+    # loop rather than only after a whole table's batches were consumed.
+    assert mask_batch_calls["n"] < 9
+
+
+def test_table_spills_deleted_before_the_next_table_starts(tmp_path, monkeypatch) -> None:
+    """OOC-B fix#1b (Task 5): a table's own child_keys.arrow / raw_parent_keys.arrow
+    / payload.arrow spills must be deleted once that table's own processing is
+    done, not left to accumulate under the run's temp root until the WHOLE
+    run's teardown (`_runner.py`'s final `shutil.rmtree(root / "joins", ...)`)
+    -- otherwise every earlier table's spill footprint sits on disk competing
+    with the disk budget for every LATER table's own spills.
+    """
+    import decoy_engine.execution.out_of_core._runner as runner_mod
+
+    rows = 12
+    paths = write_large_fk_chain(tmp_path / "src", rows, width=0, orphan_frac=0.0, batch_rows=4)
+    plan = make_plan()
+    graph = make_graph(OrphanPolicy.WARN)
+    target = tmp_path / "published"
+
+    real_check = runner_mod.check_temp_disk_budget
+    checkpoints: list[bool] = []
+
+    def spy_check(root, *, max_bytes):
+        # "parent" is topologically first and has ONE outgoing edge (to
+        # "child"), so it stages a raw_parent_keys.arrow. By the time THIS
+        # (the run's own table-boundary) checkpoint first fires -- right
+        # after "parent" finishes, before "child" starts -- that spill must
+        # already be gone.
+        checkpoints.append((root / "joins" / "parent" / "raw_parent_keys.arrow").exists())
+        return real_check(root, max_bytes=max_bytes)
+
+    monkeypatch.setattr(runner_mod, "check_temp_disk_budget", spy_check)
+
+    run_fk_out_of_core(
+        plan,
+        lazy_sources(paths),
+        registry=_REG,
+        relationship_graph=graph,
+        batch_rows=4,
+        sink=ParquetTransactionalSink(target),
+        temp_dir=tmp_path / "work",
+        temp_disk_budget_bytes=10 * 1024 * 1024 * 1024,  # generous: never trips
+    )
+    assert checkpoints, "the table-boundary checkpoint never fired"
+    assert checkpoints[0] is False, (
+        "parent's raw_parent_keys.arrow spill was still on disk after parent's "
+        "own processing finished, instead of being deleted right after its last read"
+    )
+
+
 def test_streaming_runner_reads_lazy_sources_in_bounded_batches(tmp_path, monkeypatch) -> None:
     """Capability proof: on the LazySource path the runner never performs a
     whole-table read; masking sees only batches bounded by the route's batch

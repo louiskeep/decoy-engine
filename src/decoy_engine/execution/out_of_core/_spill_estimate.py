@@ -54,17 +54,40 @@ purposes. `strategy_output_width` reads the column's config:
     not a guess pretending to be exact.
 
 WHAT ACTUALLY LANDS ON THE TEMP FILESYSTEM (the two-term model): the
-out-of-core runner does NOT spill whole tables. It spills the FK KEY columns
-only -- per incoming edge a DuckDB parent-key temp table + group-by/join radix
-partitions, per outgoing edge a narrow staged-Parquet copy of the key columns
-(`_stage.py`, `_relation.py::_staging_schema`). The staged/join key is a
-STRING TOKEN (`execution/_fk_keys.py::fk_join_key`, `\x00STR:{len}:{value}`
-tuple-framed), and an `__decoy_row_nr` int64 column is staged alongside it.
-PAYLOAD columns are masked in Arrow and stream straight to the sink; they
-become committed OUTPUT, never transient spill. So disk pressure is two
-independent terms, EACH scaled by ITS OWN table's row count (never a
-cross-product of all key widths x all rows, which would inflate quadratically
-in schema breadth):
+out-of-core runner does NOT spill whole tables as its COMMITTED output. It
+spills the FK KEY columns -- per incoming edge a DuckDB parent-key temp table
++ group-by/join radix partitions, per outgoing edge a narrow staged-Parquet
+copy of the key columns (`_stage.py`, `_relation.py::_staging_schema`). The
+staged/join key is a STRING TOKEN (`execution/_fk_keys.py::fk_join_key`,
+`\x00STR:{len}:{value}` tuple-framed), and an `__decoy_row_nr` int64 column is
+staged alongside it.
+
+STALE (pre-OOC-B) CLAIM CORRECTED: this section previously said payload
+columns "stream straight to the sink" and are "never transient spill." Since
+the OOC-B single-source-read redesign (`_stream_driver.py`, `_payload_store.py`)
+that is no longer true: `stream_table` now stages THREE additional Arrow-IPC
+spills per table under `temp_dir` before anything commits --
+`edge_{n}/child_keys.arrow` (one per incoming edge, `SpillChildKeys`, sized by
+THIS table's own row count), `raw_parent_keys.arrow` (one per table with an
+outgoing edge, `RawParentKeySpill`, sized by that same row count), and
+`payload.arrow` (one per table when a sink is present, `SpillPayloadStore`,
+carrying every non-FK column at its masked width -- i.e. close to the same
+size as that table's own committed OUTPUT term below). All three are deleted
+right after their last read (`stream_table`'s `finally` block), so they are
+genuinely TRANSIENT, but they DO coexist on disk with earlier-staged key spills
+and, briefly, with the row group(s) already flushed to the committed output
+file -- a real disk-pressure contributor the SPILL model below does not yet
+price. The model is left AS-IS here (not re-derived) because it is advisory-
+only and already conservative in the safe direction for its two priced terms;
+this gap is a documented UNDER-estimate risk on the payload/child-key-spill
+side, backstopped by the runtime `check_temp_disk_budget`, which (post-Task-5)
+checkpoints WITHIN a table's phase 1 as well as at table boundaries -- the
+actual no-OOM guarantee was always that runtime enforcer, never this preflight.
+
+So disk pressure is (at least) two independent PRICED terms, EACH scaled by
+ITS OWN table's row count (never a cross-product of all key widths x all
+rows, which would inflate quadratically in schema breadth), plus the
+transient spills described above that this model does not price:
 
   SPILL (transient temp, released at job end) = SPILL_OVERHEAD * (
       base + parent_relations * max(1, max_per_table_edge_count)

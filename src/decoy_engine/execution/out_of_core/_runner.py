@@ -163,11 +163,17 @@ def run_fk_out_of_core(
                 unconfigured_column_policy=unconfigured_column_policy,
                 mask_key=mask_key,
                 code_set_corpora=code_set_corpora,
+                temp_disk_budget_bytes=temp_disk_budget_bytes,
+                disk_check_root=root,
             )
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and a
                 # walk here costs a handful of stats, not a watcher thread.
+                # stream_table ALSO checkpoints mid-table (Task 5): this call
+                # is the backstop for a table whose phase 1 never crosses the
+                # mid-table interval (few batches) or whose footprint grows
+                # only during the post-phase-1 relation build/emit.
                 check_temp_disk_budget(root, max_bytes=temp_disk_budget_bytes)
         quality_metrics: dict[str, Any] = (
             {"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}

@@ -13,13 +13,12 @@ one pass; FK resolution runs later, from an artifact of that SAME read, never
 from the source again.
 
 1. Phase 1 -- the ONLY raw source pass. Per raw batch: stage every incoming
-   edge's `(row_nr, join_key, src)` keys into that edge's spillable
-   `child_keys` TEMP TABLE (`StreamFkJoiner.stage_batch`), mask the non-FK
-   columns (`mask_batch`), and append the masked batch to the **payload
-   store** (`ResidentPayloadStore` in memory when there is no sink,
-   `SpillPayloadStore` -- a lossless Arrow-IPC record-batch stream -- when
-   there is). FAIL policies run their anti-join precount here and raise
-   before any output.
+   edge's `(row_nr, join_key, src)` keys into that edge's `SpillChildKeys`
+   Arrow-IPC file (`StreamFkJoiner.stage_batch`), mask the non-FK columns
+   (`mask_batch`), and append the masked batch to the **payload store**
+   (`ResidentPayloadStore` in memory when there is no sink, `SpillPayloadStore`
+   -- a lossless Arrow-IPC record-batch stream -- when there is). FAIL
+   policies run their anti-join precount here and raise before any output.
 2. Phase 2 -- one streamed join per edge. Each edge opens its ordered raw
    join-row reader (`StreamFkJoiner.iter_join_rows`), wrapped in a
    `JoinRowCursor`.
@@ -38,6 +37,7 @@ Byte-parity to the pandas oracle is unchanged and pinned by `tests/parity/`.
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +51,7 @@ from decoy_engine.execution._output_projection import (
     enforce_output_projection,
 )
 from decoy_engine.execution.out_of_core import _join as _join_ooc
+from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
 from decoy_engine.execution.out_of_core._emit import (
     assemble_resident,
     emit_to_sink,
@@ -93,6 +94,16 @@ if TYPE_CHECKING:
     TableSource: TypeAlias = pa.Table | LazySource
 
 
+# How many phase-1 raw batches pass between mid-table disk checkpoints. The
+# runner's own boundary check (`_runner.py`, after `stream_table` returns) is
+# free -- it runs once per table -- but a checkpoint INSIDE phase 1 costs one
+# `os.walk`-shaped disk-usage scan per firing, so this is a batch count, not
+# every batch: fine-grained enough to catch a real table (thousands of
+# batches) exhausting disk long before its own boundary, coarse enough that
+# the scan cost stays a rounding error against the batch work itself.
+_DISK_CHECKPOINT_BATCH_INTERVAL = 32
+
+
 def stream_table(
     plan: Plan,
     table_name: str,
@@ -113,6 +124,8 @@ def stream_table(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
     code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    temp_disk_budget_bytes: int | None = None,
+    disk_check_root: Path | None = None,
 ) -> None:
     """Rewrite one table via the three-phase single-streaming-join driver.
 
@@ -124,6 +137,17 @@ def stream_table(
     incoming-edge order. `budget_bytes` (when not None) sizes the joiner/build
     DuckDB connections by their own phase-local liveness (see
     `_memory_estimate.resolve_phase_memory_limits`).
+
+    `temp_disk_budget_bytes` + `disk_check_root` (both default None): the SAME
+    budget and root `_runner.py` checks at each table boundary, threaded here
+    so phase 1 can ALSO checkpoint every `_DISK_CHECKPOINT_BATCH_INTERVAL`
+    raw batches -- the table-boundary check alone fires only after a whole
+    table's `child_keys.arrow` + `raw_parent_keys.arrow` + `payload.arrow`
+    spills have already accumulated, which for one large table can exhaust
+    disk long before that boundary is ever reached. `disk_check_root` is the
+    RUN's overall temp root (not this table's own `temp_dir`), matching what
+    the boundary check measures: the combined footprint of every spill under
+    the run, not just this table's.
 
     `code_set_corpora` (default None): the shared corpus-provenance evidence
     sink, mutated in place. Each column's evidence commits only once its stream
@@ -224,6 +248,7 @@ def stream_table(
             # there cannot leak the just-opened DuckDB connection.
             joiners.append(joiner)
             joiner.begin_staging()
+        batches_since_disk_check = 0
         for raw_batch in _iter_source_batches(raw, batch_rows):
             for joiner in joiners:
                 joiner.stage_batch(raw_batch)
@@ -271,6 +296,18 @@ def stream_table(
                 # one stable schema across every write to its Arrow IPC stream.
                 masked_batch = reconcile_batch(masked_batch, payload_schema)
             store.append(masked_batch)
+            if temp_disk_budget_bytes is not None and disk_check_root is not None:
+                # Mid-table checkpoint (Task 5): the runner's own boundary
+                # check only fires after this whole table's phase 1 has
+                # already finished, by which point child_keys.arrow +
+                # raw_parent_keys.arrow + payload.arrow may already have
+                # exhausted disk on a table with many batches. Same fail-
+                # closed error the boundary check raises; a caller cannot
+                # tell which checkpoint fired, nor does it need to.
+                batches_since_disk_check += 1
+                if batches_since_disk_check >= _DISK_CHECKPOINT_BATCH_INTERVAL:
+                    check_temp_disk_budget(disk_check_root, max_bytes=temp_disk_budget_bytes)
+                    batches_since_disk_check = 0
         # Finalize the spill now: phase 1 is done reading `raw`, and the
         # outgoing-relation build (below, or in `emit_to_sink`) reads this
         # stream back via `raw_parent_source` -- it must carry its end-of-stream
@@ -402,6 +439,15 @@ def stream_table(
         # idempotent.
         if raw_parent_spill is not None:
             raw_parent_spill.finalize()
+        # Early delete (Task 5): every spill this call created --
+        # child_keys.arrow per edge, raw_parent_keys.arrow, payload.arrow --
+        # lives under this table's OWN `temp_dir` and has had its last read by
+        # this point (success or failure), so there is no reason to leave it
+        # on disk competing with every LATER table's spill budget until the
+        # whole run's teardown. Best-effort: a table this call never reached
+        # (an exception before `temp_dir` was even created) leaves nothing to
+        # remove.
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _open_joiner(
