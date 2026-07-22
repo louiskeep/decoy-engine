@@ -1,334 +1,468 @@
-"""Differentially private snapshot release (deferred follow-up 3, 2026-06-12).
+"""Unit tests for `decoy_engine.quality.dp.fit_dp_snapshot` (DPS Scope B).
 
-`apply_dp_noise` adds per-count Laplace noise (Dwork et al. 2006;
-OpenDP/SmartNoise histogram release pattern) to a distribution
-snapshot, removes exact moments, and widens min/max to edge resolution.
-The artifact stays distribution-snapshot/v1 (additive `dp` block) and
-the seeded samplers consume it unchanged, so generation from a FIXED
-noisy snapshot is still deterministic.
+Supersedes the Option A `apply_dp_noise` suite entirely (that mechanism
+is deleted). Covers the guide's named assertions for step 5 section 3
+(config validation, release ID minting, disclosure-channel regressions,
+categorical order/other_count derivation) plus the section 7.2 unseeded
+statistical mechanism tests.
 """
 
 from __future__ import annotations
 
-import json
+import math
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from decoy_engine.generation.statistical import StatisticalSpecError, load_spec, sample_column
-from decoy_engine.quality.dp import DpError, apply_dp_noise
-from decoy_engine.quality.snapshot import compute_distribution_snapshot
+from decoy_engine.quality.dp import DpError, fit_dp_snapshot
+
+# Fixed test-confidence budget (guide section 7.2): 1e-6 false-failure
+# probability per statistical test per run, derived once as a module
+# constant so a later reader can recheck the arithmetic.
+_ALPHA = 1e-6
 
 
-def _source_df() -> pd.DataFrame:
-    rng = np.random.default_rng(5)
-    n = 500
+def _mixed_df(n: int = 2000, seed: int = 3) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
     return pd.DataFrame(
         {
-            "amount": rng.normal(100.0, 25.0, size=n).round(2),
-            "state": rng.choice(["CA", "NY", "TX"], size=n, p=[0.5, 0.3, 0.2]),
-            "joined": pd.to_datetime("2020-01-01")
-            + pd.to_timedelta(rng.integers(0, 365 * 4, size=n), unit="D"),
-            "comment": [f"row comment number {i} with some text" * (1 + i % 3) for i in range(n)],
+            "age": rng.integers(0, 120, size=n).astype(float),
+            "state": rng.choice(["CA", "NY", "TX", "ZZ"], size=n, p=[0.5, 0.3, 0.15, 0.05]),
         }
     )
 
 
-def _snapshot() -> dict:
-    return compute_distribution_snapshot(_source_df())
+class TestConfigValidation:
+    def test_production_dp_fit_exposes_no_seed_or_rng_parameter(self):
+        import inspect
 
+        sig = inspect.signature(fit_dp_snapshot)
+        assert "seed" not in sig.parameters
+        assert "rng" not in sig.parameters
 
-class TestNoiseApplication:
-    def test_counts_noised_nonnegative_ints_and_input_unmutated(self):
-        snap = _snapshot()
-        before = json.dumps(snap, sort_keys=True)
-        noisy = apply_dp_noise(snap, epsilon=0.5, rng=np.random.default_rng(0))
-        assert json.dumps(snap, sort_keys=True) == before  # input untouched
+    def test_dp_fit_rejects_missing_public_column_declarations(self):
+        df = pd.DataFrame({"age": [1.0, 2.0], "state": ["a", "b"]})
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                df,
+                categorical_columns=["state"],
+                numeric_domains={},  # "age" undeclared
+                epsilon=1.0,
+                delta=1e-6,
+            )
+        assert exc.value.code == "dp_column_declaration_incomplete"
 
-        num = noisy["columns"]["amount"]["stats"]
-        assert num["bin_counts"] != snap["columns"]["amount"]["stats"]["bin_counts"]
-        for col in noisy["columns"].values():
-            stats = col.get("stats") or {}
-            for c in stats.get("bin_counts") or []:
-                assert isinstance(c, int) and c >= 0
-            for item in stats.get("top_values") or []:
-                assert isinstance(item["count"], int) and item["count"] >= 0
-            for item in stats.get("year_bins") or []:
-                assert isinstance(item["count"], int) and item["count"] >= 0
-            for c in stats.get("length_bin_counts") or []:
-                assert isinstance(c, int) and c >= 0
-        assert isinstance(noisy["row_count"], int) and noisy["row_count"] >= 0
+    def test_dp_fit_rejects_overlapping_public_column_declarations(self):
+        df = pd.DataFrame({"age": [1.0, 2.0]})
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                df,
+                categorical_columns=["age"],
+                numeric_domains={"age": (0.0, 120.0)},
+                epsilon=1.0,
+                delta=1e-6,
+            )
+        assert exc.value.code == "dp_column_declaration_overlap"
 
-    def test_exact_moments_removed_and_minmax_widened(self):
-        snap = _snapshot()
-        noisy = apply_dp_noise(snap, epsilon=1.0, rng=np.random.default_rng(1))
-        num = noisy["columns"]["amount"]["stats"]
-        assert num["quantiles"] == {}
-        assert num["mean"] is None and num["std"] is None
-        assert num["min"] == num["bin_edges"][0]
-        assert num["max"] == num["bin_edges"][-1]
-        dt = noisy["columns"]["joined"]["stats"]
-        assert dt["min"].endswith("-01-01T00:00:00")
-        assert dt["max"].endswith("-12-31T23:59:59")
-        ft = noisy["columns"]["comment"]["stats"]
-        assert ft["length"]["mean"] is None and ft["length"]["std"] is None
-
-    def test_tiny_epsilon_clamps_to_zero_never_negative(self):
-        noisy = apply_dp_noise(_snapshot(), epsilon=1e-3, rng=np.random.default_rng(2))
-        counts = noisy["columns"]["amount"]["stats"]["bin_counts"]
-        assert all(c >= 0 for c in counts)
-        assert 0 in counts  # scale 1000 noise must zero something
-
-    def test_dp_metadata_block(self):
-        # DPS-2 (Task 4): the dp block gains delta + the composed budget
-        # (epsilon_total/delta_total/composition/charges) on top of the
-        # DPS-1 (Task 3) fields. This assertion is the one the plan
-        # flags as needing an update once the block grows.
-        noisy = apply_dp_noise(_snapshot(), epsilon=2.0, rng=np.random.default_rng(3))
-        dp = noisy["dp"]
-        assert dp["epsilon"] == 2.0
-        assert dp["delta"] == 1e-6
-        assert dp["mechanism"] == "laplace"
-        assert dp["sensitivity"] == 1
-        assert dp["adjacency"] == "add-remove-one-row"
-        assert dp["scope"] == "per-column-histogram"
-        assert dp["composition"] == "sequential"
-        assert dp["epsilon_total"] > dp["epsilon"]  # more than one release was charged
-        assert dp["delta_total"] >= 0.0
-        assert isinstance(dp["charges"], list) and len(dp["charges"]) > 0
-        # Schema unchanged: v1-additive.
-        assert noisy["schema_version"] == _snapshot()["schema_version"]
-
-
-def _cat_snapshot(counts: dict) -> dict:
-    return {
-        "schema_version": "distribution-snapshot/v1",
-        "row_count": sum(counts.values()),
-        "columns": {
-            "dx": {
-                "kind": "categorical",
-                "dtype": "object",
-                "null_count": 0,
-                "non_null_count": sum(counts.values()),
-                "distinct_count": len(counts),
-                "stats": {
-                    "top_values": [{"value": k, "count": v} for k, v in counts.items()],
-                    "other_count": 0,
-                },
-            }
-        },
-        "joints": [],
-    }
-
-
-class TestThresholdReleasedCategorySet:
-    """DPS-1 Task 3: stable-histogram / propose-test-release category set.
-
-    A unique rare category (e.g. a single patient's free-text-like code)
-    is a real-value leak even though its *count* gets Laplace noise: the
-    label itself is released exactly. Suppressing labels below the
-    stable-histogram threshold tau makes the released label SET itself
-    (epsilon, delta)-DP (Korolova et al. 2009 / Dwork & Roth Sec. 3).
-    """
-
-    def test_rare_category_suppressed_into_other(self):
-        rng = np.random.default_rng(7)
-        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
-        out = apply_dp_noise(snap, epsilon=0.5, delta=1e-6, rng=rng)
-        labels = {tv["value"] for tv in out["columns"]["dx"]["stats"]["top_values"]}
-        assert "rare_unique_patient" not in labels  # the leak is gone
-        assert out["columns"]["dx"]["stats"]["other_count"] >= 1
-
-    def test_common_category_survives_threshold(self):
-        rng = np.random.default_rng(7)
-        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
-        out = apply_dp_noise(snap, epsilon=0.5, delta=1e-6, rng=rng)
-        labels = {tv["value"] for tv in out["columns"]["dx"]["stats"]["top_values"]}
-        assert "common" in labels
-
-    def test_default_delta_applied_when_omitted(self):
-        # apply_dp_noise must still threshold-release even without an
-        # explicit delta (default from the Interfaces contract).
-        rng = np.random.default_rng(7)
-        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
-        out = apply_dp_noise(snap, epsilon=0.5, rng=rng)
-        labels = {tv["value"] for tv in out["columns"]["dx"]["stats"]["top_values"]}
-        assert "rare_unique_patient" not in labels
-
-    def test_suppressed_mass_conserved_not_dropped(self):
-        # Total released mass (kept top_values + other_count) must not
-        # silently shrink -- the suppressed count moves to other_count,
-        # it does not vanish.
-        rng = np.random.default_rng(11)
-        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
-        out = apply_dp_noise(snap, epsilon=0.5, delta=1e-6, rng=rng)
-        stats = out["columns"]["dx"]["stats"]
-        released_total = sum(tv["count"] for tv in stats["top_values"]) + stats["other_count"]
-        assert released_total >= 1  # nonnegative, noised counts can shrink but never go missing
-
-    def test_invalid_delta_rejected(self):
-        snap = _cat_snapshot({"a": 10, "b": 10})
-        for bad in (0, -1e-6, 1.0, float("nan"), float("inf")):
-            with pytest.raises(DpError) as exc:
-                apply_dp_noise(snap, epsilon=1.0, delta=bad, rng=np.random.default_rng(0))
-            assert exc.value.code == "dp_delta_invalid"
-
-
-class TestComposedBudget:
-    """DPS-2 Task 4: every noised release is charged to a PrivacyBudget;
-    the composed total is the honest (epsilon, delta) of the whole
-    snapshot release, not the per-histogram figure alone (Dwork & Roth
-    Thm 3.16, sequential composition -- see dp_budget.py)."""
-
-    def test_reports_composed_epsilon_total(self):
-        rng = np.random.default_rng(1)
-        snap = _cat_snapshot({"a": 500, "b": 500})  # 1 categorical col + row_count + ...
-        out = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=rng)
-        dp = out["dp"]
-        assert dp["epsilon_total"] >= 1.0  # per-column + scalar releases all charged
-        assert dp["composition"] == "sequential"
-        assert any(c["label"].startswith("dx") for c in dp["charges"])
-
-    def test_epsilon_total_is_sum_of_charge_epsilons(self):
-        rng = np.random.default_rng(2)
-        snap = _cat_snapshot({"a": 500, "b": 500})
-        out = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=rng)
-        dp = out["dp"]
-        assert dp["epsilon_total"] == pytest.approx(sum(c["epsilon"] for c in dp["charges"]))
-        assert dp["delta_total"] == pytest.approx(sum(c["delta"] for c in dp["charges"]))
-
-    def test_every_column_and_row_count_is_charged(self):
-        # Honest accounting: row_count is charged, and the categorical
-        # column's threshold-released label set is charged too (not just
-        # numeric histograms) -- charging fewer releases than were
-        # actually noised would UNDERSTATE epsilon_total, which is a
-        # wrong DP claim, worse than none.
-        rng = np.random.default_rng(3)
-        snap = _cat_snapshot({"a": 500, "b": 500})
-        out = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=rng)
-        labels = [c["label"] for c in out["dp"]["charges"]]
-        assert "row_count" in labels
-        assert any(label.startswith("dx.") for label in labels)
-
-    def test_multi_column_snapshot_composes_more_than_single_column(self):
-        rng1 = np.random.default_rng(4)
-        rng2 = np.random.default_rng(4)
-        one_col = apply_dp_noise(_cat_snapshot({"a": 500, "b": 500}), epsilon=1.0, rng=rng1)
-        two_cols = _cat_snapshot({"a": 500, "b": 500})
-        two_cols["columns"]["dx2"] = json.loads(json.dumps(two_cols["columns"]["dx"]))
-        two_cols_out = apply_dp_noise(two_cols, epsilon=1.0, rng=rng2)
-        assert two_cols_out["dp"]["epsilon_total"] > one_col["dp"]["epsilon_total"]
-
-
-class TestDeltaAdvertisedOnlyWhenSpent:
-    """Fix 6 (gate remediation, LOW #6): the `dp` block must not advertise
-    a `delta` figure when no delta-spending (categorical threshold)
-    release actually occurred -- advertised delta must match spent delta."""
-
-    def _numeric_only_snapshot(self) -> dict:
-        rng = np.random.default_rng(9)
-        df = pd.DataFrame({"amount": rng.normal(100.0, 25.0, size=200).round(2)})
-        return compute_distribution_snapshot(df)
-
-    def test_delta_omitted_when_no_categorical_release(self):
-        noisy = apply_dp_noise(
-            self._numeric_only_snapshot(), epsilon=1.0, rng=np.random.default_rng(0)
-        )
-        assert noisy["dp"]["delta_total"] == 0.0
-        assert "delta" not in noisy["dp"]
-
-    def test_delta_present_when_categorical_release_occurred(self):
-        # _snapshot() (module fixture) includes a categorical "state"
-        # column, so the threshold-release charge spends delta.
-        noisy = apply_dp_noise(_snapshot(), epsilon=1.0, rng=np.random.default_rng(0))
-        assert noisy["dp"]["delta_total"] > 0.0
-        assert noisy["dp"]["delta"] == 1e-6
-
-    def test_delta_present_when_only_high_cardinality_style_categorical_input(self):
-        # Even a categorical column that ends up fully retained (no actual
-        # suppression) still spends delta -- the THRESHOLD MECHANISM itself
-        # is what charges delta, not whether anything was suppressed.
-        snap = _cat_snapshot({"a": 500, "b": 500})
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        assert noisy["dp"]["delta"] == 1e-6
-
-
-class TestValidation:
     @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "abc"])
     def test_invalid_epsilon_rejected(self, bad):
+        df = pd.DataFrame({"age": [1.0, 2.0]})
         with pytest.raises(DpError) as exc:
-            apply_dp_noise(_snapshot(), epsilon=bad)
+            fit_dp_snapshot(
+                df,
+                categorical_columns=[],
+                numeric_domains={"age": (0.0, 120.0)},
+                epsilon=bad,
+                delta=1e-6,
+            )
         assert exc.value.code == "dp_epsilon_invalid"
 
-    def test_joints_rejected(self):
-        snap = compute_distribution_snapshot(_source_df(), joint_columns=[("state", "comment")])
-        if not snap["joints"]:  # comment is freetext; use a real categorical pair
-            df = _source_df()
-            df["tier"] = ["gold" if s == "CA" else "bronze" for s in df["state"]]
-            snap = compute_distribution_snapshot(df, joint_columns=[("state", "tier")])
-        assert snap["joints"]
+    @pytest.mark.parametrize("bad", [0, 1, 1.0, -1e-6, float("nan"), float("inf")])
+    def test_invalid_delta_rejected_including_zero(self, bad):
+        # delta=0 is rejected even for a numeric-only fit (guide 9.10 item 2).
+        df = pd.DataFrame({"age": [1.0, 2.0]})
         with pytest.raises(DpError) as exc:
-            apply_dp_noise(snap, epsilon=1.0)
-        assert exc.value.code == "dp_joint_unsupported"
+            fit_dp_snapshot(
+                df,
+                categorical_columns=[],
+                numeric_domains={"age": (0.0, 120.0)},
+                epsilon=1.0,
+                delta=bad,
+            )
+        assert exc.value.code == "dp_delta_invalid"
 
+    @pytest.mark.parametrize("bad", [1, 1.5, 0, -1])
+    def test_invalid_numeric_bins_rejected(self, bad):
+        df = pd.DataFrame({"age": [1.0, 2.0]})
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                df,
+                categorical_columns=[],
+                numeric_domains={"age": (0.0, 120.0)},
+                epsilon=1.0,
+                delta=1e-6,
+                numeric_bins=bad,
+            )
+        assert exc.value.code == "dp_numeric_bins_invalid"
 
-class TestSamplerConsumption:
-    def _noisy_path(self, tmp_path, epsilon=1.0):
-        noisy = apply_dp_noise(_snapshot(), epsilon=epsilon, rng=np.random.default_rng(7))
-        path = tmp_path / "noisy.json"
-        path.write_text(json.dumps(noisy), encoding="utf-8")
-        return str(path)
+    @pytest.mark.parametrize(
+        "bounds", [(120.0, 0.0), (0.0, 0.0), (float("nan"), 1.0), (0.0, float("inf"))]
+    )
+    def test_invalid_numeric_domain_rejected(self, bounds):
+        df = pd.DataFrame({"age": [1.0, 2.0]})
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                df, categorical_columns=[], numeric_domains={"age": bounds}, epsilon=1.0, delta=1e-6
+            )
+        assert exc.value.code == "dp_numeric_domain_invalid"
 
-    def test_noisy_snapshot_roundtrips_load_spec_for_all_kinds(self, tmp_path):
-        path = self._noisy_path(tmp_path)
-        for name, extra in (
-            ("amount", {}),
-            ("state", {"allow_real_categories": True}),
-            ("joined", {}),
-        ):
-            spec = load_spec({"name": name, "type": "statistical", "snapshot_file": path, **extra})
-            assert spec.kind in ("numeric", "categorical", "datetime")
-
-    def test_generation_from_fixed_noisy_snapshot_is_deterministic(self, tmp_path):
-        path = self._noisy_path(tmp_path)
-        spec = load_spec({"name": "amount", "type": "statistical", "snapshot_file": path})
-        a = sample_column(spec, 300, col_seed=99)
-        b = sample_column(spec, 300, col_seed=99)
-        assert a == b
-        cat = load_spec(
-            {
-                "name": "state",
-                "type": "statistical",
-                "snapshot_file": path,
-                "allow_real_categories": True,
-            }
+    def test_numeric_bins_default_is_ten_and_recorded_in_artifact(self):
+        df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
+        snap = fit_dp_snapshot(
+            df,
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=1.0,
+            delta=1e-6,
         )
-        assert sample_column(cat, 300, col_seed=99) == sample_column(cat, 300, col_seed=99)
+        assert snap["dp"]["numeric_bins"] == 10
+        assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == 10
 
-    def test_all_zero_weights_raise_degenerate(self, tmp_path):
-        noisy = apply_dp_noise(_snapshot(), epsilon=1.0, rng=np.random.default_rng(7))
-        for item in noisy["columns"]["state"]["stats"]["top_values"]:
-            item["count"] = 0
-        noisy["columns"]["state"]["stats"]["other_count"] = 0
-        for item in noisy["columns"]["joined"]["stats"]["year_bins"]:
-            item["count"] = 0
-        path = tmp_path / "zeroed.json"
-        path.write_text(json.dumps(noisy), encoding="utf-8")
 
-        cat = load_spec(
-            {
-                "name": "state",
-                "type": "statistical",
-                "snapshot_file": str(path),
-                "allow_real_categories": True,
-            }
+class TestReleaseIds:
+    def test_independent_fits_mint_distinct_release_ids(self):
+        df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
+        snap_a = fit_dp_snapshot(
+            df,
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=1.0,
+            delta=1e-6,
         )
-        with pytest.raises(StatisticalSpecError) as exc:
-            sample_column(cat, 10, col_seed=1)
-        assert exc.value.code == "statistical_stats_degenerate"
+        snap_b = fit_dp_snapshot(
+            df,
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=1.0,
+            delta=1e-6,
+        )
+        assert snap_a["dp"]["release_id"] != snap_b["dp"]["release_id"]
 
-        dt = load_spec({"name": "joined", "type": "statistical", "snapshot_file": str(path)})
-        with pytest.raises(StatisticalSpecError) as exc:
-            sample_column(dt, 10, col_seed=1)
-        assert exc.value.code == "statistical_stats_degenerate"
+    def test_copied_snapshot_preserves_release_id(self):
+        import copy
+        import json
+
+        df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
+        snap = fit_dp_snapshot(
+            df,
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=1.0,
+            delta=1e-6,
+        )
+        copy_a = copy.deepcopy(snap)
+        copy_b = json.loads(json.dumps(snap))
+        assert copy_a["dp"]["release_id"] == snap["dp"]["release_id"]
+        assert copy_b["dp"]["release_id"] == snap["dp"]["release_id"]
+
+
+class TestArtifactShape:
+    def test_dp_artifact_emits_no_exact_column_scalars(self):
+        snap = fit_dp_snapshot(
+            _mixed_df(),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        age = snap["columns"]["age"]
+        assert age["stats"]["mean"] is None
+        assert age["stats"]["std"] is None
+        assert age["stats"]["quantiles"] == {}
+        state = snap["columns"]["state"]
+        assert "high_cardinality" not in state["stats"]
+        assert "support_origin" not in state
+
+    def test_dp_artifact_records_opendp_and_dp_accounting_versions(self):
+        import importlib.metadata
+
+        snap = fit_dp_snapshot(
+            pd.DataFrame({"age": [1.0, 2.0]}),
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=1.0,
+            delta=1e-6,
+        )
+        assert snap["dp"]["opendp_version"] == importlib.metadata.version("opendp")
+        assert snap["dp"]["dp_accounting_version"] == importlib.metadata.version("dp-accounting")
+
+    def test_dp_artifact_totals_are_the_accountant_result_not_the_request(self):
+        snap = fit_dp_snapshot(
+            _mixed_df(),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        assert snap["dp"]["epsilon_total"] <= 2.0
+        assert snap["dp"]["epsilon_total"] != 2.0  # the accountant's result, not the request
+
+    def test_dp_fit_certificate_count_equals_query_count(self):
+        snap = fit_dp_snapshot(
+            _mixed_df(),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        assert snap["dp"]["query_count"] == 1 + 1 + 2  # row_count + 1 numeric + 2*1 categorical
+
+
+class TestDisclosureChannelRegressions:
+    """Guide section 7.3: private values change, public declarations stay
+    fixed; only the observable schema/success class/schedule may match,
+    never the released values themselves."""
+
+    def test_dp_fit_kind_and_success_are_identical_across_30_31_distinct_neighbors(self):
+        df_30 = pd.DataFrame({"cat": [f"val{i}" for i in range(30)]})
+        df_31 = pd.DataFrame({"cat": [f"val{i}" for i in range(31)]})
+        snap_30 = fit_dp_snapshot(
+            df_30, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        )
+        snap_31 = fit_dp_snapshot(
+            df_31, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        )
+        assert (
+            snap_30["columns"]["cat"]["kind"] == snap_31["columns"]["cat"]["kind"] == "categorical"
+        )
+        assert snap_30["dp"]["query_count"] == snap_31["dp"]["query_count"]
+
+    def test_dp_fit_all_null_declared_categorical_runs_measurement_and_emits_categorical_shape(
+        self,
+    ):
+        df = pd.DataFrame({"cat": [None, None, None, None]})
+        snap = fit_dp_snapshot(
+            df, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        )
+        assert snap["columns"]["cat"]["kind"] == "categorical"
+        assert snap["dp"]["query_count"] == 1 + 2  # row_count + 2 categorical queries
+
+    def test_dp_fit_numeric_shape_and_charge_schedule_are_data_independent_for_all_null_and_all_inf(
+        self,
+    ):
+        domains = {"age": (0.0, 120.0)}
+        all_null = fit_dp_snapshot(
+            pd.DataFrame({"age": [None, None, None]}),
+            categorical_columns=[],
+            numeric_domains=domains,
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        all_inf = fit_dp_snapshot(
+            pd.DataFrame({"age": [float("inf"), float("-inf"), float("inf")]}),
+            categorical_columns=[],
+            numeric_domains=domains,
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        ordinary = fit_dp_snapshot(
+            pd.DataFrame({"age": [10.0, 50.0, 90.0]}),
+            categorical_columns=[],
+            numeric_domains=domains,
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        for snap in (all_null, all_inf, ordinary):
+            assert (
+                snap["columns"]["age"]["stats"]["bin_edges"]
+                == ordinary["columns"]["age"]["stats"]["bin_edges"]
+            )
+            assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == 10
+            assert snap["dp"]["query_count"] == ordinary["dp"]["query_count"]
+
+    def test_all_distinct_categorical_versus_single_repeated_label_same_schema(self):
+        all_distinct = pd.DataFrame({"cat": [f"v{i}" for i in range(50)]})
+        one_label = pd.DataFrame({"cat": ["only"] * 50})
+        snap_distinct = fit_dp_snapshot(
+            all_distinct, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        )
+        snap_one = fit_dp_snapshot(
+            one_label, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        )
+        assert snap_distinct["dp"]["query_count"] == snap_one["dp"]["query_count"]
+        # Neither raises, and other_count is well-formed (no divide-by-zero
+        # or exact fallback) even when nothing is retained.
+        assert snap_distinct["columns"]["cat"]["stats"]["other_count"] >= 0
+        assert snap_one["columns"]["cat"]["stats"]["other_count"] >= 0
+
+
+class TestCategoricalRelease:
+    def test_categorical_release_order_uses_noised_counts_not_true_rank(self):
+        snap = fit_dp_snapshot(
+            _mixed_df(n=3000),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=5.0,
+            delta=1e-6,
+        )
+        top = snap["columns"]["state"]["stats"]["top_values"]
+        counts = [t["count"] for t in top]
+        assert counts == sorted(counts, reverse=True)
+        # Tie-break is by label ascending for equal counts.
+        for i in range(len(top) - 1):
+            if top[i]["count"] == top[i + 1]["count"]:
+                assert top[i]["value"] < top[i + 1]["value"]
+
+    def test_categorical_other_count_is_derived_only_from_noised_total_and_kept_counts(self):
+        snap = fit_dp_snapshot(
+            _mixed_df(n=3000),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=5.0,
+            delta=1e-6,
+        )
+        stats = snap["columns"]["state"]["stats"]
+        kept_sum = sum(t["count"] for t in stats["top_values"])
+        assert stats["other_count"] == max(0, snap["columns"]["state"]["non_null_count"] - kept_sum)
+
+
+class TestUnseededStatisticalMechanism:
+    """Guide section 7.2. Neither test may be seeded; both are designed
+    so a correct implementation fails less often than `_ALPHA` per run."""
+
+    def test_independent_dp_fits_are_not_deterministic(self):
+        df = pd.DataFrame({"age": [float(i % 120) for i in range(2000)]})
+        domains = {"age": (0.0, 120.0)}
+        vectors = [
+            tuple(
+                fit_dp_snapshot(
+                    df, categorical_columns=[], numeric_domains=domains, epsilon=5.0, delta=1e-6
+                )["columns"]["age"]["stats"]["bin_counts"]
+            )
+            for _ in range(5)
+        ]
+        # Collision probability of 5 independent 10-bin noised-count
+        # vectors all matching, under a real Laplace mechanism at this
+        # scale, is far below _ALPHA; a broken (e.g. zero-noise) mechanism
+        # would make every vector identical.
+        assert len(set(vectors)) > 1
+
+    def test_count_one_release_probability_upper_bound(self):
+        """A label with true count 1 must be released no more often than
+        its measurement's own certified delta (times a documented slack),
+        one-sided Clopper-Pearson at alpha=_ALPHA. Compares against the
+        CERTIFIED delta of the thresholded chain, not the fit-wide delta
+        or the allocation target (guide section 7.2).
+
+        Calibration (the allocation search) runs ONCE: it is a pure
+        function of the public (epsilon, delta, schedule) request, never
+        of values (guide section 4.3.2), so re-deriving it per trial would
+        only slow the test down, not change what it measures. The
+        calibrated measurement is invoked fresh (unseeded OpenDP
+        randomness) on every trial.
+
+        The schedule's (epsilon, delta) here is a private test fixture,
+        not a production default: it exists only to fix a certified delta
+        against which the empirical release rate is checked, and the
+        property under test (empirical rate tracks certified delta) holds
+        at any delta. A one-categorical-column schedule at delta=1e-3
+        (certified delta ~5e-4) needs an infeasible trial count to resolve
+        at alpha=1e-6: with 1 expected release in 2000 trials the
+        Clopper-Pearson upper bound is dominated by sampling noise (~16x
+        certified delta), not by mechanism behavior, so the test cannot
+        tell a correct implementation from a broken one. delta=0.02 raises
+        the certified delta to ~0.01, so 5000 trials give ~50 expected
+        releases; per Clopper-Pearson, that pins the upper bound to
+        ~1.8-2.7x certified delta even in a 5-sigma-high draw (verified
+        against scipy.stats.beta.ppf during test design), comfortably
+        inside the slack factor below while still catching an
+        order-of-magnitude regression in release probability.
+        """
+        from decoy_engine.quality.dp_budget import (
+            CategoricalQuerySpec,
+            OpenDpReleaseSession,
+            Schedule,
+        )
+
+        schedule = Schedule(
+            row_count_name="rc",
+            numeric=(),
+            categorical=(CategoricalQuerySpec("g", "t"),),
+        )
+        session = OpenDpReleaseSession(schedule, epsilon=1.0, delta=0.02)
+        grouped_meas, _total_meas = session._categorical_measurements(
+            session._eps_q, session._delta_per_categorical
+        )
+        certified_delta = grouped_meas.map(1)[1]
+
+        n_trials = 5000
+        values = ["common"] * 999 + ["rare_one"]
+        releases = sum(1 for _ in range(n_trials) if "rare_one" in grouped_meas.invoke(values))
+
+        # One-sided Clopper-Pearson upper bound at alpha=_ALPHA, computed
+        # via the regularized incomplete beta function's relationship to
+        # the F distribution (Clopper & Pearson 1934); stdlib-only so this
+        # test carries no extra runtime dependency.
+        upper = _clopper_pearson_upper(releases, n_trials, _ALPHA)
+        slack_factor = 10  # documented slack: catches an order-of-magnitude regression
+        assert upper <= certified_delta * slack_factor, (
+            f"N={n_trials} releases={releases} observed_rate={releases / n_trials} "
+            f"upper={upper} certified_delta={certified_delta}"
+        )
+
+
+def _clopper_pearson_upper(successes: int, n: int, alpha: float) -> float:
+    """One-sided Clopper-Pearson upper confidence bound on a binomial
+    success probability (Clopper & Pearson, "The Use of Confidence or
+    Fiducial Limits Illustrated in the Case of the Binomial", Biometrika
+    1934). `successes == n` gives the trivial upper bound of 1.0; otherwise
+    the bound is the value `p` solving `Beta_CDF(observed_rate; successes+1,
+    n-successes) = 1 - alpha`, found here by bisection over the
+    regularized incomplete beta function (`math.lgamma`-based series, no
+    scipy dependency) rather than scipy's `beta.ppf`, since scipy is not a
+    declared runtime dependency of this engine."""
+    if successes >= n:
+        return 1.0
+
+    def reg_incomplete_beta(x: float, a: float, b: float) -> float:
+        # Continued-fraction evaluation (Numerical Recipes 6.4), accurate
+        # to double precision for the parameter ranges this test uses.
+        if x <= 0.0:
+            return 0.0
+        if x >= 1.0:
+            return 1.0
+        ln_beta = math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+        front = math.exp(math.log(x) * a + math.log(1.0 - x) * b - ln_beta) / a
+        if x >= (a + 1.0) / (a + b + 2.0):
+            return 1.0 - reg_incomplete_beta(1.0 - x, b, a)
+        f, c, d = 1.0, 1.0, 0.0
+        for i in range(200):
+            m = i // 2
+            if i == 0:
+                numerator = 1.0
+            elif i % 2 == 0:
+                numerator = (m * (b - m) * x) / ((a + 2 * m - 1) * (a + 2 * m))
+            else:
+                numerator = -((a + m) * (a + b + m) * x) / ((a + 2 * m) * (a + 2 * m + 1))
+            d = 1.0 + numerator * d
+            if abs(d) < 1e-30:
+                d = 1e-30
+            d = 1.0 / d
+            c = 1.0 + numerator / c
+            if abs(c) < 1e-30:
+                c = 1e-30
+            f *= d * c
+            if abs(d * c - 1.0) < 1e-12:
+                break
+        return front * (f - 1.0)
+
+    a, b = successes + 1, n - successes
+    lo, hi = successes / n, 1.0
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if reg_incomplete_beta(mid, a, b) < 1 - alpha:
+            lo = mid
+        else:
+            hi = mid
+    return hi
