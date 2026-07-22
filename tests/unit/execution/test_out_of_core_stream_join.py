@@ -795,6 +795,70 @@ def test_begin_staging_writes_spill_file_finalized_before_any_scan(tmp_path) -> 
         assert joiner.total_orphans() == 0
 
 
+# ---------------------------------------------------------------------------
+# OOC-B memory fix (mem-002): build-side-swap pragma structural guard.
+#
+# `child_keys` is a registered Arrow RecordBatchReader with no known row count,
+# so DuckDB's cardinality estimator sizes it at ~1 row and swaps the LEFT
+# JOIN's build side onto it, pinning an O(child) hash table instead of the
+# bounded `parent_keys` VIEW (see `_stream_join.py`'s `__init__` and
+# `_disable_build_side_swap`). This test does not re-measure memory (the perf
+# sentinel `tests/perf/test_out_of_core_memory_sentinel.py::
+# test_child_key_memory_plateau_width0` does that); it only pins the DuckDB
+# public-API surface the fix depends on, so a future DuckDB upgrade that
+# renames or removes `build_side_probe_side` fails loudly here instead of
+# silently reintroducing the O(child) regression.
+# ---------------------------------------------------------------------------
+
+
+def test_build_side_swap_optimizer_exists_on_installed_duckdb() -> None:
+    import duckdb
+
+    con = duckdb.connect()
+    try:
+        names = {row[0] for row in con.execute("SELECT name FROM duckdb_optimizers()").fetchall()}
+    finally:
+        con.close()
+    assert stream_join_mod._BUILD_SIDE_SWAP_OPTIMIZER in names, (
+        "DuckDB no longer exposes the 'build_side_probe_side' optimizer name -- "
+        "_disable_build_side_swap degrades to a silent no-op on this version, "
+        "which would silently reopen the O(child) build-side regression."
+    )
+
+
+def test_joiner_connection_disables_build_side_swap(tmp_path) -> None:
+    plan = _two_table_plan(_col("hash", namespace="cust"), "customers", "orders", "customer_id")
+    edge = _edge(OrphanPolicy.PRESERVE)
+    parent = pa.table({"customer_id": ["c1", "c2"]})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    child = pa.table({"customer_id": ["c1", "c2"]})
+    with _stream_joiner(plan, edge, relation, tmp_path / "s", child) as joiner:
+        disabled = joiner._conn.execute(
+            "SELECT current_setting('disabled_optimizers')"
+        ).fetchone()[0]
+        assert stream_join_mod._BUILD_SIDE_SWAP_OPTIMIZER in disabled.split(",")
+
+
+def test_disable_build_side_swap_is_a_noop_when_optimizer_name_is_absent(
+    tmp_path, monkeypatch
+) -> None:
+    # Simulates an older/renamed DuckDB where 'build_side_probe_side' is not in
+    # duckdb_optimizers(): the guard must leave disabled_optimizers untouched,
+    # never raise.
+    import duckdb
+
+    conn = duckdb.connect()
+    try:
+        monkeypatch.setattr(
+            stream_join_mod, "_BUILD_SIDE_SWAP_OPTIMIZER", "not_a_real_optimizer_name"
+        )
+        stream_join_mod._disable_build_side_swap(conn)
+        disabled = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
+        assert disabled == ""
+    finally:
+        conn.close()
+
+
 def test_string_masked_with_binary_child_key_rejected_at_construction(tmp_path) -> None:
     # A promotable mix outside {int64, float64}: string+binary would merge to
     # binary, but only when the data mixes; an all-string run would drift, so

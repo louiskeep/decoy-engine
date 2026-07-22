@@ -93,6 +93,32 @@ if TYPE_CHECKING:
     from decoy_engine.relationships._graph import RelationshipEdge
 
 
+# DuckDB's build-side-swap optimizer, by name, in `duckdb_optimizers()`. Kept as
+# a module constant so the structural version-guard test below can assert on
+# the exact same string this module pragmas against.
+_BUILD_SIDE_SWAP_OPTIMIZER = "build_side_probe_side"
+
+
+def _disable_build_side_swap(conn: object) -> None:
+    """Pin the joiner's own connection to the written join order (parent-build).
+
+    Public DuckDB API only (`duckdb_optimizers()` + `SET disabled_optimizers`),
+    not a library customization. Appends to any `disabled_optimizers` value
+    `connect_duckdb` may already carry rather than overwriting it, since this
+    connection is per-joiner and not shared with the resident/relation-build
+    connections that never register an unsized Arrow stream as a join side.
+    """
+    names = {row[0] for row in conn.execute("SELECT name FROM duckdb_optimizers()").fetchall()}
+    if _BUILD_SIDE_SWAP_OPTIMIZER not in names:
+        # Older DuckDB without this optimizer name never swaps this way; a
+        # missing/renamed name must degrade to a no-op, never an error.
+        return
+    existing = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
+    disabled = {name for name in existing.split(",") if name}
+    disabled.add(_BUILD_SIDE_SWAP_OPTIMIZER)
+    conn.execute(f"SET disabled_optimizers = '{','.join(sorted(disabled))}'")
+
+
 class StreamFkJoiner:
     """One streamed FK join per edge, emitting an ordered FK-output reader.
 
@@ -202,6 +228,15 @@ class StreamFkJoiner:
         # rejection never leaks one.
         self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
         try:
+            # `child_keys` is a registered Arrow RecordBatchReader with no known
+            # row count, so DuckDB's cardinality estimator treats it as ~1 row and
+            # swaps the LEFT JOIN's build side onto it -- building the hash table
+            # on the O(child) side instead of the bounded `parent_keys` VIEW.
+            # `build_side_probe_side` (DuckDB 1.5.4, public `duckdb_optimizers()`
+            # pragma) forces the planner to keep the written join order, i.e. the
+            # bounded parent, as the build side; guarded so an absent/renamed
+            # optimizer name on a future DuckDB version is a no-op, not an error.
+            _disable_build_side_swap(self._conn)
             # Parent as a VIEW, never a materialized TEMP TABLE: this joiner runs
             # ONE join against it per edge (unlike the removed per-batch joiner
             # that ran hundreds), so DuckDB reads the relation parquet once as a
