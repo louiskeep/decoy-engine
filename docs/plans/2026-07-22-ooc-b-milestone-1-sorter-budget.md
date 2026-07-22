@@ -253,3 +253,54 @@ This is the empirical proof that paper accounting cannot give. It runs the sorte
 - [ ] The measured subprocess test proves real RSS stays within the tested envelope while data far
   exceeds the ceiling, with real spill.
 - [ ] The route-seam decision above is recorded for M2; `_batch_join.py` is NOT touched in M1.
+
+## Milestone 1 measured results
+
+Measured 2026-07-22 on the build box (12 GiB RAM, shared; ~3.3 GiB free disk at measurement time,
+which also set the dataset size below -- see the sizing note in
+`tests/perf/test_ooc_external_sort_memory.py`). Fresh subprocess, `ARROW_DEFAULT_MEMORY_POOL=system`,
+`MALLOC_ARENA_MAX=2`, `process_ceiling_bytes` = 512 MiB, `run_bytes_cap` = 80,530,637 bytes (~76.8 MiB,
+`F_SORT * M`), `merge_fan_in` = 16 (the `resolve_reorder_budgets` default). Dataset: 4,000,000 rows,
+shuffled `row_nr`, variable-width binary payload (8-400 bytes, one random width per batch of 30,000
+rows), ~830 MB of Arrow-encoded data (~10x `run_bytes_cap`, ~1.6x `process_ceiling_bytes`).
+
+| run (seed)     | on-disk runs | merge passes | peak RSS (VmHWM) | ratio to 512 MiB ceiling | wall time |
+|----------------|:---:|:---:|---:|---:|---:|
+| 20260722       | 11  | 1   | 653.4 MB | 1.28x | 15.5 s |
+| 101            | 11  | 1   | 585.8 MB | 1.14x | 15.0 s |
+| 102            | 12  | 1   | 606.6 MB | 1.19x | 16.3 s |
+| 20260722 (re-run) | 11 | 1 | 596.7 MB | 1.17x | 15.5 s |
+
+All four runs: output fully sorted (contiguous `row_nr` 0..3,999,999, verified by streaming the full
+drain, not a spot check), real spill proven (>1 run file on disk before merge), single merge pass (11-12
+runs, under `merge_fan_in`=16). `ENVELOPE_FACTOR` = 1.35x is set above the highest observed ratio
+(1.28x), not the exact max, so ordinary run-to-run variance does not make the gate flaky. A fixed
+~165-195 MB baseline (importing pyarrow, numpy, and `decoy_engine` alone, before any sorter work) is a
+large fraction of this small 512 MiB ceiling and is the main reason the ratio sits meaningfully above
+1.0x rather than being unexplained slack.
+
+**A real Task 2 bug was found and fixed via this measurement, not just verified by it.** The first
+version of `_RunHead` opened run files during merge with `pyarrow.memory_map`. At this same dataset
+size, that version measured peak RSS of 736-964 MB (1.4x-1.9x the ceiling, envelope-violating) even
+though `ExternalRowNrSorter.peak_merge_resident_bytes` and `pyarrow.default_memory_pool().max_memory()`
+both stayed small and within their documented bounds throughout. Root cause: `memory_map` maps and
+leaves resident every page of a file actually touched, and pyarrow's own pool never accounts for that
+residency as an "allocation" since a memory-mapped read is zero-copy from its perspective. With up to
+`merge_fan_in` run files open at once, reading even a handful of small batches from each inflated real
+RSS by roughly the total on-disk run size sitting in mapped-and-touched pages -- invisible to every
+byte-accounting formula in this milestone's design, only visible to a real subprocess VmHWM measurement.
+The fix (`pa.OSFile` instead, a buffered read that copies each batch through the tracked pool, so it is
+released like any other tracked allocation once the batch is dropped) is committed in
+`fix(ooc): use OSFile not memory_map for run reads` and is what the numbers above measure.
+
+**Deviations from this guide's literal formulas, both driven by this measurement (recorded here for
+tech-lead review, not silently applied):**
+- `ExternalRowNrSorter`'s per-merge-head cap is `run_bytes_cap // (2 * merge_fan_in)`, not the
+  `run_bytes_cap // merge_fan_in` this guide's Task 2 section states. The merge round's own transient
+  work (concatenating the active heads, then one `sort_by` call to interleave them, which computes sort
+  indices and gathers a freshly copied result while the un-sorted heads are still resident) costs roughly
+  another heads'-worth of bytes on top of the heads themselves. Halving the per-head cap keeps that
+  transient inside `run_bytes_cap` too; using the literal (unhalved) formula was measured to make peak
+  RSS worse, not better, on this same dataset.
+- Reading run files for both the merge pass and the final drain uses `pa.OSFile`, not `pa.memory_map`
+  (see the bug writeup above). Nothing else in this guide's file-format or interface contract changed.
