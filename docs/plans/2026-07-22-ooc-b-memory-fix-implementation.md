@@ -40,6 +40,15 @@
 
 - [ ] **Step 5: Record the decision.** Append numbers + GO/NO-GO to this plan and `scratchpad/oocb-investigation.md`. GO → Task 2. NO-GO (RSS keeps a child-row slope; the global sort/result is the residual) → Task 6 becomes the PRIMARY fix (re-plan), or recommend reverting PR #107 if no bounded public-core path exists.
 
+### Task 1 RESULT (2026-07-22): GO
+- **A (isolated joiner, fixed 1M parent, width 0):** VmHWM plateaus in a ~1.1–1.4 GB band across child 3M→18M (6×); per-1M slope decays 189→83→61→33 MB/1M (RED = constant +517 MB/1M). Parity ok at every size. The child side is no longer O(child) resident.
+- **B:** two-scan reopen PASS (`total_orphans` scan 1 → `iter_join_rows` scan 2, both correct from the same file; the "scan 2 returns zero" failure mode did not occur).
+- **C:** full route 2M/width16 under a 2 GB `RLIMIT_DATA` cap: completed=true, peak_rss 1587 MB, parity ok, temp_disk 2.49 GB.
+- **Residual:** ~30 MB/1M creep + ~140 MB allocator jitter at 15–18M — a bounded external-sort floor, NOT an O(child) slope, so Task 6 stays contingency. The 200M GCP run at VERIFY remains the real ceiling test.
+
+### CRITICAL harness note (fold into every capped run, incl. TQ-0 + GCP verify)
+The probe's single-tier `--mem-cap-mb` path does NOT auto-set the allocator-pinning env; only its `--capability` path does. Any process-capped run MUST export `ARROW_DEFAULT_MEMORY_POOL=system` and `MALLOC_ARENA_MAX=2` in the environment BEFORE process start, or it spuriously OOMs on address-space reservation (peak_vms ~3.9 GB blows a 2 GB `RLIMIT_DATA` even though peak_rss is ~1 GB). Bake this into the TQ-0 sentinel and the GCP verify invocation so the guard can't be bitten by it.
+
 ---
 
 ## Task 2: `SpillChildKeys` — disk-backed, RE-OPENABLE child-key store
