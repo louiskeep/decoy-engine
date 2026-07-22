@@ -14,192 +14,162 @@ mathematical bound on re-identification risk. The `storm` profiler reports
 heuristic re-identification-risk signals to help you assess a dataset; those
 are diagnostics, not a proof.
 
-The one formal mechanism is `decoy fit --epsilon` (`quality/dp.py`) feeding a
-statistical generate column. This is a CONDITIONAL claim, not a blanket one:
-generated marginals are (epsilon, delta)-differentially private by
-post-processing of the DP snapshot only for the specific columns and only
-when the snapshot was actually produced by a DP fit. Do not read "Decoy
+The one formal mechanism is `quality.dp.fit_dp_snapshot`, which produces a
+`dps-marginal/v2` release consumed by a `type: statistical` generate column
+under a `global_settings.dp` declaration. Each column's privacy loss is
+certified by OpenDP's own privacy map (`Measurement.map`, `opendp==0.15.1`),
+and the fit-wide loss is composed by Google's `dp_accounting` (0.6.0) PLD
+composition over those per-column certificates. The composition uses a
+dominating-pair representation of each certified `(epsilon, delta)`, so the
+reported total is a valid upper bound rather than the tightest achievable
+one. This is a CONDITIONAL claim, not a blanket one: do not read "Decoy
 supports DP" as "every statistical column in every run is DP" -- most are
-not, unless every item below holds for that specific column.
+not, unless the column's snapshot is a verified `dps-marginal/v2` release
+consumed by a compiled, DP-verified Plan.
 
-**Categorical DP is not yet supported (as of 2026-07-21).** An earlier draft
-of this feature attempted a categorical release (real vocabulary through a
-stable-histogram threshold). A privacy review (Codex) found the mechanism
-did not satisfy its stated (epsilon, delta) bound: the released label ORDER
-leaked unnoised rank information (`quality/snapshot.py`'s true-count sort,
-`quality/dp.py`'s iteration order), suppressed noisy counts were summed into
-an observable `other_count` (a measurable privacy gap, not a rounding
-error), counts were rounded before the threshold test (silently lowering the
-effective threshold by up to 0.5), and fit SUCCESS itself was a
-data-dependent function of the private data (an object column typed
-categorical below 30 distinct values, freetext -- rejected under `dp_mode`
--- above it, so two neighboring datasets could produce "artifact exists" vs.
-"typed error" at zero privacy cost). Rather than ship a guarantee that does
-not hold, `dp_mode` now rejects EVERY object/string column outright at fit
-time (`dp_mode_categorical_unsupported`, `quality/snapshot.py::_stats_for`,
-regardless of its distinct-value count), and `global_settings.dp` rejects
-any categorical `type: statistical` generate column with one clear
-compile-time error (`dp_categorical_not_yet_supported`,
-`plan/_checks_dp.py`). Numeric marginal DP is unaffected; it never depended
-on the categorical mechanism. A correct categorical mechanism is a tracked
-follow-up, not a documented-but-broken feature.
+> For a DP fit whose declared fit-wide privacy loss is `(epsilon, delta)`,
+> Decoy's released single-column numeric and categorical marginals, and
+> synthetic columns generated solely as post-processing of a DP-verified
+> pinned Plan, are covered by that fit's approximate `(epsilon, delta)`
+> differential privacy guarantee under add-or-remove-one-row adjacency.
+>
+> This guarantee is marginal only. It does not cover joint distributions,
+> cross-column correlations, conditional sampling, masked outputs, non-DP
+> snapshots, or forged artifacts.
+>
+> When several independent release IDs are consumed, their privacy losses
+> compose; repeated references to the same release ID are charged once, and
+> conflicting artifacts carrying one release ID are rejected.
 
 **What is covered.** A statistical generate column's marginal carries the
-(epsilon, 0) guarantee -- pure DP, no delta spent -- only when its snapshot
-column is:
+declared `(epsilon, delta)` guarantee only when its snapshot was produced by
+`fit_dp_snapshot` for that specific column, and the compiled Plan's
+`dp_verification` receipt (reproduced from the pinned snapshot bytes, never
+trusted from the artifact's own claim alone) certifies it:
 
-- **Numeric, with a caller-supplied domain.** Fit with `dp_mode=True` and a
-  `numeric_domains` entry for that column (`quality/snapshot.py`, DPS-1):
-  fixed bin ranges, not the real min/max, so releasing the support spends NO
-  privacy budget (it never touched the data). Without a caller-supplied
-  domain the range comes from the real data and the guarantee does not hold
-  for that column, dp_mode or not.
+- **Numeric columns**, released as a fixed-bin-count histogram over a
+  caller-declared domain (`numeric_domains`), via `make_find_bin >>
+  then_count_by_categories >> then_laplace`.
+- **Categorical columns**, released as a thresholded top-label set plus a
+  non-null total, via `make_count_by >> then_laplace_threshold` (grouped)
+  and `make_count >> then_laplace` (total).
+- **Row count**, released once per fit via `make_count >> then_laplace`,
+  shared across every column in that fit.
 
-**What is NOT covered, ever, as of this writing:**
+**What is NOT covered, ever:**
 
-- **Categorical marginals.** Not yet supported at all (see above) -- fit
-  rejects the column, and compile rejects the config, before either can
-  reach `generate`.
-- **Datetime and freetext marginals.** These are out of scope on BOTH
-  sides. At fit time, `dp_mode` REJECTS datetime columns outright
-  (`quality/snapshot.py::_stats_for`, raises `ValueError`) rather than
-  silently degrading: a datetime column's year bins come from the real
-  observed year set -- data-dependent support with no caller-supplied
-  override, so an outlier admission year or DOB would survive as a bin
-  whose PRESENCE singles out an individual regardless of the noised count.
-  Freetext is out of scope for the same reason and is now covered by the
-  same object/string rejection as categorical (above). At consume time, the
-  provenance check (below) additionally rejects any referenced
-  datetime/freetext column, because `apply_dp_noise` will happily noise a
-  column that was fit WITHOUT `dp_mode` -- so fit-time rejection alone does
-  not stop a non-`dp_mode` snapshot from being noised and then consumed.
-  Mask or exclude these columns, or fit them outside `dp_mode` (their
-  release then carries no DP guarantee at all, same as any pre-DPS-1 fit).
-- **Cross-column joint structure.** Joint contingency tables are rejected
-  under `--epsilon` entirely (no composition accounting in v1), and a
-  preserved marginal says nothing about preserved correlation.
-  Joint-distribution DP (PrivBayes-style) is a separate, larger,
-  not-yet-built effort.
+- **Cross-column correlation and conditional synthesis.** The protected
+  release scope is single-column marginals only. Joint contingency tables,
+  `condition_on` sampling, and any cross-column structure carry no privacy
+  accounting; a preserved marginal says nothing about preserved
+  correlation. Joint-distribution DP (PrivBayes/MST/AIM-style mechanisms) is
+  a separate, larger, not-yet-built effort, out of scope for this
+  single-column-marginals build.
 - **Masked output.** Still carries no epsilon (masking is a deterministic
   transform, entirely outside this mechanism).
+- **Datetime and freetext columns.** Not eligible for a DP release; only
+  numeric and categorical kinds are ever accepted by the compile-time
+  provenance check.
 - **`high_cardinality: true` and `allow_real_categories: true` columns.**
-  Both retain or release real vocabulary and are anti-DP by construction
-  (and, being categorical, are covered by the blanket rejection above
-  regardless).
+  Both retain or release real, non-DP vocabulary and are anti-DP by
+  construction; a DP-declared pipeline hard-rejects either at compile time.
+- **A Plan embedding an exact, non-DP snapshot inherits that snapshot's
+  full sensitivity.** Pinning a snapshot's bytes into the Plan (so
+  generation never rereads a path) is required for the generation
+  capability regardless of whether that snapshot is DP-fit; an exact
+  snapshot referenced by a non-DP-declared pipeline carries no privacy
+  reduction just because it is now embedded in a Plan file.
+- **Numeric domains and column kinds are public metadata**, declared by the
+  caller at fit time and recorded in the artifact -- they cost no privacy
+  budget, but they are not protected either; do not treat them as secret.
+- **Categorical label discovery consumes privacy budget.** Which labels
+  survive the release's threshold is itself a private-data-dependent
+  outcome, budgeted as part of the fit's query schedule, not a free
+  side-channel.
 
 **What is enforced mechanically versus what is an operator precondition.**
-Four things are compile-time or test-suite enforced, not just documented:
 
-- **Categorical is hard-rejected.** When `global_settings.dp` is set, a
-  `type: statistical` generate column whose referenced snapshot column has
-  `kind: "categorical"` is rejected at compile time
-  (`plan._checks_dp.check_dp_categorical_unsupported`,
-  `dp_categorical_not_yet_supported`) regardless of `allow_real_categories`.
-- **Anti-DP knobs are hard-rejected.** When `global_settings.dp` is set,
-  `high_cardinality: true` and `allow_real_categories: true` on a
-  statistical generate column are hard-rejected at compile time
-  (`plan._checks_dp.check_dp_generate_contract`): a config cannot silently
-  combine either with a DP declaration.
-- **A dp-declared pipeline must consume a DP-fit snapshot, within its
-  declared budget.** When `global_settings.dp` is set, compile time also
-  checks the snapshot each statistical generate column actually references
-  (`plan._checks_dp.check_dp_snapshot_provenance`): the snapshot must carry
-  a `dp` block with a recorded `epsilon_total` (proof `apply_dp_noise` ran
-  over it), the referenced column must not be categorical (above), and a
-  NUMERIC column must show `support_origin: "caller"` (fit with `dp_mode` +
-  a `numeric_domains` entry, not the real data-dependent range). A plain,
-  never-DP-fit snapshot, or a numeric column fit without `dp_mode`, is
-  rejected with `PlanCompileError` even though every other check passes.
-  The per-kind verdict is a fail-closed ALLOW-LIST: a referenced column is
-  accepted ONLY as numeric-with-`caller`; every other kind -- categorical,
-  datetime, freetext, empty, and any unknown/future kind -- is rejected by
-  default (`dp_snapshot_kind_not_dp_eligible` for the non-categorical
-  cases). This matters because `apply_dp_noise` noises ANY snapshot
-  (datetime year bins and freetext length bins included), so a column fit
-  WITHOUT `dp_mode` and then noised carries a `dp` block over data-dependent
-  support; the consume-side allow-list is what stops that non-DP release
-  from shipping under a DP declaration, not the fit-time rejection alone.
-  Beyond provenance, the check also composes every DISTINCT consumed
-  artifact's `(epsilon_total, delta_total)` (deduped by content hash -- the
-  same artifact referenced by many columns is one release, charged once) by
-  basic sequential composition (Dwork & Roth Thm 3.16) and rejects the
-  config (`dp_budget_exceeded`) if the composed spend exceeds
-  `global_settings.dp`'s DECLARED `epsilon`/`delta`; a malformed artifact
-  budget (missing/non-finite/negative) fails closed
-  (`dp_snapshot_budget_malformed`). Before this, the declared ceiling was
-  checked for presence only, never compared against what the artifacts
-  actually spent.
-- **Generation reads only the artifact.** Post-processing immunity requires
-  the sampler never re-touch the raw source frame; this is a
-  regression-locked contract, not an inference --
-  `test_generation_consumes_only_the_snapshot`
-  (`tests/unit/generation/test_generate_dp_contract.py`) fails the build if
-  a future refactor makes the sampler reach for raw data.
+- **`OpenDpReleaseSession` is the sole OpenDP call site.** It enforces a
+  fixed query schedule (refuses an unscheduled or duplicate release,
+  refuses a loss report before the schedule completes) and asserts every
+  recorded certificate equals `measurement.map(1)` on the object actually
+  invoked, never the calibration target. The fixed schedule is enforced by
+  Decoy, not by the DP library: an OpenDP-native compositor that would
+  itself refuse an unscheduled query is unavailable in this build (it
+  requires a Polars version Decoy does not run -- see the dependency
+  decision below). A defect in Decoy's release session could therefore
+  under-count a release, and no library would catch it; the mitigations are
+  the single call site, refusal of unscheduled/repeated queries, and the
+  certificate-count assertion, not a library-enforced backstop.
+- **DP generation requires a DP-verified pinned Plan.** `generate_tables`
+  accepts only a compiled `Plan`; a categorical column's `allow_real_
+  categories` consent gate is bypassed only when the PLAN COMPILER (never
+  the artifact's own `dp` key) has verified the pinned snapshot as a
+  `dps-marginal/v2` release for that specific column. Successful
+  compilation alone does not protect a caller who bypasses the compiled
+  Plan and calls internal generation helpers directly with unvalidated
+  data.
+- **Independent release IDs compose; the same ID is charged once.**
+  Release IDs are privacy-ledger identities, never derived from content,
+  timestamps, paths, or row counts. Distinct release IDs referenced by a
+  pipeline compose via basic sequential composition; the same release ID
+  referenced by many columns is charged once, keyed by ID, not by content
+  digest. A release ID reused with a DIFFERENT digest is rejected as a
+  conflicting artifact (`dp_release_id_conflict`), never silently
+  re-charged or silently accepted as a duplicate. A content hash never
+  identifies a privacy release by itself.
+- **Serialized Plan files are integrity-checked internally, not
+  authenticated against a hostile replacement.** `plan_from_yaml`
+  recomputes each embedded snapshot's digest from its pinned bytes and
+  rejects a mismatch, and recomputes the `dp_verification` receipt from
+  those same revalidated bytes rather than trusting the serialized receipt
+  verbatim. This catches accidental corruption and a forged receipt on an
+  otherwise-genuine pinned artifact; it does not authenticate that the
+  Plan file as a whole came from a trusted compiler, since nothing signs
+  the file itself.
+- **The consumed snapshot is trusted to be genuine.** The provenance check
+  reads the snapshot JSON at face value: it defends against honest
+  misconfiguration (pointing a DP-declared pipeline at a non-DP-fit
+  artifact, or an artifact whose internal schedule doesn't match its own
+  declared columns), not against a forged or hand-edited artifact. A DP
+  artifact's recorded `epsilon_total` and `delta_total` are self-declared;
+  Decoy verifies internal consistency and release-ID uniqueness, but a
+  hand-edited artifact can understate what it actually spent. The
+  compile-time ceiling check is a policy control over artifacts Decoy
+  itself produced, not a defense against a caller who edits their own
+  artifacts.
+- **DP artifacts reveal exactly the labels and counts deliberately released
+  by OpenDP.** The artifact never carries exact row counts, exact distinct
+  counts, suppressed label names, suppressed noisy counts, per-query
+  certificate breakdowns, or an RNG seed.
 
-**The snapshot loader is content-addressed.** `generation/statistical/
-_spec.py`'s snapshot cache is keyed by `sha256` of the file bytes, not the
-file path, and `plan._checks_dp.check_dp_snapshot_provenance` reads through
-the SAME loader. A cache hit is therefore byte-equivalent to a fresh read at
-call time by construction: a long-lived process (e.g. the platform API)
-cannot serve a stale cached artifact to a DP-declared run after the file at
-a given path is overwritten with a different (or non-DP) one, and the
-compile-time gate and the generation-time sampler provably see the same
-parsed object rather than merely the same path.
+**Snapshot bytes are read once and pinned, never reopened.** `compile_plan`
+reads every referenced snapshot path exactly once, embeds the exact bytes
+and a SHA-256 digest into the Plan, and neither `generate_tables` nor the
+fidelity gate reopens a `snapshot_file` path afterward -- both consume the
+pinned, parsed artifact from the compiled Plan. This closes a
+read-time-of-check/read-time-of-use window where a file swapped between two
+separate reads within one compilation, or between compile and generate,
+could serve different bytes to different consumers; generation reads only
+the pinned artifact.
 
-**The consumed snapshot is trusted to be genuine.** The provenance check
-reads the snapshot JSON at face value: it defends against honest
-misconfiguration (pointing a DP-declared pipeline at a non-DP-fit artifact,
-or under-declaring the spent budget), NOT against a forged or hand-edited
-snapshot. The (epsilon, delta) guarantee assumes the consumed artifact is
-the real output of `decoy fit`; there is no signature on the snapshot today,
-so a deliberately falsified `dp` block or `support_origin` marker would
-pass.
-
-Everything else -- that the operator actually ran `decoy fit --epsilon`
-with `dp_mode` and a correct `numeric_domains` entry per numeric column in
-the first place, and that the composed budget (`dp.epsilon_total`/
-`dp.delta_total`, sequential composition per Dwork & Roth, *Algorithmic
-Foundations of DP*, Thm 3.16) reported to stakeholders is the DECLARED
-`global_settings.dp` ceiling now enforces against, not a smaller
-single-histogram `epsilon` quietly substituted in its place -- is an
-OPERATOR PRECONDITION: something the fit invocation must get right, not
-something the engine can independently verify from the config alone at
-every point.
-
-**The fit-time flow is CLI-side and its wiring is unverified here.** The
-engine change described above provides the MECHANISM
-(`quality/snapshot.py`'s `dp_mode`/`numeric_domains`, `quality/dp.py`'s
-`apply_dp_noise`) and the CONSUME-SIDE enforcement
-(`check_dp_generate_contract` + `check_dp_snapshot_provenance` above). It
-does not, by itself, prove that `decoy fit --epsilon` on the CLI actually
-threads `dp_mode`/`numeric_domains` through to
-`compute_distribution_snapshot` end to end -- that wiring lives in a
-separate repo and is pending verification. Until it is verified, treat this
-as "the engine can produce and correctly gate a DP snapshot when asked
-directly," not as "the `decoy fit --epsilon` CLI command is a turnkey DP
-workflow."
-
-**DP-fit output is not reproducible run to run, by design.** The Laplace
-noise in `apply_dp_noise` (`quality/dp.py`) is drawn from fresh OS entropy
-(`numpy.random.default_rng()`), never from the job seed. This is deliberate:
-seeding the noise from material the config holder controls would let them
-subtract it back out and recover the true counts, voiding the guarantee, so
-the `rng` parameter exists only for tests. So each DP release draws fresh
-noise: applying the mechanism twice to identical counts, at the same seed and
-config, yields a different noisy snapshot every time. This is separate from
-Decoy's normal determinism
-contract, not a weakening of it: once a specific noisy snapshot artifact
-exists, GENERATING synthetic rows from it is fully seed-reproducible as usual
-(the samplers are seeded; the snapshot is just weights). So do not expect
-byte-identical DP snapshots across repeated fits, and do not treat the job
-seed as a privacy-relevant secret for the DP mechanism, since it plays no
-part in the noise draw. Tracking total epsilon across repeated fits is now
-enforced against `global_settings.dp`'s declared ceiling (above), not just
-the operator's responsibility to track separately.
+**DP-fit output is not reproducible run to run, by design.** `fit_dp_snapshot`
+draws its Laplace/threshold noise from OpenDP's own entropy, never from the
+job seed: seeding the noise from material the config holder controls would
+let them subtract it back out and recover the true counts, voiding the
+guarantee. So each DP release draws fresh noise -- applying the mechanism
+twice to identical data and the same fit parameters yields a different noisy
+release every time. This is separate from Decoy's normal determinism
+contract, not a weakening of it: once a specific release artifact exists and
+is pinned into a compiled Plan, generating synthetic rows from it is fully
+seed-reproducible as usual (the samplers are seeded; the release is just
+weights). Do not expect byte-identical DP artifacts across repeated fits,
+and do not treat the job seed as a privacy-relevant secret for the DP
+mechanism, since it plays no part in the noise draw.
 
 If your use case requires a formal privacy guarantee over MASKED data, over
-generated JOINT structure, or over a CATEGORICAL, datetime, or freetext
-column, Decoy alone does not supply it.
+generated JOINT or conditional structure, or over datetime or freetext
+columns, Decoy alone does not supply it.
 
 ## It does not certify legal or regulatory compliance
 

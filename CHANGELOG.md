@@ -9,68 +9,69 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (DPS-1..3 + Option A remediation: marginal differential privacy for `generate`, numeric only, 2026-07-21)
+### Added (DPS Scope B: per-column OpenDP marginal differential privacy for `generate`, numeric and categorical, 2026-07-22)
 
-Decoy's `mode: generate` output can carry an honest (epsilon, 0)-DP
-guarantee over per-column NUMERIC marginals, when the consumed snapshot was
-produced by a DP fit. **Categorical DP is not yet supported.** An earlier
-draft of this feature also attempted a categorical release (real vocabulary
-through a stable-histogram threshold); a privacy review (Codex, 2026-07-21)
-found the mechanism did not satisfy its stated (epsilon, delta) bound: the
-released label ORDER leaked unnoised rank information, suppressed noisy
-counts were summed into an observable `other_count`, counts were rounded
-before the threshold test (silently lowering the effective threshold), and
-fit SUCCESS itself was a data-dependent function of the private data (a
-30-distinct-value cliff between "categorical" and "freetext"). Rather than
-ship a guarantee that does not hold, `dp_mode` now rejects every
-object/string column outright at fit time (`dp_mode_categorical_unsupported`,
-`quality/snapshot.py`) -- both the ordinary cardinality path AND an explicit
-`high_cardinality` request (which forces the same categorical release) --
-and `global_settings.dp` rejects any categorical `type:
-statistical` generate column with one clear compile-time error
-(`dp_categorical_not_yet_supported`, `plan/_checks_dp.py`) instead of the
-prior two-error deadlock. Bool columns still fit under `dp_mode` (candidate
-set is dtype-determined `{True, False}`, data-independent) but their
-categorical release is rejected consume-side until a correct categorical
-mechanism lands (tracked follow-up).
+Supersedes the prior unreleased Option A entry outright (pre-GA hard
+delete, no compatibility shim): `apply_dp_noise` and the Polars-compositor
+design it depended on are both gone. Decoy's `mode: generate` output can
+now carry an honest, approximate `(epsilon, delta)`-DP guarantee over
+per-column NUMERIC AND CATEGORICAL marginals, certified by OpenDP and
+composed by Google's `dp_accounting`, when the consumed snapshot was
+produced by `fit_dp_snapshot` and the compiling Plan reproduces its
+verification receipt from the pinned artifact bytes.
 
-- **DPS-1: data-independent numeric support.** Numeric bin ranges come from a
-  caller-supplied `numeric_domains` entry (not the real min/max) --
-  data-independent by construction, so releasing it spends NO privacy
-  budget at all (`quality/snapshot.py`).
-- **DPS-2: privacy-budget accountant.** `PrivacyBudget` composes every noisy
-  release into one stated `(epsilon_total, delta_total)` by sequential
-  composition (Dwork & Roth, *Algorithmic Foundations of DP*, Thm 3.16),
-  emitted in the snapshot's `dp` block (`quality/dp_budget.py`). A
-  numeric-only snapshot is `(epsilon_total, 0)`-DP -- pure, no delta spent.
-  A snapshot containing a categorical column would be
-  `(epsilon_total, delta_total)`-DP with `delta_total > 0` (the
-  stable-histogram threshold spends delta) -- which is exactly why a flat
-  "epsilon-DP" label was never accurate for that case, and exactly why
-  categorical columns are rejected before they can reach `generate` (above):
-  every snapshot this guarantee currently covers is numeric-only and pure.
-- **DPS-3: consume-only contract + fail-closed gates + budget enforcement.**
-  `generate` reads only the snapshot artifact (post-processing immunity,
-  regression-locked); `compile_plan` rejects the anti-DP knobs
-  (`allow_real_categories`, `high_cardinality`), a DP-declared pipeline
-  pointed at a non-DP-fit snapshot, and (new) a DP-declared pipeline whose
-  consumed artifacts' composed spend exceeds the DECLARED
-  `global_settings.dp.{epsilon,delta}` ceiling (`dp_budget_exceeded`;
-  previously the declared values were checked for presence only, never
-  compared against the artifact). The snapshot loader is also now
-  content-addressed (keyed by `sha256` of the file bytes, not the path), so
-  a long-lived process can never serve a stale cached artifact to a
-  DP-declared run after the file on disk changes underneath it
-  (`generation/statistical/_spec.py`, `plan/_checks_dp.py`). The
-  honest-limits disclaimer is narrowed to the proven marginal claim
-  (`docs/what-we-cannot-prove.md`).
+- **New core dependencies: `opendp==0.15.1` and `dp-accounting==0.6.0`.**
+  Each column's privacy loss is certified by OpenDP's own privacy map
+  (`Measurement.map`, `contrib` feature only); the fit-wide loss is composed
+  by `dp_accounting`'s PLD composition over those certificates. Neither
+  `opendp[polars]` nor `opendp.extras.polars` is used or permitted: a
+  dependency spike found `opendp[polars]` pins a Polars version incompatible
+  with Decoy's `polars>=1,<2` range, so the OpenDP-native Polars
+  `Context` compositor was evaluated and rejected; Decoy's release
+  scheduling is enforced by `OpenDpReleaseSession`, the sole OpenDP call
+  site, instead.
+- **Numeric and categorical marginal support.** Numeric columns release a
+  fixed-bin-count histogram over a caller-declared domain
+  (`make_find_bin >> then_count_by_categories >> then_laplace`);
+  categorical columns release a thresholded top-label set plus a
+  non-null total (`make_count_by >> then_laplace_threshold` and
+  `make_count >> then_laplace`). The prior Option A categorical rejection
+  is lifted; categorical DP is supported end to end.
+- **Breaking `fit_dp_snapshot` contract.** `categorical_columns` and
+  `numeric_domains` are now required, explicit, public declarations (never
+  inferred from dtype or cardinality), and `delta` is required and
+  rejected at zero even for a numeric-only fit (uniformity over a
+  marginally stronger pure-epsilon claim). `apply_dp_noise` is deleted, not
+  deprecated.
+- **Plan-only `generate_tables`.** `generate_tables` accepts only a
+  compiled `Plan`; a raw configuration mapping raises `TypeError`. Every
+  snapshot a compiled Plan references is read exactly once at compile
+  time, embedded verbatim (bytes + SHA-256 digest, 16 MiB cap per
+  artifact, HC-5 precedent) into a new `GenerationPlan` payload, and never
+  reopened by generation or the fidelity gate.
+- **Plan schema version bump (1 -> 2) for the pinned `GenerationPlan`
+  payload.** A pre-bump serialized Plan loads for reporting/diagnostics
+  but raises the moment generation is requested from it (no migration; the
+  engine is pre-GA). `plan_from_yaml` revalidates every embedded snapshot
+  digest and recomputes the `dp_verification` receipt from the pinned
+  bytes rather than trusting the serialized receipt.
+- **Release-ID budget identity.** A DP artifact's privacy-ledger identity is
+  its `release_id` (minted at fit time, never derived from content,
+  timestamps, or paths), not its content digest. The same release ID
+  referenced by many columns is charged once; distinct release IDs always
+  compose by basic sequential composition; a release ID reused with a
+  DIFFERENT digest is rejected as a conflicting artifact
+  (`dp_release_id_conflict`).
+- **Joint and conditional DP remain unsupported.** `condition_on` under a
+  `dp`-declared pipeline is rejected (`dp_joint_unsupported`); the
+  protected release scope is single-column marginals only.
+  Joint-distribution DP (PrivBayes/MST/AIM-style mechanisms) is a
+  separate, larger, not-yet-built effort. CLI and platform wiring for the
+  new fit-time contract are tracked as follow-up issues in their own
+  repos, not built here.
 
-Scope: NUMERIC marginals only (not categorical, not joint structure, not
-datetime/freetext), `generate` only (masked output carries no epsilon). The
-noise is drawn from fresh OS entropy, so DP-fit snapshots are deliberately
-not reproducible run to run; see `docs/what-we-cannot-prove.md`. The fit-time
-entry point (`decoy fit --epsilon`) lives in the CLI repo; the engine ships
-the mechanism and the consume-side enforcement.
+See `docs/what-we-cannot-prove.md` for the full claim wording and every
+documented limit.
 
 ### Added (TX-1: activate + document `text_redact` NER, 2026-07-20)
 
