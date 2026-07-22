@@ -10,9 +10,16 @@ Privacy gate: a categorical snapshot's `top_values` contain REAL values
 from the source frame. Emitting them is a deliberate disclosure the
 operator must opt into with `allow_real_categories: true`; without it
 the spec refuses to load (`statistical_real_categories_not_allowed`).
-Differential privacy lives at FIT time (`decoy fit --epsilon`,
-quality/dp.py); the spec layer consumes exact and noisy snapshots
-identically.
+Differential privacy lives at FIT time (`quality.dp.fit_dp_snapshot`);
+the spec layer consumes exact and DP-fit snapshots identically EXCEPT
+for one exemption: a categorical column whose snapshot the COMPILER has
+already verified as an OpenDP-certified `dps-marginal/v2` release
+(`dp_verified=True`, threaded in by the caller -- never inferred by
+reading the snapshot's own `dp` key, guide section 5) does not need the
+`allow_real_categories` consent gate, because there is no real vocabulary
+in a verified DP artifact for it to release. `load_spec` never reopens a
+snapshot path itself (guide section 4.7): the caller passes the already
+pinned/parsed snapshot mapping.
 
 `high_cardinality: true` (HC-5) opts a column into the FULL retained
 vocabulary a fit step produced with `compute_distribution_snapshot(...,
@@ -37,8 +44,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
@@ -72,38 +79,59 @@ class StatisticalSpec:
     condition_on: str | None
     joint: dict[str, Any] | None  # the snapshot joint entry when condition_on
     parent_first: bool  # joint key order: True when condition_on is key[0]
+    # The pinned snapshot's SHA-256 hex digest (guide section 4.7's read-once
+    # pass), or None when this spec was built outside that pass (a direct/
+    # unvalidated-dict caller with no Plan). Generation-time seed derivation
+    # (`generators.derivation.strategy_config_fingerprint`) needs a content
+    # digest for its `snapshot_file` fingerprint input; without this field it
+    # had no pinned digest to reuse and fell back to re-opening
+    # `col_cfg["snapshot_file"]` from disk at generate time -- a real TOCTOU
+    # reopen of a path the Plan already pinned (guide section 4.7/4.8, defect
+    # F4). Carrying the digest here lets the statistical generator branch
+    # reuse it instead, closing that reopen without touching the sampler.
+    snapshot_digest: str | None = None
 
 
-# Snapshot files are read once per CONTENT per process; configs commonly
-# point many columns at one artifact, and re-parsing multi-MB JSON per
-# column would be wasteful. Keyed by sha256(file bytes), NEVER by path
-# (Finding 3 gate remediation, 2026-07-21): a path-keyed cache in a
-# long-lived process (the platform API) can serve a stale EXACT snapshot to
-# a DP-declared run after the file at that path is overwritten with a
-# genuinely DP-fit artifact -- Codex reproduced exactly this against
-# `feat/dps-marginal-dp`. A hit is byte-equivalent to a fresh read at call
-# time BY CONSTRUCTION here: the cache key IS the content, so it cannot
-# diverge from what a fresh read of that content would return. Every call
-# still pays a full read + hash (the parse -- the expensive part for large
-# JSON -- is what gets amortized); a stat-only (mtime/size) fast path was
-# considered and rejected as the correctness layer (mtime granularity and
-# same-second rewrites make it TOCTOU-prone), so it is not implemented here.
-# Bounded to the last-`_SNAPSHOT_CACHE_MAX` distinct contents seen (LRU) so
-# a long-lived process cannot grow this dict without bound.
-_SNAPSHOT_CACHE_MAX = 128
-_SNAPSHOT_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+def spec_to_dict(spec: StatisticalSpec) -> dict[str, Any]:
+    """Plain-dict form of a validated `StatisticalSpec`, for embedding into
+    `PinnedStatisticalSpec.spec` (guide section 4.7). `dataclasses.asdict`
+    is exact here because every field is already a JSON-shaped value
+    (str/dict/bool/None)."""
+    return asdict(spec)
 
 
+def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
+    """Inverse of `spec_to_dict`: reconstruct a `StatisticalSpec` from its
+    plain-dict (or thawed frozen-mapping) form."""
+    return StatisticalSpec(
+        column=str(data["column"]),
+        source_column=str(data["source_column"]),
+        kind=str(data["kind"]),
+        dtype=str(data["dtype"]),
+        stats=dict(data["stats"]),
+        other_mode=str(data["other_mode"]),
+        condition_on=data["condition_on"],
+        joint=dict(data["joint"]) if data.get("joint") is not None else None,
+        parent_first=bool(data["parent_first"]),
+        snapshot_digest=data.get("snapshot_digest"),
+    )
+
+
+# `_load_snapshot` is the sole `open()` site for a snapshot artifact in
+# this package (guide section 4.7 item 3): the process-global content-
+# keyed cache that used to live here is GONE. It stopped being a
+# correctness mechanism once the compiler started reading every path
+# exactly once, up front, into an immutable pinned mapping
+# (`plan._generation.read_and_pin_snapshots`) before any check or
+# `load_spec` call runs -- caching a second time here would only risk
+# serving a DIFFERENT read's bytes to a caller expecting the compiler's
+# pinned bytes. `load_spec` below never calls this function itself; it
+# takes the already-parsed snapshot mapping as an explicit argument. This
+# function remains for compile-time callers that still need to read a
+# path (the compiler's read-once pass) and for tests building fixtures.
 def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
     """Read + parse a snapshot artifact. Returns `(content_sha256, parsed)`.
-
-    The digest is exposed so a caller that needs artifact IDENTITY across
-    multiple config references -- `plan._checks_dp.check_dp_snapshot_
-    provenance`'s per-artifact budget dedup (Finding 4: the same artifact
-    consumed by many columns is ONE DP release, charged once) -- can reuse
-    the same notion of "same artifact" this cache already computes, rather
-    than re-hashing or (worse) diverging on what "same" means.
-    """
+    No caching: every call is a fresh read + hash + parse."""
     try:
         with open(path, "rb") as fh:
             raw = fh.read()
@@ -113,10 +141,6 @@ def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
             message=f"snapshot_file {path!r} could not be read: {exc}",
         ) from exc
     digest = hashlib.sha256(raw).hexdigest()
-    cached = _SNAPSHOT_CACHE.get(digest)
-    if cached is not None:
-        _SNAPSHOT_CACHE.move_to_end(digest)
-        return digest, cached
     try:
         snap = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -138,27 +162,43 @@ def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
                 f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
             ),
         )
-    _SNAPSHOT_CACHE[digest] = snap
-    if len(_SNAPSHOT_CACHE) > _SNAPSHOT_CACHE_MAX:
-        _SNAPSHOT_CACHE.popitem(last=False)
     return digest, snap
 
 
-def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
+def load_spec(
+    col_cfg: dict[str, Any],
+    *,
+    snapshot: Mapping[str, Any],
+    dp_verified: bool = False,
+    snapshot_digest: str | None = None,
+) -> StatisticalSpec:
     """Validate a `type: statistical` generate column into a sampler spec.
+
+    Args:
+        col_cfg: The generate-column config entry (name, source_column,
+            other_mode, condition_on, allow_real_categories,
+            high_cardinality).
+        snapshot: The ALREADY parsed, already pinned snapshot artifact
+            (guide section 4.7) -- this function never opens
+            `col_cfg["snapshot_file"]` itself.
+        dp_verified: Whether the PLAN COMPILER has verified this exact
+            snapshot as an OpenDP-certified `dps-marginal/v2` release for
+            this column (guide section 5). Never derived by reading
+            `snapshot["dp"]` here -- an unverified `dp`-shaped key in an
+            otherwise ordinary snapshot must not exempt anything; only the
+            compiler's own verdict does.
+        snapshot_digest: The pinned snapshot's SHA-256 hex digest, when the
+            caller read it through the compile-time read-once pass
+            (`plan._generation.read_and_pin_snapshots`). Carried onto the
+            returned spec so generation-time seed derivation can reuse it
+            instead of reopening `snapshot_file` (see `StatisticalSpec.
+            snapshot_digest`).
 
     Raises StatisticalSpecError with a stable code on every mismatch;
     the plan compiler surfaces the same codes at validate time.
     """
     name = col_cfg.get("name", "<unnamed>")
-    snapshot_file = col_cfg.get("snapshot_file")
-    if not snapshot_file:
-        raise StatisticalSpecError(
-            code="statistical_snapshot_file_required",
-            message=f"statistical column {name!r} requires `snapshot_file`.",
-        )
-    _digest, snap = _load_snapshot(str(snapshot_file))
-
+    snap = snapshot
     source_column = str(col_cfg.get("source_column") or name)
     col_entry = (snap.get("columns") or {}).get(source_column)
     if col_entry is None:
@@ -216,13 +256,18 @@ def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
             ),
         )
 
-    if kind == "categorical" and col_cfg.get("allow_real_categories") is not True:
+    if (
+        kind == "categorical"
+        and not dp_verified
+        and col_cfg.get("allow_real_categories") is not True
+    ):
         raise StatisticalSpecError(
             code="statistical_real_categories_not_allowed",
             message=(
                 f"statistical column {name!r}: the snapshot's top_values contain REAL "
                 f"source values; emitting them requires `allow_real_categories: true` "
-                f"on the column (explicit disclosure opt-in)."
+                f"on the column (explicit disclosure opt-in), unless the compiler has "
+                f"verified this snapshot as an OpenDP-certified DP release."
             ),
         )
 
@@ -309,4 +354,5 @@ def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
         condition_on=condition_on,
         joint=joint,
         parent_first=parent_first,
+        snapshot_digest=snapshot_digest,
     )

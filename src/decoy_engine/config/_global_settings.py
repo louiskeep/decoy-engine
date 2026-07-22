@@ -13,33 +13,29 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DpGenerateSettings(BaseModel):
-    """DPS-3: declares that this pipeline's `generate` output must be
-    (epsilon, delta)-DP. Presence alone (not epsilon/delta's values) is
-    what `plan._checks_dp.check_dp_generate_contract` gates on: it hard-
-    rejects `allow_real_categories: true` / `high_cardinality: true`
-    generate columns, which release real vocabulary and would silently
-    void the guarantee this block declares.
+    """Declares that this pipeline's `generate` output must be an honest,
+    approximate `(epsilon, delta)`-DP marginal release (DPS Scope B,
+    2026-07-22 rebuild of the DPS-3 declaration). Presence alone (key
+    membership on `global_settings.dp`, not truthiness of this model's
+    contents) is what `plan._checks_dp.check_dp_generate_contract` gates
+    on: it hard-rejects `allow_real_categories: true`, `high_cardinality:
+    true`, and `condition_on` on a `type: statistical` generate column,
+    each of which would silently void or fall outside the guarantee this
+    block declares.
 
-    Finding 4 (2026-07-21 DPS remediation): `epsilon`/`delta` here are an
-    ENFORCED CEILING, not an annotation. `plan._checks_dp.check_dp_snapshot_
-    provenance` composes the (epsilon_total, delta_total) actually spent by
-    every distinct DP snapshot artifact this pipeline consumes (basic
-    sequential composition, Dwork & Roth Thm 3.16) and rejects the config
-    (`dp_budget_exceeded`) if that composed spend exceeds these declared
-    values. Before this, an operator could declare epsilon=1e-6 and the
-    engine would accept an artifact whose real epsilon_total was 5 --
-    presence of this block was checked, its VALUES were not.
+    `epsilon`/`delta` here are an ENFORCED CEILING, not an annotation.
+    `plan._checks_dp.verify_dp_snapshots` composes the `(epsilon_total,
+    delta_total)` actually spent by every distinct DP release (keyed by
+    `release_id`, not content digest -- guide section 6 row F5) this
+    pipeline consumes and rejects the config (`dp_budget_exceeded`) if
+    that composed spend exceeds these declared values.
 
-    Gate remediation Fix 5 (LOW #5): a `numeric_domains` field used to live
-    here as a documented-informational mirror of
-    `quality/snapshot.compute_distribution_snapshot`'s fit-time param --
-    but fitting happens via the separate `decoy fit` step (CLI-side), so
-    the engine never read it from this block; an operator setting it here
-    got silently no effect. Dropped rather than kept as a footgun. The
-    real numeric-domain declaration is `compute_distribution_snapshot(...,
-    numeric_domains=..., dp_mode=True)` at fit time; this block only
-    declares the generate-side (epsilon, delta) contract and gates the
-    anti-DP generate-column knobs.
+    There is no `numeric_domains` field here: the real numeric-domain and
+    categorical-column declarations are `fit_dp_snapshot`'s own
+    `numeric_domains`/`categorical_columns` arguments at fit time
+    (`quality/dp.py`), a separate step from this generate-side ceiling
+    declaration. This block only declares the generate-side `(epsilon,
+    delta)` contract and gates the anti-DP generate-column knobs.
     """
 
     model_config = ConfigDict(extra="forbid")

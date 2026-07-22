@@ -1,62 +1,115 @@
-"""DPS-3: compile-time DP generate contract (Task 5) + consume-only lock (Task 6).
+"""DPS Scope B: compile-time DP generate contract + consume-only lock.
 
-Task 5: `global_settings.dp` hard-rejects the anti-DP generate-column knobs
-(`allow_real_categories: true`, `high_cardinality: true`) at compile time.
-
-Real-API reconciliation against the plan's representative sketch:
-- No top-level `mode: generate` / `dp:` config key exists (FC-1 dropped
-  the `mode` discriminator; per-table kind is inferred from `columns`
-  vs `generate_columns`). The dp declaration lives at
-  `global_settings.dp` (`config.DpGenerateSettings`), alongside the
-  engine's other opt-in pipeline-wide knobs.
-- The real compile error type is `PlanCompileError` (code, path,
-  message), not a `ConfigError`.
-- `compile_plan(config, profile, *, decoy_engine_version)` requires a
-  `Profile`, not a bare dict; `run_config_only_checks(config)` is the
-  existing profile-free entry point (mirrors
-  `tests/unit/generation/test_statistical.py::TestCompileCheck`) and is
-  used here instead, since the DP contract check is config-only.
-
-Task 6: `test_generation_consumes_only_the_snapshot` locks that sampling
-from a DP-noised snapshot needs no raw source frame -- through the REAL
-`load_spec`/`sample_column` API (file-backed snapshot, per
-`tests/unit/quality/test_dp.py`'s `TestSamplerConsumption` pattern), not
-the plan's invented `load_spec_from_dict`.
+Supersedes the Option A test suite entirely (that mechanism is deleted;
+`apply_dp_noise` no longer exists). Covers guide section 5/6/8's named
+assertions: categorical DP compiles without `allow_real_categories`
+(guide binding decision + step 5), an exact snapshot still requires the
+consent gate, an unverified `dp`-shaped key in an artifact cannot forge
+the exemption, joint/condition_on is rejected under DP, and the
+release-ID budget ledger (guide section 6 row F5/F6) fails closed on
+every malformed shape the guide enumerates.
 """
 
 from __future__ import annotations
 
+import builtins
 import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from decoy_engine import run_config_only_checks
-from decoy_engine.generation.statistical import load_spec, sample_column
-from decoy_engine.plan import PlanCompileError
-from decoy_engine.plan._checks_dp import (
-    check_dp_categorical_unsupported,
-    check_dp_generate_contract,
-    check_dp_snapshot_provenance,
-)
-from decoy_engine.quality.dp import apply_dp_noise
+from decoy_engine.generation.statistical import load_spec
+from decoy_engine.plan import PlanCompileError, compile_plan
+from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
+from decoy_engine.plan._generation import read_and_pin_snapshots
+from decoy_engine.profile import Profile
+from decoy_engine.quality.dp import fit_dp_snapshot
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
 )
 
 
-def _dp_cfg(*, table_columns: list[dict]) -> dict:
+def _profile() -> Profile:
+    return Profile(
+        schema_version=1,
+        tables=(),
+        relationships=(),
+        profiled_at=datetime.now(timezone.utc),
+        decoy_engine_version="test",
+    )
+
+
+def _write(tmp_path, name: str, snap: dict) -> str:
+    path = tmp_path / name
+    path.write_text(json.dumps(snap), encoding="utf-8")
+    return str(path)
+
+
+def _dp_fit_mixed(tmp_path, *, n=400, epsilon=5.0, delta=1e-6) -> str:
+    rng = np.random.default_rng(3)
+    df = pd.DataFrame(
+        {
+            "age": rng.integers(0, 120, size=n).astype(float),
+            "state": rng.choice(["CA", "NY", "TX"], size=n, p=[0.5, 0.3, 0.2]),
+        }
+    )
+    snap = fit_dp_snapshot(
+        df,
+        categorical_columns=["state"],
+        numeric_domains={"age": (0.0, 120.0)},
+        epsilon=epsilon,
+        delta=delta,
+    )
+    return _write(tmp_path, "dp.json", snap)
+
+
+def _dp_fit_categorical_only(
+    tmp_path,
+    filename: str,
+    *,
+    categories: list[str],
+    p: list[float],
+    n: int = 800,
+    epsilon: float = 8.0,
+    delta: float = 1e-6,
+    seed: int = 11,
+) -> str:
+    """A categorical-only DP fit (no numeric columns) over a caller-chosen
+    label alphabet -- used by the F4 file-swap test to construct two
+    artifacts whose retained labels can never collide, since the
+    alphabets themselves are disjoint. `n`/`p`/`epsilon` are generous
+    (a strongly dominant label, high epsilon) so the unseeded OpenDP
+    threshold mechanism retains at least the majority label with
+    overwhelming probability; this mirrors `_dp_fit_mixed`'s already-
+    reliable shape used throughout this file, just skewed further for a
+    file-swap test that must not be flaky.
+    """
+    rng = np.random.default_rng(seed)
+    df = pd.DataFrame({"state": rng.choice(categories, size=n, p=p)})
+    snap = fit_dp_snapshot(
+        df,
+        categorical_columns=["state"],
+        numeric_domains={},
+        epsilon=epsilon,
+        delta=delta,
+    )
+    return _write(tmp_path, filename, snap)
+
+
+def _dp_cfg(*, table_columns: list[dict], epsilon: float = 5.0, delta: float = 1e-6) -> dict:
     return {
-        "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
+        "global_settings": {"seed": 1, "dp": {"epsilon": epsilon, "delta": delta}},
         "tables": [{"name": "t", "row_count": 5, "generate_columns": table_columns}],
     }
 
 
 class TestCheckDpGenerateContract:
-    """Direct unit coverage of check_dp_generate_contract (config-only)."""
-
     def test_dp_unset_never_raises_even_with_anti_dp_knobs(self):
         cfg = {
             "global_settings": {"seed": 1},
@@ -77,585 +130,300 @@ class TestCheckDpGenerateContract:
         }
         check_dp_generate_contract(cfg)  # no raise
 
-    def test_dp_set_without_anti_dp_knobs_passes(self):
+    def test_dp_rejects_high_cardinality(self, tmp_path):
+        path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
-            table_columns=[{"name": "dx", "type": "statistical", "snapshot_file": "whatever.json"}]
+            table_columns=[
+                {
+                    "name": "state",
+                    "type": "statistical",
+                    "snapshot_file": path,
+                    "high_cardinality": True,
+                }
+            ]
         )
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_generate_contract(cfg)
+        assert exc.value.code == "dp_generate_high_cardinality_unsupported"
+
+    def test_dp_configuration_rejects_allow_real_categories_true(self, tmp_path):
+        path = _dp_fit_mixed(tmp_path)
+        cfg = _dp_cfg(
+            table_columns=[
+                {
+                    "name": "state",
+                    "type": "statistical",
+                    "snapshot_file": path,
+                    "allow_real_categories": True,
+                }
+            ]
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_generate_contract(cfg)
+        assert exc.value.code == "dp_generate_allow_real_categories_unsupported"
+
+    def test_dp_configuration_rejects_joint_or_condition_on(self, tmp_path):
+        path = _dp_fit_mixed(tmp_path)
+        cfg = _dp_cfg(
+            table_columns=[
+                {
+                    "name": "state",
+                    "type": "statistical",
+                    "snapshot_file": path,
+                    "condition_on": "age",
+                }
+            ]
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_generate_contract(cfg)
+        assert exc.value.code == "dp_joint_unsupported"
+
+    def test_non_statistical_generate_column_ignored(self):
+        cfg = _dp_cfg(table_columns=[{"name": "id", "type": "sequence"}])
         check_dp_generate_contract(cfg)  # no raise
 
-    def test_dp_rejects_high_cardinality(self):
+
+class TestDpCategoricalNowSupported:
+    """Scope B binding decision: categorical DP IS supported when the
+    snapshot is a verified `dps-marginal/v2` release. This directly
+    supersedes Option A's blanket `dp_categorical_not_yet_supported`."""
+
+    def test_dp_categorical_snapshot_compiles_without_allow_real_categories(self, tmp_path):
+        path = _dp_fit_mixed(tmp_path)
+        cfg = _dp_cfg(
+            table_columns=[{"name": "state", "type": "statistical", "snapshot_file": path}]
+        )
+        names = run_config_only_checks(cfg)
+        assert "statistical_columns" in names  # no raise; compiled clean
+
+    def test_dp_categorical_snapshot_compiles_end_to_end_through_compile_plan(self, tmp_path):
+        path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
             table_columns=[
-                {
-                    "name": "dx",
-                    "type": "statistical",
-                    "snapshot_file": "whatever.json",
-                    "allow_real_categories": True,
-                    "high_cardinality": True,
-                }
+                {"name": "age", "type": "statistical", "snapshot_file": path},
+                {"name": "state", "type": "statistical", "snapshot_file": path},
             ]
         )
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_generate_contract(cfg)
-        assert exc.value.code == "dp_generate_high_cardinality_unsupported"
-        assert "dx" in exc.value.message
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert plan.generation is not None
+        assert plan.generation.dp_verification is not None
+        assert plan.generation.dp_verification.epsilon_total <= 5.0
 
-    def test_dp_rejects_allow_real_categories(self):
-        cfg = _dp_cfg(
-            table_columns=[
-                {
-                    "name": "dx",
-                    "type": "statistical",
-                    "snapshot_file": "whatever.json",
-                    "allow_real_categories": True,
-                }
-            ]
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_generate_contract(cfg)
-        assert exc.value.code == "dp_generate_allow_real_categories_unsupported"
-        assert "dx" in exc.value.message
-
-    def test_non_statistical_generate_column_ignored(self):
-        cfg = _dp_cfg(table_columns=[{"name": "id", "type": "sequence"}])
-        check_dp_generate_contract(cfg)  # no raise: gate only applies to type: statistical
-
-
-class TestCompileIntegration:
-    """Wired into the real compile chokepoint (config-only branch)."""
-
-    def test_dp_rejects_high_cardinality_via_run_config_only_checks(self):
-        cfg = _dp_cfg(
-            table_columns=[
-                {
-                    "name": "dx",
-                    "type": "statistical",
-                    "snapshot_file": "whatever.json",
-                    "allow_real_categories": True,
-                    "high_cardinality": True,
-                }
-            ]
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_generate_high_cardinality_unsupported"
-
-    def test_dp_rejects_allow_real_categories_via_run_config_only_checks(self):
-        cfg = _dp_cfg(
-            table_columns=[
-                {
-                    "name": "dx",
-                    "type": "statistical",
-                    "snapshot_file": "whatever.json",
-                    "allow_real_categories": True,
-                }
-            ]
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_generate_allow_real_categories_unsupported"
-
-    def test_dp_contract_check_surfaces_before_snapshot_artifact_check(self):
-        # The dp-contract violation is a config-shape verdict independent
-        # of whether the referenced snapshot artifact even exists; it
-        # must surface on its OWN code, not fall through to
-        # statistical_snapshot_unreadable from the missing file.
-        cfg = _dp_cfg(
-            table_columns=[
-                {
-                    "name": "dx",
-                    "type": "statistical",
-                    "snapshot_file": "/nonexistent/path.json",
-                    "allow_real_categories": True,
-                    "high_cardinality": True,
-                }
-            ]
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_generate_high_cardinality_unsupported"
-
-
-# ── Option A (2026-07-21 DPS remediation): categorical not yet supported ───
-#
-# Before this check, a categorical `type: statistical` column under
-# `global_settings.dp` fell into a two-error deadlock: without
-# `allow_real_categories`, `generation.statistical.load_spec` raised
-# `statistical_real_categories_not_allowed` (implying the fix is to add the
-# flag); WITH the flag, `check_dp_generate_contract` raised
-# `dp_generate_allow_real_categories_unsupported` (implying the fix is to
-# remove it). No config compiled either way, and neither message named the
-# real reason (categorical DP is not yet implemented correctly).
-# `check_dp_categorical_unsupported` runs first and gives ONE clear code
-# regardless of the flag.
-
-
-def _categorical_snapshot_cfg(tmp_path, *, allow_real_categories: bool | None = None) -> dict:
-    df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
-    snap = compute_distribution_snapshot(df)  # ordinary fit: kind == "categorical"
-    col: dict = {
-        "name": "state",
-        "type": "statistical",
-        "snapshot_file": _write_snapshot(tmp_path, snap),
-    }
-    if allow_real_categories is not None:
-        col["allow_real_categories"] = allow_real_categories
-    return {
-        "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
-        "tables": [{"name": "t", "row_count": 5, "generate_columns": [col]}],
-    }
-
-
-class TestCheckDpCategoricalUnsupported:
-    """Direct unit coverage of check_dp_categorical_unsupported."""
-
-    def test_dp_unset_never_raises_even_for_a_categorical_column(self, tmp_path):
-        cfg = _categorical_snapshot_cfg(tmp_path)
-        cfg["global_settings"] = {"seed": 1}  # no dp declared
-        check_dp_categorical_unsupported(cfg)  # no raise
-
-    def test_dp_set_categorical_without_allow_real_categories_rejected(self, tmp_path):
-        cfg = _categorical_snapshot_cfg(tmp_path)  # flag not set at all
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_categorical_unsupported(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-        assert "state" in exc.value.message
-
-    def test_dp_set_categorical_with_allow_real_categories_still_rejected(self, tmp_path):
-        # The deadlock-closing case: setting the flag does NOT unlock
-        # anything -- categorical is rejected either way, with the SAME code.
-        cfg = _categorical_snapshot_cfg(tmp_path, allow_real_categories=True)
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_categorical_unsupported(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-
-    def test_dp_set_numeric_column_not_rejected(self, tmp_path):
-        df = pd.DataFrame({"age": [31, 42, 55]})
-        snap = compute_distribution_snapshot(df)
+    def test_exact_categorical_snapshot_still_requires_allow_real_categories(self, tmp_path):
+        df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
+        snap = compute_distribution_snapshot(df)  # ordinary, non-DP fit
+        path = _write(tmp_path, "exact.json", snap)
         cfg = {
-            "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
+            "global_settings": {"seed": 1},  # no dp declared
             "tables": [
                 {
                     "name": "t",
                     "row_count": 5,
                     "generate_columns": [
-                        {
-                            "name": "age",
-                            "type": "statistical",
-                            "snapshot_file": _write_snapshot(tmp_path, snap),
-                        }
+                        {"name": "state", "type": "statistical", "snapshot_file": path}
                     ],
                 }
             ],
         }
-        check_dp_categorical_unsupported(cfg)  # no raise: not categorical
-
-    def test_non_statistical_generate_column_ignored(self):
-        cfg = _dp_cfg(table_columns=[{"name": "id", "type": "sequence"}])
-        check_dp_categorical_unsupported(cfg)  # no raise
-
-    def test_unreadable_snapshot_deferred_to_check_statistical_columns(self):
-        cfg = _dp_cfg(
-            table_columns=[
-                {"name": "dx", "type": "statistical", "snapshot_file": "/nonexistent/path.json"}
-            ]
-        )
-        check_dp_categorical_unsupported(cfg)  # no raise: defers to row 12's verdict
-
-
-class TestCheckDpCategoricalUnsupportedIntegration:
-    """Wired into the real compile chokepoint: proves the deadlock is
-    closed end-to-end, not just at the unit level."""
-
-    def test_categorical_without_flag_gets_the_clear_code_not_the_consent_gate(self, tmp_path):
-        cfg = _categorical_snapshot_cfg(tmp_path)
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-        assert exc.value.code != "statistical_real_categories_not_allowed"
+        assert exc.value.code == "statistical_real_categories_not_allowed"
 
-    def test_categorical_with_flag_still_gets_the_clear_code_not_the_knob_rejection(self, tmp_path):
-        # This is the exact "add the flag" move a user would try after
-        # reading the without-flag error above -- it must NOT flip to
-        # dp_generate_allow_real_categories_unsupported (the old deadlock).
-        cfg = _categorical_snapshot_cfg(tmp_path, allow_real_categories=True)
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-        assert exc.value.code != "dp_generate_allow_real_categories_unsupported"
-
-
-# ── Fix 3 (gate remediation, P1 #2): consumed-snapshot DP provenance ───────
-#
-# `check_dp_generate_contract` (Task 5 above) only rejects two anti-DP
-# generate-column KNOBS; it never looks at the snapshot artifact itself.
-# An operator can declare `global_settings.dp`, point every statistical
-# column at a completely ordinary (non-DP-fit) snapshot, and ship non-DP
-# output while the config claims DP. `check_dp_snapshot_provenance` closes
-# that: when `dp` is declared, every referenced snapshot must carry a `dp`
-# block with a recorded `epsilon_total` (proof `apply_dp_noise` actually
-# ran), and every referenced NUMERIC column must show
-# `support_origin == "caller"` (proof it was fit with dp_mode +
-# numeric_domains -- DPS-1 -- not a data-dependent real min/max range).
-
-
-def _dp_declared_cfg(
-    *,
-    snapshot_file: str,
-    col_name: str = "age",
-    extra: dict | None = None,
-    declared_epsilon: float = 1.0,
-    declared_delta: float = 1e-6,
-):
-    col = {"name": col_name, "type": "statistical", "snapshot_file": snapshot_file}
-    col.update(extra or {})
-    return {
-        "global_settings": {
-            "seed": 1,
-            "dp": {"epsilon": declared_epsilon, "delta": declared_delta},
-        },
-        "tables": [{"name": "t", "row_count": 5, "generate_columns": [col]}],
-    }
-
-
-def _write_snapshot(tmp_path, snap: dict) -> str:
-    path = tmp_path / "snap.json"
-    path.write_text(json.dumps(snap), encoding="utf-8")
-    return str(path)
-
-
-class TestCheckDpSnapshotProvenance:
-    def test_dp_declared_plain_snapshot_rejected(self, tmp_path):
-        df = pd.DataFrame({"age": [31, 42, 55]})
-        snap = compute_distribution_snapshot(df)  # ordinary fit: no `dp` block at all
-        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, snap))
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_not_dp_fit"
-        assert "age" in exc.value.message
-
-    def test_dp_declared_properly_dp_fit_snapshot_passes(self, tmp_path):
-        df = pd.DataFrame({"age": [31, 42, 55]})
-        snap = compute_distribution_snapshot(
-            df, dp_mode=True, numeric_domains={"age": (0.0, 120.0)}
-        )
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        # Finding 4 (2026-07-21): the declared ceiling must cover the
-        # snapshot's COMPOSED spend, not the per-release epsilon passed to
-        # apply_dp_noise -- a single numeric column charges row_count +
-        # null_count + non_null_count + distinct_count + histogram
-        # separately (5 releases @ epsilon=1.0 = epsilon_total 5.0, per
-        # dp.py's module docstring), so declaring epsilon=1.0 here would
-        # now correctly trip dp_budget_exceeded. Declare comfortably above
-        # the actual spend so this test proves provenance, not budget.
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, noisy), declared_epsilon=10.0
-        )
-        check_dp_snapshot_provenance(cfg)  # no raise
-
-    def test_dp_declared_non_dp_fit_numeric_rejected_despite_dp_block(self, tmp_path):
-        # The `dp` block IS present (apply_dp_noise ran), but the numeric
-        # column was fit WITHOUT dp_mode -- bin edges are the real
-        # min/max, so support_origin stays "data" and the release is not
-        # actually DP despite the block's presence. A wrong DP guarantee
-        # is worse than none, so this must still be rejected.
-        df = pd.DataFrame({"age": [31, 42, 55]})
-        snap = compute_distribution_snapshot(df)  # no dp_mode
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, noisy))
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_numeric_support_data_dependent"
-        assert "age" in exc.value.message
-
-    def test_dp_unset_plain_snapshot_passes(self, tmp_path):
-        df = pd.DataFrame({"age": [31, 42, 55]})
+    def test_dp_exemption_ignores_unverified_dp_key_in_artifact(self, tmp_path):
+        """An attacker (or a stale/hand-edited artifact) cannot forge the
+        exemption by hand-writing a `dp`-shaped key onto an otherwise
+        exact snapshot: the compiler's OWN verification is what grants
+        `dp_verified`, never a truthy key read from the artifact itself."""
+        df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
         snap = compute_distribution_snapshot(df)
+        snap["dp"] = {"schema": "dps-marginal/v2", "epsilon_total": 1.0, "delta_total": 1e-6}
+        path = _write(tmp_path, "forged.json", snap)
         cfg = {
+            "global_settings": {"seed": 1},  # dp NOT declared globally
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "state", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        # Without global_settings.dp declared, verify_dp_snapshots never
+        # runs at all -- dp_verified is always False regardless of the
+        # artifact's own claims -- so the consent gate still applies.
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "statistical_real_categories_not_allowed"
+
+    def test_load_spec_never_reads_snapshot_dp_key_for_the_exemption(self, tmp_path):
+        """Direct unit proof at the `load_spec` seam: `dp_verified` is a
+        plain argument, not derived from `snapshot["dp"]`."""
+        df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
+        snap = compute_distribution_snapshot(df)
+        snap["dp"] = {"schema": "dps-marginal/v2", "epsilon_total": 1.0, "delta_total": 1e-6}
+        spec_kwargs = {"name": "state", "type": "statistical", "snapshot_file": "x"}
+        from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(spec_kwargs, snapshot=snap, dp_verified=False)
+        assert exc.value.code == "statistical_real_categories_not_allowed"
+        # dp_verified=True (the compiler's verdict) is what exempts it,
+        # not the presence of snap["dp"].
+        spec = load_spec(spec_kwargs, snapshot=snap, dp_verified=True)
+        assert spec.kind == "categorical"
+
+
+class TestFailClosedDpDeclaration:
+    """Guide section 6 row F6: presence is key membership, not truthiness,
+    for every value except a bare `None` -- deliberately narrowed from the
+    guide's literal text (see `_dp_declared`'s docstring in
+    `plan/_checks_dp.py`): `PipelineConfig.model_validate(cfg).model_dump()`,
+    the documented production choke point, always materializes
+    `global_settings["dp"] = None` for a config that never touched `dp`,
+    so a pure membership test would reject every ordinary non-DP pipeline
+    compiled through that choke point. A present-but-otherwise-malformed
+    value ({}, a list, a scalar, an incomplete mapping) still fails
+    closed -- there is no equivalent false-positive risk for those,
+    since ordinary PipelineConfig validation cannot produce them."""
+
+    def test_empty_dp_block_fails_closed_with_dp_budget_declaration_malformed(self):
+        cfg = {"global_settings": {"seed": 1, "dp": {}}, "tables": []}
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, {})
+        assert exc.value.code == "dp_budget_declaration_malformed"
+
+    def test_non_mapping_dp_block_fails_closed(self):
+        for bad in ([], "x", 1):
+            cfg = {"global_settings": {"seed": 1, "dp": bad}, "tables": []}
+            with pytest.raises(PlanCompileError) as exc:
+                verify_dp_snapshots(cfg, {})
+            assert exc.value.code == "dp_budget_declaration_malformed"
+
+    def test_dp_unset_passes(self):
+        cfg = {"global_settings": {"seed": 1}, "tables": []}
+        verified, receipt = verify_dp_snapshots(cfg, {})
+        assert verified == frozenset()
+        assert receipt is None
+
+    def test_dp_key_present_as_none_passes_like_unset(self):
+        """The `PipelineConfig.model_dump()` case: `dp` present, value
+        `None`, because the field was never set. Must compile clean, not
+        raise `dp_budget_declaration_malformed` (see class docstring)."""
+        cfg = {"global_settings": {"seed": 1, "dp": None}, "tables": []}
+        verified, receipt = verify_dp_snapshots(cfg, {})
+        assert verified == frozenset()
+        assert receipt is None
+
+    def test_pipeline_config_dump_of_an_unset_dp_field_compiles_without_dp_error(self):
+        """End-to-end reproduction of the real regression this guards:
+        a config that never touches `global_settings.dp`, validated and
+        dumped through the documented production choke point
+        (`PipelineConfig.model_validate(cfg).model_dump()`), must compile
+        through `run_config_only_checks` without a DP-declaration error."""
+        from decoy_engine import run_config_only_checks
+        from decoy_engine.config import PipelineConfig
+
+        raw = {
+            "version": 1,
             "global_settings": {"seed": 1},
+            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
             "tables": [
                 {
-                    "name": "t",
-                    "row_count": 5,
-                    "generate_columns": [
-                        {
-                            "name": "age",
-                            "type": "statistical",
-                            "snapshot_file": _write_snapshot(tmp_path, snap),
-                        }
-                    ],
+                    "name": "people",
+                    "columns": [{"name": "email", "strategy": "faker", "provider": "person_email"}],
                 }
             ],
+            "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
         }
-        check_dp_snapshot_provenance(cfg)  # no raise: no dp declared, no gate
-
-    def test_dp_declared_categorical_dp_mode_fit_rejected_option_a(self, tmp_path):
-        # Option A (2026-07-21): even a categorical column carrying the
-        # dp_mode full-vocabulary marker is rejected -- the RELEASE
-        # mechanism (apply_dp_noise's stable-histogram branch) does not
-        # satisfy its stated (epsilon, delta) bound regardless of fit-side
-        # candidacy. `compute_distribution_snapshot(df, dp_mode=True)` can
-        # no longer even PRODUCE this artifact live for an object column
-        # (it now fails closed at fit time,
-        # dp_mode_categorical_unsupported, tests/unit/generation/
-        # test_snapshot_dp_support.py) -- the marker is stamped directly
-        # here to prove the CONSUME-side gate still rejects an artifact
-        # carrying it (e.g. one fit by a pre-Option-A engine version, or
-        # hand-edited), not just that the fit path is closed.
-        rng = np.random.default_rng(3)
-        df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
-        snap = compute_distribution_snapshot(df)  # ordinary (non-dp_mode) fit
-        snap["columns"]["state"]["support_origin"] = "full_vocabulary"
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, noisy),
-            col_name="state",
-            extra={"allow_real_categories": True},
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-        assert "state" in exc.value.message
-
-    def test_dp_declared_categorical_without_dp_mode_rejected(self, tmp_path):
-        # Option A: an ALL-CATEGORICAL dp-declared pipeline is rejected
-        # regardless of whether the column was fit with dp_mode -- the same
-        # blanket dp_categorical_not_yet_supported code as the dp_mode-fit
-        # case above, since categorical DP is not supported at all yet.
-        rng = np.random.default_rng(3)
-        df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
-        snap = compute_distribution_snapshot(df)  # NO dp_mode -> top-K truncation
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, noisy),
-            col_name="state",
-            extra={"allow_real_categories": True},
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-        assert "state" in exc.value.message
-
-    def test_dp_declared_mixed_numeric_and_categorical_dp_mode_fit_rejected_option_a(
-        self, tmp_path
-    ):
-        # Option A: a pipeline with BOTH a sound numeric DP column and a
-        # categorical column under the same global_settings.dp is rejected
-        # on the categorical column -- there is no partial-DP pipeline; the
-        # whole dp-declared config must compile or not.
-        rng = np.random.default_rng(3)
-        df = pd.DataFrame(
-            {"age": [31, 42, 55, 27, 61], "state": rng.choice(["CA", "NY", "TX"], size=5)}
-        )
-        # dp_mode=True can no longer fit this frame at all (the categorical
-        # "state" column fails closed at fit time, aborting before "age" is
-        # even reached) -- fit WITHOUT dp_mode (numeric_domains alone still
-        # stamps age's support_origin="caller") and hand-stamp state's
-        # full_vocabulary marker to simulate the mixed artifact a
-        # pre-Option-A engine would have produced.
-        snap = compute_distribution_snapshot(df, numeric_domains={"age": (0.0, 120.0)})
-        snap["columns"]["state"]["support_origin"] = "full_vocabulary"
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        cfg = {
-            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-6}},
-            "tables": [
-                {
-                    "name": "t",
-                    "row_count": 5,
-                    "generate_columns": [
-                        {
-                            "name": "age",
-                            "type": "statistical",
-                            "snapshot_file": _write_snapshot(tmp_path, noisy),
-                        },
-                        {
-                            "name": "state",
-                            "type": "statistical",
-                            "snapshot_file": _write_snapshot(tmp_path, noisy),
-                            "allow_real_categories": True,
-                        },
-                    ],
-                }
-            ],
-        }
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
-        assert "state" in exc.value.message
-
-    def test_wired_into_run_config_only_checks(self, tmp_path):
-        # The real chokepoint used by `decoy validate`, not just direct
-        # unit coverage of the check function.
-        df = pd.DataFrame({"age": [31, 42, 55]})
-        snap = compute_distribution_snapshot(df)  # no dp block
-        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, snap))
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_snapshot_not_dp_fit"
-
-    def test_all_categorical_hole_closed_is_a_self_contained_verdict(self, tmp_path):
-        # check_dp_snapshot_provenance rejects an all-categorical snapshot
-        # on its own -- a self-contained verdict, not relying on
-        # check_dp_categorical_unsupported having run first (through the
-        # full compile_plan/run_config_only_checks chain, THAT check fires
-        # first and is what a real caller sees; this proves the SIBLING
-        # check stands correct-by-construction regardless of ordering, per
-        # this module's established convention for the anti-DP-knob check).
-        rng = np.random.default_rng(3)
-        df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
-        snap = compute_distribution_snapshot(df)  # NO dp_mode
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        # No allow_real_categories here -> reaches the provenance check
-        # without the anti-DP-knob gate masking it.
-        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, noisy), col_name="state")
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_categorical_not_yet_supported"
+        dumped = PipelineConfig.model_validate(raw).model_dump()
+        assert dumped["global_settings"]["dp"] is None  # confirms the reproduction still applies
+        run_config_only_checks(dumped)  # must not raise dp_budget_declaration_malformed
 
 
-class TestDpSnapshotProvenanceAllowList:
-    """PoC-encoding regression tests for the fail-closed allow-list.
-
-    The consume-side check previously only RAISED for numeric-not-'caller'
-    and categorical-not-'full_vocabulary'; datetime/freetext/empty kinds
-    fell through and PASSED. Because `apply_dp_noise` noises ANY snapshot
-    (datetime year_bins, freetext length bins included), an operator could
-    fit WITHOUT dp_mode, run apply_dp_noise (adds a `dp` block +
-    epsilon_total), declare `global_settings.dp`, and ship a non-DP
-    datetime/freetext support (e.g. an outlier admission year) under a DP
-    declaration. Fix 2's FIT-TIME rejection does not cover this -- the
-    snapshot was never dp_mode-fit. The allow-list default-rejects every
-    kind that is not a proven-data-independent numeric or categorical."""
-
-    def _noised(self, tmp_path, df: pd.DataFrame) -> str:
-        # Fit WITHOUT dp_mode (data-dependent support, no support_origin),
-        # then run apply_dp_noise so a `dp` block + epsilon_total exist.
-        snap = compute_distribution_snapshot(df)
-        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
-        return _write_snapshot(tmp_path, noisy)
-
-    def test_datetime_consume_side_bypass_now_rejected(self, tmp_path):
-        df = pd.DataFrame(
-            {"joined": pd.to_datetime(["1931-01-01", "2020-06-15", "2021-12-31", "2022-03-03"])}
-        )
-        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="joined")
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
-        assert "joined" in exc.value.message
-
-    def test_freetext_consume_side_bypass_now_rejected(self, tmp_path):
-        df = pd.DataFrame(
-            {"note": [f"free text clinical note number {i} with distinct words" for i in range(40)]}
-        )
-        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="note")
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
-        assert "note" in exc.value.message
-
-    def test_empty_kind_column_rejected_fail_closed(self, tmp_path):
-        # `empty` (all-null) releases stats={} and is harmless today, but
-        # must ride the same fail-closed default so a future change cannot
-        # reopen the hole.
-        df = pd.DataFrame({"blank": [None, None, None]})
-        snap = compute_distribution_snapshot(df)
-        assert snap["columns"]["blank"]["kind"] == "empty"
-        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="blank")
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
-
-    def test_datetime_bypass_closed_end_to_end_via_run_config_only_checks(self, tmp_path):
-        # datetime is a load_spec-supported kind that needs no
-        # allow_real_categories, so it genuinely reaches the provenance
-        # check through the real `decoy validate` chain -- the true PoC.
-        df = pd.DataFrame(
-            {"joined": pd.to_datetime(["1931-01-01", "2020-06-15", "2021-12-31", "2022-03-03"])}
-        )
-        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="joined")
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
-
-    def test_freetext_bypass_closed_end_to_end_via_run_config_only_checks(self, tmp_path):
-        df = pd.DataFrame(
-            {"note": [f"free text clinical note number {i} with distinct words" for i in range(40)]}
-        )
-        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="note")
-        with pytest.raises(PlanCompileError) as exc:
-            run_config_only_checks(cfg)
-        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
-
-
-# ── Finding 4 (2026-07-21): declared (epsilon, delta) budget enforcement ───
-#
-# `global_settings.dp` previously only checked `epsilon_total` was present
-# and numeric; `delta_total` was never validated, and the DECLARED
-# epsilon/delta were never compared against what the artifacts actually
-# spent. A config declaring epsilon=1e-6 would accept an artifact whose real
-# epsilon_total was 5. These five cases are the plan's exact enumeration.
-
-
-def _numeric_dp_artifact(*, epsilon_total: object, delta_total: object = 0.0) -> dict:
-    """A minimal, schema-valid, PROVENANCE-ELIGIBLE numeric DP artifact with
-    an EXACTLY controlled `dp.epsilon_total`/`delta_total` -- hand-built
-    rather than routed through `apply_dp_noise` (whose composed total is a
-    function of how many scalars a real fit charges, not a single knob) so
-    the budget-composition arithmetic below is exact and legible. `object`
-    typing on the two dp fields lets the malformed-input tests pass
-    non-numeric/None/NaN values through untouched.
-    """
+def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", distinct_marker=0):
     return {
         "schema_version": DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
         "row_count": 5,
         "columns": {
             "age": {
-                "dtype": "int64",
+                "dtype": "float64",
                 "kind": "numeric",
                 "null_count": 0,
                 "non_null_count": 5,
                 "distinct_count": 5,
-                "support_origin": "caller",
                 "stats": {"bin_edges": [0.0, 120.0], "bin_counts": [5]},
             }
         },
         "joints": [],
-        "dp": {"epsilon_total": epsilon_total, "delta_total": delta_total},
+        "dp": {
+            "schema": "dps-marginal/v2",
+            "release_id": release_id,
+            "scope": "single-column-marginals",
+            "adjacency": "add-remove-one-row",
+            "epsilon_total": epsilon_total,
+            "delta_total": delta_total,
+            "accountant": "dp_accounting PLD composition over OpenDP privacy maps",
+            "opendp_version": _running_opendp_version(),
+            "dp_accounting_version": _running_dp_accounting_version(),
+            "query_count": 2,  # 1 row_count + 1 numeric column + 2*0 categorical
+            "numeric_bins": 1,
+            "categorical_columns": [],
+            "numeric_domains": {"age": [0.0, 120.0]},
+            "_marker": distinct_marker,
+        },
     }
 
 
-class TestFinding4BudgetEnforcement:
-    def test_i_declared_budget_below_artifact_spend_rejected(self, tmp_path):
-        # Codex's repro shape: declared epsilon=1e-6, artifact epsilon_total=5.
-        artifact = _numeric_dp_artifact(epsilon_total=5.0)
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, artifact), declared_epsilon=1e-6
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_budget_exceeded"
-        assert "5.0" in exc.value.message
-        assert "1e-06" in exc.value.message or "1e-6" in exc.value.message.replace("1e-06", "1e-6")
+def _running_opendp_version() -> str:
+    import importlib.metadata
 
-    def test_ii_declared_budget_exactly_equal_to_spend_passes(self, tmp_path):
-        # Boundary: spend <= declared passes; equality is the boundary case.
-        artifact = _numeric_dp_artifact(epsilon_total=2.5)
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, artifact), declared_epsilon=2.5
-        )
-        check_dp_snapshot_provenance(cfg)  # no raise
+    return importlib.metadata.version("opendp")
 
-    def test_iii_two_distinct_artifacts_compose_and_can_exceed_declared_budget(self, tmp_path):
-        # Two DIFFERENT artifacts (distinguishing distinct_count so the
-        # bytes genuinely differ -- a real content-hash miss, not a
-        # collision) each spend 0.6; declared 1.0 cannot cover 0.6 + 0.6.
-        artifact_a = _numeric_dp_artifact(epsilon_total=0.6)
-        artifact_b = _numeric_dp_artifact(epsilon_total=0.6)
-        artifact_b["columns"]["age"]["distinct_count"] = 6
-        path_a = _write_snapshot(tmp_path, artifact_a)
-        path_b = tmp_path / "snap_b.json"
-        path_b.write_text(json.dumps(artifact_b), encoding="utf-8")
+
+def _running_dp_accounting_version() -> str:
+    import importlib.metadata
+
+    return importlib.metadata.version("dp-accounting")
+
+
+def _cfg_with_artifact(
+    tmp_path, artifact, *, name="age", declared_epsilon=10.0, declared_delta=1e-6
+):
+    path = _write(tmp_path, f"{name}_{id(artifact)}.json", artifact)
+    return {
+        "global_settings": {
+            "seed": 1,
+            "dp": {"epsilon": declared_epsilon, "delta": declared_delta},
+        },
+        "tables": [
+            {
+                "name": "t",
+                "row_count": 5,
+                "generate_columns": [
+                    {
+                        "name": name,
+                        "type": "statistical",
+                        "snapshot_file": path,
+                        "source_column": "age",
+                    }
+                ],
+            }
+        ],
+    }, path
+
+
+class TestReleaseIdLedger:
+    """Guide section 6 row F5: distinct release IDs always compose; the
+    same ID referenced repeatedly is charged once; a reused ID with
+    different bytes is rejected as a conflicting artifact."""
+
+    def test_distinct_release_ids_with_identical_released_values_compose_budget(self, tmp_path):
+        a = _numeric_dp_artifact(epsilon_total=0.6, release_id="rA")
+        b = _numeric_dp_artifact(epsilon_total=0.6, release_id="rB", distinct_marker=1)
+        cfg_a, path_a = _cfg_with_artifact(tmp_path, a, name="age_a")
+        _, path_b = _cfg_with_artifact(tmp_path, b, name="age_b")
         cfg = {
             "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
             "tables": [
@@ -672,23 +440,21 @@ class TestFinding4BudgetEnforcement:
                         {
                             "name": "age_b",
                             "type": "statistical",
-                            "snapshot_file": str(path_b),
+                            "snapshot_file": path_b,
                             "source_column": "age",
                         },
                     ],
                 }
             ],
         }
+        pinned = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
+            verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_budget_exceeded"
 
-    def test_iii_same_artifact_referenced_by_ten_columns_charged_once(self, tmp_path):
-        # The SAME artifact (one content hash) consumed by 10 columns is
-        # ONE DP release, charged once -- 0.6 <= declared 1.0 passes, where
-        # naively summing 10x0.6 would have wrongly rejected it.
-        artifact = _numeric_dp_artifact(epsilon_total=0.6)
-        path = _write_snapshot(tmp_path, artifact)
+    def test_same_release_id_referenced_twice_is_charged_once(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=0.6, release_id="rSAME")
+        path = _write(tmp_path, "same.json", artifact)
         cfg = {
             "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
             "tables": [
@@ -702,154 +468,241 @@ class TestFinding4BudgetEnforcement:
                             "snapshot_file": path,
                             "source_column": "age",
                         }
-                        for i in range(10)
+                        for i in range(5)
                     ],
                 }
             ],
         }
-        check_dp_snapshot_provenance(cfg)  # no raise: charged once, not 10x
+        pinned = read_and_pin_snapshots(cfg)
+        verified, receipt = verify_dp_snapshots(cfg, pinned)
+        assert receipt is not None
+        assert receipt.epsilon_total == pytest.approx(0.6)
+        assert receipt.release_ids == ("rSAME",)
 
-    def test_iv_delta_total_absent_rejected_fail_closed(self, tmp_path):
-        # `apply_dp_noise` ALWAYS writes delta_total (even 0.0); an absent
-        # key only happens on a tampered/pre-DPS-2 artifact and must not be
-        # silently treated as 0.0.
-        artifact = _numeric_dp_artifact(epsilon_total=1.0)
-        del artifact["dp"]["delta_total"]
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, artifact), declared_epsilon=10.0
-        )
+    def test_same_release_id_with_different_digest_is_rejected(self, tmp_path):
+        a = _numeric_dp_artifact(epsilon_total=0.5, release_id="rDUP")
+        b = _numeric_dp_artifact(epsilon_total=0.9, release_id="rDUP")  # same ID, different bytes
+        path_a = _write(tmp_path, "dupA.json", a)
+        path_b = _write(tmp_path, "dupB.json", b)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-6}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "age_a",
+                            "type": "statistical",
+                            "snapshot_file": path_a,
+                            "source_column": "age",
+                        },
+                        {
+                            "name": "age_b",
+                            "type": "statistical",
+                            "snapshot_file": path_b,
+                            "source_column": "age",
+                        },
+                    ],
+                }
+            ],
+        }
+        pinned = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_budget_malformed"
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_release_id_conflict"
 
-    def test_iv_delta_total_nan_rejected_fail_closed(self, tmp_path):
-        artifact = _numeric_dp_artifact(epsilon_total=1.0, delta_total=float("nan"))
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, artifact), declared_epsilon=10.0
-        )
+    def test_dp_snapshot_without_release_id_is_rejected(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        del artifact["dp"]["release_id"]
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_budget_malformed"
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_missing_release_id"
 
-    def test_iv_delta_total_negative_rejected_fail_closed(self, tmp_path):
-        artifact = _numeric_dp_artifact(epsilon_total=1.0, delta_total=-0.1)
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, artifact), declared_epsilon=10.0
-        )
+    def test_composed_release_budget_above_declared_ceiling_is_rejected(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=5.0, release_id="rBIG")
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact, declared_epsilon=1e-6)
+        pinned = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_snapshot_budget_malformed"
-
-    def test_v_delta_path_artifact_delta_above_declared_delta_rejected(self, tmp_path):
-        # The delta AXIS of the comparison, exercised independently of
-        # epsilon. Option A ships numeric-only DP, and a genuine numeric
-        # fit always spends delta_total=0.0 (no threshold-release
-        # mechanism runs), so this is a hand-crafted artifact -- exactly
-        # the shape the plan's Finding 4(d)(v) case describes, adapted to
-        # Option A's scope (the plan's literal case used a categorical
-        # artifact, which Option A rejects before budget accounting is
-        # ever reached; delta_total > 0 is otherwise only reachable via a
-        # categorical release, so this is the faithful in-scope
-        # equivalent: prove the delta comparison is real, not just epsilon).
-        artifact = _numeric_dp_artifact(epsilon_total=0.1, delta_total=0.01)
-        cfg = _dp_declared_cfg(
-            snapshot_file=_write_snapshot(tmp_path, artifact),
-            declared_epsilon=10.0,
-            declared_delta=1e-6,
-        )
-        with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
+            verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_budget_exceeded"
 
-    def test_declared_dp_with_malformed_ceiling_fails_closed(self, tmp_path):
-        # dennis MED-1 (2026-07-21): a declared-but-unenforceable budget must
-        # NOT silently disable enforcement (the decorative-guarantee bug
-        # Finding 4 kills). These checks can run on a raw, not-yet-pydantic-
-        # validated config dict; a malformed DECLARATION (here: missing
-        # epsilon) now fails closed with `dp_budget_declaration_malformed`
-        # rather than skipping the budget comparison. DpGenerateSettings makes
-        # this unreachable through the validated product path; this locks the
-        # raw-dict backstop.
-        artifact = _numeric_dp_artifact(epsilon_total=5.0)
-        cfg = {
-            "global_settings": {"seed": 1, "dp": {"delta": 1e-6}},  # epsilon missing
-            "tables": [
-                {
-                    "name": "t",
-                    "row_count": 5,
-                    "generate_columns": [
-                        {
-                            "name": "age",
-                            "type": "statistical",
-                            "snapshot_file": _write_snapshot(tmp_path, artifact),
-                        }
-                    ],
-                }
-            ],
-        }
+    def test_dp_artifact_query_count_inconsistent_with_declared_columns_is_rejected(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        artifact["dp"]["query_count"] = 99
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_budget_declaration_malformed"
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_query_count_mismatch"
 
-    def test_declared_dp_with_bad_delta_still_enforces_epsilon(self, tmp_path):
-        # dennis MED-1 axis-coupling: a bad delta must not disable the
-        # well-formed epsilon axis. Out-of-range delta -> fail closed on the
-        # declaration, not a silent pass that would have let epsilon slide.
-        artifact = _numeric_dp_artifact(epsilon_total=5.0)
-        cfg = {
-            "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 5.0}},
-            "tables": [
-                {
-                    "name": "t",
-                    "row_count": 5,
-                    "generate_columns": [
-                        {
-                            "name": "age",
-                            "type": "statistical",
-                            "snapshot_file": _write_snapshot(tmp_path, artifact),
-                        }
-                    ],
-                }
-            ],
-        }
+    def test_dp_artifact_from_a_different_library_version_is_rejected(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        artifact["dp"]["opendp_version"] = "0.0.0-not-installed"
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            check_dp_snapshot_provenance(cfg)
-        assert exc.value.code == "dp_budget_declaration_malformed"
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_library_version_mismatch"
+
+    def test_dp_snapshot_budget_malformed_nan_delta(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=1.0, delta_total=float("nan"))
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_budget_malformed"
+
+    def test_not_dp_fit_snapshot_rejected(self, tmp_path):
+        df = pd.DataFrame({"age": [1, 2, 3]})
+        snap = compute_distribution_snapshot(df)
+        cfg, _ = _cfg_with_artifact(tmp_path, snap)
+        pinned = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_not_dp_fit"
 
 
-# ── Task 6: consume-only contract lock ──────────────────────────────────────
+class TestConsumeOnlyContract:
+    def test_generation_consumes_only_the_pinned_snapshot(self, tmp_path):
+        """Sampling from a DP artifact needs no raw source frame -- and,
+        under Scope B, no re-opened path either (guide section 4.7/4.8).
+        """
+        path = _dp_fit_mixed(tmp_path, n=300)
+        cfg = _dp_cfg(
+            table_columns=[{"name": "state", "type": "statistical", "snapshot_file": path}]
+        )
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")
+        from decoy_engine.generation.synthesize import generate_tables
+
+        out = generate_tables(plan)
+        values = out["t"]["state"].to_pylist()
+        assert len(values) == 5
+        assert set(values) <= {"CA", "NY", "TX"}
+
+    def test_generate_tables_uses_pinned_snapshot_after_file_swap(self, tmp_path, monkeypatch):
+        """Guide section 4.8/F4 and defect closure matrix row F4. The
+        previous regression here (`test_generation_consumes_only_the_
+        pinned_snapshot` above) never overwrites the snapshot file after
+        compiling, so it passes whether or not pinning actually works --
+        it proves nothing about TOCTOU safety. This test runs the exact
+        attack guide section 7.4 describes: compile against one DP
+        artifact, then swap the SAME path's bytes for a second,
+        independently-fit DP artifact whose retained categorical labels
+        live in a completely disjoint alphabet, then generate.
+
+        Two things must both hold for this to be a real proof rather than
+        a restatement of the old test: (1) the generated values must be
+        provably attributable to the PINNED (pre-swap) artifact, which a
+        disjoint label alphabet gives us for free -- any value from the
+        swapped alphabet could only have come from a runtime re-read; and
+        (2) `open()` must never be called on the pinned path again after
+        compile_plan returns, checked structurally, not inferred from the
+        output alone.
+        """
+        pinned_path = _dp_fit_categorical_only(
+            tmp_path,
+            "pinned.json",
+            categories=["CA", "NY", "TX"],
+            p=[0.9, 0.07, 0.03],
+            epsilon=8.0,
+            delta=1e-6,
+        )
+        swapped_snapshot_path = _dp_fit_categorical_only(
+            tmp_path,
+            "swapped.json",
+            categories=["ZQX", "WKR", "VPL"],
+            p=[0.9, 0.07, 0.03],
+            epsilon=8.0,
+            delta=1e-6,
+            seed=97,
+        )
+        swapped_bytes = Path(swapped_snapshot_path).read_bytes()
+        # Sanity: the two artifacts are genuinely different bytes and
+        # genuinely disjoint label spaces, or the assertion below would be
+        # vacuous.
+        assert swapped_bytes != Path(pinned_path).read_bytes()
+
+        cfg = _dp_cfg(
+            table_columns=[{"name": "state", "type": "statistical", "snapshot_file": pinned_path}],
+            epsilon=8.0,
+            delta=1e-6,
+        )
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")
+
+        # The TOCTOU swap: overwrite the SAME path compile_plan just read,
+        # with the disjoint-alphabet artifact's exact bytes.
+        with open(pinned_path, "wb") as fh:
+            fh.write(swapped_bytes)
+        assert Path(pinned_path).read_bytes() == swapped_bytes  # swap landed
+
+        # Structural guard: nothing downstream of compile_plan may open
+        # this path again. A generation path that reopens it to reread the
+        # (now-swapped) snapshot must fail this test even if it happened
+        # to sample a value that also looked plausible.
+        real_open = builtins.open
+
+        def _guarded_open(file, *args, **kwargs):
+            try:
+                target = os.fspath(file)
+            except TypeError:
+                target = None
+            if target is not None and os.path.abspath(str(target)) == os.path.abspath(
+                pinned_path
+            ):
+                raise AssertionError(
+                    f"generate_tables reopened pinned snapshot path {pinned_path!r} "
+                    "after compile_plan -- the Plan must carry embedded bytes, not a "
+                    "runtime path read (guide section 4.7/4.8, defect F4)."
+                )
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _guarded_open)
+
+        from decoy_engine.generation.synthesize import generate_tables
+
+        out = generate_tables(plan)
+        values = set(out["t"]["state"].to_pylist())
+
+        # Every generated value must be explainable by the PINNED artifact
+        # (or empty, if -- vanishingly unlikely at this skew/epsilon -- no
+        # label survived thresholding); none may come from the swapped
+        # artifact's disjoint alphabet. If pinning were broken and
+        # generation re-read the swapped file, this assertion is exactly
+        # what would catch it: the swapped alphabet shares no strings with
+        # the pinned one.
+        assert values <= {"CA", "NY", "TX"}
+        assert not values & {"ZQX", "WKR", "VPL"}
 
 
-def _source_df() -> pd.DataFrame:
-    rng = np.random.default_rng(5)
-    n = 300
-    return pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=n, p=[0.5, 0.3, 0.2])})
-
-
-def test_generation_consumes_only_the_snapshot(tmp_path):
-    """Sampling from a DP snapshot must not require or read the raw source
-    frame. Contract lock for post-processing immunity (DPS-3).
-
-    Built through the REAL fit -> DP-noise -> load_spec -> sample_column
-    pipeline (not the plan's invented load_spec_from_dict/StatisticalSpec
-    construction): a genuine DP'd snapshot is written to disk, and only
-    that file (never `_source_df()`) is touched from here on.
+class TestGenerateTablesRejectsRawConfig:
+    """Guide section 4.8/F3, defect closure matrix row F3: the public
+    `generate_tables` entry point accepts only a compiled `Plan`. A raw
+    configuration mapping -- the exact prior bypass shape (guide section
+    7.4's entrypoint-bypass PoC) -- must be rejected with a typed error
+    before any output is produced, not silently accepted and generated
+    from directly.
     """
-    snap = compute_distribution_snapshot(_source_df())
-    noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(7))
-    path = tmp_path / "noisy.json"
-    path.write_text(json.dumps(noisy), encoding="utf-8")
 
-    spec = load_spec(
-        {
-            "name": "state",
-            "type": "statistical",
-            "snapshot_file": str(path),
-            "allow_real_categories": True,
-        }
-    )
-    out = sample_column(spec, 100, col_seed=42)
-    assert len(out) == 100
-    # Only labels present in the (threshold-released) artifact -- CA/NY/TX
-    # all comfortably clear tau at n=300, so no "other"/suppression here.
-    assert set(out) <= {"CA", "NY", "TX"}
+    def test_generate_tables_rejects_raw_config_and_requires_compiled_plan(self, tmp_path):
+        path = _dp_fit_mixed(tmp_path, n=300)
+        raw_config = _dp_cfg(
+            table_columns=[{"name": "state", "type": "statistical", "snapshot_file": path}]
+        )
+        from decoy_engine.generation.synthesize import generate_tables
+
+        with pytest.raises(TypeError, match="compiled decoy_engine.plan.Plan"):
+            generate_tables(raw_config)
+
+    def test_generate_tables_rejects_plan_without_generation_payload(self):
+        # A Plan compiled from a config with no generate_columns at all has
+        # no GenerationPlan to generate from.
+        cfg = {"global_settings": {"seed": 1}, "tables": [{"name": "t", "row_count": 3}]}
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert plan.generation is None
+        from decoy_engine.generation.synthesize import generate_tables
+
+        with pytest.raises(TypeError, match="no generation payload"):
+            generate_tables(plan)
