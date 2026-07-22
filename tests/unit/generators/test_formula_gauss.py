@@ -18,7 +18,7 @@ from __future__ import annotations
 import random
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.generation.synthesize import generate_tables
+from tests.unit._dps_helpers import compile_and_generate
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,13 +64,13 @@ class TestGaussDeterminism:
     global random state between calls."""
 
     def test_same_seed_byte_identical(self) -> None:
-        """Two generate_tables() calls with the same seed and formula produce
+        """Two compile_and_generate() calls with the same seed and formula produce
         identical output lists."""
         cfg = _gauss_config(50.0, 15.0, n_rows=200, seed=7)
-        out_a = generate_tables(cfg)["t"].column("amount").to_pylist()
-        out_b = generate_tables(cfg)["t"].column("amount").to_pylist()
+        out_a = compile_and_generate(cfg)["t"].column("amount").to_pylist()
+        out_b = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         assert out_a == out_b, (
-            "gauss formula column: two generate_tables() calls with the same "
+            "gauss formula column: two compile_and_generate() calls with the same "
             "seed produced different output. Determinism broken."
         )
 
@@ -82,12 +82,12 @@ class TestGaussDeterminism:
         random), polluting module-global state between runs has no effect.
         """
         cfg = _gauss_config(100.0, 20.0, n_rows=100, seed=99)
-        out_a = generate_tables(cfg)["t"].column("amount").to_pylist()
+        out_a = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         # Pollute module-global random between calls.
         random.seed(12345)
         for _ in range(200):
             random.gauss(0, 1)
-        out_b = generate_tables(cfg)["t"].column("amount").to_pylist()
+        out_b = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         assert out_a == out_b, (
             "gauss formula column: module-global random pollution changed output. "
             "gauss() in _formula_scope must be bound to the per-row rng, not "
@@ -97,12 +97,12 @@ class TestGaussDeterminism:
     def test_different_seeds_produce_different_output(self) -> None:
         """Different seeds must produce different output (sanity check)."""
         out_a = (
-            generate_tables(_gauss_config(50.0, 10.0, n_rows=50, seed=1))["t"]
+            compile_and_generate(_gauss_config(50.0, 10.0, n_rows=50, seed=1))["t"]
             .column("amount")
             .to_pylist()
         )
         out_b = (
-            generate_tables(_gauss_config(50.0, 10.0, n_rows=50, seed=2))["t"]
+            compile_and_generate(_gauss_config(50.0, 10.0, n_rows=50, seed=2))["t"]
             .column("amount")
             .to_pylist()
         )
@@ -126,7 +126,7 @@ class TestGaussDistribution:
         mu, sigma = 50.0, 15.0
         tol = 0.10
         cfg = _gauss_config(mu, sigma, n_rows=1000, seed=42)
-        vals = generate_tables(cfg)["t"].column("amount").to_pylist()
+        vals = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         non_null = [v for v in vals if v is not None]
         out_mean = sum(non_null) / len(non_null)
         band = tol * max(abs(mu), 1.0)
@@ -140,7 +140,7 @@ class TestGaussDistribution:
         mu, sigma = 50.0, 15.0
         tol = 0.10
         cfg = _gauss_config(mu, sigma, n_rows=1000, seed=42)
-        vals = generate_tables(cfg)["t"].column("amount").to_pylist()
+        vals = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         non_null = [v for v in vals if v is not None]
         n = len(non_null)
         mean = sum(non_null) / n
@@ -154,7 +154,7 @@ class TestGaussDistribution:
     def test_no_null_rows(self) -> None:
         """gauss() should not produce None for any row (always a float)."""
         cfg = _gauss_config(0.0, 1.0, n_rows=200, seed=5)
-        vals = generate_tables(cfg)["t"].column("amount").to_pylist()
+        vals = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         null_count = sum(1 for v in vals if v is None)
         assert null_count == 0, (
             f"gauss(0.0, 1.0): {null_count} None value(s) in {len(vals)} rows. "
@@ -164,7 +164,7 @@ class TestGaussDistribution:
     def test_rows_are_floats(self) -> None:
         """Every output value must be a float (not int, str, etc.)."""
         cfg = _gauss_config(10.0, 2.0, n_rows=50, seed=8)
-        vals = generate_tables(cfg)["t"].column("amount").to_pylist()
+        vals = compile_and_generate(cfg)["t"].column("amount").to_pylist()
         non_float = [
             (i, type(v).__name__, v) for i, v in enumerate(vals) if not isinstance(v, float)
         ]

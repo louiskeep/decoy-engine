@@ -15,7 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.generation.synthesize import generate_tables
+from tests.unit._dps_helpers import compile_and_generate
 
 
 def _generate_config(row_count: int = 5) -> dict:
@@ -131,7 +131,7 @@ class TestGenerationOpSpine:
         # ENG-2 M1 fix: V1 sequence ALWAYS returns strings (columns.py:305-319 wraps
         # every value through f"{prefix}{value_str}{suffix}"), even unformatted.
         cfg = PipelineConfig.model_validate(_generate_config(row_count=7)).model_dump()
-        tables = generate_tables(cfg)
+        tables = compile_and_generate(cfg)
         assert set(tables) == {"customers"}
         t = tables["customers"]
         assert t.num_rows == 7
@@ -148,7 +148,7 @@ class TestGenerationOpSpine:
 
     def test_zero_rows(self):
         cfg = PipelineConfig.model_validate(_generate_config(row_count=0)).model_dump()
-        tables = generate_tables(cfg)
+        tables = compile_and_generate(cfg)
         assert tables["customers"].num_rows == 0
 
     def test_sequence_formatting(self):
@@ -162,7 +162,7 @@ class TestGenerationOpSpine:
             "pad_length": 4,
         }
         cfg = PipelineConfig.model_validate(cfg).model_dump()
-        vals = generate_tables(cfg)["customers"].column("acct").to_pylist()
+        vals = compile_and_generate(cfg)["customers"].column("acct").to_pylist()
         assert vals == ["ACCT-0001", "ACCT-0002", "ACCT-0003"]
 
     # The runtime "not yet implemented" ValueError is gone (all four generators
@@ -223,7 +223,7 @@ def _v2_run(
     }
     cfg = PipelineConfig.model_validate(cfg).model_dump()
     return (
-        generate_tables(
+        compile_and_generate(
             cfg, derive_key=derive_key, instance_default_locale=instance_default_locale
         )["t"]
         .column(col["name"])
@@ -365,7 +365,7 @@ class TestQA7Coverage:
     warning, F8 seed cast error message."""
 
     def test_qa7_f1_concurrent_faker_calls_deterministic(self):
-        """F1 CRITICAL: concurrent generate_tables() calls must produce
+        """F1 CRITICAL: concurrent compile_and_generate() calls must produce
         byte-identical output across runs. Pre-fix the shared Faker
         singleton's seed_instance raced between threads; the QA-7 fix
         serialized the seed_instance + provider_func pair with a lock,
@@ -390,7 +390,7 @@ class TestQA7Coverage:
         results_lock = threading.Lock()
 
         def _worker():
-            out = generate_tables(cfg)
+            out = compile_and_generate(cfg)
             with results_lock:
                 results.append(out["t"].to_pydict()["fn"])
 
@@ -408,7 +408,7 @@ class TestQA7Coverage:
             )
 
     def test_p5_concurrent_different_seeds_match_serial(self):
-        """Sprint P5 non-interference: concurrent generate_tables() calls with
+        """Sprint P5 non-interference: concurrent compile_and_generate() calls with
         DIFFERENT seeds each match their serial reference. With any shared
         mutable Faker state, a competing call's seed_instance would land
         between this call's per-row seed and draw."""
@@ -432,12 +432,12 @@ class TestQA7Coverage:
             }
 
         seeds = list(range(8))
-        serial = {s: generate_tables(_cfg(s))["t"].to_pydict()["fn"] for s in seeds}
+        serial = {s: compile_and_generate(_cfg(s))["t"].to_pydict()["fn"] for s in seeds}
         barrier = threading.Barrier(len(seeds))
 
         def worker(s: int) -> list[Any]:
             barrier.wait()
-            return generate_tables(_cfg(s))["t"].to_pydict()["fn"]
+            return compile_and_generate(_cfg(s))["t"].to_pydict()["fn"]
 
         with ThreadPoolExecutor(max_workers=len(seeds)) as pool:
             futures = {s: pool.submit(worker, s) for s in seeds}
@@ -483,18 +483,22 @@ class TestQA7Coverage:
         }
         with _warnings.catch_warnings(record=True) as w:
             _warnings.simplefilter("always")
-            tbl = generate_tables(cfg)["t"]
+            tbl = compile_and_generate(cfg)["t"]
         assert not any("not yet supported" in str(warn.message).lower() for warn in w)
         names = tbl.column("name").to_pylist()
         assert tbl.column("greet").to_pylist() == [f"Hello {nm}" for nm in names]
 
     def test_qa7_f8_non_numeric_seed_raises_typed_error(self):
-        """F8 + F5 (2026-06-26): a non-numeric seed now raises the SAME
-        typed PlanCompileError(seed_not_numeric) as the plan compiler,
-        because generate_tables routes through the shared
-        _normalize_job_seed_int validator instead of a local int() coercion
-        (which also silently accepted bool)."""
+        """F8 + F5 (2026-06-26): a non-numeric seed raises the SAME typed
+        PlanCompileError(seed_not_numeric) the plan compiler always raised,
+        via the shared _normalize_job_seed_int validator (which also
+        rejects bool). `generate_tables` is Plan-only now (DPS Scope B,
+        guide section 4.8): a config this malformed never compiles, so it
+        never reaches `generate_tables` at all -- the assertion moves to
+        `compile_plan`, the only place this can still surface."""
+        from decoy_engine.plan import compile_plan
         from decoy_engine.plan._errors import PlanCompileError
+        from tests.unit._dps_helpers import empty_profile
 
         cfg = {
             "version": 1,
@@ -516,7 +520,7 @@ class TestQA7Coverage:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            generate_tables(cfg)
+            compile_plan(cfg, empty_profile(), decoy_engine_version="test")
         assert exc.value.code == "seed_not_numeric"
         assert "global_settings.seed" in str(exc.value)
 
@@ -568,7 +572,7 @@ class TestFormulaParityV1:
             "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
         }
         cfg = PipelineConfig.model_validate(cfg).model_dump()
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         names = tbl.column("name").to_pylist()
         greet = tbl.column("greet").to_pylist()
         assert greet == [f"Hello {nm}" for nm in names]
@@ -598,7 +602,7 @@ def _v2_run_single_table(gcols: list[dict], n: int, seed: int = 42, derive_key=N
         "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
     }
     cfg = PipelineConfig.model_validate(cfg).model_dump()
-    tbl = generate_tables(cfg, derive_key=derive_key)["t"]
+    tbl = compile_and_generate(cfg, derive_key=derive_key)["t"]
     return {c: tbl.column(c).to_pylist() for c in tbl.column_names}
 
 
@@ -740,7 +744,7 @@ class TestReferencedFormulaPostPass:
                 }
             ],
         }
-        out = generate_tables(cfg)["t"].column("greet").to_pylist()
+        out = compile_and_generate(cfg)["t"].column("greet").to_pylist()
         assert out == [None] * 5
 
     def test_null_cell_in_reference_warns(self, caplog):
@@ -835,7 +839,7 @@ def _v2_run_multi(tables_cfg: list[dict], seed: int = 42, derive_key=None) -> di
         },
     }
     cfg = PipelineConfig.model_validate(cfg).model_dump()
-    result = generate_tables(cfg, derive_key=derive_key)
+    result = compile_and_generate(cfg, derive_key=derive_key)
     return {
         name: {c: tbl.column(c).to_pylist() for c in tbl.column_names}
         for name, tbl in result.items()
@@ -1145,7 +1149,7 @@ class TestReferenceConfigValidation:
         cfg = self._two_table_cfg()
         cfg["tables"] = list(reversed(cfg["tables"]))  # orders first, customers second
         validated = PipelineConfig.model_validate(cfg).model_dump()
-        result = generate_tables(validated)
+        result = compile_and_generate(validated)
         parents = set(result["customers"].column("id").to_pylist())
         children = result["orders"].column("customer_id").to_pylist()
         assert all(c in parents for c in children)

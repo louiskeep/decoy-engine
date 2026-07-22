@@ -62,13 +62,17 @@ def test_corpus_artifact_round_trips(artifact: dict) -> None:
         # Round-trip through the REAL reader (load_spec), not a re-json.loads,
         # so a regression in the kind dispatch / joint lookup / schema guard
         # is caught. One col_cfg per reader branch (numeric, categorical,
-        # conditioned-joint).
+        # conditioned-joint). load_spec no longer reads snapshot_file itself
+        # (DPS Scope B, guide 4.7): the compiler reads each path exactly once
+        # up front, so this harness reads it the same way via _load_snapshot.
         from decoy_engine.generation.statistical import load_spec
+        from decoy_engine.generation.statistical._spec import _load_snapshot
 
         path = HERE / artifact["path"]
+        _digest, snapshot = _load_snapshot(str(path))
         for rec in artifact["expected_specs"]:
             cfg = {**rec["col_cfg"], "snapshot_file": str(path)}
-            spec = load_spec(cfg)
+            spec = load_spec(cfg, snapshot=snapshot)
             ctx = (
                 f"{artifact['tag']} written by engine "
                 f"{artifact['produced_by_engine_version']}: column "
@@ -113,10 +117,12 @@ def test_harness_bites_on_corruption(tmp_path: Path) -> None:
 
 def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:
     """Meta-test for the snapshot kind: a tampered schema_version must make the
-    reader (load_spec) raise, proving the gate bites for this artifact too. The
-    tampered copy goes to a fresh path so load_spec's per-path cache cannot mask
-    the corruption with a previously-cached good parse."""
-    from decoy_engine.generation.statistical import StatisticalSpecError, load_spec
+    reader raise, proving the gate bites for this artifact too. `load_spec` no
+    longer reads `snapshot_file` itself (DPS Scope B, guide 4.7) -- the read +
+    schema guard now lives in `_load_snapshot`, so this exercises that
+    function directly rather than routing through `load_spec`."""
+    from decoy_engine.generation.statistical import StatisticalSpecError
+    from decoy_engine.generation.statistical._spec import _load_snapshot
 
     snaps = [a for a in _artifacts() if a["kind"] == "distribution_snapshot"]
     assert snaps, "expected at least one distribution_snapshot artifact in the corpus"
@@ -125,7 +131,6 @@ def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:
     data["schema_version"] = "distribution-snapshot/v999"  # flip the guarded field
     tampered = tmp_path / "tampered-snapshot.json"
     tampered.write_text(json.dumps(data), encoding="utf-8")
-    cfg = {**art["expected_specs"][0]["col_cfg"], "snapshot_file": str(tampered)}
     with pytest.raises(StatisticalSpecError) as exc:
-        load_spec(cfg)
+        _load_snapshot(str(tampered))
     assert exc.value.code == "statistical_snapshot_schema_mismatch"

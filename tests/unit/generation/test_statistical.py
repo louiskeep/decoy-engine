@@ -16,6 +16,19 @@ import pandas as pd
 import pytest
 
 from decoy_engine.generation.statistical import StatisticalSpecError, load_spec, sample_column
+from decoy_engine.generation.statistical._spec import _load_snapshot
+
+
+def _load_spec(col_cfg: dict, **kwargs) -> object:
+    """`load_spec` no longer reads `snapshot_file` itself (guide step 5/8:
+    the plan compiler pins snapshot bytes once; `load_spec` only consumes
+    an already-parsed mapping). This file's tests exercise `load_spec`
+    directly against a path-carrying `col_cfg`, so read+parse it here at
+    the call site via the same `_load_snapshot` the compiler's read-once
+    pass uses, preserving each test's original unreadable/malformed-path
+    assertions unchanged."""
+    _digest, snapshot = _load_snapshot(col_cfg["snapshot_file"])
+    return load_spec(col_cfg, snapshot=snapshot, **kwargs)
 
 
 def _write_snapshot(tmp_path, df: pd.DataFrame, joints=None) -> str:
@@ -55,7 +68,7 @@ class TestNumericSampling:
     def test_values_in_source_range_and_deterministic(self, tmp_path):
         df = _source_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("amount", snap))
+        spec = _load_spec(_col("amount", snap))
         a = sample_column(spec, 500, col_seed=1234)
         b = sample_column(spec, 500, col_seed=1234)
         assert a == b
@@ -64,13 +77,13 @@ class TestNumericSampling:
 
     def test_different_seed_different_values(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())
-        spec = load_spec(_col("amount", snap))
+        spec = _load_spec(_col("amount", snap))
         assert sample_column(spec, 200, col_seed=1) != sample_column(spec, 200, col_seed=2)
 
     def test_integer_dtype_emits_ints(self, tmp_path):
         df = _source_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("age", snap))
+        spec = _load_spec(_col("age", snap))
         out = sample_column(spec, 300, col_seed=9)
         assert all(isinstance(v, int) for v in out)
         assert all(df["age"].min() <= v <= df["age"].max() for v in out)
@@ -83,7 +96,7 @@ class TestNumericSampling:
 
         df = _source_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("amount", snap))
+        spec = _load_spec(_col("amount", snap))
         synth = pd.DataFrame({"amount": sample_column(spec, 2_000, col_seed=77)})
         report = compute_fidelity(
             compute_distribution_snapshot(df[["amount"]]),
@@ -96,13 +109,13 @@ class TestCategoricalSampling:
     def test_requires_allow_real_categories(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("state", snap))
+            _load_spec(_col("state", snap))
         assert exc.value.code == "statistical_real_categories_not_allowed"
 
     def test_redistribute_emits_only_top_values(self, tmp_path):
         df = _source_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("state", snap, allow_real_categories=True))
+        spec = _load_spec(_col("state", snap, allow_real_categories=True))
         out = sample_column(spec, 1_000, col_seed=5)
         assert set(out) <= {"CA", "NY", "TX", "WA"}
         # Rough shape: CA is the majority class at p=0.5.
@@ -116,14 +129,14 @@ class TestCategoricalSampling:
         snap_dict = compute_distribution_snapshot(df, categorical_top_k=2)
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
-        spec = load_spec(_col("state", str(path), allow_real_categories=True, other_mode="emit"))
+        spec = _load_spec(_col("state", str(path), allow_real_categories=True, other_mode="emit"))
         out = sample_column(spec, 1_000, col_seed=5)
         assert "__other__" in set(out)
         assert set(out) <= {"CA", "NY", "__other__"}
 
     def test_deterministic(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())
-        spec = load_spec(_col("state", snap, allow_real_categories=True))
+        spec = _load_spec(_col("state", snap, allow_real_categories=True))
         assert sample_column(spec, 400, col_seed=3) == sample_column(spec, 400, col_seed=3)
 
     def test_truthy_string_allow_real_categories_rejected(self, tmp_path):
@@ -132,13 +145,13 @@ class TestCategoricalSampling:
         categories."""
         snap = _write_snapshot(tmp_path, _source_df())
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("state", snap, allow_real_categories="false"))
+            _load_spec(_col("state", snap, allow_real_categories="false"))
         assert exc.value.code == "statistical_allow_real_categories_invalid_type"
 
     def test_truthy_int_allow_real_categories_rejected(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("state", snap, allow_real_categories=1))
+            _load_spec(_col("state", snap, allow_real_categories=1))
         assert exc.value.code == "statistical_allow_real_categories_invalid_type"
 
 
@@ -163,7 +176,7 @@ class TestHighCardinalitySampling:
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("code", str(path), high_cardinality=True))
+            _load_spec(_col("code", str(path), high_cardinality=True))
         assert exc.value.code == "statistical_high_cardinality_requires_real_categories"
 
     def test_truthy_string_allow_real_categories_rejected(self, tmp_path):
@@ -177,7 +190,7 @@ class TestHighCardinalitySampling:
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(
+            _load_spec(
                 _col(
                     "code",
                     str(path),
@@ -202,7 +215,7 @@ class TestHighCardinalitySampling:
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(
+            _load_spec(
                 _col(
                     "code",
                     str(path),
@@ -223,13 +236,15 @@ class TestHighCardinalitySampling:
         assert snap_dict["columns"]["code"]["stats"]["high_cardinality"] is True
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
-        spec = load_spec(_col("code", str(path), high_cardinality=True, allow_real_categories=True))
+        spec = _load_spec(
+            _col("code", str(path), high_cardinality=True, allow_real_categories=True)
+        )
         assert spec.kind == "categorical"
 
     def test_invalid_type_rejected(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("state", snap, allow_real_categories=True, high_cardinality="yes"))
+            _load_spec(_col("state", snap, allow_real_categories=True, high_cardinality="yes"))
         assert exc.value.code == "statistical_high_cardinality_invalid_type"
 
     def test_non_categorical_kind_rejected(self, tmp_path):
@@ -237,7 +252,7 @@ class TestHighCardinalitySampling:
         # categorical snapshot kind.
         snap = _write_snapshot(tmp_path, _source_df())
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("amount", snap, allow_real_categories=True, high_cardinality=True))
+            _load_spec(_col("amount", snap, allow_real_categories=True, high_cardinality=True))
         assert exc.value.code == "statistical_high_cardinality_kind_invalid"
 
     def test_full_vocabulary_retained_and_sampled(self, tmp_path):
@@ -249,7 +264,9 @@ class TestHighCardinalitySampling:
         assert len(snap_dict["columns"]["code"]["stats"]["top_values"]) == 40
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
-        spec = load_spec(_col("code", str(path), allow_real_categories=True, high_cardinality=True))
+        spec = _load_spec(
+            _col("code", str(path), allow_real_categories=True, high_cardinality=True)
+        )
         out = sample_column(spec, 2_000, col_seed=5)
         # Every drawn value is a real observed code; none collapsed to other.
         assert set(out) <= {f"C{i:03d}" for i in range(40)}
@@ -260,7 +277,7 @@ class TestDatetimeSampling:
     def test_within_source_range_and_deterministic(self, tmp_path):
         df = _source_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("joined", snap))
+        spec = _load_spec(_col("joined", snap))
         a = sample_column(spec, 300, col_seed=11)
         b = sample_column(spec, 300, col_seed=11)
         assert a == b
@@ -272,9 +289,11 @@ class TestConditionalSampling:
     def test_condition_on_respects_joint(self, tmp_path):
         df = _source_df()
         snap = _write_snapshot(tmp_path, df, joints=[("state", "tier")])
-        parent_spec = load_spec(_col("state", snap, allow_real_categories=True))
+        parent_spec = _load_spec(_col("state", snap, allow_real_categories=True))
         parents = sample_column(parent_spec, 1_000, col_seed=21)
-        child_spec = load_spec(_col("tier", snap, allow_real_categories=True, condition_on="state"))
+        child_spec = _load_spec(
+            _col("tier", snap, allow_real_categories=True, condition_on="state")
+        )
         children = sample_column(child_spec, 1_000, col_seed=22, parent_values=parents)
         # The source correlation is deterministic: CA -> gold, NY -> silver.
         pairs = list(zip(parents, children, strict=True))
@@ -286,20 +305,20 @@ class TestConditionalSampling:
     def test_condition_on_requires_joint_in_snapshot(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())  # no joints captured
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("tier", snap, allow_real_categories=True, condition_on="state"))
+            _load_spec(_col("tier", snap, allow_real_categories=True, condition_on="state"))
         assert exc.value.code == "statistical_joint_missing"
 
 
 class TestSpecErrors:
     def test_missing_snapshot_file(self, tmp_path):
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("amount", str(tmp_path / "nope.json")))
+            _load_spec(_col("amount", str(tmp_path / "nope.json")))
         assert exc.value.code == "statistical_snapshot_unreadable"
 
     def test_unknown_column(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("ghost", snap))
+            _load_spec(_col("ghost", snap))
         assert exc.value.code == "statistical_column_not_in_snapshot"
 
     def test_unknown_kind_rejected(self, tmp_path):
@@ -308,13 +327,13 @@ class TestSpecErrors:
         df = pd.DataFrame({"blank": [None] * 10})
         snap = _write_snapshot(tmp_path, df)
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("blank", snap))
+            _load_spec(_col("blank", snap))
         assert exc.value.code == "statistical_kind_unsupported"
 
     def test_source_column_override(self, tmp_path):
         df = _source_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("renamed_amount", snap, source_column="amount"))
+        spec = _load_spec(_col("renamed_amount", snap, source_column="amount"))
         out = sample_column(spec, 50, col_seed=2)
         assert len(out) == 50
 
@@ -333,7 +352,7 @@ class TestFreetextSampling:
     def test_lengths_within_source_range_and_deterministic(self, tmp_path):
         df = self._freetext_df()
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("comment", snap))
+        spec = _load_spec(_col("comment", snap))
         a = sample_column(spec, 500, col_seed=11)
         b = sample_column(spec, 500, col_seed=11)
         assert a == b
@@ -345,7 +364,7 @@ class TestFreetextSampling:
         """Per-row seeding (rng.seed(col_seed + i)): row i is independent of
         n, so any chunking of rows is byte-identical to a serial pass."""
         snap = _write_snapshot(tmp_path, self._freetext_df())
-        spec = load_spec(_col("comment", snap))
+        spec = _load_spec(_col("comment", snap))
         assert sample_column(spec, 50, col_seed=7) == sample_column(spec, 100, col_seed=7)[:50]
 
     def test_length_distribution_matches_histogram(self, tmp_path):
@@ -353,7 +372,7 @@ class TestFreetextSampling:
 
         df = self._freetext_df()
         snap_path = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("comment", snap_path))
+        spec = _load_spec(_col("comment", snap_path))
         out = sample_column(spec, 5_000, col_seed=21)
         with open(snap_path, encoding="utf-8") as fh:
             snap = _json.load(fh)
@@ -379,14 +398,14 @@ class TestFreetextSampling:
         df = pd.DataFrame({"comment": [f"fixed length str {i:03d}" for i in range(50)]})
         assert df["comment"].str.len().nunique() == 1
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("comment", snap))
+        spec = _load_spec(_col("comment", snap))
         out = sample_column(spec, 100, col_seed=4)
         assert all(len(v) == len(df["comment"][0]) for v in out)
 
     def test_no_source_tokens_in_output(self, tmp_path):
         df = pd.DataFrame({"comment": [f"SECRETVALUE{i} appears here" for i in range(40)]})
         snap = _write_snapshot(tmp_path, df)
-        spec = load_spec(_col("comment", snap))
+        spec = _load_spec(_col("comment", snap))
         out = sample_column(spec, 200, col_seed=5)
         assert not any("SECRETVALUE" in v for v in out)
 
@@ -395,12 +414,12 @@ class TestFreetextSampling:
         df["state"] = (["CA", "NY"] * 500)[: len(df)]
         snap = _write_snapshot(tmp_path, df)
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("comment", snap, condition_on="state"))
+            _load_spec(_col("comment", snap, condition_on="state"))
         assert exc.value.code == "statistical_condition_kind_invalid"
 
     def test_compile_check_passes_and_generate_tables_end_to_end(self, tmp_path):
-        from decoy_engine.generation.synthesize import generate_tables
         from decoy_engine.plan._checks import check_statistical_columns
+        from tests.unit._dps_helpers import compile_and_generate
 
         snap = _write_snapshot(tmp_path, self._freetext_df())
         cfg = {
@@ -416,7 +435,7 @@ class TestFreetextSampling:
             ],
         }
         check_statistical_columns(cfg)
-        out = generate_tables(cfg)
+        out = compile_and_generate(cfg)
         values = out["synthetic"].column("comment").to_pylist()
         assert len(values) == 60 and all(isinstance(v, str) for v in values)
 
@@ -424,7 +443,7 @@ class TestFreetextSampling:
 class TestGenerateTablesIntegration:
     def test_statistical_column_through_generate_tables(self, tmp_path):
         from decoy_engine.config import PipelineConfig
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         df = _source_df()
         snap = _write_snapshot(tmp_path, df, joints=[("state", "tier")])
@@ -466,7 +485,7 @@ class TestGenerateTablesIntegration:
             },
         }
         validated = PipelineConfig.model_validate(cfg).model_dump()
-        out = generate_tables(validated)
+        out = compile_and_generate(validated)
         tbl = out["synthetic"]
         assert tbl.num_rows == 200
         states = tbl.column("state").to_pylist()
@@ -474,11 +493,12 @@ class TestGenerateTablesIntegration:
         ca_tiers = [t for s, t in zip(states, tiers, strict=True) if s == "CA"]
         assert ca_tiers and ca_tiers.count("gold") / len(ca_tiers) > 0.9
         # Determinism: same config, same bytes.
-        again = generate_tables(validated)
+        again = compile_and_generate(validated)
         assert again["synthetic"].equals(tbl)
 
     def test_condition_on_must_reference_earlier_column(self, tmp_path):
-        from decoy_engine.generation.synthesize import generate_tables
+        from decoy_engine.plan import compile_plan
+        from tests.unit._dps_helpers import empty_profile
 
         df = _source_df()
         snap = _write_snapshot(tmp_path, df, joints=[("state", "tier")])
@@ -507,8 +527,17 @@ class TestGenerateTablesIntegration:
                 }
             ],
         }
-        with pytest.raises(StatisticalSpecError) as exc:
-            generate_tables(cfg)
+        # The declared-order rule now surfaces at compile time
+        # (`check_statistical_columns`, guide step 5/7): `generate_tables`
+        # is Plan-only, so a config that can never compile never reaches
+        # it. This specific rule is `check_statistical_columns`'s OWN
+        # check (not one `load_spec` raises), so it surfaces directly as
+        # `PlanCompileError`, not the wrapped `StatisticalSpecError` a
+        # `load_spec` failure would raise.
+        from decoy_engine.plan import PlanCompileError
+
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(cfg, empty_profile(), decoy_engine_version="test")
         assert exc.value.code == "statistical_condition_column_unavailable"
 
 
