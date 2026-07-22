@@ -39,6 +39,7 @@ sentinel exists to catch.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import subprocess
@@ -52,6 +53,12 @@ _PROBE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "scripts",
     "fk_memory_probe.py",
+)
+
+_PLATEAU_PROBE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "scripts",
+    "ooc_child_key_plateau_probe.py",
 )
 
 # Small enough to keep the default gate fast (~9s for the three subprocess runs
@@ -241,3 +248,137 @@ def test_out_of_core_completes_where_in_memory_routes_oom():
     _assert_both_edges_checked(ooc)
     assert rec["proven"] is True
     assert proc.returncode == 0, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# TQ-0: child-key memory-invariant plateau sentinel (OOC-B memory fix, fix#1b)
+#
+# The tests above scale parent, child, and grandchild TOGETHER (`--rows`), at
+# a tier (5,000 rows) too small to show the child-side regression at all: it
+# only becomes dominant once the child count is large relative to the parent
+# (`_stream_join.py`'s module docstring -- child_keys is O(child) resident
+# regardless of parent size). `scripts/ooc_child_key_plateau_probe.py` isolates
+# the axis this sentinel needs: parent cardinality FIXED, only the child grows,
+# through the real `run_fk_out_of_core` entrypoint (a single `customers ->
+# orders` edge), under an EXPLICIT DuckDB `memory_limit` -- exactly the shape
+# the implementation plan's Task 1 spike used to prove the fix, now pinned as
+# a permanent regression guard. See the module docstring's env-var note
+# (`_CAPPED_ENV`-equivalent below): the allocator must be pinned BEFORE the
+# probe subprocess starts or its RSS reflects reserved address space, not live
+# data, and either masks or fakes the slope this sentinel measures.
+# ---------------------------------------------------------------------------
+
+_PLATEAU_ENV = {
+    "ARROW_DEFAULT_MEMORY_POOL": "system",
+    "MALLOC_ARENA_MAX": "2",
+}
+
+# Fixed parent cardinality for every plateau tier (both series below): large
+# enough that the relation-build's own floor is a real, nonzero fixed cost
+# (never re-measured per tier, since it does not vary with the child), small
+# enough that generating and masking it stays fast.
+_PLATEAU_PARENT_ROWS = 100_000
+
+# Three child sizes per series (>= 3, per the implementation plan), well
+# beyond where the pre-fix `child_keys` TEMP TABLE's resident cost dominates
+# fixed per-run overhead (measured on this box, 2026-07-22: pre-fix width-0
+# peak RSS 512.8 / 629.6 / 877.2 MB at 1M / 3M / 5M child rows -- an
+# ACCELERATING per-1M-row slope, 58.4 then 123.8 MB/1M, the opposite of a
+# plateau).
+_PLATEAU_CHILD_ROWS = (1_000_000, 3_000_000, 5_000_000)
+
+
+def _plateau_probe(
+    *, parent_rows: int, child_rows: int, payload_width: int, memory_limit_mb: int
+) -> dict:
+    cmd = [
+        sys.executable,
+        _PLATEAU_PROBE,
+        "--parent-rows",
+        str(parent_rows),
+        "--child-rows",
+        str(child_rows),
+        "--payload-width",
+        str(payload_width),
+        "--memory-limit-mb",
+        str(memory_limit_mb),
+        "--json",
+    ]
+    proc = subprocess.run(  # noqa: S603
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, **_PLATEAU_ENV},
+    )
+    assert proc.returncode == 0, f"plateau probe subprocess failed: {proc.stderr}"
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def _assert_plateau(records: list[dict], *, max_last_slope_mb_per_1m: float, label: str) -> None:
+    """Bounded-slope assertion, not an absolute-peak one (per the plan): the
+    per-1M-child-row RSS increment in the LAST (largest, most spill-mature)
+    segment must stay under a documented bound. A genuinely O(child) resident
+    structure keeps a roughly CONSTANT or GROWING per-1M slope as child rows
+    grow (the pre-fix `child_keys` TEMP TABLE measurement above); a properly
+    spilled/streamed one decays toward a small bounded residual."""
+    for rec in records:
+        assert rec["null_out_rows"] == 0, (
+            f"{label}: join produced null-only output at child_rows={rec['child_rows']} "
+            "(a vacuous run that never really joined anything would trivially 'plateau')"
+        )
+    slopes = [
+        (b["peak_rss_mb"] - a["peak_rss_mb"]) / ((b["child_rows"] - a["child_rows"]) / 1_000_000)
+        for a, b in itertools.pairwise(records)
+    ]
+    last_slope = slopes[-1]
+    assert last_slope < max_last_slope_mb_per_1m, (
+        f"{label}: peak RSS is not plateauing as child rows grow at FIXED parent "
+        f"cardinality -- last-segment slope {last_slope:.1f} MB/1M child rows exceeds the "
+        f"{max_last_slope_mb_per_1m:.1f} MB/1M bound (all slopes: "
+        f"{[round(s, 1) for s in slopes]}, records: {records})"
+    )
+
+
+def test_child_key_memory_plateau_width0():
+    """Key-width case (TQ-0): no payload columns, so any RSS growth as the
+    child grows can only come from the FK-key path -- the `child_keys`
+    structure `_stream_join.py`'s module docstring identifies as the O(child)
+    regression. FIXED 100k-row parent, child grown 1M -> 3M -> 5M rows under
+    an explicit 256 MB `memory_limit`. Pre-fix (`child_keys` TEMP TABLE) this
+    is RED: the per-1M slope ACCELERATES (58.4 then 123.8 MB/1M rows, measured
+    2026-07-22). Post-fix (`SpillChildKeys` + reopened streaming reader) it
+    must plateau under the bound below.
+    """
+    records = [
+        _plateau_probe(
+            parent_rows=_PLATEAU_PARENT_ROWS,
+            child_rows=rows,
+            payload_width=0,
+            memory_limit_mb=256,
+        )
+        for rows in _PLATEAU_CHILD_ROWS
+    ]
+    _assert_plateau(records, max_last_slope_mb_per_1m=60.0, label="width-0 (FK key only)")
+
+
+def test_child_key_memory_plateau_payload_width():
+    """Payload-width case (TQ-0): the SAME growing-child sweep, but with 4
+    payload columns present per table, so a fix that only plateaus when there
+    is nothing else to mask cannot pass silently. `SpillPayloadStore` was
+    already proven spillable (Task 1 attribution: 'payload store spills
+    correctly and is not the driver'), so this is chiefly a stability guard on
+    the payload axis, kept SEPARATE from the width-0 case above (per the
+    implementation plan) so a regression on one axis cannot hide behind a
+    healthy measurement on the other.
+    """
+    records = [
+        _plateau_probe(
+            parent_rows=_PLATEAU_PARENT_ROWS,
+            child_rows=rows,
+            payload_width=4,
+            memory_limit_mb=300,
+        )
+        for rows in _PLATEAU_CHILD_ROWS
+    ]
+    _assert_plateau(records, max_last_slope_mb_per_1m=120.0, label="payload-width=4")
