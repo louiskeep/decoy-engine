@@ -126,12 +126,24 @@ def _bounded_batches(table: pa.Table, max_bytes: int) -> Iterator[pa.RecordBatch
 
 class _RunHead:
     """One open run's read cursor during a merge pass: at most one stored
-    batch resident at a time, refilled from disk only once fully consumed."""
+    batch resident at a time, refilled from disk only once fully consumed.
+
+    Opened with `pa.OSFile` (a buffered, pool-tracked read), NOT
+    `pa.memory_map`: a subprocess RSS measurement showed `memory_map` leaves
+    the touched pages of the WHOLE mapped file resident (counted in VmHWM)
+    even though pyarrow's own allocator never "sees" them as an allocation --
+    reading a handful of small batches from each of several memory-mapped run
+    files inflated real RSS by roughly the total on-disk run size, hundreds
+    of MB above `pyarrow.default_memory_pool().max_memory()`'s own reported
+    peak for the same run. `OSFile` reads copy each batch through the
+    tracked pool instead, so the resident cost is bounded by what
+    `peak_merge_resident_bytes` actually accounts for.
+    """
 
     def __init__(self, path: Path, row_nr_column: str) -> None:
         self._row_nr_column = row_nr_column
-        self._mmap = pa.memory_map(str(path), "r")
-        self._reader = pa.ipc.open_file(self._mmap)
+        self._source = pa.OSFile(str(path), "rb")
+        self._reader = pa.ipc.open_file(self._source)
         self._next_batch_idx = 0
         self.pending: pa.Table | None = None
 
@@ -167,7 +179,7 @@ class _RunHead:
         self.pending = remaining if remaining.num_rows > 0 else None
 
     def close(self) -> None:
-        self._mmap.close()
+        self._source.close()
 
 
 class ExternalRowNrSorter:
@@ -395,7 +407,10 @@ class ExternalRowNrSorter:
             )
         if self._final_run_path is None:
             return
-        with pa.memory_map(str(self._final_run_path), "r") as source:
+        # pa.OSFile, not pa.memory_map: see _RunHead's docstring for the
+        # measured reason (memory_map leaves the whole file's touched pages
+        # resident, well beyond what pyarrow's own pool accounts for).
+        with pa.OSFile(str(self._final_run_path), "rb") as source:
             reader = pa.ipc.open_file(source)
             for i in range(reader.num_record_batches):
                 yield reader.get_batch(i)
