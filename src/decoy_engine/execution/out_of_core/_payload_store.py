@@ -165,4 +165,78 @@ class RawParentKeySpill:
             yield from reader
 
 
-__all__ = ["PayloadStore", "RawParentKeySpill", "ResidentPayloadStore", "SpillPayloadStore"]
+class SpillChildKeys:
+    """Disk-backed, RE-OPENABLE Arrow-IPC spill of one edge's staged child keys.
+
+    Replaces `StreamFkJoiner`'s `child_keys` DuckDB TEMP TABLE (OOC-B fix#1b):
+    that table held one row per CHILD row -- an O(child) structure that, being
+    a DuckDB temp table, could not fully evict its buffer-manager/control
+    state, so it stayed resident for the whole child stream regardless of
+    `memory_limit` (the regression `_stream_join.py`'s module docstring
+    describes). This class makes the child side symmetric with the parent
+    side: `parent_keys` is already a `read_parquet` VIEW over
+    `ParentKeyRelation` (never materialized); the child now stages into this
+    file instead, and each DuckDB scan gets a fresh streaming
+    `RecordBatchReader` over it, so DuckDB's own external hash-join +
+    merge-sort own the spilling instead of a resident Python/DuckDB structure.
+
+    Arrow IPC, NOT Parquet, for the same reason `RawParentKeySpill` uses IPC
+    for the parent-side raw keys: a child FK key column may legitimately carry
+    an Arrow type Parquet cannot encode (`month_day_nano_interval`,
+    run-end-encoded, and the like) that the route admits and the oracle masks.
+    IPC round-trips the full admitted Arrow surface losslessly; a Parquet
+    spill would crash inputs that otherwise succeed.
+
+    `open_reader()` returns a FRESH single-pass `pa.RecordBatchReader` each
+    call, reopening the finalized stream from byte 0 -- required because a
+    DuckDB-registered `RecordBatchReader` is single-pass (rows on the first
+    query against it, zero on a second), and `StreamFkJoiner` scans the child
+    TWICE per edge (`total_orphans()`'s FAIL precount, then
+    `iter_join_rows()`'s join), so each scan needs its own reader, never a
+    shared one. Every call is independent of any earlier reader's position, so
+    an early-aborted consumer never leaves the next `open_reader()` starting
+    mid-stream. Read only after `finalize()`: the stream is only guaranteed
+    complete (its end-of-stream marker written) once the writer is closed --
+    reading one still open for writing is version/buffering dependent.
+    """
+
+    def __init__(self, path: Path, schema: pa.Schema) -> None:
+        self._path = path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # Schema is known up front (`StreamFkJoiner._key_schema`, fixed before
+        # any batch is staged), so the writer opens eagerly, mirroring
+        # `RawParentKeySpill`; a zero-row table yields a valid empty stream
+        # that reads back as no batches.
+        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(str(path), schema)
+
+    def append(self, batch: pa.RecordBatch) -> None:
+        if self._writer is None:
+            raise AssertionError("append after finalize")
+        if batch.num_rows:
+            self._writer.write_batch(batch)
+
+    def finalize(self) -> None:
+        """Close the writer so the stream carries its EOS marker; idempotent."""
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+
+    def open_reader(self) -> pa.RecordBatchReader:
+        """A fresh, single-pass reader over the finalized stream, from byte 0.
+
+        Must be called after `finalize()`. The caller owns the returned
+        reader (registering, then unregistering, it with its own DuckDB
+        connection is `StreamFkJoiner`'s job, not this store's).
+        """
+        if self._writer is not None:
+            raise AssertionError("open_reader before finalize")
+        return pa.ipc.open_stream(str(self._path))
+
+
+__all__ = [
+    "PayloadStore",
+    "RawParentKeySpill",
+    "ResidentPayloadStore",
+    "SpillChildKeys",
+    "SpillPayloadStore",
+]
