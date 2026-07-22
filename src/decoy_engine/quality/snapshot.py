@@ -47,46 +47,26 @@ no top-K collapse, so the artifact additionally exposes every distinct
 code AND rare-code presence/absence -- treat it with the same care as
 a raw extract of that column.
 
-DPS-1 (`numeric_domains` / `dp_mode`, dp.py's sibling half of the
-marginal-DP effort): a Laplace-noised histogram over a DATA-DERIVED
-range is not actually DP -- real min/max leak regardless of noise on
-the counts. `numeric_domains` declares a fixed range (SmartNoise/OpenDP
-pattern); `dp_mode` fails closed without one. Out-of-domain values
-clamp (Dwork & Roth Sec. 3.3) rather than vanish from `row_count`.
-
-Gate remediation Fix 1 (P0): `dp_mode` also bypasses `categorical_top_k`
-SELECTION (itself data-dependent, Korolova et al. WWW 2009) -- every
-observed label becomes a tau-threshold candidate, unlike
-`high_cardinality_columns` (full vocabulary, no threshold). Scope narrowed
-by Option A below: only the bool branch reaches this candidacy widening
-now; object/string columns are rejected before Fix 1 applies.
-
-Gate remediation Fix 2 (P0): `dp_mode` rejects datetime/freetext columns
-outright (data-dependent support, no caller override).
-
-Option A (2026-07-21 DPS remediation, Codex privacy-gate block on
-`feat/dps-marginal-dp`): the categorical release mechanism
-(`quality/dp.py::apply_dp_noise`'s stable-histogram branch) does not yet
-satisfy the (epsilon, delta) bound it claims (unnoised rank leakage,
-suppressed mass folded into an observable `other_count`, rounding before
-the threshold test) -- see CHANGELOG.md. Rather than ship a broken
-guarantee, `dp_mode` now rejects every object/string column outright
-(`dp_mode_categorical_unsupported`) -- BOTH the cardinality-cliff path and an
-explicit `high_cardinality` request, which forces the same categorical
-release and would otherwise return before the object/string reject. This
-also removes Fix 1/Fix 2's prior data-dependent split
-(30-distinct cardinality cliff) as an observable fit-success signal for that
-dtype family. Bool is unaffected -- its candidate set is dtype-determined
-(`{True, False}`), never data-dependent -- so a bool column still fits under
-dp_mode (its categorical release is rejected consume-side by
-`plan._checks_dp` until correct categorical DP lands).
+DPS Scope B history: this module previously carried its own `dp_mode` /
+`numeric_domains` fit-time parameters (Option A, 2026-06 through
+2026-07-21) that widened categorical candidacy and fixed numeric bin
+ranges in place, ahead of a since-deleted `quality.dp.apply_dp_noise`.
+That mechanism never satisfied the privacy bound it claimed (see
+CHANGELOG.md) and is gone. The Scope B rebuild
+(`quality.dp.fit_dp_snapshot`) does not call this function at all --
+"Do not route the DP fit through compute_distribution_snapshot. That
+function materializes exact statistics and has value-dependent kind
+behavior unsuitable for DP" is the design rule going forward. This
+module is explicitly non-DP: every kind decision here may look at
+values (bool vs. object vs. numeric, the 30-distinct cardinality cliff,
+etc.), which is exactly what a DP fit must never do.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Collection, Sequence
-from typing import Any, NoReturn
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -100,14 +80,14 @@ class DistributionSnapshotError(Exception):
     """Fit-time contract violation this module cannot silently degrade past.
     Machine-readable code.
 
-    Originally scoped to `high_cardinality` (a column marked
-    `high_cardinality` promises FULL-fidelity vocabulary retention, so a
-    request this module cannot honor -- wrong dtype, or a vocabulary/label
-    size the JSON artifact should not carry -- fails the fit loudly instead
-    of falling back to the ordinary top-K/freetext behavior). Also raised
-    for `dp_mode`'s object/string rejection (`dp_mode_categorical_unsupported`,
-    Option A DPS remediation): both are "this fit request cannot be honored
-    as declared" failures, coded for the same reason.
+    Scoped to `high_cardinality` (a column marked `high_cardinality`
+    promises FULL-fidelity vocabulary retention, so a request this module
+    cannot honor -- wrong dtype, or a vocabulary/label size the JSON
+    artifact should not carry -- fails the fit loudly instead of falling
+    back to the ordinary top-K/freetext behavior). The Option A `dp_mode`
+    parameter this error type used to also cover is gone (DPS Scope B
+    history, above); this module carries no DP-specific rejection code of
+    its own anymore.
     """
 
     def __init__(self, *, code: str, message: str) -> None:
@@ -157,10 +137,12 @@ def compute_distribution_snapshot(
     categorical_top_k: int = _DEFAULT_CATEGORICAL_TOP_K,
     contingency_top_k: int = _DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
-    numeric_domains: dict[str, tuple[float, float]] | None = None,
-    dp_mode: bool = False,
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
+
+    Explicitly non-DP (module docstring): every kind decision here may
+    look at values. DP fits go through `quality.dp.fit_dp_snapshot`
+    instead, which never calls this function.
 
     Args:
         df: Input frame. Not mutated.
@@ -183,29 +165,14 @@ def compute_distribution_snapshot(
             bytes; violating either raises `DistributionSnapshotError`
             rather than silently degrading. Unknown column names are
             silently skipped (matching `joint_columns`, not a validator).
-        numeric_domains: DPS-1 (module docstring). `{column: (lo, hi)}`;
-            bin_edges/min/max derive from the (clamped) domain when set.
-        dp_mode: DPS-1. Fail-closed: numeric requires `numeric_domains`;
-            datetime/freetext are rejected outright (Fix 2); every object/
-            string column (would-be categorical or freetext) is rejected
-            outright regardless of cardinality (Option A, 2026-07-21 DPS
-            remediation -- categorical DP is not yet implemented correctly,
-            see CHANGELOG.md). Bool stays categorical (dtype-determined, not
-            data-dependent) and still bypasses `categorical_top_k`.
 
     Returns:
         A dict matching schema `distribution-snapshot/v1` (module
-        docstring). `dp_mode`/`numeric_domains` adds a per-column
-        `support_origin` key ("data"|"caller"), else omitted (byte-
-        identical to every prior engine version).
+        docstring).
 
     Raises:
         DistributionSnapshotError: bad `high_cardinality_columns` shape or
-            safety-limit violation (see that arg's docs above); or
-            `dp_mode=True` with any object/string column
-            (`dp_mode_categorical_unsupported`, Option A).
-        ValueError: `dp_mode=True` with a numeric column that has no
-            `numeric_domains` entry, or with any datetime column.
+            safety-limit violation (see that arg's docs above).
     """
     # MED-3: a bare str satisfies `Collection[str]` structurally, so
     # `high_cardinality_columns="code"` would silently iterate characters
@@ -221,9 +188,6 @@ def compute_distribution_snapshot(
             ),
         )
     high_cardinality_set = frozenset(str(c) for c in high_cardinality_columns)
-    numeric_domains = numeric_domains or {}
-    # support_origin appears only when DPS-1 params are used (byte-identity).
-    emit_support_origin = dp_mode or bool(numeric_domains)
     columns_block: dict[str, dict[str, Any]] = {}
     for col in df.columns:
         columns_block[str(col)] = _column_snapshot(
@@ -231,9 +195,6 @@ def compute_distribution_snapshot(
             numeric_bins=numeric_bins,
             categorical_top_k=categorical_top_k,
             high_cardinality=str(col) in high_cardinality_set,
-            numeric_domain=numeric_domains.get(str(col)),
-            dp_mode=dp_mode,
-            emit_support_origin=emit_support_origin,
         )
 
     joints_block: list[dict[str, Any]] = []
@@ -263,9 +224,6 @@ def _column_snapshot(
     numeric_bins: int,
     categorical_top_k: int,
     high_cardinality: bool = False,
-    numeric_domain: tuple[float, float] | None = None,
-    dp_mode: bool = False,
-    emit_support_origin: bool = False,
 ) -> dict[str, Any]:
     non_null = series.dropna()
     null_count = int(series.isna().sum())
@@ -277,16 +235,14 @@ def _column_snapshot(
     dtype = canonical_dtype_label(series.dtype)
 
     if non_null_count == 0:
-        kind, support_origin = "empty", "data"
+        kind = "empty"
         stats: dict[str, Any] = {}
     else:
-        kind, stats, support_origin = _stats_for(
+        kind, stats = _stats_for(
             non_null,
             numeric_bins=numeric_bins,
             top_k=categorical_top_k,
             high_cardinality=high_cardinality,
-            numeric_domain=numeric_domain,
-            dp_mode=dp_mode,
         )
     out: dict[str, Any] = {
         "dtype": dtype,
@@ -296,8 +252,6 @@ def _column_snapshot(
         "distinct_count": distinct_count,
         "stats": stats,
     }
-    if emit_support_origin:
-        out["support_origin"] = support_origin
     return out
 
 
@@ -307,101 +261,23 @@ def _stats_for(
     numeric_bins: int,
     top_k: int,
     high_cardinality: bool = False,
-    numeric_domain: tuple[float, float] | None = None,
-    dp_mode: bool = False,
-) -> tuple[str, dict[str, Any], str]:
+) -> tuple[str, dict[str, Any]]:
     if high_cardinality:
-        # Option A (2026-07-21): high_cardinality forces the categorical
-        # release over the FULL real vocabulary, which under dp_mode would mint
-        # a dp-labeled artifact whose (epsilon, delta) bound does not hold
-        # (Codex Finding 1). This early return would otherwise bypass the
-        # object/string dp_mode rejection at the bottom of this function. A
-        # VALID high_cardinality column is always string-family (the dtype gate
-        # in _high_cardinality_categorical_stats rejects anything else) -- i.e.
-        # exactly the categorical family Option A fences off -- so reject the
-        # whole branch under dp_mode. The generate-side contract already rejects
-        # high_cardinality under a DP declaration at compile time; this is its
-        # fit-side twin.
-        if dp_mode:
-            _raise_dp_mode_categorical_unsupported(non_null.name)
-        return "categorical", _high_cardinality_categorical_stats(non_null), "data"
-    # Fix 1: dp_mode bypasses top-K candidate SELECTION (data-dependent).
-    # Fix 7: a categorical column whose candidacy was made data-independent
-    # (full observed vocabulary) is marked support_origin="full_vocabulary",
-    # parallel to numeric's "caller" -- the consume-side provenance check
-    # (plan._checks_dp) requires it, so a top-K-truncated (non-DP) fit
-    # cannot masquerade as DP under a dp-declared pipeline.
-    categorical_top_k = None if dp_mode else top_k
-    cat_support = "full_vocabulary" if dp_mode else "data"
+        return "categorical", _high_cardinality_categorical_stats(non_null)
     if pd.api.types.is_bool_dtype(non_null):
-        stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
-        return "categorical", stats, cat_support
+        stats = _categorical_stats(non_null.astype(str), top_k=top_k)
+        return "categorical", stats
     if pd.api.types.is_numeric_dtype(non_null):
-        if dp_mode and numeric_domain is None:
-            raise ValueError(
-                f"dp_mode requires a data-independent numeric_domain for column {non_null.name!r}."
-            )
-        stats = _numeric_stats(non_null, bins=numeric_bins, domain=numeric_domain)
-        return "numeric", stats, ("caller" if numeric_domain is not None else "data")
+        stats = _numeric_stats(non_null, bins=numeric_bins)
+        return "numeric", stats
     if pd.api.types.is_datetime64_any_dtype(non_null):
-        if dp_mode:  # Fix 2: year_bins derive from the real observed year set.
-            _raise_dp_mode_unsupported_kind(non_null.name, "datetime", "year_bins")
-        return "datetime", _datetime_stats(non_null), "data"
+        return "datetime", _datetime_stats(non_null)
 
-    # Option A (2026-07-21 DPS remediation): every remaining dtype is
-    # object/string-family (would otherwise become categorical-by-cardinality
-    # or freetext below). apply_dp_noise's categorical release does not yet
-    # satisfy the (epsilon, delta) bound it claims -- unnoised rank leakage,
-    # suppressed mass folded into an observable other_count, and rounding
-    # before the threshold test all understate the true release probability
-    # (tracked follow-up; not fixed here). dp_mode therefore rejects EVERY
-    # object/string column outright, BEFORE distinct_count is computed: the
-    # prior split at _CATEGORICAL_DISTINCT_CAP made fit SUCCESS itself a
-    # function of the private data (neighboring 30- and 31-distinct datasets
-    # produced "artifact exists" vs "typed error" at zero privacy cost).
-    # Rejecting unconditionally removes that data-dependent success signal;
-    # no cardinality makes this succeed. Bool (above) and numeric/datetime
-    # keep their existing dp_mode rules -- only object/string is new here.
-    if dp_mode:
-        _raise_dp_mode_categorical_unsupported(non_null.name)
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
-        stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
-        return "categorical", stats, cat_support
-    return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins), "data"
-
-
-def _raise_dp_mode_categorical_unsupported(column: Any) -> NoReturn:
-    """Option A: dp_mode rejects every column that would take the categorical
-    release path -- both the object/string cardinality-cliff path AND an
-    explicit non-bool `high_cardinality` request -- because
-    `quality/dp.py::apply_dp_noise`'s categorical mechanism does not yet
-    satisfy its stated (epsilon, delta) bound (see CHANGELOG.md). Shared by
-    both fit-time reject sites so they raise the IDENTICAL code + message: one
-    clear reason regardless of which path a column would have taken."""
-    raise DistributionSnapshotError(
-        code="dp_mode_categorical_unsupported",
-        message=(
-            f"dp_mode does not support column {column!r} as categorical: "
-            "categorical differential privacy is not yet implemented correctly "
-            "(see CHANGELOG.md). dp_mode rejects every object/string column "
-            "(any distinct-value count) and every high_cardinality column, "
-            "since both take the categorical release path. Mask or exclude this "
-            "column from the dp_mode fit, or fit it outside dp_mode (its release "
-            "will not carry a DP guarantee)."
-        ),
-    )
-
-
-def _raise_dp_mode_unsupported_kind(column: Any, kind: str, support_field: str) -> None:
-    """Fix 2: datetime/freetext support is data-dependent, no caller
-    override (unlike numeric's `numeric_domain`); fail closed pre-stats."""
-    raise ValueError(
-        f"dp_mode does not support {kind} column {column!r}: {support_field} derive from "
-        "the real observed data (data-dependent support), which DPS-1 does not make "
-        "data-independent. Mask or exclude this column from the dp_mode fit, or fit it "
-        "outside dp_mode (its release will not carry a DP guarantee)."
-    )
+        stats = _categorical_stats(non_null.astype(str), top_k=top_k)
+        return "categorical", stats
+    return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins)
 
 
 def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
