@@ -649,9 +649,7 @@ class TestConsumeOnlyContract:
                 target = os.fspath(file)
             except TypeError:
                 target = None
-            if target is not None and os.path.abspath(str(target)) == os.path.abspath(
-                pinned_path
-            ):
+            if target is not None and os.path.abspath(str(target)) == os.path.abspath(pinned_path):
                 raise AssertionError(
                     f"generate_tables reopened pinned snapshot path {pinned_path!r} "
                     "after compile_plan -- the Plan must carry embedded bytes, not a "
