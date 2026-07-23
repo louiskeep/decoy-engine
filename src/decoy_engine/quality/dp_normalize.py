@@ -6,14 +6,32 @@ precedent. This is a cohesive unit rather than an arbitrary slice: it is
 the whole boundary between caller-supplied row content and the values
 OpenDP ever sees.
 
-The invariant every function here maintains is TOTALITY. Each input row
-contributes at most one element to the normalized vector, and no row's
-content can make normalization raise, warn, or otherwise become an
-observable. Fit success is itself an observable, so a value that made
-one frame raise where its one-row neighbour succeeded would break
-(epsilon, delta) for any delta < 1 before a single released number was
-considered. Three separate review rounds found defects of exactly that
-shape here, so prefer widening a guard over narrowing one.
+Two invariants, and the second is the one that keeps getting missed.
+
+TOTALITY. Each input row contributes at most one element to the
+normalized vector, and no row's content can make normalization raise,
+warn, or otherwise become an observable. Fit success is itself an
+observable, so a value that made one frame raise where its one-row
+neighbour succeeded would break (epsilon, delta) for any delta < 1
+before a single released number was considered. Three separate review
+rounds found defects of exactly that shape here, so prefer widening a
+guard over narrowing one.
+
+BOXING INVARIANCE. The label is a function of the value MODULO EVERY
+BOXING PANDAS CAN APPLY. Totality is necessary and is not sufficient,
+and rounds 6, 7 and 8 each shipped a guard that was total and not
+boxing-invariant: `str()` moved under the int64->float64 upcast, the
+integral-real fast path moved above 2**53, and the type gate itself
+evaluated `isinstance` on the BOX, so `numpy.bool_` failed a `bool`
+check and a whole column dropped. A guard that decides anything from a
+value's Python TYPE is suspect, because pandas chooses that type from
+the whole column's contents: bool<->float, `numpy.bool_`<->`bool`, and
+real<->complex all cross this module's gate on ordinary neighbours.
+Canonicalize the scalar first (`_unbox`), then decide.
+
+The corollary that cost a round: "an allowlist can only over-drop" is
+FALSE. Over-dropping is safe only when it is uniform across every boxing
+of the same value, which a type-keyed allowlist is not.
 """
 
 from __future__ import annotations
@@ -23,7 +41,34 @@ import numbers
 import warnings
 from typing import Any
 
+import numpy as np
 import pandas as pd
+
+
+def _unbox(raw: Any) -> Any:
+    """Strip the numpy scalar box, leaving the value it holds.
+
+    dennis round 8 (BLOCKER-2): the type gate was evaluated on the BOX
+    rather than on the value, and pandas chooses the box. `numpy.bool_`
+    is neither `bool` nor `numbers.Real` (both `isinstance` checks are
+    False), so every row of a nullable `boolean` column failed the gate
+    and dropped, releasing an artifact that asserted a fully populated
+    column was 100% null. No adversarial neighbour was needed: the same
+    parquet file read with `dtype_backend="numpy_nullable"` released
+    nothing while the default backend released a full distribution, and
+    any caller running `convert_dtypes()` upstream hit it.
+
+    `.item()` is the general form of the fix rather than a pair of
+    special cases: it maps every numpy scalar to its Python equivalent
+    (`bool_`->`bool`, `str_`->`str`, `float32`->`float`, `int64`->`int`,
+    `complex128`->`complex`), so the gate sees the value in whatever box
+    pandas happened to choose. Types with no Python equivalent
+    (`datetime64`, `timedelta64`) unbox to objects that still fail the
+    gate, which is the intended disposition.
+    """
+    if isinstance(raw, np.generic):
+        return raw.item()
+    return raw
 
 
 def _is_complex(raw: Any) -> bool:
@@ -89,8 +134,21 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
         warnings.simplefilter("ignore")
         for raw in series:
             try:
+                raw = _unbox(raw)
                 if _is_complex(raw):
-                    continue  # unconvertible, like any other non-numeric value
+                    # dennis round 8 (BLOCKER-4): dropping every complex
+                    # was recordwise but not coercion-invariant. ONE
+                    # complex row re-types the whole column to
+                    # complex128, so every previously-real value arrived
+                    # boxed as complex and dropped too -- the released
+                    # bin_counts went from [.., 400, .., 400, ..] to all
+                    # zeros on a one-row neighbour. A real that was
+                    # re-typed keeps its value in the real part, so it
+                    # must still convert; only a nonzero imaginary part
+                    # is genuinely unconvertible.
+                    if raw.imag != 0:
+                        continue
+                    raw = raw.real
                 v = float(raw)
             except Exception:  # broad by design: totality, see docstring
                 continue
@@ -161,22 +219,35 @@ def _canonical_label(raw: Any) -> str:
     probability-0-vs-1 observable and breaks (epsilon, delta) for any
     delta < 1 before a single released number is considered.
 
-    `bool` is handled before the real branch: it is an `int` subclass, so
-    it would otherwise render as "1"/"0". Non-finite floats render from
-    the image too, so `inf` stays "inf".
+    `bool` gets NO special case, and the round-7 rationale for giving it
+    one was exactly backwards (dennis round 8, BLOCKER-1). That rationale
+    said bool must render "True"/"False" because it is an `int` subclass
+    that "would otherwise render 1/0". Rendering "1"/"0" is the
+    coercion-invariant answer and "True"/"False" is the unstable one: a
+    bool column's float64 image IS 1.0/0.0, and pandas re-types bool to
+    int64, float64, or object-of-int on the most ordinary neighbours
+    there are -- concatenating a partition whose flag column is all-null,
+    or one holding ints. Measured distance was 1600 on an 800-row column,
+    from one added row. Bools now render from their image like every
+    other real, and the resulting `True`/`1` label collision is a
+    coarsening, which can only weaken a release.
+
+    Non-finite floats render from the image too, so `inf` stays "inf".
     """
-    if isinstance(raw, bool):
-        return str(raw)
+    raw = _unbox(raw)
     if isinstance(raw, str):
         return raw
+    if _is_complex(raw):
+        # A real that one complex row re-typed to complex128 keeps its
+        # value in the real part; a genuinely complex value has no label.
+        if raw.imag != 0:
+            raise TypeError("complex categorical value with a nonzero imaginary part")
+        raw = raw.real
     if not isinstance(raw, numbers.Real):
         raise TypeError(f"unsupported categorical value type: {type(raw).__name__}")
     try:
         as_float = float(raw)
     except OverflowError:
-        # Only an integer can exceed float64's range from inside `Real`.
-        if isinstance(raw, numbers.Integral):
-            return str(int(raw))
         return str(raw)
     if math.isfinite(as_float) and as_float == int(as_float):
         return str(int(as_float))

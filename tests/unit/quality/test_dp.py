@@ -123,6 +123,23 @@ _ADJACENCY_POOLS: dict[str, tuple[list, bool]] = {
     "mixed_num_str": ([1, "a", 2.5], False),
     "huge_int_obj": ([10**400, 10**401], True),
     "decimal_obj": ([decimal.Decimal("1.5"), decimal.Decimal("2.5")], True),
+    # dennis round 8: extension dtypes were absent, and `boolean` is
+    # where the whole-column drop lived (numpy.bool_ is neither `bool`
+    # nor `numbers.Real`).
+    "ext_boolean": ([True, False], False),
+    "ext_Int64": ([1, 2**60 + 1], False),
+    "ext_Float64": ([1.5, 2.5], False),
+    "ext_string": (["a", "b"], False),
+    "complex_real": ([1 + 0j, 2 + 0j], False),
+}
+
+# Extension dtypes must be constructed with an explicit dtype; the plain
+# constructor would infer a numpy dtype and never exercise the box.
+_ADJACENCY_POOL_DTYPES: dict[str, str] = {
+    "ext_boolean": "boolean",
+    "ext_Int64": "Int64",
+    "ext_Float64": "Float64",
+    "ext_string": "string",
 }
 
 # Added rows chosen to trigger a dtype change on the pools above.
@@ -137,6 +154,11 @@ _ADJACENCY_ADDED: dict[str, object] = {
     "bool": True,
     "timedelta": datetime.timedelta(days=9),
     "timestamp": pd.Timestamp("2021-06-01"),
+    # dennis round 8: complex was absent despite being the one type this
+    # module has a dedicated helper for. One complex row re-types a whole
+    # numeric column to complex128.
+    "complex_real": 3 + 0j,
+    "complex_imag": 1 + 1j,
 }
 
 
@@ -524,24 +546,51 @@ class TestRecordwiseNormalization:
         by at most one element.
 
         The matrix is the point. The pools straddle float64's exact
-        integer range in both signs and cross `str`/`bool`/unsupported
-        types; the added rows are the values that trigger a dtype change
-        (null, NaN, an incompatible string, a float, a huge int). Neither
-        construction forces `dtype=object`, because that is the one dtype
-        that cannot upcast -- forcing it is exactly how the sibling test
-        below passed with the coercion removed."""
+        integer range in both signs and cross `str`/`bool`/extension/
+        unsupported types; the added rows are the values that trigger a
+        dtype change (null, NaN, an incompatible string, a float, a huge
+        int, a complex). Neither construction forces `dtype=object`,
+        because that is the one dtype that cannot upcast -- forcing it is
+        exactly how the sibling test below passed with the coercion
+        removed.
+
+        BOTH construction axes are required (dennis round 8). Building
+        the neighbour as `pd.Series([*pool, added])` cannot produce
+        bool->int64, bool->float, or real->complex128 boxing at all: list
+        construction re-infers from scratch, while `pd.concat` boxes the
+        EXISTING values into the combined dtype, which is what a
+        partitioned or chunked read actually does. The list-only matrix
+        reported zero violations on four separate guarantee breaks."""
         pool, obj = _ADJACENCY_POOLS[pool_id]
         added = _ADJACENCY_ADDED[added_id]
-        for dtype in (object, None) if not obj else (object,):
+        pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
+
+        for dtype in (object,) if obj else (object, None):
+            build_dtype = pool_dtype or dtype
             try:
-                base = pd.Series(list(pool), dtype=dtype)
-                neighbour = pd.Series([*pool, added], dtype=dtype)
-            except (OverflowError, ValueError):
-                continue  # pandas itself refuses the frame; no neighbour exists
-            assert (
-                _multiset_distance(_normalize_categorical(base), _normalize_categorical(neighbour))
-                <= 1
-            )
+                base = pd.Series(list(pool), dtype=build_dtype)
+            except (OverflowError, ValueError, TypeError):
+                continue  # pandas itself refuses the pool
+            base_labels = _normalize_categorical(base)
+
+            neighbours = []
+            try:
+                neighbours.append(pd.Series([*pool, added], dtype=dtype))
+            except (OverflowError, ValueError, TypeError):
+                pass
+            try:  # concat: boxes the EXISTING values into the joint dtype
+                neighbours.append(
+                    pd.concat([base, pd.Series([added])], ignore_index=True)
+                )
+            except (OverflowError, ValueError, TypeError):
+                pass
+            if not neighbours:
+                continue
+
+            for neighbour in neighbours:
+                assert (
+                    _multiset_distance(base_labels, _normalize_categorical(neighbour)) <= 1
+                ), f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
 
     @pytest.mark.parametrize("n", [8, 40], ids=["small", "wide"])
     @pytest.mark.parametrize(
@@ -589,15 +638,19 @@ class TestRecordwiseNormalization:
 
     def test_canonical_label_merges_integral_reals_but_preserves_everything_else(self):
         """An integral real renders as its integer string whatever its
-        storage width, so the upcast above cannot move it. `bool` is
-        handled first on purpose (it is an `int` subclass and would
-        otherwise render "1"/"0"), and a non-finite float renders from
-        its float64 image, so `inf` stays "inf".
+        storage width, so the upcast above cannot move it, and a
+        non-finite float renders from its float64 image, so `inf` stays
+        "inf".
 
-        This output is pinned byte-identical across the round-7 rewrite:
-        the labels below are what both the round-6 implementation and the
-        float64-image implementation produce, which is what makes the
-        wider fix safe to adopt."""
+        `bool` renders "1"/"0" and NOT "True"/"False" (dennis round 8).
+        The round-7 version of this test pinned "True"/"False" and the
+        round-7 docstring defended it, both backwards: a bool column's
+        float64 image is 1.0/0.0, and pandas re-types bool to int64 or
+        float64 on ordinary neighbours, so "True"/"False" moved 1600
+        labels on an 800-row column while "1"/"0" does not move at all.
+        The resulting `True`/`1` collision is a coarsening and can only
+        weaken a release, which is the disposition already accepted for
+        `7`/`7.0`."""
         series = pd.Series(
             [7, 7.0, np.int64(7), np.float64(7.0), 7.5, True, False, "CA", float("inf")],
             dtype=object,
@@ -608,11 +661,46 @@ class TestRecordwiseNormalization:
             "7",
             "7",
             "7.5",
-            "True",
-            "False",
+            "1",
+            "0",
             "CA",
             "inf",
         ]
+
+    @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
+    @pytest.mark.parametrize("added_id", sorted(_ADJACENCY_ADDED), ids=sorted(_ADJACENCY_ADDED))
+    def test_numeric_normalization_is_multiset_recordwise(self, pool_id, added_id):
+        """The same matrix against `_normalize_numeric`.
+
+        dennis round 8 (HIGH-1, item 4): the numeric path had NO adjacency
+        matrix -- only the two pre-existing drop-one-row loops over a
+        fixed float fixture. That is how BLOCKER-4 survived in the very
+        code C-B2 claimed to have closed: one complex row re-typed the
+        column to complex128, every previously-real value arrived boxed
+        as complex and was dropped as "unconvertible", and the released
+        bin_counts went from two populated bins to all zeros."""
+        pool, obj = _ADJACENCY_POOLS[pool_id]
+        added = _ADJACENCY_ADDED[added_id]
+        pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
+        bounds = {"lower": -(2.0**62), "upper": 2.0**62}
+
+        for dtype in (object,) if obj else (object, None):
+            try:
+                base = pd.Series(list(pool), dtype=pool_dtype or dtype)
+            except (OverflowError, ValueError, TypeError):
+                continue
+            base_out = _normalize_numeric(base, **bounds)
+            for build in (
+                lambda: pd.Series([*pool, added], dtype=dtype),
+                lambda: pd.concat([base, pd.Series([added])], ignore_index=True),
+            ):
+                try:
+                    neighbour = build()
+                except (OverflowError, ValueError, TypeError):
+                    continue
+                assert (
+                    _multiset_distance(base_out, _normalize_numeric(neighbour, **bounds)) <= 1
+                ), f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
 
     def test_integers_too_large_for_float64_are_labelled_not_dropped(self):
         """Routing reals through their float64 image means `float(raw)`

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import itertools
+import logging
 import math
 import uuid
 from collections.abc import Collection, Mapping
@@ -85,6 +86,44 @@ _DEFAULT_NUMERIC_BINS = 10
 # about the released shape without being read off the private frame.
 _DP_NUMERIC_DTYPE_LABEL = "float64"
 _DP_CATEGORICAL_DTYPE_LABEL = "object"
+
+# Fixed, content-independent description of what normalization releases.
+# Identical bytes in every artifact: a policy that varied with the frame
+# would be an unnoised channel, which is precisely why the per-column
+# drop COUNT below goes to the log and never in here.
+_DP_NORMALIZATION_POLICY = {
+    "categorical_labels": "str|bool|real, rendered from the float64 image",
+    "categorical_unsupported": "dropped",
+    "numeric_values": "float64, non-finite clamped to the declared bound",
+}
+
+_logger = logging.getLogger(__name__)
+
+
+def _log_unlabellable_drops(col: str, series: pd.Series, labels: list[str]) -> None:
+    """Report unlabellable cells to the OPERATOR, never to the artifact.
+
+    dennis round 8 (MEDIUM-1). Dropping is accounted correctly -- a
+    dropped row is indistinguishable from a null row in every released
+    field -- and that is exactly what makes losing a whole column
+    invisible: an all-date or nullable-boolean column releases a
+    well-formed artifact asserting the column is 100% null, and the
+    operator reads it as a data-quality finding about their own data.
+
+    This is safe only because it is LOCAL. The party running the fit
+    already holds the raw frame, so telling them what their own frame
+    contained discloses nothing they cannot see. Putting the same number
+    in the artifact, or branching any behaviour on it, would be an
+    unnoised function of the data -- so this must stay a log line.
+    """
+    dropped = int(series.notna().sum()) - len(labels)
+    if dropped > 0:
+        _logger.warning(
+            "dp fit: column %r dropped %d non-null value(s) with no categorical label "
+            "(only str/bool/real values are labelled). They are released as nulls.",
+            col,
+            dropped,
+        )
 
 
 class DpError(Exception):
@@ -461,6 +500,7 @@ def _fit_dp_snapshot_with_backend(
 
     for col in categorical_cols:
         cat_values = _normalize_categorical(frame[col])
+        _log_unlabellable_drops(col, frame[col], cat_values)
         grouped_raw, total_raw = session.release_categorical(
             f"categorical_grouped:{col}", f"categorical_total:{col}", cat_values
         )
@@ -512,6 +552,7 @@ def _fit_dp_snapshot_with_backend(
             "release_id": release_id,
             "scope": DP_RELEASE_SCOPE,
             "adjacency": DP_ADJACENCY,
+            "normalization_policy": _DP_NORMALIZATION_POLICY,
             "epsilon_total": epsilon_total,
             "delta_total": delta_total,
             "accountant": DP_ACCOUNTANT_LABEL,
