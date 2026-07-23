@@ -12,16 +12,48 @@ accountant.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 import pytest
 
 from decoy_engine.quality.dp_budget import (
-    CategoricalQuerySpec,
     DpBudgetError,
-    NumericQuerySpec,
     OpenDpReleaseSession,
-    ReleaseLedger,
-    Schedule,
+    _FakeMeasurement,
 )
+from decoy_engine.quality.dp_ledger import ReleaseLedger
+from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
+
+
+@dataclass
+class _SpyBackend:
+    """A backend whose `.invoke()` calls are logged, so a test can assert
+    a refused release never reached the mechanism (H2): the log grows only
+    when a measurement is actually invoked, never when one is merely
+    constructed and certified via `.map()` during the allocation search."""
+
+    log: list[str] = field(default_factory=list)
+
+    def _spy(self, label: str, certificate: Any, released: Any) -> _FakeMeasurement:
+        return _FakeMeasurement(
+            certificate=certificate,
+            released_fn=lambda _values, label=label, released=released: (
+                self.log.append(label) or released
+            ),
+        )
+
+    def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+        return self._spy("count", 0.01, 0)
+
+    def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+        return self._spy("numeric", 0.01, [0] * (len(interior_edges) + 1))
+
+    def categorical_measurements(self, eps_q: float, delta_alloc: float):
+        return (
+            self._spy("grouped", (0.01, delta_alloc), {}),
+            self._spy("total", 0.01, 0),
+        )
 
 
 def _mixed_schedule() -> Schedule:
@@ -80,25 +112,47 @@ class TestOpenDpReleaseSession:
         assert epsilon_total <= 1.0
         assert delta_total == 1e-6
 
-    def test_refuses_unscheduled_query(self):
-        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6)
+    def test_refuses_unscheduled_query_without_invoking_any_measurement(self):
+        """H2: refusing AFTER the mechanism ran is not refusing -- the
+        spy backend's log only grows on `.invoke()`, never on `.map()`
+        (which the allocation search alone calls during construction).
+        `release_categorical` is the case the finding names directly (the
+        parked code invoked both measurements THEN checked admission), so
+        this exercises that path with an unscheduled grouped/total name
+        pair and proves neither measurement is ever invoked."""
+        backend = _SpyBackend()
+        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6, backend=backend)
+        assert backend.log == []  # construction (allocation search) never invokes
         with pytest.raises(DpBudgetError) as exc:
-            session.release_numeric("numeric:not_scheduled", [1.0, 2.0])
-        assert exc.value.code in ("dp_unscheduled_release",)
+            session.release_categorical(
+                "categorical_grouped:not_scheduled", "categorical_total:not_scheduled", ["a", "b"]
+            )
+        assert exc.value.code == "dp_unscheduled_release"
+        assert backend.log == []  # still never invoked -- refused before construction
 
-    def test_refuses_duplicate_release_of_one_query(self):
-        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6)
+    def test_refuses_duplicate_release_of_one_query_without_a_second_invocation(self):
+        """H2, the load-bearing case: `release_row_count` invokes once
+        legitimately, then a second call must be refused BEFORE a second
+        measurement is constructed/invoked -- otherwise the mechanism
+        spends budget a second time that the ledger never records."""
+        backend = _SpyBackend()
+        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6, backend=backend)
         session.release_row_count(10)
+        assert backend.log == ["count"]
         with pytest.raises(DpBudgetError) as exc:
             session.release_row_count(10)
         assert exc.value.code == "dp_duplicate_release"
+        assert backend.log == ["count"]  # unchanged: the duplicate never invoked a second time
 
     def test_refuses_loss_report_before_schedule_is_complete(self):
-        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6)
+        backend = _SpyBackend()
+        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6, backend=backend)
         session.release_row_count(10)
+        invocations_before = list(backend.log)
         with pytest.raises(DpBudgetError) as exc:
             session.composed_loss()
         assert exc.value.code == "dp_schedule_incomplete"
+        assert backend.log == invocations_before  # the failed report invoked nothing new
 
     def test_query_schedule_is_column_order_independent(self):
         """Two schedules built from the same column DECLARATIONS in a
@@ -143,28 +197,41 @@ class TestOpenDpReleaseSession:
         assert exc.value.code == "dp_budget_infeasible"
 
     def test_certificates_come_from_measurement_maps_not_the_calibration_target(self):
-        """Load-bearing (guide section 5 step 2 / section 6 row A2): the
-        recorded certificate must equal `measurement.map(1)` for the
-        object actually invoked, not the eps_q target the session
-        calibrated toward. Calibration searches land on a scale/threshold
-        whose certified map is typically slightly UNDER the target (the
-        threshold search lands on an integer); this test proves the
-        composed total reflects that, rather than assuming the target was
-        met exactly."""
-        schedule = Schedule(
-            row_count_name="rc",
-            numeric=(NumericQuerySpec("numeric:a", tuple(float(i) for i in range(1, 5))),),
-            categorical=(),
+        """BLOCKER 1 / A2, load-bearing: the recorded certificate must
+        equal `measurement.map(1)` for the object ACTUALLY invoked, not
+        the eps_q target the session calibrated toward. `0.0 < epsilon_
+        total <= 1.0` (the previous assertion here) holds for ANY
+        implementation that records any small positive number -- it does
+        not distinguish "recorded measurement.map(1)" from "recorded
+        self._eps_q", which is exactly the defect A2 names. This test
+        substitutes a backend whose certificate is fixed strictly BELOW
+        the eps_q the session calibrates toward, then asserts the
+        recorded certificate is that exact fixed value, not eps_q."""
+        fixed_certificate = 1e-3  # far below any eps_q this schedule could allocate
+
+        class _FixedCertificateBackend:
+            def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+                return _FakeMeasurement(certificate=fixed_certificate, released=42)
+
+            def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+                raise AssertionError("this schedule has no numeric column")
+
+            def categorical_measurements(self, eps_q: float, delta_alloc: float):
+                raise AssertionError("this schedule has no categorical column")
+
+        schedule = Schedule(row_count_name="rc", numeric=(), categorical=())
+        session = OpenDpReleaseSession(
+            schedule, epsilon=1.0, delta=1e-6, backend=_FixedCertificateBackend()
         )
-        session = OpenDpReleaseSession(schedule, epsilon=1.0, delta=1e-6)
-        session.release_row_count(100)
-        session.release_numeric("numeric:a", [float(x % 4) for x in range(100)])
-        epsilon_total, _ = session.composed_loss()
-        # The composed total from two certified releases at eps_q must be
-        # a real accountant composition (strictly more than either single
-        # certified release alone), not a naive eps_q * 2 == epsilon
-        # coincidence copied from the request.
-        assert 0.0 < epsilon_total <= 1.0
+        # The allocation search converges on eps_q = epsilon itself here,
+        # since a fixed certificate far below any target is "feasible"
+        # everywhere the search looks; the fixed certificate is still far
+        # below it.
+        assert session._eps_q > fixed_certificate
+        session.release_row_count(42)
+        recorded = session._releases["rc"].certificate
+        assert recorded == fixed_certificate
+        assert recorded != session._eps_q
 
 
 class TestReleaseLedger:

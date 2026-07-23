@@ -54,12 +54,11 @@ import pandas as pd
 
 from decoy_engine.internal.pandas_compat import canonical_dtype_label
 from decoy_engine.quality.dp_budget import (
-    CategoricalQuerySpec,
     DpBudgetError,
-    NumericQuerySpec,
     OpenDpReleaseSession,
-    Schedule,
+    _OpenDpBackend,
 )
+from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
@@ -211,6 +210,7 @@ def fit_dp_snapshot(
     epsilon: float,
     delta: float,
     numeric_bins: int = _DEFAULT_NUMERIC_BINS,
+    _session_backend: _OpenDpBackend | None = None,
 ) -> dict[str, Any]:
     """Fit a `distribution-snapshot/v1` artifact under `(epsilon, delta)`
     differential privacy, scope `single-column-marginals`.
@@ -236,6 +236,14 @@ def fit_dp_snapshot(
         numeric_bins: Bin count per numeric column. Int >= 2, default 10
             (guide section 9.10 item 1); recorded in the artifact so bin
             edges are reproducible from public metadata alone.
+        _session_backend: TEST-ONLY seam (guide section 5 step 3). Passes
+            an `_OpenDpBackend` double straight into the
+            `OpenDpReleaseSession` this call constructs, so a test can
+            observe the session's OWN certificate/schedule bookkeeping
+            (BLOCKER A2; defects 1a/1b) independent of real OpenDP noise.
+            Never set outside a test: leaving it `None` (the only path a
+            production caller ever takes) always constructs the real
+            OpenDP-backed session.
 
     Returns:
         A `distribution-snapshot/v1` artifact whose additive `dp` block
@@ -299,7 +307,7 @@ def fit_dp_snapshot(
             for c in categorical_cols
         ),
     )
-    session = OpenDpReleaseSession(schedule, epsilon=epsilon, delta=delta)
+    session = OpenDpReleaseSession(schedule, epsilon=epsilon, delta=delta, backend=_session_backend)
 
     row_count_released = _serialize_count(session.release_row_count(len(frame)))
 

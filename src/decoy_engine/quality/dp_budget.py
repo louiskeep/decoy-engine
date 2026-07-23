@@ -57,20 +57,25 @@ to report a loss before every scheduled query has released, and (at the
 call site in `quality/dp.py`) asserting the certificate count equals the
 schedule length before serialization.
 
-`ReleaseLedger` (previously `PrivacyBudget`) is NOT this session. It is
-the plan-compile-time policy ceiling check (`plan/_checks_dp.py`) that
-sums already-certified, already-composed release totals across distinct
-release IDs -- a bookkeeping convenience over numbers a fit already
-produced, never a second mechanism accountant.
+`ReleaseLedger` (previously `PrivacyBudget`; now `quality/dp_ledger.py`,
+a size-cap split, not a design change) is NOT this session: it is the
+plan-compile-time policy ceiling (`plan/_checks_dp.py`) that sums
+already-certified release totals across distinct release IDs, never a
+second mechanism accountant. `NumericQuerySpec`/`CategoricalQuerySpec`/
+`Schedule` (guide section 4.3.1) similarly live in `quality/dp_schedule.
+py`, re-imported here since this session builds/enforces/certifies
+against them.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol
 
 import opendp.prelude as _dp
+
+from decoy_engine.quality.dp_schedule import Schedule
 
 if TYPE_CHECKING:
     import opendp.mod as _dp_mod
@@ -123,10 +128,6 @@ class DpBudgetError(Exception):
         super().__init__(f"[{code}] {message}")
 
 
-def _certificate_epsilon(certificate: Certificate) -> float:
-    return certificate if isinstance(certificate, float) else certificate[0]
-
-
 def _certificate_to_pld(certificate: Certificate):
     from dp_accounting.pld import common
     from dp_accounting.pld import privacy_loss_distribution as pldist
@@ -167,67 +168,137 @@ def _search_largest(predicate, *, lower: float, upper: float) -> float:
     return lo
 
 
-@dataclass(frozen=True)
-class NumericQuerySpec:
-    """One scheduled numeric-marginal query (guide section 4.4).
-
-    `interior_edges` are the `numeric_bins - 1` public interior cut points
-    derived from the column's declared domain (never from data); the
-    SAME edges are used both to certify the allocation search and to
-    build the real release chain, so the certified loss and the actual
-    release are provably the same measurement shape.
-    """
-
-    name: str
-    interior_edges: tuple[float, ...]
-
-    @property
-    def numeric_bins(self) -> int:
-        return len(self.interior_edges) + 1
-
-
-@dataclass(frozen=True)
-class CategoricalQuerySpec:
-    """The pair of scheduled queries one categorical column contributes
-    (guide section 4.5): the thresholded grouped count and the noised
-    non-null total."""
-
-    grouped_name: str
-    total_name: str
-
-
-@dataclass(frozen=True)
-class Schedule:
-    """The fixed, public, deterministic query schedule for one fit (guide
-    section 4.3.1). Built from public declarations only, before any value
-    is examined."""
-
-    row_count_name: str
-    numeric: tuple[NumericQuerySpec, ...]
-    categorical: tuple[CategoricalQuerySpec, ...]
-
-    @property
-    def query_count(self) -> int:
-        return 1 + len(self.numeric) + 2 * len(self.categorical)
-
-    @property
-    def query_names(self) -> tuple[str, ...]:
-        names = [self.row_count_name]
-        names += [q.name for q in self.numeric]
-        for q in self.categorical:
-            names += [q.grouped_name, q.total_name]
-        return tuple(names)
-
-    def delta_per_categorical(self, delta: float) -> float:
-        if not self.categorical:
-            return 0.0
-        return (delta / 2.0) / len(self.categorical)
-
-
 @dataclass
 class _Release:
     certificate: Certificate
     value: object
+
+
+class _OpenDpBackend(Protocol):
+    """Seam for mechanism-level test doubles (guide section 5 step 3).
+
+    Production always uses `_RealOpenDpBackend`, the only implementation
+    that ever runs outside a test: it builds and invokes real OpenDP
+    `Transformation >> Measurement` chains under `contrib` (section 9.1).
+    A test double supplies released values and a certificate that comes
+    from a `.map()`-shaped object on the double itself (`_FakeMeasurement`
+    below); it must never fabricate an epsilon or delta out of thin air,
+    because the property BLOCKER A2 pins -- "the recorded certificate is
+    `measurement.map(1)` on the object actually invoked, never the
+    calibration target" -- is only checkable if the double's `.map()` is
+    itself the source of truth the test asserts against.
+    """
+
+    def count_measurement(self, eps_q: float) -> Any: ...
+
+    def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]) -> Any: ...
+
+    def categorical_measurements(self, eps_q: float, delta_alloc: float) -> tuple[Any, Any]: ...
+
+
+class _RealOpenDpBackend:
+    """The sole `_OpenDpBackend` implementation used outside tests: builds
+    and invokes real OpenDP chains under `contrib` only (guide sections
+    4.4/4.5, verified end to end in the build venv per section 3.4)."""
+
+    def count_measurement(self, eps_q: float) -> _dp_mod.Measurement:
+        """`make_count >> then_laplace`, shared by the row-count query and
+        the categorical non-null-total query (guide section 4.5): both are
+        a plain count over a recordwise string-typed projection under
+        `symmetric_distance()`."""
+        import opendp.measurements as meas
+        import opendp.transformations as tf
+
+        domain = _dp.vector_domain(_dp.atom_domain(T=str))
+        metric = _dp.symmetric_distance()
+        counter = tf.make_count(domain, metric, TO=int)
+        scale = _dp.binary_search(
+            lambda s: (counter >> meas.then_laplace(scale=s)).map(1) <= eps_q,
+            bounds=_SCALE_SEARCH_BOUNDS,
+        )
+        return counter >> meas.then_laplace(scale=scale)
+
+    def numeric_measurement(
+        self, eps_q: float, interior_edges: tuple[float, ...]
+    ) -> _dp_mod.Measurement:
+        import opendp.measurements as meas
+        import opendp.transformations as tf
+
+        domain = _dp.vector_domain(_dp.atom_domain(T=float, nan=False))
+        metric = _dp.symmetric_distance()
+        # Interior edges only: `bins` categories need `bins - 1` interior
+        # cut points (section 4.4), which makes `make_find_bin`'s category
+        # range exactly 0..bins-1 with no overflow bin. The SAME edges are
+        # used here (calibration/certification) and at release time -- no
+        # placeholder shape, so the certified map(1) is the actual
+        # release's certificate, not a structurally-similar stand-in.
+        numeric_bins = len(interior_edges) + 1
+        transformation = tf.make_find_bin(domain, metric, edges=list(interior_edges)) >> (
+            tf.then_count_by_categories(categories=list(range(numeric_bins)), null_category=False)
+        )
+        scale = _dp.binary_search(
+            lambda s: (transformation >> meas.then_laplace(scale=s)).map(1) <= eps_q,
+            bounds=_SCALE_SEARCH_BOUNDS,
+        )
+        return transformation >> meas.then_laplace(scale=scale)
+
+    def categorical_measurements(
+        self, eps_q: float, delta_alloc: float
+    ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
+        import opendp.measurements as meas
+        import opendp.transformations as tf
+
+        cat_domain = _dp.vector_domain(_dp.atom_domain(T=str))
+        metric = _dp.symmetric_distance()
+        count_by = tf.make_count_by(cat_domain, metric)
+
+        def chain(scale: float, threshold: float):
+            # `dp.binary_search`'s stub always types its predicate/return as
+            # `float` regardless of `T=int` (the runtime value IS an int
+            # under `T=int`, per OpenDP's own i32 threshold contract --
+            # the stub just doesn't express a T-dependent return type), so
+            # the cast here is a type-only correction, not a behavior change.
+            return count_by >> meas.then_laplace_threshold(scale=scale, threshold=int(threshold))
+
+        scale = _dp.binary_search(
+            lambda s: chain(s, _I32_MAX).map(1)[0] <= eps_q,
+            bounds=_SCALE_SEARCH_BOUNDS,
+        )
+        threshold = _dp.binary_search(
+            lambda t: chain(scale, t).map(1)[1] <= delta_alloc,
+            bounds=(1, _I32_MAX),
+            T=int,
+        )
+        grouped = chain(scale, threshold)
+        total = self.count_measurement(eps_q)
+        return grouped, total
+
+
+@dataclass(frozen=True)
+class _FakeMeasurement:
+    """Test double for a certified OpenDP `Measurement` (guide section 5
+    step 3). `.map(d_in)` returns a FIXED, already-certified value --
+    never computed from `d_in`, and never the calibration target a
+    session happened to search for -- and `.invoke(values)` returns a
+    FIXED released value regardless of `values` (or one derived by
+    `released_fn`, for a double whose release must still vary with its
+    input shape). This replaces the MEASUREMENT OBJECT a session invokes;
+    it never seeds or replaces production randomness, and it never
+    supplies a certificate that didn't come from a `.map()`-shaped source
+    -- the double simply IS that source, by construction."""
+
+    certificate: Certificate
+    released: Any = None
+    released_fn: Any = None  # Callable[[Any], Any] | None
+
+    def map(self, d_in: int) -> Certificate:
+        del d_in
+        return self.certificate
+
+    def invoke(self, values: Any) -> Any:
+        if self.released_fn is not None:
+            return self.released_fn(values)
+        return self.released
 
 
 class OpenDpReleaseSession:
@@ -239,12 +310,25 @@ class OpenDpReleaseSession:
     query counts). Data is only touched by the `release_*` methods.
     """
 
-    def __init__(self, schedule: Schedule, *, epsilon: float, delta: float) -> None:
+    def __init__(
+        self,
+        schedule: Schedule,
+        *,
+        epsilon: float,
+        delta: float,
+        backend: _OpenDpBackend | None = None,
+    ) -> None:
         self._schedule = schedule
         self._epsilon = epsilon
         self._delta = delta
         self._delta_per_categorical = schedule.delta_per_categorical(delta)
         self._releases: dict[str, _Release] = {}
+        # Production never passes `backend` (guide section 5 step 3): the
+        # default is the real OpenDP-backed implementation. Only tests
+        # substitute a double, and only to observe THIS session's own
+        # bookkeeping (schedule enforcement, certificate provenance) --
+        # never to fabricate a privacy guarantee.
+        self._backend: _OpenDpBackend = backend or _RealOpenDpBackend()
         self._eps_q = self._allocate_epsilon()
 
     # -- allocation (guide section 4.3.2) --------------------------------
@@ -353,83 +437,38 @@ class OpenDpReleaseSession:
             raise infeasible()
         return eps_q
 
-    # -- measurement construction (OpenDP only, contrib only) ------------
+    # -- measurement construction (delegates to `self._backend`) ---------
+    #
+    # These three methods are thin delegators, never the construction
+    # site themselves: `_RealOpenDpBackend` (the default) is where the
+    # actual OpenDP calls live, so a test can substitute `self._backend`
+    # wholesale without this session's release/admission logic changing
+    # at all (guide section 5 step 3).
 
     def _count_measurement(self, eps_q: float) -> _dp_mod.Measurement:
-        """`make_count >> then_laplace`, shared by the row-count query and
-        the categorical non-null-total query (guide section 4.5): both are
-        a plain count over a recordwise string-typed projection under
-        `symmetric_distance()`."""
-        import opendp.measurements as meas
-        import opendp.transformations as tf
-
-        domain = _dp.vector_domain(_dp.atom_domain(T=str))
-        metric = _dp.symmetric_distance()
-        counter = tf.make_count(domain, metric, TO=int)
-        scale = _dp.binary_search(
-            lambda s: (counter >> meas.then_laplace(scale=s)).map(1) <= eps_q,
-            bounds=_SCALE_SEARCH_BOUNDS,
-        )
-        return counter >> meas.then_laplace(scale=scale)
+        return self._backend.count_measurement(eps_q)
 
     def _numeric_measurement(
         self, eps_q: float, interior_edges: tuple[float, ...]
     ) -> _dp_mod.Measurement:
-        import opendp.measurements as meas
-        import opendp.transformations as tf
-
-        domain = _dp.vector_domain(_dp.atom_domain(T=float, nan=False))
-        metric = _dp.symmetric_distance()
-        # Interior edges only: `bins` categories need `bins - 1` interior
-        # cut points (section 4.4), which makes `make_find_bin`'s category
-        # range exactly 0..bins-1 with no overflow bin. The SAME edges are
-        # used here (calibration/certification) and at release time -- no
-        # placeholder shape, so the certified map(1) is the actual
-        # release's certificate, not a structurally-similar stand-in.
-        numeric_bins = len(interior_edges) + 1
-        transformation = tf.make_find_bin(domain, metric, edges=list(interior_edges)) >> (
-            tf.then_count_by_categories(categories=list(range(numeric_bins)), null_category=False)
-        )
-        scale = _dp.binary_search(
-            lambda s: (transformation >> meas.then_laplace(scale=s)).map(1) <= eps_q,
-            bounds=_SCALE_SEARCH_BOUNDS,
-        )
-        return transformation >> meas.then_laplace(scale=scale)
+        return self._backend.numeric_measurement(eps_q, interior_edges)
 
     def _categorical_measurements(
         self, eps_q: float, delta_alloc: float
     ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
-        import opendp.measurements as meas
-        import opendp.transformations as tf
-
-        cat_domain = _dp.vector_domain(_dp.atom_domain(T=str))
-        metric = _dp.symmetric_distance()
-        count_by = tf.make_count_by(cat_domain, metric)
-
-        def chain(scale: float, threshold: float):
-            # `dp.binary_search`'s stub always types its predicate/return as
-            # `float` regardless of `T=int` (the runtime value IS an int
-            # under `T=int`, per OpenDP's own i32 threshold contract --
-            # the stub just doesn't express a T-dependent return type), so
-            # the cast here is a type-only correction, not a behavior change.
-            return count_by >> meas.then_laplace_threshold(scale=scale, threshold=int(threshold))
-
-        scale = _dp.binary_search(
-            lambda s: chain(s, _I32_MAX).map(1)[0] <= eps_q,
-            bounds=_SCALE_SEARCH_BOUNDS,
-        )
-        threshold = _dp.binary_search(
-            lambda t: chain(scale, t).map(1)[1] <= delta_alloc,
-            bounds=(1, _I32_MAX),
-            T=int,
-        )
-        grouped = chain(scale, threshold)
-        total = self._count_measurement(eps_q)
-        return grouped, total
+        return self._backend.categorical_measurements(eps_q, delta_alloc)
 
     # -- release (data touched here, and only here) ----------------------
 
-    def _register(self, name: str, certificate: Certificate, value: object) -> None:
+    def _admit(self, name: str) -> None:
+        """Refuse an unscheduled or already-used query name BEFORE any
+        measurement is constructed or invoked (H2 / guide section 4.3.5
+        mitigation 2). This is deliberately a separate, PRE-invocation
+        step from `_record`: refusing AFTER the mechanism ran is not
+        refusing -- the mechanism would already have spent real privacy
+        budget that this refusal would then let vanish, never entering
+        the ledger. Every `release_*` method below calls this before
+        constructing or invoking anything."""
         if name not in self._schedule.query_names:
             raise DpBudgetError(
                 code="dp_unscheduled_release",
@@ -444,6 +483,12 @@ class OpenDpReleaseSession:
                 code="dp_duplicate_release",
                 message=f"query {name!r} has already released once; a query may release only once.",
             )
+
+    def _record(self, name: str, certificate: Certificate, value: object) -> None:
+        """Record an already-invoked release. Called only AFTER `_admit`
+        has passed and the mechanism has already run -- this method
+        itself performs no admission check, so it must never be reachable
+        except behind `_admit`."""
         self._releases[name] = _Release(certificate=certificate, value=value)
 
     def release_row_count(self, row_count: int) -> int:
@@ -454,9 +499,11 @@ class OpenDpReleaseSession:
         exactly 1 regardless of the vector's element values), so this is
         the same certified chain as the categorical non-null total, applied
         to the table's own row-projection rather than one column's."""
+        name = self._schedule.row_count_name
+        self._admit(name)
         measurement = self._count_measurement(self._eps_q)
         released = measurement.invoke([""] * row_count)
-        self._register(self._schedule.row_count_name, measurement.map(1), released)
+        self._record(name, measurement.map(1), released)
         return int(released)
 
     def release_numeric(self, name: str, values: list[float]) -> list[int]:
@@ -475,9 +522,10 @@ class OpenDpReleaseSession:
                 code="dp_unscheduled_release",
                 message=f"query {name!r} is not a scheduled numeric query.",
             )
+        self._admit(name)
         measurement = self._numeric_measurement(self._eps_q, spec.interior_edges)
         released = measurement.invoke(values)
-        self._register(name, measurement.map(1), released)
+        self._record(name, measurement.map(1), released)
         return list(released)
 
     def release_categorical(
@@ -488,14 +536,18 @@ class OpenDpReleaseSession:
         then_laplace_threshold`) and the noised non-null total
         (`make_count >> then_laplace`), each its own scheduled query with
         its own certificate. `values` is the already normalized,
-        null-excluded projection of one column."""
+        null-excluded projection of one column. Both names are admitted
+        BEFORE either measurement is constructed (H2): a refusal on
+        `total_name` must not leave `grouped_name` already invoked."""
+        self._admit(grouped_name)
+        self._admit(total_name)
         grouped_meas, total_meas = self._categorical_measurements(
             self._eps_q, self._delta_per_categorical
         )
         grouped_released = grouped_meas.invoke(values)
-        self._register(grouped_name, grouped_meas.map(1), grouped_released)
+        self._record(grouped_name, grouped_meas.map(1), grouped_released)
         total_released = total_meas.invoke(values)
-        self._register(total_name, total_meas.map(1), total_released)
+        self._record(total_name, total_meas.map(1), total_released)
         return dict(grouped_released), int(total_released)
 
     # -- composition and receipt ------------------------------------------
@@ -540,48 +592,3 @@ class OpenDpReleaseSession:
                 ),
             )
         return epsilon_total, self._delta
-
-
-# ---------------------------------------------------------------------
-# Compile-time policy ceiling (NOT a mechanism accountant)
-# ---------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _LedgerCharge:
-    label: str
-    epsilon: float
-    delta: float
-
-
-@dataclass
-class ReleaseLedger:
-    """Sums already-certified, already-composed release totals across
-    DISTINCT release IDs at plan-compile time (guide section 3.3: "Wiring
-    OpenDP's certified losses into dp_accounting's composition and
-    asserting the result against the request" -- item 3 of what Decoy
-    owns). This is a policy-ceiling bookkeeping convenience over numbers a
-    fit already produced via `OpenDpReleaseSession.composed_loss()`; it is
-    NOT a mechanism accountant and computes no privacy quantity of its
-    own. Basic sequential composition (sum of already-composed totals) is
-    the correct, conservative bound across independent release IDs (guide
-    section 4.3.5 / `plan/_checks_dp.py`'s release-ID dedup).
-    """
-
-    _charges: list[_LedgerCharge] = field(default_factory=list)
-
-    def charge(self, label: str, *, epsilon: float, delta: float = 0.0) -> None:
-        if epsilon <= 0:
-            raise ValueError(f"epsilon must be > 0, got {epsilon!r}")
-        if delta < 0:
-            raise ValueError(f"delta must be >= 0, got {delta!r}")
-        self._charges.append(_LedgerCharge(label, float(epsilon), float(delta)))
-
-    def total_epsilon(self) -> float:
-        return sum(c.epsilon for c in self._charges)
-
-    def total_delta(self) -> float:
-        return sum(c.delta for c in self._charges)
-
-    def breakdown(self) -> list[dict[str, object]]:
-        return [{"label": c.label, "epsilon": c.epsilon, "delta": c.delta} for c in self._charges]
