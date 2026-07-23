@@ -172,9 +172,7 @@ class TestDpFitIsIndependentOfExactSnapshot:
         import decoy_engine.quality.snapshot as snapshot_module
 
         def _boom(*args, **kwargs):
-            raise AssertionError(
-                "fit_dp_snapshot must never call compute_distribution_snapshot"
-            )
+            raise AssertionError("fit_dp_snapshot must never call compute_distribution_snapshot")
 
         monkeypatch.setattr(snapshot_module, "compute_distribution_snapshot", _boom)
         fit_dp_snapshot(
@@ -193,9 +191,7 @@ class TestDpFitIsIndependentOfExactSnapshot:
         after a DP fit and asserts byte-identical results."""
         from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
-        df = pd.DataFrame(
-            {"age": [1.0, 2.0, 3.0, None], "state": ["CA", "NY", "CA", None]}
-        )
+        df = pd.DataFrame({"age": [1.0, 2.0, 3.0, None], "state": ["CA", "NY", "CA", None]})
         before = compute_distribution_snapshot(df)
         fit_dp_snapshot(
             _mixed_df(),
