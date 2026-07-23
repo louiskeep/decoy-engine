@@ -1,219 +1,289 @@
 # DPS-CODEC implementation guide
 
-Status: PLAN (awaiting Codex plan-review). Author: Opus. Cycle: DPS-CODEC, the
-next dev cycle after the marginal-DP mechanism landed on main (`c9914b9`).
+Status: PLAN, revision 2 (remediated against Codex plan-review round 1, which
+returned BLOCK — 2 BLOCKER, several HIGH, 2 MEDIUM). Author: Opus. Cycle:
+DPS-CODEC, the next dev cycle after the marginal-DP mechanism landed on main
+(`c9914b9`).
 
-This guide is the expansion of ROADMAP §DPS item 5 (`decoy-platform/docs/ROADMAP.md`)
-into a build-ready plan. It also folds in the fresh comprehensive Codex review of
-2026-07-23 (ROADMAP §DPS item 5, "Comprehensive fresh-Codex review").
+This guide expands ROADMAP §DPS item 5 into a build-ready plan and folds in both
+the 2026-07-23 comprehensive Codex review of the current code and the round-1
+plan-review of revision 1 of this guide.
 
-## 1. Goal
+## 1. Goal, stated honestly
 
-Replace the value-level pandas type inference in the DP fit with **declared typed
-carriers converted through versioned, total codecs**, so that pandas moves OUT of
-the formal DP boundary. This closes, structurally, the entire boxing/totality bug
-class that produced 9+ adversarial review rounds on `quality/dp_normalize.py`.
+Replace the scattered, value-level pandas type inference in the DP fit with **one
+canonical typed-carrier layer converted through a single total, versioned codec**,
+and pin the whole DataFrame→vector transformation to an exact, tested dependency
+set.
+
+**What this does and does NOT achieve (round-1 BLOCKER correction).** Typed
+carriers prove `CarrierTable → OpenDP vector` is stability-1 by construction. They
+do NOT by themselves prove `DataFrame → CarrierTable` is stability-1 — that adapter
+still owns column access, per-cell fetch, null detection, warning suppression,
+scalar decoding, and vector construction, which is where most of the current
+defects live. So "take pandas out of the formal boundary" precisely means:
+
+- The **core claim** is stated over the `CarrierTable` and is pandas-free. A caller
+  that supplies a valid `CarrierTable` gets DP with no pandas in the theorem.
+- The **end-to-end DataFrame claim** (what `fit_dp_snapshot` advertises today, over
+  rows of the DataFrame) additionally depends on the pandas adapter being a
+  **formally specified, total, boxing-invariant stability-1 transformation**. The
+  win is that this adapter is now ONE certified codec — property-tested, in the
+  crown-jewel invariant, and gated to an exact dependency set — instead of
+  per-type inference defended example-by-example across an unbounded version range.
+
+The adapter therefore lives **in the engine and in the end-to-end proof** (it is
+outside the OpenDP mechanism core, not outside the theorem). This is the round-1
+Q5 resolution.
 
 Non-goal: changing any privacy mechanism. OpenDP mechanisms and `dp_accounting`
-composition are unchanged and were confirmed sound (no under-accounting) by the
-comprehensive review.
+composition are unchanged and were confirmed sound (no under-accounting).
 
-## 2. Why this design (the formal problem)
+## 2. Why (the formal problem)
 
-OpenDP proves its (epsilon, delta) guarantee over **its own input vector**, with a
-declared stability of 1: one changed vector element perturbs the output by at most
-one unit. Our documented guarantee is stated over **rows of the caller's
-DataFrame**. The two are the same statement only if the conversion satisfies:
-
-> add or remove one row  =>  at most one element of the vector changes, and every
-> other element is byte-identical.
-
-pandas derives a column's storage type from ALL of its rows, so one added row can
-silently re-box every existing value (int+None -> float; Arrow `list` -> object of
-ndarrays; etc.). That turns "add one row" into "many changed vector elements",
-which breaks distance-1 while OpenDP's `map(1)` certificate is unchanged. That is
-the bug class. Defending it with a hand-built test matrix is load-bearing on the
-matrix and volatile across pandas/numpy/pyarrow versions (comprehensive review,
-High).
-
-The fix is to define adjacency over **canonical typed carriers** that have exactly
-one representation per value, so "add one row -> one new element, others unchanged"
-holds by construction. pandas becomes a convenience adapter that lives OUTSIDE the
-formal claim.
+OpenDP proves (epsilon, delta) over its input vector with declared stability 1: one
+changed vector element perturbs the output by at most one unit. Equivalence to a
+row-level claim needs: add/remove one row => at most one changed vector element,
+all others equal under OpenDP's atomic equality. pandas derives storage from ALL
+rows, so one added row can rebox every value (int+None→float; Arrow list→object of
+ndarrays; **bool→complex128 when a `1j` is appended**), turning "add one row" into
+many changed elements while `map(1)` is unchanged. That is the bug class.
 
 ## 3. Design
 
-### 3.1 Carrier types (closed set for v1)
+### 3.1 CarrierTable (explicit, round-1 HIGH)
 
-Three carriers. Each has a TOTAL, boxing-invariant decode: for the reboxing
-relation `x ~ y` (pandas can store the same value as either), `decode_T(x) ==
-decode_T(y)`, and any non-conforming value maps to `null`. Nulls are total, cannot
-create a fit-success channel, and match existing missing-value semantics.
-
-- **`number`**: canonicalized through the binary64 image. Zero-imaginary complex
-  maps to its real component; a nonzero imaginary part is non-conforming -> null.
-  NaN -> null; +/-inf policy fixed (clamp to the declared bound, as today).
-  Out-of-domain finite values clamp into `[lower, upper]`.
-- **`flag`**: booleans plus the exact `0`/`1` reboxings (int, float, numpy). Any
-  other value -> null. (A naive "accept only Python `bool`" codec is NOT enough --
-  pandas reboxes booleans as `1`/`0`; the codec must accept the exact 0/1 image.)
-- **`text`**: Unicode only, kept verbatim (never generic `str()`). A `text` column
-  stored as `int64` goes to **null, not stringified**: an `int64` cell cannot
-  distinguish source text `"7"` from `"07"` from a numeric `7`, and `str()`
-  recreates the current instability. Non-UTF-8 / non-Unicode -> null.
-
-Carrier for datetime/timedelta: **null (unsupported) for v1** (matches today).
-Open question in section 8 on whether to add an epoch-int carrier later.
-
-### 3.2 The `column_schema` API (the fit-API break)
-
-Replace the parallel `categorical_columns` / `numeric_domains` / `delta` arguments
-with one `column_schema` mapping:
+The carrier boundary needs a concrete representation that preserves row count and
+null positions (a null-excluded numpy array loses both; the row-count release comes
+from `len(frame)` today at `dp.py:444`):
 
 ```
-column_schema = {
-    "<column>": {
-        "kind": "categorical" | "numeric",   # release kind
-        "carrier": "text" | "flag" | "number",
-        "bounds": (lower, upper),              # numeric only
-    },
+CarrierTable:
+    row_count: int                      # authoritative N for the row-count release
+    columns: dict[name, Column]         # every column length == row_count
+Column is one of:
+    NumberColumn(values: float64 ndarray, validity: bool ndarray)
+    FlagColumn(values: bool ndarray,      validity: bool ndarray)
+    TextColumn(values: tuple[str, ...],   validity: bool ndarray)
+```
+
+`validity[i] == False` marks a null/non-conforming cell (excluded from the release
+like today). `row_count` is released via the existing row-count mechanism; per
+column, only valid cells enter the OpenDP vector.
+
+### 3.2 Carrier codecs (closed set, executable totality)
+
+Three carriers. Each codec is a **total function over a single pandas cell** whose
+output is invariant under every reboxing pandas can apply to the same value. "Total"
+is defined executably as the whole path: **fetch → container/temporal reject → null
+detect → decode → validity → FFI-safety**, never raising or warning on any cell.
+
+- **`number`**: reject containers and temporal values BEFORE unboxing (round-1 HIGH:
+  `datetime64[ns].item()` / `timedelta64[ns].item()` return plain ints, so a
+  post-unbox check is too late — see current `dp_normalize.py:109`). Zero-imaginary
+  complex → real component; nonzero imaginary → invalid. NaN → invalid; ±inf clamps
+  to the declared bound; finite out-of-domain clamps into `[lower, upper]`.
+  Canonicalize through the binary64 image and **normalize signed zero** (`-0.0 →
+  0.0`) — equality is OpenDP's atomic f64 equality, NOT byte-identity (round-1 HIGH:
+  `-0.0 == 0.0` but their bytes differ).
+- **`flag`**: booleans, the exact int/float `0`/`1` reboxings, AND **zero-imaginary
+  complex whose real part is exactly 0 or 1** (round-1 BLOCKER: appending one `1j`
+  reboxes every bool as complex128; a bool/int/float-only codec gives distance 4).
+  Nonzero imaginary, any other value → invalid. Container/temporal reject before the
+  equality check.
+- **`text`**: Unicode only, kept verbatim (never generic `str()`). **Reject embedded
+  NUL** (round-1 HIGH: OpenDP truncates a string at NUL — current code rejects it at
+  `dp_normalize.py:574`) and **reject lone surrogates** (probe: `UnicodeEncodeError`).
+  A `text` column stored as `int64` → all-invalid, NOT stringified (`int64` cannot
+  distinguish `"7"` from `"07"` from numeric `7`).
+
+Datetime/timedelta: null-only (invalid) for v1, rejected before unboxing.
+
+### 3.3 Allowed release-kind × carrier pairs (closed table, round-1 HIGH)
+
+`kind × carrier` is NOT a free product. OpenDP 0.15.1 `make_count_by` supports
+unknown-key counting for `str` and `bool` but NOT `float` (probe: float constructor
+fails; numeric vs categorical domains already differ at `dp_budget.py:227` / `:251`).
+So:
+
+| kind        | allowed carrier(s) | mechanism                          |
+|-------------|--------------------|------------------------------------|
+| numeric     | `number`           | binned count / clamped-mean chain  |
+| categorical | `text`, `flag`     | `make_count_by` (str / bool keys)  |
+
+`categorical + number` is REJECTED at schema validation for v1 (it would need a
+canonical float→token string encoding + post-release decode; deferred). Schema
+validation fails closed on any unlisted pair.
+
+### 3.4 The fit API (round-1 HIGH: state where every arg lives)
+
+```
+fit_dp_snapshot(
+    source,                       # DataFrame (uses the adapter) OR a CarrierTable
+    column_schema: {name: {kind, carrier, bounds?, numeric_bins?}},
+    epsilon: float,               # requested ceiling, strictly > 0
+    delta: float,                 # requested ceiling, strictly in (0, 1)
     ...
-}
+)
 ```
 
-It records: release kind, categorical carrier, numeric bounds, the fixed
-adjacency, and the codec version. It must NOT record: pandas/numpy dtype names,
-per-column raise behaviour, caller-supplied stringifiers, inferred nullability or
-categories, or exact invalid-value counts (each of those is a channel or a
-dtype-coupling we are removing).
+`epsilon`/`delta`/`numeric_bins` are fit-level (or per-column for bins); the schema
+holds per-column `kind`/`carrier`/`bounds`. The schema does NOT carry pandas/numpy
+dtype names, caller stringifiers, inferred nullability/categories, per-column raise
+behaviour, or exact invalid counts. This replaces the parallel
+`categorical_columns`/`numeric_domains`/`delta` arguments.
 
-Since the fit-API break is already accepted, the unified schema is the cleaner
-final shape rather than another additive argument.
+### 3.5 The pandas adapter (in-engine, in the end-to-end claim)
 
-### 3.3 Carrier-first conversion
+One shared adapter `DataFrame + column_schema → CarrierTable`, in the engine so CLI,
+platform, and tests use the same implementation, and **inside the end-to-end
+stability claim**. It owns the guarded per-cell fetch (keep the positional-read
+guard pattern from `_cells`, `dp_normalize.py:295`, for Arrow-backed cells that raise
+on fetch), null detection, and validity construction, then applies the per-carrier
+codec. It is the transformation the crown-jewel property test certifies.
 
-- `number` carriers enter OpenDP as contiguous **float64 numpy arrays** (OpenDP
-  0.15.1 accepts these directly). `flag`/`text` enter as validated UTF-8 string
-  lists / boolean vectors per the mechanism.
-- A **pandas adapter**, explicitly outside the formal DP claim, converts a
-  DataFrame under a declared `column_schema` to carriers; non-conforming values
-  become null. A caller that already holds carriers can skip pandas entirely.
-- Note from the review's probe: OpenDP 0.15.1 does NOT accept `pyarrow.Array`
-  directly (`UnknownTypeException`), so numpy float64 is the numeric carrier and
-  there is still one final, total conversion from the canonical carrier into
-  OpenDP's exact input -- but from a canonical typed source, not from pandas
-  inference.
+### 3.6 Dependency gate: exact-tuple allowlist (round-1 HIGH)
 
-### 3.4 Dependency-version gate + artifact recording (review High)
+Testing only min/max of a version range does not certify intermediate releases and
+boxing is not monotonic under semver. For v1:
 
-The guarantee still touches numpy/pandas/pyarrow at the adapter edge, so:
+- Gate on **exact certified tuples** of `(python_minor, pandas, numpy, pyarrow)` —
+  not ranges. Python 3.10–3.12 are supported and scalar unboxing is part of the path,
+  so Python minor is in the tuple.
+- The dependency-matrix CI job runs the adjacency property on **every** certified
+  tuple, not just endpoints.
+- The gate runs **before any private value is touched**, and fails closed (clear
+  refusal) on an uncertified stack.
+- Record the fit stack (codec id + version, python/pandas/numpy/pyarrow/OpenDP/
+  `dp_accounting` versions) in the artifact. Verification checks the recorded tuple +
+  codec are recognized-certified. Do NOT require the generation machine's pandas/
+  pyarrow to match when those libraries are not used in generation.
+- **Recording versions is audit evidence, not authentication** (round-1 HIGH). Until
+  the artifact-auth MAC lands (ROADMAP item 4, separate cycle), a forged artifact can
+  also forge its codec/version fields. The gate closes accidental drift, not forgery.
 
-- **Fail closed** outside the certified pandas/numpy/pyarrow versions -- the exact
-  matrix the codecs are property-tested against. Outside it, refuse the fit with a
-  clear message rather than silently running.
-- **Record in the artifact**: codec ID + version, and the pandas/numpy/pyarrow +
-  OpenDP + `dp_accounting` versions. Today only OpenDP/`dp_accounting` are
-  recorded; the versions that actually determine the vector are not.
-- **CI runs a dependency-version matrix** (min and max of the certified range),
-  running the adjacency property test on each.
+### 3.7 Artifact schema versioning (round-1 HIGH: v3 collision)
 
-This converts a silent, CI-passing guarantee break into a loud refusal, and is the
-durable form of the fail-closed version gate.
-
-### 3.5 Artifact schema -> `dps-marginal/v3`
-
-Add `column_schema`, the codec version, and the dependency versions. Bump the
-schema string to `dps-marginal/v3`. Pre-GA: hard break, no back-compat shim
-(RELEASE_PHASE is pre-GA; `is_pre_ga()` gates).
+The MAC work already claims `dps-marginal/v3` (ROADMAP item 4). To avoid a double
+allocation: **codec metadata = `dps-marginal/v3`, artifact-auth MAC = `dps-marginal/v4`**
+(sequential, they are separate cycles). Update the ROADMAP MAC entry to say v4. Add
+`column_schema`, codec version, and the recorded dependency tuple to v3. Pre-GA hard
+break, no back-compat shim.
 
 ## 4. Fold in the comprehensive-review findings (modules the codec KEEPS)
 
-These live in `dp_budget` / `dp_ledger` / `dp_policy` / `dp.py`, all retained:
+In `dp_budget` / `dp_ledger` / `dp_policy` / `dp.py`, all retained:
 
-- **Shared-mutable policy dict (Medium).** `_DP_NORMALIZATION_POLICY` ships by
-  reference; mutating one artifact's policy retroactively changes others and a
-  later fit inherits it. Emit a fresh copy per artifact; keep the module value
-  immutable (freeze / return a deep copy).
-- **Budget calibration rejects valid permissive budgets (Medium).** OpenDP
-  `binary_search` raises on a constant predicate, including when the lower endpoint
-  already satisfies the target; `_certify_schedule` reads every such raise as
-  "infeasible" and `_allocate_epsilon` assumes monotone feasibility. Check BOTH
-  search endpoints explicitly; treat lower-endpoint-satisfies as feasible; document
-  and enforce a numerically-supported epsilon range; handle the PLD `OverflowError`
-  on very large epsilon explicitly instead of surfacing it raw.
-- **Zero-epsilon rejected downstream (Medium).** `dp_accounting` legitimately
-  returns `epsilon_total = 0` at permissive delta; the fit accepts and serializes
-  it, but `ReleaseLedger.charge` and snapshot verification reject nonpositive
-  epsilon. Pick one: accept `epsilon >= 0` downstream, or reject such requested
-  budgets before fitting. (Recommend: accept `>= 0` downstream -- eps=0 with delta>0
-  is a valid approximate-DP release.)
-- **Allocation cost (Medium).** Session build runs ~80 full schedule
-  certifications, each rebuilding/recalibrating every OpenDP chain (~27s for 5
-  numeric + 2 categorical before any rows). Cache certification by public schedule
-  shape + budget, or certify one representative per identical mechanism shape and
-  replicate its certificate; release-time measurements are still individually
-  constructed.
-- **Private-seam wording (Low).** `_fit_dp_snapshot_with_backend` is described as
-  unreachable; Python privates are importable. Reword as an unsupported internal
-  seam, not a security boundary.
+- **Shared-mutable policy dict (Medium).** Emit a fresh deep copy per artifact; keep
+  the module value immutable. (Fix confirmed correctly specified by plan-review.)
+- **Budget calibration (Medium).** Check BOTH `binary_search` endpoints; treat
+  lower-endpoint-satisfies as feasible (current searches raise here,
+  `dp_budget.py:215`). Define a **concrete numerically-supported epsilon range with a
+  coded error** (not a raw `OverflowError`); pick the numbers during build against
+  the installed PLD.
+- **Zero-epsilon (Medium).** Accept composed `epsilon_total >= 0` downstream in
+  `ReleaseLedger.charge` and snapshot verification; keep REQUESTED fit/generate
+  budget ceilings strictly positive. (Probe confirmed `eps=1, delta=0.9` yields a
+  legitimate `epsilon_total=0` the ledger currently rejects.)
+- **Allocation cost (Medium) — with a safety spec (round-1 MEDIUM).** Cache
+  calibration/allocation RESULTS, do NOT substitute a representative certificate for
+  the exact measurement object (the invariant is that the certificate is read from
+  the object actually invoked). Cache key MUST include: exact OpenDP + `dp_accounting`
+  versions, backend identity (so fake test backends never share production entries),
+  the full public schedule signature + budget, and any mechanism-shape field the
+  certified map depends on.
+- **Private-seam wording (Low).** Reword `_fit_dp_snapshot_with_backend` as an
+  unsupported internal seam. (Confirmed correctly specified.)
 
-## 5. What is replaced vs kept
+## 5. Affected surface (round-1 HIGH: the complete list)
 
-- **Replaced:** `quality/dp_normalize.py` (the pandas value-level codec and its
-  hand-built adjacency matrix) and the fit-API surface.
-- **Kept (adapted where noted):** `dp_budget` (composition), `dp_ledger`,
-  `dp_schedule`, `dp.py` orchestration (adapted to the carrier API), the OpenDP
-  chains, and the release-ID / artifact machinery.
+Beyond `dp_normalize`/`dp_budget`/`dp_ledger`/`dp_policy`/`dp.py`:
 
-## 6. Test strategy (TQ discipline, invariant-first)
+- `quality/snapshot.py` (schema owner, `:78`)
+- `plan/_checks_dp.py` (artifact verification + query-count reconstruction, `:305`)
+- `generation/statistical/_spec.py` (statistical-spec DP exemption wording, `:184`)
+- `config/_global_settings.py` (generate-side config docs, `:34`)
+- Plan serialization / compatibility fixtures; `test_dp_claim_copy.py`; CHANGELOG;
+  and `docs/what-we-cannot-prove.md` (the guarantee wording — this GATES).
 
-Land the invariant test FIRST, before the codecs exist:
+DPS stays **explicitly unshipped** in the docs/claim until the CLI + platform callers
+and the revised claim are complete.
 
-- **DP adjacency invariant (the crown jewel for this module):** for every carrier
-  and every add/remove-one-row neighbour, multiset distance <= 1, no raise, no
-  warning -- run across the certified dependency matrix. This is a hard merge gate.
-- **Property-based codec tests (Hypothesis):** generate values and their reboxing
-  relations; assert `decode` totality and boxing invariance
-  (`decode_T(x) == decode_T(y)`).
-- **Guard-structure mutation tests:** keep the mutation-checked totality-guard
-  pattern for whatever residual guards the codecs need.
-- **Dependency-matrix CI job:** the adjacency property across min/max pinned
-  pandas/numpy/pyarrow.
+## 6. What is replaced vs kept
 
-The property tests over carriers replace the enumerated pandas boxing matrix in
-`test_dp.py`; the point of the codec is that correctness is provable over the
-carrier, not defended example-by-example.
+- **Replaced:** `quality/dp_normalize.py` (scattered value-level inference) and the
+  fit-API surface.
+- **Kept (adapted):** `dp_budget`, `dp_ledger`, `dp_schedule`, `dp.py` orchestration,
+  the OpenDP chains, and the release-ID / artifact machinery.
 
-## 7. Build order (phasing)
+## 7. Test strategy (TQ discipline, invariant-first)
 
-1. **Invariant + carriers.** Land the adjacency invariant test; implement the three
-   total codecs (`number`/`flag`/`text`) with property-based adjacency tests.
-2. **`column_schema` API + pandas adapter** (adapter outside the formal claim).
-3. **Orchestration + artifact.** Wire `dp.py` to carriers; bump artifact to
-   `dps-marginal/v3`; add the dependency-version gate + version recording.
-4. **Fold in the review findings** (policy-dict copy, budget calibration + cache,
-   ledger zero-epsilon, seam wording).
-5. **Remove `dp_normalize.py`** and its matrix (superseded).
-6. **CLI + platform wiring** against the `column_schema` API (this is the separate
-   ROADMAP item 2, sequenced right after this cycle -- wire once).
+- **Crown-jewel invariant, landed FIRST:** for the full `DataFrame → CarrierTable →
+  OpenDP vector` path (the end-to-end adapter, NOT only already-canonical carriers),
+  every add/remove-one-row neighbour has multiset distance <= 1, no raise, no warning
+  — run across EVERY certified dependency tuple. Hard merge gate.
+- **Property-based codec tests (Hypothesis)** with a DEFINED strategy that generates
+  values and their reboxings (bool↔int↔float↔complex widening; list/ndarray; nullable
+  Boolean; NUL/surrogate text; temporal). Assert decode totality + boxing invariance.
+- **Preserve the current matrix's known examples as regression SEEDS** (round-1
+  MEDIUM: do not delete until the property suite proves equal strength) — complex
+  widening, Arrow temporal fetch errors, list→ndarray, nullable Boolean, NUL/surrogate
+  text, hostile dunders, and BOTH the list-reconstruction and `pd.concat` construction
+  paths.
+- **Carry the non-vacuous-comparison coverage guard** (current suite has it at
+  `test_dp.py:688`): every declared carrier/reboxing must produce a real
+  dtype-differing comparison, so no test is silently vacuous.
+- Keep the mutation-checked totality-guard pattern for residual guards.
 
-Each phase lands its tests with it. Gates: dennis (Opus) then Codex per the loop
-protocol; Opus may take the hardest codec/orchestration build directly given the
-difficulty (the DPS Opus-builds exception).
+## 8. Build order (phasing)
 
-## 8. Open questions for the plan-review
+1. **Invariant + CarrierTable + codecs.** Land the crown-jewel adjacency invariant
+   over the adapter path; define `CarrierTable`; implement the three total codecs
+   with the property strategy + preserved regression seeds.
+2. **Adapter + `column_schema` API** with the closed kind×carrier table and the
+   fail-closed schema validation.
+3. **Dependency gate + exact-tuple allowlist + CI matrix**, gate before any value.
+4. **Orchestration + artifact `dps-marginal/v3`** (carrier metadata + recorded stack);
+   wire `dp.py`, `snapshot.py`, `_checks_dp.py`.
+5. **Fold in the review findings** (policy-dict copy, budget endpoints + eps range +
+   result-cache with the safe key, ledger `>= 0`, seam wording).
+6. **Remove `dp_normalize.py`** once the property suite subsumes its matrix (seeds
+   preserved).
+7. Update `_spec.py`/`_global_settings.py` docs, claim-copy tests, CHANGELOG, and
+   `what-we-cannot-prove.md` to the carrier + certified-adapter claim.
+8. **CLI + platform wiring** against `column_schema` (ROADMAP item 2, next cycle).
 
-1. **Datetime/timedelta carrier:** null-only for v1 (matches today), or add an
-   explicit epoch-int carrier now? (Lean: null-only for v1.)
-2. **Certified dependency matrix bounds:** which pandas/numpy/pyarrow min+max to
-   certify and gate on (pyproject currently allows pandas 1.5-2.x, pyarrow
-   unbounded). Proposal: certify the current resolved versions as the floor+ceiling
-   for v1 and widen deliberately later.
-3. **Carrier set completeness:** are `number`/`flag`/`text` sufficient for v1, or
-   add an explicit fixed-vocabulary categorical carrier (OpenDP `Enum`-style, public
-   categories) now rather than later?
-4. **Zero-epsilon disposition:** accept `epsilon >= 0` downstream vs reject
-   pre-fit. (Lean: accept `>= 0`.)
-5. **Adapter surface:** does the pandas adapter live in the engine (convenience,
-   outside the claim) or only in the CLI/platform callers? (Lean: engine, clearly
-   fenced as non-DP, so tests and callers share one adapter.)
+Gates per phase: dennis (Opus) then Codex; Opus may take the hardest codec/adapter/
+orchestration build given DPS difficulty.
+
+## 9. Resolved open questions (from round-1)
+
+1. Datetime/timedelta: null-only for v1, rejected before unboxing. RESOLVED.
+2. Dependency certification: exact tuples incl Python minor, every tuple tested, not a
+   min/max interval. RESOLVED (§3.6).
+3. Carrier set: `number`/`flag`/`text` sufficient for v1 after the flag zero-imaginary
+   fix (§3.2) and the closed kind×carrier table (§3.3). No fixed-vocabulary categorical
+   now (different support mechanism + accounting shape). RESOLVED.
+4. Zero-epsilon: accept composed `epsilon_total >= 0` downstream; requested ceilings
+   strictly positive. RESOLVED (§4).
+5. Adapter placement/claim: in-engine, shared, and INSIDE the end-to-end stability
+   claim (outside the OpenDP core, not outside the proof). RESOLVED (§1, §3.5).
+
+## 10. One decision to surface to Cam (customer-facing)
+
+The round-1 BLOCKER forces an honest choice about what we advertise:
+
+- **(default in this plan)** Keep the end-to-end DataFrame-row DP claim, with the
+  adapter certified as a stability-1 transformation under the exact-version gate. Most
+  customer-friendly ("declare a schema, hand us a DataFrame, get DP over your rows"),
+  and strictly stronger than today because the adapter is one certified codec, but
+  pandas remains in the end-to-end theorem (mitigated to a single gated, tested
+  component).
+- **(stricter)** State DP only over the `CarrierTable`; DataFrame fits via the adapter
+  are labeled convenience and cannot advertise row-level DP unless the caller supplies
+  carriers. Purest ("pandas fully out of the theorem"), but pushes carrier
+  materialization onto callers and narrows the customer claim.
+
+This plan builds the default and keeps the carrier-level claim available as the clean
+core, so we can tighten to the stricter statement later without a rebuild. Flagging in
+case Cam wants the stricter public claim from v1.
