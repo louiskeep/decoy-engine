@@ -205,11 +205,17 @@ trusted from the artifact's own claim alone) certifies it:
   fabricated `dp` block bolted on compiles clean and generates real
   source values into synthetic output. The numeric shape check (comparing
   `stats.min`/`max`/`mean`/`std`/`quantiles`/`bin_counts` length against
-  what a genuine release can ever look like) catches the realistic case
-  of a stale exact snapshot with a copied-in `dp` block; it does not stop
-  a forger who reproduces that shape from scratch, because at that point
-  they have replicated the entire DP artifact format, not merely attached
-  a block to something else. Successful compilation alone does not
+  what a genuine release can ever look like) catches exactly one case: a
+  verbatim `dp` block copied onto an untouched exact snapshot, which still
+  carries its real `mean`, `std` and `quantiles`. It stops nothing else, and
+  defeating it requires no knowledge of DP and no reproduction of the artifact
+  format. Every field it reads is attacker-writable: set `mean`, `std` and
+  `quantiles` to null and empty, declare `numeric_bins` as the length of the
+  histogram already in the snapshot, and declare the numeric domain as the
+  observed min and max. That artifact compiles DP-verified while its
+  `bin_counts` are still the exact, unnoised histogram and its declared domain
+  is still the real minimum and maximum. Treat this check as a guard against
+  copy-paste, not against an adversary. Successful compilation alone does not
   protect a caller who bypasses the compiled Plan and calls internal
   generation helpers directly with unvalidated data, and it does not
   protect a caller who feeds the compiler a snapshot they wrote by hand.
@@ -228,9 +234,16 @@ trusted from the artifact's own claim alone) certifies it:
   rejects a mismatch, and recomputes the `dp_verification` receipt from
   those same revalidated bytes rather than trusting the serialized receipt
   verbatim. This catches accidental corruption and a forged receipt on an
-  otherwise-genuine pinned artifact; it does not authenticate that the
-  Plan file as a whole came from a trusted compiler, since nothing signs
-  the file itself.
+  otherwise-genuine pinned artifact. It has no authentication value: the
+  digest and the bytes it covers live in the same attacker-controlled file,
+  so an edit that recomputes the digest passes. The dangerous direction is
+  the reverse of the one the check defends. Replacing an honest plan's pinned
+  snapshot bytes with an exact snapshot whose `top_values` are real source
+  values, then recomputing the digest, yields a plan that loads, generates
+  real values, and produces a receipt carrying the ORIGINAL genuine release
+  ID and a genuine-looking `epsilon_total`. Nothing in that receipt
+  distinguishes it from an honest one, so an auditor reading the receipt has
+  no signal. Nothing signs the file itself.
 - **The consumed snapshot is trusted to be genuine, and the consequence is
   not only budget understatement -- it is real source vocabulary reaching
   synthetic output.** The provenance check reads the snapshot JSON at
@@ -238,13 +251,16 @@ trusted from the artifact's own claim alone) certifies it:
   DP-declared pipeline at a non-DP-fit artifact, or an artifact whose
   internal schedule doesn't match its own declared columns) and against
   the realistic case of a stale exact artifact with a copied-in `dp`
-  block (the numeric shape check above), not against a forger who
-  replicates a genuine release's shape from scratch. That numeric shape
-  defense is numeric only: an exact and a DP categorical `stats` block
-  carry identical keys (compare `quality/snapshot.py`'s `top_values`/
-  `other_count` shape against `quality/dp.py`'s), so there is no shape
-  evidence to compare for a categorical column, and the stale-copied-block
-  case above is caught for a numeric column and NOT for a categorical one.
+  block (the numeric shape check above), not against anyone willing to edit
+  four fields. That numeric shape defense is numeric only: an exact and a DP
+  categorical `stats` block carry identical keys (compare
+  `quality/snapshot.py`'s `top_values`/`other_count` shape against
+  `quality/dp.py`'s), so there is no shape evidence to compare for a
+  categorical column. The numeric-versus-categorical asymmetry is real for the
+  copy-paste case alone -- a literally stale numeric block is caught and a
+  literally stale categorical block is not -- and it vanishes entirely against
+  a deliberate forger, for whom the two paths cost the same. Do not read the
+  asymmetry as the numeric path being defended.
   A DP artifact's
   recorded `epsilon_total` and `delta_total` are self-declared; Decoy
   verifies internal consistency and release-ID uniqueness, but a

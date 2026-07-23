@@ -65,3 +65,40 @@ def test_dp_claim_copy_names_no_removed_option_a_claims():
     # behavior -- the mechanism was deleted outright (pre-GA hard delete).
     assert "apply_dp_noise" not in text
     assert "dp_mode" not in text
+
+
+def test_dp_claim_copy_does_not_overstate_the_forgery_defenses():
+    """Security review 2026-07-23 (B1, H1): both defenses were described as
+    stronger than they are, and neither overstatement was pinned, so nothing
+    caught the drift.
+
+    B1: the numeric shape check reads four attacker-writable fields. Nulling
+    `mean`/`std`/`quantiles` and declaring the observed min/max defeats it
+    with no DP knowledge, so the page must not claim that defeating it
+    requires replicating the artifact format, and must not present the
+    numeric path as defended relative to the categorical one.
+
+    H1: the embedded snapshot digest covers bytes in the same file, so a
+    hostile edit that recomputes it is undetectable, and the surviving
+    receipt fields do not distinguish the tampered plan from an honest one.
+    """
+    text = _doc_text()
+    lowered = text.lower()
+
+    # B1: the false causal claim must stay gone.
+    assert "replicated the entire dp artifact format" not in lowered
+    assert "replicates a genuine release's shape from scratch" not in lowered
+
+    # B1: what actually defeats the check must be stated.
+    assert "attacker-writable" in lowered
+    assert "still the exact, unnoised histogram" in lowered
+    assert "guard against copy-paste, not against an adversary" in lowered
+
+    # B1: the asymmetry must be scoped to the copy-paste case.
+    assert "asymmetry is real for the copy-paste case alone" in lowered
+
+    # H1: the digest's lack of authentication value must be stated, along
+    # with the payload-swap case and the indistinguishable receipt.
+    assert "no authentication value" in lowered
+    assert "recomputes the digest passes" in lowered
+    assert "distinguishes it from an honest one" in lowered
