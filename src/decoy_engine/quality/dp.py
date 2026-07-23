@@ -192,6 +192,23 @@ def _validate_config(
             )
 
 
+def _is_complex(raw: Any) -> bool:
+    """A complex value is unconvertible, whatever its width.
+
+    `isinstance(raw, complex)` alone is not that test. `numpy.complex128`
+    subclasses Python's `complex` and so is caught by it, but
+    `numpy.complex64` does not, and `float()` on one silently returns the
+    real part instead of failing. That is the "silently keep a real part"
+    half of C-B2, still open for the narrower width. The dtype-kind check
+    covers every numpy complex width, including any this build has not
+    seen. Callers run this inside their conversion guard, so a value
+    whose `dtype` access misbehaves drops the row rather than escaping.
+    """
+    if isinstance(raw, complex):
+        return True
+    return getattr(getattr(raw, "dtype", None), "kind", None) == "c"
+
+
 def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list[float]:
     """Total, recordwise projection (guide section 4.2/7.1): every row
     contributes at most one element. Conversion failures and NaN become
@@ -237,9 +254,9 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for raw in series:
-            if isinstance(raw, complex):
-                continue  # unconvertible, like any other non-numeric value
             try:
+                if _is_complex(raw):
+                    continue  # unconvertible, like any other non-numeric value
                 v = float(raw)
             except Exception:  # broad by design: totality, see docstring
                 continue

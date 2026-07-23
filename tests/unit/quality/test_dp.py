@@ -315,6 +315,28 @@ class TestRecordwiseNormalization:
         )
         assert "c" in snap["columns"]
 
+    @pytest.mark.parametrize(
+        "value",
+        [1 + 2j, np.complex64(1 + 2j), np.complex128(1 + 2j)],
+        ids=["builtin", "complex64", "complex128"],
+    )
+    def test_every_complex_width_is_unconvertible_not_silently_real(self, value):
+        """C-B2 was closed with `isinstance(raw, complex)`, which catches
+        the builtin and `complex128` (it subclasses `complex`) but NOT
+        `complex64`, where `float()` silently returns the real part. A
+        parametrized test is the point here: the unparametrized version
+        passed on the two widths that happen to subclass `complex` while
+        the third kept `1.0`."""
+        series = pd.Series([value], dtype=object)
+        assert _normalize_numeric(series, lower=0.0, upper=10.0) == []
+
+    def test_real_numeric_types_survive_the_complex_guard(self):
+        """The guard drops complex only. Widening it to something that
+        also rejects ordinary numpy reals would silently empty real
+        columns, so pin the negative case alongside."""
+        series = pd.Series([np.float64(3.0), np.int64(4), 5.0, "6"], dtype=object)
+        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [3.0, 4.0, 5.0, 6.0]
+
     def test_null_check_that_raises_on_content_does_not_take_the_fit_down(self):
         """C-B4, third location: deciding nullness runs the value's own
         dunders, so the null step is content-dependent too.
