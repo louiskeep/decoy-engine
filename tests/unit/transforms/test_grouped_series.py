@@ -500,7 +500,7 @@ class TestGroupedSeriesGeneratePath:
     """grouped_series wired into the generate_tables synthesize path."""
 
     def test_cumcount_in_generate_table(self) -> None:
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -529,7 +529,7 @@ class TestGroupedSeriesGeneratePath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         series = tbl.column("series").to_pylist()
         grp = tbl.column("grp").to_pylist()
         # Within each group, values must be non-negative integers

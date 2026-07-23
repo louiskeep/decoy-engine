@@ -26,6 +26,12 @@ Determinism: `compute_distribution_snapshot` and `compute_fidelity`
 pin float precision, and statistical sampling is seed-deterministic,
 so the same (config, seed, artifact) produces byte-identical warning
 strings on every run.
+
+DPS Scope B (guide section 4.8): this module consumes the Plan's
+already-pinned statistical specs and snapshot artifacts. It never calls
+`_load_snapshot` or opens `source_path` -- `generate_tables` resolves
+every `(table, column)` to its `StatisticalSpec` and its full parsed
+snapshot artifact once, from `GenerationPlan`, before this gate runs.
 """
 
 from __future__ import annotations
@@ -35,8 +41,8 @@ from typing import Any
 
 import pandas as pd
 
-from decoy_engine.generation.statistical import load_spec
-from decoy_engine.generation.statistical._spec import _load_snapshot
+from decoy_engine.generation.statistical import StatisticalSpec
+from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.fidelity import compute_fidelity
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
@@ -63,6 +69,9 @@ def score_generated_fidelity(
     *,
     table_name: str,
     threshold: float,
+    statistical_specs: dict[tuple[str, str], StatisticalSpec],
+    snapshot_index_for_column: dict[tuple[str, str], int],
+    snapshot_artifacts: list[dict[str, Any]],
 ) -> list[str]:
     """Score a generated table's statistical columns against their snapshots.
 
@@ -71,38 +80,62 @@ def score_generated_fidelity(
         data: The generated column values, keyed by generated column name.
         table_name: Table name, for the warning text.
         threshold: Warn when a snapshot group's overall score is below this.
+        statistical_specs: `{(table, column): StatisticalSpec}`, pinned at
+            compile time (guide section 4.7/4.8) -- no path is reopened.
+        snapshot_index_for_column: `{(table, column): index into
+            snapshot_artifacts}`, grouping columns that share one artifact
+            exactly as the prior path-string grouping did.
+        snapshot_artifacts: The Plan's pinned, already-parsed snapshot
+            artifacts (`GenerationPlan.snapshots`, decoded once by the
+            caller).
 
     Returns:
         Warning strings, one per snapshot artifact whose generated
         columns score below `threshold`. Empty when the table has no
         statistical columns or every group scores at or above it.
     """
-    by_snapshot: dict[str, dict[str, str]] = {}
+    by_snapshot: dict[int, dict[str, str]] = {}
     for col in generate_columns:
         if col.get("type") != "statistical":
             continue
-        spec = load_spec(col)
-        group = by_snapshot.setdefault(str(col["snapshot_file"]), {})
+        col_name = str(col["name"])
+        spec = statistical_specs.get((table_name, col_name))
+        index = snapshot_index_for_column.get((table_name, col_name))
+        if spec is None or index is None:
+            continue  # unreachable through compile_plan; defensive only
+        group = by_snapshot.setdefault(index, {})
         if spec.source_column in group:
             _log.debug(
                 "fidelity gate: table %r columns %r and %r both map to source "
-                "column %r in %r; scoring the later one only",
+                "column %r (snapshot index %r); scoring the later one only",
                 table_name,
                 group[spec.source_column],
                 spec.column,
                 spec.source_column,
-                col["snapshot_file"],
+                index,
             )
         group[spec.source_column] = spec.column
 
     warnings: list[str] = []
-    for snapshot_file, columns in sorted(by_snapshot.items()):
-        # Rename generated columns to their source names so
-        # compute_fidelity's shared-column intersection lines up with
-        # the artifact. _load_snapshot is the cached, schema-checked
-        # reader the sampler itself used, so this cannot introduce a
-        # second failure mode.
-        artifact = _load_snapshot(snapshot_file)
+    for index, columns in sorted(by_snapshot.items()):
+        # H5 (guide section 4.7): `index` comes from a pinned `Plan`'s
+        # `PinnedStatisticalSpec.snapshot_index`, which a hand-edited or
+        # corrupted serialized manifest could set out of range against
+        # `GenerationPlan.snapshots`. A raw `IndexError` here is an
+        # untyped crash on untrusted input; fail with the same typed,
+        # machine-readable-code error family every other malformed-Plan
+        # condition in this feature area raises.
+        if not 0 <= index < len(snapshot_artifacts):
+            raise StatisticalSpecError(
+                code="statistical_snapshot_index_out_of_range",
+                message=(
+                    f"fidelity gate: snapshot_index={index!r} is out of range for "
+                    f"{len(snapshot_artifacts)} pinned snapshot artifact(s). The Plan's "
+                    "statistical specs disagree with its pinned snapshots -- recompile "
+                    "through compile_plan rather than editing a serialized manifest."
+                ),
+            )
+        artifact = snapshot_artifacts[index]
         frame = pd.DataFrame(
             {source_col: data[gen_col] for source_col, gen_col in sorted(columns.items())}
         )
@@ -120,7 +153,7 @@ def score_generated_fidelity(
         worst_text = ",".join(f"{name}:{score}" for name, score in worst)
         warnings.append(
             f"generation_fidelity_below_threshold: table={table_name} "
-            f"snapshot={snapshot_file} overall_score={overall} "
+            f"snapshot_index={index} overall_score={overall} "
             f"threshold={threshold} worst_columns=[{worst_text}]"
         )
     return warnings
@@ -132,9 +165,18 @@ def warn_on_low_fidelity(
     *,
     table_name: str,
     threshold: float,
+    statistical_specs: dict[tuple[str, str], StatisticalSpec],
+    snapshot_index_for_column: dict[tuple[str, str], int],
+    snapshot_artifacts: list[dict[str, Any]],
 ) -> None:
     """Run the gate and log each warning. The generate path's one call site."""
     for message in score_generated_fidelity(
-        generate_columns, data, table_name=table_name, threshold=threshold
+        generate_columns,
+        data,
+        table_name=table_name,
+        threshold=threshold,
+        statistical_specs=statistical_specs,
+        snapshot_index_for_column=snapshot_index_for_column,
+        snapshot_artifacts=snapshot_artifacts,
     ):
         _log.warning(message)

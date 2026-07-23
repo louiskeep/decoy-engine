@@ -20,7 +20,7 @@ import sys
 import pytest
 
 from decoy_engine.config._pipeline import PipelineConfig
-from decoy_engine.generation.synthesize import generate_tables
+from tests.unit._dps_helpers import compile_and_generate
 
 
 def _multi_col_config(row_count: int = 24) -> dict:
@@ -70,11 +70,22 @@ def _digest_tables(tables: dict) -> str:
 
 _CHILD_SCRIPT = """
 import json, sys, hashlib
+from datetime import datetime, timezone
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.generation.synthesize import generate_tables
+from decoy_engine.plan import compile_plan
+from decoy_engine.profile import Profile
 
 cfg = PipelineConfig.model_validate(json.loads(sys.argv[1])).model_dump()
-tables = generate_tables(cfg)
+profile = Profile(
+    schema_version=1,
+    tables=(),
+    relationships=(),
+    profiled_at=datetime.now(timezone.utc),
+    decoy_engine_version="test",
+)
+plan = compile_plan(cfg, profile, decoy_engine_version="test")
+tables = generate_tables(plan)
 h = hashlib.sha256()
 for name in sorted(tables):
     h.update(name.encode("utf-8"))
@@ -92,7 +103,7 @@ class TestGenerateProcessStability:
         import json
 
         cfg = PipelineConfig.model_validate(_multi_col_config()).model_dump()
-        parent = _digest_tables(generate_tables(cfg))
+        parent = _digest_tables(compile_and_generate(cfg))
 
         child = subprocess.run(  # noqa: S603 -- args are test literals
             [sys.executable, "-c", _CHILD_SCRIPT, json.dumps(_multi_col_config())],
@@ -110,7 +121,9 @@ class TestGenerateProcessStability:
 class TestGenerateInProcessStability:
     def test_generate_twice_is_byte_identical(self):
         cfg = PipelineConfig.model_validate(_multi_col_config()).model_dump()
-        assert _digest_tables(generate_tables(cfg)) == _digest_tables(generate_tables(cfg))
+        assert _digest_tables(compile_and_generate(cfg)) == _digest_tables(
+            compile_and_generate(cfg)
+        )
 
 
 class TestCrossColumnIndependence:
@@ -147,7 +160,7 @@ class TestCrossColumnIndependence:
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
         cfg = PipelineConfig.model_validate(cfg).model_dump()
-        t = generate_tables(cfg)["t"]
+        t = compile_and_generate(cfg)["t"]
         a = t.column("a").to_pylist()
         b = t.column("b").to_pylist()
         assert a != b
@@ -159,7 +172,7 @@ class TestCrossColumnIndependence:
         # The numpy-family null mask must be stable run-to-run (and, per the
         # lockstep fix, identical between engines -- covered by the parity oracle).
         cfg = PipelineConfig.model_validate(_multi_col_config()).model_dump()
-        a = generate_tables(cfg)["people"].column("score").to_pylist()
-        b = generate_tables(cfg)["people"].column("score").to_pylist()
+        a = compile_and_generate(cfg)["people"].column("score").to_pylist()
+        b = compile_and_generate(cfg)["people"].column("score").to_pylist()
         assert a == b
         assert any(v is None for v in a)  # null injection actually fired

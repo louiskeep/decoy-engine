@@ -46,6 +46,20 @@ entry (HC-5) retains the FULL observed vocabulary for that column with
 no top-K collapse, so the artifact additionally exposes every distinct
 code AND rare-code presence/absence -- treat it with the same care as
 a raw extract of that column.
+
+DPS Scope B history: this module previously carried its own `dp_mode` /
+`numeric_domains` fit-time parameters (Option A, 2026-06 through
+2026-07-21) that widened categorical candidacy and fixed numeric bin
+ranges in place, ahead of a since-deleted `quality.dp.apply_dp_noise`.
+That mechanism never satisfied the privacy bound it claimed (see
+CHANGELOG.md) and is gone. The Scope B rebuild
+(`quality.dp.fit_dp_snapshot`) does not call this function at all --
+"Do not route the DP fit through compute_distribution_snapshot. That
+function materializes exact statistics and has value-dependent kind
+behavior unsuitable for DP" is the design rule going forward. This
+module is explicitly non-DP: every kind decision here may look at
+values (bool vs. object vs. numeric, the 30-distinct cardinality cliff,
+etc.), which is exactly what a DP fit must never do.
 """
 
 from __future__ import annotations
@@ -61,15 +75,26 @@ from decoy_engine.internal.pandas_compat import canonical_dtype_label
 
 DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
 
+# Owned here rather than in `quality/dp.py` so `plan` can check it
+# without importing the fit (which pulls OpenDP into plan compile).
+# dennis round 9 (LOW-1): it was duplicated as two independent
+# literals with nothing pinning them equal, so a one-sided bump would
+# silently reject every artifact.
+DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
+
 
 class DistributionSnapshotError(Exception):
-    """Fit-time `high_cardinality` contract violation. Machine-readable code.
+    """Fit-time contract violation this module cannot silently degrade past.
+    Machine-readable code.
 
-    Raised in place of silently degrading: a column marked
-    `high_cardinality` promises FULL-fidelity vocabulary retention, so a
-    request this module cannot honor (wrong dtype, or a vocabulary/label
-    size the JSON artifact should not carry) fails the fit loudly instead
-    of falling back to the ordinary top-K/freetext behavior.
+    Scoped to `high_cardinality` (a column marked `high_cardinality`
+    promises FULL-fidelity vocabulary retention, so a request this module
+    cannot honor -- wrong dtype, or a vocabulary/label size the JSON
+    artifact should not carry -- fails the fit loudly instead of falling
+    back to the ordinary top-K/freetext behavior). The Option A `dp_mode`
+    parameter this error type used to also cover is gone (DPS Scope B
+    history, above); this module carries no DP-specific rejection code of
+    its own anymore.
     """
 
     def __init__(self, *, code: str, message: str) -> None:
@@ -122,6 +147,10 @@ def compute_distribution_snapshot(
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
 
+    Explicitly non-DP (module docstring): every kind decision here may
+    look at values. DP fits go through `quality.dp.fit_dp_snapshot`
+    instead, which never calls this function.
+
     Args:
         df: Input frame. Not mutated.
         joint_columns: Pairs of column names whose pairwise contingency
@@ -145,15 +174,12 @@ def compute_distribution_snapshot(
             silently skipped (matching `joint_columns`, not a validator).
 
     Returns:
-        A dict matching schema `distribution-snapshot/v1`. See module
-        docstring for shape contract.
+        A dict matching schema `distribution-snapshot/v1` (module
+        docstring).
 
     Raises:
-        DistributionSnapshotError: A `high_cardinality_columns` entry has
-            a non-string source dtype, or exceeds the distinct-value or
-            label-byte safety limit; or `high_cardinality_columns` itself
-            is a bare `str`/`bytes` (MED-3) instead of a collection of
-            column names.
+        DistributionSnapshotError: bad `high_cardinality_columns` shape or
+            safety-limit violation (see that arg's docs above).
     """
     # MED-3: a bare str satisfies `Collection[str]` structurally, so
     # `high_cardinality_columns="code"` would silently iterate characters
@@ -216,22 +242,16 @@ def _column_snapshot(
     dtype = canonical_dtype_label(series.dtype)
 
     if non_null_count == 0:
-        return {
-            "dtype": dtype,
-            "kind": "empty",
-            "null_count": null_count,
-            "non_null_count": 0,
-            "distinct_count": 0,
-            "stats": {},
-        }
-
-    kind, stats = _stats_for(
-        non_null,
-        numeric_bins=numeric_bins,
-        top_k=categorical_top_k,
-        high_cardinality=high_cardinality,
-    )
-    return {
+        kind = "empty"
+        stats: dict[str, Any] = {}
+    else:
+        kind, stats = _stats_for(
+            non_null,
+            numeric_bins=numeric_bins,
+            top_k=categorical_top_k,
+            high_cardinality=high_cardinality,
+        )
+    out: dict[str, Any] = {
         "dtype": dtype,
         "kind": kind,
         "null_count": null_count,
@@ -239,6 +259,7 @@ def _column_snapshot(
         "distinct_count": distinct_count,
         "stats": stats,
     }
+    return out
 
 
 def _stats_for(
@@ -251,15 +272,18 @@ def _stats_for(
     if high_cardinality:
         return "categorical", _high_cardinality_categorical_stats(non_null)
     if pd.api.types.is_bool_dtype(non_null):
-        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k)
+        stats = _categorical_stats(non_null.astype(str), top_k=top_k)
+        return "categorical", stats
     if pd.api.types.is_numeric_dtype(non_null):
-        return "numeric", _numeric_stats(non_null, bins=numeric_bins)
+        stats = _numeric_stats(non_null, bins=numeric_bins)
+        return "numeric", stats
     if pd.api.types.is_datetime64_any_dtype(non_null):
         return "datetime", _datetime_stats(non_null)
 
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
-        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k)
+        stats = _categorical_stats(non_null.astype(str), top_k=top_k)
+        return "categorical", stats
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins)
 
 
@@ -370,7 +394,9 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     return stats
 
 
-def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
+def _numeric_stats(
+    non_null: pd.Series, *, bins: int, domain: tuple[float, float] | None = None
+) -> dict[str, Any]:
     arr = pd.to_numeric(non_null, errors="coerce").dropna().to_numpy(dtype=float)
     # to_numpy + dropna handles object columns of stringified numbers
     # without surprising the histogram math below.
@@ -389,8 +415,6 @@ def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
             "bin_edges": [],
             "bin_counts": [],
         }
-    lo = float(finite.min())
-    hi = float(finite.max())
     mean = float(finite.mean())
     # std with ddof=0 matches pandas describe()'s "population" semantics
     # only when explicitly requested; we use ddof=1 to align with
@@ -404,12 +428,21 @@ def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
         for p, v in zip(quantiles_idx, q_vals, strict=True)
     }
 
+    if domain is not None:
+        # DPS-1: range from the caller's domain; clamp (not drop) outliers.
+        lo, hi = float(domain[0]), float(domain[1])
+        hist_input = np.clip(finite, lo, hi)
+    else:
+        lo = float(finite.min())
+        hi = float(finite.max())
+        hist_input = finite
+
     if lo == hi:
         # Zero-range fallback: single bin covering the constant value.
         bin_edges = [lo, hi]
         bin_counts = [int(finite.size)]
     else:
-        counts, edges = np.histogram(finite, bins=bins, range=(lo, hi))
+        counts, edges = np.histogram(hist_input, bins=bins, range=(lo, hi))
         bin_edges = [_round(float(e)) for e in edges]
         bin_counts = [int(c) for c in counts]
 

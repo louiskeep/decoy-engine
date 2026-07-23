@@ -47,6 +47,37 @@ ALLOWLIST: dict[str, int] = {
     # mirroring the `_spill_estimate.py` split this module's own docstring
     # already documents as precedent, when the next budget change lands.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
+    # DPS Scope B (2026-07-22): crossed the 600 cap (was 600 exactly in the
+    # parked branch, guide section 4.8) to thread the pinned-Plan
+    # generation contract through the existing per-generator dispatch:
+    # `_generate_tables_from_config`/`_generate_column`/`_statistical` all
+    # gain `table_name`/`statistical_specs`/`snapshot_index_for_column`/
+    # `snapshot_artifacts` parameters so the `statistical` branch and the
+    # fidelity gate consume the compiled Plan's pinned specs/artifacts
+    # instead of reopening a `snapshot_file` path (guide section 4.7/4.8,
+    # closing defect F3/F4). The guide's own new-module split
+    # (`generation/_plan_entry.py`) already carries the public
+    # `generate_tables(plan, ...)` wrapper and its Plan-only guards out of
+    # this file; this remaining growth is the internal signature threading
+    # the guide's split could not remove. Decompose the `statistical`/
+    # `derived`/`formula` per-type dispatch branches into sibling modules
+    # (mirroring `transforms/derived_aggregate.py`) when the next
+    # generator-type addition lands. +8 more (654 -> 662) for the bottom-of-
+    # module re-export of `generate_tables` from the new `_plan_entry.py`
+    # (avoids a real import cycle: `_plan_entry` imports
+    # `_generate_tables_from_config` FROM this module) so the documented
+    # `decoy_engine.generation.synthesize.generate_tables` path
+    # (`decoy_engine/__init__.py`) still resolves after the move.
+    # DPS Scope B follow-up (2026-07-22): +6 LOC (662 -> 668) closing a
+    # residual F4 reopen the guide's own step-8 wiring missed: `_statistical`
+    # still built its `GenDeriveContext` from the raw `col` dict, whose
+    # `snapshot_file` the fingerprint step (`generators.derivation.
+    # strategy_config_fingerprint`) read fresh off disk to compute a content
+    # digest for seed derivation -- a real re-open of a path the Plan already
+    # pinned. `_statistical` now passes the pinned `StatisticalSpec.
+    # snapshot_digest` straight through instead. Same decomposition target
+    # stands.
+    "src/decoy_engine/generation/synthesize.py": 668,
     "src/decoy_engine/storm/detectors.py": 1049,
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,
@@ -63,7 +94,30 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table. Decompose the growing _checks.py into
     # per-strategy check sub-modules in a follow-up sprint when the check set
     # stabilises (post-SP-15 or when the next strategy batch lands).
-    "src/decoy_engine/plan/_checks.py": 736,
+    # DPS Scope B (2026-07-22): +29 LOC (736 -> 765). `check_statistical_
+    # columns` moved the "snapshot_file required" check here from
+    # `load_spec` (guide section 4.7/4.8's read-once contract needs the
+    # path validated before any pinned-bytes lookup), gained `pinned`/
+    # `dp_verified_columns` parameters and the pinned-snapshot lookup
+    # (falling back to a direct read only when the compiler's read-once
+    # pass could not open the path), and now returns the per-column
+    # `(table, column, path, spec_dict)` list `plan._generation.
+    # build_generation_plan` pins into the compiled Plan. Same
+    # decomposition target stands.
+    # DPS Scope B follow-up (2026-07-22): +9 LOC (765 -> 774) threading the
+    # read-once pass's own digest (`read.sha256`) onto `load_spec`'s
+    # `snapshot_digest` kwarg so generation-time seed derivation has a
+    # pinned digest to reuse instead of reopening `snapshot_file` (see the
+    # matching `synthesize.py` entry above; same F4 closure). Same
+    # decomposition target stands.
+    # Round-3 remediation (2026-07-23), C-M1: +9 LOC (774 -> 783) resolving
+    # a `snapshot_file` through the new `plan._generation.resolve_pinned_
+    # snapshot` helper instead of an inline `_load_snapshot` fallback, so a
+    # path the read-once pass already attempted and classified is never
+    # reopened. The docstring update explaining `failures` is most of the
+    # growth; the call-site change itself is one line. Same decomposition
+    # target stands.
+    "src/decoy_engine/plan/_checks.py": 783,
     # HC-5 (2026-07-17): +16 LOC (695 -> 711) adding the `high_cardinality`
     # wrong-type guard to `check_statistical_columns` -- a `high_cardinality`
     # key on a non-`type: statistical` column (the one case `load_spec` never
@@ -101,7 +155,48 @@ ALLOWLIST: dict[str, int] = {
     # branches) + one call site + one return-tuple entry in
     # `run_config_only_checks`. Same per-strategy check-module pattern as
     # every prior addition here; same decomposition target stands.
-    "src/decoy_engine/plan/_compile.py": 671,
+    # DPS (2026-07-20): +8 LOC (671 -> 679) for the two dp compile checks --
+    # dp_generate_contract (Row 31, DPS-3) + dp_snapshot_provenance (Row 32,
+    # gate remediation Fix 3): the import + their call sites (compile_plan x2
+    # branches + run_config_only_checks). dp_generate_contract also adds its
+    # checks_passed/returned-tuple entries; dp_snapshot_provenance runs but is
+    # not recorded in checks_passed. Same per-strategy check-module pattern;
+    # same decomposition target stands.
+    # Option A DPS remediation (2026-07-21): +11 LOC (679 -> 690) for
+    # `check_dp_categorical_unsupported`'s import + two call sites
+    # (compile_plan's no_profile/full branches share one call + comment,
+    # run_config_only_checks its own). Not recorded in checks_passed (same
+    # convention as dp_snapshot_provenance). Same decomposition target stands.
+    # DPS Scope B (2026-07-22): +7 LOC (690 -> 697), net of a genuine size
+    # reduction: `check_dp_categorical_unsupported`/`check_dp_snapshot_
+    # provenance` (Option A) are DELETED outright, but compile_plan and
+    # run_config_only_checks both gain the read-and-pin-once call site
+    # (`read_and_pin_snapshots`), the DP verification call site
+    # (`verify_dp_snapshots`), and compile_plan alone gains the
+    # `GenerationPlan` builder call site (`build_generation_plan`) plus the
+    # `generation=` field in the `Plan(...)` construction -- exactly the
+    # "call sites only" growth guide section 4.7 anticipated when it moved
+    # the read-and-pin pass, the `GenerationPlan` builder, and the
+    # recursive freeze into the new `plan/_generation.py` sibling module
+    # rather than inlining them here. Same decomposition target stands.
+    # Round-3 remediation (2026-07-23), C-M1: +6 LOC (697 -> 703) across
+    # both call sites: `read_and_pin_snapshots` now returns a
+    # `(pinned, failures)` pair instead of just `pinned`, and threading
+    # `failures=` into `check_statistical_columns` pushes each call over
+    # the 100-column line-length cap, forcing a multi-line call. Same
+    # decomposition target stands.
+    "src/decoy_engine/plan/_compile.py": 703,
+    # Round-3 remediation (2026-07-23), C-H2: crossed the 600 cap (600 -> 604)
+    # fixing `_allocate_epsilon`'s search predicate, which treated a valid
+    # composed epsilon of exactly `0.0` as falsy (`x or math.inf`) and
+    # under-spent the requested budget for categorical-only schedules. The
+    # named `_within_request` helper plus its explanatory comment (an
+    # `is None` check is not self-explanatory without one, per CLAUDE.md's
+    # comment rule) cost 4 net lines over the one-line lambda it replaces.
+    # Decompose the allocation-search half of `OpenDpReleaseSession` into a
+    # sibling module (mirroring `dp_schedule.py`'s split) when this file is
+    # next touched for a reason that adds real orchestration.
+    "src/decoy_engine/quality/dp_budget.py": 605,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
@@ -300,6 +395,13 @@ ALLOWLIST: dict[str, int] = {
     # into transforms/_codeset_config_checks.py (mirroring _checks_top_code.py),
     # bringing code_set.py back to 592 -- under the 600 cap, so it is no longer
     # allowlisted here. Do not re-add it without cause.
+    # NOTE: quality/snapshot.py was allowlisted at 713 during the Option A
+    # `dp_mode` build (2026-07-20/21 gate remediation). DPS Scope B
+    # (2026-07-22) deleted `dp_mode`/`numeric_domains`/`support_origin`
+    # entirely -- the DP fit path no longer routes through this module at
+    # all (`quality.dp.fit_dp_snapshot` fits directly from the source
+    # frame) -- bringing the module back to 589 lines, under the 600 cap,
+    # so it is no longer allowlisted here. Do not re-add it without cause.
 }
 
 

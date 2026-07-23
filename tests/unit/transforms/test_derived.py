@@ -524,7 +524,7 @@ class TestDerivedGeneratePath:
 
     def _run_generate(self, generate_columns: list, row_count: int = 3) -> dict:
         """Call generate_tables with the given generate_columns; return col->values."""
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -539,7 +539,7 @@ class TestDerivedGeneratePath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         return {col: tbl.column(col).to_pylist() for col in tbl.column_names}
 
     def test_derived_generate_column_computes_from_sibling(self) -> None:
@@ -613,7 +613,7 @@ class TestDerivedGeneratePath:
 
     def test_derived_generate_three_rows_correct_values(self) -> None:
         """Integration: generate table with sequence + derived column, 3 rows."""
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -637,7 +637,7 @@ class TestDerivedGeneratePath:
             ],
             "targets": {"scores": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["scores"]
+        tbl = compile_and_generate(cfg)["scores"]
         base_vals = tbl.column("base").to_pylist()
         doubled_vals = tbl.column("doubled").to_pylist()
         tripled_vals = tbl.column("tripled").to_pylist()

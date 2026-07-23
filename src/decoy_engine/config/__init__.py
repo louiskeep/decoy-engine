@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from decoy_engine.config._errors import PipelineConfigError
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
-from decoy_engine.config._global_settings import GlobalSettings
+from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
 from decoy_engine.config._pipeline import PipelineConfig
@@ -79,6 +79,7 @@ __all__ = [
     "ColumnConfig",
     "DedupeOp",
     "DeriveOp",
+    "DpGenerateSettings",
     "DropColumnOp",
     "FileSource",
     "FileTarget",

@@ -9,6 +9,70 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (DPS Scope B: per-column OpenDP marginal differential privacy for `generate`, numeric and categorical, 2026-07-22)
+
+Supersedes the prior unreleased Option A entry outright (pre-GA hard
+delete, no compatibility shim): `apply_dp_noise` and the Polars-compositor
+design it depended on are both gone. Decoy's `mode: generate` output can
+now carry an honest, approximate `(epsilon, delta)`-DP guarantee over
+per-column NUMERIC AND CATEGORICAL marginals, certified by OpenDP and
+composed by Google's `dp_accounting`, when the consumed snapshot was
+produced by `fit_dp_snapshot` and the compiling Plan reproduces its
+verification receipt from the pinned artifact bytes.
+
+- **New core dependencies: `opendp==0.15.1` and `dp-accounting==0.6.0`.**
+  Each column's privacy loss is certified by OpenDP's own privacy map
+  (`Measurement.map`, `contrib` feature only); the fit-wide loss is composed
+  by `dp_accounting`'s PLD composition over those certificates. Neither
+  `opendp[polars]` nor `opendp.extras.polars` is used or permitted: a
+  dependency spike found `opendp[polars]` pins a Polars version incompatible
+  with Decoy's `polars>=1,<2` range, so the OpenDP-native Polars
+  `Context` compositor was evaluated and rejected; Decoy's release
+  scheduling is enforced by `OpenDpReleaseSession`, the sole OpenDP call
+  site, instead.
+- **Numeric and categorical marginal support.** Numeric columns release a
+  fixed-bin-count histogram over a caller-declared domain
+  (`make_find_bin >> then_count_by_categories >> then_laplace`);
+  categorical columns release a thresholded top-label set plus a
+  non-null total (`make_count_by >> then_laplace_threshold` and
+  `make_count >> then_laplace`). The prior Option A categorical rejection
+  is lifted; categorical DP is supported end to end.
+- **Breaking `fit_dp_snapshot` contract.** `categorical_columns` and
+  `numeric_domains` are now required, explicit, public declarations (never
+  inferred from dtype or cardinality), and `delta` is required and
+  rejected at zero even for a numeric-only fit (uniformity over a
+  marginally stronger pure-epsilon claim). `apply_dp_noise` is deleted, not
+  deprecated.
+- **Plan-only `generate_tables`.** `generate_tables` accepts only a
+  compiled `Plan`; a raw configuration mapping raises `TypeError`. Every
+  snapshot a compiled Plan references is read exactly once at compile
+  time, embedded verbatim (bytes + SHA-256 digest, 16 MiB cap per
+  artifact, HC-5 precedent) into a new `GenerationPlan` payload, and never
+  reopened by generation or the fidelity gate.
+- **Plan schema version bump (1 -> 2) for the pinned `GenerationPlan`
+  payload.** A pre-bump serialized Plan loads for reporting/diagnostics
+  but raises the moment generation is requested from it (no migration; the
+  engine is pre-GA). `plan_from_yaml` revalidates every embedded snapshot
+  digest and recomputes the `dp_verification` receipt from the pinned
+  bytes rather than trusting the serialized receipt.
+- **Release-ID budget identity.** A DP artifact's privacy-ledger identity is
+  its `release_id` (minted at fit time, never derived from content,
+  timestamps, or paths), not its content digest. The same release ID
+  referenced by many columns is charged once; distinct release IDs always
+  compose by basic sequential composition; a release ID reused with a
+  DIFFERENT digest is rejected as a conflicting artifact
+  (`dp_release_id_conflict`).
+- **Joint and conditional DP remain unsupported.** `condition_on` under a
+  `dp`-declared pipeline is rejected (`dp_joint_unsupported`); the
+  protected release scope is single-column marginals only.
+  Joint-distribution DP (PrivBayes/MST/AIM-style mechanisms) is a
+  separate, larger, not-yet-built effort. CLI and platform wiring for the
+  new fit-time contract are tracked as follow-up issues in their own
+  repos, not built here.
+
+See `docs/what-we-cannot-prove.md` for the full claim wording and every
+documented limit.
+
 ### Added (TX-1: activate + document `text_redact` NER, 2026-07-20)
 
 The `text_redact` `ner` option (spaCy person-name/location detection) was

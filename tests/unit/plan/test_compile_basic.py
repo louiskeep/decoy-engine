@@ -22,9 +22,12 @@ class TestCompilePlanHappyPath:
     def test_compile_stamps_versions(self, simple_config: dict, simple_profile: Profile) -> None:
         """S3 bumped seed_protocol_version 0 -> 1; F-series 1 -> 2;
         QA walks/gen F3 2 -> 3; formula-hash 3 -> 4 (2026-06-01);
-        WS1 FPE detokenization 4 -> 5 (2026-06-12)."""
+        WS1 FPE detokenization 4 -> 5 (2026-06-12).
+
+        plan_version bumped 1 -> 2 for the DPS Scope B pinned
+        `GenerationPlan` payload (guide section 4.7)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_version == 1
+        assert plan.plan_version == 2
         assert plan.seed_protocol_version == 6
         assert plan.engine_version == "0.1.0"
 
@@ -51,7 +54,8 @@ class TestCompilePlanHappyPath:
         faker_requires_provider at row 26; HC-3a (2026-07-17) added
         date_shift_group_by_refs at row 27; HC-3b (2026-07-17) added
         top_code_config at row 28; HC-7 (2026-07-17) added freetext_advisory
-        at row 29; TX-2 (2026-07-20) added text_mask_ner_available at row 30."""
+        at row 29; TX-2 (2026-07-20) added text_mask_ner_available at row 30;
+        DPS-3 (2026-07-20) added dp_generate_contract at row 31."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -65,6 +69,7 @@ class TestCompilePlanHappyPath:
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
             "non_poolable_provider_with_pool_backend",
+            "dp_generate_contract",
             "statistical_columns",
             "text_redact_ner_available",
             "text_mask_ner_available",
@@ -135,7 +140,7 @@ class TestYamlRoundTrip:
     ) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "plan_version: 1" in y
+        assert "plan_version: 2" in y
         assert "seed_protocol_version: 6" in y
 
     def test_yaml_emits_seed_protocol_version_six(
