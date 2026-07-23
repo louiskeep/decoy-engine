@@ -134,7 +134,14 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
         warnings.simplefilter("ignore")
         for raw in series:
             try:
-                raw = _unbox(raw)
+                # No `_unbox` here, deliberately. This path has no type
+                # gate -- it only calls `float()`, which is total over
+                # numpy scalars, and `_is_complex` reads the numpy dtype
+                # directly. Unboxing was provably inert (removing it
+                # changed nothing across the full adjacency matrix), and
+                # inert code that no test can falsify is a liability.
+                # Anything that adds a type gate here must add `_unbox`
+                # with it, or it reintroduces the nullable-boolean drop.
                 if _is_complex(raw):
                     # dennis round 8 (BLOCKER-4): dropping every complex
                     # was recordwise but not coercion-invariant. ONE
@@ -297,9 +304,15 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     `bool()` alone is not that check: it raises for a multi-element array
     but for a SINGLETON container it silently returns that one element's
     verdict, so container cells were being handled differently BY LENGTH
-    (Codex round 5). The `ndim` check is what makes length stop mattering
-    here; since round 7 containers then drop uniformly at the type gate
-    instead, being neither `str`, `bool`, nor real.
+    (Codex round 5).
+
+    That guard is now BELT-AND-BRACES rather than load-bearing, and is
+    kept deliberately rather than by oversight (dennis round 8, LOW-2).
+    Since round 7 a container drops at the type gate whether or not the
+    null check excluded it first, so removing the `ndim` check produces
+    zero behavioural difference across 17 container and scalar cell
+    shapes. It stays because it is the only thing keeping the null step
+    itself honest if the type gate ever widens.
 
     No equivalence to `dropna()` is claimed. Round 5 asserted one and it
     was false, and round 7 widened the gap deliberately. Dropping is

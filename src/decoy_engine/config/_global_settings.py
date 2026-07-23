@@ -144,16 +144,25 @@ class GlobalSettings(BaseModel):
         # close, reached through a different container type.
         # Codex round 7: widening to `Mapping` was still fail-open,
         # because this returned the CALLER'S object and pydantic then
-        # read it a second time. A mapping whose reads differ declared DP
-        # here and reported it absent to pydantic, so `dp` was None and
-        # absent from `model_fields_set`, the serializer dropped it,
-        # `_dp_declared` returned False, and the contract check accepted
-        # `allow_real_categories: true` -- silently converting an
-        # operator-declared DP pipeline into a non-DP one. Validating one
-        # snapshot and returning a DIFFERENT object is the whole bug, so
-        # take the snapshot once and hand pydantic exactly what was
-        # checked. Non-mappings pass through untouched for pydantic to
-        # reject with its own error.
+        # read it a second time. Validating one snapshot and returning a
+        # DIFFERENT object is the whole bug, so take the snapshot once
+        # and hand pydantic exactly what was checked. Non-mappings pass
+        # through untouched for pydantic to reject with its own error.
+        #
+        # What the second read could actually do, measured against the
+        # pre-fix commit (Codex round 8, confirmed independently by
+        # dennis; an earlier version of this comment got it wrong):
+        # reporting the key ABSENT failed CLOSED, because pydantic's
+        # second pass walks model fields through `__getitem__` and a
+        # `KeyError` surfaces as a `ValidationError`. Substituting a
+        # VALUE did not. A mapping yielding `epsilon=0.1` and then
+        # `epsilon=1000.0` produced a model carrying 1000.0 while this
+        # validator had approved 0.1 -- a DP-labelled pipeline with a
+        # meaningless budget. Substituting `None` left `dp` present in
+        # `model_fields_set`, so the omission serializer below kept it,
+        # but `model_dump(exclude_none=True)` is a SEPARATE erasure path
+        # that drops a `None` regardless, and `_dp_declared` then
+        # returned False. The snapshot closes both.
         if not isinstance(data, Mapping):
             return data
         snapshot = dict(data)

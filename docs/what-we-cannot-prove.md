@@ -37,15 +37,42 @@ consumed by a compiled, DP-verified Plan.
 > cross-column correlations, conditional sampling, masked outputs, non-DP
 > snapshots, or forged artifacts.
 >
-> A declared categorical column releases only its `str`, `bool`, and real
-> values. Values of any other type -- dates, timestamps, timedeltas,
-> decimals -- contribute nothing to that column's release. This is a
-> deliberate restriction, not an oversight: a label derived from such a
-> value is a function of how pandas happens to be storing the column, and
-> a column's storage type is a function of ALL its rows, so one added row
-> can change every label at once and break the adjacency the certificate
-> assumes. Cast such a column to strings upstream if you need it released,
-> accepting that the cast is then yours to keep stable.
+> Adjacency is over the rows of the DataFrame handed to the fit, not over
+> the records of the file that frame was loaded from. pandas infers a
+> column's type from ALL of its values, so one extra record in a source
+> file can change how every other value in that column is parsed: a
+> column of zero-padded account numbers reads as integers and releases
+> `1, 2, 3`, and one non-numeric record later re-types it as text,
+> releasing `001, 002, 003`. Every label moved, from one added record. A
+> date column parsed as dates releases nothing at all; the same column
+> re-typed as text by one unparseable record releases every date.
+>
+> To carry the guarantee back to a source file, materialize the frame
+> under a fixed schema that does not depend on the file's contents:
+> explicit `dtype=` for every declared column, and no inferred date
+> parsing. Decoy cannot verify that you did. By the time the fit sees a
+> frame the parse has already happened, and refusing a frame based on the
+> types it happens to have would itself disclose whether the unusual
+> record was present.
+>
+> A declared categorical column releases only its text, boolean, and
+> numeric values. Values of any other type -- dates, timestamps,
+> timedeltas, decimals -- contribute nothing to that column's release,
+> and are counted as nulls. This is a deliberate restriction, not an
+> oversight: a label derived from such a value is a function of how
+> pandas happens to be storing the column, and a column's storage type is
+> a function of ALL its rows, so one added row can change every label at
+> once and break the adjacency the certificate assumes. Cast such a
+> column to strings upstream if you need it released, accepting that the
+> cast is then yours to keep stable. The fit logs a per-column count of
+> what it dropped, so check the log rather than reading an all-null
+> column as a finding about your data.
+>
+> Booleans release as `1` and `0`, not `True` and `False`, and therefore
+> share labels with the integers 1 and 0 in a mixed column. That
+> collision is deliberate: it is what makes a boolean column's labels
+> survive pandas re-typing it to integers or floats, which happens
+> whenever it is concatenated with a partition that holds either.
 >
 > When several independent release IDs are consumed, their privacy losses
 > compose; repeated references to the same release ID are charged once, and

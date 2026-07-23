@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import json
 import math
 import warnings
 from collections import Counter
@@ -579,18 +580,16 @@ class TestRecordwiseNormalization:
             except (OverflowError, ValueError, TypeError):
                 pass
             try:  # concat: boxes the EXISTING values into the joint dtype
-                neighbours.append(
-                    pd.concat([base, pd.Series([added])], ignore_index=True)
-                )
+                neighbours.append(pd.concat([base, pd.Series([added])], ignore_index=True))
             except (OverflowError, ValueError, TypeError):
                 pass
             if not neighbours:
                 continue
 
             for neighbour in neighbours:
-                assert (
-                    _multiset_distance(base_labels, _normalize_categorical(neighbour)) <= 1
-                ), f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
+                assert _multiset_distance(base_labels, _normalize_categorical(neighbour)) <= 1, (
+                    f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
+                )
 
     @pytest.mark.parametrize("n", [8, 40], ids=["small", "wide"])
     @pytest.mark.parametrize(
@@ -690,17 +689,21 @@ class TestRecordwiseNormalization:
             except (OverflowError, ValueError, TypeError):
                 continue
             base_out = _normalize_numeric(base, **bounds)
-            for build in (
-                lambda: pd.Series([*pool, added], dtype=dtype),
-                lambda: pd.concat([base, pd.Series([added])], ignore_index=True),
-            ):
-                try:
-                    neighbour = build()
-                except (OverflowError, ValueError, TypeError):
-                    continue
-                assert (
-                    _multiset_distance(base_out, _normalize_numeric(neighbour, **bounds)) <= 1
-                ), f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
+
+            neighbours = []
+            try:
+                neighbours.append(pd.Series([*pool, added], dtype=dtype))
+            except (OverflowError, ValueError, TypeError):
+                pass
+            try:  # concat: boxes the EXISTING values into the joint dtype
+                neighbours.append(pd.concat([base, pd.Series([added])], ignore_index=True))
+            except (OverflowError, ValueError, TypeError):
+                pass
+
+            for neighbour in neighbours:
+                assert _multiset_distance(base_out, _normalize_numeric(neighbour, **bounds)) <= 1, (
+                    f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
+                )
 
     def test_integers_too_large_for_float64_are_labelled_not_dropped(self):
         """Routing reals through their float64 image means `float(raw)`
@@ -717,6 +720,31 @@ class TestRecordwiseNormalization:
         huge = [10**400, 10**401]
         series = pd.Series(huge, dtype=object)
         assert _normalize_categorical(series) == [str(v) for v in huge]
+
+    def test_normalization_policy_is_identical_whatever_the_frame_holds(self):
+        """The artifact says what normalization releases, in fixed bytes.
+
+        Codex round 8 (MEDIUM): an all-date column releases as if
+        all-null with nothing explaining why, so the artifact should
+        carry the policy. dennis round 8 (MEDIUM-1) supplied the
+        constraint: the policy may be stated but the per-column drop
+        COUNT may not, because the count is an unnoised function of the
+        data. The count goes to the log, where it discloses nothing --
+        the party running the fit already holds the raw frame.
+
+        So this asserts the policy does NOT vary with content. A policy
+        that differed between these two frames would be exactly the
+        channel the drop accounting exists to avoid."""
+        supported = pd.DataFrame({"c": ["a", "b"] * 100})
+        unsupported = pd.DataFrame({"c": [decimal.Decimal("1.5")] * 200})
+        blocks = [
+            fit_dp_snapshot(
+                df, categorical_columns=["c"], numeric_domains={}, epsilon=2.0, delta=1e-6
+            )["dp"]["normalization_policy"]
+            for df in (supported, unsupported)
+        ]
+        assert blocks[0] == blocks[1]
+        assert json.dumps(blocks[0], sort_keys=True) == json.dumps(blocks[1], sort_keys=True)
 
     def test_unlabellable_types_drop_rather_than_raise(self):
         """Codex round 7 named timedelta and datetime columns as moving
