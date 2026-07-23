@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DpVerification
-from decoy_engine.quality.dp_budget import ReleaseLedger
+from decoy_engine.quality.dp_ledger import ReleaseLedger
 
 if TYPE_CHECKING:
     from decoy_engine.plan._generation import ReadSnapshot
@@ -199,6 +199,37 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
                 )
 
 
+def _numeric_shape_matches_a_dp_release(
+    col_snap: dict[str, Any], *, lower: float, upper: float, numeric_bins: int
+) -> bool:
+    """BLOCKER 2 item 3 (cheap shape evidence): an exact `compute_
+    distribution_snapshot` numeric column carries real `min`/`max`/`mean`/
+    `std`/`quantiles` (`quality/snapshot.py:566-575`); a genuine
+    `fit_dp_snapshot` numeric column NEVER does (guide section 4.2.1: `min`/
+    `max` are the declared domain bounds, `mean`/`std` are always `None`,
+    `quantiles` is always `{}`, and `bin_counts` always has exactly
+    `numeric_bins` entries). This does NOT stop a determined forger who
+    replicates that exact shape from scratch -- at that point they have
+    reproduced the whole DP artifact format, not merely attached a `dp`
+    block to an otherwise-ordinary snapshot -- but it does stop the
+    realistic case this BLOCKER demonstrated: an ordinary EXACT snapshot
+    with a fabricated `dp` block bolted on, whose numeric `stats` still
+    carries the exact fit's real min/max/mean/quantiles untouched."""
+    stats = col_snap.get("stats")
+    if not isinstance(stats, dict):
+        return False
+    bin_counts = stats.get("bin_counts")
+    return (
+        stats.get("min") == lower
+        and stats.get("max") == upper
+        and stats.get("mean") is None
+        and stats.get("std") is None
+        and stats.get("quantiles") == {}
+        and isinstance(bin_counts, list)
+        and len(bin_counts) == numeric_bins
+    )
+
+
 def _raise(code: str, *, table_name: Any, col_name: Any, message: str) -> NoReturn:
     raise PlanCompileError(
         code=code,
@@ -347,6 +378,40 @@ def verify_dp_snapshots(
                         "Only columns the fit itself declared DP-eligible are accepted."
                     ),
                 )
+
+            if kind == "numeric":
+                domain = numeric_domains.get(source_column)
+                numeric_bins = dp_block.get("numeric_bins")
+                shape_ok = False
+                if (
+                    isinstance(domain, list)
+                    and len(domain) == 2
+                    and isinstance(domain[0], (int, float))
+                    and isinstance(domain[1], (int, float))
+                    and isinstance(numeric_bins, int)
+                    and not isinstance(numeric_bins, bool)
+                ):
+                    shape_ok = _numeric_shape_matches_a_dp_release(
+                        col_snap,
+                        lower=float(domain[0]),
+                        upper=float(domain[1]),
+                        numeric_bins=numeric_bins,
+                    )
+                if not shape_ok:
+                    _raise(
+                        "dp_snapshot_numeric_shape_mismatch",
+                        table_name=table_name,
+                        col_name=col_name,
+                        message=(
+                            f"statistical column {col_name!r} in table {table_name!r}: source "
+                            f"column {source_column!r} is declared numeric, but its stats block "
+                            "does not have the shape a genuine fit_dp_snapshot release always "
+                            "has (min/max equal to the declared domain bounds, mean/std null, "
+                            "quantiles empty, and len(bin_counts) == numeric_bins). This is the "
+                            "shape of an exact, non-DP snapshot with a copied or hand-written "
+                            "dp block, not a DP release for this column."
+                        ),
+                    )
 
             release_id = dp_block.get("release_id")
             if not isinstance(release_id, str) or not release_id:

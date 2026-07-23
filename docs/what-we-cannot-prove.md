@@ -101,14 +101,34 @@ trusted from the artifact's own claim alone) certifies it:
   under-count a release, and no library would catch it; the mitigations are
   the single call site, refusal of unscheduled/repeated queries, and the
   certificate-count assertion, not a library-enforced backstop.
-- **DP generation requires a DP-verified pinned Plan.** `generate_tables`
-  accepts only a compiled `Plan`; a categorical column's `allow_real_
-  categories` consent gate is bypassed only when the PLAN COMPILER (never
-  the artifact's own `dp` key) has verified the pinned snapshot as a
-  `dps-marginal/v2` release for that specific column. Successful
-  compilation alone does not protect a caller who bypasses the compiled
-  Plan and calls internal generation helpers directly with unvalidated
-  data.
+- **DP generation requires a DP-verified pinned Plan -- and "verified" is
+  a consistency check over a self-declared block, not a proof the
+  release actually happened.** `generate_tables` accepts only a compiled
+  `Plan`; a categorical column's `allow_real_categories` consent gate is
+  bypassed when the PLAN COMPILER's `verify_dp_snapshots` pass certifies
+  the pinned snapshot as a `dps-marginal/v2` release for that specific
+  column. That certification is a PURE FUNCTION of the artifact's OWN
+  `dp` key: it checks that the block is internally consistent (the
+  declared library versions match the running environment, the declared
+  `query_count` recomputes from the declared columns, the declared kind
+  matches the column, cheap shape evidence for numeric columns), never
+  that an actual OpenDP fit produced the numbers it reports. A forged but
+  internally consistent `dp` block -- correct library versions, a
+  `query_count` that recomputes cleanly, a fresh `release_id`, a
+  plausible `epsilon_total` -- attached to an ordinary EXACT snapshot
+  passes every one of those checks and is treated as verified. This was
+  demonstrated directly: an exact `compute_distribution_snapshot` with a
+  fabricated `dp` block bolted on compiles clean and generates real
+  source values into synthetic output. The numeric shape check (comparing
+  `stats.min`/`max`/`mean`/`std`/`quantiles`/`bin_counts` length against
+  what a genuine release can ever look like) catches the realistic case
+  of a stale exact snapshot with a copied-in `dp` block; it does not stop
+  a forger who reproduces that shape from scratch, because at that point
+  they have replicated the entire DP artifact format, not merely attached
+  a block to something else. Successful compilation alone does not
+  protect a caller who bypasses the compiled Plan and calls internal
+  generation helpers directly with unvalidated data, and it does not
+  protect a caller who feeds the compiler a snapshot they wrote by hand.
 - **Independent release IDs compose; the same ID is charged once.**
   Release IDs are privacy-ledger identities, never derived from content,
   timestamps, paths, or row counts. Distinct release IDs referenced by a
@@ -127,17 +147,25 @@ trusted from the artifact's own claim alone) certifies it:
   otherwise-genuine pinned artifact; it does not authenticate that the
   Plan file as a whole came from a trusted compiler, since nothing signs
   the file itself.
-- **The consumed snapshot is trusted to be genuine.** The provenance check
-  reads the snapshot JSON at face value: it defends against honest
-  misconfiguration (pointing a DP-declared pipeline at a non-DP-fit
-  artifact, or an artifact whose internal schedule doesn't match its own
-  declared columns), not against a forged or hand-edited artifact. A DP
-  artifact's recorded `epsilon_total` and `delta_total` are self-declared;
-  Decoy verifies internal consistency and release-ID uniqueness, but a
-  hand-edited artifact can understate what it actually spent. The
-  compile-time ceiling check is a policy control over artifacts Decoy
-  itself produced, not a defense against a caller who edits their own
-  artifacts.
+- **The consumed snapshot is trusted to be genuine, and the consequence is
+  not only budget understatement -- it is real source vocabulary reaching
+  synthetic output.** The provenance check reads the snapshot JSON at
+  face value: it defends against honest misconfiguration (pointing a
+  DP-declared pipeline at a non-DP-fit artifact, or an artifact whose
+  internal schedule doesn't match its own declared columns) and against
+  the realistic case of a stale exact artifact with a copied-in `dp`
+  block (the numeric shape check above), not against a forger who
+  replicates a genuine release's shape from scratch. A DP artifact's
+  recorded `epsilon_total` and `delta_total` are self-declared; Decoy
+  verifies internal consistency and release-ID uniqueness, but a
+  hand-edited artifact can understate what it actually spent -- and, for
+  a categorical column specifically, a forged-but-consistent `dp` block
+  is what grants the `allow_real_categories` exemption, so the consequence
+  of accepting one is not a budget-accounting error but the REAL,
+  non-private category values in that artifact's `top_values` being
+  sampled straight into generated output. The compile-time ceiling check
+  is a policy control over artifacts Decoy itself produced, not a defense
+  against a caller who edits their own artifacts.
 - **DP artifacts reveal exactly the labels and counts deliberately released
   by OpenDP.** The artifact never carries exact row counts, exact distinct
   counts, suppressed label names, suppressed noisy counts, per-query

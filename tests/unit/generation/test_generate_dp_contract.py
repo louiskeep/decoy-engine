@@ -15,6 +15,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -230,32 +231,57 @@ class TestDpCategoricalNowSupported:
         assert exc.value.code == "statistical_real_categories_not_allowed"
 
     def test_dp_exemption_ignores_unverified_dp_key_in_artifact(self, tmp_path):
-        """An attacker (or a stale/hand-edited artifact) cannot forge the
-        exemption by hand-writing a `dp`-shaped key onto an otherwise
-        exact snapshot: the compiler's OWN verification is what grants
-        `dp_verified`, never a truthy key read from the artifact itself."""
-        df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
-        snap = compute_distribution_snapshot(df)
-        snap["dp"] = {"schema": "dps-marginal/v2", "epsilon_total": 1.0, "delta_total": 1e-6}
-        path = _write(tmp_path, "forged.json", snap)
-        cfg = {
-            "global_settings": {"seed": 1},  # dp NOT declared globally
-            "tables": [
-                {
-                    "name": "t",
-                    "row_count": 5,
-                    "generate_columns": [
-                        {"name": "state", "type": "statistical", "snapshot_file": path}
-                    ],
-                }
-            ],
+        """BLOCKER 2 (adversarial finding): `verify_dp_snapshots`'s verdict
+        is a PURE FUNCTION of the artifact's OWN `dp` key -- it checks
+        internal consistency (library versions, query_count recomputation,
+        kind eligibility, cheap numeric shape evidence), never that a real
+        OpenDP fit actually produced the numbers. The reviewer demonstrated
+        this concretely: take an ordinary EXACT `compute_distribution_
+        snapshot`, attach a fabricated but internally-consistent `dp`
+        block (correct library versions, correct `query_count`, a fresh
+        `release_id`, `epsilon_total: 0.01`), and it compiled clean and
+        generated real source values into synthetic output.
+
+        The PREVIOUS version of this test left `global_settings.dp`
+        UNDECLARED, so `verify_dp_snapshots` returned early
+        (`_checks_dp.py:241`) and never examined the forged block at all
+        -- it proved nothing about forgery resistance, only that the
+        ordinary non-DP consent gate still applies when DP isn't even in
+        play. This version declares `global_settings.dp` (so verification
+        actually RUNS against the forgery) and reproduces the exact
+        forged-block shape the reviewer used, on a NUMERIC column. The
+        BLOCKER 2 item 3 shape-evidence check (an exact snapshot's real
+        `mean`/`quantiles` can never coincidentally look like a DP
+        release's always-null/always-empty shape) is what now catches
+        this realistic case: compilation is rejected instead of silently
+        granting the exemption and letting the real `mean`-bearing exact
+        snapshot's synthesis proceed. `docs/what-we-cannot-prove.md`
+        states plainly that this check does not stop a forger who
+        replicates the DP shape from scratch -- only this realistic,
+        demonstrated case."""
+        df = pd.DataFrame({"age": [12.0, 45.0, 67.0, 89.0, 30.0]})
+        snap = compute_distribution_snapshot(df)  # ordinary, EXACT fit
+        assert snap["columns"]["age"]["stats"]["mean"] is not None  # a REAL exact statistic
+        snap["dp"] = {
+            "schema": "dps-marginal/v2",
+            "release_id": uuid.uuid4().hex,
+            "scope": "single-column-marginals",
+            "adjacency": "add-remove-one-row",
+            "epsilon_total": 0.01,
+            "delta_total": 1e-6,
+            "accountant": "dp_accounting PLD composition over OpenDP privacy maps",
+            "opendp_version": _running_opendp_version(),
+            "dp_accounting_version": _running_dp_accounting_version(),
+            "query_count": 2,  # 1 row_count + 1 numeric column + 2*0 categorical: recomputes clean
+            "numeric_bins": 10,
+            "categorical_columns": [],
+            "numeric_domains": {"age": [0.0, 120.0]},
         }
-        # Without global_settings.dp declared, verify_dp_snapshots never
-        # runs at all -- dp_verified is always False regardless of the
-        # artifact's own claims -- so the consent gate still applies.
+        path = _write(tmp_path, "forged_numeric.json", snap)
+        cfg = _dp_cfg(table_columns=[{"name": "age", "type": "statistical", "snapshot_file": path}])
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
-        assert exc.value.code == "statistical_real_categories_not_allowed"
+        assert exc.value.code == "dp_snapshot_numeric_shape_mismatch"
 
     def test_load_spec_never_reads_snapshot_dp_key_for_the_exemption(self, tmp_path):
         """Direct unit proof at the `load_spec` seam: `dp_verified` is a
@@ -353,7 +379,15 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
                 "null_count": 0,
                 "non_null_count": 5,
                 "distinct_count": 5,
-                "stats": {"bin_edges": [0.0, 120.0], "bin_counts": [5]},
+                "stats": {
+                    "bin_edges": [0.0, 120.0],
+                    "bin_counts": [5],
+                    "min": 0.0,
+                    "max": 120.0,
+                    "mean": None,
+                    "std": None,
+                    "quantiles": {},
+                },
             }
         },
         "joints": [],
