@@ -36,11 +36,10 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DpVerification
 from decoy_engine.quality.dp_ledger import ReleaseLedger
+from decoy_engine.quality.snapshot import DP_SNAPSHOT_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from decoy_engine.plan._generation import ReadSnapshot
-
-DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
 
 
 def _dp_declared(config: dict[str, Any]) -> bool:

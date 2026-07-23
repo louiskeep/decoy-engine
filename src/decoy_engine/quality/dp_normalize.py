@@ -36,6 +36,8 @@ of the same value, which a type-keyed allowlist is not.
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import math
 import numbers
 import warnings
@@ -58,17 +60,52 @@ def _unbox(raw: Any) -> Any:
     nothing while the default backend released a full distribution, and
     any caller running `convert_dtypes()` upstream hit it.
 
-    `.item()` is the general form of the fix rather than a pair of
-    special cases: it maps every numpy scalar to its Python equivalent
+    `.item()` maps every numpy scalar to its Python equivalent
     (`bool_`->`bool`, `str_`->`str`, `float32`->`float`, `int64`->`int`,
     `complex128`->`complex`), so the gate sees the value in whatever box
-    pandas happened to choose. Types with no Python equivalent
-    (`datetime64`, `timedelta64`) unbox to objects that still fail the
-    gate, which is the intended disposition.
+    pandas happened to choose.
+
+    `.item()` is TYPE-ERASING, not gate-preserving, and callers must
+    reject datetimelike values BEFORE calling it (round 9, both
+    reviewers). An earlier version of this docstring claimed
+    `datetime64`/`timedelta64` "unbox to objects that still fail the
+    gate". That is false at nanosecond resolution, which is pandas'
+    native one:
+
+        unit  dt64.item() ->                  td64.item() ->
+        s     datetime.datetime(2020, 1, 1)   datetime.timedelta(seconds=5)
+        us    datetime.datetime(2020, 1, 1)   datetime.timedelta(microseconds=5)
+        ns    int 1577836800000000000         int 5
+
+    An `int` passes the real-number gate, so a date column was labelled
+    with its raw epoch-nanosecond integers -- releasing the timestamps
+    themselves -- while the same values boxed as `pandas.Timestamp` were
+    correctly dropped. One added row moved ~801 labels.
+
+    This is why `.item()` was the wrong generalization of the two
+    special cases it replaced: it erases "this is a time quantity" into
+    `int` for exactly the resolution pandas uses, and the gate cannot
+    see what it can no longer distinguish.
     """
     if isinstance(raw, np.generic):
         return raw.item()
     return raw
+
+
+def _is_datetimelike(raw: Any) -> bool:
+    """A time quantity has no categorical label and no numeric value.
+
+    Checked BEFORE any unboxing, so the answer cannot depend on the
+    resolution pandas chose (see `_unbox`). `pandas.Timestamp` and
+    `pandas.Timedelta` subclass the `datetime` types; `numpy.datetime64`
+    and `numpy.timedelta64` are caught by their dtype kind, as
+    `_is_complex` catches complex widths. Callers run this inside their
+    conversion guard, so a value whose `dtype` access misbehaves drops
+    the row rather than escaping.
+    """
+    if isinstance(raw, (datetime.date, datetime.time, datetime.timedelta)):
+        return True
+    return getattr(getattr(raw, "dtype", None), "kind", None) in ("M", "m")
 
 
 def _is_complex(raw: Any) -> bool:
@@ -142,6 +179,11 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
                 # inert code that no test can falsify is a liability.
                 # Anything that adds a type gate here must add `_unbox`
                 # with it, or it reintroduces the nullable-boolean drop.
+                if _is_datetimelike(raw):
+                    # float(np.datetime64(...,'ns')) SUCCEEDS and returns
+                    # the epoch integer, so this path needs its own
+                    # rejection -- `_unbox` would not have helped.
+                    continue
                 if _is_complex(raw):
                     # dennis round 8 (BLOCKER-4): dropping every complex
                     # was recordwise but not coercion-invariant. ONE
@@ -241,6 +283,8 @@ def _canonical_label(raw: Any) -> str:
 
     Non-finite floats render from the image too, so `inf` stays "inf".
     """
+    if _is_datetimelike(raw):
+        raise TypeError("datetimelike categorical value")
     raw = _unbox(raw)
     if isinstance(raw, str):
         return raw
@@ -250,7 +294,7 @@ def _canonical_label(raw: Any) -> str:
         if raw.imag != 0:
             raise TypeError("complex categorical value with a nonzero imaginary part")
         raw = raw.real
-    if not isinstance(raw, numbers.Real):
+    if not isinstance(raw, (numbers.Real, decimal.Decimal)):
         raise TypeError(f"unsupported categorical value type: {type(raw).__name__}")
     try:
         as_float = float(raw)

@@ -61,9 +61,11 @@ from decoy_engine.quality.dp_budget import (
 )
 from decoy_engine.quality.dp_normalize import _normalize_categorical, _normalize_numeric
 from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
-from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
+from decoy_engine.quality.snapshot import (
+    DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
+    DP_SNAPSHOT_SCHEMA_VERSION,
+)
 
-DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
 DP_RELEASE_SCOPE = "single-column-marginals"
 DP_ADJACENCY = "add-remove-one-row"
 DP_ACCOUNTANT_LABEL = "dp_accounting PLD composition over OpenDP privacy maps"
@@ -92,38 +94,53 @@ _DP_CATEGORICAL_DTYPE_LABEL = "object"
 # would be an unnoised channel, which is precisely why the per-column
 # drop COUNT below goes to the log and never in here.
 _DP_NORMALIZATION_POLICY = {
-    "categorical_labels": "str|bool|real, rendered from the float64 image",
-    "categorical_unsupported": "dropped",
+    "categorical_labels": (
+        "text kept verbatim; boolean, real, decimal and zero-imaginary complex "
+        "rendered from the float64 image; integers beyond float64 range rendered exactly"
+    ),
+    "categorical_unsupported": "released as null (datetime, timedelta, and any other type)",
     "numeric_values": "float64, non-finite clamped to the declared bound",
 }
 
 _logger = logging.getLogger(__name__)
 
 
-def _log_unlabellable_drops(col: str, series: pd.Series, labels: list[str]) -> None:
-    """Report unlabellable cells to the OPERATOR, never to the artifact.
+def _log_normalization_policy() -> None:
+    """State the policy once per fit, unconditionally.
 
-    dennis round 8 (MEDIUM-1). Dropping is accounted correctly -- a
-    dropped row is indistinguishable from a null row in every released
-    field -- and that is exactly what makes losing a whole column
-    invisible: an all-date or nullable-boolean column releases a
-    well-formed artifact asserting the column is 100% null, and the
-    operator reads it as a data-quality finding about their own data.
+    Round 8 shipped this as a per-column count of dropped values, and
+    round 9 blocked it twice over.
 
-    This is safe only because it is LOCAL. The party running the fit
-    already holds the raw frame, so telling them what their own frame
-    contained discloses nothing they cannot see. Putting the same number
-    in the artifact, or branching any behaviour on it, would be an
-    unnoised function of the data -- so this must stay a log line.
+    It was an observable (Codex): the record was emitted only when a drop
+    occurred, so its presence is a probability-0-vs-1 function of the
+    data, carrying an exact count. The round-8 rationale -- that the
+    fitting party already holds the frame, so a local signal discloses
+    nothing -- does not hold, because a logger is not intrinsically
+    local; a caller can attach a centralized handler. It also
+    contradicted this program's own rule that no scalar may "warn, or
+    otherwise become observable".
+
+    It reopened C-B4 (dennis): the count called `series.notna()`, a
+    vectorized nullness check that runs each value's own dunders, from
+    OUTSIDE the conversion guard. `pandas.isna(Decimal("sNaN"))` raises
+    `InvalidOperation`, so a one-row neighbour made the whole fit raise
+    where its neighbour emitted an artifact -- the exact fit-success
+    channel `dp_normalize` exists to close, reintroduced by the
+    remediation that was meant to improve the operator's signal.
+
+    So the message is now fixed text on every fit: it never reads a
+    value, never counts, and never branches. The operator learns that
+    unlabellable values are released as nulls and can pair that with a
+    column's own released `non_null_count` -- which is noised, so it is
+    not a channel either. An exact per-column diagnostic, if one is ever
+    wanted, belongs in a separately invoked, explicitly non-DP audit
+    operation, never as a side effect of the protected fit.
     """
-    dropped = int(series.notna().sum()) - len(labels)
-    if dropped > 0:
-        _logger.warning(
-            "dp fit: column %r dropped %d non-null value(s) with no categorical label "
-            "(only str/bool/real values are labelled). They are released as nulls.",
-            col,
-            dropped,
-        )
+    _logger.info(
+        "dp fit: categorical columns release only text, boolean and numeric values; "
+        "datetimes, timedeltas and other types are released as nulls. This message is "
+        "fixed and does not indicate whether any value in this frame was affected."
+    )
 
 
 class DpError(Exception):
@@ -498,9 +515,10 @@ def _fit_dp_snapshot_with_backend(
             },
         }
 
+    _log_normalization_policy()
+
     for col in categorical_cols:
         cat_values = _normalize_categorical(frame[col])
-        _log_unlabellable_drops(col, frame[col], cat_values)
         grouped_raw, total_raw = session.release_categorical(
             f"categorical_grouped:{col}", f"categorical_total:{col}", cat_values
         )

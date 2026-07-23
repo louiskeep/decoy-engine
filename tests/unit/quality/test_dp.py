@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import decimal
 import json
+import logging
 import math
 import warnings
 from collections import Counter
@@ -22,6 +23,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.quality.dp import (
+    _DP_NORMALIZATION_POLICY,
     DpError,
     _fit_dp_snapshot_with_backend,
     _normalize_categorical,
@@ -132,6 +134,16 @@ _ADJACENCY_POOLS: dict[str, tuple[list, bool]] = {
     "ext_Float64": ([1.5, 2.5], False),
     "ext_string": (["a", "b"], False),
     "complex_real": ([1 + 0j, 2 + 0j], False),
+    # dennis round 9: the day-resolution `datetime` pool above was the
+    # ONE unit that dodges the defect. `.item()` returns a datetime for
+    # second and microsecond resolution but an INT for nanosecond, which
+    # is pandas' native one, so only the ns pools falsify the gate.
+    "datetime_ns": ([np.datetime64("2020-01-01", "ns"), np.datetime64("2020-01-02", "ns")], False),
+    "datetime_us": ([np.datetime64("2020-01-01", "us"), np.datetime64("2020-01-02", "us")], False),
+    "datetime_s": ([np.datetime64("2020-01-01", "s"), np.datetime64("2020-01-02", "s")], False),
+    "timedelta_ns": ([np.timedelta64(5, "ns"), np.timedelta64(7, "ns")], False),
+    "timedelta_us": ([np.timedelta64(5, "us"), np.timedelta64(7, "us")], False),
+    "decimal_mixed": ([decimal.Decimal("1.5"), decimal.Decimal("2")], True),
 }
 
 # Extension dtypes must be constructed with an explicit dtype; the plain
@@ -721,6 +733,81 @@ class TestRecordwiseNormalization:
         series = pd.Series(huge, dtype=object)
         assert _normalize_categorical(series) == [str(v) for v in huge]
 
+    def test_datetimelike_values_are_rejected_at_every_resolution(self):
+        """Round 9, both reviewers: `.item()` is type-ERASING.
+
+        `np.datetime64(...,"ns").item()` returns an `int` (epoch
+        nanoseconds), and an `int` passes the real-number gate, so a date
+        column was labelled with its raw epoch integers -- releasing the
+        timestamps themselves in a privacy product -- while the same
+        values boxed as `pandas.Timestamp` were correctly dropped. The
+        numeric path broke independently, because
+        `float(np.datetime64(...,"ns"))` also succeeds.
+
+        Resolution is the axis, so it is the axis under test. `s` and
+        `us` unbox to `datetime.datetime` and were always rejected; only
+        `ns`, which is pandas' native resolution, unboxed to `int`."""
+        for unit in ("s", "ms", "us", "ns"):
+            stamps = pd.Series([np.datetime64(f"2020-01-0{1 + i % 3}", unit) for i in range(30)])
+            deltas = pd.Series([np.timedelta64(i % 3, unit) for i in range(30)])
+            for series in (stamps, deltas):
+                assert _normalize_categorical(series) == [], f"labelled at {unit}"
+                assert _normalize_numeric(series, lower=0.0, upper=1e20) == [], (
+                    f"converted at {unit}"
+                )
+
+        # The pandas and Python boxes of the same quantities, which were
+        # always rejected -- the disposition must not depend on the box.
+        boxed = pd.Series(
+            [pd.Timestamp("2020-01-01"), pd.Timedelta(1, "D"), datetime.date(2020, 1, 1)],
+            dtype=object,
+        )
+        assert _normalize_categorical(boxed) == []
+
+    def test_complex_is_labelled_only_when_its_imaginary_part_is_zero(self):
+        """dennis round 9 (MEDIUM-1): a surviving mutant.
+
+        Replacing `if raw.imag != 0:` with `if False:` -- so a genuinely
+        complex value gets its real part labelled instead of dropped --
+        passed all 639 tests. The numeric twin died on the matrix; the
+        categorical side had pure coverage asymmetry. Both directions are
+        pinned here in one place."""
+        series = pd.Series([1 + 0j, 2 + 0j, 3 + 4j], dtype=object)
+        assert _normalize_categorical(series) == ["1", "2"]
+        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.0, 2.0]
+
+    def test_decimal_is_treated_the_same_by_both_normalizers(self):
+        """dennis round 9 (MEDIUM-2): `Decimal` is `numbers.Number` but
+        not `numbers.Real`, so the categorical gate dropped every one
+        while the numeric path converted them happily -- two normalizers
+        disagreeing about the same value on an ABC-registration accident
+        rather than any boxing argument. `float(Decimal)` is exactly the
+        float64-image rule already in use."""
+        series = pd.Series([decimal.Decimal("1.5"), decimal.Decimal("2")], dtype=object)
+        assert _normalize_categorical(series) == ["1.5", "2"]
+        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.5, 2.0]
+
+    def test_the_policy_log_fires_unconditionally(self, caplog):
+        """dennis round 9: mutation M9 made the logger inert and survived
+        all 639 tests, because nothing referenced it.
+
+        The message must fire on EVERY fit and must not vary with
+        content: a record emitted only when a drop occurred is a
+        probability-0-vs-1 observable, which is what round 9 blocked."""
+        clean = pd.DataFrame({"c": ["a", "b"] * 100})
+        dropped = pd.DataFrame({"c": [pd.Timestamp("2020-01-01")] * 200})
+        records = []
+        for df in (clean, dropped):
+            caplog.clear()
+            with caplog.at_level(logging.INFO, logger="decoy_engine.quality.dp"):
+                fit_dp_snapshot(
+                    df, categorical_columns=["c"], numeric_domains={}, epsilon=2.0, delta=1e-6
+                )
+            emitted = [r.getMessage() for r in caplog.records if "dp fit:" in r.getMessage()]
+            assert emitted, "the policy line must fire on every fit"
+            records.append(emitted)
+        assert records[0] == records[1], "the log must not vary with frame content"
+
     def test_normalization_policy_is_identical_whatever_the_frame_holds(self):
         """The artifact says what normalization releases, in fixed bytes.
 
@@ -746,6 +833,19 @@ class TestRecordwiseNormalization:
         assert blocks[0] == blocks[1]
         assert json.dumps(blocks[0], sort_keys=True) == json.dumps(blocks[1], sort_keys=True)
 
+        # Codex round 9 (MEDIUM): content-independence is not
+        # correctness. Replacing the whole policy with
+        # {"categorical_labels": "everything is retained", ...} passed
+        # all 507 focused tests, because nothing asserted what it SAYS.
+        # Pin the exact dict, and assert each behaviour it claims.
+        assert blocks[0] == _DP_NORMALIZATION_POLICY
+        assert _normalize_categorical(pd.Series(["a"], dtype=object)) == ["a"]  # text verbatim
+        assert _normalize_categorical(pd.Series([True], dtype=object)) == ["1"]  # bool -> image
+        assert _normalize_categorical(pd.Series([decimal.Decimal("1.5")], dtype=object)) == ["1.5"]
+        assert _normalize_categorical(pd.Series([1 + 0j], dtype=object)) == ["1"]  # zero-imaginary
+        assert _normalize_categorical(pd.Series([10**400], dtype=object)) == [str(10**400)]  # exact
+        assert _normalize_categorical(pd.Series([pd.Timestamp("2020-01-01")], dtype=object)) == []
+
     def test_unlabellable_types_drop_rather_than_raise(self):
         """Codex round 7 named timedelta and datetime columns as moving
         every label across a coercion: a `timedelta64` column labels
@@ -765,7 +865,10 @@ class TestRecordwiseNormalization:
             ["a", datetime.timedelta(days=1), pd.Timestamp("2020-01-01"), decimal.Decimal("1.5")],
             dtype=object,
         )
-        assert _normalize_categorical(mixed) == ["a"]  # total: no raise
+        # `Decimal` survives since round 9 (dennis MEDIUM-2): it has a
+        # float64 image like any other number, and dropping it was an
+        # ABC-registration accident rather than a boxing argument.
+        assert _normalize_categorical(mixed) == ["a", "1.5"]  # total: no raise
 
         # The coercion Codex demonstrated, now invariant because both
         # boxings drop.

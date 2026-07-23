@@ -43,9 +43,15 @@ consumed by a compiled, DP-verified Plan.
 > file can change how every other value in that column is parsed: a
 > column of zero-padded account numbers reads as integers and releases
 > `1, 2, 3`, and one non-numeric record later re-types it as text,
-> releasing `001, 002, 003`. Every label moved, from one added record. A
-> date column parsed as dates releases nothing at all; the same column
-> re-typed as text by one unparseable record releases every date.
+> releasing `001, 002, 003`. Every label moved, from one added record.
+>
+> This caveat covers PARSING ONLY, and is a precondition on the caller.
+> It does not excuse anything that happens after a frame exists. Once
+> you hand a DataFrame to the fit, releasing the same value identically
+> whatever container pandas has put it in is Decoy's obligation, not
+> yours -- if two frames differing by one row disagree about a value
+> they both contain, that is a defect here and not an instance of the
+> caveat above.
 >
 > To carry the guarantee back to a source file, materialize the frame
 > under a fixed schema that does not depend on the file's contents:
@@ -56,17 +62,23 @@ consumed by a compiled, DP-verified Plan.
 > record was present.
 >
 > A declared categorical column releases only its text, boolean, and
-> numeric values. Values of any other type -- dates, timestamps,
-> timedeltas, decimals -- contribute nothing to that column's release,
-> and are counted as nulls. This is a deliberate restriction, not an
-> oversight: a label derived from such a value is a function of how
-> pandas happens to be storing the column, and a column's storage type is
-> a function of ALL its rows, so one added row can change every label at
-> once and break the adjacency the certificate assumes. Cast such a
-> column to strings upstream if you need it released, accepting that the
-> cast is then yours to keep stable. The fit logs a per-column count of
-> what it dropped, so check the log rather than reading an all-null
-> column as a finding about your data.
+> numeric values -- including decimals, which are released as their
+> numeric value. Dates, timestamps and timedeltas contribute nothing to
+> that column's release and are counted as nulls. This is a deliberate
+> restriction, not an oversight: a label derived from a time quantity is
+> a function of how pandas happens to be storing the column, and a
+> column's storage type is a function of ALL its rows, so one added row
+> could otherwise change every label at once and break the adjacency the
+> certificate assumes. Cast such a column to strings upstream if you need
+> it released, accepting that the cast is then yours to keep stable.
+>
+> A fully dropped column therefore reports close to zero non-null values,
+> which is indistinguishable from a genuinely empty column -- deliberately
+> so, since a signal that appeared only when values were dropped would
+> itself disclose that they were. Every fit logs the policy above
+> unconditionally, whether or not anything was affected. If a column you
+> expect to be populated reports no values, check its type against this
+> paragraph before reading it as a finding about your data.
 >
 > Booleans release as `1` and `0`, not `True` and `False`, and therefore
 > share labels with the integers 1 and 0 in a mixed column. That

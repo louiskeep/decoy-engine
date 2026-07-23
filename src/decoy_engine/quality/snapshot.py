@@ -75,6 +75,13 @@ from decoy_engine.internal.pandas_compat import canonical_dtype_label
 
 DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
 
+# Owned here rather than in `quality/dp.py` so `plan` can check it
+# without importing the fit (which pulls OpenDP into plan compile).
+# dennis round 9 (LOW-1): it was duplicated as two independent
+# literals with nothing pinning them equal, so a one-sided bump would
+# silently reject every artifact.
+DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
+
 
 class DistributionSnapshotError(Exception):
     """Fit-time contract violation this module cannot silently degrade past.
