@@ -76,8 +76,10 @@ consumed by a compiled, DP-verified Plan.
 > record was present.
 >
 > A declared categorical column releases only its text, boolean, and
-> numeric values -- including decimals, which are released as their
-> numeric value. Dates, timestamps and timedeltas contribute nothing to
+> numeric values -- including decimals, which are released from their
+> float64 image like any other real, so a decimal too large for float64
+> releases as `inf` rather than its exact value. Dates, timestamps and
+> timedeltas contribute nothing to
 > that column's release and are counted as nulls. This is a deliberate
 > restriction, not an oversight: a label derived from a time quantity is
 > a function of how pandas happens to be storing the column, and a
@@ -119,13 +121,20 @@ interrupt a long fit and a caller can still exit the process. A cell holding
 an object whose `__str__` or `__float__` raises one of those two can
 therefore still make a fit terminate where its one-row neighbour succeeded.
 
+The same boundary covers a `DataFrame` whose own container runs caller code:
+a `Series` subclass whose `array` or length depends on the rows it holds is
+as live as an object in a cell, and for such a frame the fit raises rather
+than silently releasing an almost-entirely-null column. Neither of these
+arises from a frame built by reading a file; both require the caller to put
+executable behaviour into the data structure itself.
+
 That is the whole residual, and both cross-model reviewers judged it out of
 scope, as do we: such a value is not data, it is code that hijacks process
 control, and a caller who can place it in the frame already controls the
-process. Catching those two as well would be the worse trade, because it
-would swallow a genuine Ctrl-C during a long fit. We state the boundary
-rather than leave it implicit, because "no row content can affect fit
-success" is otherwise read as unconditional.
+process. Catching `KeyboardInterrupt` and `SystemExit` as well would be the
+worse trade, because it would swallow a genuine Ctrl-C during a long fit. We
+state the boundary rather than leave it implicit, because "no row content can
+affect fit success" is otherwise read as unconditional.
 
 **The single-threaded boundary.** Totality also rests on suppressing warnings,
 via `warnings.catch_warnings()` plus `simplefilter("ignore")`. That mechanism

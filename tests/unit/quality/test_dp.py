@@ -16,6 +16,7 @@ import itertools
 import json
 import logging
 import math
+import numbers
 import warnings
 from collections import Counter
 from collections.abc import Sequence
@@ -1084,7 +1085,7 @@ class TestRecordwiseNormalization:
                 "trailing NUL before the fit sees it; "
                 "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
                 "image; an integer or rational too large for float64 rendered by its own exact "
-                "repr instead, up to the interpreter's decimal-conversion limit; a decimal or "
+                "string form instead, up to the interpreter's decimal-conversion limit; a decimal or "
                 "extended-precision real too large for float64 released as the infinity its "
                 "float64 image becomes; NaN released as null"
             ),
@@ -1509,40 +1510,121 @@ class TestTotalityGuardStructure:
         Codex round 10's BLOCKER: `float()` on the numeric path has no type
         gate ahead of it, so a cell whose `__float__` raised a direct
         `BaseException` subclass escaped and made fit success a
-        probability-0-versus-1 observable."""
+        probability-0-versus-1 observable.
+
+        Codex round 12 caught that the categorical half of this was inert:
+        an object that merely defines a raising `__str__` never reaches
+        `str()`, because `_canonical_label` rejects it at the type gate
+        first, so `__str__` is never called and the categorical guard is
+        never exercised. The value has to be a registered `numbers.Real`
+        whose `__float__` raises, which reaches the `float()` inside
+        `_canonical_label`, past the gate."""
 
         class Sentinel(BaseException):
             pass
 
-        class Hostile:
+        class NumericHostile:
             def __float__(self):
-                raise Sentinel("from __float__")
+                raise Sentinel("from __float__ on the numeric path")
 
-            def __str__(self):
-                raise Sentinel("from __str__")
+        @numbers.Real.register
+        class CategoricalHostile:
+            # Registered so it passes `_canonical_label`'s `numbers.Real`
+            # gate and reaches its `float()`; that is the only categorical
+            # route to a BaseException at the guard.
+            def __float__(self):
+                raise Sentinel("from __float__ inside _canonical_label")
 
-        numeric = pd.Series([1.0, 2.0, Hostile()], dtype=object)
+        numeric = pd.Series([1.0, 2.0, NumericHostile()], dtype=object)
         assert _normalize_numeric(numeric, lower=0.0, upper=10.0) == [1.0, 2.0]
-        categorical = pd.Series(["a", "b", Hostile()], dtype=object)
+        categorical = pd.Series(["a", "b", CategoricalHostile()], dtype=object)
         assert _normalize_categorical(categorical) == ["a", "b"]
 
     @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
     def test_an_interrupt_from_a_cell_still_propagates(self, interrupt):
         """Kills the mutant dropping `KeyboardInterrupt`/`SystemExit` from
-        the re-raise tuples. Totality is deliberately NOT absolute here: an
-        operator must be able to stop a long fit and a caller must be able
-        to exit the process. That residual is a documented domain
-        restriction, so it needs a test as much as the guard does."""
+        the two normalizer re-raise tuples. Totality is deliberately NOT
+        absolute here: an operator must be able to stop a long fit and a
+        caller must be able to exit the process. That residual is a
+        documented domain restriction, so it needs a test as much as the
+        guard does.
 
-        class Interrupter:
+        Both paths, because they have separate guards (Codex round 12): the
+        numeric one via `float()`, the categorical one via a registered
+        `numbers.Real` whose `__float__` raises, since a plain object is
+        rejected at the type gate before any dunder that could raise runs."""
+
+        class NumericInterrupter:
             def __float__(self):
                 raise interrupt
 
-            def __str__(self):
+        @numbers.Real.register
+        class CategoricalInterrupter:
+            def __float__(self):
                 raise interrupt
 
         with pytest.raises(interrupt):
-            _normalize_numeric(pd.Series([1.0, Interrupter()], dtype=object), lower=0.0, upper=1.0)
+            _normalize_numeric(
+                pd.Series([1.0, NumericInterrupter()], dtype=object), lower=0.0, upper=1.0
+            )
+        with pytest.raises(interrupt):
+            _normalize_categorical(pd.Series(["a", CategoricalInterrupter()], dtype=object))
+
+    def test_len_that_raises_propagates_like_array(self):
+        """`count = len(series)` shares the setup's fail-loud disposition
+        with `series.array`: both are content-dependent container code, both
+        propagate rather than silently degrade. The `array` test covers one
+        half; this covers the length so a future guard around only one of
+        them cannot reintroduce the silent-null release on the other."""
+
+        class LenFails(pd.Series):
+            boom = False
+
+            def __len__(self):
+                if type(self).boom:
+                    raise SystemError("len depends on nothing this test controls")
+                return super().__len__()
+
+        series = LenFails([1.0, 2.0, 3.0])
+        LenFails.boom = True
+        try:
+            with pytest.raises(SystemError):
+                _normalize_numeric(series, lower=0.0, upper=10.0)
+        finally:
+            LenFails.boom = False
+
+    def test_a_consumer_exception_thrown_into_cells_propagates(self):
+        """Kills the mutant that wraps the `yield` in a guard which
+        preserves finalization but swallows a consumer's `throw` (Codex
+        round 12). The `yield` is outside every guard precisely so an
+        exception injected by the consumer is the consumer's, not a fetch
+        failure to be dropped."""
+        generator = _cells(pd.Series([1.0, 2.0, 3.0], dtype=object))
+        next(generator)
+        with pytest.raises(ValueError):
+            generator.throw(ValueError("injected by the consumer"))
+
+    def test_a_container_cell_drops_under_every_boxing(self):
+        """Codex round 12 (BLOCKER): an Arrow `list` column arrives cell by
+        cell as a Python `list`, which `float()` rejects, so it drops. Add
+        one null and pandas widens to `object`, reboxing each `list` as a
+        length-1 `ndarray`, and `float(np.array([1]))` SUCCEEDS -- distance
+        N on an N-row column against a `map(1)` certificate. Both boxings
+        must drop, on both paths."""
+        for arrow_type, value in (
+            (pa.list_(pa.int64()), 1),
+            (pa.large_list(pa.int64()), 2),
+            (pa.list_(pa.float64()), 1.5),
+        ):
+            base = pd.Series(
+                pd.arrays.ArrowExtensionArray(pa.array([[value], [value]], type=arrow_type))
+            )
+            neighbour = pd.concat([base, pd.Series([None])], ignore_index=True)
+            assert base.array[0].__class__ is not neighbour.array[0].__class__  # boxing changed
+            assert _normalize_numeric(base, lower=0.0, upper=1e9) == []
+            assert _normalize_numeric(neighbour, lower=0.0, upper=1e9) == []
+            assert _normalize_categorical(base) == []
+            assert _normalize_categorical(neighbour) == []
 
     @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
     def test_an_interrupt_from_the_FETCH_also_propagates(self, interrupt):
@@ -1580,11 +1662,11 @@ class TestTotalityGuardStructure:
             _normalize_numeric(series, lower=0.0, upper=10.0)
 
     def test_cells_stays_a_conforming_generator_when_finalized_early(self):
-        """Kills the mutant dropping `GeneratorExit` from `_cells`'s
-        re-raise tuple. That guard wraps the `yield`, so swallowing a
-        finalization `GeneratorExit` and continuing makes CPython raise
-        `RuntimeError: generator ignored GeneratorExit`, and every consumer
-        that stops early sees it."""
+        """Kills the mutant moving the `yield` back inside the fetch guard.
+        The `yield` is outside every guard, so a finalization `GeneratorExit`
+        propagates from it; if a guard wrapped the `yield` and swallowed it,
+        CPython would raise `RuntimeError: generator ignored GeneratorExit`
+        and every consumer that stops early would see it."""
         series = pd.Series([1.0, 2.0, 3.0, 4.0], dtype=object)
 
         generator = _cells(series)
@@ -1634,26 +1716,35 @@ class TestTotalityGuardStructure:
         assert list(_cells(series)) == [1.0, 2.0]
         assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.0, 2.0]
 
-    def test_setup_that_depends_on_content_yields_nothing_rather_than_raising(self):
-        """Codex round 11: `series.array` and `len(series)` ran before the
-        `try`. Both are calls on a caller-supplied object, so a container
-        whose `array` raises only when a sentinel row is present aborted the
-        fit on ordinary integer CELLS -- reaching the fit-success channel
-        with no unusual cell at all, which the documented domain restriction
-        does not cover."""
-        seen: list[int] = []
+    def test_content_dependent_setup_fails_loud_rather_than_releasing_nulls(self):
+        """The disposition for a container whose setup runs content-dependent
+        code, decided across three rounds.
+
+        Codex round 11 wanted `series.array`/`len(series)` guarded so such a
+        container did not abort the fit. Codex round 12 and dennis round 12
+        both showed the guard I added was worse than the disease: swallowing
+        the failure and returning [] emits an artifact asserting the column
+        is ~100% null, which is both a lie about the data and an unbounded
+        multiset difference from the frame's one-row neighbour dressed up as
+        success. The input is out of domain either way -- a container whose
+        setup executes caller code is as live as an object in a cell (see
+        `dp_normalize`'s DOMAIN block) -- so the choice is between two
+        out-of-domain dispositions, and failing LOUD is the honest one: it
+        never emits a lying release, and it matches how a cell-dunder
+        interrupt is handled. So the setup is unguarded and the exception
+        propagates."""
 
         class SetupFails(pd.Series):
             @property
             def array(self):
-                seen.append(len(self))
                 if len(self) > 2:
                     raise SystemError("setup depends on row count")
                 return pd.Series.array.fget(self)
 
+        with pytest.raises(SystemError):
+            _normalize_numeric(SetupFails([1.0, 2.0, 3.0]), lower=0.0, upper=10.0)
+        # A frame whose setup does NOT raise is read normally.
         assert _normalize_numeric(SetupFails([1.0, 2.0]), lower=0.0, upper=10.0) == [1.0, 2.0]
-        assert _normalize_numeric(SetupFails([1.0, 2.0, 3.0]), lower=0.0, upper=10.0) == []
-        assert seen == [2, 3]
 
 
 class TestReleaseIds:

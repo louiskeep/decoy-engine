@@ -45,21 +45,32 @@ therefore outside the domain and is the one residual case.
 
 For completeness, the `BaseException` enumeration is: `KeyboardInterrupt`
 and `SystemExit` are re-raised everywhere, `GeneratorExit` additionally in
-`_cells` because that guard wraps a `yield`, and `asyncio.CancelledError`
-is currently swallowed -- inert on this synchronous call path, and listed
-so the next reader does not have to rediscover the set.
+`_cells`'s FETCH guard (so a `GeneratorExit` raised by an array's
+`__getitem__` propagates rather than being swallowed as a dropped row;
+`_cells` keeps its `yield` outside every guard, so a finalization
+`GeneratorExit` propagates from there and the generator stays conforming),
+and `asyncio.CancelledError` is currently swallowed -- inert on this
+synchronous call path, and listed so the next reader does not have to
+rediscover the set.
 
 That residual is a caller precondition, not a defect we can close, and
 it is narrow: reaching it requires a live Python object carrying
-executable behaviour in a frame cell. No file-based ingestion path can
-produce one -- Parquet, CSV, JSON and Arrow all yield values, and the
-compiler reads plans with `yaml.safe_load` and has no pickle path -- so
-a caller who can place such an object in the frame is already executing
+executable behaviour in a frame cell, OR a `Series` subclass whose own
+`array`/`__len__` runs caller code that depends on the rows (the frame's
+container is then as live as a cell would be). No file-based ingestion
+path produces either -- Parquet, CSV, JSON and Arrow all yield values in
+a plain `Series`, and the compiler reads plans with `yaml.safe_load` and
+has no pickle path -- so a caller who can place one is already executing
 code in this process and has strictly greater capability than the
 channel provides. This is the same shape as the parse-time dtype
 precondition in `docs/what-we-cannot-prove.md`: what happens before a
-frame exists is the caller's, and everything reachable from a frame
-built out of real data is ours.
+frame exists is the caller's, and everything reachable from a plain
+frame built out of real data is ours. For such an out-of-domain frame we
+make no claim at all: a container whose setup runs content-dependent code
+makes the fit RAISE (fail loud), which is the honest disposition, because
+silently reading no rows would emit an artifact claiming the column is
+almost entirely null. The guarantee does not extend to a frame that is
+not data, and no plain frame from a file reaches this.
 """
 
 from __future__ import annotations
@@ -154,6 +165,30 @@ def _is_complex(raw: Any) -> bool:
     return getattr(getattr(raw, "dtype", None), "kind", None) == "c"
 
 
+def _is_container(raw: Any) -> bool:
+    """A cell holding a SEQUENCE is not a scalar, whatever its length.
+
+    Codex round 12 (BLOCKER): an Arrow `list<int64>` column arrives cell by
+    cell as a Python `list`, which `float()` rejects, so the row drops. Add
+    one null and pandas widens the column to `object`, reboxing every
+    existing cell as a length-1 `ndarray` -- and `float(np.array([1]))`
+    SUCCEEDS, returning the sole element. The same logical value therefore
+    dropped in one boxing and converted in the other, distance N on an
+    N-row column, while OpenDP is certified with `map(1)`. The categorical
+    path already dropped both boxings at its type gate; the numeric path
+    only calls `float()`, so it needed this.
+
+    `numpy.ndim` is the boxing-invariant test: 0 for every scalar this
+    module accepts (Python and numpy numbers, `str`, `bytes`, `Decimal`,
+    `Fraction`, `complex`), and >= 1 for `list`, `tuple` and `ndarray` at
+    any length. Reaches nothing pandas can turn a scalar INTO, so a real
+    value cannot be dropped by it. Callers run this inside their conversion
+    guard, so a value whose length access misbehaves drops the row rather
+    than escaping.
+    """
+    return np.ndim(raw) != 0
+
+
 def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list[float]:
     """Total, recordwise projection (guide section 4.2/7.1): every row
     contributes at most one element. Conversion failures and NaN become
@@ -211,6 +246,11 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
                 # falsify is a liability, so it stays out.
                 # Anything that adds a type gate here must add `_unbox`
                 # with it, or it reintroduces the nullable-boolean drop.
+                if _is_container(raw):
+                    # A list/ndarray cell is not a scalar; drop it whatever
+                    # its boxing (Codex round 12). Must precede `float()`,
+                    # which accepts a length-1 ndarray.
+                    continue
                 if _is_datetimelike(raw):
                     # float(np.datetime64(...,'ns')) SUCCEEDS and returns
                     # the epoch integer, so this path needs its own
@@ -297,21 +337,22 @@ def _cells(series: pd.Series) -> Iterator[Any]:
     backend-dependent code path, which is the defect class that produced
     six of the last ten review rounds.
     """
-    try:
-        values = series.array
-        count = len(series)
-    except (KeyboardInterrupt, SystemExit):
-        raise
-    except BaseException:  # broad by design: totality, see THE DOMAIN above
-        # Codex round 11: setup was outside every guard. `series.array` and
-        # `len(series)` are attribute and dunder calls on a caller-supplied
-        # object, and a Series subclass whose `array` property raises only
-        # when a sentinel row is present made the whole fit abort on ordinary
-        # integer cells -- a fit-success observable reached without any
-        # unusual CELL, which the documented domain restriction (about live
-        # objects in cells) does not cover. A frame we cannot read at all
-        # yields no rows rather than raising.
-        return
+    # Setup is deliberately NOT guarded. `series.array` and `len(series)`
+    # never raise for any real dtype -- verified across every arrow width
+    # and temporal resolution, huge decimals, list/struct arrows, sparse,
+    # interval, period, datetimetz, categorical and empty -- so no in-domain
+    # frame reaches an exception here, and there is no fit-success channel to
+    # guard against. A `Series` subclass whose `array`/`__len__` runs
+    # content-dependent caller code CAN raise, but such a frame is out of
+    # domain (its container is as live as an object in a cell, see THE DOMAIN
+    # above). The honest disposition there is to FAIL LOUD: an earlier round
+    # guarded this and returned [], which emits an artifact asserting the
+    # column is ~100% null -- a lying release, and an unbounded multiset
+    # difference from its one-row neighbour dressed up as success (dennis and
+    # Codex both, round 12). Propagating is also consistent with how a
+    # cell-dunder interrupt is handled one screen down: loud, not swallowed.
+    values = series.array
+    count = len(series)
 
     for i in range(count):
         try:
@@ -407,6 +448,13 @@ def _canonical_label(raw: Any) -> str:
 
     Non-finite floats render from the image too, so `inf` stays "inf".
     """
+    # No container check here, deliberately. A list or ndarray cell already
+    # fails the `numbers.Real`/`str` gate below and drops under every boxing
+    # (Codex round 12 verified both a Python `list` and a length-1 `ndarray`
+    # drop), so an explicit check would be inert -- and this module does not
+    # keep inert code no test can falsify. The numeric path is different: it
+    # calls `float()`, which ACCEPTS a length-1 ndarray, so its container
+    # check is load-bearing and has one.
     if _is_datetimelike(raw):
         raise TypeError("datetimelike categorical value")
     raw = _unbox(raw)
@@ -501,6 +549,19 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:  # broad by design: totality, see THE DOMAIN above
+                # Honest note (dennis round 12): the re-raise and the
+                # BaseException breadth here are defensive symmetry with the
+                # label guard below, and are deliberately NOT pinned by a
+                # test, because they are unreachable. `pd.isna` classifies an
+                # unrecognised object by identity and NaN-membership without
+                # invoking its `__float__`/`__str__`/`__eq__`, so no cell
+                # content routes a `BaseException` -- or a `KeyboardInterrupt`
+                # -- through this line. The one thing that reaches it is
+                # `pd.isna(Decimal("sNaN"))` raising `InvalidOperation`, an
+                # ordinary `Exception` (covered by the sNaN test). The breadth
+                # stays for the day the type gate widens and a raising dunder
+                # does reach here; narrowing it to match today's reachability
+                # would be a latent trap, not a simplification.
                 pass
             try:
                 label = _canonical_label(raw)

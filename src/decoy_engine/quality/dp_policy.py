@@ -24,7 +24,7 @@ _DP_NORMALIZATION_POLICY = {
         "trailing NUL before the fit sees it; "
         "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
         "image; an integer or rational too large for float64 rendered by its own exact "
-        "repr instead, up to the interpreter's decimal-conversion limit; a decimal or "
+        "string form instead, up to the interpreter's decimal-conversion limit; a decimal or "
         "extended-precision real too large for float64 released as the infinity its "
         "float64 image becomes; NaN released as null"
     ),
