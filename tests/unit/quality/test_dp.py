@@ -657,7 +657,9 @@ class TestRecordwiseNormalization:
         native = pd.Series(deltas)
         coerced = pd.Series([*deltas, "x"])
         assert native.dtype != coerced.dtype  # timedelta64 -> object
-        assert _multiset_distance(_normalize_categorical(native), _normalize_categorical(coerced)) <= 1
+        assert (
+            _multiset_distance(_normalize_categorical(native), _normalize_categorical(coerced)) <= 1
+        )
 
     def test_normalize_numeric_never_warns_on_exotic_content(self):
         series = pd.Series(["1", 1 + 2j, None, object(), "not a number"], dtype=object)

@@ -174,7 +174,10 @@ def _canonical_label(raw: Any) -> str:
     try:
         as_float = float(raw)
     except OverflowError:
-        return str(int(raw))
+        # Only an integer can exceed float64's range from inside `Real`.
+        if isinstance(raw, numbers.Integral):
+            return str(int(raw))
+        return str(raw)
     if math.isfinite(as_float) and as_float == int(as_float):
         return str(int(as_float))
     return str(as_float)
