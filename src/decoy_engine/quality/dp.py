@@ -280,11 +280,26 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     the label crossed into OpenDP -- the same fit-success channel, just
     relocated. Labels are therefore required to be UTF-8 encodable here.
     `str.isascii()` is a cached flag check, so the overwhelmingly common
-    all-ASCII label pays no encoding cost."""
+    all-ASCII label pays no encoding cost.
+
+    Null exclusion is per row rather than a vectorized `Series.dropna()`
+    for the same reason. Deciding nullness runs the value's own dunders,
+    so it too can raise on content: `pd.isna(Decimal("sNaN"))` raises
+    `InvalidOperation`, which took the whole fit down from outside the
+    conversion guard. A row whose null check cannot be evaluated is
+    treated as present and left to the conversion step, which is total.
+    `bool()` also raises for an array-valued cell, where `pd.isna`
+    returns an array rather than a scalar verdict; those cells stay
+    present and are labelled by `str()`, matching what `dropna()` did."""
     out: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        for raw in series.dropna():
+        for raw in series:
+            try:
+                if bool(pd.isna(raw)):
+                    continue
+            except Exception:  # broad by design: totality, see docstring
+                pass
             try:
                 label = str(raw)
                 if not label.isascii():

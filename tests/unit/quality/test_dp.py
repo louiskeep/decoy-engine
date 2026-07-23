@@ -9,6 +9,7 @@ statistical mechanism tests.
 
 from __future__ import annotations
 
+import decimal
 import math
 
 import numpy as np
@@ -313,6 +314,26 @@ class TestRecordwiseNormalization:
             delta=1e-6,
         )
         assert "c" in snap["columns"]
+
+    def test_null_check_that_raises_on_content_does_not_take_the_fit_down(self):
+        """C-B4, third location: deciding nullness runs the value's own
+        dunders, so the null step is content-dependent too.
+        `pd.isna(Decimal("sNaN"))` raises `InvalidOperation`, which the
+        vectorized `Series.dropna()` propagated from outside the
+        conversion guard. A row whose null check cannot be evaluated is
+        present, not fatal."""
+        series = pd.Series(["a", decimal.Decimal("sNaN"), "b"], dtype=object)
+        assert _normalize_categorical(series) == ["a", "sNaN", "b"]
+
+    def test_per_row_null_exclusion_matches_dropna_semantics(self):
+        """The null step went from vectorized to per-row, so pin what it
+        must still do: every null flavour excluded, and array-valued
+        cells (where `pd.isna` returns an array rather than a verdict)
+        still present and labelled, as `dropna()` left them."""
+        nulls = pd.Series(["a", None, np.nan, pd.NA, pd.NaT, "b"], dtype=object)
+        assert _normalize_categorical(nulls) == ["a", "b"]
+        arrays = pd.Series(["a", [1, 2], {"k": 1}, "b"], dtype=object)
+        assert _normalize_categorical(arrays) == ["a", "[1, 2]", "{'k': 1}", "b"]
 
     def test_normalize_categorical_keeps_ordinary_non_ascii_labels(self):
         """The encodability guard drops only what cannot be represented.
