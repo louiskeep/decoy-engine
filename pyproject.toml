@@ -65,7 +65,13 @@ dependencies = [
     # section 3.3) and the proof manifest. Bump only as a reviewed, golden-and-
     # manifest-regenerating change. Was an unpinned floor (>=13.0.0), which let
     # the proof-manifest drift across environments.
-    "faker==40.31.0",
+    # Held at 40.23.0: the dependabot bump to 40.31.0 (#47) skipped the
+    # manifest-regen + review this pin requires, and 40.31.0 silently drops
+    # five person providers (name/first/last/full/email) from the registry and
+    # shifts the name pools the proof manifest is generated against. Migrating
+    # to a newer Faker is a dedicated, provider-regression-fixing task on the
+    # roadmap, not a chore bump.
+    "faker==40.23.0",
     "psutil>=5.9.0",
     "pyarrow>=14.0.0",
     # Used by decoy_engine.disguises.schema for the Disguise model.
