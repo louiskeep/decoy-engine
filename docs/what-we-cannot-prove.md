@@ -40,6 +40,25 @@ consumed by a compiled, DP-verified Plan.
 > When several independent release IDs are consumed, their privacy losses
 > compose; repeated references to the same release ID are charged once, and
 > conflicting artifacts carrying one release ID are rejected.
+>
+> The guarantee is over DATA VALUES. A cell holding an arbitrary executable
+> Python object that seizes process control is outside it, and outside the
+> adjacency relation the claim is stated over.
+
+**The data-model boundary.** Preprocessing is total over data: no scalar
+value can make a fit raise, warn, or otherwise become observable, so fit
+success is not a channel. That totality is enforced with `except Exception`,
+which by design does not catch `KeyboardInterrupt` or `SystemExit`. A cell
+holding an object whose `__str__` or `__float__` raises one of those can
+therefore make a fit terminate where its one-row neighbour succeeded.
+
+Both cross-model reviewers found this independently and both judged it out of
+scope, as do we: such a value is not data, it is code that hijacks process
+control, and a caller who can place it in the frame already controls the
+process. Catching `BaseException` would be the worse trade, because it would
+swallow a genuine Ctrl-C during a long fit. We state the boundary rather than
+leave it implicit, because "no row content can affect fit success" is
+otherwise read as unconditional.
 
 **What is covered.** A statistical generate column's marginal carries the
 declared `(epsilon, delta)` guarantee only when its snapshot was produced by
