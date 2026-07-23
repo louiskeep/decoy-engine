@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.quality.dp import DpError, fit_dp_snapshot
+from decoy_engine.quality.dp_budget import _FakeMeasurement
 
 # Fixed test-confidence budget (guide section 7.2): 1e-6 false-failure
 # probability per statistical test per run, derived once as a module
@@ -297,34 +298,115 @@ class TestDisclosureChannelRegressions:
         assert snap_one["columns"]["cat"]["stats"]["other_count"] >= 0
 
 
+class _FixedCategoricalBackend:
+    """H3/H4 seam (guide section 5 step 3 / section 6 rows 1a/1b): forces
+    `fit_dp_snapshot`'s categorical release to a FIXED grouped-count dict
+    and non-null total regardless of `values`, so a test can vary the
+    real, suppressed input while observing an artifact whose released
+    categorical quantities are pinned. `count_measurement`/`numeric_
+    measurement` are also fixed so the WHOLE artifact (not just the
+    categorical column) is reproducible across different input frames,
+    letting a byte-identity assertion cover more than the one column."""
+
+    def __init__(self, *, row_count: int, grouped: dict[str, int], total: int) -> None:
+        self._row_count = row_count
+        self._grouped = dict(grouped)
+        self._total = total
+
+    def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+        return _FakeMeasurement(certificate=0.01, released=self._row_count)
+
+    def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+        return _FakeMeasurement(certificate=0.01, released=[0] * (len(interior_edges) + 1))
+
+    def categorical_measurements(self, eps_q: float, delta_alloc: float):
+        return (
+            _FakeMeasurement(certificate=(0.01, delta_alloc / 2 or 1e-9), released=self._grouped),
+            _FakeMeasurement(certificate=0.01, released=self._total),
+        )
+
+
 class TestCategoricalRelease:
     def test_categorical_release_order_uses_noised_counts_not_true_rank(self):
+        """Defect 1a (guide section 6): the previous version of this test
+        used a fixture whose true counts (~1500/900/450/150 at epsilon
+        5.0) are so far apart that Laplace noise cannot plausibly invert
+        them -- the assertion held whether the code sorted by released
+        count (correct) or by true rank (the defect), so it never
+        falsified anything. This version uses the `_session_backend` seam
+        to force a released grouped-count dict that INVERTS the true
+        frequency order of its input frame, then asserts the artifact's
+        `top_values` follows the FORCED (inverted) order. Sorting by true
+        rank instead of released count would emit CA/NY/TX; sorting by
+        released count (correct) emits TX/NY/CA."""
+        # True frequency order in the input: CA (900) > NY (90) > TX (10).
+        df = pd.DataFrame({"state": ["CA"] * 900 + ["NY"] * 90 + ["TX"] * 10})
+        # Forced RELEASED order inverts it: TX highest, NY middle, CA lowest.
+        backend = _FixedCategoricalBackend(
+            row_count=1000, grouped={"CA": 10, "NY": 90, "TX": 900}, total=1000
+        )
         snap = fit_dp_snapshot(
-            _mixed_df(n=3000),
+            df,
             categorical_columns=["state"],
-            numeric_domains={"age": (0.0, 120.0)},
+            numeric_domains={},
             epsilon=5.0,
             delta=1e-6,
+            _session_backend=backend,
         )
         top = snap["columns"]["state"]["stats"]["top_values"]
+        assert [t["value"] for t in top] == ["TX", "NY", "CA"]
+        assert [t["count"] for t in top] == [900, 90, 10]
         counts = [t["count"] for t in top]
         assert counts == sorted(counts, reverse=True)
-        # Tie-break is by label ascending for equal counts.
-        for i in range(len(top) - 1):
-            if top[i]["count"] == top[i + 1]["count"]:
-                assert top[i]["value"] < top[i + 1]["value"]
 
     def test_categorical_other_count_is_derived_only_from_noised_total_and_kept_counts(self):
-        snap = fit_dp_snapshot(
-            _mixed_df(n=3000),
+        """Defect 1b (guide section 6): the previous version of this test
+        ran ONE scenario and restated `other_count`'s own formula line for
+        line -- a tautology, not a proof of independence from suppressed
+        values. This version runs TWO scenarios whose forced released
+        total and kept pairs are IDENTICAL but whose true, suppressed
+        (non-top) labels differ, and asserts the resulting artifacts are
+        byte-identical except `release_id` (which always mints fresh per
+        fit by design -- guide section 7.3/binding decision 10). Any
+        dependence on the suppressed values -- for `other_count` or
+        anything else in the artifact -- would make the two differ."""
+        backend = _FixedCategoricalBackend(
+            row_count=520, grouped={"CA": 300, "NY": 150, "TX": 50}, total=520
+        )
+        # Same kept labels/counts and same released total; DIFFERENT
+        # suppressed tail composition (20 distinct rare labels, disjoint
+        # between scenarios).
+        df_a = pd.DataFrame(
+            {"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + [f"rareA{i}" for i in range(20)]}
+        )
+        df_b = pd.DataFrame(
+            {"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + [f"rareB{i}" for i in range(20)]}
+        )
+        snap_a = fit_dp_snapshot(
+            df_a,
             categorical_columns=["state"],
-            numeric_domains={"age": (0.0, 120.0)},
+            numeric_domains={},
             epsilon=5.0,
             delta=1e-6,
+            _session_backend=backend,
         )
-        stats = snap["columns"]["state"]["stats"]
-        kept_sum = sum(t["count"] for t in stats["top_values"])
-        assert stats["other_count"] == max(0, snap["columns"]["state"]["non_null_count"] - kept_sum)
+        snap_b = fit_dp_snapshot(
+            df_b,
+            categorical_columns=["state"],
+            numeric_domains={},
+            epsilon=5.0,
+            delta=1e-6,
+            _session_backend=backend,
+        )
+        stats_a = snap_a["columns"]["state"]["stats"]
+        kept_sum = sum(t["count"] for t in stats_a["top_values"])
+        assert stats_a["other_count"] == max(
+            0, snap_a["columns"]["state"]["non_null_count"] - kept_sum
+        )
+
+        del snap_a["dp"]["release_id"]
+        del snap_b["dp"]["release_id"]
+        assert snap_a == snap_b
 
 
 class TestUnseededStatisticalMechanism:
@@ -379,11 +461,8 @@ class TestUnseededStatisticalMechanism:
         inside the slack factor below while still catching an
         order-of-magnitude regression in release probability.
         """
-        from decoy_engine.quality.dp_budget import (
-            CategoricalQuerySpec,
-            OpenDpReleaseSession,
-            Schedule,
-        )
+        from decoy_engine.quality.dp_budget import OpenDpReleaseSession
+        from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, Schedule
 
         schedule = Schedule(
             row_count_name="rc",
