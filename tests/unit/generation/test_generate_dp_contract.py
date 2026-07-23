@@ -515,7 +515,7 @@ class TestReleaseIdLedger:
                 }
             ],
         }
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_budget_exceeded"
@@ -541,7 +541,7 @@ class TestReleaseIdLedger:
                 }
             ],
         }
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         verified, receipt = verify_dp_snapshots(cfg, pinned)
         assert receipt is not None
         assert receipt.epsilon_total == pytest.approx(0.6)
@@ -575,7 +575,7 @@ class TestReleaseIdLedger:
                 }
             ],
         }
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_release_id_conflict"
@@ -584,7 +584,7 @@ class TestReleaseIdLedger:
         artifact = _numeric_dp_artifact(epsilon_total=0.5)
         del artifact["dp"]["release_id"]
         cfg, _ = _cfg_with_artifact(tmp_path, artifact)
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_missing_release_id"
@@ -592,7 +592,7 @@ class TestReleaseIdLedger:
     def test_composed_release_budget_above_declared_ceiling_is_rejected(self, tmp_path):
         artifact = _numeric_dp_artifact(epsilon_total=5.0, release_id="rBIG")
         cfg, _ = _cfg_with_artifact(tmp_path, artifact, declared_epsilon=1e-6)
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_budget_exceeded"
@@ -601,7 +601,7 @@ class TestReleaseIdLedger:
         artifact = _numeric_dp_artifact(epsilon_total=0.5)
         artifact["dp"]["query_count"] = 99
         cfg, _ = _cfg_with_artifact(tmp_path, artifact)
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_query_count_mismatch"
@@ -610,7 +610,7 @@ class TestReleaseIdLedger:
         artifact = _numeric_dp_artifact(epsilon_total=0.5)
         artifact["dp"]["opendp_version"] = "0.0.0-not-installed"
         cfg, _ = _cfg_with_artifact(tmp_path, artifact)
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_library_version_mismatch"
@@ -618,7 +618,7 @@ class TestReleaseIdLedger:
     def test_dp_snapshot_budget_malformed_nan_delta(self, tmp_path):
         artifact = _numeric_dp_artifact(epsilon_total=1.0, delta_total=float("nan"))
         cfg, _ = _cfg_with_artifact(tmp_path, artifact)
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_budget_malformed"
@@ -627,7 +627,7 @@ class TestReleaseIdLedger:
         df = pd.DataFrame({"age": [1, 2, 3]})
         snap = compute_distribution_snapshot(df)
         cfg, _ = _cfg_with_artifact(tmp_path, snap)
-        pinned = read_and_pin_snapshots(cfg)
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_not_dp_fit"
@@ -772,3 +772,36 @@ class TestGenerateTablesRejectsRawConfig:
 
         with pytest.raises(TypeError, match="no generation payload"):
             generate_tables(plan)
+
+
+class TestDpDeclaredWithNoStatisticalColumns:
+    """D-M7 (dennis must-fix): a `dp`-declared pipeline with ZERO `type:
+    statistical` generate columns used to compile clean (`verify_dp_
+    snapshots` returns `dp_verification=None` -- nothing to verify) but
+    then `generate_tables` raised `TypeError` UNCONDITIONALLY whenever
+    `_dp_declared(config)` was true, regardless of whether the config
+    referenced any DP-fit column at all. That is a config-compiles/
+    generate-always-raises trap with no way out for an operator who
+    declares `global_settings.dp` alongside ordinary non-statistical
+    generate columns (faker, sequence, ...), which is not a contradiction:
+    the DP contract only concerns statistical generate columns."""
+
+    def test_dp_declared_pipeline_with_only_non_statistical_columns_can_generate(self):
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
+                }
+            ],
+        }
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert plan.generation is not None
+        assert plan.generation.dp_verification is None  # nothing to verify -- no raise for that
+
+        from decoy_engine.generation.synthesize import generate_tables
+
+        out = generate_tables(plan)  # must not raise TypeError
+        assert out["t"].column("id").to_pylist() == ["1", "2", "3", "4", "5"]

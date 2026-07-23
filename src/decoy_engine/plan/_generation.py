@@ -81,24 +81,40 @@ def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
     return list(seen)
 
 
-def read_and_pin_snapshots(config: dict[str, Any]) -> dict[str, ReadSnapshot]:
+def read_and_pin_snapshots(
+    config: dict[str, Any],
+) -> tuple[dict[str, ReadSnapshot], dict[str, Any]]:
     """The single read pass (guide section 4.7 item 1): open every distinct
-    referenced snapshot path exactly once, hash it, parse it, and return a
-    `{path: ReadSnapshot}` mapping. Unreadable/malformed files are
-    deliberately NOT rejected here -- `check_statistical_columns` (via
-    `generation.statistical.load_spec`) owns that verdict on its own error
-    codes, matching the existing convention of one check owning one
-    failure mode. A file this pass cannot even open is simply absent from
-    the returned mapping; downstream checks that need it re-derive the
-    same "unreadable" verdict `load_spec` already raises.
+    referenced snapshot path exactly once, hash it, parse it, and return
+    `({path: ReadSnapshot}, {path: StatisticalSpecError})`. A file this
+    pass cannot open or parse is absent from the first mapping and present
+    in the second, carrying the SAME classified failure `check_statistical_
+    columns` would otherwise re-derive by reopening it.
+
+    C-M1 (round-3 remediation): the parked version of this pass silently
+    dropped an unreadable/malformed path with no record of WHY, relying on
+    `check_statistical_columns` to call `generation.statistical._spec.
+    _load_snapshot(path)` a SECOND time to re-derive the same verdict --
+    a real second `open()` of a path that could have been swapped between
+    the two reads, violating the single-read invariant `CHANGELOG.md`
+    claims. Classifying the failure HERE, during the one read this pass
+    ever performs, and handing the classification (not the path) to the
+    caller closes that reopen structurally rather than by convention.
     """
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
     pinned: dict[str, ReadSnapshot] = {}
+    failures: dict[str, Any] = {}
     for path in _iter_statistical_snapshot_paths(config):
         try:
             with open(path, "rb") as fh:
                 raw = fh.read()
-        except OSError:
-            continue  # check_statistical_columns raises statistical_snapshot_unreadable
+        except OSError as exc:
+            failures[path] = StatisticalSpecError(
+                code="statistical_snapshot_unreadable",
+                message=f"snapshot_file {path!r} could not be read: {exc}",
+            )
+            continue
         if len(raw) > EMBEDDED_SNAPSHOT_MAX_BYTES:
             raise PlanCompileError(
                 code="dp_snapshot_embedded_artifact_too_large",
@@ -115,14 +131,63 @@ def read_and_pin_snapshots(config: dict[str, Any]) -> dict[str, ReadSnapshot]:
         digest = hashlib.sha256(raw).hexdigest()
         try:
             parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            continue  # check_statistical_columns raises statistical_snapshot_unreadable
-        if not isinstance(parsed, dict) or parsed.get("schema_version") != (
-            DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
-        ):
-            continue  # check_statistical_columns raises statistical_snapshot_schema_mismatch
+        except json.JSONDecodeError as exc:
+            failures[path] = StatisticalSpecError(
+                code="statistical_snapshot_unreadable",
+                message=f"snapshot_file {path!r} could not be read: {exc}",
+            )
+            continue
+        version = parsed.get("schema_version") if isinstance(parsed, dict) else None
+        if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
+            failures[path] = StatisticalSpecError(
+                code="statistical_snapshot_schema_mismatch",
+                message=(
+                    f"snapshot_file {path!r} declares schema {version!r}; this engine "
+                    f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
+                ),
+            )
+            continue
         pinned[path] = ReadSnapshot(path=path, sha256=digest, parsed=parsed, raw=raw)
-    return pinned
+    return pinned, failures
+
+
+def resolve_pinned_snapshot(
+    snapshot_file: str,
+    pinned: dict[str, ReadSnapshot],
+    failures: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Guide section 4.7 / C-M1 (round-3 remediation): the single place
+    that decides what `check_statistical_columns` sees for one
+    `snapshot_file`, and the only place left that may still call
+    `_load_snapshot` -- and only when NO read-once pass ran at all.
+
+    `failures` non-`None` means the caller DID run `read_and_pin_snapshots`
+    for this compile: every referenced path was already attempted exactly
+    once, so a path absent from BOTH `pinned` and `failures` here is a
+    compiler defect, not a license to reopen it -- raise a generic refusal
+    rather than falling back to disk. `failures=None` means no read-once
+    pass ran (a direct/legacy caller building a spec by hand, e.g. a unit
+    test); the read below is that caller's ONLY read of `snapshot_file`,
+    not a second read of anything a compile pass already pinned.
+    """
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError, _load_snapshot
+
+    read = pinned.get(snapshot_file)
+    if read is not None:
+        return read.parsed
+    if failures is not None:
+        raise failures.get(
+            snapshot_file,
+            StatisticalSpecError(
+                code="statistical_snapshot_unreadable",
+                message=(
+                    f"snapshot_file {snapshot_file!r} has no pinned content and no "
+                    "recorded read failure from this compile's read-once pass; "
+                    "refusing rather than reopening the path."
+                ),
+            ),
+        )
+    return _load_snapshot(snapshot_file)[1]
 
 
 def build_generation_plan(

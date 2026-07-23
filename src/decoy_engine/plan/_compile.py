@@ -193,13 +193,17 @@ def compile_plan(
     # DPS Scope B (guide 4.7/5): read-and-pin once so every check below
     # sees the same bytes; DP verification runs before check_statistical_
     # columns, which needs its dp_verified verdict per column.
-    _pinned_snapshots = read_and_pin_snapshots(config)
+    _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
     check_dp_generate_contract(config)  # Row 31 (DPS-3): anti-DP knob + condition_on reject
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate
     # columns vs their snapshot artifacts. Config + artifact only, so it
-    # runs in both branches and in run_config_only_checks.
-    _column_specs = check_statistical_columns(config, _pinned_snapshots, _dp_verified_columns)
+    # runs in both branches and in run_config_only_checks. `_snapshot_
+    # read_failures` (C-M1) lets a path the read-once pass already
+    # attempted raise its classified verdict instead of being reopened.
+    _column_specs = check_statistical_columns(
+        config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
+    )
     # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in
     # requires the spacy extra + model on THIS host. Config + installed
     # packages only; both branches + run_config_only_checks.
@@ -507,13 +511,15 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): same read-verify-validate order as above.
-    _pinned_snapshots = read_and_pin_snapshots(config)
+    _pinned_snapshots, _snapshot_read_failures = read_and_pin_snapshots(config)
     check_dp_generate_contract(config)  # Row 31 (DPS-3)
     _dp_verified_columns, _dp_verification = verify_dp_snapshots(config, _pinned_snapshots)
     # Row 12 (WS3): consumes the config plus its referenced snapshot
     # artifact (a fitted-model JSON, not source data), so config-only
     # callers catch a missing/incompatible artifact before a long run.
-    check_statistical_columns(config, _pinned_snapshots, _dp_verified_columns)
+    check_statistical_columns(
+        config, _pinned_snapshots, _dp_verified_columns, failures=_snapshot_read_failures
+    )
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.
     check_text_redact_ner_available(config)
     # Row 30 (TX-2, 2026-07-20): text_mask `ner` opt-in needs the same

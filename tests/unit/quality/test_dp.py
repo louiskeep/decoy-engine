@@ -153,6 +153,75 @@ class TestConfigValidation:
         assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == 10
 
 
+class TestDpFitIsIndependentOfExactSnapshot:
+    """D-M4/D-M5 (dennis must-fix): `fit_dp_snapshot` and `compute_
+    distribution_snapshot` (the pre-existing NON-DP fit) are fully
+    independent code paths (guide section 5 step 3: "Do not route the DP
+    fit through compute_distribution_snapshot... it materializes exact
+    statistics and has value-dependent kind behavior unsuitable for
+    DP"). These name and pin that independence directly, rather than
+    leaving it as an unstated property of the two modules never
+    importing each other."""
+
+    def test_dp_fit_does_not_call_compute_distribution_snapshot(self, monkeypatch):
+        """D-M5: patches `compute_distribution_snapshot` to raise if
+        called at all, then runs a full mixed-column DP fit. If a future
+        change ever routed the DP path through the exact snapshot
+        builder -- the direct disclosure the guide warns against -- this
+        fails immediately."""
+        import decoy_engine.quality.snapshot as snapshot_module
+
+        def _boom(*args, **kwargs):
+            raise AssertionError(
+                "fit_dp_snapshot must never call compute_distribution_snapshot"
+            )
+
+        monkeypatch.setattr(snapshot_module, "compute_distribution_snapshot", _boom)
+        fit_dp_snapshot(
+            _mixed_df(),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )  # must not raise
+
+    def test_non_dp_snapshot_behavior_is_unchanged_after_dp_fit_split(self):
+        """D-M4: calling `fit_dp_snapshot` must not change `compute_
+        distribution_snapshot`'s own output for an identical input -- no
+        shared mutable state, no import-time side effect that alters
+        non-DP behavior. Calls the exact (non-DP) builder before and
+        after a DP fit and asserts byte-identical results."""
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = pd.DataFrame(
+            {"age": [1.0, 2.0, 3.0, None], "state": ["CA", "NY", "CA", None]}
+        )
+        before = compute_distribution_snapshot(df)
+        fit_dp_snapshot(
+            _mixed_df(),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        after = compute_distribution_snapshot(df)
+        assert before == after
+
+    def test_private_values_cannot_change_declared_dp_kind(self):
+        """D-M6 (binding decision 5): kind comes EXCLUSIVELY from the
+        caller's declaration, never inferred from dtype, values, or
+        cardinality. A column declared categorical whose every value
+        LOOKS numeric (parseable as a float) still emits `kind:
+        categorical` -- there is no runtime branch that could read
+        the declaration differently based on content shape."""
+        df = pd.DataFrame({"code": ["1", "2", "3", "1", "2"]})
+        snap = fit_dp_snapshot(
+            df, categorical_columns=["code"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        )
+        assert snap["columns"]["code"]["kind"] == "categorical"
+        assert "bin_edges" not in snap["columns"]["code"]["stats"]
+
+
 class TestRecordwiseNormalization:
     """D-M6/C-B2: the one stability claim Decoy makes on its own (guide
     section 3.3 item 1) is that preprocessing is recordwise -- every input

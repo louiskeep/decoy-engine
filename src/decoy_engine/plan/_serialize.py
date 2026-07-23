@@ -303,7 +303,26 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
         payload_b64=data["payload_b64"],
         release_id=data.get("release_id"),
     )
-    parsed = json.loads(raw)
+    # LOW (round-3 remediation): a digest match is proof the bytes are
+    # what the manifest claims, not proof those bytes are JSON. A manifest
+    # whose sha256 happens to match non-JSON `payload_b64` (hand-edited,
+    # or a genuinely corrupted write) must not raise a bare
+    # `JSONDecodeError` out of `plan_from_yaml` -- same shape as the
+    # already-fixed `IndexError`: every malformed-manifest path here is a
+    # typed `PlanCompileError`, never an unguarded stdlib exception.
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PlanCompileError(
+            code="dp_pinned_snapshot_payload_not_json",
+            path=f"<generation.snapshots source_path={source_path!r}>",
+            message=(
+                f"embedded snapshot {source_path!r}: payload_b64 decodes to bytes whose "
+                f"sha256 matches the manifest ({stored_sha256!r}), but is not valid JSON "
+                f"({exc}). A digest match is not proof the payload is a JSON snapshot "
+                "artifact."
+            ),
+        ) from exc
     read_snapshot = ReadSnapshot(
         path=source_path,
         sha256=stored_sha256,
@@ -385,7 +404,16 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     config = json.loads(data["config_json"])
     _require_statistical_snapshots_pinned(config, pinned_by_path)
     dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
-    column_specs = check_statistical_columns(config, pinned_by_path, dp_verified_columns)
+    # C-M1: `failures={}` (never `None`) here -- `_require_statistical_
+    # snapshots_pinned` above already guarantees every referenced path is
+    # in `pinned_by_path`, so this should never be consulted; passing a
+    # non-None empty mapping means a future bug that violates that
+    # guarantee fails closed (a generic refusal) rather than falling back
+    # to `check_statistical_columns`'s legacy direct-read path, which
+    # would reopen a path this deserialization step must never touch.
+    column_specs = check_statistical_columns(
+        config, pinned_by_path, dp_verified_columns, failures={}
+    )
     rebuilt = build_generation_plan(
         config,
         pinned_by_path,

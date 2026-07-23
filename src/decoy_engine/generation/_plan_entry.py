@@ -27,6 +27,26 @@ from decoy_engine.generation.synthesize import _generate_tables_from_config
 from decoy_engine.plan._types import unfreeze_json
 
 
+def _config_declares_statistical_column(config: dict[str, Any]) -> bool:
+    """D-M7 (round-3 remediation): does ANY table declare a `type:
+    statistical` generate column? A `dp`-declared pipeline with ZERO
+    statistical columns compiles clean (`verify_dp_snapshots` returns
+    `dp_verification=None` since there is nothing to verify) but used to
+    hit the unconditional receipt check below UNCONDITIONALLY, so it
+    could compile but then never generate -- a config-compiles/generate-
+    always-raises trap with no way out. The receipt is only meaningful
+    (and only required) when the config actually references a DP-fit
+    column; `global_settings.dp` alongside non-statistical generate
+    columns (faker, sequence, ...) is not a contradiction."""
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    return any(
+        isinstance(col, dict) and col.get("type") == "statistical"
+        for table in tables
+        if isinstance(table, dict)
+        for col in table.get("generate_columns", []) or []
+    )
+
+
 def generate_tables(
     plan: Any,
     derive_key: Any = None,
@@ -71,7 +91,11 @@ def generate_tables(
     config = json.loads(plan.generation.config_json)
     from decoy_engine.plan._checks_dp import _dp_declared
 
-    if _dp_declared(config) and plan.generation.dp_verification is None:
+    if (
+        _dp_declared(config)
+        and plan.generation.dp_verification is None
+        and _config_declares_statistical_column(config)
+    ):
         raise TypeError(
             "generate_tables: the embedded configuration declares global_settings.dp "
             "but this Plan carries no reproduced DpVerification receipt. Recompile "

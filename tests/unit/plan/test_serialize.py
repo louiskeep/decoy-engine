@@ -261,6 +261,34 @@ def test_plan_from_yaml_refuses_when_only_one_of_two_pinned_snapshots_is_removed
     assert exc.value.code == "statistical_snapshot_not_pinned"
 
 
+def test_plan_from_yaml_rejects_non_json_payload_with_matching_digest(tmp_path):
+    """New LOW (round-3 remediation): a manifest whose `payload_b64`
+    decodes to bytes that are NOT valid JSON, but whose sha256 happens to
+    match the manifest's own stored digest (a hand-edited or corrupted
+    write, recomputed consistently), must raise a typed
+    `PlanCompileError`, not a bare `JSONDecodeError` -- the same shape as
+    the already-fixed `IndexError`. The digest check alone cannot catch
+    this: it only proves the bytes are what the manifest claims, not that
+    those bytes are JSON."""
+    import base64
+    import hashlib
+
+    plan = _compiled_dp_plan(tmp_path)
+    rendered = plan_to_yaml(plan)
+    data = __import__("yaml").safe_load(rendered)
+
+    non_json_bytes = b"NOT JSON AT ALL"
+    data["generation"]["snapshots"][0]["payload_b64"] = base64.b64encode(non_json_bytes).decode(
+        "ascii"
+    )
+    data["generation"]["snapshots"][0]["sha256"] = hashlib.sha256(non_json_bytes).hexdigest()
+    tampered_yaml = __import__("yaml").safe_dump(data, sort_keys=False)
+
+    with pytest.raises(PlanCompileError) as exc:
+        plan_from_yaml(tampered_yaml)
+    assert exc.value.code == "dp_pinned_snapshot_payload_not_json"
+
+
 def test_plan_from_yaml_without_generation_block_round_trips_none(tmp_path):
     """A Plan compiled with no generate_columns has no `generation` key at
     all on the wire (guide section 4.7); it must deserialize back to

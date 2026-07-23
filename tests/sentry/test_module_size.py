@@ -110,7 +110,14 @@ ALLOWLIST: dict[str, int] = {
     # pinned digest to reuse instead of reopening `snapshot_file` (see the
     # matching `synthesize.py` entry above; same F4 closure). Same
     # decomposition target stands.
-    "src/decoy_engine/plan/_checks.py": 774,
+    # Round-3 remediation (2026-07-23), C-M1: +9 LOC (774 -> 783) resolving
+    # a `snapshot_file` through the new `plan._generation.resolve_pinned_
+    # snapshot` helper instead of an inline `_load_snapshot` fallback, so a
+    # path the read-once pass already attempted and classified is never
+    # reopened. The docstring update explaining `failures` is most of the
+    # growth; the call-site change itself is one line. Same decomposition
+    # target stands.
+    "src/decoy_engine/plan/_checks.py": 783,
     # HC-5 (2026-07-17): +16 LOC (695 -> 711) adding the `high_cardinality`
     # wrong-type guard to `check_statistical_columns` -- a `high_cardinality`
     # key on a non-`type: statistical` column (the one case `load_spec` never
@@ -172,7 +179,13 @@ ALLOWLIST: dict[str, int] = {
     # the read-and-pin pass, the `GenerationPlan` builder, and the
     # recursive freeze into the new `plan/_generation.py` sibling module
     # rather than inlining them here. Same decomposition target stands.
-    "src/decoy_engine/plan/_compile.py": 697,
+    # Round-3 remediation (2026-07-23), C-M1: +6 LOC (697 -> 703) across
+    # both call sites: `read_and_pin_snapshots` now returns a
+    # `(pinned, failures)` pair instead of just `pinned`, and threading
+    # `failures=` into `check_statistical_columns` pushes each call over
+    # the 100-column line-length cap, forcing a multi-line call. Same
+    # decomposition target stands.
+    "src/decoy_engine/plan/_compile.py": 703,
     # Round-3 remediation (2026-07-23), C-H2: crossed the 600 cap (600 -> 604)
     # fixing `_allocate_epsilon`'s search predicate, which treated a valid
     # composed epsilon of exactly `0.0` as falsy (`x or math.inf`) and

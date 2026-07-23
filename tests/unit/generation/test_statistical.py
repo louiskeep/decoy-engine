@@ -338,6 +338,63 @@ class TestSpecErrors:
         assert len(out) == 50
 
 
+class TestReadOnceSnapshotPinning:
+    """C-M1 (round-3 remediation): a `read_and_pin_snapshots` failure must
+    be classified and handed to `check_statistical_columns` as `failures`,
+    never silently dropped and re-derived by a second `open()` of the same
+    path -- the single-read invariant (guide section 4.7, CHANGELOG.md).
+    This writes an unreadable snapshot_file, runs the read-once pass
+    (recording the classified failure), then SWAPS the file for valid
+    content before `check_statistical_columns` runs -- simulating a race
+    between the pinning pass and the check. The fixed code must raise the
+    ORIGINAL classified failure without ever re-opening the swapped path.
+    Separately, calling `resolve_pinned_snapshot` with `failures=None` (the
+    pre-C-M1 fallback shape) against the same swapped path DOES succeed --
+    proving a reopen at that point would have silently returned the
+    swapped bytes instead of refusing, the exact defect this closes."""
+
+    def test_check_statistical_columns_raises_the_classified_read_once_failure_never_reopens(
+        self, tmp_path
+    ):
+        from decoy_engine.plan._checks import check_statistical_columns
+        from decoy_engine.plan._errors import PlanCompileError
+        from decoy_engine.plan._generation import read_and_pin_snapshots, resolve_pinned_snapshot
+
+        bad_path = tmp_path / "snapshot.json"
+        bad_path.write_text("NOT JSON AT ALL", encoding="utf-8")
+        cfg = {
+            "global_settings": {"seed": 42},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [_col("amount", str(bad_path))],
+                }
+            ],
+        }
+        pinned, failures = read_and_pin_snapshots(cfg)
+        assert str(bad_path) in failures
+        assert failures[str(bad_path)].code == "statistical_snapshot_unreadable"
+        assert str(bad_path) not in pinned
+
+        # Swap the file for genuinely valid content AFTER the read-once
+        # pass but BEFORE the check runs -- `_write_snapshot` always
+        # writes to this same tmp_path/"snapshot.json" path.
+        _write_snapshot(tmp_path, _source_df())
+
+        with pytest.raises(PlanCompileError) as exc:
+            check_statistical_columns(cfg, pinned, frozenset(), failures=failures)
+        assert exc.value.code == "statistical_snapshot_unreadable"
+
+        # The vulnerability class this closes: resolving the SAME path
+        # without a failures record (the pre-C-M1 fallback) reopens the
+        # file directly and, since it was swapped to valid content in the
+        # meantime, succeeds -- silently returning the swapped bytes
+        # instead of refusing.
+        reopened = resolve_pinned_snapshot(str(bad_path), pinned, None)
+        assert reopened["schema_version"]  # the reopen "worked" -- read fresh, swapped content
+
+
 class TestFreetextSampling:
     """Length-only surrogate text (deferred follow-up 4, 2026-06-12)."""
 

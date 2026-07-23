@@ -288,6 +288,7 @@ def check_statistical_columns(
     config: dict[str, Any],
     pinned: dict[str, Any] | None = None,
     dp_verified_columns: frozenset[tuple[str, str]] = frozenset(),
+    failures: dict[str, Any] | None = None,
 ) -> list[tuple[str, str, str, dict[str, Any]]]:
     """Validate `type: statistical` generate columns against their snapshots.
 
@@ -306,11 +307,18 @@ def check_statistical_columns(
     same table.
 
     `pinned` is the compiler's `{path: ReadSnapshot}` read-once map
-    (`plan._generation.read_and_pin_snapshots`); a path absent there falls
-    back to a direct read here (the read pass couldn't open/parse it, so
-    there is no pinned content to protect). `dp_verified_columns` is the
-    `(table, column)` set `plan._checks_dp.verify_dp_snapshots` certified
-    as an OpenDP release. Returns `(table_name, column_name,
+    (`plan._generation.read_and_pin_snapshots`). `failures` is that same
+    read-once pass's `{path: StatisticalSpecError}` classification of
+    every path it could not open or parse (C-M1, round-3 remediation): a
+    path absent from `pinned` raises the CLASSIFIED failure from
+    `failures` rather than reopening it, so a compile that ran the read-
+    once pass never calls `open()` a second time for any path. `failures
+    =None` means no read-once pass ran at all (a direct/legacy caller,
+    e.g. a test building a spec by hand); only then does this function
+    fall back to a direct read via `plan._generation.resolve_pinned_
+    snapshot`. `dp_verified_columns` is the `(table, column)` set
+    `plan._checks_dp.verify_dp_snapshots` certified as an OpenDP release.
+    Returns `(table_name, column_name,
     snapshot_path, spec_dict)` per validated statistical column, in
     declared order, fed to `plan._generation.build_generation_plan`.
 
@@ -326,7 +334,8 @@ def check_statistical_columns(
     key) is caught here instead.
     """
     from decoy_engine.generation.statistical import load_spec, spec_to_dict
-    from decoy_engine.generation.statistical._spec import StatisticalSpecError, _load_snapshot
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+    from decoy_engine.plan._generation import resolve_pinned_snapshot
 
     pinned = pinned or {}
     column_specs: list[tuple[str, str, str, dict[str, Any]]] = []
@@ -361,7 +370,7 @@ def check_statistical_columns(
                 snapshot_file = str(snapshot_file)
                 read = pinned.get(snapshot_file)
                 try:
-                    snap = read.parsed if read is not None else _load_snapshot(snapshot_file)[1]
+                    snap = resolve_pinned_snapshot(snapshot_file, pinned, failures)
                     dp_verified = (table_name, col_name) in dp_verified_columns
                     # Thread the read-once pass's own digest onto the spec
                     # (guide section 4.7/4.8, defect F4) so generation-time

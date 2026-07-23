@@ -204,6 +204,40 @@ class TestOpenDpReleaseSession:
         session_b = OpenDpReleaseSession(schedule_b, epsilon=1.0, delta=1e-6)
         assert session_a._eps_q == session_b._eps_q
 
+    def test_release_session_budget_allocation_is_data_independent(self):
+        """D-M1 (dennis must-fix), the version of the above that actually
+        VARIES data: two REAL OpenDP sessions built from the identical
+        public (schedule, epsilon, delta), each released against a
+        dataset differing in EVERY value (not merely a different row
+        count or a couple of swapped labels) -- one dataset's numeric
+        column at the low end of its domain with one label alphabet, the
+        other at the high end with a disjoint label alphabet, disjoint
+        row counts too. Certificates depend only on the CALIBRATED
+        scale/threshold (a pure function of eps_q/delta_alloc), never on
+        the values actually released, so every recorded certificate must
+        be identical across the two regardless of how different the
+        released data is."""
+        schedule = _mixed_schedule()
+        session_a = OpenDpReleaseSession(schedule, epsilon=1.0, delta=1e-6)
+        session_b = OpenDpReleaseSession(schedule, epsilon=1.0, delta=1e-6)
+        assert session_a._eps_q == session_b._eps_q
+
+        session_a.release_row_count(3)
+        session_b.release_row_count(9_000)
+        session_a.release_numeric("numeric:age", [0.0, 0.0, 0.0])
+        session_b.release_numeric("numeric:age", [float(x) for x in range(9_000)])
+        session_a.release_categorical(
+            "categorical_grouped:state", "categorical_total:state", ["only_a"] * 3
+        )
+        session_b.release_categorical(
+            "categorical_grouped:state",
+            "categorical_total:state",
+            [f"distinct_b_{i}" for i in range(9_000)],
+        )
+
+        for name in schedule.query_names:
+            assert session_a._releases[name].certificate == session_b._releases[name].certificate
+
     def test_raises_dp_budget_infeasible_when_schedule_cannot_be_funded(self):
         # 20 categorical columns at a vanishingly small epsilon/delta:
         # infeasible even at the floor.
