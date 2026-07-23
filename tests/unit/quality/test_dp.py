@@ -369,19 +369,34 @@ class TestCategoricalRelease:
         byte-identical except `release_id` (which always mints fresh per
         fit by design -- guide section 7.3/binding decision 10). Any
         dependence on the suppressed values -- for `other_count` or
-        anything else in the artifact -- would make the two differ."""
+        anything else in the artifact -- would make the two differ.
+
+        BLOCKER B-2: an earlier version of this test made the two
+        scenarios' suppressed tails differ ONLY in label NAMES (20 rows
+        across 20 distinct labels in both, `rareA{i}` vs `rareB{i}`) --
+        same suppressed MASS, same suppressed CARDINALITY. That falsifies
+        dependence on label strings and nothing else: a defect reading the
+        true suppressed row count or the true suppressed label count
+        straight off the input (instead of deriving `other_count` from the
+        noised total and kept counts alone) would compute the identical
+        number for both scenarios and this test would not notice. The two
+        tails below differ in both mass (20 rows vs. 40) and cardinality
+        (20 distinct labels vs. 7), so a defect reading either true
+        quantity off the suppressed values makes `snap_a` and `snap_b`
+        disagree."""
         backend = _FixedCategoricalBackend(
             row_count=520, grouped={"CA": 300, "NY": 150, "TX": 50}, total=520
         )
         # Same kept labels/counts and same released total; DIFFERENT
-        # suppressed tail composition (20 distinct rare labels, disjoint
-        # between scenarios).
+        # suppressed tail MASS and CARDINALITY (not merely label names):
+        # df_a has 20 rows across 20 distinct rare labels, df_b has 40
+        # rows across 7 distinct rare labels.
         df_a = pd.DataFrame(
             {"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + [f"rareA{i}" for i in range(20)]}
         )
-        df_b = pd.DataFrame(
-            {"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + [f"rareB{i}" for i in range(20)]}
-        )
+        rare_labels_b = [f"rareB{i}" for i in range(7)]
+        tail_b = [rare_labels_b[i % len(rare_labels_b)] for i in range(40)]
+        df_b = pd.DataFrame({"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + tail_b})
         snap_a = fit_dp_snapshot(
             df_a,
             categorical_columns=["state"],

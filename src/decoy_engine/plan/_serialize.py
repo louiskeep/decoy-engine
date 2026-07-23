@@ -313,6 +313,47 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
     return pinned_snapshot, read_snapshot
 
 
+def _require_statistical_snapshots_pinned(
+    config: dict[str, Any], pinned: dict[str, ReadSnapshot]
+) -> None:
+    """HIGH H-A: refuse a deserialized `generation` block whose config
+    references a `snapshot_file` the pinned set does not cover, BEFORE
+    `check_statistical_columns` ever runs.
+
+    `check_statistical_columns` is shared with `compile_plan`, where a
+    path absent from `pinned` genuinely means "the read pass couldn't
+    open it" and a direct-read fallback re-derives the right unreadable
+    verdict (guide section 4.7). At LOAD time that fallback is wrong: an
+    absent path means a serialized Plan's `generation.snapshots` no
+    longer covers a `snapshot_file` its own `config_json` references --
+    a malformed manifest, not a missing file -- so falling back would
+    make deserialization a filesystem read plus an existence oracle over
+    a path named in this untrusted document, contradicting "read once and
+    pinned, never reopened." This check runs first and refuses instead,
+    leaving `check_statistical_columns`'s own fallback path unreachable
+    here."""
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("generate_columns", []) or []:
+            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+                continue
+            snapshot_file = col_entry.get("snapshot_file")
+            col_name = col_entry.get("name", "?")
+            if snapshot_file and str(snapshot_file) not in pinned:
+                raise PlanCompileError(
+                    code="statistical_snapshot_not_pinned",
+                    path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
+                    message=(
+                        f"statistical column {col_name!r} references snapshot_file "
+                        f"{snapshot_file!r}, not among this Plan's pinned snapshots -- "
+                        "a malformed manifest, not a fallback to a fresh filesystem read."
+                    ),
+                )
+
+
 def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     """Decode the `generation` block, revalidating everything the guide
     requires rather than trusting the serialized values verbatim.
@@ -332,11 +373,17 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     plan`, exactly as a fresh `compile_plan` would. `dp_verification` is
     recomputed the same way it always was, from those same revalidated
     bytes (guide section 4.7: "revalidate embedded digests and DP
-    receipts during deserialization")."""
+    receipts during deserialization").
+
+    HIGH H-A: `_require_statistical_snapshots_pinned` runs first, so a
+    config-referenced snapshot absent from the pinned set is refused
+    before `check_statistical_columns`'s own compile-time fallback (a
+    direct filesystem read) can ever run against this untrusted manifest."""
     decoded = [_pinned_snapshot_from_dict(s) for s in data.get("snapshots", []) or []]
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
     config = json.loads(data["config_json"])
+    _require_statistical_snapshots_pinned(config, pinned_by_path)
     dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
     column_specs = check_statistical_columns(config, pinned_by_path, dp_verified_columns)
     rebuilt = build_generation_plan(

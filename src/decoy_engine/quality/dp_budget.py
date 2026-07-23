@@ -323,6 +323,7 @@ class OpenDpReleaseSession:
         self._delta = delta
         self._delta_per_categorical = schedule.delta_per_categorical(delta)
         self._releases: dict[str, _Release] = {}
+        self._reserved: set[str] = set()  # admitted, not yet recorded (M-2 -- see `_admit`)
         # Production never passes `backend` (guide section 5 step 3): the
         # default is the real OpenDP-backed implementation. Only tests
         # substitute a double, and only to observe THIS session's own
@@ -468,7 +469,8 @@ class OpenDpReleaseSession:
         refusing -- the mechanism would already have spent real privacy
         budget that this refusal would then let vanish, never entering
         the ledger. Every `release_*` method below calls this before
-        constructing or invoking anything."""
+        constructing or invoking anything. Reserves `name` (M-2) so a second
+        admission fails structurally, not by accident of ordering."""
         if name not in self._schedule.query_names:
             raise DpBudgetError(
                 code="dp_unscheduled_release",
@@ -478,17 +480,17 @@ class OpenDpReleaseSession:
                     "release outside the schedule fixed at construction."
                 ),
             )
-        if name in self._releases:
+        if name in self._releases or name in self._reserved:
             raise DpBudgetError(
                 code="dp_duplicate_release",
                 message=f"query {name!r} has already released once; a query may release only once.",
             )
+        self._reserved.add(name)
 
     def _record(self, name: str, certificate: Certificate, value: object) -> None:
-        """Record an already-invoked release. Called only AFTER `_admit`
-        has passed and the mechanism has already run -- this method
-        itself performs no admission check, so it must never be reachable
-        except behind `_admit`."""
+        """Record an already-invoked release and clear its reservation (M-2).
+        Called only AFTER `_admit`; performs no admission check itself."""
+        self._reserved.discard(name)
         self._releases[name] = _Release(certificate=certificate, value=value)
 
     def release_row_count(self, row_count: int) -> int:
@@ -502,8 +504,9 @@ class OpenDpReleaseSession:
         name = self._schedule.row_count_name
         self._admit(name)
         measurement = self._count_measurement(self._eps_q)
+        certificate = measurement.map(1)  # L-1: read before invoke (never after)
         released = measurement.invoke([""] * row_count)
-        self._record(name, measurement.map(1), released)
+        self._record(name, certificate, released)
         return int(released)
 
     def release_numeric(self, name: str, values: list[float]) -> list[int]:
@@ -524,8 +527,9 @@ class OpenDpReleaseSession:
             )
         self._admit(name)
         measurement = self._numeric_measurement(self._eps_q, spec.interior_edges)
+        certificate = measurement.map(1)  # L-1
         released = measurement.invoke(values)
-        self._record(name, measurement.map(1), released)
+        self._record(name, certificate, released)
         return list(released)
 
     def release_categorical(
@@ -544,10 +548,12 @@ class OpenDpReleaseSession:
         grouped_meas, total_meas = self._categorical_measurements(
             self._eps_q, self._delta_per_categorical
         )
+        grouped_certificate = grouped_meas.map(1)  # L-1
         grouped_released = grouped_meas.invoke(values)
-        self._record(grouped_name, grouped_meas.map(1), grouped_released)
+        self._record(grouped_name, grouped_certificate, grouped_released)
+        total_certificate = total_meas.map(1)  # L-1
         total_released = total_meas.invoke(values)
-        self._record(total_name, total_meas.map(1), total_released)
+        self._record(total_name, total_certificate, total_released)
         return dict(grouped_released), int(total_released)
 
     # -- composition and receipt ------------------------------------------

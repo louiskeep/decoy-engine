@@ -144,6 +144,25 @@ class TestOpenDpReleaseSession:
         assert exc.value.code == "dp_duplicate_release"
         assert backend.log == ["count"]  # unchanged: the duplicate never invoked a second time
 
+    def test_refuses_duplicate_numeric_release_without_a_second_invocation(self):
+        """HIGH H-B: the two H2 tests above cover `release_row_count` and
+        `release_categorical` only, leaving `_admit`-before-invoke unpinned
+        on the numeric path. Demonstrated: moving `self._admit(name)` in
+        `release_numeric` from before construction/invoke to immediately
+        before `_record` -- the exact parked H2 defect -- passed the whole
+        `tests/unit/quality/` suite (389 passed) with only these two H2
+        tests present. This exercises `release_numeric` the same way:
+        legitimate release first, then a second call must be refused
+        before the mechanism is invoked again."""
+        backend = _SpyBackend()
+        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6, backend=backend)
+        session.release_numeric("numeric:age", [1.0, 2.0, 3.0])
+        assert backend.log == ["numeric"]
+        with pytest.raises(DpBudgetError) as exc:
+            session.release_numeric("numeric:age", [1.0, 2.0, 3.0])
+        assert exc.value.code == "dp_duplicate_release"
+        assert backend.log == ["numeric"]  # unchanged: the duplicate never invoked a second time
+
     def test_refuses_loss_report_before_schedule_is_complete(self):
         backend = _SpyBackend()
         session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6, backend=backend)
@@ -197,41 +216,98 @@ class TestOpenDpReleaseSession:
         assert exc.value.code == "dp_budget_infeasible"
 
     def test_certificates_come_from_measurement_maps_not_the_calibration_target(self):
-        """BLOCKER 1 / A2, load-bearing: the recorded certificate must
-        equal `measurement.map(1)` for the object ACTUALLY invoked, not
-        the eps_q target the session calibrated toward. `0.0 < epsilon_
-        total <= 1.0` (the previous assertion here) holds for ANY
-        implementation that records any small positive number -- it does
-        not distinguish "recorded measurement.map(1)" from "recorded
-        self._eps_q", which is exactly the defect A2 names. This test
-        substitutes a backend whose certificate is fixed strictly BELOW
-        the eps_q the session calibrates toward, then asserts the
-        recorded certificate is that exact fixed value, not eps_q."""
-        fixed_certificate = 1e-3  # far below any eps_q this schedule could allocate
+        """BLOCKER B-1 / A2, load-bearing over ALL FOUR `_record` call
+        sites (`release_row_count`, `release_numeric`, and the grouped +
+        total halves of `release_categorical`): each recorded certificate
+        must equal `measurement.map(1)` for the object ACTUALLY invoked,
+        not the eps_q target the session calibrated toward.
+
+        The previous version of this test used a schedule with NO numeric
+        or categorical column (`Schedule(row_count_name="rc", numeric=(),
+        categorical=())`), so only `release_row_count`'s `_record` call
+        was ever exercised; the other three sites were unpinned. This
+        version schedules one of each query kind and gives the backend a
+        DISTINCT, hard-coded certificate per site, so a defect at any one
+        site is independently visible: recording `self._eps_q` instead of
+        the invoked object's own certificate would make that site's
+        assertion see the single shared `_eps_q` float instead of its own
+        constant.
+
+        Every fixed certificate here is far below any eps_q this fully-
+        fundable schedule could allocate (epsilon=1.0 for 4 cheap
+        queries), so the test cannot pass by accident via `composed_loss`
+        tripping its ceiling check -- the recorded values are asserted
+        directly, and `composed_loss` is never even called.
+
+        Mutation evidence (each `_record` call site changed independently
+        to `self._record(<name>, self._eps_q, <released>)` in
+        `dp_budget.py`): `release_row_count`, `release_numeric`, and the
+        grouped and total halves of `release_categorical` -- each mutation
+        was confirmed to fail only its own assertion below, one call site
+        at a time.
+        """
+        ROW_COUNT_CERT = 1e-3
+        NUMERIC_CERT = 2e-3
+        GROUPED_CERT = (3e-3, 1e-7)
+        TOTAL_CERT = 4e-3
 
         class _FixedCertificateBackend:
             def count_measurement(self, eps_q: float) -> _FakeMeasurement:
-                return _FakeMeasurement(certificate=fixed_certificate, released=42)
+                return _FakeMeasurement(certificate=ROW_COUNT_CERT, released=42)
 
             def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
-                raise AssertionError("this schedule has no numeric column")
+                return _FakeMeasurement(
+                    certificate=NUMERIC_CERT, released=[0] * (len(interior_edges) + 1)
+                )
 
             def categorical_measurements(self, eps_q: float, delta_alloc: float):
-                raise AssertionError("this schedule has no categorical column")
+                return (
+                    _FakeMeasurement(certificate=GROUPED_CERT, released={}),
+                    _FakeMeasurement(certificate=TOTAL_CERT, released=0),
+                )
 
-        schedule = Schedule(row_count_name="rc", numeric=(), categorical=())
+        schedule = _mixed_schedule()  # row_count + 1 numeric + 1 categorical pair
         session = OpenDpReleaseSession(
             schedule, epsilon=1.0, delta=1e-6, backend=_FixedCertificateBackend()
         )
-        # The allocation search converges on eps_q = epsilon itself here,
-        # since a fixed certificate far below any target is "feasible"
-        # everywhere the search looks; the fixed certificate is still far
-        # below it.
-        assert session._eps_q > fixed_certificate
-        session.release_row_count(42)
-        recorded = session._releases["rc"].certificate
-        assert recorded == fixed_certificate
-        assert recorded != session._eps_q
+        # The allocation search converges on eps_q close to epsilon itself
+        # here, since every fixed certificate is "feasible" everywhere the
+        # search looks (the backend ignores eps_q entirely) and each is far
+        # below the request -- so eps_q is nowhere near any of the four
+        # fixed constants below.
+        assert session._eps_q > ROW_COUNT_CERT
+        assert session._eps_q > NUMERIC_CERT
+        assert session._eps_q > TOTAL_CERT
+
+        session.release_row_count(500)
+        session.release_numeric("numeric:age", [float(x % 120) for x in range(500)])
+        session.release_categorical(
+            "categorical_grouped:state", "categorical_total:state", ["CA", "NY", "TX"]
+        )
+
+        assert session._releases["row_count"].certificate == ROW_COUNT_CERT
+        assert session._releases["numeric:age"].certificate == NUMERIC_CERT
+        assert session._releases["categorical_grouped:state"].certificate == GROUPED_CERT
+        assert session._releases["categorical_total:state"].certificate == TOTAL_CERT
+        for name in schedule.query_names:
+            assert session._releases[name].certificate != session._eps_q
+
+    def test_admit_reserves_the_name_so_a_second_admit_before_any_record_is_refused(self):
+        """M-2: `_admit` alone -- before `_record` ever runs for `name` --
+        must refuse a second admission of the same name. The previous
+        implementation checked only `name in self._releases`, which
+        `_record` populates AFTER the mechanism is invoked; "released only
+        once" held only because every `release_*` method happens to call
+        `_admit` immediately followed by an invoke and a `_record` within
+        one synchronous call, never because `_admit` itself remembered a
+        name it had already admitted. This calls `_admit` directly twice
+        for the same name with no `_record` in between, which the old
+        check could not catch."""
+        session = OpenDpReleaseSession(_mixed_schedule(), epsilon=1.0, delta=1e-6)
+        session._admit("row_count")
+        with pytest.raises(DpBudgetError) as exc:
+            session._admit("row_count")
+        assert exc.value.code == "dp_duplicate_release"
 
 
 class TestReleaseLedger:

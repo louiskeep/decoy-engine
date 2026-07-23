@@ -179,6 +179,32 @@ def test_plan_from_yaml_rebuilds_statistical_spec_from_pinned_bytes_not_the_seri
     assert rebuilt_specs[0].spec["other_mode"] != forged_other_mode
 
 
+def test_plan_from_yaml_refuses_unpinned_snapshot_file_instead_of_reading_disk(tmp_path):
+    """HIGH H-A: deserialization must be a pure function of the manifest
+    bytes, never a filesystem read plus an existence oracle over a path
+    named in the untrusted document. This empties `generation.snapshots`
+    (so `pinned_by_path` at load time covers nothing) and overwrites the
+    on-disk `snapshot_file` with unparseable content, so any fallback to
+    a direct read would raise `statistical_snapshot_unreadable` -- the
+    exact defect demonstrated against the reviewer's finding. The fixed
+    behavior must instead raise `statistical_snapshot_not_pinned` without
+    ever touching the path again."""
+    plan = _compiled_dp_plan(tmp_path)
+    rendered = plan_to_yaml(plan)
+    data = __import__("yaml").safe_load(rendered)
+
+    snapshot_path = data["generation"]["snapshots"][0]["source_path"]
+    data["generation"]["snapshots"] = []
+    tampered_yaml = __import__("yaml").safe_dump(data, sort_keys=False)
+
+    with open(snapshot_path, "w", encoding="utf-8") as fh:
+        fh.write("NOT JSON AT ALL")
+
+    with pytest.raises(PlanCompileError) as exc:
+        plan_from_yaml(tampered_yaml)
+    assert exc.value.code == "statistical_snapshot_not_pinned"
+
+
 def test_plan_from_yaml_without_generation_block_round_trips_none(tmp_path):
     """A Plan compiled with no generate_columns has no `generation` key at
     all on the wire (guide section 4.7); it must deserialize back to

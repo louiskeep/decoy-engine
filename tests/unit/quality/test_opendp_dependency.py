@@ -173,9 +173,20 @@ def test_quality_dp_budget_is_the_only_module_that_imports_opendp_anywhere():
     `opendp.extras` (the previous, narrower check). Walking every source
     file under `src/decoy_engine` and asserting `opendp` is named ONLY by
     `dp_budget.py` is the mechanical pin: a later contributor adding a
-    second OpenDP call site anywhere in the package fails this test,
-    rather than silently opening a second, unaudited construction/
-    invocation site."""
+    second STATIC `opendp` import anywhere in the package fails this test.
+
+    M-1: this is a static, `ast`-based import-shape check, and it cannot
+    do better than that -- it catches a second top-level `import opendp`
+    or `from opendp... import`, not a second call site reached some other
+    way. `importlib.import_module("opendp.prelude")` inside a function
+    body, or `from decoy_engine.quality.dp_budget import _dp` (re-
+    exporting the already-imported module object rather than importing
+    `opendp` by name), both construct or reach a second OpenDP entry point
+    while walking clean here. Catching those needs a runtime or call-graph
+    check (an `import-linter` forbidden-contract would be the natural
+    enforcement point if that dependency is ever added; it is not a
+    dependency of this build today, so it is not added in this pass), not
+    a wider version of this static walk."""
     package_root = pathlib.Path(decoy_engine.__file__).resolve().parent
     offenders: dict[str, set[str]] = {}
     for path in sorted(package_root.rglob("*.py")):

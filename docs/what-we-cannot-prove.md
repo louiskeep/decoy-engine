@@ -91,9 +91,11 @@ trusted from the artifact's own claim alone) certifies it:
 
 - **`OpenDpReleaseSession` is the sole OpenDP call site.** It enforces a
   fixed query schedule (refuses an unscheduled or duplicate release,
-  refuses a loss report before the schedule completes) and asserts every
-  recorded certificate equals `measurement.map(1)` on the object actually
-  invoked, never the calibration target. The fixed schedule is enforced by
+  refuses a loss report before the schedule completes) and records every
+  certificate as `measurement.map(1)` on the object actually invoked,
+  never the calibration target -- there is no runtime assertion that
+  compares the two; this is what the session's own construction always
+  does. The fixed schedule is enforced by
   Decoy, not by the DP library: an OpenDP-native compositor that would
   itself refuse an unscheduled query is unavailable in this build (it
   requires a Polars version Decoy does not run -- see the dependency
@@ -155,7 +157,13 @@ trusted from the artifact's own claim alone) certifies it:
   internal schedule doesn't match its own declared columns) and against
   the realistic case of a stale exact artifact with a copied-in `dp`
   block (the numeric shape check above), not against a forger who
-  replicates a genuine release's shape from scratch. A DP artifact's
+  replicates a genuine release's shape from scratch. That numeric shape
+  defense is numeric only: an exact and a DP categorical `stats` block
+  carry identical keys (compare `quality/snapshot.py`'s `top_values`/
+  `other_count` shape against `quality/dp.py`'s), so there is no shape
+  evidence to compare for a categorical column, and the stale-copied-block
+  case above is caught for a numeric column and NOT for a categorical one.
+  A DP artifact's
   recorded `epsilon_total` and `delta_total` are self-declared; Decoy
   verifies internal consistency and release-ID uniqueness, but a
   hand-edited artifact can understate what it actually spent -- and, for
