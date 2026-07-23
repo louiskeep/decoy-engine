@@ -838,7 +838,21 @@ class TestRecordwiseNormalization:
         # {"categorical_labels": "everything is retained", ...} passed
         # all 507 focused tests, because nothing asserted what it SAYS.
         # Pin the exact dict, and assert each behaviour it claims.
-        assert blocks[0] == _DP_NORMALIZATION_POLICY
+        # Pin the LITERAL text, not the constant the artifact is built
+        # from: `blocks[0] == _DP_NORMALIZATION_POLICY` compares the
+        # value to itself, so mutating the constant moves both sides and
+        # the assertion holds. That tautology let the garbage-policy
+        # mutant survive a second time, in the fix for it.
+        assert blocks[0] == {
+            "categorical_labels": (
+                "text kept verbatim; boolean, real, decimal and zero-imaginary complex "
+                "rendered from the float64 image; integers beyond float64 range rendered exactly"
+            ),
+            "categorical_unsupported": (
+                "released as null (datetime, timedelta, and any other type)"
+            ),
+            "numeric_values": "float64, non-finite clamped to the declared bound",
+        }
         assert _normalize_categorical(pd.Series(["a"], dtype=object)) == ["a"]  # text verbatim
         assert _normalize_categorical(pd.Series([True], dtype=object)) == ["1"]  # bool -> image
         assert _normalize_categorical(pd.Series([decimal.Decimal("1.5")], dtype=object)) == ["1.5"]
