@@ -43,6 +43,12 @@ that an operator can still interrupt a fit and a caller can still exit
 the process. A cell that raises either of those FROM ITS OWN dunders is
 therefore outside the domain and is the one residual case.
 
+For completeness, the `BaseException` enumeration is: `KeyboardInterrupt`
+and `SystemExit` are re-raised everywhere, `GeneratorExit` additionally in
+`_cells` because that guard wraps a `yield`, and `asyncio.CancelledError`
+is currently swallowed -- inert on this synchronous call path, and listed
+so the next reader does not have to rediscover the set.
+
 That residual is a caller precondition, not a defect we can close, and
 it is narrow: reaching it requires a live Python object carrying
 executable behaviour in a frame cell. No file-based ingestion path can
@@ -197,9 +203,12 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
                 # No `_unbox` here, deliberately. This path has no type
                 # gate -- it only calls `float()`, which is total over
                 # numpy scalars, and `_is_complex` reads the numpy dtype
-                # directly. Unboxing was provably inert (removing it
-                # changed nothing across the full adjacency matrix), and
-                # inert code that no test can falsify is a liability.
+                # directly. Unboxing is inert here: the original evidence
+                # was run under a fetch that pre-unboxed numpy scalars and
+                # so no longer supports the claim, but dennis round 10
+                # re-established it under the current fetch (1222 frames x
+                # 3 domains, zero differences). Inert code that no test can
+                # falsify is a liability, so it stays out.
                 # Anything that adds a type gate here must add `_unbox`
                 # with it, or it reintroduces the nullable-boolean drop.
                 if _is_datetimelike(raw):
@@ -260,12 +269,50 @@ def _cells(series: pd.Series) -> Iterator[Any]:
     disposition an unconvertible value already gets, and the same one the
     identical logical value receives under a numpy or object boxing where
     it arrives as a `pd.Timestamp` and is dropped by `_is_datetimelike`.
+
+    THE BOX CHANGED, and callers of this helper must know it. For a
+    numpy-backed Series, `Series.__iter__` is `map(self._values.item,
+    range(size))` and returns PYTHON NATIVES; `series.array[i]` returns
+    NUMPY SCALARS. dennis round 10 measured the difference on 11 of 31
+    representations: `int64`, `float64`, `float16`, `float32`,
+    `complex128`, `complex64`, `uint64`, `int8`, `bytes_S`, `categorical`
+    and `bool` -- and that last one is `np.True_`, which is exactly the
+    round-8 BLOCKER-2 value that is neither `bool` nor `numbers.Real`.
+    Behaviourally this is inert (2040 frames across both normalizers, zero
+    disposition differences) because `_canonical_label` unboxes and the
+    numeric path only calls `float()`. It makes the warning below STRONGER,
+    not weaker: before this change a naive type gate would have appeared to
+    work on numpy-backed columns and failed only on extension dtypes, and
+    now it fails on numpy-backed columns too.
+
+    THE COST, measured so it is a known number rather than a surprise on
+    the next benchmark: end-to-end normalizer throughput is 1.3x-3.0x
+    slower than the old fetch (fetch alone is 4.8x-12.1x; the loop body
+    absorbs most of it), landing at roughly 100k-520k rows per second
+    depending on representation and path. Multi-chunk arrow does not
+    degrade superlinearly -- 1 to 1000 chunks all sit in the same band --
+    so there is no quadratic landmine here. The cheaper shape, guarding
+    only extension arrays and keeping `map(ndarray.item, ...)` for
+    numpy-backed columns, is deliberately NOT taken: it reintroduces a
+    backend-dependent code path, which is the defect class that produced
+    six of the last ten review rounds.
     """
     values = series.array
     for i in range(len(series)):
         try:
             yield values[i]
-        except (KeyboardInterrupt, SystemExit):
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            # `GeneratorExit` belongs here and NOT in the two non-generator
+            # guards: this one wraps a `yield`, so finalizing the generator
+            # mid-iteration throws it AT that yield. Swallowing it and
+            # continuing to the next `yield` makes CPython raise
+            # `RuntimeError: generator ignored GeneratorExit` -- so widening
+            # the guard to `BaseException` for totality turned `_cells` into
+            # a non-conforming generator, and any consumer that stops early
+            # (`break`, `islice`, `zip`, a bounded or streaming caller) saw a
+            # RuntimeError or an "Exception ignored in" traceback. Found by
+            # dennis round 10 in the commit that added the KeyboardInterrupt
+            # re-raise so operators could still interrupt a fit.
             raise
         except BaseException:  # broad by design: totality, see THE DOMAIN above
             continue

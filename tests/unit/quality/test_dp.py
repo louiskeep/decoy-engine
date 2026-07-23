@@ -210,6 +210,31 @@ _ADJACENCY_REINTERPRETING_POOLS = frozenset(
     }
 )
 
+# Pools that cannot reach a neighbour of a DIFFERENT dtype, so they carry
+# recordwise coverage and contribute nothing to boxing invariance. dennis
+# round 10 (MEDIUM-c) found two arrow pools silently in this state; the
+# audit that followed found five more that had always been. Recorded as
+# explicit decisions rather than silent zeros: the guard below fails both
+# when an unexempted pool reaches no dtype change AND when an exempted one
+# starts reaching them, so neither direction can drift unnoticed.
+_NO_CROSS_BOXING_NEIGHBOUR = frozenset(
+    {
+        # `pd.concat` itself raises while widening these to object, because
+        # the values sit so far outside the Python range, and their list
+        # axis is pinned to their own schema because they reinterpret.
+        "arrow_date32_overflow",
+        "arrow_time64_us_overflow",
+        # Already object, and object is the one dtype that cannot upcast:
+        # every added row leaves it object. They carry recordwise coverage
+        # and, deliberately, no boxing coverage.
+        "string",
+        "mixed_num_str",
+        "huge_int_obj",
+        "decimal_obj",
+        "decimal_mixed",
+    }
+)
+
 # Added rows chosen to trigger a dtype change on the pools above.
 _ADJACENCY_ADDED: dict[str, object] = {
     "none": None,
@@ -639,7 +664,8 @@ class TestRecordwiseNormalization:
 
         built = 0
         compared = 0
-        for dtype in (object,) if obj else (object, None):
+        cross_boxing = 0
+        for dtype in (object,) if (obj or pool_dtype) else (object, None):
             try:
                 base = _build_series(list(pool), pool_dtype or dtype)
             except (OverflowError, ValueError, TypeError, pa.ArrowException):
@@ -647,19 +673,33 @@ class TestRecordwiseNormalization:
             built += 1
             list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
             for added in _ADJACENCY_ADDED.values():
-                try:
-                    _build_series([*pool, added], list_dtype)
+                for make in ("list", "concat"):
+                    try:
+                        neighbour = (
+                            _build_series([*pool, added], list_dtype)
+                            if make == "list"
+                            else pd.concat([base, pd.Series([added])], ignore_index=True)
+                        )
+                    except (OverflowError, ValueError, TypeError, pa.ArrowException):
+                        continue
                     compared += 1
-                except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                    pass
-                try:
-                    pd.concat([base, pd.Series([added])], ignore_index=True)
-                    compared += 1
-                except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                    pass
+                    if neighbour.dtype != base.dtype:
+                        cross_boxing += 1
 
         assert built, f"{pool_id}: the pool itself never builds; every one of its cases is vacuous"
         assert compared, f"{pool_id}: builds but yields no neighbour on any added row; vacuous"
+        if pool_id in _NO_CROSS_BOXING_NEIGHBOUR:
+            assert not cross_boxing, (
+                f"{pool_id} is exempted from the cross-boxing requirement but now reaches "
+                f"{cross_boxing} such neighbours; drop the exemption"
+            )
+        else:
+            assert cross_boxing, (
+                f"{pool_id}: every neighbour has the base's own dtype, so it exercises the "
+                "fetch guard but contributes nothing to boxing invariance, which is what "
+                "this matrix exists to prove. Either give it a reachable dtype change or "
+                "add it to _NO_CROSS_BOXING_NEIGHBOUR with the reason."
+            )
 
     @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
     @pytest.mark.parametrize("added_id", sorted(_ADJACENCY_ADDED), ids=sorted(_ADJACENCY_ADDED))
@@ -695,7 +735,10 @@ class TestRecordwiseNormalization:
         added = _ADJACENCY_ADDED[added_id]
         pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
 
-        for dtype in (object,) if obj else (object, None):
+        # dennis round 10 (LOW-a): `pool_dtype or dtype` makes the loop
+        # degenerate for every pool that pins its dtype -- the body ran
+        # twice identically, duplicating half the arrow assertions.
+        for dtype in (object,) if (obj or pool_dtype) else (object, None):
             build_dtype = pool_dtype or dtype
             try:
                 base = _build_series(list(pool), build_dtype)
@@ -813,7 +856,7 @@ class TestRecordwiseNormalization:
         pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
         bounds = {"lower": -(2.0**62), "upper": 2.0**62}
 
-        for dtype in (object,) if obj else (object, None):
+        for dtype in (object,) if (obj or pool_dtype) else (object, None):
             try:
                 base = _build_series(list(pool), pool_dtype or dtype)
             except (OverflowError, ValueError, TypeError):
@@ -971,7 +1014,9 @@ class TestRecordwiseNormalization:
         # ships in every artifact has to be true.
         assert blocks[0] == {
             "categorical_labels": (
-                "text kept verbatim unless it contains NUL or cannot be encoded as UTF-8; "
+                "text kept verbatim unless the value AS RECEIVED contains NUL or cannot be "
+                "encoded as UTF-8, noting that numpy fixed-width string storage strips a "
+                "trailing NUL before the fit sees it; "
                 "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
                 "image; a real too large for float64 rendered by its own exact repr instead, "
                 "up to the interpreter's decimal-conversion limit; NaN released as null"
@@ -1019,6 +1064,51 @@ class TestRecordwiseNormalization:
         permit. The uniform disposition is to drop."""
         series = pd.Series(["a\x00b"] * 3 + ["a"] * 3 + ["a\x00c"] * 3 + ["keep"], dtype=object)
         assert _normalize_categorical(series) == ["a"] * 3 + ["keep"]
+
+    @pytest.mark.parametrize(
+        "backing",
+        ["object", "string", "string[pyarrow]", "arrow", "category", "numpy_U"],
+    )
+    def test_the_nul_disposition_is_recorded_for_every_string_backing(self, backing):
+        """dennis round 10 (MEDIUM-a): the regression above covers only
+        `dtype=object`, and the drop is NOT uniform across backings.
+
+        numpy's fixed-width `U` dtype strips trailing NULs AT STORAGE, so
+        `"a\x00"` reaches the normalizer as `"a"` -- indistinguishable from
+        a genuine `"a"`, with the information destroyed before the fit sees
+        the frame. We cannot make that uniform; we can only be accurate
+        about it, which is why the policy string says "as received".
+
+        Checked rather than assumed: this is not a DP break. Trailing-NUL
+        stripping is irreversible and no pandas operation moves an object
+        column into `U`, so no one-row neighbour can flip a column between
+        the two dispositions. INTERIOR NUL drops everywhere, which is the
+        case that actually merged distinct values.
+
+        Pinned per backing so the divergence is on the record rather than
+        latent, and so a future change to either side shows up here."""
+        trailing, interior, plain = "a\x00", "a\x00b", "ab"
+        values = [trailing, interior, plain]
+        if backing == "numpy_U":
+            series = pd.Series(np.array(values))
+        elif backing == "arrow":
+            series = pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values)))
+        elif backing == "category":
+            series = pd.Series(values, dtype="category")
+        else:
+            series = pd.Series(values, dtype=backing)
+
+        labels = _normalize_categorical(series)
+
+        # Interior NUL always drops; plain text always survives.
+        assert interior not in labels
+        assert plain in labels
+        if backing == "numpy_U":
+            # Already truncated to "a" before we saw it, so it survives as
+            # ordinary text. This asymmetry is deliberate and disclosed.
+            assert labels == ["a", plain]
+        else:
+            assert labels == [plain]
 
     def test_unlabellable_types_drop_rather_than_raise(self):
         """Codex round 7 named timedelta and datetime columns as moving

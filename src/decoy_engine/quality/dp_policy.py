@@ -19,7 +19,9 @@ _logger = logging.getLogger(__name__)
 # drop COUNT below goes to the log and never in here.
 _DP_NORMALIZATION_POLICY = {
     "categorical_labels": (
-        "text kept verbatim unless it contains NUL or cannot be encoded as UTF-8; "
+        "text kept verbatim unless the value AS RECEIVED contains NUL or cannot be "
+        "encoded as UTF-8, noting that numpy fixed-width string storage strips a "
+        "trailing NUL before the fit sees it; "
         "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
         "image; a real too large for float64 rendered by its own exact repr instead, "
         "up to the interpreter's decimal-conversion limit; NaN released as null"
