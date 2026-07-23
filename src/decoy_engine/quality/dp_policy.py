@@ -15,19 +15,22 @@ _logger = logging.getLogger(__name__)
 
 # Fixed, content-independent description of what normalization releases.
 # Identical bytes in every artifact: a policy that varied with the frame
-# would be an unnoised channel, which is precisely why the per-column
-# drop COUNT below goes to the log and never in here.
+# would be an unnoised channel. Round 9 deleted the per-column drop
+# COUNT this comment used to point at; nothing below logs one.
 _DP_NORMALIZATION_POLICY = {
     "categorical_labels": (
         "text kept verbatim unless the value AS RECEIVED contains NUL or cannot be "
         "encoded as UTF-8, noting that numpy fixed-width string storage strips a "
         "trailing NUL before the fit sees it; "
         "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
-        "image; a real too large for float64 rendered by its own exact repr instead, "
-        "up to the interpreter's decimal-conversion limit; NaN released as null"
+        "image; an integer or rational too large for float64 rendered by its own exact "
+        "repr instead, up to the interpreter's decimal-conversion limit; a decimal or "
+        "extended-precision real too large for float64 released as the infinity its "
+        "float64 image becomes; NaN released as null"
     ),
     "categorical_unsupported": (
-        "released as null (datetime, timedelta, NUL-bearing or non-UTF-8 text, and any other type)"
+        "released as null (datetime, timedelta, text whose value AS RECEIVED carries "
+        "NUL or is not UTF-8 encodable, and any other type)"
     ),
     "numeric_values": (
         "float64, values outside the declared domain clamped to it, "

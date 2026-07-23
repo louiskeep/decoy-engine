@@ -130,3 +130,11 @@ def test_dp_claim_copy_scopes_the_domain_to_values_not_live_objects():
     assert "outside this guarantee" in text
     # And why the residual is narrow rather than merely disclosed.
     assert "nothing loaded from a file can be such a cell" in text
+
+    # Codex round 11: the page went on to describe the OLD handling two
+    # paragraphs later -- `except Exception`, and a claim that catching
+    # `BaseException` would swallow Ctrl-C -- both the opposite of what
+    # ships. A guarantee page carrying two contradictory descriptions of
+    # its own enforcement is worse than one that describes neither.
+    assert "enforced with `except baseexception`" in text
+    assert "two types are deliberately re-raised" in text

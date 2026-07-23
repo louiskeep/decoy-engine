@@ -297,25 +297,42 @@ def _cells(series: pd.Series) -> Iterator[Any]:
     backend-dependent code path, which is the defect class that produced
     six of the last ten review rounds.
     """
-    values = series.array
-    for i in range(len(series)):
+    try:
+        values = series.array
+        count = len(series)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:  # broad by design: totality, see THE DOMAIN above
+        # Codex round 11: setup was outside every guard. `series.array` and
+        # `len(series)` are attribute and dunder calls on a caller-supplied
+        # object, and a Series subclass whose `array` property raises only
+        # when a sentinel row is present made the whole fit abort on ordinary
+        # integer cells -- a fit-success observable reached without any
+        # unusual CELL, which the documented domain restriction (about live
+        # objects in cells) does not cover. A frame we cannot read at all
+        # yields no rows rather than raising.
+        return
+
+    for i in range(count):
         try:
-            yield values[i]
-        except (KeyboardInterrupt, SystemExit, GeneratorExit):
-            # `GeneratorExit` belongs here and NOT in the two non-generator
-            # guards: this one wraps a `yield`, so finalizing the generator
-            # mid-iteration throws it AT that yield. Swallowing it and
-            # continuing to the next `yield` makes CPython raise
-            # `RuntimeError: generator ignored GeneratorExit` -- so widening
-            # the guard to `BaseException` for totality turned `_cells` into
-            # a non-conforming generator, and any consumer that stops early
-            # (`break`, `islice`, `zip`, a bounded or streaming caller) saw a
-            # RuntimeError or an "Exception ignored in" traceback. Found by
-            # dennis round 10 in the commit that added the KeyboardInterrupt
-            # re-raise so operators could still interrupt a fit.
+            cell = values[i]
+        except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:  # broad by design: totality, see THE DOMAIN above
             continue
+        # The `yield` is deliberately OUTSIDE the guard. Codex round 11:
+        # with both inside one `try`, a `GeneratorExit` arriving from the
+        # FETCH was indistinguishable from generator finalization, and the
+        # re-raise added for the latter aborted the fit for the former --
+        # so an ExtensionArray raising `GeneratorExit` from `__getitem__`
+        # took the whole fit down while the docstring promised one dropped
+        # row. Splitting them lets a fetch-raised `GeneratorExit` drop the
+        # row like any other fetch failure, while a finalization
+        # `GeneratorExit` still propagates from the `yield` and keeps this
+        # generator conforming (swallowing it there makes CPython raise
+        # `RuntimeError: generator ignored GeneratorExit`, which is what
+        # dennis round 11 caught when the guard was widened).
+        yield cell
 
 
 def _canonical_label(raw: Any) -> str:

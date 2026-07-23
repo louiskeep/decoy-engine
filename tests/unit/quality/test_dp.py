@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import gc
+import itertools
 import json
 import logging
 import math
@@ -33,6 +35,12 @@ from decoy_engine.quality.dp import (
     fit_dp_snapshot,
 )
 from decoy_engine.quality.dp_budget import DpBudgetError, _FakeMeasurement
+from decoy_engine.quality.dp_normalize import _cells
+
+# The LITERAL name, not `_policy_logger.name` -- deriving it from the
+# module under test compares the value to itself, which is how a
+# garbage-policy mutant survived twice earlier in this program.
+_POLICY_LOGGER_NAME = "decoy_engine.quality.dp_policy"
 
 # Fixed test-confidence budget (guide section 7.2): 1e-6 false-failure
 # probability per statistical test per run, derived once as a module
@@ -227,6 +235,13 @@ _NO_CROSS_BOXING_NEIGHBOUR = frozenset(
         # Already object, and object is the one dtype that cannot upcast:
         # every added row leaves it object. They carry recordwise coverage
         # and, deliberately, no boxing coverage.
+        #
+        # `string` is exempt only under the DEFAULT `future.infer_string`
+        # (Codex round 11): with that option enabled the base infers as
+        # `str` and an added numeric row widens it to `object`, so the pool
+        # reaches 21 cross-boxing neighbours and the exemption is wrong.
+        # The test below pins both halves of that so the dependency is
+        # recorded rather than silently inherited from a global default.
         "string",
         "mixed_num_str",
         "huge_int_obj",
@@ -646,6 +661,29 @@ class TestRecordwiseNormalization:
             dropped_out = _normalize_categorical(dropped)
             assert _multiset_distance(base_out, dropped_out) <= 1
 
+    def test_the_string_pool_exemption_depends_on_a_pandas_global(self):
+        """Codex round 11: `string`'s exemption reads as a property of the
+        data, and it is really a property of `pd.options.future.infer_string`.
+
+        Under the default the pool is object dtype and nothing widens it.
+        Enable the option and the base infers as `str`, an added numeric row
+        widens to `object`, and the exemption is simply wrong -- so when that
+        option becomes the default, the exemption must go. Pin both halves
+        now rather than discover it as a silent coverage loss then."""
+        values = ["a", "b"]
+        original = pd.options.future.infer_string
+        try:
+            pd.options.future.infer_string = False
+            assert pd.Series(values).dtype == object
+            assert pd.Series([*values, 7]).dtype == object  # no widening: exemption holds
+
+            pd.options.future.infer_string = True
+            widened = pd.Series(values)
+            assert widened.dtype != object  # infers as `str`
+            assert pd.Series([*values, 7]).dtype != widened.dtype  # widening IS reachable
+        finally:
+            pd.options.future.infer_string = original
+
     @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
     def test_every_declared_pool_actually_produces_a_comparison(self, pool_id):
         """Codex round 10 (MEDIUM): a pool whose construction raises is
@@ -665,7 +703,9 @@ class TestRecordwiseNormalization:
         built = 0
         compared = 0
         cross_boxing = 0
-        for dtype in (object,) if (obj or pool_dtype) else (object, None):
+        for dtype in (
+            (object,) if (obj or pool_id in _ADJACENCY_REINTERPRETING_POOLS) else (object, None)
+        ):
             try:
                 base = _build_series(list(pool), pool_dtype or dtype)
             except (OverflowError, ValueError, TypeError, pa.ArrowException):
@@ -735,10 +775,21 @@ class TestRecordwiseNormalization:
         added = _ADJACENCY_ADDED[added_id]
         pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
 
-        # dennis round 10 (LOW-a): `pool_dtype or dtype` makes the loop
-        # degenerate for every pool that pins its dtype -- the body ran
-        # twice identically, duplicating half the arrow assertions.
-        for dtype in (object,) if (obj or pool_dtype) else (object, None):
+        # The two passes are only degenerate for a REINTERPRETING pool,
+        # where `list_dtype = pool_dtype` regardless of `dtype`. For any
+        # other pinned-dtype pool they build DIFFERENT list neighbours --
+        # `object` in one pass, re-inferred in the other -- and collapsing
+        # the axis on `pool_dtype` deleted 279 of 942 cross-boxing
+        # comparisons (dennis round 11, HIGH-1). What went with them:
+        # `ext_boolean`/`arrow_bool` -> numpy `bool`, which is the
+        # `np.bool_` transition round 8 added that pool FOR, and
+        # `ext_Int64`/`ext_Float64`/`arrow_int64`/`arrow_float64` ->
+        # `complex128`, which is round 8's real-to-complex re-typing.
+        # The cross-boxing guard did not catch it because ("list",
+        # "object") still differs from the base dtype.
+        for dtype in (
+            (object,) if (obj or pool_id in _ADJACENCY_REINTERPRETING_POOLS) else (object, None)
+        ):
             build_dtype = pool_dtype or dtype
             try:
                 base = _build_series(list(pool), build_dtype)
@@ -856,7 +907,9 @@ class TestRecordwiseNormalization:
         pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
         bounds = {"lower": -(2.0**62), "upper": 2.0**62}
 
-        for dtype in (object,) if (obj or pool_dtype) else (object, None):
+        for dtype in (
+            (object,) if (obj or pool_id in _ADJACENCY_REINTERPRETING_POOLS) else (object, None)
+        ):
             try:
                 base = _build_series(list(pool), pool_dtype or dtype)
             except (OverflowError, ValueError, TypeError):
@@ -961,11 +1014,23 @@ class TestRecordwiseNormalization:
         records = []
         for df in (clean, dropped):
             caplog.clear()
-            with caplog.at_level(logging.INFO, logger="decoy_engine.quality.dp"):
+            with caplog.at_level(logging.INFO, logger=_POLICY_LOGGER_NAME):
                 fit_dp_snapshot(
                     df, categorical_columns=["c"], numeric_domains={}, epsilon=2.0, delta=1e-6
                 )
-            emitted = [r.getMessage() for r in caplog.records if "dp fit:" in r.getMessage()]
+            matching = [r for r in caplog.records if "dp fit:" in r.getMessage()]
+            # dennis + Codex round 11 (both found this independently): the
+            # `dp_policy` extraction moved the emitting logger out of
+            # `decoy_engine.quality.dp`, and nothing noticed. The `logger=`
+            # argument here was INERT -- `caplog.at_level` force-enables the
+            # root logger, so the test passed while naming a logger that
+            # emits nothing, and an operator filtering on the old name lost
+            # the line silently. Assert the name on the record itself.
+            assert {r.name for r in matching} == {_POLICY_LOGGER_NAME}, (
+                f"policy line came from {sorted({r.name for r in matching})}, "
+                f"not {_POLICY_LOGGER_NAME}"
+            )
+            emitted = [r.getMessage() for r in matching]
             assert emitted, "the policy line must fire on every fit"
             records.append(emitted)
         assert records[0] == records[1], "the log must not vary with frame content"
@@ -1018,12 +1083,14 @@ class TestRecordwiseNormalization:
                 "encoded as UTF-8, noting that numpy fixed-width string storage strips a "
                 "trailing NUL before the fit sees it; "
                 "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
-                "image; a real too large for float64 rendered by its own exact repr instead, "
-                "up to the interpreter's decimal-conversion limit; NaN released as null"
+                "image; an integer or rational too large for float64 rendered by its own exact "
+                "repr instead, up to the interpreter's decimal-conversion limit; a decimal or "
+                "extended-precision real too large for float64 released as the infinity its "
+                "float64 image becomes; NaN released as null"
             ),
             "categorical_unsupported": (
-                "released as null (datetime, timedelta, NUL-bearing or non-UTF-8 text, "
-                "and any other type)"
+                "released as null (datetime, timedelta, text whose value AS RECEIVED carries "
+                "NUL or is not UTF-8 encodable, and any other type)"
             ),
             "numeric_values": (
                 "float64, values outside the declared domain clamped to it, "
@@ -1048,6 +1115,15 @@ class TestRecordwiseNormalization:
         assert _normalize_categorical(pd.Series([Fraction(10**400, 3)], dtype=object)) == [
             str(Fraction(10**400, 3))
         ]
+        # dennis + Codex round 11: the exact-repr branch is `except
+        # OverflowError`, so only types whose `__float__` RAISES reach it.
+        # Decimal and longdouble return inf silently and fall through to the
+        # float64 image, which the previous "a real too large for float64"
+        # wording denied -- and which also collides with a genuine infinity.
+        assert _normalize_categorical(pd.Series([decimal.Decimal("1E+400")], dtype=object)) == [
+            "inf"
+        ]
+        assert _normalize_categorical(pd.Series([np.longdouble("1e400")], dtype=object)) == ["inf"]
         assert _normalize_numeric(pd.Series([float("nan")]), lower=0.0, upper=10.0) == []
         assert _normalize_numeric(pd.Series([99.0]), lower=0.0, upper=10.0) == [10.0]
         assert _normalize_numeric(pd.Series([float("-inf")]), lower=0.0, upper=10.0) == [0.0]
@@ -1409,6 +1485,175 @@ class TestRecordwiseNormalization:
             delta=1e-6,
         )
         assert "n" in snap["columns"]
+
+
+class TestTotalityGuardStructure:
+    """dennis round 11 (HIGH-2): three consecutive rounds of guard
+    remediation landed in `dp_normalize` -- the `BaseException` widening,
+    the `KeyboardInterrupt`/`SystemExit` re-raise, and the `GeneratorExit`
+    split -- and not one of them had a regression test. Mutants reverting
+    each of the three survived the whole suite. The only thing in the repo
+    describing the guard structure was a docstring.
+
+    CAREFUL when extending these: `_pytest.outcomes.Failed` derives from
+    `BaseException`, not `Exception`, and is in no re-raise tuple, so an
+    `assert` placed inside a mock cell's dunder is SWALLOWED by the guard
+    and the test reports green (dennis round 11, MEDIUM-2). Every mock
+    below records into a list the test inspects afterwards; none asserts
+    inside a dunder.
+    """
+
+    def test_a_cell_raising_a_bare_base_exception_drops_rather_than_aborting(self):
+        """Kills the mutant narrowing either guard back to `Exception`.
+
+        Codex round 10's BLOCKER: `float()` on the numeric path has no type
+        gate ahead of it, so a cell whose `__float__` raised a direct
+        `BaseException` subclass escaped and made fit success a
+        probability-0-versus-1 observable."""
+
+        class Sentinel(BaseException):
+            pass
+
+        class Hostile:
+            def __float__(self):
+                raise Sentinel("from __float__")
+
+            def __str__(self):
+                raise Sentinel("from __str__")
+
+        numeric = pd.Series([1.0, 2.0, Hostile()], dtype=object)
+        assert _normalize_numeric(numeric, lower=0.0, upper=10.0) == [1.0, 2.0]
+        categorical = pd.Series(["a", "b", Hostile()], dtype=object)
+        assert _normalize_categorical(categorical) == ["a", "b"]
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_an_interrupt_from_a_cell_still_propagates(self, interrupt):
+        """Kills the mutant dropping `KeyboardInterrupt`/`SystemExit` from
+        the re-raise tuples. Totality is deliberately NOT absolute here: an
+        operator must be able to stop a long fit and a caller must be able
+        to exit the process. That residual is a documented domain
+        restriction, so it needs a test as much as the guard does."""
+
+        class Interrupter:
+            def __float__(self):
+                raise interrupt
+
+            def __str__(self):
+                raise interrupt
+
+        with pytest.raises(interrupt):
+            _normalize_numeric(pd.Series([1.0, Interrupter()], dtype=object), lower=0.0, upper=1.0)
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_an_interrupt_from_the_FETCH_also_propagates(self, interrupt):
+        """The re-raise tuple in `_cells` is separate from the ones in the
+        two normalizers, and the test above only covers the latter: it
+        raises from `__float__`, which the numeric guard catches, never
+        reaching the fetch. A mutant that emptied `_cells`'s tuple survived
+        because of exactly that gap."""
+
+        class RaisingGetItem:
+            def __init__(self, values, interrupt):
+                self._values, self._interrupt = list(values), interrupt
+
+            def __len__(self):
+                return len(self._values)
+
+            def __getitem__(self, index):
+                if self._values[index] == 999.0:
+                    raise self._interrupt
+                return self._values[index]
+
+        class ArraySeries(pd.Series):
+            _raising = None
+
+            @property
+            def array(self):
+                return self._raising
+
+        series = ArraySeries([1.0, 999.0, 2.0])
+        series._raising = RaisingGetItem([1.0, 999.0, 2.0], interrupt)
+
+        with pytest.raises(interrupt):
+            list(_cells(series))
+        with pytest.raises(interrupt):
+            _normalize_numeric(series, lower=0.0, upper=10.0)
+
+    def test_cells_stays_a_conforming_generator_when_finalized_early(self):
+        """Kills the mutant dropping `GeneratorExit` from `_cells`'s
+        re-raise tuple. That guard wraps the `yield`, so swallowing a
+        finalization `GeneratorExit` and continuing makes CPython raise
+        `RuntimeError: generator ignored GeneratorExit`, and every consumer
+        that stops early sees it."""
+        series = pd.Series([1.0, 2.0, 3.0, 4.0], dtype=object)
+
+        generator = _cells(series)
+        next(generator)
+        generator.close()  # raises RuntimeError if the generator is non-conforming
+
+        for _ in itertools.islice(_cells(series), 2):
+            pass
+
+        for _ in _cells(series):
+            break
+
+        abandoned = _cells(series)
+        next(abandoned)
+        del abandoned
+        gc.collect()
+
+    def test_a_generator_exit_raised_by_the_fetch_drops_one_row(self):
+        """Codex round 11: with the fetch and the `yield` in one `try`, a
+        `GeneratorExit` arriving FROM the fetch was indistinguishable from
+        finalization, and the re-raise added for the latter aborted the fit
+        for the former -- so an array raising it from `__getitem__` took the
+        whole fit down while the docstring promised one dropped row."""
+
+        class RaisingGetItem:
+            def __init__(self, values):
+                self._values = list(values)
+
+            def __len__(self):
+                return len(self._values)
+
+            def __getitem__(self, index):
+                if self._values[index] == 999.0:
+                    raise GeneratorExit("raised by __getitem__")
+                return self._values[index]
+
+        class ArraySeries(pd.Series):
+            _raising = None
+
+            @property
+            def array(self):
+                return self._raising
+
+        series = ArraySeries([1.0, 999.0, 2.0])
+        series._raising = RaisingGetItem([1.0, 999.0, 2.0])
+
+        assert list(_cells(series)) == [1.0, 2.0]
+        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.0, 2.0]
+
+    def test_setup_that_depends_on_content_yields_nothing_rather_than_raising(self):
+        """Codex round 11: `series.array` and `len(series)` ran before the
+        `try`. Both are calls on a caller-supplied object, so a container
+        whose `array` raises only when a sentinel row is present aborted the
+        fit on ordinary integer CELLS -- reaching the fit-success channel
+        with no unusual cell at all, which the documented domain restriction
+        does not cover."""
+        seen: list[int] = []
+
+        class SetupFails(pd.Series):
+            @property
+            def array(self):
+                seen.append(len(self))
+                if len(self) > 2:
+                    raise SystemError("setup depends on row count")
+                return pd.Series.array.fget(self)
+
+        assert _normalize_numeric(SetupFails([1.0, 2.0]), lower=0.0, upper=10.0) == [1.0, 2.0]
+        assert _normalize_numeric(SetupFails([1.0, 2.0, 3.0]), lower=0.0, upper=10.0) == []
+        assert seen == [2, 3]
 
 
 class TestReleaseIds:

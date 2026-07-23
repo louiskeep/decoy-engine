@@ -110,18 +110,22 @@ consumed by a compiled, DP-verified Plan.
 
 **The data-model boundary.** Preprocessing is total over data: no scalar
 value can make a fit raise, warn, or otherwise become observable, so fit
-success is not a channel. That totality is enforced with `except Exception`,
-which by design does not catch `KeyboardInterrupt` or `SystemExit`. A cell
-holding an object whose `__str__` or `__float__` raises one of those can
-therefore make a fit terminate where its one-row neighbour succeeded.
+success is not a channel. Totality is enforced with `except BaseException`
+rather than `except Exception`, because a cell whose `__float__` raised a
+direct `BaseException` subclass escaped the narrower form and aborted the
+fit. Two types are deliberately re-raised rather than caught,
+`KeyboardInterrupt` and `SystemExit`, so that an operator can still
+interrupt a long fit and a caller can still exit the process. A cell holding
+an object whose `__str__` or `__float__` raises one of those two can
+therefore still make a fit terminate where its one-row neighbour succeeded.
 
-Both cross-model reviewers found this independently and both judged it out of
+That is the whole residual, and both cross-model reviewers judged it out of
 scope, as do we: such a value is not data, it is code that hijacks process
 control, and a caller who can place it in the frame already controls the
-process. Catching `BaseException` would be the worse trade, because it would
-swallow a genuine Ctrl-C during a long fit. We state the boundary rather than
-leave it implicit, because "no row content can affect fit success" is
-otherwise read as unconditional.
+process. Catching those two as well would be the worse trade, because it
+would swallow a genuine Ctrl-C during a long fit. We state the boundary
+rather than leave it implicit, because "no row content can affect fit
+success" is otherwise read as unconditional.
 
 **The single-threaded boundary.** Totality also rests on suppressing warnings,
 via `warnings.catch_warnings()` plus `simplefilter("ignore")`. That mechanism
