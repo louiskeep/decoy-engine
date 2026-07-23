@@ -614,6 +614,22 @@ class TestRecordwiseNormalization:
             "inf",
         ]
 
+    def test_integers_too_large_for_float64_are_labelled_not_dropped(self):
+        """Routing reals through their float64 image means `float(raw)`
+        can raise `OverflowError` for a big enough integer. Falling back
+        to the exact integer string is sound rather than a special case:
+        such a value cannot live in an `int64` column, so pandas holds it
+        in `object` dtype, which never upcasts, so nothing can move the
+        label.
+
+        Without the fallback these rows drop instead. That is not a
+        guarantee break -- dropping stays recordwise -- which is exactly
+        why it needs its own test: the adjacency matrix passes either
+        way, and dennis round 7 called the silent loss out specifically."""
+        huge = [10**400, 10**401]
+        series = pd.Series(huge, dtype=object)
+        assert _normalize_categorical(series) == [str(v) for v in huge]
+
     def test_unlabellable_types_drop_rather_than_raise(self):
         """Codex round 7 named timedelta and datetime columns as moving
         every label across a coercion: a `timedelta64` column labels
