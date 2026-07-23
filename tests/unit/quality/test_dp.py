@@ -23,7 +23,6 @@ import pandas as pd
 import pytest
 
 from decoy_engine.quality.dp import (
-    _DP_NORMALIZATION_POLICY,
     DpError,
     _fit_dp_snapshot_with_backend,
     _normalize_categorical,
