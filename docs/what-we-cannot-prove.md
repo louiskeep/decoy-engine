@@ -60,6 +60,20 @@ swallow a genuine Ctrl-C during a long fit. We state the boundary rather than
 leave it implicit, because "no row content can affect fit success" is
 otherwise read as unconditional.
 
+**The single-threaded boundary.** Totality also rests on suppressing warnings,
+via `warnings.catch_warnings()` plus `simplefilter("ignore")`. That mechanism
+swaps a process-global filter list and restores it on exit, so it is not
+thread-safe. A concurrent thread that installs `simplefilter("error")` inside
+that window would turn a content-dependent warning back into an exception and
+reopen the fit-success channel described above.
+
+`fit_dp_snapshot` is a caller-facing entrypoint and the engine does not fit
+snapshots inside its own concurrency, so no in-engine caller can reach this.
+Python 3.10 offers no thread-safe alternative (`catch_warnings(action=...)`
+arrived later), so we record the boundary rather than restructure around it:
+run a DP fit on one thread, or do not install warning filters concurrently
+with one.
+
 **What is covered.** A statistical generate column's marginal carries the
 declared `(epsilon, delta)` guarantee only when its snapshot was produced by
 `fit_dp_snapshot` for that specific column, and the compiled Plan's
