@@ -209,6 +209,68 @@ class TestConfigValidation:
             )
         assert exc.value.code == "dp_numeric_domain_invalid"
 
+    @pytest.mark.parametrize(
+        ("bounds", "bins"),
+        [((0.0, 1.7e308), 10), ((1.0, 1.0000000000000002), 100)],
+        ids=["overflowing_width", "collapsing_width"],
+    )
+    def test_domains_whose_derived_bin_edges_degenerate_raise_a_coded_error(self, bounds, bins):
+        """D-M-B (dennis round 5): finite `lower < upper` passed
+        validation, but the DERIVED interior edges could overflow or
+        collapse to non-unique values, and OpenDP then rejected them at
+        the FFI with a raw `OpenDPException`, after the row-count release
+        had already charged the session. `(0.0, 1.7e308)` is a plausible
+        "just give it a wide domain" input. This module documents that it
+        raises coded `DpError`, so the edges are now derived from the
+        public declaration and checked before any value is touched. Not a
+        privacy channel: the outcome is a function of the declaration
+        alone, identical for both neighbours."""
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                pd.DataFrame({"age": [1.0] * 5}),
+                categorical_columns=[],
+                numeric_domains={"age": bounds},
+                epsilon=2.0,
+                delta=1e-6,
+                numeric_bins=bins,
+            )
+        assert exc.value.code == "dp_numeric_domain_invalid"
+
+    @pytest.mark.parametrize(
+        ("bounds", "bins"),
+        [((0.0, 120.0), 10), ((0.0, 1.0), 2), ((-50.0, 50.0), 100), ((0.0, 1e-300), 10)],
+        ids=["ordinary", "two_bins", "many_bins", "very_small"],
+    )
+    def test_ordinary_domains_still_fit(self, bounds, bins):
+        """The edge guard must reject only degenerate declarations. An
+        earlier revision of it used `zip(full, full[1:], strict=True)`,
+        whose operands differ in length by one by construction, and so
+        raised `ValueError` on EVERY fit; only including ordinary
+        domains here caught that."""
+        snap = fit_dp_snapshot(
+            pd.DataFrame({"age": [1.0] * 5}),
+            categorical_columns=[],
+            numeric_domains={"age": bounds},
+            epsilon=2.0,
+            delta=1e-6,
+            numeric_bins=bins,
+        )
+        assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == bins
+
+    def test_non_string_frame_column_labels_are_rejected(self):
+        """D-L-A (dennis round 5): validation compared `str(label)` sets
+        while the fit loop indexed with the stringified name, so an
+        integer column `5` declared as `numeric_domains={5: ...}` passed
+        validation and then died on `frame["5"]` with a bare `KeyError`.
+        Fail-closed and no leak, but the wrong exception type from a
+        module that documents coded errors."""
+        df = pd.DataFrame({5: [0.5, 0.6]})
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                df, categorical_columns=[], numeric_domains={5: (0.0, 1.0)}, epsilon=2.0, delta=1e-6
+            )
+        assert exc.value.code == "dp_column_label_not_a_string"
+
     def test_duplicate_frame_column_labels_are_rejected(self):
         """D-M4: `frame.columns` was compared as a set, so `["x", "x"]`
         passed the coverage check. `frame["x"]` then returns a DataFrame,

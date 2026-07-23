@@ -45,6 +45,7 @@ compile error, never a silent truncation.
 from __future__ import annotations
 
 import importlib.metadata
+import itertools
 import math
 import uuid
 from collections.abc import Collection, Mapping
@@ -168,6 +169,24 @@ def _validate_config(
     # over the label string instead of the data. Nothing leaks (it
     # describes none of the values), but a DP artifact that silently
     # describes the wrong thing is worse than a rejected one.
+    # D-L-A (dennis round 5): every comparison below is on `str(label)`,
+    # but the fit loop indexes the frame with that STRINGIFIED name. An
+    # integer column `5` declared as `numeric_domains={5: ...}` therefore
+    # passed validation and then died on `frame["5"]` with a bare
+    # `KeyError`. Same class as the derived-edges break above: fail
+    # closed, no leak, wrong exception type. Rejected with a coded error
+    # rather than silently supported, since indexing by the original
+    # label is a wider change than this build should make and the path
+    # does not work today.
+    non_string = sorted(repr(c) for c in frame.columns if not isinstance(c, str))
+    if non_string:
+        raise DpError(
+            code="dp_column_label_not_a_string",
+            message=(
+                f"frame has non-string column labels: {non_string}. Declare and fit columns "
+                "under string names; rename the frame's columns before fitting."
+            ),
+        )
     frame_labels = [str(c) for c in frame.columns]
     duplicated = sorted({label for label in frame_labels if frame_labels.count(label) > 1})
     if duplicated:
@@ -205,6 +224,31 @@ def _validate_config(
                 message=(
                     f"numeric_domains[{col!r}]=({lower!r}, {upper!r}) must have finite "
                     "lower < upper."
+                ),
+            )
+        # D-M-B (dennis round 5): finite `lower < upper` is not enough.
+        # The bin edges DERIVED from the declaration can still overflow
+        # or collapse to non-unique values, and OpenDP then rejects them
+        # at the FFI with a raw `OpenDPException` ("edges must be unique
+        # and ordered") -- after the row-count release has already
+        # charged the session. `(0.0, 1.7e308)` is a plausible "just give
+        # it a wide domain" input, and so is a pair of adjacent floats
+        # under a high `numeric_bins`. This module documents that it
+        # raises coded `DpError`, so the same edges are derived here,
+        # from PUBLIC declarations only, and checked before any value is
+        # touched.
+        edges = [lower + (upper - lower) * i / numeric_bins for i in range(1, numeric_bins)]
+        full = [lower, *edges, upper]
+        if not all(math.isfinite(e) for e in full) or any(
+            b <= a for a, b in itertools.pairwise(full)
+        ):
+            raise DpError(
+                code="dp_numeric_domain_invalid",
+                message=(
+                    f"numeric_domains[{col!r}]=({lower!r}, {upper!r}) with "
+                    f"numeric_bins={numeric_bins} derives bin edges that are not finite and "
+                    "strictly increasing (the domain is too wide, or too narrow for this many "
+                    "bins). Narrow the domain or reduce numeric_bins."
                 ),
             )
 

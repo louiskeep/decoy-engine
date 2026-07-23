@@ -144,6 +144,31 @@ class GlobalSettings(BaseModel):
             )
         return data
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        """Keep the serialization-mode JSON schema intact.
+
+        D-M-A (dennis round 5): a `@model_serializer(mode="wrap")`
+        returning `Any` makes pydantic discard this model's SERIALIZATION
+        schema entirely, so `model_json_schema(mode="serialization")`
+        reported `GlobalSettings` as `{}` and dropped
+        `DpGenerateSettings` from `$defs` altogether. Validation mode was
+        unaffected, and no consumer in this repo or the platform reads
+        the serialization-mode schema today, so it was latent rather than
+        live -- but it is a real regression introduced by the `dp`
+        omission serializer, in the core schema, and nothing covered it.
+
+        The field-enumerating schema is recovered by asking the handler
+        again with the `serialization` entry stripped from the schema
+        copy, which is exactly the schema pydantic would have built had
+        the serializer not been attached. Only the JSON schema is
+        affected; the serializer itself still runs on every dump.
+        """
+        schema = handler(core_schema)
+        if not schema:
+            schema = handler({k: v for k, v in core_schema.items() if k != "serialization"})
+        return schema
+
     @model_serializer(mode="wrap")
     def _omit_never_assigned_dp(self, handler: Any) -> Any:
         """C-B3/D-M3: keep `dp` UNSET distinguishable from an explicit
