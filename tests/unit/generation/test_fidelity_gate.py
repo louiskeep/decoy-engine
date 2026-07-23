@@ -25,6 +25,7 @@ from decoy_engine.generation._fidelity_gate import (
     score_generated_fidelity,
 )
 from decoy_engine.generation.statistical import load_spec
+from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 from tests.unit._dps_helpers import compile_and_generate
 
@@ -156,6 +157,35 @@ class TestWarnGate:
             snapshot_index_for_column=snapshot_index_for_column,
             snapshot_artifacts=snapshot_artifacts,
         )
+
+
+class TestSnapshotIndexBoundsCheck:
+    def test_out_of_range_snapshot_index_raises_typed_error_not_indexerror(self, tmp_path):
+        """H5: `snapshot_index` is read from a (possibly hand-edited or
+        corrupted) serialized Plan's `PinnedStatisticalSpec`. An
+        out-of-range value must fail with a typed, machine-readable-code
+        error, not a raw `IndexError` bubbling out of a bare `list[index]`
+        lookup -- the same "recompile, don't trust a hand-edited manifest"
+        posture the rest of this feature area applies."""
+        df = _source_df()
+        snap_path = _write_snapshot(tmp_path, df, name="oob.json")
+        with open(snap_path, encoding="utf-8") as fh:
+            snap_dict = json.load(fh)
+        cols = [{"name": "amount", "type": "statistical", "snapshot_file": snap_path}]
+        spec = load_spec(cols[0], snapshot=snap_dict)
+        with pytest.raises(StatisticalSpecError) as exc:
+            score_generated_fidelity(
+                cols,
+                {"amount": [1.0, 2.0, 3.0]},
+                table_name="synthetic",
+                threshold=0.8,
+                statistical_specs={("synthetic", "amount"): spec},
+                # Only one artifact is pinned (index 0); this Plan claims
+                # index 5, which does not exist.
+                snapshot_index_for_column={("synthetic", "amount"): 5},
+                snapshot_artifacts=[snap_dict],
+            )
+        assert exc.value.code == "statistical_snapshot_index_out_of_range"
 
 
 class TestNonStatisticalTables:

@@ -142,6 +142,43 @@ def test_plan_from_yaml_recomputes_dp_verification_receipt(tmp_path):
     assert "forged-release-id" not in recomputed.release_ids
 
 
+def test_plan_from_yaml_rebuilds_statistical_spec_from_pinned_bytes_not_the_serialized_spec(
+    tmp_path,
+):
+    """H5: `_pinned_statistical_spec_from_dict` used to only refreeze the
+    serialized `statistical_specs[i].spec` dict, never re-running
+    `load_spec` against the pinned snapshot bytes. A manifest whose
+    declared spec disagreed with `snapshots[i].payload_b64` passed every
+    check, and generation would sample from the untrusted spec rather
+    than the bytes it was supposedly pinned to. This forges exactly that
+    disagreement -- flips the serialized spec's `other_mode` to a value
+    the real pinned snapshot's config never declared -- and asserts the
+    loaded Plan's spec reflects the REAL config + pinned bytes, not the
+    forged one."""
+    plan = _compiled_dp_plan(tmp_path)
+    rendered = plan_to_yaml(plan)
+    data = __import__("yaml").safe_load(rendered)
+
+    specs = data["generation"]["statistical_specs"]
+    assert len(specs) == 1
+    real_other_mode = specs[0]["spec"]["other_mode"]
+    forged_other_mode = "emit" if real_other_mode != "emit" else "redistribute"
+    assert forged_other_mode != real_other_mode
+    specs[0]["spec"]["other_mode"] = forged_other_mode
+    forged_yaml = __import__("yaml").safe_dump(data, sort_keys=False)
+
+    reloaded = plan_from_yaml(forged_yaml)
+
+    assert reloaded.generation is not None
+    rebuilt_specs = reloaded.generation.statistical_specs
+    assert len(rebuilt_specs) == 1
+    # The rebuilt spec matches what load_spec derives from the embedded
+    # config + pinned bytes -- the real other_mode -- not the forged value
+    # that was on the wire.
+    assert rebuilt_specs[0].spec["other_mode"] == real_other_mode
+    assert rebuilt_specs[0].spec["other_mode"] != forged_other_mode
+
+
 def test_plan_from_yaml_without_generation_block_round_trips_none(tmp_path):
     """A Plan compiled with no generate_columns has no `generation` key at
     all on the wire (guide section 4.7); it must deserialize back to

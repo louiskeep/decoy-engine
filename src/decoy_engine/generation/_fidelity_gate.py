@@ -42,6 +42,7 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.generation.statistical import StatisticalSpec
+from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.fidelity import compute_fidelity
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
@@ -117,6 +118,23 @@ def score_generated_fidelity(
 
     warnings: list[str] = []
     for index, columns in sorted(by_snapshot.items()):
+        # H5 (guide section 4.7): `index` comes from a pinned `Plan`'s
+        # `PinnedStatisticalSpec.snapshot_index`, which a hand-edited or
+        # corrupted serialized manifest could set out of range against
+        # `GenerationPlan.snapshots`. A raw `IndexError` here is an
+        # untyped crash on untrusted input; fail with the same typed,
+        # machine-readable-code error family every other malformed-Plan
+        # condition in this feature area raises.
+        if not 0 <= index < len(snapshot_artifacts):
+            raise StatisticalSpecError(
+                code="statistical_snapshot_index_out_of_range",
+                message=(
+                    f"fidelity gate: snapshot_index={index!r} is out of range for "
+                    f"{len(snapshot_artifacts)} pinned snapshot artifact(s). The Plan's "
+                    "statistical specs disagree with its pinned snapshots -- recompile "
+                    "through compile_plan rather than editing a serialized manifest."
+                ),
+            )
         artifact = snapshot_artifacts[index]
         frame = pd.DataFrame(
             {source_col: data[gen_col] for source_col, gen_col in sorted(columns.items())}

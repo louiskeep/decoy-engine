@@ -28,9 +28,10 @@ from typing import Any
 
 import yaml
 
+from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.plan._generation import ReadSnapshot
+from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
 from decoy_engine.plan._types import (
     ColumnSeed,
     DpVerification,
@@ -46,7 +47,6 @@ from decoy_engine.plan._types import (
     PlanRelationshipEnd,
     SeedEnvelope,
     TableSeed,
-    freeze_json,
     unfreeze_json,
 )
 
@@ -313,42 +313,50 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
     return pinned_snapshot, read_snapshot
 
 
-def _pinned_statistical_spec_from_dict(data: dict[str, Any]) -> PinnedStatisticalSpec:
-    return PinnedStatisticalSpec(
-        table_name=data["table_name"],
-        column_name=data["column_name"],
-        snapshot_index=data["snapshot_index"],
-        spec=freeze_json(data["spec"]),
-    )
-
-
 def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     """Decode the `generation` block, revalidating everything the guide
-    requires rather than trusting the serialized values verbatim:
-    every embedded snapshot's digest is recomputed (raises on mismatch),
-    and `dp_verification` is RECOMPUTED from those revalidated bytes via
-    the same `verify_dp_snapshots` compile-time check would run -- the
-    serialized `dp_verification` block is discarded, not read back,
-    because a hand-edited manifest could otherwise claim a receipt the
-    embedded bytes don't actually support (guide section 4.7: "revalidate
-    embedded digests and DP receipts during deserialization")."""
+    requires rather than trusting the serialized values verbatim.
+
+    Every embedded snapshot's digest is recomputed (raises on mismatch,
+    `_pinned_snapshot_from_dict`). H5 (guide section 4.7): the previous
+    version of this function stopped there for `statistical_specs` --
+    `_pinned_statistical_spec_from_dict` only refroze the serialized
+    `spec` dict, so a manifest whose `statistical_specs[i].spec`
+    disagreed with `snapshots[i].payload_b64` passed every check and
+    generation would sample from the untrusted `spec`, not the verified
+    bytes. This function no longer trusts `data["statistical_specs"]` at
+    all: it RE-RUNS `check_statistical_columns` -- the same compile-time
+    pass that built `column_specs` in the first place -- against the
+    revalidated pinned bytes and the embedded config, then rebuilds the
+    WHOLE `GenerationPlan` from that recomputation via `build_generation_
+    plan`, exactly as a fresh `compile_plan` would. `dp_verification` is
+    recomputed the same way it always was, from those same revalidated
+    bytes (guide section 4.7: "revalidate embedded digests and DP
+    receipts during deserialization")."""
     decoded = [_pinned_snapshot_from_dict(s) for s in data.get("snapshots", []) or []]
-    snapshots = tuple(pinned for pinned, _read in decoded)
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
-    statistical_specs = tuple(
-        _pinned_statistical_spec_from_dict(s) for s in data.get("statistical_specs", []) or []
-    )
-
     config = json.loads(data["config_json"])
-    _verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
-
-    return GenerationPlan(
-        config_json=data["config_json"],
-        snapshots=snapshots,
-        statistical_specs=statistical_specs,
+    dp_verified_columns, dp_verification = verify_dp_snapshots(config, pinned_by_path)
+    column_specs = check_statistical_columns(config, pinned_by_path, dp_verified_columns)
+    rebuilt = build_generation_plan(
+        config,
+        pinned_by_path,
+        column_specs=column_specs,
         dp_verification=dp_verification,
     )
+    if rebuilt is None:
+        # A manifest that serialized a `generation` block in the first
+        # place always has at least one generate table; this guards the
+        # (unreachable through normal compile_plan output) degenerate case
+        # defensively rather than raising an unrelated AttributeError.
+        return GenerationPlan(
+            config_json=data["config_json"],
+            snapshots=(),
+            statistical_specs=(),
+            dp_verification=dp_verification,
+        )
+    return rebuilt
 
 
 def _seed_envelope_from_dict(data: dict[str, Any]) -> SeedEnvelope:
