@@ -524,6 +524,23 @@ class TestGlobalSettingsSerializationSchema:
         assert "seed" in global_settings["properties"]
         assert "DpGenerateSettings" in schema["$defs"]
 
+    @pytest.mark.parametrize("mode", ["validation", "serialization"])
+    def test_advertised_dp_schema_matches_what_validation_accepts(self, mode):
+        """C-M-1 (Codex round 6): both schema modes advertised `dp` as
+        `DpGenerateSettings | null` with default `null`, while validation
+        REFUSES an explicit null. A schema-driven client could therefore
+        generate a schema-valid config that pydantic rejects. The
+        existing tests compared property NAMES only, so they passed while
+        the schema and the model disagreed."""
+        from decoy_engine.config import PipelineConfig
+
+        dp = PipelineConfig.model_json_schema(mode=mode)["$defs"]["GlobalSettings"]["properties"][
+            "dp"
+        ]
+        assert "null" not in str(dp), dp
+        assert "default" not in dp, dp
+        assert dp.get("$ref", "").endswith("DpGenerateSettings"), dp
+
     def test_validation_and_serialization_modes_agree_on_field_names(self):
         from decoy_engine.config import PipelineConfig
 

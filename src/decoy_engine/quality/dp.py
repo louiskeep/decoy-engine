@@ -151,6 +151,27 @@ def _validate_config(
             message=f"numeric_bins must be an int >= 2; got {numeric_bins!r}.",
         )
 
+    # D-MEDIUM-1 (dennis round 6) / C-L-1 (Codex round 6): round 5 closed
+    # the non-string LABEL case on the frame side only. The mirror case
+    # is a non-string DECLARATION key: with a string frame column "5" and
+    # `numeric_domains={5: (0.0, 1.0)}`, every check below passed (the
+    # sets are compared stringified, and the bounds loop reads the
+    # original int key), and the fit then indexed `numeric_domains["5"]`
+    # and died on a bare `KeyError` from an entrypoint documenting only
+    # `DpError`. The categorical side was worse than inconsistent: it
+    # SUCCEEDED silently, since that path only ever needs the name.
+    # Reject both, under the same code, before anything is read.
+    non_string_decls = sorted(
+        repr(c) for c in (*categorical_columns, *numeric_domains) if not isinstance(c, str)
+    )
+    if non_string_decls:
+        raise DpError(
+            code="dp_column_label_not_a_string",
+            message=(
+                f"non-string column declarations: {non_string_decls}. Declare columns under "
+                "their exact string names; a stringified key does not address the frame."
+            ),
+        )
     categorical_set = frozenset(str(c) for c in categorical_columns)
     numeric_set = frozenset(str(c) for c in numeric_domains)
     overlap = categorical_set & numeric_set
@@ -353,6 +374,17 @@ def _fit_dp_snapshot_with_backend(
     production caller, since production callers cannot reach this function
     at all, only `fit_dp_snapshot`.
     """
+    # D-LOW-1 (dennis round 6): validate what you actually use. The
+    # declarations used to be read three separate times -- once by the
+    # validation loop, once building the `Schedule`, once by the fit loop
+    # -- so a `Mapping` whose reads differ could pass every check and
+    # then hand OpenDP different bounds, landing a raw `OpenDPException`
+    # AFTER `release_row_count` had already charged the session, which is
+    # the exact failure the derived-edge guard exists to prevent. Read
+    # the caller's declarations exactly once here; everything downstream,
+    # validation included, sees only this snapshot.
+    numeric_domains = dict(numeric_domains)
+    categorical_columns = tuple(categorical_columns)
     _validate_config(
         frame=frame,
         categorical_columns=categorical_columns,

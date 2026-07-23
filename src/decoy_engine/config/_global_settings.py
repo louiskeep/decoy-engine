@@ -7,6 +7,7 @@ choice).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
@@ -135,7 +136,13 @@ class GlobalSettings(BaseModel):
         dicts without going through this model, so both entry paths fail
         closed.
         """
-        if isinstance(data, dict) and "dp" in data and data["dp"] is None:
+        # Codex round 6: this tested `isinstance(data, dict)`, but
+        # pydantic accepts ANY mapping, so a `UserDict` carrying an
+        # explicit `dp: None` validated, and `exclude_none` /
+        # `exclude_defaults` then erased the key and `_dp_declared`
+        # returned False -- the same fail-open this validator exists to
+        # close, reached through a different container type.
+        if isinstance(data, Mapping) and "dp" in data and data["dp"] is None:
             raise ValueError(
                 "global_settings.dp is present but null. Remove the key entirely for a "
                 "pipeline with no DP contract, or supply {epsilon: ..., delta: ...} to "
@@ -167,6 +174,21 @@ class GlobalSettings(BaseModel):
         schema = handler(core_schema)
         if not schema:
             schema = handler({k: v for k, v in core_schema.items() if k != "serialization"})
+        # C-M-1 (Codex round 6): the generated schema advertised `dp` as
+        # `DpGenerateSettings | null` with default `null`, but validation
+        # now REFUSES an explicit null, so a schema-driven client could
+        # emit a schema-valid config that pydantic rejects. The field
+        # annotation has to stay `| None` (that is what an unset `dp`
+        # holds in Python), so the advertised schema is corrected to say
+        # what is actually accepted: the model, or absent.
+        dp_schema = schema.get("properties", {}).get("dp")
+        if isinstance(dp_schema, dict) and "anyOf" in dp_schema:
+            non_null = [b for b in dp_schema["anyOf"] if b.get("type") != "null"]
+            if len(non_null) == 1:
+                # Reuse pydantic's OWN branch object rather than writing a
+                # `$ref` by hand: the generator tracks ref counts by
+                # identity, and a hand-built ref string is not registered.
+                schema["properties"]["dp"] = non_null[0]
         return schema
 
     @model_serializer(mode="wrap")

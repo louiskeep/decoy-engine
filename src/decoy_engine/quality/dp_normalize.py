@@ -19,6 +19,7 @@ shape here, so prefer widening a guard over narrowing one.
 from __future__ import annotations
 
 import math
+import numbers
 import warnings
 from typing import Any
 
@@ -103,6 +104,53 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
     return out
 
 
+def _canonical_label(raw: Any) -> str:
+    """The label for a categorical cell, as a function of the VALUE and
+    not of the column's storage width.
+
+    Codex round 6, the one defect in this program that broke the DP
+    guarantee itself rather than a test or an error contract. `str(raw)`
+    alone is NOT stable under add-or-remove-one-row adjacency, because
+    pandas upcasts an integer column to float64 the moment a null enters
+    it, and every cell's `str()` changes with it:
+
+        D  = ints 0..7            -> ["0" ... "7"]
+        D' = ints 0..7 and a null -> ["0.0" ... "7.0"]
+
+    Adding ONE row replaced EVERY label. The two normalized multisets
+    differ by 16 elements while the grouped-count measurement certifies
+    `map(1)`, so the composed `(epsilon, delta)` understated the true
+    sensitivity by a factor of the column's cardinality. Normalization
+    was recordwise GIVEN A FRAME, but a frame's storage dtype is a
+    function of ALL its rows, so the per-row map was not really per-row.
+    Five review rounds missed it because every recordwise test used
+    string fixtures, which never upcast.
+
+    Rendering an integral real as its integer string makes the label
+    invariant under that upcast: `7` and `7.0` are the same value and now
+    get the same label, so the neighbours agree again. Merging them is
+    intended and privacy-favourable (it can only coarsen a release), and
+    matches the existing disposition of `str()` collisions.
+
+    `bool` is excluded deliberately: it is an `int` subclass, so it would
+    otherwise render as "1"/"0", and it has no upcast problem to solve
+    (a bool column with a null becomes object dtype and keeps
+    `True`/`False`). Non-finite floats fall through to `str()`, so `inf`
+    stays "inf". Callers run this inside their conversion guard, so a
+    value whose comparison or conversion misbehaves drops the row rather
+    than escaping.
+    """
+    if isinstance(raw, bool):
+        return str(raw)
+    if isinstance(raw, numbers.Integral):
+        return str(int(raw))
+    if isinstance(raw, numbers.Real):
+        as_float = float(raw)
+        if math.isfinite(as_float) and as_float == int(as_float):
+            return str(int(as_float))
+    return str(raw)
+
+
 def _normalize_categorical(series: pd.Series) -> list[str]:
     """Total, recordwise projection: nulls excluded via `Series.dropna()`
     (uniform across None/NaN/NaT/pd.NA), every remaining scalar mapped to
@@ -160,7 +208,7 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
             except Exception:  # broad by design: totality, see docstring
                 pass
             try:
-                label = str(raw)
+                label = _canonical_label(raw)
                 if not label.isascii():
                     label.encode("utf-8")
             except Exception:  # broad by design: totality, see docstring

@@ -257,6 +257,69 @@ class TestConfigValidation:
         )
         assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == bins
 
+    @pytest.mark.parametrize(
+        ("frame_cols", "cats", "doms"),
+        [
+            ({5: [0.5, 0.6]}, [], {5: (0.0, 1.0)}),
+            ({"5": [0.5, 0.6]}, [], {5: (0.0, 1.0)}),
+            ({"5": ["a", "b"]}, [5], {}),
+        ],
+        ids=["non_string_frame_label", "non_string_numeric_key", "non_string_categorical_member"],
+    )
+    def test_non_string_column_declarations_are_rejected(self, frame_cols, cats, doms):
+        """D-MEDIUM-1 (dennis round 6) / C-L-1 (Codex round 6): round 5
+        closed only the FRAME side, while this test's own docstring
+        described the declaration case. The mirror cases: a non-string
+        `numeric_domains` key died on a bare `KeyError` inside the fit,
+        and a non-string `categorical_columns` member SUCCEEDED silently,
+        because that path only ever needs the name. Parametrizing over
+        all three is the point, since the single-fixture version passed
+        while two of them were live."""
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                pd.DataFrame(frame_cols),
+                categorical_columns=cats,
+                numeric_domains=doms,
+                epsilon=2.0,
+                delta=1e-6,
+            )
+        assert exc.value.code == "dp_column_label_not_a_string"
+
+    def test_declarations_are_read_once_so_a_drifting_mapping_cannot_slip_past(self):
+        """D-LOW-1 (dennis round 6): the declarations were read three
+        times (validation, schedule construction, fit loop), so a
+        `Mapping` whose reads differ passed every check and then handed
+        OpenDP different bounds, landing a raw `OpenDPException` AFTER
+        `release_row_count` had charged the session. They are snapshotted
+        once at entry now, so later reads cannot diverge."""
+        from collections.abc import Mapping
+
+        class _Drifting(Mapping):
+            def __init__(self):
+                self.reads = 0
+
+            def __getitem__(self, key):
+                self.reads += 1
+                return (0.0, 100.0) if self.reads <= 2 else (0.0, 1.7e308)
+
+            def __iter__(self):
+                return iter(["age"])
+
+            def __len__(self):
+                return 1
+
+        drifting = _Drifting()
+        snap = fit_dp_snapshot(
+            pd.DataFrame({"age": [1.0] * 5}),
+            categorical_columns=[],
+            numeric_domains=drifting,
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        # The snapshot pinned the first read, so the declared bounds are
+        # what the artifact reports, not whatever the mapping drifted to.
+        assert snap["columns"]["age"]["stats"]["bin_edges"][-1] == 100.0
+
     def test_non_string_frame_column_labels_are_rejected(self):
         """D-L-A (dennis round 5): validation compared `str(label)` sets
         while the fit loop indexed with the stringified name, so an
@@ -395,6 +458,59 @@ class TestRecordwiseNormalization:
             dropped = base.drop(base.index[i]).reset_index(drop=True)
             dropped_out = _normalize_categorical(dropped)
             assert len(base_out) - len(dropped_out) in (0, 1)
+
+    @pytest.mark.parametrize("n", [8, 40], ids=["small", "wide"])
+    def test_categorical_labels_are_stable_when_a_null_upcasts_the_column(self, n):
+        """Codex round 6, the one defect in this program that broke the
+        DP guarantee itself rather than a test or an error contract.
+
+        pandas upcasts an integer column to float64 the moment a null
+        enters it, so under plain `str()` EVERY label changed when ONE
+        row was added:
+
+            ints 0..7            -> ["0" ... "7"]
+            ints 0..7 and a null -> ["0.0" ... "7.0"]
+
+        The normalized multisets differed by 2n elements while the
+        grouped-count measurement certifies `map(1)`, so the composed
+        `(epsilon, delta)` understated the true sensitivity by a factor
+        of the column's cardinality. Normalization was recordwise GIVEN A
+        FRAME, but a frame's storage dtype is a function of ALL its rows.
+
+        Every recordwise test before this one used STRING fixtures, which
+        never upcast, which is why five review rounds missed it. Integer
+        fixtures are the point here."""
+        base = pd.Series(list(range(n)))
+        neighbour = pd.Series([*range(n), None])
+        assert base.dtype != neighbour.dtype  # the upcast this guards against
+        base_labels = _normalize_categorical(base)
+        neighbour_labels = _normalize_categorical(neighbour)
+        # Adding one null row adds no label and changes none of the rest.
+        assert base_labels == neighbour_labels
+        assert set(base_labels) ^ set(neighbour_labels) == set()
+
+    def test_canonical_label_merges_integral_reals_but_preserves_everything_else(self):
+        """The canonicalization is deliberately narrow: an integral real
+        renders as its integer string, whatever its storage width, so the
+        upcast above cannot move it. Everything else is untouched.
+        `bool` is excluded on purpose (it is an `int` subclass and would
+        otherwise render "1"/"0"), and a non-finite float is not integral
+        so it falls through to `str()`."""
+        series = pd.Series(
+            [7, 7.0, np.int64(7), np.float64(7.0), 7.5, True, False, "CA", float("inf")],
+            dtype=object,
+        )
+        assert _normalize_categorical(series) == [
+            "7",
+            "7",
+            "7",
+            "7",
+            "7.5",
+            "True",
+            "False",
+            "CA",
+            "inf",
+        ]
 
     def test_normalize_numeric_never_warns_on_exotic_content(self):
         series = pd.Series(["1", 1 + 2j, None, object(), "not a number"], dtype=object)
@@ -884,10 +1000,18 @@ class TestDisclosureChannelRegressions:
         )
         col_30, col_31 = snap_30["columns"]["cat"], snap_31["columns"]["cat"]
         assert col_30["kind"] == col_31["kind"] == "categorical"
-        assert set(col_30.keys()) == set(col_31.keys())
-        assert set(col_30["stats"].keys()) == set(col_31["stats"].keys())
         assert snap_30["dp"]["query_count"] == snap_31["dp"]["query_count"]
         assert snap_30["dp"]["categorical_columns"] == snap_31["dp"]["categorical_columns"]
+        # C-H-1 (Codex round 6): key-set comparison cannot catch a leaked
+        # cardinality PREDICATE, because a key like
+        # `over_30_distinct = len(set(values)) > 30` is present on both
+        # neighbours and only its VALUE differs. These two fixtures are
+        # the only ones in the suite that straddle such a threshold, so
+        # they are where it has to be caught. Same property as the
+        # all-null and all-inf tests: every field is either a released
+        # noised quantity or a public constant.
+        assert _public_part(col_30) == _public_part(col_31)
+        assert snap_30["dp"].keys() == snap_31["dp"].keys()
 
     def test_dp_fit_all_null_declared_categorical_runs_measurement_and_emits_categorical_shape(
         self,

@@ -16,6 +16,7 @@ import builtins
 import json
 import os
 import uuid
+from collections import UserDict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -456,6 +457,27 @@ class TestFailClosedDpDeclaration:
         }
         with pytest.raises(pydantic.ValidationError, match="present but null"):
             PipelineConfig.model_validate(raw)
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [dict, UserDict],
+        ids=["dict", "user_dict"],
+    )
+    def test_explicit_dp_null_is_refused_through_any_mapping_type(self, wrap):
+        """C-B-2 (Codex round 6): the before-validator tested
+        `isinstance(data, dict)`, but pydantic accepts ANY mapping. A
+        `UserDict` carrying an explicit `dp: None` therefore validated,
+        and `exclude_none` / `exclude_defaults` then erased the key so
+        `_dp_declared` returned False -- the same fail-open the validator
+        exists to close, reached through a different container type. A
+        built-in dict cannot catch this, which is why it is parametrized
+        over the mapping type."""
+        import pydantic
+
+        from decoy_engine.config import GlobalSettings
+
+        with pytest.raises(pydantic.ValidationError, match="present but null"):
+            GlobalSettings.model_validate(wrap({"seed": 1, "dp": None}))
 
     @pytest.mark.parametrize(
         "dump_kwargs",
