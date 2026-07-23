@@ -251,11 +251,15 @@ trusted from the artifact's own claim alone) certifies it:
   otherwise-genuine pinned artifact. It has no authentication value: the
   digest and the bytes it covers live in the same attacker-controlled file,
   so an edit that recomputes the digest passes. The dangerous direction is
-  the reverse of the one the check defends. Replacing an honest plan's pinned
-  snapshot bytes with an exact snapshot whose `top_values` are real source
-  values, then recomputing the digest, yields a plan that loads, generates
-  real values, and produces a receipt carrying the ORIGINAL genuine release
-  ID and a genuine-looking `epsilon_total`. Nothing in that receipt
+  the reverse of the one the check defends. Keep an honest plan's `dp` block
+  exactly as minted, replace only the pinned snapshot's `top_values` with
+  real source values, recompute the digest, and the plan loads, generates
+  those real values, and produces a receipt carrying the ORIGINAL genuine
+  release ID and its genuine `epsilon_total`. Note what is NOT being
+  described: substituting a wholesale exact snapshot does not work, because
+  such a snapshot carries no `dp` block and the provenance check rejects it.
+  The working edit is the surgical one, which is also the harder one to
+  notice. Nothing in that receipt
   distinguishes it from an honest one, so an auditor reading the receipt has
   no signal. Nothing signs the file itself.
 - **The consumed snapshot is trusted to be genuine, and the consequence is

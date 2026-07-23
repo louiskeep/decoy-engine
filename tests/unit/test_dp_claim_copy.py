@@ -102,6 +102,13 @@ def test_dp_claim_copy_does_not_overstate_the_forgery_defenses():
     assert "no authentication value" in lowered
     assert "recomputes the digest passes" in lowered
     assert "distinguishes it from an honest one" in lowered
+    # dennis round 10 (LOW-2): the page described the working edit
+    # imprecisely. A wholesale exact snapshot carries no `dp` block and is
+    # rejected by the provenance check; what works is keeping the honest
+    # `dp` block and swapping only `top_values`. Stating the weaker
+    # version would let a reader conclude the provenance check covers it.
+    assert "replace only the pinned snapshot's `top_values`" in lowered
+    assert "does not work" in lowered
 
 
 def test_dp_claim_copy_scopes_the_domain_to_values_not_live_objects():
