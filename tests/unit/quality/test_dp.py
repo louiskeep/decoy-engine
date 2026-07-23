@@ -30,6 +30,28 @@ from decoy_engine.quality.dp_budget import DpBudgetError, _FakeMeasurement
 _ALPHA = 1e-6
 
 
+class _RaisesOnConversion:
+    """A scalar whose `float()` and `str()` both raise something no
+    handler would think to enumerate. Row content is caller-supplied, so
+    normalization cannot assume any conversion is total."""
+
+    def __float__(self) -> float:
+        raise RuntimeError("no float for you")
+
+    def __str__(self) -> str:
+        raise RuntimeError("no str for you")
+
+    def __repr__(self) -> str:
+        return "<_RaisesOnConversion>"
+
+
+# C-B4: each entry raises a different exception type from `float()` and
+# `str()`. `10**10000` overflows the float conversion and trips CPython's
+# 4300-digit integer-to-string cap; `_RaisesOnConversion` raises an
+# unrelated type from both.
+_HOSTILE_SCALARS = (10**10000, _RaisesOnConversion())
+
+
 def _mixed_df(n: int = 2000, seed: int = 3) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     return pd.DataFrame(
@@ -259,6 +281,78 @@ class TestRecordwiseNormalization:
             warnings.simplefilter("always")
             _normalize_numeric(series, lower=0.0, upper=10.0)
         assert caught == [], [str(w.message) for w in caught]
+
+    def test_normalization_is_total_over_scalars_that_raise_on_conversion(self):
+        """C-B4: normalization must not raise on ANY row content. Each
+        hostile scalar below raises a DIFFERENT exception type, so a
+        handler that enumerates conversion errors it thought of (the
+        `(TypeError, ValueError)` this replaced) fails here rather than
+        passing on the one type it happens to name."""
+        for hostile in _HOSTILE_SCALARS:
+            series = pd.Series(["1", hostile, "3"], dtype=object)
+            numeric = _normalize_numeric(series, lower=0.0, upper=10.0)
+            categorical = _normalize_categorical(series)
+            # Dropped like any other unconvertible value: the two
+            # convertible rows survive, the hostile row contributes none.
+            assert numeric == [1.0, 3.0], (hostile, numeric)
+            assert categorical == ["1", "3"], (hostile, categorical)
+
+    def test_categorical_labels_that_cannot_be_encoded_are_dropped_not_raised(self):
+        """C-B4, second location: a lone surrogate is a valid Python
+        `str`, so `str()` succeeds and normalization used to pass it
+        through. It then raised `UnicodeEncodeError` where the label
+        crossed into OpenDP -- the same fit-success channel one layer
+        down. Totality has to hold against the release boundary."""
+        series = pd.Series(["a", "\ud800", "b"], dtype=object)
+        assert _normalize_categorical(series) == ["a", "b"]
+        snap = fit_dp_snapshot(
+            pd.DataFrame({"c": ["a", "\ud800", "b"]}, dtype=object),
+            categorical_columns=["c"],
+            numeric_domains={},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        assert "c" in snap["columns"]
+
+    def test_normalize_categorical_keeps_ordinary_non_ascii_labels(self):
+        """The encodability guard drops only what cannot be represented.
+        Ordinary non-ASCII text takes the non-`isascii()` branch and must
+        survive it, or the guard would silently gut international data."""
+        series = pd.Series(["café", "日本語", "naïve"], dtype=object)
+        assert _normalize_categorical(series) == ["café", "日本語", "naïve"]
+
+    def test_fit_succeeds_identically_on_neighbours_differing_by_a_hostile_row(self):
+        """C-B4, the channel itself: fit success is an observable. If one
+        neighbour emits an artifact and the other raises, that observable
+        has probability 0 on one and 1 on the other, breaking
+        (epsilon, delta) for any delta < 1 before any released number is
+        considered. Both neighbours must fit, and the released shape must
+        not reveal which one it was."""
+        base = pd.DataFrame({"n": ["1", "2"], "c": ["a", "b"]}, dtype=object)
+        base_snap = fit_dp_snapshot(
+            base,
+            categorical_columns=["c"],
+            numeric_domains={"n": (0.0, 10.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        for hostile in _HOSTILE_SCALARS:
+            neighbour = pd.DataFrame(
+                {"n": ["1", "2", hostile], "c": ["a", "b", hostile]}, dtype=object
+            )
+            snap = fit_dp_snapshot(
+                neighbour,
+                categorical_columns=["c"],
+                numeric_domains={"n": (0.0, 10.0)},
+                epsilon=2.0,
+                delta=1e-6,
+            )
+            assert snap["columns"].keys() == base_snap["columns"].keys()
+            for name in base_snap["columns"]:
+                assert (
+                    snap["columns"][name]["stats"].keys()
+                    == base_snap["columns"][name]["stats"].keys()
+                ), (hostile, name)
 
 
 class TestReleaseIds:

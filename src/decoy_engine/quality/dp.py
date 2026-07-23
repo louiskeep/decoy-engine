@@ -218,7 +218,21 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
     (covers the builtin type and `numpy.complex128`, which subclasses it)
     as an unconvertible failure before calling `float()`, so it becomes
     null like any other unconvertible value rather than silently keeping
-    a real part."""
+    a real part.
+
+    C-B4 (Codex round-4 blocker): the `except` here used to name
+    `(TypeError, ValueError)`, which made the "content can never raise"
+    claim above false. `float(10**10000)` raises `OverflowError`, so a
+    one-row neighbour carrying a large Python int made the whole fit
+    raise instead of emitting an artifact. Fit success/failure is itself
+    an observable, and one with probability 0 on one neighbour and 1 on
+    the other breaks (epsilon, delta) for any delta < 1 before a single
+    released number is considered. Totality is the invariant, so the
+    handler is now the totality itself rather than a list of the
+    conversion errors we happened to think of: ANY failure converting a
+    row's value drops that row, exactly as an unconvertible value
+    already did. Each row still contributes at most one element, so
+    add-or-remove-one-row stability is unchanged."""
     out: list[float] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -227,7 +241,7 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
                 continue  # unconvertible, like any other non-numeric value
             try:
                 v = float(raw)
-            except (TypeError, ValueError):
+            except Exception:  # broad by design: totality, see docstring
                 continue
             if math.isnan(v):
                 continue
@@ -247,10 +261,38 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     the same blanket warning suppression as `_normalize_numeric` (C-B2):
     `str()` on an exotic scalar type is not known to warn today, but
     suppression here costs nothing and keeps both normalizers under the
-    same "no warning ever, regardless of content" invariant."""
+    same "no warning ever, regardless of content" invariant.
+
+    C-B4 (Codex round-4 blocker): `str()` was assumed total and called
+    bare. It is not. CPython caps integer-to-string conversion at 4300
+    digits, so `str(10**10000)` raises `ValueError`, and a one-row
+    neighbour carrying such a value made the entire fit raise rather
+    than emit an artifact -- the same probability-0-vs-1 fit-success
+    channel closed in `_normalize_numeric`. Any failure rendering a
+    row's value now drops that row, which is what an unrepresentable
+    label should have meant all along; each row still contributes at
+    most one element.
+
+    Totality is defined against what the release boundary can consume,
+    not merely against `str()` returning. A lone surrogate such as
+    `"\\ud800"` is a perfectly good Python `str` that cannot be encoded
+    as UTF-8, and it raised `UnicodeEncodeError` further downstream when
+    the label crossed into OpenDP -- the same fit-success channel, just
+    relocated. Labels are therefore required to be UTF-8 encodable here.
+    `str.isascii()` is a cached flag check, so the overwhelmingly common
+    all-ASCII label pays no encoding cost."""
+    out: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return [str(v) for v in series.dropna()]
+        for raw in series.dropna():
+            try:
+                label = str(raw)
+                if not label.isascii():
+                    label.encode("utf-8")
+            except Exception:  # broad by design: totality, see docstring
+                continue
+            out.append(label)
+    return out
 
 
 def fit_dp_snapshot(
