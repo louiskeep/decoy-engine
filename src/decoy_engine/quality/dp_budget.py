@@ -428,11 +428,16 @@ class OpenDpReleaseSession:
         floor_composed = composed_epsilon_or_none(feasible_floor)
         if floor_composed is None or floor_composed > self._epsilon:
             raise infeasible()
-        eps_q = _search_largest(
-            lambda e: (composed_epsilon_or_none(e) or math.inf) <= self._epsilon,
-            lower=feasible_floor,
-            upper=self._epsilon,
-        )
+
+        # C-H2 (Codex HIGH): `x or math.inf` treated a valid composed
+        # epsilon of exactly `0.0` as falsy, turning it into infinity and
+        # making the predicate false at its own lower bound. `is None` is
+        # the real feasibility check.
+        def _within_request(e: float) -> bool:
+            composed = composed_epsilon_or_none(e)
+            return composed is not None and composed <= self._epsilon
+
+        eps_q = _search_largest(_within_request, lower=feasible_floor, upper=self._epsilon)
         composed = composed_epsilon_or_none(eps_q)
         if composed is None or composed > self._epsilon:
             raise infeasible()

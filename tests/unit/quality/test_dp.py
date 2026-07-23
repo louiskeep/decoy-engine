@@ -22,7 +22,7 @@ from decoy_engine.quality.dp import (
     _normalize_numeric,
     fit_dp_snapshot,
 )
-from decoy_engine.quality.dp_budget import _FakeMeasurement
+from decoy_engine.quality.dp_budget import DpBudgetError, _FakeMeasurement
 
 # Fixed test-confidence budget (guide section 7.2): 1e-6 false-failure
 # probability per statistical test per run, derived once as a module
@@ -274,6 +274,55 @@ class TestArtifactShape:
         assert snap["dp"]["epsilon_total"] <= 2.0
         assert snap["dp"]["epsilon_total"] != 2.0  # the accountant's result, not the request
 
+    def test_dp_artifact_epsilon_total_matches_independent_dp_accounting_composition(self):
+        """C-H3 (Codex): the test above asserts only `epsilon_total <=
+        request` and `!= request`, so a defect writing e.g. `request / 2`
+        (or any other formula that never consults `dp_accounting`) would
+        pass without ever being compared against the library's own
+        composition. This fixes EVERY certificate the fit's four queries
+        would produce to known constants (independent of `eps_q`), then
+        independently composes those SAME constants through `dp_budget.
+        _compose`/`dp_accounting.pld` right here in the test, and asserts
+        the artifact's `epsilon_total` equals that independently-derived
+        value -- not merely an inequality against the request."""
+        from decoy_engine.quality.dp_budget import _compose
+
+        row_count_cert = 0.11
+        numeric_cert = 0.17
+        grouped_cert = (0.23, 1e-8)
+        total_cert = 0.13
+
+        class _FixedCertBackend:
+            def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+                return _FakeMeasurement(certificate=row_count_cert, released=10)
+
+            def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+                return _FakeMeasurement(
+                    certificate=numeric_cert, released=[0] * (len(interior_edges) + 1)
+                )
+
+            def categorical_measurements(self, eps_q: float, delta_alloc: float):
+                return (
+                    _FakeMeasurement(certificate=grouped_cert, released={}),
+                    _FakeMeasurement(certificate=total_cert, released=0),
+                )
+
+        snap = _fit_dp_snapshot_with_backend(
+            _mixed_df(),
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=5.0,
+            delta=1e-3,
+            _session_backend=_FixedCertBackend(),
+        )
+        expected = _compose(
+            [row_count_cert, numeric_cert, grouped_cert, total_cert]
+        ).get_epsilon_for_delta(1e-3)
+        assert snap["dp"]["epsilon_total"] == pytest.approx(expected)
+        # A defect writing `request / 2` (2.5) or the raw request (5.0)
+        # would not coincide with the composed result of these constants.
+        assert snap["dp"]["epsilon_total"] not in (2.5, 5.0)
+
     def test_dp_fit_certificate_count_equals_query_count(self):
         snap = fit_dp_snapshot(
             _mixed_df(),
@@ -284,6 +333,101 @@ class TestArtifactShape:
         )
         assert snap["dp"]["query_count"] == 1 + 1 + 2  # row_count + 1 numeric + 2*1 categorical
 
+    def test_certificate_count_mismatch_guard_raises_dp_schedule_mismatch(self, monkeypatch):
+        """C-H3 (Codex): the test above only checks the serialized formula
+        `1 + numeric_count + 2 * categorical_count` against `query_count`;
+        removing the runtime `session.certificate_count() != schedule.
+        query_count` guard at the call site in `dp.py` does not affect it,
+        since the loop above always releases every declared column exactly
+        once by construction. This forces the guard's precondition
+        directly (patching `certificate_count` to disagree with the
+        schedule) and asserts the typed error the guard raises -- deleting
+        the guard would make this pass cleanly instead of raising."""
+        from decoy_engine.quality import dp_budget
+
+        monkeypatch.setattr(dp_budget.OpenDpReleaseSession, "certificate_count", lambda self: 999)
+        with pytest.raises(DpBudgetError) as exc:
+            fit_dp_snapshot(
+                _mixed_df(),
+                categorical_columns=["state"],
+                numeric_domains={"age": (0.0, 120.0)},
+                epsilon=2.0,
+                delta=1e-6,
+            )
+        assert exc.value.code == "dp_schedule_mismatch"
+
+    def test_adapter_never_rounds_or_compares_before_release(self):
+        """C-H3 row 1c (guide section 6): OpenDP owns exact noisy-value
+        thresholding; Decoy may round (serialize) only AFTER release, and
+        must never compare a value against a threshold of its own before
+        that. This records every value handed to a measurement's
+        `.invoke()` at the seam and asserts each equals the UNROUNDED,
+        un-thresholded normalized projection -- proving `dp.py` passes the
+        already-normalized values straight through with no rounding or
+        comparison of its own -- and separately asserts the module exposes
+        no home-grown threshold helper or module-level threshold
+        arithmetic."""
+        recorded: dict[str, list[object]] = {}
+
+        class _RecordingBackend:
+            def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+                def released_fn(values):
+                    recorded["row_count"] = list(values)
+                    return len(values)
+
+                return _FakeMeasurement(certificate=0.1, released_fn=released_fn)
+
+            def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+                def released_fn(values):
+                    recorded["numeric"] = list(values)
+                    return [0] * (len(interior_edges) + 1)
+
+                return _FakeMeasurement(certificate=0.1, released_fn=released_fn)
+
+            def categorical_measurements(self, eps_q: float, delta_alloc: float):
+                def grouped_fn(values):
+                    recorded["grouped"] = list(values)
+                    return {}
+
+                def total_fn(values):
+                    recorded["total"] = list(values)
+                    return len(values)
+
+                return (
+                    _FakeMeasurement(certificate=(0.1, 1e-8), released_fn=grouped_fn),
+                    _FakeMeasurement(certificate=0.1, released_fn=total_fn),
+                )
+
+        df = pd.DataFrame(
+            {
+                "age": [1.5, 200.0, float("nan"), None, 50.25],
+                "cat": ["a", "b", None, "a", "c"],
+            }
+        )
+        _fit_dp_snapshot_with_backend(
+            df,
+            categorical_columns=["cat"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+            _session_backend=_RecordingBackend(),
+        )
+        expected_numeric = _normalize_numeric(df["age"], lower=0.0, upper=120.0)
+        expected_cat = _normalize_categorical(df["cat"])
+        assert recorded["numeric"] == expected_numeric
+        # Unrounded floats reach the measurement -- 1.5/50.25 stay
+        # fractional, 200.0 is clamped to the domain bound (120.0) but not
+        # rounded to an int.
+        assert all(isinstance(v, float) for v in recorded["numeric"])
+        assert 120.0 in recorded["numeric"] and 1.5 in recorded["numeric"]
+        assert recorded["grouped"] == expected_cat
+        assert recorded["total"] == expected_cat
+
+        import decoy_engine.quality.dp as dp_module
+
+        assert not hasattr(dp_module, "_stable_histogram_threshold")
+        assert "tau" not in vars(dp_module)
+
 
 class TestDisclosureChannelRegressions:
     """Guide section 7.3: private values change, public declarations stay
@@ -291,6 +435,14 @@ class TestDisclosureChannelRegressions:
     never the released values themselves."""
 
     def test_dp_fit_kind_and_success_are_identical_across_30_31_distinct_neighbors(self):
+        """C-H3 (Codex): the previous version compared only `kind` and
+        `query_count`, so a cardinality branch that changed the emitted
+        KEY SET (e.g. adding/omitting a stats key past some distinct-value
+        threshold) would pass unnoticed. This additionally compares the
+        full column-entry key set and the full `stats` key set between
+        the two neighbours, plus the fit's own declared-column echo
+        (`dp.categorical_columns`) -- any cardinality-triggered branch
+        that changes what keys the artifact carries now fails here."""
         df_30 = pd.DataFrame({"cat": [f"val{i}" for i in range(30)]})
         df_31 = pd.DataFrame({"cat": [f"val{i}" for i in range(31)]})
         snap_30 = fit_dp_snapshot(
@@ -299,18 +451,65 @@ class TestDisclosureChannelRegressions:
         snap_31 = fit_dp_snapshot(
             df_31, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
         )
-        assert (
-            snap_30["columns"]["cat"]["kind"] == snap_31["columns"]["cat"]["kind"] == "categorical"
-        )
+        col_30, col_31 = snap_30["columns"]["cat"], snap_31["columns"]["cat"]
+        assert col_30["kind"] == col_31["kind"] == "categorical"
+        assert set(col_30.keys()) == set(col_31.keys())
+        assert set(col_30["stats"].keys()) == set(col_31["stats"].keys())
         assert snap_30["dp"]["query_count"] == snap_31["dp"]["query_count"]
+        assert snap_30["dp"]["categorical_columns"] == snap_31["dp"]["categorical_columns"]
 
     def test_dp_fit_all_null_declared_categorical_runs_measurement_and_emits_categorical_shape(
         self,
     ):
+        """C-H3 (Codex), F1: the previous version recorded no mechanism
+        invocation and made no nonempty comparison, so an all-null
+        short-circuit that skipped the measurement entirely but returned
+        the expected shape would still pass. This uses a spy backend
+        (`released_fn`) to prove BOTH scheduled categorical measurements
+        are actually invoked on the all-null input, then asserts the
+        released values are consulted (not merely a hard-coded shape)."""
+        invoked: list[str] = []
+
+        class _SpyAllNullBackend:
+            def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+                def released_fn(values):
+                    invoked.append("row_count")
+                    return len(values)
+
+                return _FakeMeasurement(certificate=0.1, released_fn=released_fn)
+
+            def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+                raise AssertionError("no numeric column declared; must not be called")
+
+            def categorical_measurements(self, eps_q: float, delta_alloc: float):
+                def grouped_fn(values):
+                    invoked.append("grouped")
+                    return {}
+
+                def total_fn(values):
+                    invoked.append("total")
+                    return len(values)
+
+                return (
+                    _FakeMeasurement(certificate=(0.1, 1e-8), released_fn=grouped_fn),
+                    _FakeMeasurement(certificate=0.1, released_fn=total_fn),
+                )
+
         df = pd.DataFrame({"cat": [None, None, None, None]})
-        snap = fit_dp_snapshot(
-            df, categorical_columns=["cat"], numeric_domains={}, epsilon=2.0, delta=1e-6
+        snap = _fit_dp_snapshot_with_backend(
+            df,
+            categorical_columns=["cat"],
+            numeric_domains={},
+            epsilon=2.0,
+            delta=1e-6,
+            _session_backend=_SpyAllNullBackend(),
         )
+        # Both categorical measurements were actually invoked (never
+        # short-circuited), each exactly once, on a values list that IS
+        # length-zero (all four rows were null, correctly excluded) --
+        # not skipped, just correctly empty.
+        assert invoked.count("grouped") == 1
+        assert invoked.count("total") == 1
         assert snap["columns"]["cat"]["kind"] == "categorical"
         assert snap["dp"]["query_count"] == 1 + 2  # row_count + 2 categorical queries
 

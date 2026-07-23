@@ -17,6 +17,7 @@ consumer is `plan/_checks_dp.py::verify_dp_snapshots`.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -42,10 +43,17 @@ class ReleaseLedger:
         self._charges.append(_LedgerCharge(label, float(epsilon), float(delta)))
 
     def total_epsilon(self) -> float:
-        return sum(c.epsilon for c in self._charges)
+        # C-H1 (Codex HIGH): plain `sum` accumulates binary floating-point
+        # error term by term; ten releases at epsilon 0.1 give
+        # `sum == 0.9999999999999999`, a value strictly less than a
+        # ceiling of `1.0` even though the conservative (correctly
+        # rounded) total is exactly `1.0`. `math.fsum` uses Shewchuk's
+        # algorithm to sum with a single final rounding, closing that gap
+        # so a ceiling comparison can't be defeated by summation order.
+        return math.fsum(c.epsilon for c in self._charges)
 
     def total_delta(self) -> float:
-        return sum(c.delta for c in self._charges)
+        return math.fsum(c.delta for c in self._charges)  # C-H1: see total_epsilon
 
     def breakdown(self) -> list[dict[str, object]]:
         return [{"label": c.label, "epsilon": c.epsilon, "delta": c.delta} for c in self._charges]

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from decoy_engine.quality.dp_budget import (
+    _EPS_Q_FLOOR,
     DpBudgetError,
     OpenDpReleaseSession,
     _FakeMeasurement,
@@ -215,6 +216,35 @@ class TestOpenDpReleaseSession:
             OpenDpReleaseSession(schedule, epsilon=1e-9, delta=1e-9)
         assert exc.value.code == "dp_budget_infeasible"
 
+    def test_categorical_only_schedule_allocation_is_not_collapsed_near_the_floor(self):
+        """C-H2 (Codex HIGH), direct reproduction: `_allocate_epsilon`'s
+        search predicate used `(composed_epsilon_or_none(e) or math.inf)
+        <= self._epsilon`, which treats a valid composed epsilon of
+        exactly `0.0` (common for a categorical-only schedule with target-
+        delta headroom) as FALSY -- `0.0 or math.inf` is `math.inf` -- so
+        the predicate reads false at its own lower bound and the search
+        returns immediately without ever searching upward. Executed: one
+        categorical column at `(epsilon=1.0, delta=0.02)` allocated
+        `eps_q=1.8221832095805442e-09` under the defect (collapsed to the
+        `_EPS_Q_FLOOR` region), while `eps_q=0.1` composes to `~0.225`,
+        comfortably inside the request -- the defect defeats the locked
+        allocation policy and makes categorical releases nearly useless,
+        even though it under-spends (fails safe on privacy) rather than
+        over-spends."""
+        from decoy_engine.quality.dp_budget import OpenDpReleaseSession
+        from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, Schedule
+
+        schedule = Schedule(
+            row_count_name="rc", numeric=(), categorical=(CategoricalQuerySpec("g", "t"),)
+        )
+        session = OpenDpReleaseSession(schedule, epsilon=1.0, delta=0.02)
+        # A correct allocation lands well above the floor -- the defect
+        # collapses to ~1.8e-9; a sane allocation is many orders of
+        # magnitude larger. Compare against a generous but discriminating
+        # factor above the floor rather than pinning an exact value the
+        # search's fixed-iteration bisection could shift slightly.
+        assert session._eps_q > _EPS_Q_FLOOR * 1000
+
     def test_certificates_come_from_measurement_maps_not_the_calibration_target(self):
         """BLOCKER B-1 / A2, load-bearing over ALL FOUR `_record` call
         sites (`release_row_count`, `release_numeric`, and the grouped +
@@ -281,7 +311,10 @@ class TestOpenDpReleaseSession:
             def categorical_measurements(self, eps_q: float, delta_alloc: float):
                 return (
                     _FakeMeasurement(
-                        certificate=(eps_q * GROUPED_EPS_FACTOR, delta_alloc * GROUPED_DELTA_FACTOR),
+                        certificate=(
+                            eps_q * GROUPED_EPS_FACTOR,
+                            delta_alloc * GROUPED_DELTA_FACTOR,
+                        ),
                         released={},
                     ),
                     _FakeMeasurement(certificate=eps_q * TOTAL_FACTOR, released=0),
@@ -358,3 +391,19 @@ class TestReleaseLedger:
         assert ledger.total_epsilon() == 0.0
         assert ledger.total_delta() == 0.0
         assert ledger.breakdown() == []
+
+    def test_ten_releases_at_point_one_epsilon_sum_to_exactly_one(self):
+        """C-H1 (Codex HIGH): executed, plain `sum` over ten charges of
+        epsilon=0.1 gives `0.9999999999999999` (binary floating-point
+        term-by-term error), strictly LESS than a ceiling of exactly
+        `1.0` -- so a caller enforcing `total_epsilon() <= 1.0` would
+        accept a conservative total that is really `1.0`, not less.
+        `math.fsum` sums with a single final rounding and gives exactly
+        `1.0`. This pins the exact literal value, not an approx bound,
+        since the whole point is the difference between the two."""
+        ledger = ReleaseLedger()
+        for _ in range(10):
+            ledger.charge("r", epsilon=0.1, delta=0.1)
+        assert sum([0.1] * 10) == 0.9999999999999999  # the plain-sum defect, restated
+        assert ledger.total_epsilon() == 1.0
+        assert ledger.total_delta() == 1.0
