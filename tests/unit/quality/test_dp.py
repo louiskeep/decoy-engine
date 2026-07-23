@@ -1097,7 +1097,27 @@ class TestRecordwiseNormalization:
                 "float64, values outside the declared domain clamped to it, "
                 "infinities clamped to the nearer bound, NaN released as null"
             ),
+            # Codex round 13 (MEDIUM): the numeric policy documented clamping,
+            # infinities and NaN but not that containers, datetimelikes,
+            # nonzero-imaginary complex and any conversion failure become null
+            # -- an incomplete disclosure in a dict that ships in every
+            # artifact. Named now, and each path asserted just below.
+            "numeric_unsupported": (
+                "released as null (a list, tuple or array cell; a datetime or "
+                "timedelta; a complex value with a nonzero imaginary part; and any "
+                "value that cannot be converted to a float)"
+            ),
         }
+        # Each numeric-unsupported path the policy now names drops to null.
+        assert _normalize_numeric(pd.Series([[1]], dtype=object), lower=0.0, upper=10.0) == []
+        assert (
+            _normalize_numeric(
+                pd.Series([pd.Timestamp("2020-01-01")], dtype=object), lower=0.0, upper=10.0
+            )
+            == []
+        )
+        assert _normalize_numeric(pd.Series([1 + 2j], dtype=object), lower=0.0, upper=10.0) == []
+        assert _normalize_numeric(pd.Series([object()], dtype=object), lower=0.0, upper=10.0) == []
         assert _normalize_categorical(pd.Series(["a"], dtype=object)) == ["a"]  # text verbatim
         assert _normalize_categorical(pd.Series([True], dtype=object)) == ["1"]  # bool -> image
         assert _normalize_categorical(pd.Series([decimal.Decimal("1.5")], dtype=object)) == ["1.5"]
@@ -1535,10 +1555,21 @@ class TestTotalityGuardStructure:
             def __float__(self):
                 raise Sentinel("from __float__ inside _canonical_label")
 
+        class ArrayHostile:
+            # Reaches the categorical NULL-CHECK guard, which the label-raising
+            # `CategoricalHostile` above does not: `pd.isna` calls a cell's
+            # `__array__` (Codex round 13). With that guard narrowed to
+            # `Exception`, this bare `BaseException` escapes and aborts the fit
+            # instead of dropping the row.
+            def __array__(self, *args, **kwargs):
+                raise Sentinel("from __array__ in the null check")
+
         numeric = pd.Series([1.0, 2.0, NumericHostile()], dtype=object)
         assert _normalize_numeric(numeric, lower=0.0, upper=10.0) == [1.0, 2.0]
         categorical = pd.Series(["a", "b", CategoricalHostile()], dtype=object)
         assert _normalize_categorical(categorical) == ["a", "b"]
+        null_check = pd.Series(["a", "b", ArrayHostile()], dtype=object)
+        assert _normalize_categorical(null_check) == ["a", "b"]
 
     @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
     def test_an_interrupt_from_a_cell_still_propagates(self, interrupt):
@@ -1569,6 +1600,26 @@ class TestTotalityGuardStructure:
             )
         with pytest.raises(interrupt):
             _normalize_categorical(pd.Series(["a", CategoricalInterrupter()], dtype=object))
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_an_interrupt_from_the_null_check_still_propagates(self, interrupt):
+        """Kills the mutant narrowing the categorical NULL-CHECK guard to
+        `Exception`, or dropping its `KeyboardInterrupt`/`SystemExit` re-raise
+        (dennis + Codex round 13). Distinct from the label-guard case above:
+        that one reaches `float()` inside `_canonical_label`; this one reaches
+        the earlier `pd.isna(raw)`. An in-source note used to call this guard
+        unreachable, on the theory that `pd.isna` never runs a cell's dunders.
+        It does: `pd.isna` calls a cell's `__array__`, so a cell whose
+        `__array__` raises an interrupt routes it straight through this guard,
+        which must re-raise rather than swallow it into a dropped row. Without
+        this test both null-guard mutants survived the whole suite."""
+
+        class ArrayInterrupter:
+            def __array__(self, *args, **kwargs):
+                raise interrupt
+
+        with pytest.raises(interrupt):
+            _normalize_categorical(pd.Series(["a", ArrayInterrupter()], dtype=object))
 
     def test_len_that_raises_propagates_like_array(self):
         """`count = len(series)` shares the setup's fail-loud disposition

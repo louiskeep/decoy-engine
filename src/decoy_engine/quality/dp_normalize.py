@@ -44,14 +44,15 @@ the process. A cell that raises either of those FROM ITS OWN dunders is
 therefore outside the domain and is the one residual case.
 
 For completeness, the `BaseException` enumeration is: `KeyboardInterrupt`
-and `SystemExit` are re-raised everywhere, `GeneratorExit` additionally in
-`_cells`'s FETCH guard (so a `GeneratorExit` raised by an array's
-`__getitem__` propagates rather than being swallowed as a dropped row;
-`_cells` keeps its `yield` outside every guard, so a finalization
-`GeneratorExit` propagates from there and the generator stays conforming),
-and `asyncio.CancelledError` is currently swallowed -- inert on this
-synchronous call path, and listed so the next reader does not have to
-rediscover the set.
+and `SystemExit` are re-raised everywhere. `GeneratorExit` is NOT re-raised
+in `_cells`'s fetch guard -- one raised by an array's `__getitem__` is
+dropped there like any other fetch failure; conformance comes instead from
+keeping `_cells`'s `yield` OUTSIDE every guard, so a finalization
+`GeneratorExit` propagates from the yield point and the generator stays
+conforming (swallowing it there would make CPython raise `RuntimeError:
+generator ignored GeneratorExit`). `asyncio.CancelledError` is currently
+swallowed -- inert on this synchronous call path, and listed so the next
+reader does not have to rediscover the set.
 
 That residual is a caller precondition, not a defect we can close, and
 it is narrow: reaching it requires a live Python object carrying
@@ -180,11 +181,17 @@ def _is_container(raw: Any) -> bool:
 
     `numpy.ndim` is the boxing-invariant test: 0 for every scalar this
     module accepts (Python and numpy numbers, `str`, `bytes`, `Decimal`,
-    `Fraction`, `complex`), and >= 1 for `list`, `tuple` and `ndarray` at
-    any length. Reaches nothing pandas can turn a scalar INTO, so a real
-    value cannot be dropped by it. Callers run this inside their conversion
-    guard, so a value whose length access misbehaves drops the row rather
-    than escaping.
+    `Fraction`, `complex`), and >= 1 for a `list`, `tuple` or multi-element
+    `ndarray` at any length. It does NOT catch every non-scalar: a 0-d
+    `ndarray` is `ndim == 0` and passes here -- correctly, since it is a
+    scalar `float()` converts (Codex round 13), and stably under every
+    boxing. Non-array containers (`set`, `dict`, `frozenset`) are also
+    `ndim == 0` and pass here, then drop one step later at `float()`,
+    uniformly across boxings. So this test reaches nothing pandas can turn a
+    scalar INTO, and no real value is dropped by it; the sequence boxings
+    that motivated it (`list`/`tuple`/`ndarray`) are exactly the ones it
+    catches. Callers run this inside their conversion guard, so a value
+    whose length access misbehaves drops the row rather than escaping.
     """
     return np.ndim(raw) != 0
 
@@ -549,19 +556,20 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:  # broad by design: totality, see THE DOMAIN above
-                # Honest note (dennis round 12): the re-raise and the
-                # BaseException breadth here are defensive symmetry with the
-                # label guard below, and are deliberately NOT pinned by a
-                # test, because they are unreachable. `pd.isna` classifies an
-                # unrecognised object by identity and NaN-membership without
-                # invoking its `__float__`/`__str__`/`__eq__`, so no cell
-                # content routes a `BaseException` -- or a `KeyboardInterrupt`
-                # -- through this line. The one thing that reaches it is
-                # `pd.isna(Decimal("sNaN"))` raising `InvalidOperation`, an
-                # ordinary `Exception` (covered by the sNaN test). The breadth
-                # stays for the day the type gate widens and a raising dunder
-                # does reach here; narrowing it to match today's reachability
-                # would be a latent trap, not a simplification.
+                # Reachable, and pinned (dennis + Codex round 13). An earlier
+                # note here claimed this guard was unreachable because
+                # `pd.isna` classifies by identity and NaN-membership without
+                # invoking a cell's dunders. That was false: `pd.isna` calls a
+                # cell's `__array__`, so a cell whose `__array__` raises routes
+                # a `BaseException` -- including a `KeyboardInterrupt` -- through
+                # this line, and `pd.isna(Decimal("sNaN"))` raising
+                # `InvalidOperation` reaches it too. The re-raise above is
+                # therefore load-bearing (an operator's Ctrl-C during a hostile
+                # `__array__` must still propagate, not be swallowed into a
+                # dropped row), on a par with the label guard one screen down.
+                # `test_an_interrupt_from_the_null_check_still_propagates` pins
+                # it; a mutant narrowing the breadth or dropping the re-raise
+                # now fails.
                 pass
             try:
                 label = _canonical_label(raw)

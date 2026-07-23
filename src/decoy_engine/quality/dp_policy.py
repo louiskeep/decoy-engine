@@ -36,6 +36,11 @@ _DP_NORMALIZATION_POLICY = {
         "float64, values outside the declared domain clamped to it, "
         "infinities clamped to the nearer bound, NaN released as null"
     ),
+    "numeric_unsupported": (
+        "released as null (a list, tuple or array cell; a datetime or "
+        "timedelta; a complex value with a nonzero imaginary part; and any "
+        "value that cannot be converted to a float)"
+    ),
 }
 
 
