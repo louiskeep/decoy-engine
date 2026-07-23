@@ -95,11 +95,18 @@ _DP_CATEGORICAL_DTYPE_LABEL = "object"
 # drop COUNT below goes to the log and never in here.
 _DP_NORMALIZATION_POLICY = {
     "categorical_labels": (
-        "text kept verbatim; boolean, real, decimal and zero-imaginary complex "
-        "rendered from the float64 image; integers beyond float64 range rendered exactly"
+        "text kept verbatim unless it contains NUL or cannot be encoded as UTF-8; "
+        "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
+        "image; integers beyond float64 range rendered exactly, up to the interpreter's "
+        "decimal-conversion limit"
     ),
-    "categorical_unsupported": "released as null (datetime, timedelta, and any other type)",
-    "numeric_values": "float64, non-finite clamped to the declared bound",
+    "categorical_unsupported": (
+        "released as null (datetime, timedelta, NUL-bearing or non-UTF-8 text, and any other type)"
+    ),
+    "numeric_values": (
+        "float64, values outside the declared domain clamped to it, "
+        "infinities clamped to the nearer bound, NaN released as null"
+    ),
 }
 
 _logger = logging.getLogger(__name__)

@@ -41,6 +41,7 @@ import decimal
 import math
 import numbers
 import warnings
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -169,7 +170,7 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
     out: list[float] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        for raw in series:
+        for raw in _cells(series):
             try:
                 # No `_unbox` here, deliberately. This path has no type
                 # gate -- it only calls `float()`, which is total over
@@ -209,6 +210,39 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
                 v = min(max(v, lower), upper)
             out.append(v)
     return out
+
+
+def _cells(series: pd.Series) -> Iterator[Any]:
+    """One cell at a time, with the FETCH itself inside the guard.
+
+    `for raw in series` puts the per-cell fetch in the loop header, where
+    no `try` can reach it, and the fetch is not free of content. A
+    `pd.ArrowDtype` column's `__iter__` calls `as_py()` per element, which
+    raises `OverflowError` whenever the stored integer leaves the
+    corresponding Python `datetime`/`date`/`time`/`timedelta` range -- so
+    ONE out-of-range row made the whole fit raise, which is a fit-success
+    observable with probability 0 on one neighbour and 1 on the other
+    (dennis round 10, BLOCKER-1). Affects `timestamp[s|ms|us]`,
+    `duration[s|ms]`, `date32`, `date64` and `time64[us]`, both signs;
+    `[ns]` is the one safe resolution, because int64 nanoseconds cannot
+    leave the Python range. Note that this is the exact inverse of round
+    9, where `ns` was the only UNSAFE resolution -- a resolution axis
+    established on the numpy side does not transfer to the arrow side.
+
+    Positional access, not one `try` around the whole loop: a single
+    guard would drop the tail of the column after the first bad cell,
+    which is not recordwise, and an `__iter__` that has raised cannot be
+    resumed anyway. A cell whose fetch fails is dropped, the same
+    disposition an unconvertible value already gets, and the same one the
+    identical logical value receives under a numpy or object boxing where
+    it arrives as a `pd.Timestamp` and is dropped by `_is_datetimelike`.
+    """
+    values = series.array
+    for i in range(len(series)):
+        try:
+            yield values[i]
+        except Exception:  # broad by design: totality, see docstring
+            continue
 
 
 def _canonical_label(raw: Any) -> str:
@@ -333,6 +367,9 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     as UTF-8, and it raised `UnicodeEncodeError` further downstream when
     the label crossed into OpenDP -- the same fit-success channel, just
     relocated. Labels are therefore required to be UTF-8 encodable here.
+    A label containing NUL is dropped for the neighbouring reason: it
+    does not raise at the boundary, it TRUNCATES there, silently merging
+    distinct source values into one released label.
     `str.isascii()` is a cached flag check, so the overwhelmingly common
     all-ASCII label pays no encoding cost.
 
@@ -366,7 +403,7 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     out: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        for raw in series:
+        for raw in _cells(series):
             try:
                 null = pd.isna(raw)
                 if getattr(null, "ndim", 0) == 0 and bool(null):
@@ -375,6 +412,18 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
                 pass
             try:
                 label = _canonical_label(raw)
+                if "\x00" in label:
+                    # dennis round 10 (MEDIUM-1): the label is truncated
+                    # at the first NUL when it crosses into OpenDP, so
+                    # "a\x00b", "a" and "a\x00c" all released as "a" --
+                    # three distinct source values reported as one. Not a
+                    # DP break (a many-to-one label map only coarsens,
+                    # and it is recordwise and boxing-invariant), but a
+                    # silent truncation at the release boundary that made
+                    # the artifact assert a `top_values` entry that is
+                    # not a value in the source. Same class as the
+                    # surrogate case below, one step short of it.
+                    continue
                 if not label.isascii():
                     label.encode("utf-8")
             except Exception:  # broad by design: totality, see docstring

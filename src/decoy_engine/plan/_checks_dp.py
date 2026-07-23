@@ -199,13 +199,24 @@ def _numeric_shape_matches_a_dp_release(
     `fit_dp_snapshot` numeric column NEVER does (guide section 4.2.1: `min`/
     `max` are the declared domain bounds, `mean`/`std` are always `None`,
     `quantiles` is always `{}`, and `bin_counts` always has exactly
-    `numeric_bins` entries). This does NOT stop a determined forger who
-    replicates that exact shape from scratch -- at that point they have
-    reproduced the whole DP artifact format, not merely attached a `dp`
-    block to an otherwise-ordinary snapshot -- but it does stop the
-    realistic case this BLOCKER demonstrated: an ordinary EXACT snapshot
-    with a fabricated `dp` block bolted on, whose numeric `stats` still
-    carries the exact fit's real min/max/mean/quantiles untouched."""
+    `numeric_bins` entries).
+
+    This is a guard against copy-paste, not against an adversary, and the
+    security review corrected the page that used to claim otherwise. It
+    stops exactly one case: an ordinary EXACT snapshot with a fabricated
+    `dp` block bolted on, whose numeric `stats` still carries the real
+    min/max/mean/quantiles untouched. It stops nothing else. All four
+    fields read below are attacker-writable, and defeating the check
+    needs no DP knowledge and no reproduction of the artifact format --
+    null `mean`, `std` and `quantiles`, declare `numeric_bins` as the
+    length of the histogram already present, and declare the domain as
+    the observed min and max. The resulting artifact compiles
+    DP-verified while `bin_counts` are still the exact unnoised
+    histogram. Do not read the categorical path's lack of an equivalent
+    check as this path being defended; the asymmetry exists only for the
+    copy-paste case. See `docs/what-we-cannot-prove.md`, which is the
+    authority on this wording and is pinned by
+    `tests/unit/test_dp_claim_copy.py`."""
     stats = col_snap.get("stats")
     if not isinstance(stats, dict):
         return False

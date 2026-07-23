@@ -17,9 +17,11 @@ import math
 import warnings
 from collections import Counter
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from decoy_engine.quality.dp import (
@@ -143,16 +145,69 @@ _ADJACENCY_POOLS: dict[str, tuple[list, bool]] = {
     "timedelta_ns": ([np.timedelta64(5, "ns"), np.timedelta64(7, "ns")], False),
     "timedelta_us": ([np.timedelta64(5, "us"), np.timedelta64(7, "us")], False),
     "decimal_mixed": ([decimal.Decimal("1.5"), decimal.Decimal("2")], True),
+    # dennis round 10: pandas ships THREE dtype backends and the matrix
+    # covered two. `pd.ArrowDtype` is reachable without any adversary via
+    # `read_parquet`/`read_csv(dtype_backend="pyarrow")` or
+    # `convert_dtypes(dtype_backend="pyarrow")`, and pyarrow is a hard
+    # dependency. Its `__iter__` calls `as_py()` per element, which
+    # raised on an out-of-Python-range temporal and took the whole fit
+    # down with it (BLOCKER-1). The out-of-range pools below are the
+    # falsifying ones: `[ns]` is the only SAFE arrow resolution, the
+    # exact inverse of round 9's numpy finding.
+    "arrow_ts_s": ([0, 1], False),
+    "arrow_ts_s_overflow": ([0, 2**60], False),
+    "arrow_ts_us_overflow": ([0, 2**62], False),
+    "arrow_ts_ns": ([0, 1], False),
+    "arrow_duration_s_overflow": ([0, 2**60], False),
+    "arrow_date32_overflow": ([0, 2**30], False),
+    "arrow_time64_us_overflow": ([0, 2**60], False),
+    "arrow_int64": ([1, 2**60 + 1], False),
+    "arrow_string": (["a", "b"], False),
+    "arrow_bool": ([True, False], False),
+    "arrow_decimal128": ([decimal.Decimal("1.5"), decimal.Decimal("2.5")], False),
+    "arrow_float64": ([1.5, 2.5], False),
 }
 
 # Extension dtypes must be constructed with an explicit dtype; the plain
 # constructor would infer a numpy dtype and never exercise the box.
-_ADJACENCY_POOL_DTYPES: dict[str, str] = {
+_ADJACENCY_POOL_DTYPES: dict[str, Any] = {
     "ext_boolean": "boolean",
     "ext_Int64": "Int64",
     "ext_Float64": "Float64",
     "ext_string": "string",
+    "arrow_ts_s": pd.ArrowDtype(pa.timestamp("s")),
+    "arrow_ts_s_overflow": pd.ArrowDtype(pa.timestamp("s")),
+    "arrow_ts_us_overflow": pd.ArrowDtype(pa.timestamp("us")),
+    "arrow_ts_ns": pd.ArrowDtype(pa.timestamp("ns")),
+    "arrow_duration_s_overflow": pd.ArrowDtype(pa.duration("s")),
+    "arrow_date32_overflow": pd.ArrowDtype(pa.date32()),
+    "arrow_time64_us_overflow": pd.ArrowDtype(pa.time64("us")),
+    "arrow_int64": pd.ArrowDtype(pa.int64()),
+    "arrow_string": pd.ArrowDtype(pa.string()),
+    "arrow_bool": pd.ArrowDtype(pa.bool_()),
+    "arrow_decimal128": pd.ArrowDtype(pa.decimal128(20, 4)),
+    "arrow_float64": pd.ArrowDtype(pa.float64()),
 }
+
+# Pools whose raw values only MEAN what the pool intends under the pool's
+# own dtype. An arrow `timestamp[s]` pool holds the ints 0 and 1, which
+# are two timestamps under that dtype and two plain integers under any
+# other. Building the neighbour by re-inferring from a list therefore
+# yields different DATA, not a reboxing of the same data, and comparing
+# the two is meaningless. For these the list neighbour must be built
+# under the same schema; the `pd.concat` axis is already correct, since
+# it boxes the existing values rather than re-reading them.
+_ADJACENCY_REINTERPRETING_POOLS = frozenset(
+    {
+        "arrow_ts_s",
+        "arrow_ts_s_overflow",
+        "arrow_ts_us_overflow",
+        "arrow_ts_ns",
+        "arrow_duration_s_overflow",
+        "arrow_date32_overflow",
+        "arrow_time64_us_overflow",
+    }
+)
 
 # Added rows chosen to trigger a dtype change on the pools above.
 _ADJACENCY_ADDED: dict[str, object] = {
@@ -171,6 +226,12 @@ _ADJACENCY_ADDED: dict[str, object] = {
     # numeric column to complex128.
     "complex_real": 3 + 0j,
     "complex_imag": 1 + 1j,
+    # dennis round 10: fits in int64 (so the arrow pools accept it) but
+    # leaves the Python datetime range, so on an arrow temporal pool the
+    # neighbour differs by a cell whose FETCH raises rather than whose
+    # conversion fails. `huge_int` above cannot reach this: 2**70
+    # overflows int64 and the frame will not build at all.
+    "int64_out_of_python_range": 2**60,
 }
 
 
@@ -581,18 +642,19 @@ class TestRecordwiseNormalization:
             build_dtype = pool_dtype or dtype
             try:
                 base = pd.Series(list(pool), dtype=build_dtype)
-            except (OverflowError, ValueError, TypeError):
+            except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 continue  # pandas itself refuses the pool
             base_labels = _normalize_categorical(base)
 
             neighbours = []
+            list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
             try:
-                neighbours.append(pd.Series([*pool, added], dtype=dtype))
-            except (OverflowError, ValueError, TypeError):
+                neighbours.append(pd.Series([*pool, added], dtype=list_dtype))
+            except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 pass
             try:  # concat: boxes the EXISTING values into the joint dtype
                 neighbours.append(pd.concat([base, pd.Series([added])], ignore_index=True))
-            except (OverflowError, ValueError, TypeError):
+            except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 pass
             if not neighbours:
                 continue
@@ -702,13 +764,14 @@ class TestRecordwiseNormalization:
             base_out = _normalize_numeric(base, **bounds)
 
             neighbours = []
+            list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
             try:
-                neighbours.append(pd.Series([*pool, added], dtype=dtype))
-            except (OverflowError, ValueError, TypeError):
+                neighbours.append(pd.Series([*pool, added], dtype=list_dtype))
+            except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 pass
             try:  # concat: boxes the EXISTING values into the joint dtype
                 neighbours.append(pd.concat([base, pd.Series([added])], ignore_index=True))
-            except (OverflowError, ValueError, TypeError):
+            except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 pass
 
             for neighbour in neighbours:
@@ -842,15 +905,28 @@ class TestRecordwiseNormalization:
         # value to itself, so mutating the constant moves both sides and
         # the assertion holds. That tautology let the garbage-policy
         # mutant survive a second time, in the fix for it.
+        # dennis round 10 (LOW-1): the pinned text was itself inaccurate
+        # on three points -- text is NOT kept verbatim when it carries a
+        # NUL or cannot be encoded, "beyond float64 range" is exact only
+        # up to the interpreter's decimal-conversion limit, and the
+        # numeric line said "non-finite clamped" while NaN is dropped and
+        # FINITE out-of-domain values are clamped too. A policy that
+        # ships in every artifact has to be true.
         assert blocks[0] == {
             "categorical_labels": (
-                "text kept verbatim; boolean, real, decimal and zero-imaginary complex "
-                "rendered from the float64 image; integers beyond float64 range rendered exactly"
+                "text kept verbatim unless it contains NUL or cannot be encoded as UTF-8; "
+                "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
+                "image; integers beyond float64 range rendered exactly, up to the interpreter's "
+                "decimal-conversion limit"
             ),
             "categorical_unsupported": (
-                "released as null (datetime, timedelta, and any other type)"
+                "released as null (datetime, timedelta, NUL-bearing or non-UTF-8 text, "
+                "and any other type)"
             ),
-            "numeric_values": "float64, non-finite clamped to the declared bound",
+            "numeric_values": (
+                "float64, values outside the declared domain clamped to it, "
+                "infinities clamped to the nearer bound, NaN released as null"
+            ),
         }
         assert _normalize_categorical(pd.Series(["a"], dtype=object)) == ["a"]  # text verbatim
         assert _normalize_categorical(pd.Series([True], dtype=object)) == ["1"]  # bool -> image
@@ -858,6 +934,26 @@ class TestRecordwiseNormalization:
         assert _normalize_categorical(pd.Series([1 + 0j], dtype=object)) == ["1"]  # zero-imaginary
         assert _normalize_categorical(pd.Series([10**400], dtype=object)) == [str(10**400)]  # exact
         assert _normalize_categorical(pd.Series([pd.Timestamp("2020-01-01")], dtype=object)) == []
+        # Each exception the corrected text now claims.
+        assert _normalize_categorical(pd.Series(["a\x00b"], dtype=object)) == []
+        assert _normalize_categorical(pd.Series(["\ud800"], dtype=object)) == []
+        assert _normalize_categorical(pd.Series([10**5000], dtype=object)) == []
+        assert _normalize_numeric(pd.Series([float("nan")]), lower=0.0, upper=10.0) == []
+        assert _normalize_numeric(pd.Series([99.0]), lower=0.0, upper=10.0) == [10.0]
+        assert _normalize_numeric(pd.Series([float("-inf")]), lower=0.0, upper=10.0) == [0.0]
+
+    def test_nul_bearing_labels_drop_rather_than_silently_merging(self):
+        """dennis round 10 (MEDIUM-1): a label is truncated at its first
+        NUL when it crosses into OpenDP, so three distinct source values
+        released as one, and the artifact asserted a `top_values` entry
+        that was not a value in the source.
+
+        Not a DP break -- a many-to-one label map is recordwise and
+        boxing-invariant, so it can only coarsen -- but a silent
+        truncation at the release boundary, which the repo does not
+        permit. The uniform disposition is to drop."""
+        series = pd.Series(["a\x00b"] * 3 + ["a"] * 3 + ["a\x00c"] * 3 + ["keep"], dtype=object)
+        assert _normalize_categorical(series) == ["a"] * 3 + ["keep"]
 
     def test_unlabellable_types_drop_rather_than_raise(self):
         """Codex round 7 named timedelta and datetime columns as moving
@@ -1081,6 +1177,83 @@ class TestRecordwiseNormalization:
                     snap["columns"][name]["stats"].keys()
                     == base_snap["columns"][name]["stats"].keys()
                 ), (hostile, name)
+
+    @pytest.mark.parametrize(
+        ("arrow_type", "in_range", "out_of_range"),
+        [
+            (pa.timestamp("s"), 0, 2**60),
+            (pa.timestamp("ms"), 0, 2**60),
+            (pa.timestamp("us"), 0, 2**62),
+            (pa.duration("s"), 0, 2**60),
+            (pa.duration("ms"), 0, 2**60),
+            (pa.date64(), 0, 2**60),
+            (pa.time64("us"), 0, 2**60),
+        ],
+        ids=["ts_s", "ts_ms", "ts_us", "dur_s", "dur_ms", "date64", "time64_us"],
+    )
+    def test_a_pyarrow_backed_cell_that_cannot_be_fetched_does_not_fail_the_fit(
+        self, arrow_type, in_range, out_of_range
+    ):
+        """dennis round 10 (BLOCKER-1): the per-cell FETCH is content-
+        dependent, and it was outside every guard.
+
+        `pd.ArrowDtype`'s `__iter__` calls `as_py()` on each element, which
+        raises `OverflowError` whenever the stored integer leaves the
+        corresponding Python range. The loop header is not somewhere a
+        `try` can reach, so ONE such row took the whole fit down and made
+        fit success a probability-0-versus-1 observable -- the same channel
+        C-B4 names, reached through the third dtype backend rather than
+        through a hostile scalar.
+
+        Not adversarial-only: `pyarrow` is a hard dependency and
+        `dtype_backend="pyarrow"` is a first-class option on `read_parquet`
+        and `read_csv`, so an out-of-range timestamp is ordinary corrupt
+        data in a column the caller correctly declared.
+
+        `[ns]` is deliberately absent: int64 nanoseconds cannot leave the
+        Python range, so it is the one SAFE arrow resolution. That is the
+        exact inverse of round 9, where `ns` was the only unsafe numpy
+        resolution -- a resolution axis established on one backend does not
+        transfer to the other.
+
+        Built through `pa.array` rather than `pd.Series(..., dtype=...)`
+        because pandas' own scalar coercion refuses several of these
+        types outright, while `read_parquet` hands back exactly this
+        arrow-native array."""
+
+        def arrow_series(values):
+            return pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values, type=arrow_type)))
+
+        base = pd.DataFrame({"c": arrow_series([in_range, in_range]), "n": [1.0, 2.0]})
+        neighbour = pd.DataFrame(
+            {
+                "c": arrow_series([in_range, in_range, out_of_range]),
+                "n": [1.0, 2.0, 3.0],
+            }
+        )
+        kwargs = {
+            "categorical_columns": ["c"],
+            "numeric_domains": {"n": (0.0, 10.0)},
+            "epsilon": 2.0,
+            "delta": 1e-6,
+        }
+        base_snap = fit_dp_snapshot(base, **kwargs)
+        snap = fit_dp_snapshot(neighbour, **kwargs)
+        assert snap["columns"].keys() == base_snap["columns"].keys()
+        assert snap["columns"]["c"]["stats"].keys() == base_snap["columns"]["c"]["stats"].keys()
+
+    def test_a_pyarrow_backed_cell_that_cannot_be_fetched_does_not_fail_a_numeric_fit(self):
+        """The same channel on the numeric path, which has its own loop."""
+        cells = pd.arrays.ArrowExtensionArray(pa.array([0, 1, 2**60], type=pa.timestamp("s")))
+        neighbour = pd.DataFrame({"n": pd.Series(cells)})
+        snap = fit_dp_snapshot(
+            neighbour,
+            categorical_columns=[],
+            numeric_domains={"n": (0.0, 10.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        assert "n" in snap["columns"]
 
 
 class TestReleaseIds:
