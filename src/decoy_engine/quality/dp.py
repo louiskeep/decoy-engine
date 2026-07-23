@@ -161,8 +161,25 @@ def _validate_config(
                 "Each column must be declared exactly once."
             ),
         )
+    # D-M4: `frame.columns` is compared as a SET below, so duplicate
+    # labels pass the coverage check. `frame[col]` then returns a
+    # DataFrame rather than a Series, and both normalizers iterate it as
+    # column LABELS -- the fit is accepted and releases a distribution
+    # over the label string instead of the data. Nothing leaks (it
+    # describes none of the values), but a DP artifact that silently
+    # describes the wrong thing is worse than a rejected one.
+    frame_labels = [str(c) for c in frame.columns]
+    duplicated = sorted({label for label in frame_labels if frame_labels.count(label) > 1})
+    if duplicated:
+        raise DpError(
+            code="dp_column_declaration_duplicated",
+            message=(
+                f"frame has duplicate column labels: {duplicated!r}. Each column must be "
+                "declared and fit exactly once; deduplicate or rename before fitting."
+            ),
+        )
     declared = categorical_set | numeric_set
-    frame_columns = frozenset(str(c) for c in frame.columns)
+    frame_columns = frozenset(frame_labels)
     if declared != frame_columns:
         missing = frame_columns - declared
         extra = declared - frame_columns

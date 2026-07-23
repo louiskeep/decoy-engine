@@ -373,6 +373,50 @@ class TestFailClosedDpDeclaration:
         assert "dp" not in dumped["global_settings"]  # unset -> key omitted entirely, not None
         run_config_only_checks(dumped)  # must not raise dp_budget_declaration_malformed
 
+    @pytest.mark.parametrize(
+        "serialize",
+        [
+            lambda m: m.model_dump(),
+            lambda m: m.model_dump(mode="json"),
+            lambda m: json.loads(m.model_dump_json()),
+        ],
+        ids=["model_dump", "model_dump_json_mode", "model_dump_json"],
+    )
+    def test_every_serialization_path_agrees_on_whether_dp_was_declared(self, serialize):
+        """D-M3 (dennis round 4): the unset/explicit-null distinction was
+        first implemented as a `model_dump` override on `PipelineConfig`.
+        `model_dump_json` goes through pydantic-core and never consulted
+        it, so that path still emitted `dp: None` for a never-assigned
+        field. `_dp_declared` is a key-membership test, so any caller
+        routing a config through `model_dump_json` got a hard
+        `dp_budget_declaration_malformed` on EVERY ordinary non-DP
+        pipeline. Fail-closed rather than a leak, but that path was
+        broken outright.
+
+        The fix moved the omission to a serializer on `GlobalSettings`,
+        which every path runs. Parametrizing over all three is the point:
+        the single-path version passed while two paths disagreed."""
+        from decoy_engine.config import PipelineConfig
+        from decoy_engine.plan._checks_dp import _dp_declared
+
+        base = {
+            "version": 1,
+            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "tables": [
+                {
+                    "name": "people",
+                    "columns": [{"name": "email", "strategy": "faker", "provider": "person_email"}],
+                }
+            ],
+            "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
+        }
+        unset = PipelineConfig.model_validate({**base, "global_settings": {"seed": 1}})
+        explicit_null = PipelineConfig.model_validate(
+            {**base, "global_settings": {"seed": 1, "dp": None}}
+        )
+        assert _dp_declared(serialize(unset)) is False
+        assert _dp_declared(serialize(explicit_null)) is True
+
     def test_pipeline_config_dump_of_an_explicit_dp_null_keeps_the_key_and_fails_closed(self):
         """The other half of the C-B3 fix: an operator who writes `dp:
         null` explicitly gets a dumped dict that STILL carries the `dp`
@@ -785,6 +829,35 @@ class TestDpDeclaredWithNoStatisticalColumns:
     declares `global_settings.dp` alongside ordinary non-statistical
     generate columns (faker, sequence, ...), which is not a contradiction:
     the DP contract only concerns statistical generate columns."""
+
+    def test_dp_declared_plan_with_a_statistical_column_still_requires_the_receipt(self, tmp_path):
+        """D-H3 (dennis round 4): the D-M7 relaxation above shipped a
+        test for what it newly PERMITS and none for what must still
+        hold, so stubbing `_config_declares_statistical_column` to
+        `False` -- which deletes the receipt requirement from the public
+        generation boundary outright -- survived every test in this
+        file. This is the other half: a `dp`-declared Plan that DOES
+        reference a DP-fit column must refuse to generate without a
+        reproduced receipt."""
+        import dataclasses
+
+        path = _dp_fit_mixed(tmp_path)
+        cfg = _dp_cfg(
+            table_columns=[{"name": "state", "type": "statistical", "snapshot_file": path}]
+        )
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert plan.generation is not None
+        assert plan.generation.dp_verification is not None  # the honest compile
+
+        stripped = dataclasses.replace(
+            plan,
+            generation=dataclasses.replace(plan.generation, dp_verification=None),
+        )
+
+        from decoy_engine.generation.synthesize import generate_tables
+
+        with pytest.raises(TypeError, match="no reproduced DpVerification receipt"):
+            generate_tables(stripped)
 
     def test_dp_declared_pipeline_with_only_non_statistical_columns_can_generate(self):
         cfg = {

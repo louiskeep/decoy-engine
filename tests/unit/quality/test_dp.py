@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import decimal
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -51,6 +52,31 @@ class _RaisesOnConversion:
 # 4300-digit integer-to-string cap; `_RaisesOnConversion` raises an
 # unrelated type from both.
 _HOSTILE_SCALARS = (10**10000, _RaisesOnConversion())
+
+
+class _WarnsOnConversion:
+    """A scalar whose conversion emits a warning.
+
+    D-H1 (dennis round 4): the blanket warning suppression is the whole
+    remediation for the `ComplexWarning` disclosure channel, and nothing
+    could falsify removing it. Every existing test used a builtin
+    `complex`, which the complex guard drops before `float()` is ever
+    reached, so no warning could be emitted with or without the
+    suppression. Complex values can no longer serve as the probe at all
+    now that every complex width is dropped by kind. The suppression's
+    actual claim is content-independent ("no warning ever, whatever the
+    row holds"), so the probe is a value that warns during conversion
+    itself, which tests the invariant rather than one historical
+    instance of it.
+    """
+
+    def __float__(self) -> float:
+        warnings.warn("converting to float", UserWarning, stacklevel=1)
+        return 1.0
+
+    def __str__(self) -> str:
+        warnings.warn("rendering as str", UserWarning, stacklevel=1)
+        return "1"
 
 
 def _mixed_df(n: int = 2000, seed: int = 3) -> pd.DataFrame:
@@ -162,6 +188,20 @@ class TestConfigValidation:
                 df, categorical_columns=[], numeric_domains={"age": bounds}, epsilon=1.0, delta=1e-6
             )
         assert exc.value.code == "dp_numeric_domain_invalid"
+
+    def test_duplicate_frame_column_labels_are_rejected(self):
+        """D-M4: `frame.columns` was compared as a set, so `["x", "x"]`
+        passed the coverage check. `frame["x"]` then returns a DataFrame,
+        which both normalizers iterate as column LABELS, and the fit was
+        accepted while releasing a distribution over the string "x"
+        rather than over the data. No leak, but a DP artifact that
+        silently describes the wrong thing."""
+        df = pd.DataFrame([["CA", "NY"], ["TX", "CA"]], columns=["x", "x"])
+        with pytest.raises(DpError) as exc:
+            fit_dp_snapshot(
+                df, categorical_columns=["x"], numeric_domains={}, epsilon=2.0, delta=1e-6
+            )
+        assert exc.value.code == "dp_column_declaration_duplicated"
 
     def test_numeric_bins_default_is_ten_and_recorded_in_artifact(self):
         df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
@@ -275,13 +315,42 @@ class TestRecordwiseNormalization:
             assert len(base_out) - len(dropped_out) in (0, 1)
 
     def test_normalize_numeric_never_warns_on_exotic_content(self):
-        import warnings
-
         series = pd.Series(["1", 1 + 2j, None, object(), "not a number"], dtype=object)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             _normalize_numeric(series, lower=0.0, upper=10.0)
         assert caught == [], [str(w.message) for w in caught]
+
+    @pytest.mark.parametrize(
+        "normalize",
+        [
+            lambda s: _normalize_numeric(s, lower=0.0, upper=10.0),
+            _normalize_categorical,
+        ],
+        ids=["numeric", "categorical"],
+    )
+    def test_no_warning_escapes_when_the_conversion_itself_warns(self, normalize):
+        """D-H1: deleting either blanket suppression used to leave every
+        test green, because the only warning-capable probe in the suite
+        was a builtin `complex`, which the complex guard drops before
+        `float()` runs. This probes the invariant the suppression
+        actually claims -- no warning escapes regardless of row content
+        -- with a value that warns during conversion itself. Removing
+        either `simplefilter("ignore")` lets the warning through and
+        fails this."""
+        series = pd.Series(["1", _WarnsOnConversion(), "3"], dtype=object)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            normalize(series)
+        assert caught == [], [str(w.message) for w in caught]
+
+    def test_infinities_clamp_to_the_declared_bounds_rather_than_dropping(self):
+        """D-M2: the documented `+-inf` behaviour (clamp to the declared
+        bound) had no assertion, so replacing the clamp with a drop left
+        every targeted test green. Fidelity rather than privacy, since
+        either behaviour is recordwise, but it is a stated contract."""
+        series = pd.Series([float("inf"), float("-inf")], dtype=object)
+        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [10.0, 0.0]
 
     def test_normalization_is_total_over_scalars_that_raise_on_conversion(self):
         """C-B4: normalization must not raise on ANY row content. Each
@@ -436,7 +505,59 @@ class TestReleaseIds:
 
 
 class TestArtifactShape:
-    def test_dp_artifact_emits_no_exact_column_scalars(self):
+    def test_null_count_is_derived_from_the_released_row_count_not_the_true_one(self):
+        """D-H2 (dennis round 4): `null_count` is the noised row count
+        minus the released non-null count. Substituting `len(frame)` for
+        the released row count survived all 56 tests in this file, and
+        that mutant is the most direct exact-value leak this artifact
+        shape allows: `null_count + non_null_count` would equal the true
+        row count exactly, so an adversary reads n off a released
+        artifact with zero error and two add-one-row neighbours shift it
+        deterministically by 1.
+
+        The backend forces a released row count far from `len(frame)`,
+        so the two candidate derivations cannot coincide."""
+        frame = _mixed_df(n=100)
+        forced_row_count = len(frame) + 500
+
+        class _ForcedRowCountBackend:
+            def count_measurement(self, eps_q: float) -> _FakeMeasurement:
+                return _FakeMeasurement(certificate=0.1, released=forced_row_count)
+
+            def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
+                return _FakeMeasurement(certificate=0.1, released=[1] * (len(interior_edges) + 1))
+
+            def categorical_measurements(self, eps_q: float, delta_alloc: float):
+                return (
+                    _FakeMeasurement(certificate=(0.1, 1e-9), released={"CA": 7}),
+                    _FakeMeasurement(certificate=0.1, released=9),
+                )
+
+        snap = _fit_dp_snapshot_with_backend(
+            frame,
+            categorical_columns=["state"],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=5.0,
+            delta=1e-3,
+            _session_backend=_ForcedRowCountBackend(),
+        )
+        assert snap["row_count"] == forced_row_count
+        for name in ("age", "state"):
+            column = snap["columns"][name]
+            expected = max(0, forced_row_count - column["non_null_count"])
+            assert column["null_count"] == expected, name
+            # The true-row-count mutant would land here instead.
+            assert column["null_count"] != max(0, len(frame) - column["non_null_count"]), name
+
+    def test_dp_artifact_emits_no_exact_moments_or_quantiles(self):
+        """D-M5: renamed from `..._no_exact_column_scalars`, which
+        claimed more than it checked. It reads moments, quantiles, and
+        two absent keys only; it says nothing about `null_count`,
+        `non_null_count`, `distinct_count`, `other_count`, or
+        `row_count`. The `null_count` half of that broader claim is
+        carried by `test_null_count_is_derived_from_the_released_row_
+        count_not_the_true_one` above, which is why the true-row-count
+        mutant survived this one."""
         snap = fit_dp_snapshot(
             _mixed_df(),
             categorical_columns=["state"],
@@ -628,7 +749,13 @@ class TestArtifactShape:
         import decoy_engine.quality.dp as dp_module
 
         assert not hasattr(dp_module, "_stable_histogram_threshold")
-        assert "tau" not in vars(dp_module)
+        # D-L5: `"tau" not in vars(...)` was an exact-key check, so
+        # `_TAU`, `threshold_tau`, or any differently-named threshold
+        # helper passed it. Match on the name shape instead: OpenDP owns
+        # thresholding, so this module should carry no tau-ish symbol at
+        # all, whatever it is called.
+        tau_named = [name for name in vars(dp_module) if "tau" in name.lower()]
+        assert tau_named == [], tau_named
 
 
 class TestDisclosureChannelRegressions:

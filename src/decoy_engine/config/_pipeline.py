@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -97,48 +97,6 @@ class PipelineConfig(BaseModel):
     # not a flag). See `_subset_stage_constraints` below for the one
     # rejectable mask-then-subset shape.
     subset: SubsetConfig | None = None
-
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """C-B3 (Codex round-3 blocker): distinguish `global_settings.dp`
-        UNSET from an explicit `dp: null` in the dumped dict.
-
-        Pydantic's default `model_dump()` always materializes
-        `global_settings["dp"] = None` for BOTH cases -- an unset Optional
-        field dumps its default (`None`), and an explicitly-written
-        `dp: null` validates to the same `None`. `plan._checks_dp.
-        _dp_declared` used to paper over this by treating a bare `None`
-        value as "unset", which is exactly the fail-open Codex executed:
-        an operator who writes `dp: null` explicitly gets the identical
-        treatment as a pipeline that never touched `dp` at all, silently
-        bypassing every DP gate (provenance, budget, categorical-consent,
-        receipt).
-
-        The root cause is the dump, not the membership check (dennis's
-        defense of the old behavior was correct about WHY it existed, but
-        the fix belongs here): `GlobalSettings.model_fields_set` (tracked
-        by pydantic per nested model instance from whichever keys were
-        actually present in that submodel's OWN validation input) still
-        distinguishes the two cases even after validation. Omitting the
-        `dp` key entirely from the dump when it was never assigned -- and
-        leaving it exactly as dumped (including a bare `None`) when it
-        WAS explicitly set -- makes `_dp_declared`'s check a pure
-        dict-membership test again, with no carve-out needed. Every other
-        `GlobalSettings` field keeps its normal default-carrying dump
-        (`_hash_config`'s byte-stability argument for `fidelity_warn_
-        threshold` and friends is untouched): this only ever removes the
-        one key `dp`, and only when it was never assigned.
-
-        Every caller across the codebase (CLI, platform, this repo's own
-        tests) reaches this transparently, because all of them already
-        follow the documented `PipelineConfig.model_validate(x).
-        model_dump()` convention (this class's own docstring) -- there is
-        no second call site to update.
-        """
-        dumped = super().model_dump(**kwargs)
-        global_settings = dumped.get("global_settings")
-        if isinstance(global_settings, dict) and "dp" not in self.global_settings.model_fields_set:
-            global_settings.pop("dp", None)
-        return dumped
 
     @model_validator(mode="after")
     def _per_table_kind_consistency(self) -> PipelineConfig:

@@ -779,7 +779,8 @@ Assertions first:
 - `test_categorical_release_order_uses_noised_counts_not_true_rank`
 - `test_categorical_other_count_is_derived_only_from_noised_total_and_kept_counts`
 - `test_adapter_never_rounds_or_compares_before_release`
-- `test_dp_artifact_emits_no_exact_column_scalars`
+- `test_dp_artifact_emits_no_exact_moments_or_quantiles`
+- `test_null_count_is_derived_from_the_released_row_count_not_the_true_one`
 - `test_dp_artifact_totals_are_the_accountant_result_not_the_request`
 - `test_dp_artifact_records_opendp_and_dp_accounting_versions`
 - `test_dp_fit_certificate_count_equals_query_count`

@@ -7,9 +7,9 @@ choice).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 
 class DpGenerateSettings(BaseModel):
@@ -110,3 +110,33 @@ class GlobalSettings(BaseModel):
     freetext_advisory_min_avg_length: float = Field(default=40.0)
     freetext_advisory_min_distinctness: float = Field(default=0.5, ge=0.0, le=1.0)
     dp: DpGenerateSettings | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_never_assigned_dp(self, handler: Any) -> Any:
+        """C-B3/D-M3: keep `dp` UNSET distinguishable from an explicit
+        `dp: null` in every serialization of this model.
+
+        Pydantic materializes `dp: None` for both cases by default -- an
+        unset Optional dumps its default, and an explicit `dp: null`
+        validates to the same `None` -- and `plan._checks_dp._dp_declared`
+        is a key-membership test. Collapsing the two lets an operator who
+        writes `dp: null` bypass every DP gate (provenance, budget,
+        categorical consent, receipt), which is the fail-open Codex
+        executed.
+
+        This lives here, as a serializer on the model that owns the
+        field, rather than as a `model_dump` override on `PipelineConfig`.
+        That override only covered `model_dump`: `model_dump_json` goes
+        through pydantic-core and never consulted it, so it still emitted
+        `dp: None` for a never-assigned field and made `_dp_declared`
+        true for ordinary non-DP pipelines. Fail-closed rather than a
+        leak, but it broke that path outright. A serializer runs on both.
+
+        Only the one key `dp`, and only when never assigned, is removed;
+        every other field keeps its normal default-carrying dump, so
+        `_hash_config`'s byte-stability argument is untouched.
+        """
+        data = handler(self)
+        if isinstance(data, dict) and "dp" not in self.model_fields_set:
+            data.pop("dp", None)
+        return data
