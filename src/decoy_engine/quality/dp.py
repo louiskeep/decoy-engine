@@ -322,15 +322,24 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     `InvalidOperation`, which took the whole fit down from outside the
     conversion guard. A row whose null check cannot be evaluated is
     treated as present and left to the conversion step, which is total.
-    `bool()` also raises for an array-valued cell, where `pd.isna`
-    returns an array rather than a scalar verdict; those cells stay
-    present and are labelled by `str()`, matching what `dropna()` did."""
+    For an array-valued cell `pd.isna` returns an ARRAY of per-element
+    verdicts rather than a verdict about the cell, so only a genuine
+    scalar result (`ndim == 0`) is allowed to exclude a row; container
+    cells stay present and are labelled by `str()`, matching what
+    `dropna()` did. Testing `bool()` alone is not that check: it raises
+    for a multi-element array (so those cells happened to stay present)
+    but for a SINGLETON container it silently returns that one element's
+    verdict, which dropped `[None]` and `numpy.array([numpy.nan])` where
+    `dropna()` kept them (Codex round 5). Dropping them is still
+    recordwise and does not weaken the DP claim, but the equivalence
+    this function claims to `dropna()` was false."""
     out: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for raw in series:
             try:
-                if bool(pd.isna(raw)):
+                null = pd.isna(raw)
+                if getattr(null, "ndim", 0) == 0 and bool(null):
                     continue
             except Exception:  # broad by design: totality, see docstring
                 pass

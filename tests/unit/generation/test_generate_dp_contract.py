@@ -395,7 +395,14 @@ class TestFailClosedDpDeclaration:
 
         The fix moved the omission to a serializer on `GlobalSettings`,
         which every path runs. Parametrizing over all three is the point:
-        the single-path version passed while two paths disagreed."""
+        the single-path version passed while two paths disagreed.
+
+        The explicit-null half of this test moved to
+        `test_pipeline_config_refuses_an_explicit_dp_null_at_validation`:
+        that config no longer validates at all, so there is no dump of
+        one left to compare. What remains here is the serializer's own
+        job, omitting a never-assigned `dp`, plus the positive case that
+        a real declaration reaches `_dp_declared` on every path."""
         from decoy_engine.config import PipelineConfig
         from decoy_engine.plan._checks_dp import _dp_declared
 
@@ -411,20 +418,29 @@ class TestFailClosedDpDeclaration:
             "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
         }
         unset = PipelineConfig.model_validate({**base, "global_settings": {"seed": 1}})
-        explicit_null = PipelineConfig.model_validate(
-            {**base, "global_settings": {"seed": 1, "dp": None}}
+        declared = PipelineConfig.model_validate(
+            {**base, "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}}}
         )
         assert _dp_declared(serialize(unset)) is False
-        assert _dp_declared(serialize(explicit_null)) is True
+        assert _dp_declared(serialize(declared)) is True
 
-    def test_pipeline_config_dump_of_an_explicit_dp_null_keeps_the_key_and_fails_closed(self):
-        """The other half of the C-B3 fix: an operator who writes `dp:
-        null` explicitly gets a dumped dict that STILL carries the `dp`
-        key (value `None`), and compiling it raises
-        `dp_budget_declaration_malformed` rather than compiling clean."""
-        from decoy_engine import run_config_only_checks
+    def test_pipeline_config_refuses_an_explicit_dp_null_at_validation(self):
+        """The other half of the C-B3 fix, moved earlier.
+
+        This used to assert that an explicit `dp: null` survived into the
+        dumped dict so `run_config_only_checks` could reject it. Codex
+        round 5 showed that carrying the distinction through
+        serialization is lossy: pydantic strips a `None` value under
+        `exclude_none=True` or `exclude_defaults=True` BEFORE the wrap
+        serializer runs, so the key was gone and every DP gate was
+        silently skipped. The declaration is now refused at validation,
+        so no dump of an explicitly-null config exists to be misread.
+        Raw-dict callers that never build this model still get
+        `dp_budget_declaration_malformed` from `verify_dp_snapshots`,
+        which `test_explicit_dp_null_fails_closed` covers."""
+        import pydantic
+
         from decoy_engine.config import PipelineConfig
-        from decoy_engine.plan._errors import PlanCompileError as _PlanCompileError
 
         raw = {
             "version": 1,
@@ -438,12 +454,41 @@ class TestFailClosedDpDeclaration:
             ],
             "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
         }
-        dumped = PipelineConfig.model_validate(raw).model_dump()
-        assert "dp" in dumped["global_settings"]
-        assert dumped["global_settings"]["dp"] is None
-        with pytest.raises(_PlanCompileError) as exc:
-            run_config_only_checks(dumped)
-        assert exc.value.code == "dp_budget_declaration_malformed"
+        with pytest.raises(pydantic.ValidationError, match="present but null"):
+            PipelineConfig.model_validate(raw)
+
+    @pytest.mark.parametrize(
+        "dump_kwargs",
+        [{}, {"exclude_none": True}, {"exclude_defaults": True}, {"exclude_unset": True}],
+        ids=["plain", "exclude_none", "exclude_defaults", "exclude_unset"],
+    )
+    def test_dp_declaration_survives_every_exclusion_option(self, dump_kwargs):
+        """Codex round 5: the parametrized test above covered three
+        output METHODS but no exclusion OPTIONS, so it passed while
+        `exclude_none=True` and `exclude_defaults=True` both erased the
+        declaration. A real `dp` block must reach `_dp_declared` under
+        every exclusion mode, and an unset one must never look declared
+        under any of them."""
+        from decoy_engine.config import PipelineConfig
+        from decoy_engine.plan._checks_dp import _dp_declared
+
+        base = {
+            "version": 1,
+            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "tables": [
+                {
+                    "name": "people",
+                    "columns": [{"name": "email", "strategy": "faker", "provider": "person_email"}],
+                }
+            ],
+            "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
+        }
+        declared = PipelineConfig.model_validate(
+            {**base, "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}}}
+        )
+        unset = PipelineConfig.model_validate({**base, "global_settings": {"seed": 1}})
+        assert _dp_declared(declared.model_dump(**dump_kwargs)) is True
+        assert _dp_declared(unset.model_dump(**dump_kwargs)) is False
 
 
 def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", distinct_marker=0):

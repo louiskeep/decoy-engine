@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 class DpGenerateSettings(BaseModel):
@@ -110,6 +110,39 @@ class GlobalSettings(BaseModel):
     freetext_advisory_min_avg_length: float = Field(default=40.0)
     freetext_advisory_min_distinctness: float = Field(default=0.5, ge=0.0, le=1.0)
     dp: DpGenerateSettings | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_explicit_dp_null(cls, data: Any) -> Any:
+        """An explicit `dp: null` is refused here, at validation.
+
+        `dp` present-but-null is always an error (the operator declared
+        the key but supplied no `(epsilon, delta)` ceiling), and it must
+        never be mistaken for "no DP contract". The earlier fix carried
+        that distinction through SERIALIZATION, omitting the key when it
+        was never assigned and leaving it when it was. Codex round 5
+        showed that channel is lossy: pydantic applies `exclude_none` and
+        `exclude_defaults` BEFORE a wrap serializer sees the data, so an
+        explicit `dp: null` is already gone by then and cannot be
+        restored. `_dp_declared` is a key-membership test, so under
+        either option the operator silently got every DP gate skipped.
+
+        Patching those two flags would leave the next serialization
+        option to reopen the same hole, so the channel goes away instead:
+        the invalid config never validates, and no dump of it can exist
+        to be misread. `verify_dp_snapshots` still raises
+        `dp_budget_declaration_malformed` for callers that pass raw
+        dicts without going through this model, so both entry paths fail
+        closed.
+        """
+        if isinstance(data, dict) and "dp" in data and data["dp"] is None:
+            raise ValueError(
+                "global_settings.dp is present but null. Remove the key entirely for a "
+                "pipeline with no DP contract, or supply {epsilon: ..., delta: ...} to "
+                "declare one. An explicit null is refused so it can never be read as "
+                "'no DP declared' (dp_budget_declaration_malformed)."
+            )
+        return data
 
     @model_serializer(mode="wrap")
     def _omit_never_assigned_dp(self, handler: Any) -> Any:

@@ -279,8 +279,13 @@ Delete `apply_dp_noise` rather than retaining a compatibility overload. The pre-
 Every DP column entry contains exactly:
 
 ```text
-dtype   public schema metadata, taken from the frame's declared dtype label
-        (internal.pandas_compat.canonical_dtype_label), never from values
+dtype   a fixed label per declared KIND (_DP_NUMERIC_DTYPE_LABEL /
+        _DP_CATEGORICAL_DTYPE_LABEL), never read off the frame. This said
+        "canonical_dtype_label(frame[col].dtype)" until Codex round 3
+        showed the frame's own dtype IS content-dependent: pandas upcasts
+        an integer column to float64 the moment a null enters it, so [1]
+        and [1, None] emitted different dtypes under identical public
+        declarations. Kind is the only public dtype signal a DP fit has.
 kind    "numeric" or "categorical", taken only from the caller's declaration
 stats   the per-kind block below
 ```

@@ -79,6 +79,26 @@ class _WarnsOnConversion:
         return "1"
 
 
+# Codex round 5: the keys in a DP column block that may legitimately
+# differ between two frames, because each is (or is derived from) a
+# quantity OpenDP released under noise. Every OTHER key must be a public
+# constant, identical across any two frames under the same declaration.
+# Comparing key SETS alone is not enough: a leak of the shape
+# `block["all_null"] = not values` adds the key unconditionally, so both
+# neighbours carry it and only the VALUE differs.
+_RELEASED_COLUMN_KEYS = frozenset({"null_count", "non_null_count", "distinct_count"})
+_RELEASED_STATS_KEYS = frozenset({"bin_counts", "top_values", "other_count"})
+
+
+def _public_part(column_block: dict) -> dict:
+    """The part of a column block that must not vary with row content."""
+    public = {k: v for k, v in column_block.items() if k not in _RELEASED_COLUMN_KEYS}
+    stats = public.get("stats")
+    if isinstance(stats, dict):
+        public["stats"] = {k: v for k, v in stats.items() if k not in _RELEASED_STATS_KEYS}
+    return public
+
+
 def _mixed_df(n: int = 2000, seed: int = 3) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     return pd.DataFrame(
@@ -425,6 +445,26 @@ class TestRecordwiseNormalization:
         assert _normalize_categorical(nulls) == ["a", "b"]
         arrays = pd.Series(["a", [1, 2], {"k": 1}, "b"], dtype=object)
         assert _normalize_categorical(arrays) == ["a", "[1, 2]", "{'k': 1}", "b"]
+
+    @pytest.mark.parametrize(
+        "container",
+        [[None], [np.nan], np.array([np.nan]), [1, 2], np.array([1, 2]), []],
+        ids=["list_none", "list_nan", "array_nan", "list_two", "array_two", "empty"],
+    )
+    def test_container_cells_are_present_whatever_their_length(self, container):
+        """Codex round 5: `pd.isna` on a container returns an ARRAY of
+        per-element verdicts, not a verdict about the cell. The previous
+        `bool(pd.isna(raw))` check raised for a MULTI-element array, so
+        those cells stayed present by accident, but for a SINGLETON it
+        silently returned that one element's verdict and dropped
+        `[None]` and `numpy.array([numpy.nan])`, which `dropna()` keeps.
+
+        The earlier version of this test used only `[1, 2]`, whose
+        two-element array takes the raising path, so it passed while the
+        singleton regression was live. Parametrizing across lengths is
+        the whole point."""
+        series = pd.Series(["a", container, "b"], dtype=object)
+        assert _normalize_categorical(series) == ["a", str(container), "b"]
 
     def test_normalize_categorical_keeps_ordinary_non_ascii_labels(self):
         """The encodability guard drops only what cannot be represented.
@@ -842,6 +882,27 @@ class TestDisclosureChannelRegressions:
         assert snap["columns"]["cat"]["kind"] == "categorical"
         assert snap["dp"]["query_count"] == 1 + 2  # row_count + 2 categorical queries
 
+        # Codex round 5: this test named selected fields but never
+        # compared its artifact against a NON-null fit, so a production
+        # branch exposing a private predicate (`all_null = not values`)
+        # would pass. Comparing key SETS does not catch that either: such
+        # a key is added unconditionally, so both neighbours carry it and
+        # only the VALUE differs. The property that actually holds is
+        # that every field is either a released quantity or a public
+        # constant, so strip the released ones and require the rest to
+        # be identical.
+        ordinary = _fit_dp_snapshot_with_backend(
+            pd.DataFrame({"cat": ["a", "b", "a", "c"]}),
+            categorical_columns=["cat"],
+            numeric_domains={},
+            epsilon=2.0,
+            delta=1e-6,
+            _session_backend=_SpyAllNullBackend(),
+        )
+        assert _public_part(snap["columns"]["cat"]) == _public_part(ordinary["columns"]["cat"])
+        assert snap.keys() == ordinary.keys()
+        assert snap["dp"].keys() == ordinary["dp"].keys()
+
     def test_dp_fit_numeric_shape_and_charge_schedule_are_data_independent_for_all_null_and_all_inf(
         self,
     ):
@@ -884,6 +945,14 @@ class TestDisclosureChannelRegressions:
             # declared kind alone, so it must be identical across every
             # neighbour here regardless of the frame's own pandas dtype.
             assert snap["columns"]["age"]["dtype"] == ordinary["columns"]["age"]["dtype"]
+            # Codex round 5: naming individual fields cannot catch a
+            # leaked predicate such as `all_null = not values`, and nor
+            # can comparing key sets, since that key is present on both
+            # neighbours and only its VALUE differs. Strip the released
+            # quantities and require everything else to be identical.
+            assert _public_part(snap["columns"]["age"]) == _public_part(ordinary["columns"]["age"])
+            assert snap.keys() == ordinary.keys()
+            assert snap["dp"].keys() == ordinary["dp"].keys()
 
     def test_dp_numeric_dtype_is_identical_across_int64_and_float64_input_frames(self):
         """C-B2 (Codex round-3 blocker), direct reproduction: `[1]` (a
