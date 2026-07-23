@@ -9,9 +9,12 @@ statistical mechanism tests.
 
 from __future__ import annotations
 
+import datetime
 import decimal
 import math
 import warnings
+from collections import Counter
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -88,6 +91,53 @@ class _WarnsOnConversion:
 # neighbours carry it and only the VALUE differs.
 _RELEASED_COLUMN_KEYS = frozenset({"null_count", "non_null_count", "distinct_count"})
 _RELEASED_STATS_KEYS = frozenset({"bin_counts", "top_values", "other_count"})
+
+
+def _multiset_distance(left: Sequence[object], right: Sequence[object]) -> int:
+    """Symmetric multiset difference -- the quantity `map(1)` bounds by 1.
+
+    Cardinality is NOT this quantity: two neighbours can have equal
+    length while every element differs (dennis round 7, HIGH-1)."""
+    lc, rc = Counter(left), Counter(right)
+    return sum(((lc - rc) + (rc - lc)).values())
+
+
+# The adjacency matrix for the recordwise property. Pools straddle
+# float64's exact integer range in both signs, because that boundary is
+# where the round-6 canonicalization silently stopped working; `_obj`
+# pools are only constructible as object dtype.
+_ADJACENCY_POOLS: dict[str, tuple[list, bool]] = {
+    "small_int": ([1, 2, 3], False),
+    "boundary_int": ([2**53 + 1, 2**53 + 3], False),
+    "big_int": ([2**60 + 1, 2**60 + 3, 2**60 + 5], False),
+    "neg_big_int": ([-(2**60 + 1), -(2**60 + 3)], False),
+    "uint64": (list(np.array([2**64 - 1, 2**64 - 3], dtype=np.uint64)), False),
+    "float64": ([1.5, 2.5], False),
+    "integral_float": ([7.0, 8.0], False),
+    "float32": (list(np.array([0.1, 0.2], dtype=np.float32)), False),
+    "string": (["a", "b"], False),
+    "bool": ([True, False], False),
+    "timedelta": ([datetime.timedelta(days=1), datetime.timedelta(days=2)], False),
+    "datetime": ([np.datetime64("2020-01-01"), np.datetime64("2020-01-02")], False),
+    "timestamp": ([pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-02")], False),
+    "mixed_num_str": ([1, "a", 2.5], False),
+    "huge_int_obj": ([10**400, 10**401], True),
+    "decimal_obj": ([decimal.Decimal("1.5"), decimal.Decimal("2.5")], True),
+}
+
+# Added rows chosen to trigger a dtype change on the pools above.
+_ADJACENCY_ADDED: dict[str, object] = {
+    "none": None,
+    "nan": np.nan,
+    "pd_na": pd.NA,
+    "str": "x",
+    "float": 1.5,
+    "int": 7,
+    "huge_int": 2**70,
+    "bool": True,
+    "timedelta": datetime.timedelta(days=9),
+    "timestamp": pd.Timestamp("2021-06-01"),
+}
 
 
 def _public_part(column_block: dict) -> dict:
@@ -444,7 +494,7 @@ class TestRecordwiseNormalization:
         for i in range(len(base)):
             dropped = base.drop(base.index[i]).reset_index(drop=True)
             dropped_out = _normalize_numeric(dropped, lower=0.0, upper=10.0)
-            assert len(base_out) - len(dropped_out) in (0, 1)
+            assert _multiset_distance(base_out, dropped_out) <= 1
 
     def test_normalize_categorical_output_length_equals_non_null_input_length(self):
         series = pd.Series(["a", None, "b", None, "c"])
@@ -457,10 +507,49 @@ class TestRecordwiseNormalization:
         for i in range(len(base)):
             dropped = base.drop(base.index[i]).reset_index(drop=True)
             dropped_out = _normalize_categorical(dropped)
-            assert len(base_out) - len(dropped_out) in (0, 1)
+            assert _multiset_distance(base_out, dropped_out) <= 1
+
+    @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
+    @pytest.mark.parametrize("added_id", sorted(_ADJACENCY_ADDED), ids=sorted(_ADJACENCY_ADDED))
+    def test_categorical_normalization_is_multiset_recordwise(self, pool_id, added_id):
+        """The property `map(1)` actually assumes, stated as a MULTISET
+        bound over genuine one-row neighbours, across a dtype matrix.
+
+        dennis round 7 (HIGH-1): the two tests carrying this property's
+        name compared CARDINALITY only. Both neighbours had length 3
+        while every element differed, so they passed while the guarantee
+        was broken -- the structural reason this defect class recurred
+        twice. A length bound is not the property; the composed
+        (epsilon, delta) is only sound if the normalized MULTISETS differ
+        by at most one element.
+
+        The matrix is the point. The pools straddle float64's exact
+        integer range in both signs and cross `str`/`bool`/unsupported
+        types; the added rows are the values that trigger a dtype change
+        (null, NaN, an incompatible string, a float, a huge int). Neither
+        construction forces `dtype=object`, because that is the one dtype
+        that cannot upcast -- forcing it is exactly how the sibling test
+        below passed with the coercion removed."""
+        pool, obj = _ADJACENCY_POOLS[pool_id]
+        added = _ADJACENCY_ADDED[added_id]
+        for dtype in (object, None) if not obj else (object,):
+            try:
+                base = pd.Series(list(pool), dtype=dtype)
+                neighbour = pd.Series([*pool, added], dtype=dtype)
+            except (OverflowError, ValueError):
+                continue  # pandas itself refuses the frame; no neighbour exists
+            assert (
+                _multiset_distance(_normalize_categorical(base), _normalize_categorical(neighbour))
+                <= 1
+            )
 
     @pytest.mark.parametrize("n", [8, 40], ids=["small", "wide"])
-    def test_categorical_labels_are_stable_when_a_null_upcasts_the_column(self, n):
+    @pytest.mark.parametrize(
+        "base_value",
+        [0, 2**53 - 4, 2**60, -(2**60)],
+        ids=["small", "at_float64_limit", "beyond_float64", "negative_beyond"],
+    )
+    def test_categorical_labels_are_stable_when_a_null_upcasts_the_column(self, n, base_value):
         """Codex round 6, the one defect in this program that broke the
         DP guarantee itself rather than a test or an error contract.
 
@@ -479,23 +568,36 @@ class TestRecordwiseNormalization:
 
         Every recordwise test before this one used STRING fixtures, which
         never upcast, which is why five review rounds missed it. Integer
-        fixtures are the point here."""
-        base = pd.Series(list(range(n)))
-        neighbour = pd.Series([*range(n), None])
+        fixtures are the point here.
+
+        dennis round 7 (HIGH-2) added the MAGNITUDE axis. `range(n)` is
+        exactly the range where the round-6 fix could not fail: those
+        values survive the float64 round-trip, so `str(int(raw))` and
+        `str(int(float(raw)))` agree. Beyond 2**53 they do not, and the
+        released distribution collapsed to a single label. The
+        `beyond_float64` ids are the falsifier; `small` still pins the
+        original round-6 regression."""
+        values = [base_value + 2 * i for i in range(n)]
+        base = pd.Series(values)
+        neighbour = pd.Series([*values, None])
         assert base.dtype != neighbour.dtype  # the upcast this guards against
         base_labels = _normalize_categorical(base)
         neighbour_labels = _normalize_categorical(neighbour)
         # Adding one null row adds no label and changes none of the rest.
         assert base_labels == neighbour_labels
-        assert set(base_labels) ^ set(neighbour_labels) == set()
+        assert _multiset_distance(base_labels, neighbour_labels) == 0
 
     def test_canonical_label_merges_integral_reals_but_preserves_everything_else(self):
-        """The canonicalization is deliberately narrow: an integral real
-        renders as its integer string, whatever its storage width, so the
-        upcast above cannot move it. Everything else is untouched.
-        `bool` is excluded on purpose (it is an `int` subclass and would
-        otherwise render "1"/"0"), and a non-finite float is not integral
-        so it falls through to `str()`."""
+        """An integral real renders as its integer string whatever its
+        storage width, so the upcast above cannot move it. `bool` is
+        handled first on purpose (it is an `int` subclass and would
+        otherwise render "1"/"0"), and a non-finite float renders from
+        its float64 image, so `inf` stays "inf".
+
+        This output is pinned byte-identical across the round-7 rewrite:
+        the labels below are what both the round-6 implementation and the
+        float64-image implementation produce, which is what makes the
+        wider fix safe to adopt."""
         series = pd.Series(
             [7, 7.0, np.int64(7), np.float64(7.0), 7.5, True, False, "CA", float("inf")],
             dtype=object,
@@ -511,6 +613,35 @@ class TestRecordwiseNormalization:
             "CA",
             "inf",
         ]
+
+    def test_unlabellable_types_drop_rather_than_raise(self):
+        """Codex round 7 named timedelta and datetime columns as moving
+        every label across a coercion: a `timedelta64` column labels
+        "1 days 00:00:00", and one incompatible row forces `object`,
+        where the same value labels "1 day, 0:00:00".
+
+        They are dropped rather than labelled, and dropped rather than
+        REJECTED. Dropping is the only disposition that is both total and
+        coercion-invariant: the value drops identically under either
+        boxing, so no added row can move a surviving label. Raising would
+        reopen the fit-success channel C-B4 closed -- an all-string frame
+        would succeed where its one-row neighbour carrying a timedelta
+        raised, a probability-0-vs-1 observable that breaks
+        (epsilon, delta) for any delta < 1 before a single released
+        number is considered."""
+        mixed = pd.Series(
+            ["a", datetime.timedelta(days=1), pd.Timestamp("2020-01-01"), decimal.Decimal("1.5")],
+            dtype=object,
+        )
+        assert _normalize_categorical(mixed) == ["a"]  # total: no raise
+
+        # The coercion Codex demonstrated, now invariant because both
+        # boxings drop.
+        deltas = [datetime.timedelta(days=1), datetime.timedelta(days=2)]
+        native = pd.Series(deltas)
+        coerced = pd.Series([*deltas, "x"])
+        assert native.dtype != coerced.dtype  # timedelta64 -> object
+        assert _multiset_distance(_normalize_categorical(native), _normalize_categorical(coerced)) <= 1
 
     def test_normalize_numeric_never_warns_on_exotic_content(self):
         series = pd.Series(["1", 1 + 2j, None, object(), "not a number"], dtype=object)
@@ -610,39 +741,56 @@ class TestRecordwiseNormalization:
         `pd.isna(Decimal("sNaN"))` raises `InvalidOperation`, which the
         vectorized `Series.dropna()` propagated from outside the
         conversion guard. A row whose null check cannot be evaluated is
-        present, not fatal."""
-        series = pd.Series(["a", decimal.Decimal("sNaN"), "b"], dtype=object)
-        assert _normalize_categorical(series) == ["a", "sNaN", "b"]
+        not fatal -- which is the claim under test, and it is unchanged.
 
-    def test_per_row_null_exclusion_matches_dropna_semantics(self):
+        Since round 7 the `Decimal` is dropped by the type gate rather
+        than labelled, so it contributes no element. The C-B4 property
+        this test exists for is TOTALITY, not presence: the fit must not
+        raise on content. It does not."""
+        series = pd.Series(["a", decimal.Decimal("sNaN"), "b"], dtype=object)
+        assert _normalize_categorical(series) == ["a", "b"]
+
+    def test_per_row_null_exclusion_excludes_every_null_flavour(self):
         """The null step went from vectorized to per-row, so pin what it
-        must still do: every null flavour excluded, and array-valued
-        cells (where `pd.isna` returns an array rather than a verdict)
-        still present and labelled, as `dropna()` left them."""
+        must still do: every null flavour excluded.
+
+        This no longer claims equivalence to `dropna()`. Round 7 narrowed
+        the labelled domain to `str`/`bool`/reals, so array-valued cells
+        drop at the type gate where `dropna()` kept them. That is a
+        deliberate widening of the drop, not a regression -- dropping is
+        recordwise and can only coarsen a release. The equivalence claim
+        was itself the round-5 defect (it was asserted and false), so it
+        is stated as the narrower true thing instead."""
         nulls = pd.Series(["a", None, np.nan, pd.NA, pd.NaT, "b"], dtype=object)
         assert _normalize_categorical(nulls) == ["a", "b"]
         arrays = pd.Series(["a", [1, 2], {"k": 1}, "b"], dtype=object)
-        assert _normalize_categorical(arrays) == ["a", "[1, 2]", "{'k': 1}", "b"]
+        assert _normalize_categorical(arrays) == ["a", "b"]
 
     @pytest.mark.parametrize(
         "container",
         [[None], [np.nan], np.array([np.nan]), [1, 2], np.array([1, 2]), []],
         ids=["list_none", "list_nan", "array_nan", "list_two", "array_two", "empty"],
     )
-    def test_container_cells_are_present_whatever_their_length(self, container):
+    def test_container_cells_are_treated_uniformly_whatever_their_length(self, container):
         """Codex round 5: `pd.isna` on a container returns an ARRAY of
         per-element verdicts, not a verdict about the cell. The previous
         `bool(pd.isna(raw))` check raised for a MULTI-element array, so
-        those cells stayed present by accident, but for a SINGLETON it
-        silently returned that one element's verdict and dropped
-        `[None]` and `numpy.array([numpy.nan])`, which `dropna()` keeps.
+        those cells took one path, but for a SINGLETON it silently
+        returned that one element's verdict and took another. Container
+        cells were being treated differently BY LENGTH, which is the
+        regression this pins.
+
+        Round 7 changed the disposition from "present and labelled" to
+        "dropped at the type gate", but the invariant is the same one and
+        is what matters: length must not decide. All six containers now
+        drop uniformly.
 
         The earlier version of this test used only `[1, 2]`, whose
         two-element array takes the raising path, so it passed while the
         singleton regression was live. Parametrizing across lengths is
         the whole point."""
         series = pd.Series(["a", container, "b"], dtype=object)
-        assert _normalize_categorical(series) == ["a", str(container), "b"]
+        assert _normalize_categorical(series) == ["a", "b"]
 
     def test_normalize_categorical_keeps_ordinary_non_ascii_labels(self):
         """The encodability guard drops only what cannot be represented.

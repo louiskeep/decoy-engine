@@ -37,6 +37,16 @@ consumed by a compiled, DP-verified Plan.
 > cross-column correlations, conditional sampling, masked outputs, non-DP
 > snapshots, or forged artifacts.
 >
+> A declared categorical column releases only its `str`, `bool`, and real
+> values. Values of any other type -- dates, timestamps, timedeltas,
+> decimals -- contribute nothing to that column's release. This is a
+> deliberate restriction, not an oversight: a label derived from such a
+> value is a function of how pandas happens to be storing the column, and
+> a column's storage type is a function of ALL its rows, so one added row
+> can change every label at once and break the adjacency the certificate
+> assumes. Cast such a column to strings upstream if you need it released,
+> accepting that the cast is then yours to keep stable.
+>
 > When several independent release IDs are consumed, their privacy losses
 > compose; repeated references to the same release ID are charged once, and
 > conflicting artifacts carrying one release ID are rejected.

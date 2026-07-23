@@ -142,14 +142,29 @@ class GlobalSettings(BaseModel):
         # `exclude_defaults` then erased the key and `_dp_declared`
         # returned False -- the same fail-open this validator exists to
         # close, reached through a different container type.
-        if isinstance(data, Mapping) and "dp" in data and data["dp"] is None:
+        # Codex round 7: widening to `Mapping` was still fail-open,
+        # because this returned the CALLER'S object and pydantic then
+        # read it a second time. A mapping whose reads differ declared DP
+        # here and reported it absent to pydantic, so `dp` was None and
+        # absent from `model_fields_set`, the serializer dropped it,
+        # `_dp_declared` returned False, and the contract check accepted
+        # `allow_real_categories: true` -- silently converting an
+        # operator-declared DP pipeline into a non-DP one. Validating one
+        # snapshot and returning a DIFFERENT object is the whole bug, so
+        # take the snapshot once and hand pydantic exactly what was
+        # checked. Non-mappings pass through untouched for pydantic to
+        # reject with its own error.
+        if not isinstance(data, Mapping):
+            return data
+        snapshot = dict(data)
+        if "dp" in snapshot and snapshot["dp"] is None:
             raise ValueError(
                 "global_settings.dp is present but null. Remove the key entirely for a "
                 "pipeline with no DP contract, or supply {epsilon: ..., delta: ...} to "
                 "declare one. An explicit null is refused so it can never be read as "
                 "'no DP declared' (dp_budget_declaration_malformed)."
             )
-        return data
+        return snapshot
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:

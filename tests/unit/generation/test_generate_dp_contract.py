@@ -479,6 +479,77 @@ class TestFailClosedDpDeclaration:
         with pytest.raises(pydantic.ValidationError, match="present but null"):
             GlobalSettings.model_validate(wrap({"seed": 1, "dp": None}))
 
+    def test_dp_budget_is_the_one_that_was_validated_not_a_later_read(self):
+        """C-H-1 (Codex round 7): the validator returned the CALLER'S
+        object rather than what it had just checked, and pydantic then
+        read that object a SECOND time. Validating one value and building
+        the model from another is a TOCTOU, and on this field the value
+        is the privacy budget.
+
+        Measured, with the pre-fix `return data`: a mapping yielding
+        `epsilon=0.1, delta=1e-9` on the first read and
+        `epsilon=1000.0, delta=0.5` on the second produced a model
+        carrying 1000.0/0.5 while the validator had approved 0.1/1e-9.
+        The pipeline still calls itself DP; its budget is meaningless.
+
+        Codex reported the defect as a LOST declaration (`dp is None`,
+        silently non-DP). That specific outcome does not reproduce here
+        and the distinction is worth recording: pydantic's second pass
+        walks model fields through `__getitem__`, so the only way to
+        report the key absent is to raise `KeyError`, which surfaces as a
+        `ValidationError` -- fail-closed, not fail-open. A mapping that
+        merely drifts its `keys()` or `__iter__` does not lose the block
+        at all. The reachable defect is value substitution, which is why
+        this test asserts on the BUDGET rather than on presence.
+
+        `dict` and `UserDict` cannot falsify any of it: both are stable,
+        so every read agrees. Drift is the mechanism, so the fixture must
+        drift, and it must drift on `__getitem__` -- the first version of
+        this test drifted on `keys()`, which pydantic never calls twice,
+        and the mutant survived it."""
+        from collections.abc import Mapping
+
+        from decoy_engine.config import GlobalSettings
+        from decoy_engine.plan._checks_dp import _dp_declared
+
+        class _DriftingMapping(Mapping):
+            """Yields a tight budget on the first read, a loose one after.
+
+            Drift is keyed on `__getitem__` because that is the access
+            pydantic re-reads with; a fixture drifting on `keys()` or
+            `__iter__` is indistinguishable from a stable mapping and
+            lets the defect through."""
+
+            TIGHT = {"epsilon": 0.1, "delta": 1e-9}
+            LOOSE = {"epsilon": 1000.0, "delta": 0.5}
+
+            def __init__(self):
+                self._payload = {"seed": 1, "dp": dict(self.TIGHT)}
+                self.dp_reads = 0
+
+            def __getitem__(self, key):
+                if key == "dp":
+                    self.dp_reads += 1
+                    return dict(self.TIGHT if self.dp_reads == 1 else self.LOOSE)
+                return self._payload[key]
+
+            def __iter__(self):
+                return iter(self._payload)
+
+            def __len__(self):
+                return len(self._payload)
+
+        drifting = _DriftingMapping()
+        settings = GlobalSettings.model_validate(drifting)
+
+        assert drifting.dp_reads >= 1  # the fixture really was read
+        assert settings.dp is not None
+        # The budget that was VALIDATED, not whatever a later read returned.
+        assert settings.dp.epsilon == 0.1, "privacy budget substituted after validation"
+        assert settings.dp.delta == 1e-9
+        assert "dp" in settings.model_fields_set
+        assert _dp_declared({"global_settings": settings.model_dump()}) is True
+
     @pytest.mark.parametrize(
         "dump_kwargs",
         [{}, {"exclude_none": True}, {"exclude_defaults": True}, {"exclude_unset": True}],

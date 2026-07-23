@@ -126,36 +126,67 @@ def _canonical_label(raw: Any) -> str:
     Five review rounds missed it because every recordwise test used
     string fixtures, which never upcast.
 
-    Rendering an integral real as its integer string makes the label
-    invariant under that upcast: `7` and `7.0` are the same value and now
-    get the same label, so the neighbours agree again. Merging them is
-    intended and privacy-favourable (it can only coarsen a release), and
-    matches the existing disposition of `str()` collisions.
+    Rendering an integral real as its integer string was the round-6
+    answer, and it was not enough. It canonicalizes the value AS THE
+    FRAME PRESENTS IT, but the upcast has already destroyed the value
+    for any magnitude above 2**53: the `Integral` path rendered the
+    exact int on one side while the `Real` path rendered the rounded
+    float64 image on the other, so neighbours disagreed on every such
+    cell. A 1200-row frame of three 19-digit IDs released three labels
+    at 400 each; adding one null row released one label at 1200, a
+    multiset distance of 2400 against a `map(1)` certificate. Bigint
+    account and snowflake IDs declared categorical are exactly the case.
 
-    `bool` is excluded deliberately: it is an `int` subclass, so it would
-    otherwise render as "1"/"0", and it has no upcast problem to solve
-    (a bool column with a null becomes object dtype and keeps
-    `True`/`False`). Non-finite floats fall through to `str()`, so `inf`
-    stays "inf". Callers run this inside their conversion guard, so a
-    value whose comparison or conversion misbehaves drops the row rather
-    than escaping.
+    The label is therefore a function of the value's FLOAT64 IMAGE, not
+    of its storage width, which is what makes it survive the upcast: both
+    sides agree because both sides ask the same question of the same
+    lossy image. Distinct large ints merging into one label is a
+    coarsening, so it can only weaken a release, matching the disposition
+    already accepted for `7`/`7.0`. Integers too large for float64 at all
+    cannot live in an `int64` column, so pandas holds them in `object`
+    dtype, which never upcasts; rendering those from the exact int is
+    stable for the same reason.
+
+    Only `str`, `bool`, and reals are labelled. Every other type is
+    REJECTED to the caller's guard, which drops the row -- deliberately
+    not an error. Dropping is both total and coercion-invariant, and it
+    is the only disposition that is: a timedelta drops identically
+    whether pandas boxes it as `pandas.Timedelta` in a `timedelta64`
+    column or as `datetime.timedelta` after one incompatible row forces
+    `object`, whereas LABELLING it changes "1 days 00:00:00" to
+    "1 day, 0:00:00" across that same coercion and moves every existing
+    label. Raising instead would reopen the fit-success channel this
+    module exists to close: an all-string frame would succeed where its
+    one-row neighbour carrying a timedelta raised, which is a
+    probability-0-vs-1 observable and breaks (epsilon, delta) for any
+    delta < 1 before a single released number is considered.
+
+    `bool` is handled before the real branch: it is an `int` subclass, so
+    it would otherwise render as "1"/"0". Non-finite floats render from
+    the image too, so `inf` stays "inf".
     """
     if isinstance(raw, bool):
         return str(raw)
-    if isinstance(raw, numbers.Integral):
-        return str(int(raw))
-    if isinstance(raw, numbers.Real):
+    if isinstance(raw, str):
+        return raw
+    if not isinstance(raw, numbers.Real):
+        raise TypeError(f"unsupported categorical value type: {type(raw).__name__}")
+    try:
         as_float = float(raw)
-        if math.isfinite(as_float) and as_float == int(as_float):
-            return str(int(as_float))
-    return str(raw)
+    except OverflowError:
+        return str(int(raw))
+    if math.isfinite(as_float) and as_float == int(as_float):
+        return str(int(as_float))
+    return str(as_float)
 
 
 def _normalize_categorical(series: pd.Series) -> list[str]:
-    """Total, recordwise projection: nulls excluded via `Series.dropna()`
-    (uniform across None/NaN/NaT/pd.NA), every remaining scalar mapped to
-    its `str()` representation -- the one documented canonical string
-    form for every supported scalar dtype declared categorical. Wrapped in
+    """Total, recordwise projection: nulls excluded per row (uniform
+    across None/NaN/NaT/pd.NA), every remaining scalar mapped through
+    `_canonical_label`, which labels `str`/`bool`/reals and rejects every
+    other type to the conversion guard below, dropping that row. Both
+    departures from the original `Series.dropna()`-plus-`str()` shape are
+    load-bearing and are explained at their guards below. Wrapped in
     the same blanket warning suppression as `_normalize_numeric` (C-B2):
     `str()` on an exotic scalar type is not known to warn today, but
     suppression here costs nothing and keeps both normalizers under the
@@ -188,15 +219,19 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     treated as present and left to the conversion step, which is total.
     For an array-valued cell `pd.isna` returns an ARRAY of per-element
     verdicts rather than a verdict about the cell, so only a genuine
-    scalar result (`ndim == 0`) is allowed to exclude a row; container
-    cells stay present and are labelled by `str()`, matching what
-    `dropna()` did. Testing `bool()` alone is not that check: it raises
-    for a multi-element array (so those cells happened to stay present)
+    scalar result (`ndim == 0`) is allowed to exclude a row. Testing
+    `bool()` alone is not that check: it raises for a multi-element array
     but for a SINGLETON container it silently returns that one element's
-    verdict, which dropped `[None]` and `numpy.array([numpy.nan])` where
-    `dropna()` kept them (Codex round 5). Dropping them is still
-    recordwise and does not weaken the DP claim, but the equivalence
-    this function claims to `dropna()` was false."""
+    verdict, so container cells were being handled differently BY LENGTH
+    (Codex round 5). The `ndim` check is what makes length stop mattering
+    here; since round 7 containers then drop uniformly at the type gate
+    instead, being neither `str`, `bool`, nor real.
+
+    No equivalence to `dropna()` is claimed. Round 5 asserted one and it
+    was false, and round 7 widened the gap deliberately. Dropping is
+    recordwise and can only coarsen a release, so the DP claim is
+    unaffected either way; what matters is that the disposition is
+    uniform and does not depend on how pandas is storing the column."""
     out: list[str] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
