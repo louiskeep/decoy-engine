@@ -17,6 +17,7 @@ import math
 import warnings
 from collections import Counter
 from collections.abc import Sequence
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -233,6 +234,22 @@ _ADJACENCY_ADDED: dict[str, object] = {
     # overflows int64 and the frame will not build at all.
     "int64_out_of_python_range": 2**60,
 }
+
+
+def _build_series(values: list, dtype: Any) -> pd.Series:
+    """Build a pool or neighbour series under `dtype`.
+
+    Codex round 10 (MEDIUM): `pd.Series(..., dtype=pd.ArrowDtype(...))`
+    routes through pandas' own scalar coercion, which refuses several
+    arrow types outright -- `duration[s]` raised `OutOfBoundsTimedelta`
+    on an out-of-range value, so all 26 of its named cases reported
+    PASSED while executing zero assertions. `read_parquet` hands back an
+    arrow-native array that pandas never coerces, so build these the way
+    the data actually arrives.
+    """
+    if isinstance(dtype, pd.ArrowDtype):
+        return pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values, type=dtype.pyarrow_dtype)))
+    return pd.Series(values, dtype=dtype)
 
 
 def _public_part(column_block: dict) -> dict:
@@ -605,6 +622,46 @@ class TestRecordwiseNormalization:
             assert _multiset_distance(base_out, dropped_out) <= 1
 
     @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
+    def test_every_declared_pool_actually_produces_a_comparison(self, pool_id):
+        """Codex round 10 (MEDIUM): a pool whose construction raises is
+        silently skipped by both matrix tests, so it reports PASSED on
+        every one of its named cases while executing zero assertions.
+        `arrow_duration_s_overflow` did exactly that for all 26 of its
+        cases, and the only reason it was noticed was a second model
+        counting them.
+
+        A skip on a SPECIFIC added row is legitimate -- pandas genuinely
+        refuses some combinations. A pool that never builds at all, or
+        that never yields a single neighbour across the whole added-row
+        axis, is a false green and must fail loudly."""
+        pool, obj = _ADJACENCY_POOLS[pool_id]
+        pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
+
+        built = 0
+        compared = 0
+        for dtype in (object,) if obj else (object, None):
+            try:
+                base = _build_series(list(pool), pool_dtype or dtype)
+            except (OverflowError, ValueError, TypeError, pa.ArrowException):
+                continue
+            built += 1
+            list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
+            for added in _ADJACENCY_ADDED.values():
+                try:
+                    _build_series([*pool, added], list_dtype)
+                    compared += 1
+                except (OverflowError, ValueError, TypeError, pa.ArrowException):
+                    pass
+                try:
+                    pd.concat([base, pd.Series([added])], ignore_index=True)
+                    compared += 1
+                except (OverflowError, ValueError, TypeError, pa.ArrowException):
+                    pass
+
+        assert built, f"{pool_id}: the pool itself never builds; every one of its cases is vacuous"
+        assert compared, f"{pool_id}: builds but yields no neighbour on any added row; vacuous"
+
+    @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
     @pytest.mark.parametrize("added_id", sorted(_ADJACENCY_ADDED), ids=sorted(_ADJACENCY_ADDED))
     def test_categorical_normalization_is_multiset_recordwise(self, pool_id, added_id):
         """The property `map(1)` actually assumes, stated as a MULTISET
@@ -641,7 +698,7 @@ class TestRecordwiseNormalization:
         for dtype in (object,) if obj else (object, None):
             build_dtype = pool_dtype or dtype
             try:
-                base = pd.Series(list(pool), dtype=build_dtype)
+                base = _build_series(list(pool), build_dtype)
             except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 continue  # pandas itself refuses the pool
             base_labels = _normalize_categorical(base)
@@ -649,7 +706,7 @@ class TestRecordwiseNormalization:
             neighbours = []
             list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
             try:
-                neighbours.append(pd.Series([*pool, added], dtype=list_dtype))
+                neighbours.append(_build_series([*pool, added], list_dtype))
             except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 pass
             try:  # concat: boxes the EXISTING values into the joint dtype
@@ -758,7 +815,7 @@ class TestRecordwiseNormalization:
 
         for dtype in (object,) if obj else (object, None):
             try:
-                base = pd.Series(list(pool), dtype=pool_dtype or dtype)
+                base = _build_series(list(pool), pool_dtype or dtype)
             except (OverflowError, ValueError, TypeError):
                 continue
             base_out = _normalize_numeric(base, **bounds)
@@ -766,7 +823,7 @@ class TestRecordwiseNormalization:
             neighbours = []
             list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
             try:
-                neighbours.append(pd.Series([*pool, added], dtype=list_dtype))
+                neighbours.append(_build_series([*pool, added], list_dtype))
             except (OverflowError, ValueError, TypeError, pa.ArrowException):
                 pass
             try:  # concat: boxes the EXISTING values into the joint dtype
@@ -916,8 +973,8 @@ class TestRecordwiseNormalization:
             "categorical_labels": (
                 "text kept verbatim unless it contains NUL or cannot be encoded as UTF-8; "
                 "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
-                "image; integers beyond float64 range rendered exactly, up to the interpreter's "
-                "decimal-conversion limit"
+                "image; a real too large for float64 rendered by its own exact repr instead, "
+                "up to the interpreter's decimal-conversion limit; NaN released as null"
             ),
             "categorical_unsupported": (
                 "released as null (datetime, timedelta, NUL-bearing or non-UTF-8 text, "
@@ -938,6 +995,14 @@ class TestRecordwiseNormalization:
         assert _normalize_categorical(pd.Series(["a\x00b"], dtype=object)) == []
         assert _normalize_categorical(pd.Series(["\ud800"], dtype=object)) == []
         assert _normalize_categorical(pd.Series([10**5000], dtype=object)) == []
+        # Codex round 10 (LOW): the overflow fallback is not integer-only.
+        # It fires for ANY accepted real whose float() overflows, and
+        # renders that value's own exact repr -- a Fraction stays a
+        # fraction, which the previous "integers ... rendered exactly"
+        # wording denied.
+        assert _normalize_categorical(pd.Series([Fraction(10**400, 3)], dtype=object)) == [
+            str(Fraction(10**400, 3))
+        ]
         assert _normalize_numeric(pd.Series([float("nan")]), lower=0.0, upper=10.0) == []
         assert _normalize_numeric(pd.Series([99.0]), lower=0.0, upper=10.0) == [10.0]
         assert _normalize_numeric(pd.Series([float("-inf")]), lower=0.0, upper=10.0) == [0.0]

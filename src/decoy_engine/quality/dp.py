@@ -60,6 +60,10 @@ from decoy_engine.quality.dp_budget import (
     _OpenDpBackend,
 )
 from decoy_engine.quality.dp_normalize import _normalize_categorical, _normalize_numeric
+from decoy_engine.quality.dp_policy import (
+    _DP_NORMALIZATION_POLICY,
+    _log_normalization_policy,
+)
 from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
@@ -89,65 +93,7 @@ _DEFAULT_NUMERIC_BINS = 10
 _DP_NUMERIC_DTYPE_LABEL = "float64"
 _DP_CATEGORICAL_DTYPE_LABEL = "object"
 
-# Fixed, content-independent description of what normalization releases.
-# Identical bytes in every artifact: a policy that varied with the frame
-# would be an unnoised channel, which is precisely why the per-column
-# drop COUNT below goes to the log and never in here.
-_DP_NORMALIZATION_POLICY = {
-    "categorical_labels": (
-        "text kept verbatim unless it contains NUL or cannot be encoded as UTF-8; "
-        "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
-        "image; integers beyond float64 range rendered exactly, up to the interpreter's "
-        "decimal-conversion limit"
-    ),
-    "categorical_unsupported": (
-        "released as null (datetime, timedelta, NUL-bearing or non-UTF-8 text, and any other type)"
-    ),
-    "numeric_values": (
-        "float64, values outside the declared domain clamped to it, "
-        "infinities clamped to the nearer bound, NaN released as null"
-    ),
-}
-
 _logger = logging.getLogger(__name__)
-
-
-def _log_normalization_policy() -> None:
-    """State the policy once per fit, unconditionally.
-
-    Round 8 shipped this as a per-column count of dropped values, and
-    round 9 blocked it twice over.
-
-    It was an observable (Codex): the record was emitted only when a drop
-    occurred, so its presence is a probability-0-vs-1 function of the
-    data, carrying an exact count. The round-8 rationale -- that the
-    fitting party already holds the frame, so a local signal discloses
-    nothing -- does not hold, because a logger is not intrinsically
-    local; a caller can attach a centralized handler. It also
-    contradicted this program's own rule that no scalar may "warn, or
-    otherwise become observable".
-
-    It reopened C-B4 (dennis): the count called `series.notna()`, a
-    vectorized nullness check that runs each value's own dunders, from
-    OUTSIDE the conversion guard. `pandas.isna(Decimal("sNaN"))` raises
-    `InvalidOperation`, so a one-row neighbour made the whole fit raise
-    where its neighbour emitted an artifact -- the exact fit-success
-    channel `dp_normalize` exists to close, reintroduced by the
-    remediation that was meant to improve the operator's signal.
-
-    So the message is now fixed text on every fit: it never reads a
-    value, never counts, and never branches. The operator learns that
-    unlabellable values are released as nulls and can pair that with a
-    column's own released `non_null_count` -- which is noised, so it is
-    not a channel either. An exact per-column diagnostic, if one is ever
-    wanted, belongs in a separately invoked, explicitly non-DP audit
-    operation, never as a side effect of the protected fit.
-    """
-    _logger.info(
-        "dp fit: categorical columns release only text, boolean and numeric values; "
-        "datetimes, timedeltas and other types are released as nulls. This message is "
-        "fixed and does not indicate whether any value in this frame was affected."
-    )
 
 
 class DpError(Exception):

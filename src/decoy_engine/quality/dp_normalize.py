@@ -32,6 +32,28 @@ Canonicalize the scalar first (`_unbox`), then decide.
 The corollary that cost a round: "an allowlist can only over-drop" is
 FALSE. Over-dropping is safe only when it is uniform across every boxing
 of the same value, which a type-keyed allowlist is not.
+
+THE DOMAIN, stated because totality cannot be absolute. The guards below
+catch `BaseException`, not `Exception`, and drop the row: Codex round 10
+showed a cell whose `__float__` raised a direct `BaseException` subclass
+escaping an `Exception` guard and aborting the fit, which is the same
+probability-0-versus-1 channel by another route. Two exceptions are
+re-raised rather than dropped, `KeyboardInterrupt` and `SystemExit`, so
+that an operator can still interrupt a fit and a caller can still exit
+the process. A cell that raises either of those FROM ITS OWN dunders is
+therefore outside the domain and is the one residual case.
+
+That residual is a caller precondition, not a defect we can close, and
+it is narrow: reaching it requires a live Python object carrying
+executable behaviour in a frame cell. No file-based ingestion path can
+produce one -- Parquet, CSV, JSON and Arrow all yield values, and the
+compiler reads plans with `yaml.safe_load` and has no pickle path -- so
+a caller who can place such an object in the frame is already executing
+code in this process and has strictly greater capability than the
+channel provides. This is the same shape as the parse-time dtype
+precondition in `docs/what-we-cannot-prove.md`: what happens before a
+frame exists is the caller's, and everything reachable from a frame
+built out of real data is ours.
 """
 
 from __future__ import annotations
@@ -200,7 +222,9 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
                         continue
                     raw = raw.real
                 v = float(raw)
-            except Exception:  # broad by design: totality, see docstring
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:  # broad by design: totality, see THE DOMAIN above
                 continue
             if math.isnan(v):
                 continue
@@ -241,7 +265,9 @@ def _cells(series: pd.Series) -> Iterator[Any]:
     for i in range(len(series)):
         try:
             yield values[i]
-        except Exception:  # broad by design: totality, see docstring
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:  # broad by design: totality, see THE DOMAIN above
             continue
 
 
@@ -408,7 +434,9 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
                 null = pd.isna(raw)
                 if getattr(null, "ndim", 0) == 0 and bool(null):
                     continue
-            except Exception:  # broad by design: totality, see docstring
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:  # broad by design: totality, see THE DOMAIN above
                 pass
             try:
                 label = _canonical_label(raw)
@@ -426,7 +454,9 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
                     continue
                 if not label.isascii():
                     label.encode("utf-8")
-            except Exception:  # broad by design: totality, see docstring
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:  # broad by design: totality, see THE DOMAIN above
                 continue
             out.append(label)
     return out

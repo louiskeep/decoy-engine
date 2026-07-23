@@ -53,6 +53,20 @@ consumed by a compiled, DP-verified Plan.
 > they both contain, that is a defect here and not an instance of the
 > caveat above.
 >
+> Frame cells must be VALUES, not live objects carrying executable
+> behaviour. Converting a cell runs that cell's own methods, so an object
+> whose `__float__` or `__str__` raises can abort the fit, and whether
+> the fit aborted is itself observable. Every such failure is caught and
+> the row dropped, with two deliberate exceptions: `KeyboardInterrupt`
+> and `SystemExit` are re-raised so that an operator can still interrupt
+> a running fit and a caller can still exit the process. A cell that
+> raises either of those from its own methods is outside this guarantee.
+> Nothing loaded from a file can be such a cell -- Parquet, CSV, JSON and
+> Arrow all produce values, and Decoy reads plans with `yaml.safe_load`
+> and has no pickle path -- so reaching this requires already running
+> code inside the fitting process, which is strictly more capability than
+> the gap yields.
+>
 > To carry the guarantee back to a source file, materialize the frame
 > under a fixed schema that does not depend on the file's contents:
 > explicit `dtype=` for every declared column, and no inferred date

@@ -102,3 +102,24 @@ def test_dp_claim_copy_does_not_overstate_the_forgery_defenses():
     assert "no authentication value" in lowered
     assert "recomputes the digest passes" in lowered
     assert "distinguishes it from an honest one" in lowered
+
+
+def test_dp_claim_copy_scopes_the_domain_to_values_not_live_objects():
+    """Codex round 10 (BLOCKER): a cell whose `__float__` raised a direct
+    `BaseException` subclass escaped the `Exception` guards and aborted
+    the fit, which is the fit-success channel by another route.
+
+    The guards now catch `BaseException` and drop the row, except for
+    `KeyboardInterrupt` and `SystemExit`, which are re-raised so an
+    operator can still interrupt a fit. That leaves a narrow residual --
+    a cell raising one of those two from its own methods -- and a
+    guarantee page may not simply omit it. Totality cannot be absolute
+    over arbitrary Python objects, so the domain has to say so.
+    """
+    text = _doc_text().lower()
+
+    assert "must be values, not live objects" in text
+    assert "keyboardinterrupt" in text and "systemexit" in text
+    assert "outside this guarantee" in text
+    # And why the residual is narrow rather than merely disclosed.
+    assert "nothing loaded from a file can be such a cell" in text
