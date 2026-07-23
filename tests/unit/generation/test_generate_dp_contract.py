@@ -303,16 +303,16 @@ class TestDpCategoricalNowSupported:
 
 class TestFailClosedDpDeclaration:
     """Guide section 6 row F6: presence is key membership, not truthiness,
-    for every value except a bare `None` -- deliberately narrowed from the
-    guide's literal text (see `_dp_declared`'s docstring in
-    `plan/_checks_dp.py`): `PipelineConfig.model_validate(cfg).model_dump()`,
-    the documented production choke point, always materializes
-    `global_settings["dp"] = None` for a config that never touched `dp`,
-    so a pure membership test would reject every ordinary non-DP pipeline
-    compiled through that choke point. A present-but-otherwise-malformed
-    value ({}, a list, a scalar, an incomplete mapping) still fails
-    closed -- there is no equivalent false-positive risk for those,
-    since ordinary PipelineConfig validation cannot produce them."""
+    full stop -- a present `dp` key fails closed on ANY malformed value,
+    including a bare `None` (C-B3, Codex round-3 blocker: `dp: null` is a
+    malformed declaration, not a synonym for unset). The ambiguity that
+    used to force a `None` carve-out here is fixed upstream instead:
+    `config.PipelineConfig.model_dump` (the documented production choke
+    point) now omits the `dp` key entirely when `GlobalSettings.
+    model_fields_set` shows it was never assigned, and leaves it present
+    (including a bare `None`) when the operator explicitly wrote `dp:
+    null`. See `_dp_declared`'s docstring in `plan/_checks_dp.py` and
+    `PipelineConfig.model_dump`'s docstring in `config/_pipeline.py`."""
 
     def test_empty_dp_block_fails_closed_with_dp_budget_declaration_malformed(self):
         cfg = {"global_settings": {"seed": 1, "dp": {}}, "tables": []}
@@ -321,7 +321,7 @@ class TestFailClosedDpDeclaration:
         assert exc.value.code == "dp_budget_declaration_malformed"
 
     def test_non_mapping_dp_block_fails_closed(self):
-        for bad in ([], "x", 1):
+        for bad in ([], "x", 1, None):
             cfg = {"global_settings": {"seed": 1, "dp": bad}, "tables": []}
             with pytest.raises(PlanCompileError) as exc:
                 verify_dp_snapshots(cfg, {})
@@ -333,21 +333,27 @@ class TestFailClosedDpDeclaration:
         assert verified == frozenset()
         assert receipt is None
 
-    def test_dp_key_present_as_none_passes_like_unset(self):
-        """The `PipelineConfig.model_dump()` case: `dp` present, value
-        `None`, because the field was never set. Must compile clean, not
-        raise `dp_budget_declaration_malformed` (see class docstring)."""
+    def test_dp_key_present_as_none_fails_closed(self):
+        """C-B3 (Codex round-3 blocker): `dp` present with value `None` --
+        an operator writing `dp: null` explicitly -- must fail closed with
+        `dp_budget_declaration_malformed`, not compile clean like unset.
+        Codex executed exactly this: an exact categorical snapshot under
+        an explicitly present `dp: null` bypassed provenance, budget,
+        categorical-consent, and receipt gates entirely."""
         cfg = {"global_settings": {"seed": 1, "dp": None}, "tables": []}
-        verified, receipt = verify_dp_snapshots(cfg, {})
-        assert verified == frozenset()
-        assert receipt is None
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, {})
+        assert exc.value.code == "dp_budget_declaration_malformed"
 
-    def test_pipeline_config_dump_of_an_unset_dp_field_compiles_without_dp_error(self):
-        """End-to-end reproduction of the real regression this guards:
-        a config that never touches `global_settings.dp`, validated and
+    def test_pipeline_config_dump_of_an_unset_dp_field_omits_the_key(self):
+        """End-to-end reproduction of the real regression this guards: a
+        config that never touches `global_settings.dp`, validated and
         dumped through the documented production choke point
         (`PipelineConfig.model_validate(cfg).model_dump()`), must compile
-        through `run_config_only_checks` without a DP-declaration error."""
+        through `run_config_only_checks` without a DP-declaration error --
+        and the dumped dict must not even carry a `dp` key, so an
+        explicit `dp: null` elsewhere can never be confused with this
+        case again."""
         from decoy_engine import run_config_only_checks
         from decoy_engine.config import PipelineConfig
 
@@ -364,8 +370,36 @@ class TestFailClosedDpDeclaration:
             "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
         }
         dumped = PipelineConfig.model_validate(raw).model_dump()
-        assert dumped["global_settings"]["dp"] is None  # confirms the reproduction still applies
+        assert "dp" not in dumped["global_settings"]  # unset -> key omitted entirely, not None
         run_config_only_checks(dumped)  # must not raise dp_budget_declaration_malformed
+
+    def test_pipeline_config_dump_of_an_explicit_dp_null_keeps_the_key_and_fails_closed(self):
+        """The other half of the C-B3 fix: an operator who writes `dp:
+        null` explicitly gets a dumped dict that STILL carries the `dp`
+        key (value `None`), and compiling it raises
+        `dp_budget_declaration_malformed` rather than compiling clean."""
+        from decoy_engine import run_config_only_checks
+        from decoy_engine.config import PipelineConfig
+        from decoy_engine.plan._errors import PlanCompileError as _PlanCompileError
+
+        raw = {
+            "version": 1,
+            "global_settings": {"seed": 1, "dp": None},
+            "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
+            "tables": [
+                {
+                    "name": "people",
+                    "columns": [{"name": "email", "strategy": "faker", "provider": "person_email"}],
+                }
+            ],
+            "targets": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-out.csv"}},
+        }
+        dumped = PipelineConfig.model_validate(raw).model_dump()
+        assert "dp" in dumped["global_settings"]
+        assert dumped["global_settings"]["dp"] is None
+        with pytest.raises(_PlanCompileError) as exc:
+            run_config_only_checks(dumped)
+        assert exc.value.code == "dp_budget_declaration_malformed"
 
 
 def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", distinct_marker=0):

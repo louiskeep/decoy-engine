@@ -222,62 +222,75 @@ class TestOpenDpReleaseSession:
         must equal `measurement.map(1)` for the object ACTUALLY invoked,
         not the eps_q target the session calibrated toward.
 
-        The previous version of this test used a schedule with NO numeric
-        or categorical column (`Schedule(row_count_name="rc", numeric=(),
-        categorical=())`), so only `release_row_count`'s `_record` call
-        was ever exercised; the other three sites were unpinned. This
-        version schedules one of each query kind and gives the backend a
-        DISTINCT, hard-coded certificate per site, so a defect at any one
-        site is independently visible: recording `self._eps_q` instead of
-        the invoked object's own certificate would make that site's
-        assertion see the single shared `_eps_q` float instead of its own
-        constant.
+        D-B1 (dennis blocker): the previous fixture's `_FixedCertificate
+        Backend` returned a CONSTANT certificate per kind, independent of
+        the `eps_q` (and `delta_alloc`) the session called it with. That
+        distinguishes measurement KIND, not measurement OBJECT: a defect
+        that certifies a DIFFERENT measurement object than the one
+        invoked --
 
-        Every fixed certificate here is far below any eps_q this fully-
-        fundable schedule could allocate (epsilon=1.0 for 4 cheap
-        queries), so the test cannot pass by accident via `composed_loss`
-        tripping its ceiling check -- the recorded values are asserted
-        directly, and `composed_loss` is never even called.
+            certificate = self._count_measurement(self._eps_q / 10.0).map(1)
+            released    = measurement.invoke([""] * row_count)
+
+        -- is invisible to a per-kind-constant fixture, because BOTH the
+        correct object (built at `self._eps_q`) and the wrong one (built
+        at `self._eps_q / 10.0`) return the identical constant through
+        `.map()`. This version makes each fake certificate a function of
+        the `eps_q` (and, for the grouped pair, `delta_alloc`) the backend
+        was actually called with, so certifying a measurement built at a
+        DIFFERENT eps_q necessarily yields a DIFFERENT recorded value --
+        the wrong-object mutant above now changes what this test observes.
+
+        Every fixed FACTOR here is far enough from 1.0 that a defect
+        recording the bare `self._eps_q`/`self._delta_per_categorical`
+        (the B-1 mutation evidence below) still cannot coincide with
+        `eps_q * factor` for any `eps_q` this schedule allocates.
 
         Mutation evidence (each `_record` call site changed independently
-        to `self._record(<name>, self._eps_q, <released>)` in
-        `dp_budget.py`): `release_row_count`, `release_numeric`, and the
-        grouped and total halves of `release_categorical` -- each mutation
-        was confirmed to fail only its own assertion below, one call site
-        at a time.
+        in `dp_budget.py`), confirmed to fail only its own assertion below,
+        one call site at a time:
+        - `self._record(<name>, self._eps_q, <released>)` (all four
+          sites: records the bare eps_q/delta_alloc, not a certificate).
+        - `certificate = self._count_measurement(self._eps_q / 10.0).map(1)`
+          (row_count: certifies a measurement built at a different eps_q
+          than the one invoked) -- and the same `/10.0` mutation applied
+          independently to the numeric and grouped/total construction
+          call sites.
         """
-        ROW_COUNT_CERT = 1e-3
-        NUMERIC_CERT = 2e-3
-        GROUPED_CERT = (3e-3, 1e-7)
-        TOTAL_CERT = 4e-3
+        ROW_COUNT_FACTOR = 0.37
+        NUMERIC_FACTOR = 0.53
+        GROUPED_EPS_FACTOR = 0.61
+        GROUPED_DELTA_FACTOR = 0.29
+        TOTAL_FACTOR = 0.71
 
         class _FixedCertificateBackend:
+            """Certificates are a pure function of the eps_q/delta_alloc
+            the session actually calls this backend with -- never a
+            per-kind constant -- so certifying a measurement built at the
+            WRONG eps_q (a different object than the one invoked) yields
+            a visibly different recorded value."""
+
             def count_measurement(self, eps_q: float) -> _FakeMeasurement:
-                return _FakeMeasurement(certificate=ROW_COUNT_CERT, released=42)
+                return _FakeMeasurement(certificate=eps_q * ROW_COUNT_FACTOR, released=42)
 
             def numeric_measurement(self, eps_q: float, interior_edges: tuple[float, ...]):
                 return _FakeMeasurement(
-                    certificate=NUMERIC_CERT, released=[0] * (len(interior_edges) + 1)
+                    certificate=eps_q * NUMERIC_FACTOR, released=[0] * (len(interior_edges) + 1)
                 )
 
             def categorical_measurements(self, eps_q: float, delta_alloc: float):
                 return (
-                    _FakeMeasurement(certificate=GROUPED_CERT, released={}),
-                    _FakeMeasurement(certificate=TOTAL_CERT, released=0),
+                    _FakeMeasurement(
+                        certificate=(eps_q * GROUPED_EPS_FACTOR, delta_alloc * GROUPED_DELTA_FACTOR),
+                        released={},
+                    ),
+                    _FakeMeasurement(certificate=eps_q * TOTAL_FACTOR, released=0),
                 )
 
         schedule = _mixed_schedule()  # row_count + 1 numeric + 1 categorical pair
         session = OpenDpReleaseSession(
             schedule, epsilon=1.0, delta=1e-6, backend=_FixedCertificateBackend()
         )
-        # The allocation search converges on eps_q close to epsilon itself
-        # here, since every fixed certificate is "feasible" everywhere the
-        # search looks (the backend ignores eps_q entirely) and each is far
-        # below the request -- so eps_q is nowhere near any of the four
-        # fixed constants below.
-        assert session._eps_q > ROW_COUNT_CERT
-        assert session._eps_q > NUMERIC_CERT
-        assert session._eps_q > TOTAL_CERT
 
         session.release_row_count(500)
         session.release_numeric("numeric:age", [float(x % 120) for x in range(500)])
@@ -285,12 +298,20 @@ class TestOpenDpReleaseSession:
             "categorical_grouped:state", "categorical_total:state", ["CA", "NY", "TX"]
         )
 
-        assert session._releases["row_count"].certificate == ROW_COUNT_CERT
-        assert session._releases["numeric:age"].certificate == NUMERIC_CERT
-        assert session._releases["categorical_grouped:state"].certificate == GROUPED_CERT
-        assert session._releases["categorical_total:state"].certificate == TOTAL_CERT
-        for name in schedule.query_names:
-            assert session._releases[name].certificate != session._eps_q
+        eps_q = session._eps_q
+        delta_alloc = session._delta_per_categorical
+        assert session._releases["row_count"].certificate == eps_q * ROW_COUNT_FACTOR
+        assert session._releases["numeric:age"].certificate == eps_q * NUMERIC_FACTOR
+        assert session._releases["categorical_grouped:state"].certificate == (
+            eps_q * GROUPED_EPS_FACTOR,
+            delta_alloc * GROUPED_DELTA_FACTOR,
+        )
+        assert session._releases["categorical_total:state"].certificate == eps_q * TOTAL_FACTOR
+        # None of the recorded certificates coincide with the bare
+        # eps_q/delta_alloc the B-1 mutation would record instead.
+        assert session._releases["row_count"].certificate != eps_q
+        assert session._releases["numeric:age"].certificate != eps_q
+        assert session._releases["categorical_total:state"].certificate != eps_q
 
     def test_admit_reserves_the_name_so_a_second_admit_before_any_record_is_refused(self):
         """M-2: `_admit` alone -- before `_record` ever runs for `name` --

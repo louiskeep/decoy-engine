@@ -47,12 +47,12 @@ from __future__ import annotations
 import importlib.metadata
 import math
 import uuid
+import warnings
 from collections.abc import Collection, Mapping
 from typing import Any
 
 import pandas as pd
 
-from decoy_engine.internal.pandas_compat import canonical_dtype_label
 from decoy_engine.quality.dp_budget import (
     DpBudgetError,
     OpenDpReleaseSession,
@@ -67,6 +67,23 @@ DP_ADJACENCY = "add-remove-one-row"
 DP_ACCOUNTANT_LABEL = "dp_accounting PLD composition over OpenDP privacy maps"
 
 _DEFAULT_NUMERIC_BINS = 10
+
+# C-B2 (Codex round-3 blocker): the emitted `dtype` label used to be
+# `canonical_dtype_label(frame[col].dtype)` -- the FRAME's own pandas
+# dtype, which is content-dependent (pandas upcasts an integer column to
+# float64 the moment a null enters it, and an object column's numpy dtype
+# can otherwise vary with content). Codex demonstrated the two-neighbour
+# leak directly: `[1]` (int64) versus `[1, None]` (float64), identical
+# public declarations. `dtype` must be "a function of the caller's public
+# declaration" (guide section 4.2.1), and the only public declaration a DP
+# fit has is column KIND (numeric vs categorical, from `categorical_
+# columns`/`numeric_domains`) -- there is no finer public dtype signal to
+# report. These are fixed labels matching what each normalizer actually
+# produces (`_normalize_numeric` always yields Python floats;
+# `_normalize_categorical` always yields `str`), so the label is honest
+# about the released shape without being read off the private frame.
+_DP_NUMERIC_DTYPE_LABEL = "float64"
+_DP_CATEGORICAL_DTYPE_LABEL = "object"
 
 
 class DpError(Exception):
@@ -180,17 +197,45 @@ def _normalize_numeric(series: pd.Series, *, lower: float, upper: float) -> list
     contributes at most one element. Conversion failures and NaN become
     null (excluded); +-inf clamp to the declared bound; finite
     out-of-domain values clamp into [lower, upper]. Content can never
-    raise -- there is no kind-selection branch here, only clamping."""
-    numeric = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    raise -- there is no kind-selection branch here, only clamping.
+
+    C-B2 (Codex round-3 blocker): this used to call the vectorized
+    `pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)`. Codex
+    demonstrated two content-dependent side channels in that path: (1) a
+    column containing a Python/numpy `complex` value deterministically
+    emits `ComplexWarning` on the cast to real, while an otherwise-
+    identical neighbour without one emits no warning at all -- an
+    observable with probability 0 on one neighbour and 1 on the other,
+    which alone violates any (epsilon, delta) guarantee with delta < 1,
+    independent of anything the fit releases; (2) `pd.to_numeric`'s
+    object/complex coercion can silently produce garbage floats (an
+    uninitialized buffer reinterpretation, not a `NaN`) instead of
+    treating the value as a null conversion failure. Both close the same
+    way: convert element-by-element with a blanket warning suppression
+    around the whole pass, so NO warning is ever emitted regardless of
+    content (not a per-type special case -- any future warning-emitting
+    input closes the same way), and explicitly treat any `complex` value
+    (covers the builtin type and `numpy.complex128`, which subclasses it)
+    as an unconvertible failure before calling `float()`, so it becomes
+    null like any other unconvertible value rather than silently keeping
+    a real part."""
     out: list[float] = []
-    for v in numeric:
-        if math.isnan(v):
-            continue
-        if math.isinf(v):
-            v = upper if v > 0 else lower
-        else:
-            v = min(max(v, lower), upper)
-        out.append(float(v))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for raw in series:
+            if isinstance(raw, complex):
+                continue  # unconvertible, like any other non-numeric value
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(v):
+                continue
+            if math.isinf(v):
+                v = upper if v > 0 else lower
+            else:
+                v = min(max(v, lower), upper)
+            out.append(v)
     return out
 
 
@@ -198,8 +243,14 @@ def _normalize_categorical(series: pd.Series) -> list[str]:
     """Total, recordwise projection: nulls excluded via `Series.dropna()`
     (uniform across None/NaN/NaT/pd.NA), every remaining scalar mapped to
     its `str()` representation -- the one documented canonical string
-    form for every supported scalar dtype declared categorical."""
-    return [str(v) for v in series.dropna()]
+    form for every supported scalar dtype declared categorical. Wrapped in
+    the same blanket warning suppression as `_normalize_numeric` (C-B2):
+    `str()` on an exotic scalar type is not known to warn today, but
+    suppression here costs nothing and keeps both normalizers under the
+    same "no warning ever, regardless of content" invariant."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return [str(v) for v in series.dropna()]
 
 
 def fit_dp_snapshot(
@@ -210,10 +261,23 @@ def fit_dp_snapshot(
     epsilon: float,
     delta: float,
     numeric_bins: int = _DEFAULT_NUMERIC_BINS,
-    _session_backend: _OpenDpBackend | None = None,
 ) -> dict[str, Any]:
-    """Fit a `distribution-snapshot/v1` artifact under `(epsilon, delta)`
-    differential privacy, scope `single-column-marginals`.
+    """Public DP fit entrypoint. Always uses the real OpenDP-backed session.
+
+    C-B1 (Codex round-3 blocker): the previous signature accepted a
+    `_session_backend` keyword that let ANY caller of this public function
+    substitute the mechanism entirely -- Codex demonstrated a backend whose
+    `invoke()` returned exact source counts and whose `map()` claimed an
+    arbitrary certificate, producing an artifact with the normal
+    `dp_accounting` label and a plausible `epsilon_total` around exact
+    values. A leading underscore is convention, not enforcement: nothing
+    stopped a caller from passing it. This function now takes no
+    mechanism/backend parameter of any name and always constructs
+    `OpenDpReleaseSession`'s default real backend. The test seam moves to
+    the private `_fit_dp_snapshot_with_backend` below, which this function
+    is a thin, backend-fixed wrapper around; tests that need to observe
+    `OpenDpReleaseSession`'s own bookkeeping (BLOCKER A2; defects 1a/1b)
+    import and call that private function directly, never this one.
 
     Every released quantity is read back from an OpenDP `Measurement.map()`
     certificate (via `OpenDpReleaseSession`) and composed by `dp_accounting`
@@ -236,14 +300,6 @@ def fit_dp_snapshot(
         numeric_bins: Bin count per numeric column. Int >= 2, default 10
             (guide section 9.10 item 1); recorded in the artifact so bin
             edges are reproducible from public metadata alone.
-        _session_backend: TEST-ONLY seam (guide section 5 step 3). Passes
-            an `_OpenDpBackend` double straight into the
-            `OpenDpReleaseSession` this call constructs, so a test can
-            observe the session's OWN certificate/schedule bookkeeping
-            (BLOCKER A2; defects 1a/1b) independent of real OpenDP noise.
-            Never set outside a test: leaving it `None` (the only path a
-            production caller ever takes) always constructs the real
-            OpenDP-backed session.
 
     Returns:
         A `distribution-snapshot/v1` artifact whose additive `dp` block
@@ -261,6 +317,41 @@ def fit_dp_snapshot(
             `dp_column_declaration_overlap`, `dp_numeric_domain_invalid`).
         DpBudgetError: ``code='dp_budget_infeasible'`` when the requested
             `(epsilon, delta)` cannot fund the fixed query schedule.
+    """
+    return _fit_dp_snapshot_with_backend(
+        frame,
+        categorical_columns=categorical_columns,
+        numeric_domains=numeric_domains,
+        epsilon=epsilon,
+        delta=delta,
+        numeric_bins=numeric_bins,
+        _session_backend=None,
+    )
+
+
+def _fit_dp_snapshot_with_backend(
+    frame: pd.DataFrame,
+    *,
+    categorical_columns: Collection[str],
+    numeric_domains: Mapping[str, tuple[float, float]],
+    epsilon: float,
+    delta: float,
+    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
+    _session_backend: _OpenDpBackend | None = None,
+) -> dict[str, Any]:
+    """Private implementation. `fit_dp_snapshot` (the public entrypoint) is
+    a thin wrapper that always passes `_session_backend=None`; this module
+    does not export this function's name, and no non-test code path in the
+    codebase calls it directly (guide section 5 step 3; C-B1 above).
+
+    `_session_backend`, when set, passes an `_OpenDpBackend` double
+    straight into the `OpenDpReleaseSession` this call constructs, so a
+    test can observe the session's OWN certificate/schedule bookkeeping
+    independent of real OpenDP noise. `None` (the only value the public
+    wrapper ever passes) always constructs the real OpenDP-backed session
+    -- this function contains no branch that weakens the guarantee for a
+    production caller, since production callers cannot reach this function
+    at all, only `fit_dp_snapshot`.
     """
     _validate_config(
         frame=frame,
@@ -320,7 +411,7 @@ def fit_dp_snapshot(
         bin_edges = [lower, *_interior_edges(lower, upper), upper]
         non_null_count = sum(bin_counts)
         columns_block[col] = {
-            "dtype": canonical_dtype_label(frame[col].dtype),
+            "dtype": _DP_NUMERIC_DTYPE_LABEL,
             "kind": "numeric",
             "null_count": max(0, row_count_released - non_null_count),
             "non_null_count": non_null_count,
@@ -352,7 +443,7 @@ def fit_dp_snapshot(
         non_null_total = _serialize_count(total_raw)
         other_count = max(0, non_null_total - sum(count for _label, count in retained))
         columns_block[col] = {
-            "dtype": canonical_dtype_label(frame[col].dtype),
+            "dtype": _DP_CATEGORICAL_DTYPE_LABEL,
             "kind": "categorical",
             "null_count": max(0, row_count_released - non_null_total),
             "non_null_count": non_null_total,

@@ -15,7 +15,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from decoy_engine.quality.dp import DpError, fit_dp_snapshot
+from decoy_engine.quality.dp import (
+    DpError,
+    _fit_dp_snapshot_with_backend,
+    _normalize_categorical,
+    _normalize_numeric,
+    fit_dp_snapshot,
+)
 from decoy_engine.quality.dp_budget import _FakeMeasurement
 
 # Fixed test-confidence budget (guide section 7.2): 1e-6 false-failure
@@ -36,11 +42,27 @@ def _mixed_df(n: int = 2000, seed: int = 3) -> pd.DataFrame:
 
 class TestConfigValidation:
     def test_production_dp_fit_exposes_no_seed_or_rng_parameter(self):
+        """C-B1: the public entrypoint accepts no mechanism/backend
+        injection parameter of ANY name, not merely the two literal names
+        this test used to check. `_session_backend` (or any future
+        differently-named seam) is a mechanism-substitution bypass on the
+        public API if it reaches this signature -- Codex demonstrated a
+        forged backend producing a plausible-looking artifact from exact
+        source counts. This asserts the FULL parameter set is exactly the
+        documented public contract, so a new injection parameter under any
+        name fails this test the moment it's added here, not only if it
+        happens to be named `seed` or `rng`."""
         import inspect
 
         sig = inspect.signature(fit_dp_snapshot)
-        assert "seed" not in sig.parameters
-        assert "rng" not in sig.parameters
+        assert set(sig.parameters) == {
+            "frame",
+            "categorical_columns",
+            "numeric_domains",
+            "epsilon",
+            "delta",
+            "numeric_bins",
+        }
 
     def test_dp_fit_rejects_missing_public_column_declarations(self):
         df = pd.DataFrame({"age": [1.0, 2.0], "state": ["a", "b"]})
@@ -129,6 +151,49 @@ class TestConfigValidation:
         )
         assert snap["dp"]["numeric_bins"] == 10
         assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == 10
+
+
+class TestRecordwiseNormalization:
+    """D-M6/C-B2: the one stability claim Decoy makes on its own (guide
+    section 3.3 item 1) is that preprocessing is recordwise -- every input
+    row contributes AT MOST one element to a column's normalized vector.
+    Pinned directly at the `_normalize_numeric`/`_normalize_categorical`
+    seam, independent of the OpenDP mechanism."""
+
+    def test_normalize_numeric_output_length_equals_non_null_input_length(self):
+        series = pd.Series([1.0, None, 3.0, float("nan"), 5.0])
+        out = _normalize_numeric(series, lower=0.0, upper=10.0)
+        assert len(out) == 3  # 1.0, 3.0, 5.0 -- None and NaN excluded
+
+    def test_normalize_numeric_removing_one_row_removes_at_most_one_element(self):
+        base = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0])
+        base_out = _normalize_numeric(base, lower=0.0, upper=10.0)
+        for i in range(len(base)):
+            dropped = base.drop(base.index[i]).reset_index(drop=True)
+            dropped_out = _normalize_numeric(dropped, lower=0.0, upper=10.0)
+            assert len(base_out) - len(dropped_out) in (0, 1)
+
+    def test_normalize_categorical_output_length_equals_non_null_input_length(self):
+        series = pd.Series(["a", None, "b", None, "c"])
+        out = _normalize_categorical(series)
+        assert len(out) == 3
+
+    def test_normalize_categorical_removing_one_row_removes_at_most_one_element(self):
+        base = pd.Series(["a", "b", "c", "d", "e"])
+        base_out = _normalize_categorical(base)
+        for i in range(len(base)):
+            dropped = base.drop(base.index[i]).reset_index(drop=True)
+            dropped_out = _normalize_categorical(dropped)
+            assert len(base_out) - len(dropped_out) in (0, 1)
+
+    def test_normalize_numeric_never_warns_on_exotic_content(self):
+        import warnings
+
+        series = pd.Series(["1", 1 + 2j, None, object(), "not a number"], dtype=object)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _normalize_numeric(series, lower=0.0, upper=10.0)
+        assert caught == [], [str(w.message) for w in caught]
 
 
 class TestReleaseIds:
@@ -281,6 +346,67 @@ class TestDisclosureChannelRegressions:
             )
             assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == 10
             assert snap["dp"]["query_count"] == ordinary["dp"]["query_count"]
+            # C-B2 (Codex round-3 blocker): the previous version of this
+            # test compared only bin edges, bin-count length, and query
+            # count, and missed a differing `dtype` -- the parked
+            # `canonical_dtype_label(frame[col].dtype)` emitted "float64"
+            # for the all-null/all-inf frames (already float dtype) but
+            # would emit "int64"/"object" for other private inputs under
+            # the identical public declaration. dtype is now a function of
+            # declared kind alone, so it must be identical across every
+            # neighbour here regardless of the frame's own pandas dtype.
+            assert snap["columns"]["age"]["dtype"] == ordinary["columns"]["age"]["dtype"]
+
+    def test_dp_numeric_dtype_is_identical_across_int64_and_float64_input_frames(self):
+        """C-B2 (Codex round-3 blocker), direct reproduction: `[1]` (a
+        pandas int64 column) versus `[1, None]` (float64 -- pandas
+        upcasts an integer column the moment a null enters it) under
+        IDENTICAL public declarations used to emit `dtype: "int64"` and
+        `dtype: "float64"` respectively -- a private-value-dependent
+        disclosure with no caller declaration behind it. Both must now
+        emit the same dtype label, derived only from declared kind."""
+        int_only = fit_dp_snapshot(
+            pd.DataFrame({"age": [1]}),
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        with_null = fit_dp_snapshot(
+            pd.DataFrame({"age": [1, None]}),
+            categorical_columns=[],
+            numeric_domains={"age": (0.0, 120.0)},
+            epsilon=2.0,
+            delta=1e-6,
+        )
+        assert int_only["columns"]["age"]["dtype"] == with_null["columns"]["age"]["dtype"]
+
+    def test_dp_fit_emits_no_warning_regardless_of_a_complex_valued_neighbor(self):
+        """C-B2 (Codex round-3 blocker), direct reproduction: two numeric
+        neighbours with identical public declarations and pandas dtype
+        `object`, `["1"]` versus `["1", 1+2j]` (adding one row containing
+        a complex value). The parked vectorized `pd.to_numeric(...).
+        to_numpy(dtype=float)` path deterministically emitted
+        `ComplexWarning` for the second neighbour and nothing for the
+        first -- an observable with probability 0 on one neighbour and 1
+        on the other, which alone violates any (epsilon, delta) guarantee
+        with delta < 1. Both neighbours must now emit zero warnings."""
+        import warnings
+
+        domains = {"age": (0.0, 10.0)}
+        neighbor_a = pd.DataFrame({"age": pd.Series(["1"], dtype=object)})
+        neighbor_b = pd.DataFrame({"age": pd.Series(["1", 1 + 2j], dtype=object)})
+        for neighbor in (neighbor_a, neighbor_b):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                fit_dp_snapshot(
+                    neighbor,
+                    categorical_columns=[],
+                    numeric_domains=domains,
+                    epsilon=2.0,
+                    delta=1e-6,
+                )
+            assert caught == [], [str(w.message) for w in caught]
 
     def test_all_distinct_categorical_versus_single_repeated_label_same_schema(self):
         all_distinct = pd.DataFrame({"cat": [f"v{i}" for i in range(50)]})
@@ -345,7 +471,7 @@ class TestCategoricalRelease:
         backend = _FixedCategoricalBackend(
             row_count=1000, grouped={"CA": 10, "NY": 90, "TX": 900}, total=1000
         )
-        snap = fit_dp_snapshot(
+        snap = _fit_dp_snapshot_with_backend(
             df,
             categorical_columns=["state"],
             numeric_domains={},
@@ -383,21 +509,45 @@ class TestCategoricalRelease:
         tails below differ in both mass (20 rows vs. 40) and cardinality
         (20 distinct labels vs. 7), so a defect reading either true
         quantity off the suppressed values makes `snap_a` and `snap_b`
-        disagree."""
+        disagree.
+
+        D-H1 (dennis HIGH): that same earlier version ALSO gave both
+        scenarios identical TRUE KEPT counts for the retained labels
+        themselves (CA 300 / NY 150 / TX 50 in both, true kept sum 500 in
+        both), even though the backend's FORCED released grouped dict and
+        total are what `other_count` is supposed to depend on. A defect
+        computing `other_count` from each retained label's TRUE count
+        read off the raw input --
+
+            other_count = max(0, non_null_total - sum(
+                list(cat_values).count(label) for label, _count in retained
+            ))
+
+        -- reads `retained`'s LABELS from the forced (identical) released
+        dict but each label's COUNT from the private input, so with
+        identical true kept sums (500 in both) it still computes the
+        identical `other_count` (20) for both scenarios and this test
+        would not notice. df_b now gives the retained labels DIFFERENT
+        true counts (CA 400 / NY 100 / TX 10, true kept sum 510) while the
+        backend still forces the SAME released grouped dict/total for
+        both -- the mutant above then computes 20 for `snap_a` and 10 for
+        `snap_b` and the byte-identity assertion below catches it."""
         backend = _FixedCategoricalBackend(
             row_count=520, grouped={"CA": 300, "NY": 150, "TX": 50}, total=520
         )
-        # Same kept labels/counts and same released total; DIFFERENT
-        # suppressed tail MASS and CARDINALITY (not merely label names):
-        # df_a has 20 rows across 20 distinct rare labels, df_b has 40
-        # rows across 7 distinct rare labels.
+        # Same kept LABELS and same released total (both forced by the
+        # backend, identical for df_a and df_b); DIFFERENT true kept
+        # COUNTS (500 vs 510) AND different suppressed tail mass/
+        # cardinality (20 rows/20 labels vs. 40 rows/7 labels) -- both
+        # kinds of "read the true value instead of the released one"
+        # defect have a distinct private quantity to disagree on.
         df_a = pd.DataFrame(
             {"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + [f"rareA{i}" for i in range(20)]}
         )
         rare_labels_b = [f"rareB{i}" for i in range(7)]
         tail_b = [rare_labels_b[i % len(rare_labels_b)] for i in range(40)]
-        df_b = pd.DataFrame({"state": ["CA"] * 300 + ["NY"] * 150 + ["TX"] * 50 + tail_b})
-        snap_a = fit_dp_snapshot(
+        df_b = pd.DataFrame({"state": ["CA"] * 400 + ["NY"] * 100 + ["TX"] * 10 + tail_b})
+        snap_a = _fit_dp_snapshot_with_backend(
             df_a,
             categorical_columns=["state"],
             numeric_domains={},
@@ -405,7 +555,7 @@ class TestCategoricalRelease:
             delta=1e-6,
             _session_backend=backend,
         )
-        snap_b = fit_dp_snapshot(
+        snap_b = _fit_dp_snapshot_with_backend(
             df_b,
             categorical_columns=["state"],
             numeric_domains={},

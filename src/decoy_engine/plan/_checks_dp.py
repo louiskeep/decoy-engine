@@ -44,39 +44,31 @@ DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
 
 
 def _dp_declared(config: dict[str, Any]) -> bool:
-    """Is `global_settings.dp` PRESENT with real content (key membership
-    for everything except the bare-`None` value, not truthiness)?
+    """Is `global_settings.dp` PRESENT (key membership, not truthiness)?
 
-    A missing or non-mapping `global_settings` means DP was never
-    declared -- not an error. A present `dp` key under a valid
-    `global_settings` whose value is anything OTHER than `None` (`{}`, a
-    list, a scalar, an incomplete mapping) means DP WAS declared and
-    fails closed on the malformed shape (guide section 6 row F6).
+    A missing or non-mapping `global_settings`, or a `global_settings`
+    with no `dp` key at all, means DP was never declared -- not an error.
+    A present `dp` key means DP WAS declared and fails closed on any
+    malformed shape, including a bare `None` (guide section 6 row F6):
+    `parse_dp_ceiling` rejects `dp: null` with `dp_budget_declaration_
+    malformed`, the same as `{}`, a list, or an incomplete mapping.
 
-    `dp: None` specifically is treated as NOT declared, one narrow,
-    deliberate deviation from the guide's literal membership-only test:
-    `decoy_engine.config._global_settings.GlobalSettings.dp` is an
-    existing (pre-DPS-Scope-B) Optional pydantic field defaulting to
-    `None`, and the documented production choke point
-    (`PipelineConfig.model_validate(cfg).model_dump()`, `decoy_engine/
-    __init__.py`) ALWAYS materializes that field -- every config that
-    never touched `dp` still dumps `global_settings["dp"] = None`. A pure
-    membership test misreads that serialization artifact as "the operator
-    declared DP," which fails EVERY ordinary non-DP pipeline compiled
-    through the documented choke point (confirmed: `PipelineConfig.
-    model_validate({...}).model_dump()["global_settings"]["dp"]` is
-    `None` for any config that never set `dp`). `None` carries the same
-    "unset" meaning here that it carries for every other GlobalSettings
-    optional field, all of which are read via `.get(...)` truthiness
-    elsewhere in this compiler, so `dp: None` reads the same as `dp`
-    absent. `{}`, a list, or any other non-mapping value is still a hard
-    compile error -- there is no way to construct those through ordinary
-    PipelineConfig validation, so no equivalent false-positive risk
-    exists for them."""
+    C-B3 (Codex round-3 blocker, fixed at the root): this used to carve
+    out a bare `None` value as "unset", because the documented production
+    choke point (`PipelineConfig.model_validate(cfg).model_dump()`)
+    materialized `global_settings["dp"] = None` for BOTH an unset field
+    and an explicit `dp: null` -- collapsing them made the check
+    indistinguishable from a real fail-open: an operator writing `dp:
+    null` got the identical (non-DP) treatment as a pipeline that never
+    touched `dp`, silently bypassing every DP gate. The fix lives at the
+    source of the ambiguity, not here: `config.PipelineConfig.model_dump`
+    now omits the `dp` key entirely when `GlobalSettings.model_fields_set`
+    shows it was never assigned, and leaves it present (including a bare
+    `None`) when it was explicitly written. With that distinction restored
+    upstream, this function is a pure membership test again -- exactly
+    the guide's original text -- and needs no `None` special case."""
     global_settings = config.get("global_settings")
-    if not isinstance(global_settings, dict) or "dp" not in global_settings:
-        return False
-    return global_settings["dp"] is not None
+    return isinstance(global_settings, dict) and "dp" in global_settings
 
 
 def _dp_raw(config: dict[str, Any]) -> Any:

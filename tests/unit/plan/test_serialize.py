@@ -37,7 +37,7 @@ def _profile() -> Profile:
     )
 
 
-def _dp_fit_mixed(tmp_path, *, n=400, epsilon=5.0, delta=1e-6) -> str:
+def _dp_fit_mixed(tmp_path, *, n=400, epsilon=5.0, delta=1e-6, name: str = "dp.json") -> str:
     rng = np.random.default_rng(3)
     df = pd.DataFrame(
         {
@@ -52,7 +52,7 @@ def _dp_fit_mixed(tmp_path, *, n=400, epsilon=5.0, delta=1e-6) -> str:
         epsilon=epsilon,
         delta=delta,
     )
-    path = tmp_path / "dp.json"
+    path = tmp_path / name
     path.write_text(json.dumps(snap), encoding="utf-8")
     return str(path)
 
@@ -67,6 +67,29 @@ def _compiled_dp_plan(tmp_path, *, epsilon: float = 5.0, delta: float = 1e-6):
                 "row_count": 5,
                 "generate_columns": [
                     {"name": "state", "type": "statistical", "snapshot_file": path}
+                ],
+            }
+        ],
+    }
+    return compile_plan(cfg, _profile(), decoy_engine_version="test")
+
+
+def _compiled_dp_plan_two_snapshots(tmp_path, *, epsilon: float = 2.0, delta: float = 1e-6):
+    """D-H2 (dennis HIGH): a Plan with TWO statistical columns pointing at
+    TWO DIFFERENT `snapshot_file` paths, each its own independent DP fit
+    (own release_id). Declares a generous ceiling since two independent
+    releases compose (never dedup by content)."""
+    path_a = _dp_fit_mixed(tmp_path, name="dp_a.json", epsilon=epsilon, delta=delta)
+    path_b = _dp_fit_mixed(tmp_path, name="dp_b.json", epsilon=epsilon, delta=delta)
+    cfg = {
+        "global_settings": {"seed": 1, "dp": {"epsilon": 5 * epsilon, "delta": 5 * delta}},
+        "tables": [
+            {
+                "name": "t",
+                "row_count": 5,
+                "generate_columns": [
+                    {"name": "state", "type": "statistical", "snapshot_file": path_a},
+                    {"name": "age", "type": "statistical", "snapshot_file": path_b},
                 ],
             }
         ],
@@ -198,6 +221,39 @@ def test_plan_from_yaml_refuses_unpinned_snapshot_file_instead_of_reading_disk(t
     tampered_yaml = __import__("yaml").safe_dump(data, sort_keys=False)
 
     with open(snapshot_path, "w", encoding="utf-8") as fh:
+        fh.write("NOT JSON AT ALL")
+
+    with pytest.raises(PlanCompileError) as exc:
+        plan_from_yaml(tampered_yaml)
+    assert exc.value.code == "statistical_snapshot_not_pinned"
+
+
+def test_plan_from_yaml_refuses_when_only_one_of_two_pinned_snapshots_is_removed(tmp_path):
+    """D-H2 (dennis HIGH): the regression test above only covers emptying
+    `generation.snapshots` ENTIRELY, which a guard shaped like `if
+    snapshot_file and str(snapshot_file) not in pinned and not pinned:`
+    would also pass (`pinned` is empty either way, so the `and not
+    pinned` clause is trivially true and never distinguishes anything).
+    This compiles a Plan with TWO statistical columns pointing at two
+    DIFFERENT snapshot_file paths and removes only the SECOND pinned
+    entry, leaving `pinned` non-empty (it still contains the first). A
+    guard with that extra clause would see a non-empty `pinned`, take the
+    `and not pinned` branch to False, and silently fall through to
+    `_load_snapshot` reopening the removed path -- exactly the concrete
+    escape the finding names. The shipped guard here has no such clause
+    and does not change; this only adds the missing fixture."""
+    plan = _compiled_dp_plan_two_snapshots(tmp_path)
+    rendered = plan_to_yaml(plan)
+    data = __import__("yaml").safe_load(rendered)
+
+    assert len(data["generation"]["snapshots"]) == 2
+    removed_path = data["generation"]["snapshots"][1]["source_path"]
+    data["generation"]["snapshots"] = [data["generation"]["snapshots"][0]]
+    tampered_yaml = __import__("yaml").safe_dump(data, sort_keys=False)
+
+    # Overwrite the removed path with unparseable content: any fallback to
+    # a direct read would raise statistical_snapshot_unreadable instead.
+    with open(removed_path, "w", encoding="utf-8") as fh:
         fh.write("NOT JSON AT ALL")
 
     with pytest.raises(PlanCompileError) as exc:
