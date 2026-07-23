@@ -12,9 +12,12 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.metadata
+import pathlib
 
 import opendp.prelude as dp
 import pytest
+
+import decoy_engine
 
 
 def test_opendp_supported_python_and_core_mechanisms_import():
@@ -145,3 +148,45 @@ def test_dp_stack_does_not_import_polars_or_opendp_extras():
     # never spell the extra.
     reqs = importlib.metadata.requires("decoy-engine") or []
     assert not any("opendp[polars]" in r for r in reqs)
+
+
+def _every_top_level_import(path: pathlib.Path) -> set[str]:
+    """Every module named by a top-level `import`/`from ... import` in one
+    source file, walked statically via `ast` (not `sys.modules`, for the
+    same contamination reason `_imported_top_level_names` above avoids
+    it)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+    return names
+
+
+def test_quality_dp_budget_is_the_only_module_that_imports_opendp_anywhere():
+    """H1: guide section 4.3.5 mitigation 1 requires `OpenDpReleaseSession`
+    (in `quality/dp_budget.py`) to be the SOLE construction and invocation
+    site for OpenDP measurements in the whole codebase -- not merely that
+    `quality/dp.py` and `quality/dp_budget.py` themselves avoid `polars`/
+    `opendp.extras` (the previous, narrower check). Walking every source
+    file under `src/decoy_engine` and asserting `opendp` is named ONLY by
+    `dp_budget.py` is the mechanical pin: a later contributor adding a
+    second OpenDP call site anywhere in the package fails this test,
+    rather than silently opening a second, unaudited construction/
+    invocation site."""
+    package_root = pathlib.Path(decoy_engine.__file__).resolve().parent
+    offenders: dict[str, set[str]] = {}
+    for path in sorted(package_root.rglob("*.py")):
+        imported = _every_top_level_import(path)
+        opendp_names = {n for n in imported if n == "opendp" or n.startswith("opendp.")}
+        if not opendp_names:
+            continue
+        rel = path.relative_to(package_root).as_posix()
+        if rel != "quality/dp_budget.py":
+            offenders[rel] = opendp_names
+    assert offenders == {}, (
+        f"only quality/dp_budget.py may import opendp (guide section 4.3.5 mitigation 1); "
+        f"found: {offenders!r}"
+    )
