@@ -724,13 +724,19 @@ class TestDataFrameBoxingRegressionSeeds:
         assert _multiset_distance(rel_base, rel_other) == 0
 
     def test_bool_column_with_one_1j_appended_reboxes_but_flags_hold(self) -> None:
-        # Appending `1j` widens a bool column to object/complex; every True is
-        # reboxed to (1+0j) and must still read True, while the 1j cell drops.
+        # The REAL reboxing (Codex phase-2 LOW-3): a numpy array over the neighbour
+        # rows widens the whole column to complex128, so every existing True is
+        # physically reboxed to np.complex128(1+0j) -- not a Python-list object
+        # column where the cells stay Python bool. Each reboxed True must still
+        # read True, and the 1j cell (nonzero imaginary) drops.
         schema = {"f": {"carrier": "flag"}}
         base = pd.DataFrame({"f": [True, False, True]})
-        neighbour = pd.DataFrame({"f": [True, False, True, 1j]})
+        neighbour = pd.DataFrame({"f": np.array([True, False, True, 1j])})
         assert base["f"].dtype == np.dtype("bool")
-        assert neighbour["f"].dtype == np.dtype("object")
+        assert neighbour["f"].dtype == np.dtype("complex128")
+        # the existing cells are genuinely complex128 now, the boxing that breaks a
+        # naive bool()/read-the-column-dtype adapter:
+        assert type(neighbour["f"].to_numpy()[0]) is np.complex128
         rel_base = released_values(dataframe_to_carrier_table(base, schema))["f"]
         rel_other = released_values(dataframe_to_carrier_table(neighbour, schema))["f"]
         assert [bool(x) for x in rel_base] == [True, False, True]
@@ -909,6 +915,35 @@ class TestColumnSchemaValidation:
                 dataframe_to_carrier_table(frame, schema)
             codes.append(exc.value.code)
         assert codes == ["dp_adapter_duplicate_column", "dp_adapter_duplicate_column"]
+
+    def test_non_string_carrier_fails_loud(self) -> None:
+        # A numpy array whose `== "number"` is truthy must not slip through `in`.
+        schema = {"n": {"carrier": np.array(["number"]), "bounds": (0.0, 9.0)}}
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(pd.DataFrame({"n": [0.5]}), schema)
+        assert exc.value.code == "dp_carrier_unknown"
+
+    @pytest.mark.parametrize("kind", [[], {}, np.array(["categorical"])])
+    def test_unhashable_or_non_string_kind_fails_loud(self, kind: Any) -> None:
+        # An unhashable kind must be a coded error, not a raw TypeError from .get().
+        schema = {"n": {"carrier": "number", "kind": kind, "bounds": (0.0, 9.0)}}
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(pd.DataFrame({"n": [0.5]}), schema)
+        assert exc.value.code == "dp_kind_unknown"
+
+    def test_multiindex_partial_label_fails_identically_on_empty_and_one_row(self) -> None:
+        # Columns [("a","x"),("a","y")] with schema key "a": df["a"] is a DataFrame.
+        # This bypasses the flat-duplicate check but must still fail coded and
+        # data-independently, not raise a raw AttributeError (Codex phase-2 LOW-2).
+        schema = {"a": {"carrier": "number", "bounds": (0.0, 9.0)}}
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y")])
+        codes = []
+        for n in (0, 1):
+            frame = pd.DataFrame(np.ones((n, 2)), columns=cols)
+            with pytest.raises(CarrierError) as exc:
+                dataframe_to_carrier_table(frame, schema)
+            codes.append(exc.value.code)
+        assert codes == ["dp_adapter_ambiguous_column", "dp_adapter_ambiguous_column"]
 
     @pytest.mark.parametrize(
         "bounds",

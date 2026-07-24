@@ -112,19 +112,22 @@ def _validate_column_schema(column_schema: Any) -> dict[str, tuple[float, float]
                 message=f"column {name!r}: schema entry must be a dict, got {type(spec).__name__}",
             )
         carrier = spec.get("carrier")
-        if carrier not in _VALID_CARRIERS:
+        # `isinstance str` FIRST, so a non-string (a numpy array whose `== "number"`
+        # is truthy, an unhashable value) is rejected with a coded error instead of
+        # slipping through `in` or raising a raw TypeError.
+        if not isinstance(carrier, str) or carrier not in _VALID_CARRIERS:
             raise CarrierError(
                 code="dp_carrier_unknown",
                 message=f"column {name!r}: unknown carrier {carrier!r}, expected one of {_VALID_CARRIERS}",
             )
         kind = spec.get("kind")
         if kind is not None:
-            allowed = _KIND_TO_CARRIERS.get(kind)
-            if allowed is None:
+            if not isinstance(kind, str) or kind not in _KIND_TO_CARRIERS:
                 raise CarrierError(
                     code="dp_kind_unknown",
                     message=f"column {name!r}: unknown kind {kind!r}, expected one of {tuple(_KIND_TO_CARRIERS)}",
                 )
+            allowed = _KIND_TO_CARRIERS[kind]
             if carrier not in allowed:
                 raise CarrierError(
                     code="dp_kind_carrier_mismatch",
@@ -293,6 +296,17 @@ def dataframe_to_carrier_table(df: pd.DataFrame, column_schema: dict[str, dict])
     for name, spec in column_schema.items():
         carrier = spec["carrier"]
         series = df[name]
+        # A partial MultiIndex label (columns [("a","x"),("a","y")], key "a") passes
+        # the `name in df.columns` / flat-duplicate checks yet selects a DataFrame.
+        # Reject any non-Series selection with a coded error before any cell read.
+        if not isinstance(series, pd.Series):
+            raise CarrierError(
+                code="dp_adapter_ambiguous_column",
+                message=(
+                    f"column {name!r}: selects a {type(series).__name__}, not a single Series "
+                    "(duplicate or partial MultiIndex label)"
+                ),
+            )
         if carrier == "number":
             lower, upper = number_bounds[name]
             columns[name] = _build_number(series, row_count, lower, upper)
