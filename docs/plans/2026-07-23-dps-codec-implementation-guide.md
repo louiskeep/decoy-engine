@@ -1,6 +1,7 @@
 # DPS-CODEC implementation guide
 
-Status: PLAN, revision 6 (remediated against Codex plan-review rounds 1-5, all
+Status: PLAN COMPLETE / BUILD-READY (Codex round-6 verdict: A -- BUILD NOW),
+revision 6 (remediated against Codex plan-review rounds 1-5, all
 BLOCK but each spec-detail-not-design; round 5 confirmed the carrier architecture is
 sound, the `carrier=None` non-DP compatibility CLOSED, 1,273 tests pass, and returned
 a HIGH + MEDIUM now closed here at the ROOT rather than by another hand-patch: (HIGH)
@@ -11,9 +12,13 @@ resolved environment + full CPython version instead of a curated tuple -- comple
 construction; (MEDIUM) the direct-carrier path is made genuinely pandas/pyarrow-free by
 splitting the adapter into a lazily-imported `carrier_adapter.py` with a CI
 import-isolation assertion). Author: Opus. Cycle: DPS-CODEC.
-NOTE: this is the 5th consecutive spec-detail BLOCK; per the anti-bad-loop guard the
-re-gate-vs-build-now decision is being surfaced to Cam rather than auto-spinning a 6th
-review.
+GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
+probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
+build-ready, no residual carrier/codec/adjacency/artifact/compatibility design hole
+remains, and the round-5 transitive-distribution HIGH is closed by construction; the
+remaining items are executable build-time checks best retired as code under the build's
+own review gates (folded into §7 as the round-6 build-gate acceptance checks + honest
+native-artifact scope wording in §3.8). AWAITING Cam greenlight to start BUILD phase 1.
 
 Expands ROADMAP §DPS item 5; grounded in the current code it modifies.
 
@@ -192,7 +197,9 @@ artifact/verifier); no per-column bins in v1.
 
 ### 3.6 The pandas adapter (in-engine, in the end-to-end claim)
 
-One shared adapter `DataFrame + column_schema -> CarrierTable` in `quality/carriers.py`,
+One shared adapter `DataFrame + column_schema -> CarrierTable` in
+`quality/carrier_adapter.py` (a lazily-imported submodule, NOT `carriers.py`, so the
+direct-carrier path stays pandas/pyarrow-free -- §3.8 MEDIUM),
 inside the end-to-end claim. Owns the guarded per-cell fetch (keep the positional-read
 guard from `_cells`, `dp_normalize.py:295`, for Arrow cells that raise on fetch), null
 detection, validity construction, then the per-carrier codec. Its output goes through
@@ -232,10 +239,17 @@ the landed behaviour rather than a stronger paraphrase.
 
 ### 3.8 Dependency gate: exact certified manifest (round-2 HIGH-3)
 
-A STATIC certified manifest. Every row is the COMPLETE certified runtime identity of
-the proof stack, not just the adapter libs (round-4 HIGH: a tuple that omits a
-runtime dimension the proof actually depends on merely relocates version drift). The
-row identity has two parts:
+A STATIC certified manifest. Every row certifies the **complete locked
+Python-distribution version set** of the proof stack (round-6 wording, honest scope):
+it captures every Python distribution and its version, not just the adapter libs
+(round-4 HIGH: a tuple that omits a runtime dimension the proof depends on merely
+relocates version drift). It is deliberately NOT a claim of exact binary identity --
+native inputs below the distribution/version layer (OpenDP's bundled `opendp.abi3.so`
+Rust core, numpy/scipy's bundled OpenBLAS/gfortran, the exact glibc patch, the exact
+CPython build) are captured only at wheel/`RECORD`-hash granularity, which v1 does not
+gate on. This matches the non-authentication threat model (§3.8 last bullet); if exact
+tested-binary identity is later wanted, add selected wheel/`RECORD` hashes + an exact
+libc constraint (deferred, ROADMAP). The row identity has two parts:
 
 1. **Platform (round-4 HIGH-b).** v1 certifies **exactly one platform: Linux,
    x86-64, CPython, glibc (manylinux)** -- the only platform our CI actually
@@ -415,15 +429,43 @@ Replaced: `dp_normalize.py` + the fit-API surface. Kept (adapted): `dp_budget`,
   reboxing produces a real dtype-differing comparison.
 - Flag-path tests (§3.4). Sanitizer tests: direct carrier with NaN/NUL/surrogate is
   rejected before FFI.
+- **Round-6 build-gate acceptance checks (Codex-required, verified as executable
+  invariants at the code-review gate, not in prose):**
+  - **Lock-set == installed-set.** A CI assertion that the marker-selected `uv.lock`
+    distribution set equals the installed `importlib.metadata` set BEFORE certifying
+    its hash. Freeze the exact extras/groups profile used for certification and the
+    project-inclusion policy (the editable `decoy-engine` dist); PEP 503 name
+    canonicalization, exact version-string handling, duplicate-name rejection, and a
+    canonical serialization before hashing. (Probe: base profile = 55 dists, dev
+    profile = 70 registry + 1 editable = 71 installed; the fingerprint is only
+    reproducible once the profile is fixed.)
+  - **Fingerprint fail-closed** on any unrelated package added to the env (safe but
+    strict -> CLI/platform hosts need their own certified rows or an isolated fit env;
+    this feeds ROADMAP item 2 wiring).
+  - **Direct-carrier import isolation (broader than `dp.py:55`).** The subprocess
+    acceptance test (real direct-carrier fit -> assert `pandas`/`pyarrow` absent from
+    `sys.modules`) must also drive fixing the eager import chain Codex found:
+    `quality/__init__.py:23` (eager pandas-bearing exports), `snapshot.py:71` (schema
+    constants that import pandas) -> move DP schema constants to a pandas-free module +
+    lazy package exports, since importing `quality.carriers` today transitively
+    executes `quality/__init__.py`.
+  - **Native-artifact scope stated honestly** in `what-we-cannot-prove.md` (§3.8
+    wording): the gate is the locked distribution/version set, not exact binary
+    identity (opendp `.so`, OpenBLAS, glibc patch, CPython build are below the gate).
+  - Crown-jewel adjacency passes on EVERY certified row.
 
 ## 8. Build order
 
-1. `quality/carriers.py`: `CarrierTable` + invariants + `sanitize_carrier_table`;
-   crown-jewel adjacency invariant (both paths, row-count projection) landed FIRST;
-   the three codecs with the property strategy + regression seeds.
-2. Adapter + `column_schema` API + closed kind x carrier validation + `other_mode`
-   flag rule.
-3. Certified manifest + fit/generation gates + CI matrix.
+1. `quality/carriers.py` (pandas/pyarrow-free): `CarrierTable` + invariants +
+   `sanitize_carrier_table`; crown-jewel adjacency invariant (both paths, row-count
+   projection) landed FIRST; the three codecs with the property strategy + regression
+   seeds. Land the direct-carrier import-isolation subprocess test here (drives the
+   `quality/__init__.py` / `snapshot.py` pandas-free refactor).
+2. `quality/carrier_adapter.py` (lazily imported) + `column_schema` API + closed
+   kind x carrier validation + `other_mode` flag rule.
+3. Certified manifest as a LOCK FINGERPRINT (§3.8: lock-set==installed-set CI
+   assertion, frozen profile, canonical hash) + fit/generation gates + CI matrix
+   pinned to exact CPython patches.
 4. `dp_schedule` carrier field; `dp_budget` bool-domain measurements + endpoints +
    eps-range probe + frozen cache key; `dp_ledger` `>= 0`.
 5. Orchestration + artifact `dps-marginal/v3` (carrier metadata + recorded tuple +
