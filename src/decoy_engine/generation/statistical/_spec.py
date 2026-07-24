@@ -13,7 +13,7 @@ the spec refuses to load (`statistical_real_categories_not_allowed`).
 Differential privacy lives at FIT time (`quality.dp.fit_dp_snapshot`);
 the spec layer consumes exact and DP-fit snapshots identically EXCEPT
 for one exemption: a categorical column whose snapshot the COMPILER has
-already verified as an OpenDP-certified `dps-marginal/v2` release
+already verified as an OpenDP-certified `dps-marginal/v3` release
 (`dp_verified=True`, threaded in by the caller -- never inferred by
 reading the snapshot's own `dp` key, guide section 5) does not need the
 `allow_real_categories` consent gate, because there is no real vocabulary
@@ -182,7 +182,7 @@ def load_spec(
             (guide section 4.7) -- this function never opens
             `col_cfg["snapshot_file"]` itself.
         dp_verified: Whether the PLAN COMPILER has verified this exact
-            snapshot as an OpenDP-certified `dps-marginal/v2` release for
+            snapshot as an OpenDP-certified `dps-marginal/v3` release for
             this column (guide section 5). Never derived by reading
             `snapshot["dp"]` here -- an unverified `dp`-shaped key in an
             otherwise ordinary snapshot must not exempt anything; only the

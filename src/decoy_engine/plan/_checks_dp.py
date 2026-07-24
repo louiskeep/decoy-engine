@@ -16,7 +16,7 @@ blanket-reject this module previously carried: `fit_dp_snapshot`'s
 categorical release is OpenDP-certified end to end, so a `kind:
 categorical` column IS accepted here, gated on the SAME provenance
 verification as numeric -- the snapshot's own `dp.categorical_columns`
-declaration, checked against a reproduced `dps-marginal/v2` schema, not
+declaration, checked against a reproduced `dps-marginal/v3` schema, not
 a truthy `dp` key alone.
 
 `verify_dp_snapshots` is the compile-time half of the guide's release-ID
@@ -29,17 +29,43 @@ ReadSnapshot`, guide section 4.7) -- it never calls `open()` itself.
 
 from __future__ import annotations
 
-import importlib.metadata
 import math
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DpVerification
 from decoy_engine.quality.dp_ledger import ReleaseLedger
+from decoy_engine.quality.dp_provenance import ProvenanceError, validate_recorded_provenance
 from decoy_engine.quality.snapshot import DP_SNAPSHOT_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from decoy_engine.plan._generation import ReadSnapshot
+
+
+def _carrier_aware_query_count(dp_block: dict[str, Any]) -> int | None:
+    """Reconstruct the artifact's own `query_count` from its recorded
+    `column_schema`, carrier-aware (guide sections 3.4/3.9): a `number` carrier
+    is one numeric query, a `text` OR `flag` carrier is a categorical PAIR (the
+    flag column's bool-domain pair is the same DP guarantee as the text path, so
+    it reconstructs to the same count). Returns `1 + numeric + 2*categorical`,
+    or `None` when the recorded schema is missing/malformed or carries an
+    unknown carrier (the caller then rejects the artifact)."""
+    column_schema = dp_block.get("column_schema")
+    if not isinstance(column_schema, dict):
+        return None
+    numeric = 0
+    categorical = 0
+    for spec in column_schema.values():
+        if not isinstance(spec, dict):
+            return None
+        carrier = spec.get("carrier")
+        if carrier == "number":
+            numeric += 1
+        elif carrier in ("text", "flag"):
+            categorical += 1
+        else:
+            return None
+    return 1 + numeric + 2 * categorical
 
 
 def _dp_declared(config: dict[str, Any]) -> bool:
@@ -257,12 +283,14 @@ def verify_dp_snapshots(
 
     Raises:
         PlanCompileError: ``dp_budget_declaration_malformed`` (malformed
-            ceiling); ``dp_snapshot_not_dp_fit`` (no `dps-marginal/v2` `dp`
-            block); ``dp_snapshot_library_version_mismatch`` (opendp/
-            dp_accounting version mismatch); ``dp_snapshot_query_count_
-            mismatch`` (declared columns don't reproduce the artifact's
-            own `query_count`); ``dp_snapshot_kind_not_dp_eligible`` (kind
-            not in the artifact's own numeric/categorical declaration);
+            ceiling); ``dp_snapshot_not_dp_fit`` (no `dps-marginal/v3` `dp`
+            block); ``dp_snapshot_provenance_uncertified`` (the recorded
+            proof-stack identity is not a certified row); ``dp_snapshot_
+            query_count_mismatch`` (declared columns/carriers don't
+            reproduce the artifact's own `query_count`); ``dp_snapshot_
+            carrier_invalid`` (a column's recorded kind x carrier pair is
+            not allowed); ``dp_snapshot_kind_not_dp_eligible`` (kind not in
+            the artifact's own numeric/categorical declaration);
             ``dp_snapshot_missing_release_id``; ``dp_snapshot_budget_
             malformed`` (bad epsilon_total/delta_total);
             ``dp_release_id_conflict`` (same release_id, different
@@ -273,9 +301,6 @@ def verify_dp_snapshots(
     if ceiling is None:
         return frozenset(), None
     declared_epsilon, declared_delta = ceiling
-
-    running_opendp = importlib.metadata.version("opendp")
-    running_dp_accounting = importlib.metadata.version("dp-accounting")
 
     verified: set[tuple[str, str]] = set()
     release_id_to_digest: dict[str, str] = {}
@@ -319,21 +344,30 @@ def verify_dp_snapshots(
                     ),
                 )
 
-            if (
-                dp_block.get("opendp_version") != running_opendp
-                or dp_block.get("dp_accounting_version") != running_dp_accounting
-            ):
+            # Provenance gate (guide section 3.8, replacing the old
+            # compare-to-local-env at this line). Generation validates the
+            # artifact's RECORDED proof-stack identity (platform triple, full
+            # CPython version, lock fingerprint) against the static certified
+            # set -- it does NOT recompute a fingerprint from its own installed
+            # libraries, because the generating host may legitimately differ
+            # from the fitting host. The human-readable `opendp_version` /
+            # `dp_accounting_version` stay in the artifact as INFORMATIONAL
+            # annotation, but the GATE is the recorded identity's membership in
+            # the certified set, not a local-version equality (which both
+            # over-matched generation-irrelevant libs AND, if merely deleted,
+            # would stop validating the proof stack entirely).
+            try:
+                validate_recorded_provenance(dp_block.get("provenance"))
+            except ProvenanceError as exc:
                 _raise(
-                    "dp_snapshot_library_version_mismatch",
+                    "dp_snapshot_provenance_uncertified",
                     table_name=table_name,
                     col_name=col_name,
                     message=(
                         f"statistical column {col_name!r} in table {table_name!r}: the "
-                        f"snapshot was fit with opendp={dp_block.get('opendp_version')!r}, "
-                        f"dp_accounting={dp_block.get('dp_accounting_version')!r}; this "
-                        f"environment runs opendp={running_opendp!r}, "
-                        f"dp_accounting={running_dp_accounting!r}. A receipt this build "
-                        "cannot reproduce is not a receipt it may accept."
+                        f"snapshot's recorded proof stack is not a certified row [{exc.code}] "
+                        f"{exc.message}. A receipt fit on an uncertified platform/stack is not "
+                        "one this build may accept."
                     ),
                 )
 
@@ -349,7 +383,29 @@ def verify_dp_snapshots(
                         "snapshot's `dp` block is missing categorical_columns/numeric_domains."
                     ),
                 )
+            # Carrier-aware reconstruction (guide sections 3.4/3.9): a flag
+            # column's bool-domain grouped+total pair reconstructs the SAME
+            # categorical pair count as the text path. The v3 artifact records a
+            # per-column `column_schema`; reconstruct from it when present (which
+            # also validates every recorded carrier against the closed set), and
+            # require it to agree with the categorical_columns/numeric_domains
+            # reconstruction so the two declarations cannot disagree.
             expected_query_count = 1 + len(numeric_domains) + 2 * len(categorical_cols)
+            carrier_aware = _carrier_aware_query_count(dp_block)
+            if carrier_aware is None or carrier_aware != expected_query_count:
+                _raise(
+                    "dp_snapshot_query_count_mismatch",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: the "
+                        "snapshot's column_schema carriers "
+                        f"(reconstructing to {carrier_aware!r}) do not agree with its "
+                        f"categorical_columns/numeric_domains ({expected_query_count!r}), or a "
+                        "recorded carrier is not one of ('number', 'flag', 'text'). The "
+                        "artifact's declared schedule does not match its declared columns."
+                    ),
+                )
             if dp_block.get("query_count") != expected_query_count:
                 _raise(
                     "dp_snapshot_query_count_mismatch",
@@ -361,6 +417,27 @@ def verify_dp_snapshots(
                         f"its own categorical_columns/numeric_domains recompute to "
                         f"{expected_query_count!r}. The artifact's declared schedule does not "
                         "match its declared columns."
+                    ),
+                )
+
+            # Validate the verified column's own recorded carrier (guide section
+            # 3.9): a numeric column must carry `number`, a categorical column
+            # `text` or `flag`; any other value fails closed.
+            col_carrier = col_snap.get("carrier")
+            col_kind = col_snap.get("kind")
+            carrier_ok = (col_kind == "numeric" and col_carrier == "number") or (
+                col_kind == "categorical" and col_carrier in ("text", "flag")
+            )
+            if not carrier_ok:
+                _raise(
+                    "dp_snapshot_carrier_invalid",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: source "
+                        f"column {source_column!r} records carrier {col_carrier!r} for kind "
+                        f"{col_kind!r}, which is not an allowed kind x carrier pair (numeric->"
+                        "number, categorical->text/flag)."
                     ),
                 )
 
@@ -429,11 +506,18 @@ def verify_dp_snapshots(
 
             epsilon_total = dp_block.get("epsilon_total")
             delta_total = dp_block.get("delta_total")
+            # Zero-epsilon accepted (guide section 4, zero-epsilon finding): the
+            # ledger already sums composed totals with `epsilon_total >= 0`
+            # (`dp_accounting` legitimately composes to exactly 0 at a large
+            # enough delta, e.g. eps=1/delta=0.9), and this reads a COMPOSED
+            # total, not a requested ceiling. A negative total is still
+            # impossible and fails closed; requested ceilings stay strictly
+            # positive at parse_dp_ceiling.
             eps_ok = (
                 isinstance(epsilon_total, (int, float))
                 and not isinstance(epsilon_total, bool)
                 and math.isfinite(epsilon_total)
-                and epsilon_total > 0
+                and epsilon_total >= 0
             )
             delta_ok = (
                 isinstance(delta_total, (int, float))
@@ -450,7 +534,7 @@ def verify_dp_snapshots(
                         f"statistical column {col_name!r} in table {table_name!r}: the "
                         f"snapshot's dp block has epsilon_total={epsilon_total!r}, "
                         f"delta_total={delta_total!r}, which must both be finite "
-                        "(epsilon_total > 0, delta_total >= 0)."
+                        "(epsilon_total >= 0, delta_total >= 0)."
                     ),
                 )
 

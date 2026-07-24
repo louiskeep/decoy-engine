@@ -11,7 +11,19 @@ one-sided bump silently reject every artifact).
 
 from __future__ import annotations
 
-# Codec-metadata schema for a differentially-private snapshot. Stays at v2
-# in DPS-CODEC phase 1; the v3 bump that adds `column_schema`/carrier/codec
-# fields (guide section 3.9) lands with the artifact work in a later phase.
-DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
+# Codec-metadata schema for a differentially-private snapshot. Bumped to v3
+# in DPS-CODEC phase 5 (guide section 3.9): the v3 artifact adds
+# `column_schema`, per-column `carrier`, the codec id/version, the recorded
+# proof-stack identity (platform triple, full CPython version, lock
+# fingerprint), and the source `boundary` (adapter vs direct). Pre-GA hard
+# break, no back-compat shim -- v2 artifacts are rejected by the generation
+# gate, which accepts only this exact version.
+DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v3"
+
+# Codec identity recorded in the v3 artifact (guide section 3.9). The single
+# closed carrier codec set (`quality/carriers.py`) is versioned as one unit:
+# a change to any codec's totality/boxing behaviour bumps this, so an artifact
+# fit under a different codec generation is distinguishable. Bytes-independent
+# of the library-version annotation, which the proof-stack fingerprint gates.
+DP_CODEC_ID = "decoy-carrier-codec"
+DP_CODEC_VERSION = "1"

@@ -30,11 +30,43 @@ from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._generation import read_and_pin_snapshots
 from decoy_engine.profile import Profile
-from decoy_engine.quality.dp import fit_dp_snapshot
+from decoy_engine.quality.dp import fit_dp_snapshot as _real_fit_dp_snapshot
+from decoy_engine.quality.dp_provenance import current_provenance
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
 )
+
+
+def _schema_from(categorical_columns=(), numeric_domains=None):
+    """Legacy-kwargs -> phase-5 `column_schema` translation for this suite (see
+    test_dp.py's `_schema_from`; the DPS-CODEC signature migration, guide
+    section 3.5)."""
+    schema: dict[str, dict] = {}
+    for c in categorical_columns:
+        schema[c] = {"kind": "categorical", "carrier": "text"}
+    for c, bounds in (numeric_domains or {}).items():
+        schema[c] = {"kind": "numeric", "carrier": "number", "bounds": bounds}
+    return schema
+
+
+def fit_dp_snapshot(frame, *, categorical_columns=(), numeric_domains=None, epsilon, delta):
+    return _real_fit_dp_snapshot(
+        frame, _schema_from(categorical_columns, numeric_domains), epsilon=epsilon, delta=delta
+    )
+
+
+def _certified_provenance_dict() -> dict:
+    """The RECORDED proof-stack identity a genuine `dps-marginal/v3` artifact
+    carries, in JSON-serializable shape. Computed live from the (certified) test
+    environment so `validate_recorded_provenance` accepts it, exactly as the
+    real fit records it (guide sections 3.8/3.9)."""
+    prov = current_provenance()
+    return {
+        "platform": dict(prov.platform._asdict()),
+        "cpython": prov.cpython,
+        "fingerprint": prov.fingerprint,
+    }
 
 
 def _profile() -> Profile:
@@ -187,7 +219,7 @@ class TestCheckDpGenerateContract:
 
 class TestDpCategoricalNowSupported:
     """Scope B binding decision: categorical DP IS supported when the
-    snapshot is a verified `dps-marginal/v2` release. This directly
+    snapshot is a verified `dps-marginal/v3` release. This directly
     supersedes Option A's blanket `dp_categorical_not_yet_supported`."""
 
     def test_dp_categorical_snapshot_compiles_without_allow_real_categories(self, tmp_path):
@@ -263,8 +295,15 @@ class TestDpCategoricalNowSupported:
         df = pd.DataFrame({"age": [12.0, 45.0, 67.0, 89.0, 30.0]})
         snap = compute_distribution_snapshot(df)  # ordinary, EXACT fit
         assert snap["columns"]["age"]["stats"]["mean"] is not None  # a REAL exact statistic
+        # The forger builds a full valid-shell v3 dp block (certified
+        # provenance, column_schema, a `number` carrier on the column) so the
+        # artifact passes the schema/provenance/query-count/carrier gates and
+        # reaches the numeric-shape guard -- which is the check under test: the
+        # exact snapshot's REAL mean can never look like a DP release's
+        # always-null shape.
+        snap["columns"]["age"]["carrier"] = "number"
         snap["dp"] = {
-            "schema": "dps-marginal/v2",
+            "schema": "dps-marginal/v3",
             "release_id": uuid.uuid4().hex,
             "scope": "single-column-marginals",
             "adjacency": "add-remove-one-row",
@@ -277,6 +316,12 @@ class TestDpCategoricalNowSupported:
             "numeric_bins": 10,
             "categorical_columns": [],
             "numeric_domains": {"age": [0.0, 120.0]},
+            "column_schema": {
+                "age": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}
+            },
+            "codec": {"id": "decoy-carrier-codec", "version": "1"},
+            "boundary": "adapter",
+            "provenance": _certified_provenance_dict(),
         }
         path = _write(tmp_path, "forged_numeric.json", snap)
         cfg = _dp_cfg(table_columns=[{"name": "age", "type": "statistical", "snapshot_file": path}])
@@ -289,7 +334,7 @@ class TestDpCategoricalNowSupported:
         plain argument, not derived from `snapshot["dp"]`."""
         df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
         snap = compute_distribution_snapshot(df)
-        snap["dp"] = {"schema": "dps-marginal/v2", "epsilon_total": 1.0, "delta_total": 1e-6}
+        snap["dp"] = {"schema": "dps-marginal/v3", "epsilon_total": 1.0, "delta_total": 1e-6}
         spec_kwargs = {"name": "state", "type": "statistical", "snapshot_file": "x"}
         from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
@@ -592,6 +637,7 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
             "age": {
                 "dtype": "float64",
                 "kind": "numeric",
+                "carrier": "number",
                 "null_count": 0,
                 "non_null_count": 5,
                 "distinct_count": 5,
@@ -608,7 +654,7 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
         },
         "joints": [],
         "dp": {
-            "schema": "dps-marginal/v2",
+            "schema": "dps-marginal/v3",
             "release_id": release_id,
             "scope": "single-column-marginals",
             "adjacency": "add-remove-one-row",
@@ -621,6 +667,10 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
             "numeric_bins": 1,
             "categorical_columns": [],
             "numeric_domains": {"age": [0.0, 120.0]},
+            "column_schema": {"age": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}},
+            "codec": {"id": "decoy-carrier-codec", "version": "1"},
+            "boundary": "adapter",
+            "provenance": _certified_provenance_dict(),
             "_marker": distinct_marker,
         },
     }
@@ -788,14 +838,22 @@ class TestReleaseIdLedger:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_query_count_mismatch"
 
-    def test_dp_artifact_from_a_different_library_version_is_rejected(self, tmp_path):
+    def test_dp_artifact_with_an_uncertified_proof_stack_is_rejected(self, tmp_path):
+        """Phase-5 migration (guide section 3.8): the old compare-to-local-env
+        library-version gate is replaced by proof-stack provenance validation.
+        Generation validates the artifact's RECORDED identity (platform triple,
+        full CPython version, lock fingerprint) against the static certified
+        set -- it does not recompute a fingerprint from its own libs. An artifact
+        whose recorded fingerprint is not a certified row fails closed. (The
+        human-readable `opendp_version` is now informational; mutating it alone
+        no longer gates, which is the point -- the fingerprint does.)"""
         artifact = _numeric_dp_artifact(epsilon_total=0.5)
-        artifact["dp"]["opendp_version"] = "0.0.0-not-installed"
+        artifact["dp"]["provenance"]["fingerprint"] = "0" * 64  # not a certified row
         cfg, _ = _cfg_with_artifact(tmp_path, artifact)
         pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
-        assert exc.value.code == "dp_snapshot_library_version_mismatch"
+        assert exc.value.code == "dp_snapshot_provenance_uncertified"
 
     def test_dp_snapshot_budget_malformed_nan_delta(self, tmp_path):
         artifact = _numeric_dp_artifact(epsilon_total=1.0, delta_total=float("nan"))

@@ -14,6 +14,22 @@ measurement (guide section 4.3.5 mitigation 1); this module drives the
 session through the fixed public schedule and serializes what it
 releases. It does not import `opendp` or `dp_accounting` itself.
 
+DPS-CODEC phase 5 wiring (guide sections 3.5/3.6/3.8/3.9). The recordwise
+projection is now ONE canonical typed-carrier layer (`quality/carriers.py`)
+converted through a single total, boxing-invariant codec per carrier, not the
+scattered pandas value-level inference of `dp_normalize.py`. A `DataFrame`
+source routes through the lazily-imported pandas adapter
+(`quality/carrier_adapter.py`); a directly-supplied `CarrierTable` routes
+through `sanitize_carrier_table` WITHOUT importing the adapter (OpenDP itself
+still loads pandas transitively -- the pandas-free guarantee is over the codec
+CORE, `carriers.py`, not the full OpenDP-backed fit). The number/text carriers
+keep the exact str/number OpenDP release the fit landed with (the phase-1
+codecs reproduce `_normalize_*` byte-for-byte on the values in their domain);
+the `flag` carrier takes the phase-4 bool-domain measurement pair. Before any
+private cell is read the fit fails closed on an uncertified proof stack
+(`check_fit_environment`, section 3.8) and records that identity into the
+`dps-marginal/v3` artifact so generation can re-validate it.
+
 Source patterns (per CLAUDE.md's "use established methodology" rule):
 OpenDP's [transformation user guide](
 https://docs.opendp.org/en/stable/api/user-guide/transformations/index.html)
@@ -49,26 +65,39 @@ import itertools
 import logging
 import math
 import uuid
-from collections.abc import Collection, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
-
+from decoy_engine.quality.carriers import (
+    CarrierError,
+    CarrierTable,
+    _validate_bound,
+    released_values,
+    sanitize_carrier_table,
+)
 from decoy_engine.quality.dp_budget import (
     DpBudgetError,
     OpenDpReleaseSession,
     _OpenDpBackend,
 )
-from decoy_engine.quality.dp_normalize import _normalize_categorical, _normalize_numeric
 from decoy_engine.quality.dp_policy import (
     _DP_NORMALIZATION_POLICY,
     _log_normalization_policy,
 )
+from decoy_engine.quality.dp_provenance import check_fit_environment, current_provenance
 from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
-from decoy_engine.quality.snapshot import (
-    DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
+from decoy_engine.quality.dp_schema import (
+    DP_CODEC_ID,
+    DP_CODEC_VERSION,
     DP_SNAPSHOT_SCHEMA_VERSION,
 )
+from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
+
+if TYPE_CHECKING:
+    # Annotation-only: the direct-`CarrierTable` path must not import pandas,
+    # so `pandas` is never imported at module load (the eager `import pandas as
+    # pd` this module carried through phase 4 is gone). The DataFrame adapter is
+    # imported lazily, inside the fit, only when a DataFrame is actually passed.
+    import pandas as pd
 
 DP_RELEASE_SCOPE = "single-column-marginals"
 DP_ADJACENCY = "add-remove-one-row"
@@ -76,22 +105,27 @@ DP_ACCOUNTANT_LABEL = "dp_accounting PLD composition over OpenDP privacy maps"
 
 _DEFAULT_NUMERIC_BINS = 10
 
-# C-B2 (Codex round-3 blocker): the emitted `dtype` label used to be
-# `canonical_dtype_label(frame[col].dtype)` -- the FRAME's own pandas
-# dtype, which is content-dependent (pandas upcasts an integer column to
-# float64 the moment a null enters it, and an object column's numpy dtype
-# can otherwise vary with content). Codex demonstrated the two-neighbour
-# leak directly: `[1]` (int64) versus `[1, None]` (float64), identical
-# public declarations. `dtype` must be "a function of the caller's public
-# declaration" (guide section 4.2.1), and the only public declaration a DP
-# fit has is column KIND (numeric vs categorical, from `categorical_
-# columns`/`numeric_domains`) -- there is no finer public dtype signal to
-# report. These are fixed labels matching what each normalizer actually
-# produces (`_normalize_numeric` always yields Python floats;
-# `_normalize_categorical` always yields `str`), so the label is honest
-# about the released shape without being read off the private frame.
+# The emitted `dtype` label is a function of the caller's public carrier
+# declaration, never of the private frame's storage dtype (guide section
+# 4.2.1): number releases float64 counts, text releases `str` labels
+# ("object"), flag releases the two canonical bool tokens ("bool"). Reading the
+# frame's own pandas dtype would be content-dependent (an int column upcasts to
+# float64 the moment a null enters it) -- the leak the carrier redesign closes.
 _DP_NUMERIC_DTYPE_LABEL = "float64"
 _DP_CATEGORICAL_DTYPE_LABEL = "object"
+_DP_FLAG_DTYPE_LABEL = "bool"
+
+# The closed release-kind x carrier table (guide section 3.3). `kind` is
+# OPTIONAL in `column_schema` (the carrier alone drives the codec and the
+# mechanism), but when a caller supplies a `kind` it is validated against this
+# table so an impossible pair (categorical + number, which OpenDP has no float
+# `make_count_by` for) fails loud rather than silently mis-releasing. Kept in
+# sync with `carrier_adapter._KIND_TO_CARRIERS` so the DataFrame and direct
+# paths accept exactly the same schema.
+_KIND_TO_CARRIERS: dict[str, tuple[str, ...]] = {
+    "numeric": ("number",),
+    "categorical": ("text", "flag"),
+}
 
 _logger = logging.getLogger(__name__)
 
@@ -113,18 +147,12 @@ def _dp_versions() -> tuple[str, str]:
     )
 
 
-def _validate_config(
-    *,
-    frame: pd.DataFrame,
-    categorical_columns: Collection[str],
-    numeric_domains: Mapping[str, tuple[float, float]],
-    epsilon: float,
-    delta: float,
-    numeric_bins: int,
-) -> None:
-    """Every check here reads only public declarations and `frame.columns`
-    (never a value). Configuration validation runs before any value is
-    inspected (guide section 4.2)."""
+def _validate_fit_params(*, epsilon: float, delta: float, numeric_bins: int) -> None:
+    """Validate the fit-level knobs. Reads only public request parameters, never
+    a value (guide section 4.2). Positivity/range checks here mirror what the
+    landed fit enforced; the per-column carrier/bounds validation moved to the
+    carrier layer (`_parse_column_schema` + `sanitize_carrier_table` / the
+    adapter)."""
     try:
         epsilon = float(epsilon)
     except (TypeError, ValueError) as exc:
@@ -160,198 +188,189 @@ def _validate_config(
             message=f"numeric_bins must be an int >= 2; got {numeric_bins!r}.",
         )
 
-    # D-MEDIUM-1 (dennis round 6) / C-L-1 (Codex round 6): round 5 closed
-    # the non-string LABEL case on the frame side only. The mirror case
-    # is a non-string DECLARATION key: with a string frame column "5" and
-    # `numeric_domains={5: (0.0, 1.0)}`, every check below passed (the
-    # sets are compared stringified, and the bounds loop reads the
-    # original int key), and the fit then indexed `numeric_domains["5"]`
-    # and died on a bare `KeyError` from an entrypoint documenting only
-    # `DpError`. The categorical side was worse than inconsistent: it
-    # SUCCEEDED silently, since that path only ever needs the name.
-    # Reject both, under the same code, before anything is read.
-    non_string_decls = sorted(
-        repr(c) for c in (*categorical_columns, *numeric_domains) if not isinstance(c, str)
-    )
-    if non_string_decls:
-        raise DpError(
-            code="dp_column_label_not_a_string",
-            message=(
-                f"non-string column declarations: {non_string_decls}. Declare columns under "
-                "their exact string names; a stringified key does not address the frame."
-            ),
+
+def _parse_column_schema(
+    column_schema: Any,
+) -> tuple[dict[str, tuple[float, float]], dict[str, str]]:
+    """Split a validated `column_schema` into numeric bounds and categorical
+    carriers for schedule construction.
+
+    Reads only the public schema, never a value, so it runs BEFORE the proof
+    stack gate and BEFORE any private cell is fetched. Structural problems (not
+    a dict, a bad carrier, a malformed/misordered number bound, an impossible
+    kind x carrier pair) fail loud with the SAME coded `CarrierError` the
+    carrier layer raises, so the DataFrame and direct paths reject an identical
+    schema identically. The authoritative per-cell FFI-safety validation is
+    still `sanitize_carrier_table`'s (run on every input); this is only what the
+    schedule needs to know a column's mechanism domain and bin edges."""
+    if not isinstance(column_schema, dict):
+        raise CarrierError(
+            code="dp_schema_type",
+            message=f"column_schema must be a dict, got {type(column_schema).__name__}",
         )
-    categorical_set = frozenset(str(c) for c in categorical_columns)
-    numeric_set = frozenset(str(c) for c in numeric_domains)
-    overlap = categorical_set & numeric_set
-    if overlap:
-        raise DpError(
-            code="dp_column_declaration_overlap",
-            message=(
-                f"columns declared as both categorical and numeric: {sorted(overlap)!r}. "
-                "Each column must be declared exactly once."
-            ),
-        )
-    # D-M4: `frame.columns` is compared as a SET below, so duplicate
-    # labels pass the coverage check. `frame[col]` then returns a
-    # DataFrame rather than a Series, and both normalizers iterate it as
-    # column LABELS -- the fit is accepted and releases a distribution
-    # over the label string instead of the data. Nothing leaks (it
-    # describes none of the values), but a DP artifact that silently
-    # describes the wrong thing is worse than a rejected one.
-    # D-L-A (dennis round 5): every comparison below is on `str(label)`,
-    # but the fit loop indexes the frame with that STRINGIFIED name. An
-    # integer column `5` declared as `numeric_domains={5: ...}` therefore
-    # passed validation and then died on `frame["5"]` with a bare
-    # `KeyError`. Same class as the derived-edges break above: fail
-    # closed, no leak, wrong exception type. Rejected with a coded error
-    # rather than silently supported, since indexing by the original
-    # label is a wider change than this build should make and the path
-    # does not work today.
-    non_string = sorted(repr(c) for c in frame.columns if not isinstance(c, str))
-    if non_string:
-        raise DpError(
-            code="dp_column_label_not_a_string",
-            message=(
-                f"frame has non-string column labels: {non_string}. Declare and fit columns "
-                "under string names; rename the frame's columns before fitting."
-            ),
-        )
-    frame_labels = [str(c) for c in frame.columns]
-    duplicated = sorted({label for label in frame_labels if frame_labels.count(label) > 1})
-    if duplicated:
-        raise DpError(
-            code="dp_column_declaration_duplicated",
-            message=(
-                f"frame has duplicate column labels: {duplicated!r}. Each column must be "
-                "declared and fit exactly once; deduplicate or rename before fitting."
-            ),
-        )
-    declared = categorical_set | numeric_set
-    frame_columns = frozenset(frame_labels)
-    if declared != frame_columns:
-        missing = frame_columns - declared
-        extra = declared - frame_columns
-        raise DpError(
-            code="dp_column_declaration_incomplete",
-            message=(
-                "categorical_columns + numeric_domains must cover frame.columns exactly "
-                f"once: missing from declarations={sorted(missing)!r}, declared but not in "
-                f"frame={sorted(extra)!r}."
-            ),
-        )
-    for col, bounds in numeric_domains.items():
-        try:
-            lower, upper = float(bounds[0]), float(bounds[1])
-        except (TypeError, ValueError, IndexError) as exc:
-            raise DpError(
-                code="dp_numeric_domain_invalid",
-                message=f"numeric_domains[{col!r}] must be a (lower, upper) pair; got {bounds!r}.",
-            ) from exc
-        if not math.isfinite(lower) or not math.isfinite(upper) or not lower < upper:
-            raise DpError(
-                code="dp_numeric_domain_invalid",
+    numeric_bounds: dict[str, tuple[float, float]] = {}
+    categorical_carriers: dict[str, str] = {}
+    for name, spec in column_schema.items():
+        if not isinstance(spec, dict):
+            raise CarrierError(
+                code="dp_schema_column_type",
+                message=f"column {name!r}: schema entry must be a dict, got {type(spec).__name__}",
+            )
+        carrier = spec.get("carrier")
+        if not isinstance(carrier, str) or carrier not in ("number", "flag", "text"):
+            raise CarrierError(
+                code="dp_carrier_unknown",
                 message=(
-                    f"numeric_domains[{col!r}]=({lower!r}, {upper!r}) must have finite "
-                    "lower < upper."
+                    f"column {name!r}: unknown carrier {carrier!r}, expected one of "
+                    "('number', 'flag', 'text')"
                 ),
             )
-        # D-M-B (dennis round 5): finite `lower < upper` is not enough.
-        # The bin edges DERIVED from the declaration can still overflow
-        # or collapse to non-unique values, and OpenDP then rejects them
-        # at the FFI with a raw `OpenDPException` ("edges must be unique
-        # and ordered") -- after the row-count release has already
-        # charged the session. `(0.0, 1.7e308)` is a plausible "just give
-        # it a wide domain" input, and so is a pair of adjacent floats
-        # under a high `numeric_bins`. This module documents that it
-        # raises coded `DpError`, so the same edges are derived here,
-        # from PUBLIC declarations only, and checked before any value is
-        # touched.
-        edges = [lower + (upper - lower) * i / numeric_bins for i in range(1, numeric_bins)]
-        full = [lower, *edges, upper]
-        if not all(math.isfinite(e) for e in full) or any(
-            b <= a for a, b in itertools.pairwise(full)
-        ):
-            raise DpError(
-                code="dp_numeric_domain_invalid",
-                message=(
-                    f"numeric_domains[{col!r}]=({lower!r}, {upper!r}) with "
-                    f"numeric_bins={numeric_bins} derives bin edges that are not finite and "
-                    "strictly increasing (the domain is too wide, or too narrow for this many "
-                    "bins). Narrow the domain or reduce numeric_bins."
-                ),
-            )
+        kind = spec.get("kind")
+        if kind is not None:
+            if not isinstance(kind, str) or kind not in _KIND_TO_CARRIERS:
+                raise CarrierError(
+                    code="dp_kind_unknown",
+                    message=(
+                        f"column {name!r}: unknown kind {kind!r}, expected one of "
+                        f"{tuple(_KIND_TO_CARRIERS)}"
+                    ),
+                )
+            allowed = _KIND_TO_CARRIERS[kind]
+            if carrier not in allowed:
+                raise CarrierError(
+                    code="dp_kind_carrier_mismatch",
+                    message=(
+                        f"column {name!r}: kind {kind!r} does not allow carrier {carrier!r} "
+                        f"(allowed: {allowed})"
+                    ),
+                )
+        if carrier == "number":
+            bounds = spec.get("bounds")
+            if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
+                raise CarrierError(
+                    code="dp_carrier_bounds_missing",
+                    message=f"column {name!r}: a 'number' carrier requires (lower, upper) bounds",
+                )
+            lower = _validate_bound(name, "lower", bounds[0])
+            upper = _validate_bound(name, "upper", bounds[1])
+            if not lower < upper:
+                raise CarrierError(
+                    code="dp_carrier_bounds_order",
+                    message=f"column {name!r}: bounds must satisfy lower < upper, got ({lower}, {upper})",
+                )
+            numeric_bounds[name] = (lower, upper)
+        else:
+            categorical_carriers[name] = carrier
+    return numeric_bounds, categorical_carriers
+
+
+def _interior_edges(lower: float, upper: float, numeric_bins: int) -> tuple[float, ...]:
+    """Interior cut points only: `numeric_bins` categories need `numeric_bins -
+    1` interior edges spanning the declared domain (guide section 4.4); derived
+    from the public domain + numeric_bins, never from data."""
+    return tuple(lower + (upper - lower) * i / numeric_bins for i in range(1, numeric_bins))
+
+
+def _check_derived_edges(name: str, lower: float, upper: float, numeric_bins: int) -> None:
+    """Reject a declaration whose DERIVED bin edges overflow or collapse to
+    non-unique values (guide section 4.4; carried forward from the landed fit's
+    D-M-B guard).
+
+    A finite `lower < upper` is not enough: `(0.0, 1.7e308)` overflows the edge
+    arithmetic and a pair of adjacent floats under a high `numeric_bins`
+    collapses to non-strictly-increasing edges, which OpenDP would otherwise
+    reject with a raw `OpenDPException` at the FFI -- AFTER the row-count release
+    has already charged the session. Derived here from PUBLIC declarations only,
+    before any value is touched, and raised as a coded `DpError`."""
+    full = [lower, *_interior_edges(lower, upper, numeric_bins), upper]
+    if not all(math.isfinite(e) for e in full) or any(b <= a for a, b in itertools.pairwise(full)):
+        raise DpError(
+            code="dp_numeric_domain_invalid",
+            message=(
+                f"column {name!r}=({lower!r}, {upper!r}) with numeric_bins={numeric_bins} "
+                "derives bin edges that are not finite and strictly increasing (the domain is "
+                "too wide, or too narrow for this many bins). Narrow the domain or reduce "
+                "numeric_bins."
+            ),
+        )
+
+
+def _flag_token(value: object) -> str:
+    """The canonical serialized token for a flag category (guide section 3.4):
+    `"true"`/`"false"`, never Python `str(bool)` `"True"/"False"` and never
+    `"0"/"1"`. The generation-side decoder (phase 6) is the inverse."""
+    return "true" if value else "false"
 
 
 def fit_dp_snapshot(
-    frame: pd.DataFrame,
+    source: pd.DataFrame | CarrierTable,
+    column_schema: dict[str, dict],
     *,
-    categorical_columns: Collection[str],
-    numeric_domains: Mapping[str, tuple[float, float]],
     epsilon: float,
     delta: float,
     numeric_bins: int = _DEFAULT_NUMERIC_BINS,
 ) -> dict[str, Any]:
     """Public DP fit entrypoint. Always uses the real OpenDP-backed session.
 
-    C-B1 (Codex round-3 blocker): the previous signature accepted a
-    `_session_backend` keyword that let ANY caller of this public function
-    substitute the mechanism entirely -- Codex demonstrated a backend whose
-    `invoke()` returned exact source counts and whose `map()` claimed an
-    arbitrary certificate, producing an artifact with the normal
-    `dp_accounting` label and a plausible `epsilon_total` around exact
-    values. A leading underscore is convention, not enforcement: nothing
-    stopped a caller from passing it. This function now takes no
-    mechanism/backend parameter of any name and always constructs
-    `OpenDpReleaseSession`'s default real backend. The test seam moves to
-    the private `_fit_dp_snapshot_with_backend` below, which this function
-    is a thin, backend-fixed wrapper around; tests that need to observe
-    `OpenDpReleaseSession`'s own bookkeeping (BLOCKER A2; defects 1a/1b)
-    import and call that private function directly, never this one.
+    The fit routes the source through the canonical typed-carrier layer (guide
+    sections 3.5/3.6): a `pandas.DataFrame` goes through the lazily-imported
+    adapter (`dataframe_to_carrier_table`), a directly-supplied `CarrierTable`
+    goes straight through `sanitize_carrier_table` without importing the
+    adapter. Either way the per-column released vector comes from the sanitized
+    `CarrierTable`, so `DataFrame -> CarrierTable -> OpenDP vector` (and the
+    direct path) is stability-1 by construction, subject to the guide section
+    3.7 residual exclusions.
 
-    Every released quantity is read back from an OpenDP `Measurement.map()`
-    certificate (via `OpenDpReleaseSession`) and composed by `dp_accounting`
-    (`quality/dp_budget.py`); this function computes no epsilon, delta,
-    noise scale, or threshold of its own (guide section 3.3/4.3).
+    Before any private cell is read the fit fails closed on an uncertified proof
+    stack (`check_fit_environment`) and on an over-ceiling epsilon
+    (`check_epsilon_supported`, inside the session). It records the certified
+    proof-stack identity into the `dps-marginal/v3` artifact so generation can
+    re-validate it.
 
     Args:
-        frame: Source data. Not mutated; never persisted exactly.
-        categorical_columns: Column names to release as thresholded
-            categorical marginals (guide section 4.5). Mandatory
-            (may be empty).
-        numeric_domains: `{column: (lower, upper)}` public domain per
-            numeric column (guide section 4.4). Mandatory (may be
-            empty). The union of `categorical_columns` and this mapping's
-            keys must equal `frame.columns` exactly, with no overlap.
+        source: A `pandas.DataFrame` (routed through the pandas adapter) OR a
+            canonical `CarrierTable` (routed directly, pandas-free). Not mutated.
+        column_schema: `{name: {"carrier": ..., "kind"?: ..., "bounds"?: ...}}`.
+            `carrier` is `"number"` (histogram-count marginal; requires
+            `(lower, upper)` `bounds`), `"text"` (str-domain categorical), or
+            `"flag"` (bool-domain categorical); an optional `kind`
+            (`"numeric"`/`"categorical"`) is checked against the closed kind x
+            carrier table. This is the ONLY per-column declaration; it replaces
+            the removed `categorical_columns`/`numeric_domains` (pre-GA hard
+            break, guide section 6). For a `DataFrame` the schema's columns must
+            exist in the frame (extra frame columns are ignored); for a
+            `CarrierTable` the schema's keys must equal the table's columns.
         epsilon: Fit-wide privacy budget request. Finite, > 0.
-        delta: Fit-wide failure-probability request. Finite, strictly
-            between 0 and 1 -- rejected at 0 even for an all-numeric fit
-            (guide section 9.10 item 2).
-        numeric_bins: Bin count per numeric column. Int >= 2, default 10
-            (guide section 9.10 item 1); recorded in the artifact so bin
-            edges are reproducible from public metadata alone.
+        delta: Fit-wide failure-probability request. Finite, in (0, 1) --
+            rejected at 0 even for an all-numeric fit.
+        numeric_bins: Bin count per numeric column. Int >= 2, default 10; one
+            fit-level value for v1, recorded in the artifact so bin edges are
+            reproducible from public metadata alone.
 
     Returns:
-        A `distribution-snapshot/v1` artifact whose additive `dp` block
-        carries schema `dps-marginal/v2` (guide section 4.6): the
-        accountant's composed `(epsilon_total, delta_total)`, a
-        data-independent `release_id`, and the public schedule metadata
-        needed to recompute `query_count` at compile time. No exact
-        per-column scalar, no suppressed label, and no calibrated scale
-        or threshold is ever emitted (guide section 4.2.1/4.6).
+        A `distribution-snapshot/v1` artifact whose additive `dp` block carries
+        schema `dps-marginal/v3` (guide section 3.9): the accountant's composed
+        `(epsilon_total, delta_total)`, a data-independent `release_id`, the
+        `column_schema` with per-column carriers, the codec id/version, the
+        recorded proof-stack identity, the source `boundary`, and the public
+        schedule metadata. No exact per-column scalar, no suppressed label, and
+        no calibrated scale or threshold is ever emitted.
 
     Raises:
-        DpError: malformed configuration (`dp_epsilon_invalid`,
+        DpError: malformed fit-level configuration (`dp_epsilon_invalid`,
             `dp_delta_invalid`, `dp_numeric_bins_invalid`,
-            `dp_column_declaration_incomplete`,
-            `dp_column_declaration_overlap`, `dp_numeric_domain_invalid`).
-        DpBudgetError: ``code='dp_budget_infeasible'`` when the requested
-            `(epsilon, delta)` cannot fund the fixed query schedule.
+            `dp_numeric_domain_invalid`).
+        CarrierError: malformed `column_schema`, bounds, or a per-cell/shape
+            violation the carrier layer refuses (see `quality/carriers.py` /
+            `quality/carrier_adapter.py`).
+        ProvenanceError: the running proof stack is not a certified row
+            (`dp_platform_uncertified`, `dp_stack_uncertified`).
+        DpBudgetError: `dp_epsilon_unsupported` (over the ceiling) or
+            `dp_budget_infeasible` (the request cannot fund the schedule).
     """
     return _fit_dp_snapshot_with_backend(
-        frame,
-        categorical_columns=categorical_columns,
-        numeric_domains=numeric_domains,
+        source,
+        column_schema,
         epsilon=epsilon,
         delta=delta,
         numeric_bins=numeric_bins,
@@ -360,66 +379,50 @@ def fit_dp_snapshot(
 
 
 def _fit_dp_snapshot_with_backend(
-    frame: pd.DataFrame,
+    source: pd.DataFrame | CarrierTable,
+    column_schema: dict[str, dict],
     *,
-    categorical_columns: Collection[str],
-    numeric_domains: Mapping[str, tuple[float, float]],
     epsilon: float,
     delta: float,
     numeric_bins: int = _DEFAULT_NUMERIC_BINS,
     _session_backend: _OpenDpBackend | None = None,
 ) -> dict[str, Any]:
-    """Private implementation. `fit_dp_snapshot` (the public entrypoint) is
-    a thin wrapper that always passes `_session_backend=None`; this module
-    does not export this function's name, and no non-test code path in the
-    codebase calls it directly (guide section 5 step 3; C-B1 above).
-
-    `_session_backend`, when set, passes an `_OpenDpBackend` double
-    straight into the `OpenDpReleaseSession` this call constructs, so a
-    test can observe the session's OWN certificate/schedule bookkeeping
-    independent of real OpenDP noise. `None` (the only value the public
-    wrapper ever passes) always constructs the real OpenDP-backed session
-    -- this function contains no branch that weakens the guarantee for a
-    production caller, since production callers cannot reach this function
-    at all, only `fit_dp_snapshot`.
-    """
-    # D-LOW-1 (dennis round 6): validate what you actually use. The
-    # declarations used to be read three separate times -- once by the
-    # validation loop, once building the `Schedule`, once by the fit loop
-    # -- so a `Mapping` whose reads differ could pass every check and
-    # then hand OpenDP different bounds, landing a raw `OpenDPException`
-    # AFTER `release_row_count` had already charged the session, which is
-    # the exact failure the derived-edge guard exists to prevent. Read
-    # the caller's declarations exactly once here; everything downstream,
-    # validation included, sees only this snapshot.
-    numeric_domains = dict(numeric_domains)
-    categorical_columns = tuple(categorical_columns)
-    _validate_config(
-        frame=frame,
-        categorical_columns=categorical_columns,
-        numeric_domains=numeric_domains,
-        epsilon=epsilon,
-        delta=delta,
-        numeric_bins=numeric_bins,
-    )
+    """Unsupported internal seam. `fit_dp_snapshot` is a thin wrapper that
+    always passes `_session_backend=None`; this module does not export this
+    name, and no non-test code path calls it directly (guide section 4
+    private-seam finding). `_session_backend`, when set, passes an
+    `_OpenDpBackend` double into the `OpenDpReleaseSession` this call constructs,
+    so a test can observe the session's OWN certificate/schedule bookkeeping
+    independent of real OpenDP noise. Production callers cannot reach this
+    function at all, only `fit_dp_snapshot`."""
+    _validate_fit_params(epsilon=epsilon, delta=delta, numeric_bins=numeric_bins)
     epsilon = float(epsilon)
     delta = float(delta)
     numeric_bins = int(numeric_bins)
-    numeric_cols = sorted(str(c) for c in numeric_domains)
-    categorical_cols = sorted(str(c) for c in categorical_columns)
 
-    # The release ID is minted once, before any value is touched, and
-    # depends on nothing but this call happening -- data-independent by
-    # construction (guide section 4.2/9.7). Two calls over identical
-    # inputs still mint distinct IDs; a byte-for-byte copy of one
-    # artifact retains its ID (copying JSON does not re-run this line).
+    # Parse the schema (public-only) into the mechanism domains and bounds the
+    # schedule commits to, and reject degenerate derived bin edges -- all BEFORE
+    # the proof-stack gate and before any private cell is read.
+    numeric_bounds, categorical_carriers = _parse_column_schema(column_schema)
+    numeric_cols = sorted(numeric_bounds)
+    categorical_cols = sorted(categorical_carriers)
+    for col in numeric_cols:
+        lower, upper = numeric_bounds[col]
+        _check_derived_edges(col, lower, upper, numeric_bins)
+
+    # Fail closed on an uncertified proof stack BEFORE reading private data
+    # (guide section 3.8): the (epsilon, delta) guarantee is only honest on a
+    # tested platform + locked distribution set. Record the certified identity
+    # into the artifact so generation can re-validate it without recomputing a
+    # fingerprint from its own (possibly different) libraries.
+    check_fit_environment()
+    provenance = current_provenance()
+
+    # The release ID is minted once, before any value is touched, and depends on
+    # nothing but this call happening -- data-independent by construction. A
+    # byte-for-byte copy of one artifact retains its ID (copying JSON does not
+    # re-run this line).
     release_id = uuid.uuid4().hex
-
-    # Interior edges only: `numeric_bins` categories need `numeric_bins - 1`
-    # interior cut points spanning the declared domain (guide section 4.4);
-    # derived from the public domain + numeric_bins, never from data.
-    def _interior_edges(lower: float, upper: float) -> tuple[float, ...]:
-        return tuple(lower + (upper - lower) * i / numeric_bins for i in range(1, numeric_bins))
 
     schedule = Schedule(
         row_count_name="row_count",
@@ -427,41 +430,53 @@ def _fit_dp_snapshot_with_backend(
             NumericQuerySpec(
                 name=f"numeric:{c}",
                 interior_edges=_interior_edges(
-                    float(numeric_domains[c][0]), float(numeric_domains[c][1])
+                    numeric_bounds[c][0], numeric_bounds[c][1], numeric_bins
                 ),
             )
             for c in numeric_cols
         ),
         categorical=tuple(
-            # This legacy fit API declares only str-typed categorical columns,
-            # so every spec carries the `text` carrier (str-domain OpenDP pair).
-            # The `flag` (bool-domain) carrier is reached only through the
-            # carrier-aware DP fit API landing in a later DPS-CODEC phase; the
-            # carrier is populated here explicitly so it enters the schedule
-            # signature and the budget cache key (guide section 3.4/4).
             CategoricalQuerySpec(
                 grouped_name=f"categorical_grouped:{c}",
                 total_name=f"categorical_total:{c}",
-                carrier="text",
+                carrier=categorical_carriers[c],
             )
             for c in categorical_cols
         ),
     )
+    # Session construction runs the allocation search (data-independent) and
+    # fails closed on an over-ceiling / NaN epsilon via `check_epsilon_supported`
+    # before any composition -- still before any private cell is read.
     session = OpenDpReleaseSession(schedule, epsilon=epsilon, delta=delta, backend=_session_backend)
 
-    row_count_released = _serialize_count(session.release_row_count(len(frame)))
+    # Convert the source to a certified `CarrierTable`. THIS reads private data,
+    # so it comes after the proof-stack gate. A `CarrierTable` routes directly
+    # through `sanitize_carrier_table` (no pandas adapter imported); a DataFrame
+    # routes through the lazily-imported adapter.
+    if isinstance(source, CarrierTable):
+        boundary = "direct"
+        table = sanitize_carrier_table(source, column_schema)
+    else:
+        boundary = "adapter"
+        from decoy_engine.quality.carrier_adapter import dataframe_to_carrier_table
+
+        table = dataframe_to_carrier_table(source, column_schema)
+    released = released_values(table)
+
+    row_count_released = _serialize_count(session.release_row_count(table.row_count))
 
     columns_block: dict[str, dict[str, Any]] = {}
     for col in numeric_cols:
-        lower, upper = float(numeric_domains[col][0]), float(numeric_domains[col][1])
-        values = _normalize_numeric(frame[col], lower=lower, upper=upper)
-        raw_counts = session.release_numeric(f"numeric:{col}", values)
+        lower, upper = numeric_bounds[col]
+        numeric_values = [float(v) for v in released[col]]
+        raw_counts = session.release_numeric(f"numeric:{col}", numeric_values)
         bin_counts = [_serialize_count(c) for c in raw_counts]
-        bin_edges = [lower, *_interior_edges(lower, upper), upper]
+        bin_edges = [lower, *_interior_edges(lower, upper, numeric_bins), upper]
         non_null_count = sum(bin_counts)
         columns_block[col] = {
             "dtype": _DP_NUMERIC_DTYPE_LABEL,
             "kind": "numeric",
+            "carrier": "number",
             "null_count": max(0, row_count_released - non_null_count),
             "non_null_count": non_null_count,
             "distinct_count": sum(1 for c in bin_counts if c > 0),
@@ -479,23 +494,38 @@ def _fit_dp_snapshot_with_backend(
     _log_normalization_policy()
 
     for col in categorical_cols:
-        cat_values = _normalize_categorical(frame[col])
+        carrier = categorical_carriers[col]
+        cat_values: list[Any]
+        if carrier == "flag":
+            cat_values = [bool(v) for v in released[col]]
+        else:
+            cat_values = list(released[col])
         grouped_raw, total_raw = session.release_categorical(
             f"categorical_grouped:{col}", f"categorical_total:{col}", cat_values
         )
-        # Serialize (round) only AFTER OpenDP has completed threshold
-        # selection: `grouped_raw` already contains only the labels
-        # OpenDP retained (guide section 4.5 step 5/6). Sort by
-        # (-released_count, label) -- a total order because released
-        # labels are distinct -- so the mechanism's emission/insertion
-        # order can never leak into the artifact (section 4.5 step 7).
-        retained = [(label, _serialize_count(count)) for label, count in grouped_raw.items()]
+        # Serialize (round) only AFTER OpenDP has completed threshold selection:
+        # `grouped_raw` already holds only the labels OpenDP retained. A flag
+        # column's bool keys serialize to the canonical "true"/"false" tokens
+        # (guide section 3.4). Sort by (-released_count, token) -- a total order
+        # because released tokens are distinct -- so the mechanism's
+        # emission/insertion order can never leak into the artifact.
+        if carrier == "flag":
+            retained = [
+                (_flag_token(label), _serialize_count(count)) for label, count in grouped_raw.items()
+            ]
+            dtype_label = _DP_FLAG_DTYPE_LABEL
+        else:
+            retained = [
+                (label, _serialize_count(count)) for label, count in grouped_raw.items()
+            ]
+            dtype_label = _DP_CATEGORICAL_DTYPE_LABEL
         retained.sort(key=lambda pair: (-pair[1], pair[0]))
         non_null_total = _serialize_count(total_raw)
         other_count = max(0, non_null_total - sum(count for _label, count in retained))
         columns_block[col] = {
-            "dtype": _DP_CATEGORICAL_DTYPE_LABEL,
+            "dtype": dtype_label,
             "kind": "categorical",
+            "carrier": carrier,
             "null_count": max(0, row_count_released - non_null_total),
             "non_null_count": non_null_total,
             "distinct_count": len(retained) + (1 if other_count > 0 else 0),
@@ -506,11 +536,10 @@ def _fit_dp_snapshot_with_backend(
         }
 
     if session.certificate_count() != schedule.query_count:
-        # Section 4.3.5 mitigation 4, restated at the call site: this can
-        # only fire if a future change bypasses the loop structure above,
-        # since every scheduled query is released exactly once by
-        # construction here. Kept as a hard assertion, not a comment,
-        # because it is what proves the schedule was actually exhausted.
+        # Section 4.3.5 mitigation 4, restated at the call site: this can only
+        # fire if a future change bypasses the loop structure above, since every
+        # scheduled query is released exactly once by construction here. Kept as
+        # a hard assertion because it is what proves the schedule was exhausted.
         raise DpBudgetError(
             code="dp_schedule_mismatch",
             message=(
@@ -521,6 +550,14 @@ def _fit_dp_snapshot_with_backend(
     epsilon_total, delta_total = session.composed_loss()
 
     opendp_version, dp_accounting_version = _dp_versions()
+    recorded_schema = {
+        col: (
+            {"kind": "numeric", "carrier": "number", "bounds": list(numeric_bounds[col])}
+            if col in numeric_bounds
+            else {"kind": "categorical", "carrier": categorical_carriers[col]}
+        )
+        for col in (*numeric_cols, *categorical_cols)
+    }
     return {
         "schema_version": DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
         "row_count": row_count_released,
@@ -541,16 +578,23 @@ def _fit_dp_snapshot_with_backend(
             "numeric_bins": numeric_bins,
             "categorical_columns": categorical_cols,
             "numeric_domains": {
-                c: [float(numeric_domains[c][0]), float(numeric_domains[c][1])]
-                for c in numeric_cols
+                c: [numeric_bounds[c][0], numeric_bounds[c][1]] for c in numeric_cols
+            },
+            # v3 additions (guide section 3.9).
+            "column_schema": recorded_schema,
+            "codec": {"id": DP_CODEC_ID, "version": DP_CODEC_VERSION},
+            "boundary": boundary,
+            "provenance": {
+                "platform": dict(provenance.platform._asdict()),
+                "cpython": provenance.cpython,
+                "fingerprint": provenance.fingerprint,
             },
         },
     }
 
 
 def _serialize_count(value: float) -> int:
-    """`max(0, int(round(v)))` -- the one place a released noisy value
-    becomes a serialized count, and only after OpenDP has completed
-    whatever selection it was going to do (guide section 4.4 step 7 /
-    4.5 step 6)."""
+    """`max(0, int(round(v)))` -- the one place a released noisy value becomes a
+    serialized count, and only after OpenDP has completed whatever selection it
+    was going to do (guide section 4.4 step 7 / 4.5 step 6)."""
     return max(0, round(float(value)))

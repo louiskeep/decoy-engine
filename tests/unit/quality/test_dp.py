@@ -28,15 +28,77 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine.quality.carriers import CarrierError
 from decoy_engine.quality.dp import (
     DpError,
-    _fit_dp_snapshot_with_backend,
-    _normalize_categorical,
-    _normalize_numeric,
-    fit_dp_snapshot,
+)
+from decoy_engine.quality.dp import (
+    _fit_dp_snapshot_with_backend as _real_fit_dp_snapshot_with_backend,
+)
+from decoy_engine.quality.dp import (
+    fit_dp_snapshot as _real_fit_dp_snapshot,
 )
 from decoy_engine.quality.dp_budget import DpBudgetError, _FakeMeasurement
-from decoy_engine.quality.dp_normalize import _cells
+from decoy_engine.quality.dp_normalize import _cells, _normalize_categorical, _normalize_numeric
+
+
+def _schema_from(categorical_columns=(), numeric_domains=None):
+    """Build a `column_schema` (the DPS-CODEC phase-5 fit API, guide section
+    3.5) from the legacy `categorical_columns`/`numeric_domains` kwargs this
+    suite was written against: a `text` carrier per categorical column, a
+    `number` carrier + `(lower, upper)` bounds per numeric column. This is the
+    spec-mandated signature migration (guide sections 3.5/6, pre-GA hard break),
+    NOT a behaviour change -- the real new-signature `fit_dp_snapshot` is
+    exercised unchanged, and the number/text release stays byte-identical (see
+    `TestCarrierPathReproducesNormalize` in test_dp_codec_golden.py)."""
+    schema: dict[str, dict] = {}
+    for c in categorical_columns:
+        schema[c] = {"kind": "categorical", "carrier": "text"}
+    for c, bounds in (numeric_domains or {}).items():
+        schema[c] = {"kind": "numeric", "carrier": "number", "bounds": bounds}
+    return schema
+
+
+def fit_dp_snapshot(
+    frame,
+    *,
+    categorical_columns=(),
+    numeric_domains=None,
+    epsilon,
+    delta,
+    numeric_bins=10,
+):
+    """Legacy-signature -> `column_schema` translation shim for this suite (see
+    `_schema_from`). Calls the real phase-5 `fit_dp_snapshot(source,
+    column_schema, ...)`."""
+    return _real_fit_dp_snapshot(
+        frame,
+        _schema_from(categorical_columns, numeric_domains),
+        epsilon=epsilon,
+        delta=delta,
+        numeric_bins=numeric_bins,
+    )
+
+
+def _fit_dp_snapshot_with_backend(
+    frame,
+    *,
+    categorical_columns=(),
+    numeric_domains=None,
+    epsilon,
+    delta,
+    numeric_bins=10,
+    _session_backend=None,
+):
+    """Legacy-signature translation shim for the private backend seam."""
+    return _real_fit_dp_snapshot_with_backend(
+        frame,
+        _schema_from(categorical_columns, numeric_domains),
+        epsilon=epsilon,
+        delta=delta,
+        numeric_bins=numeric_bins,
+        _session_backend=_session_backend,
+    )
 
 # The LITERAL name, not `_policy_logger.name` -- deriving it from the
 # module under test compares the value to itself, which is how a
@@ -326,39 +388,51 @@ class TestConfigValidation:
         happens to be named `seed` or `rng`."""
         import inspect
 
-        sig = inspect.signature(fit_dp_snapshot)
+        # Introspect the REAL new-signature entrypoint (this suite's
+        # `fit_dp_snapshot` is a legacy-kwargs translation shim). The phase-5
+        # API is `fit_dp_snapshot(source, column_schema, *, epsilon, delta,
+        # numeric_bins)`; it still exposes no mechanism/backend injection
+        # parameter of any name.
+        sig = inspect.signature(_real_fit_dp_snapshot)
         assert set(sig.parameters) == {
-            "frame",
-            "categorical_columns",
-            "numeric_domains",
+            "source",
+            "column_schema",
             "epsilon",
             "delta",
             "numeric_bins",
         }
 
-    def test_dp_fit_rejects_missing_public_column_declarations(self):
+    def test_dp_fit_rejects_a_schema_column_absent_from_the_frame(self):
+        """Phase-5 migration: the fit fits exactly the columns declared in
+        `column_schema` (partial frame coverage is allowed -- a marginal release
+        describes what it declares). A declared column that is NOT in the frame
+        fails closed in the adapter with a coded `CarrierError`, before any cell
+        is read, rather than silently releasing nothing."""
         df = pd.DataFrame({"age": [1.0, 2.0], "state": ["a", "b"]})
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
+        with pytest.raises(CarrierError) as exc:
+            _real_fit_dp_snapshot(
                 df,
-                categorical_columns=["state"],
-                numeric_domains={},  # "age" undeclared
+                {"missing": {"kind": "categorical", "carrier": "text"}},
                 epsilon=1.0,
                 delta=1e-6,
             )
-        assert exc.value.code == "dp_column_declaration_incomplete"
+        assert exc.value.code == "dp_adapter_missing_column"
 
-    def test_dp_fit_rejects_overlapping_public_column_declarations(self):
+    def test_dp_fit_rejects_an_unknown_carrier(self):
+        """Phase-5 migration: a per-column carrier outside the closed set
+        (`number`/`flag`/`text`) is rejected before any private cell is read.
+        (The legacy `categorical + numeric` OVERLAP this test used to cover is
+        structurally impossible now: `column_schema` keys are unique, so a
+        column declares exactly one carrier by construction.)"""
         df = pd.DataFrame({"age": [1.0, 2.0]})
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
+        with pytest.raises(CarrierError) as exc:
+            _real_fit_dp_snapshot(
                 df,
-                categorical_columns=["age"],
-                numeric_domains={"age": (0.0, 120.0)},
+                {"age": {"carrier": "bogus", "bounds": (0.0, 120.0)}},
                 epsilon=1.0,
                 delta=1e-6,
             )
-        assert exc.value.code == "dp_column_declaration_overlap"
+        assert exc.value.code == "dp_carrier_unknown"
 
     @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "abc"])
     def test_invalid_epsilon_rejected(self, bad):
@@ -405,12 +479,16 @@ class TestConfigValidation:
         "bounds", [(120.0, 0.0), (0.0, 0.0), (float("nan"), 1.0), (0.0, float("inf"))]
     )
     def test_invalid_numeric_domain_rejected(self, bounds):
+        # Phase-5 migration: number-carrier bounds are validated by the carrier
+        # layer (`_validate_bound` + the order check), so a malformed/misordered
+        # domain now fails closed with a coded `CarrierError` (nonfinite bound or
+        # bad order) rather than the legacy `DpError('dp_numeric_domain_invalid')`.
         df = pd.DataFrame({"age": [1.0, 2.0]})
-        with pytest.raises(DpError) as exc:
+        with pytest.raises(CarrierError) as exc:
             fit_dp_snapshot(
                 df, categorical_columns=[], numeric_domains={"age": bounds}, epsilon=1.0, delta=1e-6
             )
-        assert exc.value.code == "dp_numeric_domain_invalid"
+        assert exc.value.code in ("dp_carrier_bounds_order", "dp_carrier_bounds_nonfinite")
 
     @pytest.mark.parametrize(
         ("bounds", "bins"),
@@ -460,33 +538,14 @@ class TestConfigValidation:
         )
         assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == bins
 
-    @pytest.mark.parametrize(
-        ("frame_cols", "cats", "doms"),
-        [
-            ({5: [0.5, 0.6]}, [], {5: (0.0, 1.0)}),
-            ({"5": [0.5, 0.6]}, [], {5: (0.0, 1.0)}),
-            ({"5": ["a", "b"]}, [5], {}),
-        ],
-        ids=["non_string_frame_label", "non_string_numeric_key", "non_string_categorical_member"],
-    )
-    def test_non_string_column_declarations_are_rejected(self, frame_cols, cats, doms):
-        """D-MEDIUM-1 (dennis round 6) / C-L-1 (Codex round 6): round 5
-        closed only the FRAME side, while this test's own docstring
-        described the declaration case. The mirror cases: a non-string
-        `numeric_domains` key died on a bare `KeyError` inside the fit,
-        and a non-string `categorical_columns` member SUCCEEDED silently,
-        because that path only ever needs the name. Parametrizing over
-        all three is the point, since the single-fixture version passed
-        while two of them were live."""
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
-                pd.DataFrame(frame_cols),
-                categorical_columns=cats,
-                numeric_domains=doms,
-                epsilon=2.0,
-                delta=1e-6,
-            )
-        assert exc.value.code == "dp_column_label_not_a_string"
+    # Phase-5 migration: the legacy `dp_column_label_not_a_string` and
+    # `dp_column_label_not_a_string` (frame-side) rejections are removed. The
+    # new API matches `column_schema` keys directly against the frame's column
+    # labels (a schema column absent from the frame fails closed with
+    # `dp_adapter_missing_column`, covered above), and the carrier layer no
+    # longer stringifies declarations, so there is no str-coercion mismatch to
+    # guard. Column-name typing is the adapter's concern and is covered by
+    # test_carriers.py's adapter suite.
 
     def test_declarations_are_read_once_so_a_drifting_mapping_cannot_slip_past(self):
         """D-LOW-1 (dennis round 6): the declarations were read three
@@ -523,33 +582,19 @@ class TestConfigValidation:
         # what the artifact reports, not whatever the mapping drifted to.
         assert snap["columns"]["age"]["stats"]["bin_edges"][-1] == 100.0
 
-    def test_non_string_frame_column_labels_are_rejected(self):
-        """D-L-A (dennis round 5): validation compared `str(label)` sets
-        while the fit loop indexed with the stringified name, so an
-        integer column `5` declared as `numeric_domains={5: ...}` passed
-        validation and then died on `frame["5"]` with a bare `KeyError`.
-        Fail-closed and no leak, but the wrong exception type from a
-        module that documents coded errors."""
-        df = pd.DataFrame({5: [0.5, 0.6]})
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
-                df, categorical_columns=[], numeric_domains={5: (0.0, 1.0)}, epsilon=2.0, delta=1e-6
-            )
-        assert exc.value.code == "dp_column_label_not_a_string"
-
     def test_duplicate_frame_column_labels_are_rejected(self):
-        """D-M4: `frame.columns` was compared as a set, so `["x", "x"]`
-        passed the coverage check. `frame["x"]` then returns a DataFrame,
-        which both normalizers iterate as column LABELS, and the fit was
-        accepted while releasing a distribution over the string "x"
-        rather than over the data. No leak, but a DP artifact that
-        silently describes the wrong thing."""
+        """A schema key that selects TWO frame columns (`df[name]` is a
+        DataFrame, not a Series) is a structural, columns-level problem, not a
+        row-value one. The adapter rejects it with a coded `CarrierError` before
+        any cell is read, rather than silently releasing a distribution over the
+        column label. (Phase-5 migration: this was `dp_column_declaration_
+        duplicated` in the legacy fit; the carrier adapter owns it now.)"""
         df = pd.DataFrame([["CA", "NY"], ["TX", "CA"]], columns=["x", "x"])
-        with pytest.raises(DpError) as exc:
+        with pytest.raises(CarrierError) as exc:
             fit_dp_snapshot(
                 df, categorical_columns=["x"], numeric_domains={}, epsilon=2.0, delta=1e-6
             )
-        assert exc.value.code == "dp_column_declaration_duplicated"
+        assert exc.value.code == "dp_adapter_duplicate_column"
 
     def test_numeric_bins_default_is_ten_and_recorded_in_artifact(self):
         df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
