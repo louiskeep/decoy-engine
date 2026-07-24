@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import pytest
+from tests._dp_cert import is_certified_dp_env
 
 from decoy_engine.quality import dp_provenance
 from decoy_engine.quality.dp import fit_dp_snapshot
@@ -35,12 +36,6 @@ _UNCERTIFIED = "not the certified DP proof-stack; fit_dp_snapshot fails closed h
 
 def _running_fingerprint() -> str:
     return dp_provenance.compute_lock_fingerprint(dp_provenance.installed_distribution_set())
-
-
-def _is_certified() -> bool:
-    key = (dp_provenance.current_platform(), dp_provenance.current_cpython())
-    members = dp_provenance._CERTIFIED_STACKS.get(key)
-    return members is not None and _running_fingerprint() in members
 
 
 def _frame() -> pd.DataFrame:
@@ -63,7 +58,7 @@ def _schema() -> dict:
 
 
 def test_dp_fit_emits_marginal_v3_over_only_declared_carriers() -> None:
-    if not _is_certified():
+    if not is_certified_dp_env():
         pytest.skip(_UNCERTIFIED)
     art = fit_dp_snapshot(_frame(), _schema(), epsilon=_EPSILON, delta=_DELTA)
 
@@ -84,7 +79,7 @@ def test_dp_fit_emits_marginal_v3_over_only_declared_carriers() -> None:
 
 
 def test_dp_snapshot_drives_generation_to_the_declared_shape(tmp_path) -> None:
-    if not _is_certified():
+    if not is_certified_dp_env():
         pytest.skip(_UNCERTIFIED)
     from decoy_engine.generation.synthesize import generate_tables
     from decoy_engine.plan import compile_plan

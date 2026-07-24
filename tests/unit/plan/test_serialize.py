@@ -100,6 +100,7 @@ def _compiled_dp_plan_two_snapshots(tmp_path, *, epsilon: float = 2.0, delta: fl
     return compile_plan(cfg, _profile(), decoy_engine_version="test")
 
 
+@pytest.mark.dp_certified
 def test_plan_yaml_round_trip_preserves_pinned_snapshot(tmp_path):
     plan = _compiled_dp_plan(tmp_path)
     assert plan.generation is not None
@@ -117,6 +118,7 @@ def test_plan_yaml_round_trip_preserves_pinned_snapshot(tmp_path):
     assert reloaded.generation.dp_verification == plan.generation.dp_verification
 
 
+@pytest.mark.dp_certified
 def test_plan_from_yaml_rejects_pinned_snapshot_digest_mismatch(tmp_path):
     """Corrupting the embedded bytes (payload changes, sha256 field left
     stale) must be caught on load, not silently trusted."""
@@ -137,6 +139,7 @@ def test_plan_from_yaml_rejects_pinned_snapshot_digest_mismatch(tmp_path):
     assert exc.value.code == "dp_pinned_snapshot_digest_mismatch"
 
 
+@pytest.mark.dp_certified
 def test_plan_from_yaml_recomputes_dp_verification_receipt(tmp_path):
     """A manifest claiming a `dp_verification` receipt the embedded bytes
     do not actually support must not survive deserialization unnoticed:
@@ -168,6 +171,7 @@ def test_plan_from_yaml_recomputes_dp_verification_receipt(tmp_path):
     assert "forged-release-id" not in recomputed.release_ids
 
 
+@pytest.mark.dp_certified
 def test_plan_from_yaml_rebuilds_statistical_spec_from_pinned_bytes_not_the_serialized_spec(
     tmp_path,
 ):
@@ -205,6 +209,7 @@ def test_plan_from_yaml_rebuilds_statistical_spec_from_pinned_bytes_not_the_seri
     assert rebuilt_specs[0].spec["other_mode"] != forged_other_mode
 
 
+@pytest.mark.dp_certified
 def test_plan_from_yaml_refuses_unpinned_snapshot_file_instead_of_reading_disk(tmp_path):
     """HIGH H-A: deserialization must be a pure function of the manifest
     bytes, never a filesystem read plus an existence oracle over a path
@@ -231,6 +236,7 @@ def test_plan_from_yaml_refuses_unpinned_snapshot_file_instead_of_reading_disk(t
     assert exc.value.code == "statistical_snapshot_not_pinned"
 
 
+@pytest.mark.dp_certified
 def test_plan_from_yaml_refuses_when_only_one_of_two_pinned_snapshots_is_removed(tmp_path):
     """D-H2 (dennis HIGH): the regression test above only covers emptying
     `generation.snapshots` ENTIRELY, which a guard shaped like `if
@@ -264,6 +270,7 @@ def test_plan_from_yaml_refuses_when_only_one_of_two_pinned_snapshots_is_removed
     assert exc.value.code == "statistical_snapshot_not_pinned"
 
 
+@pytest.mark.dp_certified
 def test_plan_from_yaml_rejects_non_json_payload_with_matching_digest(tmp_path):
     """New LOW (round-3 remediation): a manifest whose `payload_b64`
     decodes to bytes that are NOT valid JSON, but whose sha256 happens to

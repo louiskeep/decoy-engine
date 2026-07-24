@@ -85,6 +85,7 @@ def _write(tmp_path, name: str, snap: dict) -> str:
 
 
 class TestFlagCarrierEndToEnd:
+    @pytest.mark.dp_certified
     def test_flag_fit_produces_a_verified_v3_artifact(self, tmp_path):
         snap = _fit_flag_plus_numeric()
 
@@ -119,6 +120,7 @@ class TestFlagCarrierEndToEnd:
         assert ("t", "is_active") in verified
         assert ("t", "age") in verified
 
+    @pytest.mark.dp_certified
     def test_column_schema_is_snapshot_once_at_entry(self):
         """The fit must freeze the caller's schema on entry so a mutable mapping
         cannot drift the routing decision (which mechanism a column takes) away
@@ -154,6 +156,7 @@ class TestFlagCarrierEndToEnd:
         assert snap["dp"]["column_schema"]["is_active"]["carrier"] == "flag"
         assert snap["columns"]["is_active"]["carrier"] == "flag"
 
+    @pytest.mark.dp_certified
     def test_flag_column_with_a_mutated_carrier_fails_closed(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         mutated = copy.deepcopy(snap)
@@ -167,6 +170,7 @@ class TestFlagCarrierEndToEnd:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_carrier_invalid"
 
+    @pytest.mark.dp_certified
     def test_columns_block_carrier_must_agree_with_dp_column_schema(self, tmp_path):
         """HIGH-2 (Codex phase-5): the `columns` block carrier (which the M-2
         flag-sampler stop and generation read) must equal the dp block's
@@ -188,6 +192,7 @@ class TestFlagCarrierEndToEnd:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_column_block_schema_mismatch"
 
+    @pytest.mark.dp_certified
     def test_column_schema_numeric_bounds_contradiction_fails_closed(self, tmp_path):
         """MEDIUM-5 (Codex phase-5): the v3 column_schema must agree with the
         legacy numeric_domains in KIND and BOUNDS, not only carrier and set
@@ -240,6 +245,7 @@ class TestFlagCarrierGeneratesRealBoolEndToEnd:
     generate_tables, both when the release retains both categories and when
     it retains only one."""
 
+    @pytest.mark.dp_certified
     def test_both_categories_generate_real_bool_values(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tokens = {e["value"] for e in snap["columns"]["is_active"]["stats"]["top_values"]}
@@ -251,6 +257,7 @@ class TestFlagCarrierGeneratesRealBoolEndToEnd:
         assert len(values) == 5
         assert all(isinstance(v, bool) for v in values)
 
+    @pytest.mark.dp_certified
     def test_one_category_generates_the_single_surviving_bool_value(self, tmp_path):
         # Every row is True, so the thresholded release retains only "true".
         rng = np.random.default_rng(9)
@@ -279,6 +286,7 @@ class TestFlagCarrierGeneratesRealBoolEndToEnd:
         assert len(values) == 5
         assert all(v is True for v in values)
 
+    @pytest.mark.dp_certified
     def test_v3_flag_artifact_without_dp_declaration_is_refused(self, tmp_path):
         """dennis/Codex phase-6 HIGH (end-to-end): a real v3 flag artifact used
         in a pipeline that does NOT declare global_settings.dp -- so the release
@@ -308,6 +316,7 @@ class TestFlagCarrierGeneratesRealBoolEndToEnd:
             compile_plan(cfg, _profile(), decoy_engine_version="test")
         assert exc.value.code == "statistical_flag_requires_dp_declaration"
 
+    @pytest.mark.dp_certified
     def test_split_carrier_flag_without_dp_declaration_is_refused(self, tmp_path):
         """Codex whole-feature BLOCKER: on the undeclared-DP path no verifier
         runs, so `load_spec` is the sole guard. Keying its refusal only on the
@@ -350,6 +359,7 @@ class TestConsumeSideReleaseIdentity:
     and must reject numeric edges pushed outside the declared domain (which the
     sampler would otherwise draw from and emit out-of-domain values)."""
 
+    @pytest.mark.dp_certified
     def test_future_codec_version_is_rejected(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tampered = copy.deepcopy(snap)
@@ -360,6 +370,7 @@ class TestConsumeSideReleaseIdentity:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_codec_unsupported"
 
+    @pytest.mark.dp_certified
     def test_unknown_codec_id_is_rejected(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tampered = copy.deepcopy(snap)
@@ -370,6 +381,7 @@ class TestConsumeSideReleaseIdentity:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_codec_unsupported"
 
+    @pytest.mark.dp_certified
     def test_mismatched_adjacency_is_rejected(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tampered = copy.deepcopy(snap)
@@ -380,6 +392,7 @@ class TestConsumeSideReleaseIdentity:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_release_shape_unsupported"
 
+    @pytest.mark.dp_certified
     def test_novel_boundary_is_rejected(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tampered = copy.deepcopy(snap)
@@ -390,6 +403,7 @@ class TestConsumeSideReleaseIdentity:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_release_shape_unsupported"
 
+    @pytest.mark.dp_certified
     def test_bin_edges_pushed_outside_the_domain_are_rejected(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tampered = copy.deepcopy(snap)
@@ -403,6 +417,7 @@ class TestConsumeSideReleaseIdentity:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_numeric_edges_mismatch"
 
+    @pytest.mark.dp_certified
     def test_interior_edges_perturbed_are_rejected(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         tampered = copy.deepcopy(snap)
@@ -416,6 +431,7 @@ class TestConsumeSideReleaseIdentity:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_numeric_edges_mismatch"
 
+    @pytest.mark.dp_certified
     def test_normalization_policy_is_isolated_per_artifact(self):
         """Codex whole-feature MEDIUM: each artifact must own its policy dict, so
         mutating one cannot bleed into the shared module value and thence every

@@ -10,12 +10,35 @@ import pandas as pd
 import pytest
 import yaml
 
+from tests._dp_cert import is_certified_dp_env, should_skip_dp
+
 # Constants for test paths
 TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 INPUT_DIR = os.path.join(TEST_DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(TEST_DATA_DIR, "output")
 EXPECTED_DIR = os.path.join(TEST_DATA_DIR, "expected")
 CONFIG_DIR = os.path.join(TEST_DATA_DIR, "config")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip `dp_certified` items off the certified DP proof-stack.
+
+    `fit_dp_snapshot` only completes on the certified 77-dist `dev+lint+vault`
+    Python 3.10.20 profile; every other profile -- including the default
+    `regression-gate` job -- fails closed with `dp_stack_uncertified` before
+    reading any private cell. Tests marked `dp_certified` call it expecting a
+    successful fit, so they are collected everywhere (coverage stays visible)
+    but SKIPPED here, with a reason, wherever the running env is not that
+    profile. The certified profile itself runs them: see the `dp_certified`
+    CI job in `.github/workflows/ci.yml`, which asserts they actually execute
+    rather than merely being collected.
+    """
+    certified = is_certified_dp_env()
+    reason = "requires the certified DP proof-stack; this env is not it"
+    for item in items:
+        has_marker = item.get_closest_marker("dp_certified") is not None
+        if should_skip_dp(has_marker=has_marker, certified=certified):
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture(scope="session", autouse=True)

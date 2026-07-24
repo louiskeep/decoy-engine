@@ -26,6 +26,7 @@ from decoy_engine.quality.dp_provenance import (
     Provenance,
     ProvenanceError,
 )
+from tests._dp_cert import is_certified_dp_env
 
 # ---------------------------------------------------------------------------
 # Fingerprint: determinism, order-independence, canonicalization, duplicates.
@@ -147,13 +148,21 @@ def test_current_provenance_is_boundary_independent_identity() -> None:
 
 
 def test_pinned_row_matches_this_env_when_this_env_is_certified() -> None:
-    """If (this platform, this cpython) is a certified row, the pinned literal
+    """If this environment IS the certified proof-stack, the pinned literal
     must equal the live fingerprint and the fit gate must PASS. On any other
-    interpreter/patch (e.g. a CI python whose patch is not yet certified) this
-    is skipped -- there the fail-closed tests below carry the load."""
+    environment this is skipped -- there the fail-closed tests below carry the
+    load.
+
+    The guard checks the FULL predicate (`is_certified_dp_env`, which wraps
+    `check_fit_environment`), not merely whether the `(platform, cpython)` key
+    is present in the manifest: a host on a certified CPython patch but an
+    uncertified distribution set (e.g. this suite's own `--extra dev` 71-dist
+    profile on 3.10.20) has a present key with no matching fingerprint, so the
+    key-only guard used to fall through to the assertion below and fail there
+    instead of skipping."""
+    if not is_certified_dp_env():
+        pytest.skip("this environment is not the certified DP proof-stack")
     key = (prov.current_platform(), prov.current_cpython())
-    if key not in prov._CERTIFIED_STACKS:
-        pytest.skip(f"this environment {key} is not a pinned certified row")
     assert (
         prov.compute_lock_fingerprint(prov.installed_distribution_set())
         in prov._CERTIFIED_STACKS[key]

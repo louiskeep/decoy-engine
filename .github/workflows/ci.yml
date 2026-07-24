@@ -183,3 +183,67 @@ jobs:
         run: pip install -e ".[dev]" build==1.2.2
       - name: Packaging gate (wheel ships the model pack + py.typed)
         run: pytest -m packaging --tb=short
+
+  # dp-certified-gate: `fit_dp_snapshot` only completes on the certified
+  # 77-dist `dev+lint+vault` Python 3.10.20 profile (`dp_provenance.
+  # check_fit_environment`); `regression-gate` above installs a different
+  # profile, so the `dp_certified`-marked fit-success tests are collected
+  # there but SKIPPED (tests/conftest.py's pytest_collection_modifyitems).
+  # This job is their one certified home, and it is UNCONDITIONAL (this
+  # workflow's own push/pull_request triggers, not a path filter) so a later
+  # DP regression cannot dodge it the way a path-filtered workflow could.
+  #
+  # Three checks, in order: (1) the environment really is certified --
+  # asserted directly against check_fit_environment, so a lock/profile drift
+  # fails this job loudly instead of quietly turning every marked test into a
+  # false skip; (2) the marked suites actually run; (3) the JUnit report is
+  # parsed and the job fails unless at least one test passed and none were
+  # skipped, errored, or failed -- a collect-only count cannot tell "ran and
+  # passed" apart from "skipped", which is exactly the false-green this gate
+  # exists to rule out.
+  dp-certified-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v5
+      - name: Pin the exact certified CPython patch
+        run: uv python install 3.10.20
+      - name: Sync the certified profile (77-dist dev+lint+vault)
+        run: uv sync --frozen --extra dev --extra lint --extra vault --python 3.10.20
+      - name: Assert this profile is certified (fail loud on drift)
+        run: >
+          uv run python -c
+          "from decoy_engine.quality.dp_provenance import check_fit_environment;
+          check_fit_environment(); print('CERTIFIED PROFILE OK')"
+      - name: DP fit-success suite (certified profile)
+        run: >
+          uv run pytest -m dp_certified
+          tests/unit/quality/test_dp.py
+          tests/unit/quality/test_dp_flag_e2e.py
+          tests/unit/generation/test_generate_dp_contract.py
+          tests/unit/plan/test_generation_plan.py
+          tests/unit/plan/test_serialize.py
+          tests/unit/quality/test_dp_provenance.py
+          --tb=short --junitxml=dp.xml
+      - name: Guard -- the suite actually executed (passed>0, none skipped/errored/failed)
+        run: |
+          uv run python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("dp.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", 0)) for s in suites)
+          failures = sum(int(s.get("failures", 0)) for s in suites)
+          errors = sum(int(s.get("errors", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          passed = tests - failures - errors - skipped
+
+          print(f"tests={tests} passed={passed} failures={failures} errors={errors} skipped={skipped}")
+          if not (passed > 0 and skipped == 0 and errors == 0 and failures == 0):
+              sys.exit(
+                  "dp-certified-gate did not prove the suite ran clean on the certified "
+                  f"profile: passed={passed} skipped={skipped} errors={errors} "
+                  f"failures={failures} (need passed>0, all others 0)"
+              )
+          PY

@@ -194,6 +194,7 @@ class TestConfigValidation:
             "numeric_bins",
         }
 
+    @pytest.mark.dp_certified
     def test_dp_fit_rejects_a_schema_column_absent_from_the_frame(self):
         """Phase-5 migration: the fit fits exactly the columns declared in
         `column_schema` (partial frame coverage is allowed -- a marginal release
@@ -309,6 +310,7 @@ class TestConfigValidation:
             )
         assert exc.value.code == "dp_numeric_domain_invalid"
 
+    @pytest.mark.dp_certified
     @pytest.mark.parametrize(
         ("bounds", "bins"),
         [((0.0, 120.0), 10), ((0.0, 1.0), 2), ((-50.0, 50.0), 100), ((0.0, 1e-300), 10)],
@@ -339,6 +341,7 @@ class TestConfigValidation:
     # guard. Column-name typing is the adapter's concern and is covered by
     # test_carriers.py's adapter suite.
 
+    @pytest.mark.dp_certified
     def test_declarations_are_read_once_so_a_drifting_mapping_cannot_slip_past(self):
         """D-LOW-1 (dennis round 6): the declarations were read three
         times (validation, schedule construction, fit loop), so a
@@ -374,6 +377,7 @@ class TestConfigValidation:
         # what the artifact reports, not whatever the mapping drifted to.
         assert snap["columns"]["age"]["stats"]["bin_edges"][-1] == 100.0
 
+    @pytest.mark.dp_certified
     def test_duplicate_frame_column_labels_are_rejected(self):
         """A schema key that selects TWO frame columns (`df[name]` is a
         DataFrame, not a Series) is a structural, columns-level problem, not a
@@ -388,6 +392,7 @@ class TestConfigValidation:
             )
         assert exc.value.code == "dp_adapter_duplicate_column"
 
+    @pytest.mark.dp_certified
     def test_numeric_bins_default_is_ten_and_recorded_in_artifact(self):
         df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
         snap = fit_dp_snapshot(
@@ -411,6 +416,7 @@ class TestDpFitIsIndependentOfExactSnapshot:
     leaving it as an unstated property of the two modules never
     importing each other."""
 
+    @pytest.mark.dp_certified
     def test_dp_fit_does_not_call_compute_distribution_snapshot(self, monkeypatch):
         """D-M5: patches `compute_distribution_snapshot` to raise if
         called at all, then runs a full mixed-column DP fit. If a future
@@ -431,6 +437,7 @@ class TestDpFitIsIndependentOfExactSnapshot:
             delta=1e-6,
         )  # must not raise
 
+    @pytest.mark.dp_certified
     def test_non_dp_snapshot_behavior_is_unchanged_after_dp_fit_split(self):
         """D-M4: calling `fit_dp_snapshot` must not change `compute_
         distribution_snapshot`'s own output for an identical input -- no
@@ -451,6 +458,7 @@ class TestDpFitIsIndependentOfExactSnapshot:
         after = compute_distribution_snapshot(df)
         assert before == after
 
+    @pytest.mark.dp_certified
     def test_private_values_cannot_change_declared_dp_kind(self):
         """D-M6 (binding decision 5): kind comes EXCLUSIVELY from the
         caller's declaration, never inferred from dtype, values, or
@@ -480,6 +488,7 @@ class TestRecordwiseNormalization:
     than a normalizer function directly -- the policy artifact, and totality
     against hostile/unfetchable content."""
 
+    @pytest.mark.dp_certified
     def test_the_policy_log_fires_unconditionally(self, caplog):
         """dennis round 9: mutation M9 made the logger inert and survived
         all 639 tests, because nothing referenced it.
@@ -513,6 +522,7 @@ class TestRecordwiseNormalization:
             records.append(emitted)
         assert records[0] == records[1], "the log must not vary with frame content"
 
+    @pytest.mark.dp_certified
     def test_normalization_policy_is_identical_whatever_the_frame_holds(self):
         """The artifact says what normalization releases, in fixed bytes.
 
@@ -640,6 +650,7 @@ class TestRecordwiseNormalization:
         assert flag_tokens
         assert flag_tokens <= {"true", "false"}
 
+    @pytest.mark.dp_certified
     def test_categorical_labels_that_cannot_be_encoded_are_dropped_not_raised(self):
         """C-B4, second location: a lone surrogate is a valid Python
         `str`, so `str()` succeeds and normalization used to pass it
@@ -660,6 +671,7 @@ class TestRecordwiseNormalization:
         )
         assert "c" in snap["columns"]
 
+    @pytest.mark.dp_certified
     def test_fit_succeeds_identically_on_neighbours_differing_by_a_hostile_row(self):
         """C-B4, the channel itself: fit success is an observable. If one
         neighbour emits an artifact and the other raises, that observable
@@ -693,6 +705,7 @@ class TestRecordwiseNormalization:
                     == base_snap["columns"][name]["stats"].keys()
                 ), (hostile, name)
 
+    @pytest.mark.dp_certified
     @pytest.mark.parametrize(
         ("arrow_type", "in_range", "out_of_range"),
         [
@@ -757,6 +770,7 @@ class TestRecordwiseNormalization:
         assert snap["columns"].keys() == base_snap["columns"].keys()
         assert snap["columns"]["c"]["stats"].keys() == base_snap["columns"]["c"]["stats"].keys()
 
+    @pytest.mark.dp_certified
     def test_a_pyarrow_backed_cell_that_cannot_be_fetched_does_not_fail_a_numeric_fit(self):
         """The same channel on the numeric path, which has its own loop."""
         cells = pd.arrays.ArrowExtensionArray(pa.array([0, 1, 2**60], type=pa.timestamp("s")))
@@ -772,6 +786,7 @@ class TestRecordwiseNormalization:
 
 
 class TestReleaseIds:
+    @pytest.mark.dp_certified
     def test_independent_fits_mint_distinct_release_ids(self):
         df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
         snap_a = fit_dp_snapshot(
@@ -790,6 +805,7 @@ class TestReleaseIds:
         )
         assert snap_a["dp"]["release_id"] != snap_b["dp"]["release_id"]
 
+    @pytest.mark.dp_certified
     def test_copied_snapshot_preserves_release_id(self):
         import copy
         import json
@@ -809,6 +825,7 @@ class TestReleaseIds:
 
 
 class TestArtifactShape:
+    @pytest.mark.dp_certified
     def test_null_count_is_derived_from_the_released_row_count_not_the_true_one(self):
         """D-H2 (dennis round 4): `null_count` is the noised row count
         minus the released non-null count. Substituting `len(frame)` for
@@ -853,6 +870,7 @@ class TestArtifactShape:
             # The true-row-count mutant would land here instead.
             assert column["null_count"] != max(0, len(frame) - column["non_null_count"]), name
 
+    @pytest.mark.dp_certified
     def test_dp_artifact_emits_no_exact_moments_or_quantiles(self):
         """D-M5: renamed from `..._no_exact_column_scalars`, which
         claimed more than it checked. It reads moments, quantiles, and
@@ -877,6 +895,7 @@ class TestArtifactShape:
         assert "high_cardinality" not in state["stats"]
         assert "support_origin" not in state
 
+    @pytest.mark.dp_certified
     def test_dp_artifact_records_opendp_and_dp_accounting_versions(self):
         import importlib.metadata
 
@@ -890,6 +909,7 @@ class TestArtifactShape:
         assert snap["dp"]["opendp_version"] == importlib.metadata.version("opendp")
         assert snap["dp"]["dp_accounting_version"] == importlib.metadata.version("dp-accounting")
 
+    @pytest.mark.dp_certified
     def test_dp_artifact_totals_are_the_accountant_result_not_the_request(self):
         snap = fit_dp_snapshot(
             _mixed_df(),
@@ -901,6 +921,7 @@ class TestArtifactShape:
         assert snap["dp"]["epsilon_total"] <= 2.0
         assert snap["dp"]["epsilon_total"] != 2.0  # the accountant's result, not the request
 
+    @pytest.mark.dp_certified
     def test_dp_artifact_epsilon_total_matches_independent_dp_accounting_composition(self):
         """C-H3 (Codex): the test above asserts only `epsilon_total <=
         request` and `!= request`, so a defect writing e.g. `request / 2`
@@ -950,6 +971,7 @@ class TestArtifactShape:
         # would not coincide with the composed result of these constants.
         assert snap["dp"]["epsilon_total"] not in (2.5, 5.0)
 
+    @pytest.mark.dp_certified
     def test_dp_fit_certificate_count_equals_query_count(self):
         snap = fit_dp_snapshot(
             _mixed_df(),
@@ -960,6 +982,7 @@ class TestArtifactShape:
         )
         assert snap["dp"]["query_count"] == 1 + 1 + 2  # row_count + 1 numeric + 2*1 categorical
 
+    @pytest.mark.dp_certified
     def test_certificate_count_mismatch_guard_raises_dp_schedule_mismatch(self, monkeypatch):
         """C-H3 (Codex): the test above only checks the serialized formula
         `1 + numeric_count + 2 * categorical_count` against `query_count`;
@@ -983,6 +1006,7 @@ class TestArtifactShape:
             )
         assert exc.value.code == "dp_schedule_mismatch"
 
+    @pytest.mark.dp_certified
     def test_adapter_never_rounds_or_compares_before_release(self):
         """C-H3 row 1c (guide section 6): OpenDP owns exact noisy-value
         thresholding; Decoy may round (serialize) only AFTER release, and
@@ -1070,6 +1094,7 @@ class TestDisclosureChannelRegressions:
     fixed; only the observable schema/success class/schedule may match,
     never the released values themselves."""
 
+    @pytest.mark.dp_certified
     def test_dp_fit_kind_and_success_are_identical_across_30_31_distinct_neighbors(self):
         """C-H3 (Codex): the previous version compared only `kind` and
         `query_count`, so a cardinality branch that changed the emitted
@@ -1102,6 +1127,7 @@ class TestDisclosureChannelRegressions:
         assert _public_part(col_30) == _public_part(col_31)
         assert snap_30["dp"].keys() == snap_31["dp"].keys()
 
+    @pytest.mark.dp_certified
     def test_dp_fit_all_null_declared_categorical_runs_measurement_and_emits_categorical_shape(
         self,
     ):
@@ -1178,6 +1204,7 @@ class TestDisclosureChannelRegressions:
         assert snap.keys() == ordinary.keys()
         assert snap["dp"].keys() == ordinary["dp"].keys()
 
+    @pytest.mark.dp_certified
     def test_dp_fit_numeric_shape_and_charge_schedule_are_data_independent_for_all_null_and_all_inf(
         self,
     ):
@@ -1229,6 +1256,7 @@ class TestDisclosureChannelRegressions:
             assert snap.keys() == ordinary.keys()
             assert snap["dp"].keys() == ordinary["dp"].keys()
 
+    @pytest.mark.dp_certified
     def test_dp_numeric_dtype_is_identical_across_int64_and_float64_input_frames(self):
         """C-B2 (Codex round-3 blocker), direct reproduction: `[1]` (a
         pandas int64 column) versus `[1, None]` (float64 -- pandas
@@ -1253,6 +1281,7 @@ class TestDisclosureChannelRegressions:
         )
         assert int_only["columns"]["age"]["dtype"] == with_null["columns"]["age"]["dtype"]
 
+    @pytest.mark.dp_certified
     def test_dp_fit_emits_no_warning_regardless_of_a_complex_valued_neighbor(self):
         """C-B2 (Codex round-3 blocker), direct reproduction: two numeric
         neighbours with identical public declarations and pandas dtype
@@ -1279,6 +1308,7 @@ class TestDisclosureChannelRegressions:
                 )
             assert caught == [], [str(w.message) for w in caught]
 
+    @pytest.mark.dp_certified
     def test_all_distinct_categorical_versus_single_repeated_label_same_schema(self):
         all_distinct = pd.DataFrame({"cat": [f"v{i}" for i in range(50)]})
         one_label = pd.DataFrame({"cat": ["only"] * 50})
@@ -1324,6 +1354,7 @@ class _FixedCategoricalBackend:
 
 
 class TestCategoricalRelease:
+    @pytest.mark.dp_certified
     def test_categorical_release_order_uses_noised_counts_not_true_rank(self):
         """Defect 1a (guide section 6): the previous version of this test
         used a fixture whose true counts (~1500/900/450/150 at epsilon
@@ -1356,6 +1387,7 @@ class TestCategoricalRelease:
         counts = [t["count"] for t in top]
         assert counts == sorted(counts, reverse=True)
 
+    @pytest.mark.dp_certified
     def test_categorical_other_count_is_derived_only_from_noised_total_and_kept_counts(self):
         """Defect 1b (guide section 6): the previous version of this test
         ran ONE scenario and restated `other_count`'s own formula line for
@@ -1449,6 +1481,7 @@ class TestUnseededStatisticalMechanism:
     """Guide section 7.2. Neither test may be seeded; both are designed
     so a correct implementation fails less often than `_ALPHA` per run."""
 
+    @pytest.mark.dp_certified
     def test_independent_dp_fits_are_not_deterministic(self):
         df = pd.DataFrame({"age": [float(i % 120) for i in range(2000)]})
         domains = {"age": (0.0, 120.0)}

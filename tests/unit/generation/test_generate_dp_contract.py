@@ -30,8 +30,8 @@ from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._generation import read_and_pin_snapshots
 from decoy_engine.profile import Profile
+from decoy_engine.quality import dp_provenance as _dp_provenance
 from decoy_engine.quality.dp import fit_dp_snapshot as _real_fit_dp_snapshot
-from decoy_engine.quality.dp_provenance import current_provenance
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
@@ -58,14 +58,21 @@ def fit_dp_snapshot(frame, *, categorical_columns=(), numeric_domains=None, epsi
 
 def _certified_provenance_dict() -> dict:
     """The RECORDED proof-stack identity a genuine `dps-marginal/v3` artifact
-    carries, in JSON-serializable shape. Computed live from the (certified) test
-    environment so `validate_recorded_provenance` accepts it, exactly as the
-    real fit records it (guide sections 3.8/3.9)."""
-    prov = current_provenance()
+    carries, in JSON-serializable shape.
+
+    A FROZEN member of the static `_CERTIFIED_STACKS` manifest, not the live
+    environment's own provenance: the artifacts built here are hand-forged
+    (via `_numeric_dp_artifact`/`_flag_dp_artifact`), so what they test is
+    `verify_dp_snapshots`'s reaction to a RECORDED identity, not whether this
+    test process happens to be running on the certified stack. Reading the
+    live environment made every test that builds one of these synthetic
+    artifacts fail on an uncertified host with `dp_snapshot_provenance_
+    uncertified` before ever reaching the behavior under test."""
+    (plat, cpython), fingerprints = next(iter(_dp_provenance._CERTIFIED_STACKS.items()))
     return {
-        "platform": dict(prov.platform._asdict()),
-        "cpython": prov.cpython,
-        "fingerprint": prov.fingerprint,
+        "platform": dict(plat._asdict()),
+        "cpython": cpython,
+        "fingerprint": sorted(fingerprints)[0],
     }
 
 
@@ -164,6 +171,7 @@ class TestCheckDpGenerateContract:
         }
         check_dp_generate_contract(cfg)  # no raise
 
+    @pytest.mark.dp_certified
     def test_dp_rejects_high_cardinality(self, tmp_path):
         path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
@@ -180,6 +188,7 @@ class TestCheckDpGenerateContract:
             check_dp_generate_contract(cfg)
         assert exc.value.code == "dp_generate_high_cardinality_unsupported"
 
+    @pytest.mark.dp_certified
     def test_dp_configuration_rejects_allow_real_categories_true(self, tmp_path):
         path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
@@ -196,6 +205,7 @@ class TestCheckDpGenerateContract:
             check_dp_generate_contract(cfg)
         assert exc.value.code == "dp_generate_allow_real_categories_unsupported"
 
+    @pytest.mark.dp_certified
     def test_dp_configuration_rejects_joint_or_condition_on(self, tmp_path):
         path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
@@ -222,6 +232,7 @@ class TestDpCategoricalNowSupported:
     snapshot is a verified `dps-marginal/v3` release. This directly
     supersedes Option A's blanket `dp_categorical_not_yet_supported`."""
 
+    @pytest.mark.dp_certified
     def test_dp_categorical_snapshot_compiles_without_allow_real_categories(self, tmp_path):
         path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
@@ -230,6 +241,7 @@ class TestDpCategoricalNowSupported:
         names = run_config_only_checks(cfg)
         assert "statistical_columns" in names  # no raise; compiled clean
 
+    @pytest.mark.dp_certified
     def test_dp_categorical_snapshot_compiles_end_to_end_through_compile_plan(self, tmp_path):
         path = _dp_fit_mixed(tmp_path)
         cfg = _dp_cfg(
@@ -932,6 +944,7 @@ class TestReleaseIdLedger:
 
 
 class TestConsumeOnlyContract:
+    @pytest.mark.dp_certified
     def test_generation_consumes_only_the_pinned_snapshot(self, tmp_path):
         """Sampling from a DP artifact needs no raw source frame -- and,
         under Scope B, no re-opened path either (guide section 4.7/4.8).
@@ -948,6 +961,7 @@ class TestConsumeOnlyContract:
         assert len(values) == 5
         assert set(values) <= {"CA", "NY", "TX"}
 
+    @pytest.mark.dp_certified
     def test_generate_tables_uses_pinned_snapshot_after_file_swap(self, tmp_path, monkeypatch):
         """Guide section 4.8/F4 and defect closure matrix row F4. The
         previous regression here (`test_generation_consumes_only_the_
@@ -1050,6 +1064,7 @@ class TestGenerateTablesRejectsRawConfig:
     from directly.
     """
 
+    @pytest.mark.dp_certified
     def test_generate_tables_rejects_raw_config_and_requires_compiled_plan(self, tmp_path):
         path = _dp_fit_mixed(tmp_path, n=300)
         raw_config = _dp_cfg(
@@ -1084,6 +1099,7 @@ class TestDpDeclaredWithNoStatisticalColumns:
     generate columns (faker, sequence, ...), which is not a contradiction:
     the DP contract only concerns statistical generate columns."""
 
+    @pytest.mark.dp_certified
     def test_dp_declared_plan_with_a_statistical_column_still_requires_the_receipt(self, tmp_path):
         """D-H3 (dennis round 4): the D-M7 relaxation above shipped a
         test for what it newly PERMITS and none for what must still

@@ -19,6 +19,7 @@ from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from decoy_engine.plan import compile_plan
 from decoy_engine.profile import Profile
@@ -66,6 +67,7 @@ def _dp_cfg(*, table_columns: list[dict], epsilon: float = 5.0, delta: float = 1
     }
 
 
+@pytest.mark.dp_certified
 def test_compile_plan_reads_each_snapshot_path_once(tmp_path, monkeypatch):
     """Two statistical columns (age, state) share ONE snapshot_file path.
     `compile_plan` must open that path exactly once across the whole
@@ -96,6 +98,7 @@ def test_compile_plan_reads_each_snapshot_path_once(tmp_path, monkeypatch):
     assert len(plan.generation.snapshots) == 1  # deduped: one PinnedSnapshot for the shared path
 
 
+@pytest.mark.dp_certified
 def test_compile_plan_embeds_snapshot_bytes_and_digest(tmp_path):
     """The embedded `payload_b64` decodes back to the exact on-disk bytes,
     and `sha256` is that same content's digest -- not a placeholder and
@@ -118,6 +121,7 @@ def test_compile_plan_embeds_snapshot_bytes_and_digest(tmp_path):
     assert snapshot.sha256 == hashlib.sha256(raw_on_disk).hexdigest()
 
 
+@pytest.mark.dp_certified
 def test_compiled_generation_plan_is_recursively_immutable(tmp_path):
     """No mutable dict or list survives the freeze: a `PinnedStatisticalSpec.
     spec` is a `MappingProxyType` all the way down, so a caller holding a
