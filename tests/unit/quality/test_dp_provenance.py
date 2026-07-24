@@ -358,10 +358,15 @@ def test_validate_recorded_provenance_rejects_malformed_records(bad: Any) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.dp_certified
 def test_assert_lock_matches_installed_passes_on_real_env() -> None:
     """The synced .venv must be exactly the marker-selected uv.lock pins.
     A failure here means the environment drifted from the lock -- which is
-    precisely what the fingerprint must never be computed over."""
+    precisely what the fingerprint must never be computed over. Marked
+    dp_certified: only the certified profile is frozen-synced to the lock;
+    the full-suite CI jobs install unpinned deps, so the conftest hook skips
+    this off-stack (the dp-certified-gate runs it, and check_fit_environment
+    there asserts the same lock-match)."""
     prov.assert_lock_matches_installed()
 
 

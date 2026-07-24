@@ -180,6 +180,7 @@ nitpick_ignore = [
     ("py:class", "pandas.DataFrame"),
     ("py:class", "pyarrow.Table"),
     ("py:class", "numpy.random.Generator"),
+    ("py:class", "numpy.ndarray"),
     ("py:class", "pydantic.BaseModel"),
     ("py:obj", "pydantic.BaseModel"),
     ("py:class", "pydantic.SecretStr"),
