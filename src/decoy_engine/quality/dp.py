@@ -433,8 +433,16 @@ def _fit_dp_snapshot_with_backend(
             for c in numeric_cols
         ),
         categorical=tuple(
+            # This legacy fit API declares only str-typed categorical columns,
+            # so every spec carries the `text` carrier (str-domain OpenDP pair).
+            # The `flag` (bool-domain) carrier is reached only through the
+            # carrier-aware DP fit API landing in a later DPS-CODEC phase; the
+            # carrier is populated here explicitly so it enters the schedule
+            # signature and the budget cache key (guide section 3.4/4).
             CategoricalQuerySpec(
-                grouped_name=f"categorical_grouped:{c}", total_name=f"categorical_total:{c}"
+                grouped_name=f"categorical_grouped:{c}",
+                total_name=f"categorical_total:{c}",
+                carrier="text",
             )
             for c in categorical_cols
         ),

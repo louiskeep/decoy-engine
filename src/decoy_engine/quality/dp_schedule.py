@@ -42,10 +42,24 @@ class NumericQuerySpec:
 class CategoricalQuerySpec:
     """The pair of scheduled queries one categorical column contributes
     (guide section 4.5): the thresholded grouped count and the noised
-    non-null total."""
+    non-null total.
+
+    `carrier` is the column's declared typed carrier (guide section 3.3/3.4),
+    which selects the OpenDP measurement DOMAIN for both halves of the pair:
+    `"text"` (the legacy default) builds the str-domain `make_count_by(str)` /
+    `make_count(str)` pair, `"flag"` builds the bool-domain `make_count_by(bool)`
+    / `make_count(bool)` pair (`atom_domain(T=str)` fails on bools -- "inferred
+    bool, expected String" -- so a boolean column needs the bool domain). It
+    defaults to `"text"` so every already-serialized schedule and every existing
+    caller keeps the exact str-domain behaviour; only a column explicitly
+    declared `flag` through the DP fit API takes the bool path. The carrier is a
+    first-class part of the schedule signature (see `Schedule.signature`) and so
+    of the budget cache key, because a str-domain and a bool-domain categorical
+    are different measurements that must never share a cached calibration."""
 
     grouped_name: str
     total_name: str
+    carrier: str = "text"
 
 
 @dataclass(frozen=True)
@@ -74,3 +88,19 @@ class Schedule:
         if not self.categorical:
             return 0.0
         return (delta / 2.0) / len(self.categorical)
+
+    def signature(self) -> tuple[object, ...]:
+        """A stable, hashable identity of this schedule's SHAPE for the budget
+        cache key (guide section 4, allocation-cost finding). It captures the
+        row-count name, every numeric query's name + interior edges/bins, and
+        every categorical query's names + CARRIER -- the carrier is included
+        deliberately (guide section 3.4) so a str-domain and a bool-domain
+        categorical, identical in every other respect, produce different
+        signatures and therefore never collide on one cached calibration. It is
+        a pure function of the public schedule (never of any value), so two fits
+        with the identical declared schedule share a signature."""
+        return (
+            self.row_count_name,
+            tuple((q.name, q.interior_edges) for q in self.numeric),
+            tuple((q.grouped_name, q.total_name, q.carrier) for q in self.categorical),
+        )

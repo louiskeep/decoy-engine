@@ -412,10 +412,16 @@ class TestReleaseLedger:
         assert ledger.total_delta() == pytest.approx(3e-7)
         assert len(ledger.breakdown()) == 2
 
-    def test_rejects_nonpositive_epsilon(self):
+    def test_accepts_zero_epsilon_rejects_negative(self):
+        # Zero-epsilon finding (guide section 4): this ledger sums already-
+        # COMPOSED release totals, and dp_accounting legitimately composes to
+        # epsilon_total == 0 at a large enough delta, so a composed total of
+        # exactly 0 must be chargeable. A negative total is still impossible.
         ledger = ReleaseLedger()
+        ledger.charge("zero", epsilon=0.0)  # must NOT raise
+        assert ledger.total_epsilon() == 0.0
         with pytest.raises(ValueError, match="epsilon"):
-            ledger.charge("bad", epsilon=0.0)
+            ledger.charge("bad", epsilon=-1e-9)
 
     def test_rejects_negative_delta(self):
         ledger = ReleaseLedger()
