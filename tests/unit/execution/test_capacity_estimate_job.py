@@ -2,10 +2,15 @@
 groundwork, docs/plans/2026-07-24-oom-checker-cli-v1.md).
 
 Covers: NOT_APPLICABLE for a no-relationships config and for a job below the
-out-of-core size threshold; Parquet footer-only row counts (never a full
-frame read); a CSV parent table forcing UNKNOWN (R6); FIT/INSUFFICIENT
-through the real budget-resolution path; and base_dir-driven (not CWD-driven)
-source path resolution (R2).
+out-of-core size threshold that is NOT out-of-core-compatible; the Codex
+P1-1 anti-under-refusal proof for a below-threshold job that IS out-of-core-
+compatible (`TestUnderRefusalAntiProof`); Parquet footer-only row counts
+(never a full frame read) alongside the real bounded local sample the
+profiler DOES take (`TestParquetFooterOnly`); a CSV parent table forcing
+UNKNOWN (R6); FIT/INSUFFICIENT through the real budget-resolution path; R3
+propagation of an unexpected budget-resolution defect
+(`TestBudgetResolutionR3`); and base_dir-driven (not CWD-driven) source path
+resolution (R2).
 
 `decide_execution_route`'s `out_of_core_threshold_rows` default is
 5,000,000 rows, and `estimate_job_capacity` has no kwarg to override it (R2's
@@ -28,6 +33,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution import capacity as capacity_mod
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.capacity import estimate_job_capacity
 from decoy_engine.execution.out_of_core._memory_estimate import CapacityVerdict
 
@@ -160,31 +166,122 @@ class TestNotApplicable:
         assert est.verdict is CapacityVerdict.NOT_APPLICABLE
         assert est.code is None
 
-    def test_below_size_threshold_routes_sequential_not_out_of_core(self, tmp_path: Path) -> None:
-        # No low_threshold fixture: at the real 5,000,000-row default, this
-        # 40-row fixture is genuinely sequential-bound, not out-of-core-bound.
+    def test_below_size_threshold_is_ambiguous_not_a_confirmed_not_applicable(
+        self, tmp_path: Path
+    ) -> None:
+        # No low_threshold fixture: at the real 5,000,000-row default, the
+        # row-count-only decision (byte-estimate routing OFF) picks
+        # `sequential` for this 40-row fixture. But this fixture IS
+        # out-of-core-compatible, and a real `decoy run` (byte-estimate
+        # routing ON by default) drops `out_of_core_threshold_rows` entirely
+        # once its byte estimate fails to confirm a `full_frame` fit --
+        # routing an out-of-core-compatible job to `out_of_core` REGARDLESS
+        # of size (see `test_byte_estimate_routing.py::
+        # test_does_not_fit_routes_out_of_core_when_eligible_and_compatible`).
+        # `estimate_job_capacity` cannot compute that real byte estimate
+        # itself (R6), so it cannot confirm which route a real run takes --
+        # NOT_APPLICABLE here would be a false "fine" (Codex P1-1's
+        # under-refusal finding); UNKNOWN is the honest verdict.
         config = _ooc_config(tmp_path)
+        est = estimate_job_capacity(config, tmp_path)
+        assert est.verdict is CapacityVerdict.UNKNOWN
+        assert est.route == "out_of_core"
+        assert "byte-level estimate" in est.message
+
+    def test_below_size_threshold_and_not_ooc_compatible_stays_not_applicable(
+        self, tmp_path: Path
+    ) -> None:
+        # `faker` is a deferred-unsupported out-of-core strategy (falls back
+        # to sequential/full-frame, `_compat._DEFERRED_GROUP_B`), so this job
+        # is out-of-core-INCOMPATIBLE -- there is no real-run ambiguity to
+        # resolve here: neither the row-count-only decision NOR a real run's
+        # byte-estimate routing (`decide_execution_route`'s `out_of_core`
+        # branch also requires `out_of_core_compatible`) can ever send this
+        # job to `out_of_core`. NOT_APPLICABLE stays correct -- proves the
+        # P1-1 fix does not turn every below-threshold job into UNKNOWN, only
+        # the genuinely ambiguous (out-of-core-COMPATIBLE) ones.
+        parent, child = _parent_child_tables()
+        config = _ooc_config(tmp_path, tables=(parent, child))
+        config["tables"][0]["columns"] = [
+            _hash_col("id", "ns"),
+            {"name": "note", "strategy": "faker", "provider": "person_email"},
+        ]
         est = estimate_job_capacity(config, tmp_path)
         assert est.verdict is CapacityVerdict.NOT_APPLICABLE
         assert est.route == "sequential"
 
 
+class TestUnderRefusalAntiProof:
+    """Codex P1-1 gate finding: the anti-under-refusal proof.
+
+    Mirrors `test_byte_estimate_routing.py::TestFlagOnByteEstimateRouting::
+    test_does_not_fit_routes_out_of_core_when_eligible_and_compatible` at the
+    `estimate_job_capacity` layer: a wide, out-of-core-compatible parent table
+    BELOW `out_of_core_threshold_rows` (so the row-count-only decision alone
+    would pick `sequential`), under a budget too tiny for its real
+    `out_of_core` build floor. A real `decoy run` (byte-estimate routing on
+    by default) routes this exact job to `out_of_core` regardless of its
+    size and refuses it there (`out_of_core_insufficient_memory`). Before the
+    P1-1 fix, `estimate_job_capacity` reported NOT_APPLICABLE/`sequential` on
+    this job -- a false "fine" on a job `decoy run` actually refuses. It must
+    now report INSUFFICIENT or UNKNOWN, NEVER NOT_APPLICABLE or FIT.
+    """
+
+    def test_below_threshold_ooc_compatible_tiny_budget_never_fit_or_not_applicable(
+        self, tmp_path: Path
+    ) -> None:
+        # No low_threshold fixture: 300k rows is genuinely below the real
+        # 5,000,000-row out_of_core_threshold_rows default, so the row-count-
+        # only decision (byte-estimate routing OFF) picks `sequential` here.
+        big_parent, big_child = _parent_child_tables(300_000)
+        config = _ooc_config(tmp_path, tables=(big_parent, big_child))
+        est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
+        assert est.verdict in {CapacityVerdict.INSUFFICIENT, CapacityVerdict.UNKNOWN}
+        assert est.verdict is not CapacityVerdict.NOT_APPLICABLE
+        assert est.verdict is not CapacityVerdict.FIT
+        # The 1 MiB budget is far below this parent's real build floor -- the
+        # promoted out-of-core pricing (not a mere "can't tell") should reach
+        # a definite INSUFFICIENT, matching the real gate's own refusal.
+        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.code in {"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"}
+
+
 class TestParquetFooterOnly:
-    def test_fit_never_materializes_a_full_frame(
+    def test_fit_never_materializes_a_full_frame_but_does_take_a_bounded_sample(
         self, tmp_path: Path, low_threshold, monkeypatch
     ) -> None:
-        config = _ooc_config(tmp_path)
-        # T6: the row-count derivation must read the Parquet footer only.
-        # `ParquetFileSource.sample_frame` uses `iter_batches`; only a
-        # `to_frame()` whole-file read (never exercised on the bounded
-        # profiling path this estimator uses) calls `read_table` -- a spy
-        # that raises if it IS called proves that path stays cold.
+        # T6 + P2 (Codex gate): the row-count derivation must read the
+        # Parquet FOOTER only, never a whole-file read -- `pq.read_table`
+        # (the only whole-file call on this path, `ParquetFileSource.
+        # to_frame`) is blocked and proven cold. But `profile_source`'s
+        # bounded residency DOES take a real, bounded (<=10k-row) LOCAL
+        # sample per source via `pq.ParquetFile.iter_batches` (`_readers.py`
+        # `LazySource.iter_batches` / `ParquetFileSource.sample_frame`) --
+        # the prior version of this test asserted only the first half and
+        # left the sample read unverified, which understated what this
+        # checker actually reads (see the module docstring's honest framing:
+        # "a bounded local sample", not metadata-only).
+        real_iter_batches = pq.ParquetFile.iter_batches
+        sample_batch_sizes: list[int] = []
+
+        def _spy_iter_batches(self: pq.ParquetFile, *args: Any, **kwargs: Any) -> Any:
+            batch_size = kwargs.get("batch_size", args[0] if args else None)
+            if batch_size is not None:
+                sample_batch_sizes.append(batch_size)
+            return real_iter_batches(self, *args, **kwargs)
+
+        monkeypatch.setattr(pq.ParquetFile, "iter_batches", _spy_iter_batches)
         monkeypatch.setattr(
             pq, "read_table", mock.Mock(side_effect=AssertionError("must not read a full frame"))
         )
+        config = _ooc_config(tmp_path)
         est = estimate_job_capacity(config, tmp_path, budget_bytes=64 * _GIB)
         assert est.verdict is CapacityVerdict.FIT
         assert est.route == "out_of_core"
+        # The bounded sample DID run (once per file source), and every call
+        # asked for at most the 10k-row default cap -- never unbounded.
+        assert sample_batch_sizes, "expected a bounded iter_batches sample per source"
+        assert all(size <= 10_000 for size in sample_batch_sizes)
 
     def test_insufficient_on_a_tiny_budget(self, tmp_path: Path, low_threshold) -> None:
         # `resolve_ooc_memory_limit` floors any explicit budget at
@@ -208,6 +305,60 @@ class TestCsvParentForcesUnknown:
         est = estimate_job_capacity(config, tmp_path, budget_bytes=64 * _GIB)
         assert est.verdict is CapacityVerdict.UNKNOWN
         assert "parent" in est.message
+
+
+class TestBudgetResolutionR3:
+    """Codex P1-2 (item 1): the budget-resolution `try/except` around
+    `resolve_ooc_memory_limit` must catch ONLY the one expected "RAM
+    undetectable" code and RE-RAISE everything else -- never fold an
+    unexpected defect into a silent `UNKNOWN`."""
+
+    def test_ram_undetectable_folds_to_unknown_not_a_crash(
+        self, tmp_path: Path, low_threshold, monkeypatch
+    ) -> None:
+        config = _ooc_config(tmp_path)
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise ExecutionError(
+                code="out_of_core_memory_detection_failed",
+                message="host RAM could not be detected (test double).",
+            )
+
+        monkeypatch.setattr(capacity_mod, "resolve_ooc_memory_limit", _boom)
+        est = estimate_job_capacity(config, tmp_path)  # no explicit budget_bytes
+        assert est.verdict is CapacityVerdict.UNKNOWN
+
+    def test_other_execution_error_propagates_never_swallowed(
+        self, tmp_path: Path, low_threshold, monkeypatch
+    ) -> None:
+        config = _ooc_config(tmp_path)
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise ExecutionError(
+                code="out_of_core_concurrency_invalid",
+                message="max_concurrent_instances must be >= 1, got 0 (test double).",
+            )
+
+        monkeypatch.setattr(capacity_mod, "resolve_ooc_memory_limit", _boom)
+        with pytest.raises(ExecutionError, match="test double"):
+            estimate_job_capacity(config, tmp_path)
+
+    def test_explicit_budget_bytes_never_caught_even_for_the_expected_code(
+        self, tmp_path: Path, low_threshold, monkeypatch
+    ) -> None:
+        # An explicit caller-supplied budget_bytes must never be swallowed,
+        # even for the one code that IS caught when budget_bytes is None.
+        config = _ooc_config(tmp_path)
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise ExecutionError(
+                code="out_of_core_memory_detection_failed",
+                message="should not be reached with an explicit budget (test double).",
+            )
+
+        monkeypatch.setattr(capacity_mod, "resolve_ooc_memory_limit", _boom)
+        with pytest.raises(ExecutionError, match="test double"):
+            estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
 
 
 class TestBaseDirResolution:

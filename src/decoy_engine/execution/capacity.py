@@ -24,12 +24,30 @@ Two deliberate, documented simplifications versus a real `decoy run`:
    byte-level estimate (or a measured micro-probe) confirms it fits -- but
    that recovery only prices RESIDENT sample data, and this estimator never
    materializes a source to get one (R6: no full-frame read in the estimate
-   path). Skipping it means this checker is occasionally MORE conservative
-   than the real run (it may flag a job as out-of-core-bound that the real
-   run's byte-estimate would actually admit to `full_frame`), never less --
-   the safe direction for a capacity gate, and consistent with R4's framing
-   that this checks the out-of-core-FK route specifically, not whole-job
-   fit.
+   path). Skipping the flags does NOT make this checker uniformly MORE
+   conservative than a real run, though -- a Codex P1 gate finding proved the
+   opposite direction also exists: `decide_execution_route`'s
+   `use_byte_estimate_routing` branch DROPS `out_of_core_threshold_rows`
+   entirely for an out-of-core-compatible pure-mask FK job once the byte
+   estimate fails to confirm `full_frame` fits, routing it to `out_of_core`
+   REGARDLESS OF SIZE -- so a real run can send a job this row-count-only
+   decision would call `sequential` (too small for the threshold) to
+   `out_of_core` instead, and refuse it there. This function cannot compute
+   the real byte estimate itself (still true: no resident/full-frame read
+   here), so instead of trusting the row-count-only route as final, it asks
+   `decide_execution_route` a SECOND time with byte-estimate routing ON and
+   the most conservative assumption a real run's own estimate could reach
+   (`full_frame_fits_estimate=False`, per that function's own "unpriceable
+   treated like does-not-fit" rule) whenever the job is out-of-core-compatible
+   and the first, byte-routing-off decision did NOT already pick
+   `out_of_core`. If that second call lands on `out_of_core`, this job's
+   capacity IS priced against that route -- and if the price comes back
+   anything less certain than `INSUFFICIENT` (a `FIT` this function cannot
+   actually confirm a real run would reach), the verdict downgrades to
+   `UNKNOWN` rather than the `FIT`/`NOT_APPLICABLE` the first, byte-routing-
+   off decision alone would have reported. This keeps the one direction a
+   capacity gate must never take off the table: reporting "fine" on a job a
+   real run refuses.
 2. Row counts for the capacity floor itself (not the routing size signal)
    trust ONLY an exact per-table count (`TableProfile.row_count_exact`):
    Parquet/fixed_width footer counts, never a CSV byte-size estimate. A
@@ -45,6 +63,7 @@ different directory than `decoy run` still evaluates the identical files.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +96,16 @@ _OUT_OF_CORE_ROUTE = "out_of_core"
 # priceability question. Reused verbatim here (same code, same fail-closed
 # posture) rather than inventing a second code for the identical defect.
 _PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
+
+# The one code `detect_host_memory_bytes` raises (propagated through
+# `detect_effective_memory_bytes` -> `resolve_ooc_memory_limit`) when NEITHER
+# a cgroup limit nor host RAM is readable -- the SOLE expected-indeterminacy
+# case the budget-resolution try/except below may fold into a `None` budget
+# (R3). Any OTHER `ExecutionError` from that call (a malformed
+# `max_concurrent_instances`, an invalid explicit `budget_bytes`, an
+# un-sizeable fan-in split, ...) is a genuine defect, not a detection
+# failure, and must propagate rather than being swallowed into a verdict.
+_RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
 
 
 def _resolve_source_path(raw_path: str, base_dir: Path) -> Path:
@@ -243,6 +272,62 @@ def estimate_job_capacity(
             "applies to a job that actually reaches that route.",
         )
 
+    # P1-1 (Codex gate finding, docs/plans/2026-07-24-oom-checker-cli-v1.md):
+    # a real `decoy run` defaults BOTH `use_byte_estimate_routing` and
+    # `use_probe_routing` to True, and `decide_execution_route`'s
+    # byte-estimate branch drops `out_of_core_threshold_rows` entirely for an
+    # out-of-core-compatible pure-mask FK job once the byte estimate fails to
+    # confirm `full_frame` fits -- it routes to `out_of_core` regardless of
+    # size. So the row-count-only decision above can pick a different route
+    # for a job a real run sends to `out_of_core` instead, where the mid-run
+    # gate can refuse it -- reporting NOT_APPLICABLE here on such a job would
+    # be a false "fine", the one direction a capacity gate must never take.
+    #
+    # This function still cannot compute the real byte-level estimate (R6:
+    # no resident/full-frame read here), so it cannot know whether a real
+    # run's estimate would confirm a `full_frame` fit. Instead it asks
+    # `decide_execution_route` what a real run would do in the WORST case
+    # for full_frame admission -- `full_frame_fits_estimate=False`, matching
+    # that function's own §13 rule that an unconfirmed/unpriceable estimate
+    # is treated identically to "does not fit" -- and, only if THAT lands on
+    # `out_of_core`, prices this job's capacity there too rather than
+    # trusting the row-count route as final.
+    ooc_route_uncertain = False
+    if (
+        route != _OUT_OF_CORE_ROUTE
+        and has_mask_table
+        and not has_generate_table
+        and out_of_core_compatible
+    ):
+        try:
+            byte_route, _byte_route_reason = decide_execution_route(
+                profile,
+                has_generate_table=has_generate_table,
+                has_mask_table=has_mask_table,
+                validators=(config.get("validators") or []),
+                fidelity_report=False,
+                vault_writer=None,
+                execution_mode="auto",
+                graph=graph,
+                resolved_substrate="pandas",
+                out_of_core_compatible=out_of_core_compatible,
+                out_of_core_reject_code=out_of_core_reject_code,
+                largest_table_rows=largest_table_rows,
+                largest_table_rows_exact=largest_table_rows_exact,
+                use_byte_estimate_routing=True,
+                full_frame_fits_estimate=False,
+                use_probe_routing=False,
+            )
+        except ExecutionError:
+            # The worst case is a reject-before-read, not an out-of-core
+            # admission -- a real run would raise there too, which is a
+            # different (and already honest) NOT_APPLICABLE outcome from the
+            # row-count route computed above; nothing to promote.
+            byte_route = None
+        if byte_route == _OUT_OF_CORE_ROUTE:
+            route = _OUT_OF_CORE_ROUTE
+            ooc_route_uncertain = True
+
     if route != _OUT_OF_CORE_ROUTE:
         return _not_applicable(
             route,
@@ -276,22 +361,24 @@ def estimate_job_capacity(
     # flag), so `sink=False` here is not a simplification -- it is the exact
     # value the real run always resolves.
     max_concurrent = _max_concurrent_ooc_instances(graph, sink=False)
-    # Mirrors `run_out_of_core_route`'s own fail-open try/except verbatim:
-    # `resolve_ooc_memory_limit(None, ...)` calls `detect_effective_memory_
-    # bytes()` internally, which raises a coded `ExecutionError` when NEITHER
-    # a cgroup limit nor host RAM is readable. The real run path treats that
-    # as "no budget to gate against" rather than a hard failure; this
-    # estimator must fail open the SAME way (R3: undetectable RAM is
-    # EXPECTED indeterminacy, verdict UNKNOWN, not a propagated crash). An
-    # explicit caller-supplied `budget_bytes` still raises -- a caller who
-    # passed a bad explicit value gets told, exactly like the run path.
+    # R3 (Codex P1-2): only the ONE expected "RAM undetectable" failure
+    # (`_RAM_UNDETECTABLE_CODE`, raised by `detect_host_memory_bytes` and
+    # propagated through `detect_effective_memory_bytes`) is caught here and
+    # folded into a `None` budget (UNKNOWN downstream) -- EXPECTED
+    # indeterminacy, matching the real run path's own fail-open contract for
+    # that one case. Any OTHER `ExecutionError` (a malformed
+    # `max_concurrent_instances`, an un-sizeable fan-in split, ...) is a
+    # genuine defect, not detection failure, and must RE-RAISE rather than
+    # being swallowed into a verdict. An explicit caller-supplied
+    # `budget_bytes` is never caught at all -- a caller who passed a bad
+    # explicit value gets told, exactly like the run path.
     resolved_budget_bytes: int | None
     try:
         resolved_budget_bytes = resolve_ooc_memory_limit(
             budget_bytes, max_concurrent_instances=max_concurrent
         ).budget_bytes
-    except ExecutionError:
-        if budget_bytes is not None:
+    except ExecutionError as exc:
+        if budget_bytes is not None or exc.code != _RAM_UNDETECTABLE_CODE:
             raise
         resolved_budget_bytes = None
 
@@ -302,4 +389,33 @@ def estimate_job_capacity(
         sink=False,
         unresolved_parent_tables=frozenset(unresolved),
     )
-    return evaluate_capacity(inputs, resolved_budget_bytes)
+    estimate = evaluate_capacity(inputs, resolved_budget_bytes)
+    if ooc_route_uncertain and estimate.verdict not in (
+        CapacityVerdict.INSUFFICIENT,
+        CapacityVerdict.UNKNOWN,
+    ):
+        # This job only reached the out-of-core pricing above because the
+        # WORST-CASE byte-estimate probe landed on `out_of_core`, never
+        # because a real byte estimate confirmed it -- so a `FIT` (or
+        # `NOT_APPLICABLE`, not reachable here since `route` was forced to
+        # `out_of_core`) claims more confidence than this estimator actually
+        # has about which route a real run would take. Only a definite
+        # `INSUFFICIENT` finding is worth surfacing on its own terms (the
+        # exact under-refusal risk this whole probe exists to catch);
+        # anything else is honestly UNKNOWN, not a confirmed pass.
+        estimate = replace(
+            estimate,
+            verdict=CapacityVerdict.UNKNOWN,
+            message=(
+                "this job is out-of-core-FK-compatible but its row-count-only "
+                "route is not out-of-core (likely below out_of_core_threshold_"
+                "rows); a real `decoy run` (byte-estimate routing on by "
+                "default) can ignore that threshold and route it to "
+                "out-of-core-FK regardless of size. This checker cannot "
+                "compute the real byte-level estimate without materializing "
+                "resident source data (R6), so it cannot confirm which route "
+                f"a real run would take; capacity is not checked with "
+                f"confidence for this job. ({estimate.message})"
+            ),
+        )
+    return estimate
