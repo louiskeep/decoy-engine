@@ -86,15 +86,27 @@ BUILD PROGRESS:
   totality, boxing invariance, adjacency, the full defect matrix -- confirmed still
   covered on the carrier codecs). 1 pre-existing MEDIUM surfaced -> phase 8 (the
   dp_policy artifact prose drift below). Zero remaining dp_normalize imports.
-- **Phase 8 (docs: `_spec.py`/`_global_settings.py` wording, claim-copy tests, CHANGELOG,
-  `what-we-cannot-prove.md`) — PENDING.** MUST ALSO FIX (phase-7 finding): the DP artifact
-  ships `dp_policy._DP_NORMALIZATION_POLICY["categorical_labels"]` prose that still
-  describes the RETIRED dp_normalize behavior (bool/real/decimal/zero-imaginary-complex/
-  huge-int rendered as text labels). The `text` carrier now DROPS non-`str` cells (never
-  stringifies) and bool routes through the separate `flag` carrier, so this shipped claim
-  over-describes the release. Correct the artifact prose and restore the assertion in
-  `test_normalization_policy_is_identical_whatever_the_frame_holds` (phase 7 left a
-  KNOWN GAP comment there rather than assert false-but-passing text).
+- **Phase 8 (docs/claim: `dp_policy.py` prose, claim-copy tests, CHANGELOG,
+  `what-we-cannot-prove.md`) — DONE & dual-gate cleared.** Corrected the retired-behavior
+  `categorical_labels`/`categorical_unsupported` prose, restored the policy-pin assertion,
+  and stated the flag/text/numeric release rules as functional boundaries. Phase-8 dennis
+  caught a flag-null underclaim (my enumeration missed Decimal/Fraction/zero-imag-complex
+  0/1 accepts) -> reworded to a functional boundary; cleared.
+- **WHOLE-FEATURE REVIEW + REMEDIATION — DONE & dual-gate cleared (7d1a99e).** After the
+  phase gates, a fresh no-context Codex whole-feature review (Cam-directed: treat as new,
+  run tests, verify it works) found the fit path sound but the CONSUME boundary not fully
+  fail-closed: **2 BLOCKER** (split-carrier flag bypass on the undeclared-DP path where no
+  verifier runs -> `_spec.py::_snapshot_declares_flag` now reads BOTH carrier locations;
+  `verify_dp_snapshots` never enforced codec id/version/scope/adjacency/boundary ->
+  `check_release_compatibility`, constants moved to pandas-free `dp_schema.py`), **1 HIGH**
+  (numeric `bin_edges` unvalidated -> sampler drew out-of-domain; `check_numeric_release_shape`
+  now recomputes canonical edges byte-identically + rejects bool/non-finite/mis-ordered
+  bounds), **3 MED** (provenance prose vs code; flag/bytes overclaim; shared-mutable policy
+  dict -> MappingProxyType + per-artifact copy), **1 LOW** (dead `_unbox`). All root-fixed
+  with 8 regression tests; the numeric extraction also returned `_checks_dp.py` to 588 LOC
+  (cleared the zero-headroom size-cap risk). dennis MERGE (0 findings) + Codex SOUND/APPROVE
+  (0 findings); 1610 pass, mypy/ruff/sentry clean. Branch NOT merged (deferred to loop item 4,
+  Cam confirm-first).
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
