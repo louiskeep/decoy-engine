@@ -209,6 +209,10 @@ def test_all_lists_every_public_name():
         "KeyedStrategyRequiresSecret",
         "MissingMaskSecret",
         "WeakMaskSecret",
+        # OOM capacity estimator (2026-07-24): estimate-only entrypoint for
+        # the out-of-core-FK memory gate, imported by the CLI across the
+        # in-process boundary (ADR-0001).
+        "estimate_job_capacity",
     }
     assert set(decoy_engine.__all__) == expected
 

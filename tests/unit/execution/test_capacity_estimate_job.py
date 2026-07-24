@@ -35,7 +35,7 @@ import pytest
 from decoy_engine.execution import capacity as capacity_mod
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.capacity import estimate_job_capacity
-from decoy_engine.execution.out_of_core._memory_estimate import CapacityVerdict
+from decoy_engine.execution.out_of_core._capacity_eval import CapacityVerdict
 
 _N = 40
 _MIB = 1024 * 1024

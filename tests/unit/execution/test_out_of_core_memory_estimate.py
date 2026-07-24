@@ -19,12 +19,13 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core import _budget as budget_mod
+from decoy_engine.execution.out_of_core import _capacity_eval as capacity_eval_mod
 from decoy_engine.execution.out_of_core import _memory_estimate as mem_mod
 from decoy_engine.execution.out_of_core._budget import resolve_ooc_memory_limit
+from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
 from decoy_engine.execution.out_of_core._memory_estimate import (
     actual_duckdb_cap_bytes,
     declared_minimum_ceiling_bytes,
-    enforce_ooc_memory_preflight,
     memory_limit_for,
     predict_ooc_build_floor_bytes,
     resolve_phase_memory_limits,
@@ -272,7 +273,7 @@ class TestEnforceOocMemoryPreflight:
     connection -- never a fraction of the raw detected ceiling."""
 
     def test_comfortably_clear_of_the_warn_band_does_not_warn(self, caplog) -> None:
-        with caplog.at_level(logging.WARNING, logger=mem_mod.__name__):
+        with caplog.at_level(logging.WARNING, logger=capacity_eval_mod.__name__):
             result = enforce_ooc_memory_preflight(
                 {"parent": 1_000}, budget_bytes=64 * _GIB, sink=True, incoming_edge_counts={}
             )
@@ -285,7 +286,7 @@ class TestEnforceOocMemoryPreflight:
         floor = predict_ooc_build_floor_bytes(100_000)
         cap = int(floor / 0.7)  # comfortably inside [0.6, 1.0) * cap
         assert 0.6 * cap <= floor < cap
-        with caplog.at_level(logging.WARNING, logger=mem_mod.__name__):
+        with caplog.at_level(logging.WARNING, logger=capacity_eval_mod.__name__):
             result = enforce_ooc_memory_preflight(
                 {"parent": 100_000}, budget_bytes=cap, sink=True, incoming_edge_counts={}
             )

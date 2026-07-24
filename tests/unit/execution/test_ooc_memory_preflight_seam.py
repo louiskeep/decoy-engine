@@ -37,9 +37,9 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core import _budget as budget_mod
+from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
 from decoy_engine.execution.out_of_core._memory_estimate import (
     actual_duckdb_cap_bytes,
-    enforce_ooc_memory_preflight,
     predict_ooc_build_floor_bytes,
 )
 

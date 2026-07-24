@@ -17,13 +17,13 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core import _memory_estimate as mem_mod
-from decoy_engine.execution.out_of_core._memory_estimate import (
+from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityInputs,
     CapacityVerdict,
     enforce_ooc_memory_preflight,
     evaluate_capacity,
-    predict_ooc_build_floor_bytes,
 )
+from decoy_engine.execution.out_of_core._memory_estimate import predict_ooc_build_floor_bytes
 
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB

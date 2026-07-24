@@ -79,7 +79,7 @@ from decoy_engine.execution._pipeline_routing_signals import (
     out_of_core_admission,
 )
 from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit
-from decoy_engine.execution.out_of_core._memory_estimate import (
+from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityInputs,
     CapacityVerdict,
