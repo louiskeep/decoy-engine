@@ -1,8 +1,9 @@
 # DPS-CODEC implementation guide
 
-Status: PLAN, revision 3 (remediated against Codex plan-review rounds 1-2, both
-BLOCK; round 2 confirmed the direction and closed flag/v3-v4/matrix-seeds, and
-returned 6 specification-completeness changes). Author: Opus. Cycle: DPS-CODEC.
+Status: PLAN, revision 4 (remediated against Codex plan-review rounds 1-3, all
+BLOCK but each spec-detail-not-design; round 3 confirmed the architecture and that
+the OpenDP `make_count(bool)`/`make_count_by(bool)` mechanism direction works, and
+returned 4 specification changes now closed here). Author: Opus. Cycle: DPS-CODEC.
 
 Expands ROADMAP §DPS item 5; grounded in the current code it modifies.
 
@@ -69,13 +70,16 @@ Column := NumberColumn(values: float64 ndarray, validity: bool ndarray)
 membership rather than enforcing it, so a valid-marked NaN reached `make_find_bin`,
 a NUL text truncated, a surrogate raised):
 
-- `row_count >= 0`; `columns` keys exactly equal the `column_schema` keys.
+- `row_count` is a non-negative `int` and NOT a `bool` (round-3 HIGH: `bool` is an
+  `int` subclass); `columns` keys exactly equal the `column_schema` keys.
 - every column is 1-D, exact dtype per its type, `len == row_count`, `validity` is
   1-D bool `len == row_count`.
 - for `validity[i] == True`: NumberColumn value is finite-or-clamped, non-NaN,
   binary64-canonical, signed-zero-normalized (`-0.0 -> 0.0`); FlagColumn value is a
-  real `numpy.bool_`; TextColumn value is `str`, UTF-8-encodable, no embedded NUL,
-  no lone surrogate.
+  real `numpy.bool_`; TextColumn value has `type(v) is str` exactly (round-3 HIGH:
+  NOT merely `isinstance(v, str)` -- a `str` subclass can override the methods the
+  sanitizer invokes while still satisfying the written invariant), UTF-8-encodable,
+  no embedded NUL, no lone surrogate.
 - `validity[i] == False` positions are dropped before the FFI call; only valid
   cells enter the OpenDP vector.
 - **Adjacency** is defined over `(value, validity)` rows: add/remove one row changes
@@ -129,18 +133,28 @@ expected String"). So for `flag`:
 - Both measurements get a **bool-domain** variant: grouped `make_count_by(bool)`
   (probe-confirmed) and a bool-domain non-null `make_count(bool)`. `str` carrier keeps
   the existing str-domain pair. Selected by the column's carrier.
+- **Carrier reaches the sampler (round-3 BLOCKER):** `StatisticalSpec`
+  (`_spec.py:69`, a frozen dataclass with no carrier field today) gains a `carrier`
+  field, threaded through its `asdict` serialization, artifact reconstruction, and
+  `load_spec` validation, so the sampler knows a column's domain.
 - **Artifact encoding:** flag `top_values` keys serialize deterministically as the
   canonical tokens `"true"`/`"false"` (not Python `str(bool)` `"True"/"False"`, not
-  `"0"/"1"`); record `carrier: "flag"` on the column so verification and generation
-  know the domain.
-- **Generation decoding (`_sample._categorical_tables`, `:156`):** today it does
-  `str(value)` and appends `OTHER_TOKEN` when `other_mode == "emit"`. For a `flag`
-  column: decode the `"true"/"false"` tokens back to the flag domain (emit booleans or
-  the canonical token per the column's output dtype). `other_mode == "emit"` is
-  FORBIDDEN for `flag` columns (the `__other__` token is not a flag value); flag
-  columns use `other_mode == "drop"` only. Enforced at schema validation.
-- Tests: empty and all-invalid flag vectors; a flag column whose grouped+total both
-  release; the `other_mode` rejection.
+  `"0"/"1"`); the column records `carrier: "flag"`, `dtype: "bool"`. The verifier
+  accepts, for a flag column, ONLY the two unique canonical tokens `"true"`/`"false"`
+  (any other key is a `dp_snapshot` shape error).
+- **Generation output = one representation (round-3 BLOCKER):** the sampler
+  (`_sample._categorical_tables`, `:156`) currently `str()`-forces every value. For a
+  `flag` column it decodes `"true"/"false"` to Python `bool` and emits `bool` (artifact
+  `dtype: "bool"`) -- one canonical representation, never `"True"/"1"` mixtures.
+- **`other_mode` (round-3 BLOCKER, corrected):** the supported modes are
+  `"redistribute"` and `"emit"` (`_spec.py:53`); there is no `"drop"`. `"emit"` inserts
+  `OTHER_TOKEN` (`"__other__"`), which is not a flag value, so **`other_mode="emit"` is
+  rejected in generate-side validation for `flag` columns**; flag columns use
+  `"redistribute"` (tail mass spread across the two known categories). Enforced in
+  `load_spec`.
+- Tests: empty and all-invalid flag vectors; a flag column whose grouped + non-null
+  total both release; one-category and both-category end-to-end fit->generate; the
+  `other_mode="emit"` rejection.
 
 ### 3.5 The fit API
 
@@ -172,45 +186,73 @@ certifies.
 ### 3.7 Totality exclusions carried forward (round-2 BLOCKER-1)
 
 The claim is total over DATA VALUES with exactly the residual already documented in
-`what-we-cannot-prove.md` (do not silently strengthen it):
+`what-we-cannot-prove.md` (do not silently strengthen it). State every disposition
+consistently (round-3 HIGH: rev 3 named only `__str__`/`__float__` and was
+inaccurate):
 
-- Cells whose `__str__`/`__float__` raise `KeyboardInterrupt`/`SystemExit` are
-  re-raised (an operator must be able to Ctrl-C a fit); such a cell can terminate a
-  fit where its neighbour succeeded. Out of the adjacency domain.
-- Live/executable-object cells and `Series`-subclass containers whose `array`/length
-  depend on their rows: fail loud (raise), not silently release a near-null column.
-  Out of domain.
-- Single-threaded precondition: warning suppression uses process-global
+- **Ordinary failure -> drop the cell.** Any conversion, null-detection, container,
+  temporal, or FFI-safety failure on a cell is caught (`except BaseException` minus
+  the two below) and that cell is marked invalid (dropped). This is the total,
+  content-independent path.
+- **`KeyboardInterrupt`/`SystemExit` from ANY invoked hook -> propagate.** Not only
+  `__str__`/`__float__`: null detection can invoke a cell's `__array__` (the landed
+  null-check guard re-raises there, `dp_normalize.py:553`, pinned by
+  `test_dp.py:1604`), and the adapter's fetch/decode hooks likewise. Any of these two
+  interrupts from any hook re-raises so an operator can Ctrl-C and a caller can exit.
+  Such a cell can terminate a fit where its one-row neighbour succeeded -- out of the
+  adjacency domain.
+- **Live container setup -> fail loud.** A `Series` subclass whose `array` or length
+  runs row-dependent caller code raises rather than silently releasing a near-null
+  column. Out of domain.
+- **Executable-object cells and non-canonical subclasses -> rejected / outside the
+  adjacency domain** (this is why TextColumn requires `type(v) is str`, §3.1): a cell
+  that is code seizing process control is not data.
+- **Single-threaded precondition.** Warning suppression uses process-global
   `catch_warnings()`+`simplefilter("ignore")`; a concurrent `simplefilter("error")`
   reopens the fit-success channel. Documented, not defended.
 
-§§1/3.5/10 and the revised `what-we-cannot-prove.md` state these explicitly.
+§§1/3.5/10 and the revised `what-we-cannot-prove.md` state these explicitly, matching
+the landed behaviour rather than a stronger paraphrase.
 
 ### 3.8 Dependency gate: exact certified manifest (round-2 HIGH-3)
 
-A STATIC certified manifest of exact tuples `(python_minor, pandas, numpy, pyarrow)`.
-**v1 certified rows** (adopt from the current lock; confirm exact patch versions
-against `uv.lock` at build phase 3):
+A STATIC certified manifest. Every row is a COMPLETE provenance tuple, not just the
+adapter libs (round-3 HIGH: enumerating only adapter deps and merely dropping the
+local compare could accept an artifact declaring an uncertified OpenDP version). Each
+row = `(boundary, python_minor, numpy, pandas?, pyarrow?, opendp, dp_accounting,
+codec_id, codec_version, schema_version)`. `opendp = 0.15.1`, `dp_accounting = 0.6.0`,
+`schema = dps-marginal/v3` for all v1 rows (confirmed against `uv.lock`).
+
+**Pandas-adapter rows** (the DataFrame path; confirmed against `uv.lock`):
 
 ```
-(3.10, pandas 2.3.3, numpy 2.2.6, pyarrow 24.0.0)
-(3.11, pandas 2.3.3, numpy 2.4.6, pyarrow 24.0.0)
-(3.12, pandas 2.3.3, numpy 2.5.0, pyarrow 24.0.0)
+(adapter, 3.10, numpy 2.2.6, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(adapter, 3.11, numpy 2.4.6, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(adapter, 3.12, numpy 2.5.0, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
 ```
 
-- **Fit time:** check the local tuple against the manifest BEFORE reading private
-  data; fail closed on an uncertified stack.
-- **Generation time:** check the artifact's RECORDED fit tuple + codec id/version
-  against the static manifest; do NOT require equality to the generation machine's
-  installed pandas/numpy/pyarrow (generation does not invoke them) NOR to
-  OpenDP/`dp_accounting` (generation invokes neither) — this fixes the current
-  over-strict compare at `_checks_dp.py:277`.
-- The manifest distinguishes **direct-carrier certification** from **pandas-adapter
-  certification**; the artifact records which boundary produced the vector (a
-  direct-carrier fit does not need a certified pandas/pyarrow, only a certified
-  Python+numpy for the float64 carrier).
+**Direct-carrier rows** (a caller-supplied canonical `CarrierTable`; no pandas/pyarrow
+in the path, only Python + numpy for the float64 carrier):
+
+```
+(direct, 3.10, numpy 2.2.6, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(direct, 3.11, numpy 2.4.6, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(direct, 3.12, numpy 2.5.0, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
+```
+
+- **Fit time:** check the local COMPLETE tuple (boundary, python, numpy, pandas/pyarrow
+  if the adapter is used, opendp, dp_accounting, codec) against the manifest BEFORE
+  reading private data; fail closed on any uncertified component.
+- **Generation time:** check the artifact's RECORDED complete fit provenance against
+  the static manifest -- including OpenDP/`dp_accounting`/codec/schema, which
+  generation does NOT invoke and so must validate from the record, not from locally
+  installed libraries. This replaces the current compare-to-local-env at
+  `_checks_dp.py:277` (which both over-matches generation-irrelevant libs AND would,
+  if merely deleted, stop validating OpenDP entirely).
+- The artifact records its `boundary` (adapter vs direct) so verification picks the
+  right row class.
 - CI dependency-matrix workflow runs the crown-jewel adjacency property on EVERY
-  manifest row.
+  manifest row (adapter and direct).
 - Recording versions is audit evidence, NOT authentication (the MAC is ROADMAP item 4
   / schema v4).
 
@@ -227,9 +269,19 @@ break, no shim.
   immutable. (Confirmed correctly specified.)
 - **Budget calibration (Medium).** Check BOTH `binary_search` endpoints; treat
   lower-endpoint-satisfies as feasible (`dp_budget.py:215`). Supported epsilon range:
-  at build, run the acceptance probe — binary-search the epsilon at which the
-  installed PLD's exponential overflows, set the supported ceiling below it, and
-  surface a coded `dp_epsilon_unsupported` error above it (not a raw `OverflowError`).
+  freeze a single CONCRETE conservative ceiling as a module constant
+  (`_DP_EPSILON_CEILING`), NOT a build-time-probed value. The PLD exponential
+  overflows at ~709.783 on py3.10 (709.782 OK) and the exact boundary drifts by
+  Python/`dp_accounting` version, so pin the ceiling well below every certified row's
+  observed overflow — set `_DP_EPSILON_CEILING = 700.0` (comfortably under 709.78 on
+  all v1 manifest rows; a requested per-column ceiling that large is already far
+  outside any real DP regime). Requests above it fail closed with a coded
+  `dp_epsilon_unsupported` error BEFORE reading private data — never a raw
+  `OverflowError` mid-composition. The CI dependency-matrix workflow asserts, per
+  manifest row, that (a) `_DP_EPSILON_CEILING` composes without overflow and (b) the
+  documented overflow point for that row stays above the frozen ceiling (a boundary
+  probe that fails the build if a version bump moves the overflow at or below 700.0,
+  forcing a re-pin rather than a silent regression).
 - **Zero-epsilon (Medium).** Accept composed `epsilon_total >= 0` in
   `ReleaseLedger.charge` and snapshot verification; requested ceilings stay strictly
   positive. (Probe-confirmed `eps=1, delta=0.9` -> legitimate `epsilon_total=0`.)
