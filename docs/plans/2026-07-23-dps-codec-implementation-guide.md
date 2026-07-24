@@ -29,7 +29,18 @@ BUILD PROGRESS:
   Codex mutation-confirmed the crown-jewel is non-vacuous and found no stability-1
   break. test_carriers.py 97 passed; direct-path isolation intact.
 - **Phase 3 (certified lock-fingerprint manifest + fit/generation gates + CI matrix) —
-  IN PROGRESS.**
+  DONE & dual-gate cleared.** Commits 677f9ab (build) -> 0e20af7 (dennis LOWs) ->
+  9bfe363 (Codex MEDIUM: reproducible dev+lint+vault profile re-pin). dennis APPROVE +
+  Codex APPROVE (Codex agreed the subset-direction finding is MEDIUM not HIGH: the
+  runtime gate hashes the actual installed set vs the frozen literal, so an incomplete
+  env cannot false-pass). `quality/dp_provenance.py` (mechanical SHA-256 fingerprint
+  over the complete installed dist set + full CPython + single Linux/x86-64 platform;
+  fail-closed check_fit_environment / validate_recorded_provenance; lock==installed
+  guard), `_DP_EPSILON_CEILING=700.0` in dp_budget, draft CI matrix. Certified pin =
+  6c0b2bbd... over the reproducible 77-dist profile. Fit/generation CALL-SITE wiring
+  deferred to phase 5.
+- **Phase 4 (dp_schedule/dp_budget carrier plumbing: bool-domain measurements +
+  endpoints + eps-range + frozen cache key; dp_ledger >= 0) — IN PROGRESS.**
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
