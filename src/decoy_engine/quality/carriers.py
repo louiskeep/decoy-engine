@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import datetime
 import math
+import numbers
 import warnings
 from dataclasses import dataclass
 from typing import Any
@@ -315,6 +316,24 @@ def _check_validity(validity: Any, row_count: int, name: str) -> np.ndarray:
     return validity
 
 
+def _validate_bound(name: str, which: str, b: Any) -> float:
+    """A clamp bound must be a finite real number (not bool, str, complex, None,
+    NaN, or +/-inf). Returns it as a plain float. Structural: raises before any
+    cell is processed so a malformed schema fails data-independently."""
+    if isinstance(b, bool) or not isinstance(b, numbers.Real):
+        raise CarrierError(
+            code="dp_carrier_bounds_type",
+            message=f"column {name!r}: {which} bound must be a real number, got {type(b).__name__}",
+        )
+    fb = float(b)
+    if not math.isfinite(fb):
+        raise CarrierError(
+            code="dp_carrier_bounds_nonfinite",
+            message=f"column {name!r}: {which} bound must be finite, got {fb}",
+        )
+    return fb
+
+
 def _sanitize_number(name: str, col: Column, spec: dict, row_count: int) -> NumberColumn:
     if not isinstance(col, NumberColumn):
         raise CarrierError(
@@ -340,6 +359,19 @@ def _sanitize_number(name: str, col: Column, spec: dict, row_count: int) -> Numb
             code="dp_carrier_bounds_missing",
             message=f"column {name!r}: a 'number' carrier requires (lower, upper) bounds",
         ) from exc
+    # Canonicalize + validate bounds ONCE, before touching any private cell.
+    # Bounds are schema config, not data: malformed bounds are a STRUCTURAL error
+    # and must fail loud independently of the rows. Deferring the check to the
+    # per-cell clamp makes it data-dependent -- an empty table would sanitize while
+    # its one-row neighbour raises (a fit-success adjacency observable), and a NaN
+    # bound would clamp a released value to NaN, past OpenDP's nan=False domain.
+    lower = _validate_bound(name, "lower", lower)
+    upper = _validate_bound(name, "upper", upper)
+    if not lower < upper:
+        raise CarrierError(
+            code="dp_carrier_bounds_order",
+            message=f"column {name!r}: bounds must satisfy lower < upper, got ({lower}, {upper})",
+        )
     out_values = np.zeros(row_count, dtype=np.float64)
     out_validity = np.zeros(row_count, dtype=np.bool_)
     for i in range(row_count):

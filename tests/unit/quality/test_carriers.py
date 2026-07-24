@@ -521,6 +521,57 @@ class TestSanitizerFFISafety:
             sanitize_carrier_table(table, {"a": {"carrier": "number", "bounds": (0.0, 1.0)}})
 
 
+class TestMalformedNumberBoundsFailStructurally:
+    """Bounds are schema config, not data: a malformed bound is a STRUCTURAL
+    error and must fail loud BEFORE any private cell is read, so an empty table
+    and its one-row neighbour fail identically. Deferring the check to the
+    per-cell clamp made it data-dependent -- an empty table sanitized while its
+    neighbour raised (a fit-success adjacency observable), and a NaN bound
+    clamped a released value to NaN past OpenDP's nan=False domain (Codex HIGH)."""
+
+    @staticmethod
+    def _num_table(rows: list[float]) -> CarrierTable:
+        n = len(rows)
+        return CarrierTable(
+            row_count=n,
+            columns={
+                "n": NumberColumn(
+                    values=np.array(rows, dtype=np.float64),
+                    validity=np.ones(n, dtype=np.bool_),
+                )
+            },
+        )
+
+    @pytest.mark.parametrize(
+        "bounds",
+        [
+            ("0", "1"),  # string bounds (the TypeError-on-clamp case)
+            (0.0, float("nan")),  # NaN bound (the invalid-NaN-past-FFI case)
+            (float("-inf"), 1.0),  # -inf bound
+            (0.0, float("inf")),  # +inf bound
+            (5.0, 1.0),  # reversed
+            (1.0, 1.0),  # zero-width (not lower < upper)
+            (None, 1.0),  # non-real
+            (0 + 1j, 1.0),  # complex
+            (True, 5.0),  # bool bound must not pass as 1.0
+        ],
+    )
+    def test_malformed_bounds_fail_identically_on_empty_and_one_row(self, bounds: tuple) -> None:
+        schema = {"n": {"carrier": "number", "bounds": bounds}}
+        codes = []
+        for rows in ([], [0.5]):  # empty table and a one-row neighbour
+            with pytest.raises(CarrierError) as exc:
+                sanitize_carrier_table(self._num_table(rows), schema)
+            codes.append(exc.value.code)
+        # Same structural failure regardless of row count -> data-independent.
+        assert codes[0] == codes[1], codes
+
+    def test_well_formed_bounds_still_sanitize(self) -> None:
+        schema = {"n": {"carrier": "number", "bounds": (-9.0, 9.0)}}
+        out = released_values(sanitize_carrier_table(self._num_table([0.5, -3.0]), schema))
+        assert out["n"] == [0.5, -3.0]
+
+
 # ---------------------------------------------------------------------------
 # End-to-end DataFrame arm (phase 2 adapter) -- expected to fail for now
 # ---------------------------------------------------------------------------
