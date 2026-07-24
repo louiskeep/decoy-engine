@@ -77,8 +77,15 @@ BUILD PROGRESS:
   dennis BLOCK 1 HIGH (its own Codex reproduced it) -> remediated -> independent Codex
   APPROVE 0 findings. Known LOW carried forward: `plan/_checks_dp.py` at exactly 600 LOC
   (zero headroom; next editor extracts). Full generation+plan+quality surface green.
-- **Phase 7 (retire `dp_normalize.py` once the property/carrier suite subsumes its
-  matrix) — NEXT.**
+- **Phase 7 (retire `dp_normalize.py`) — DONE & dual-gate cleared.** Deleted the
+  595-LOC runtime-dead module; closed 6 carrier-suite coverage gaps FIRST (`be66bf4`,
+  verified against pre-deletion code) then deleted (`8779150`); converted
+  `test_dp_codec_golden.py` to pinned-vector regression (oracle retired) and pruned the
+  `_normalize_*`/`_cells` tests from `test_dp.py`. Gates: dennis MERGE (subsumption
+  complete, 0 lost invariant) + Codex APPROVE (0 findings; every deleted invariant --
+  totality, boxing invariance, adjacency, the full defect matrix -- confirmed still
+  covered on the carrier codecs). 1 pre-existing MEDIUM surfaced -> phase 8 (the
+  dp_policy artifact prose drift below). Zero remaining dp_normalize imports.
 - **Phase 8 (docs: `_spec.py`/`_global_settings.py` wording, claim-copy tests, CHANGELOG,
   `what-we-cannot-prove.md`) — PENDING.** MUST ALSO FIX (phase-7 finding): the DP artifact
   ships `dp_policy._DP_NORMALIZATION_POLICY["categorical_labels"]` prose that still
