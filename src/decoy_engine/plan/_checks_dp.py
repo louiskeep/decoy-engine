@@ -32,6 +32,10 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from decoy_engine.plan._checks_dp_carrier import (
+    carrier_aware_query_count,
+    numeric_shape_matches_a_dp_release,
+)
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DpVerification
 from decoy_engine.quality.dp_ledger import ReleaseLedger
@@ -40,32 +44,6 @@ from decoy_engine.quality.snapshot import DP_SNAPSHOT_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from decoy_engine.plan._generation import ReadSnapshot
-
-
-def _carrier_aware_query_count(dp_block: dict[str, Any]) -> int | None:
-    """Reconstruct the artifact's own `query_count` from its recorded
-    `column_schema`, carrier-aware (guide sections 3.4/3.9): a `number` carrier
-    is one numeric query, a `text` OR `flag` carrier is a categorical PAIR (the
-    flag column's bool-domain pair is the same DP guarantee as the text path, so
-    it reconstructs to the same count). Returns `1 + numeric + 2*categorical`,
-    or `None` when the recorded schema is missing/malformed or carries an
-    unknown carrier (the caller then rejects the artifact)."""
-    column_schema = dp_block.get("column_schema")
-    if not isinstance(column_schema, dict):
-        return None
-    numeric = 0
-    categorical = 0
-    for spec in column_schema.values():
-        if not isinstance(spec, dict):
-            return None
-        carrier = spec.get("carrier")
-        if carrier == "number":
-            numeric += 1
-        elif carrier in ("text", "flag"):
-            categorical += 1
-        else:
-            return None
-    return 1 + numeric + 2 * categorical
 
 
 def _dp_declared(config: dict[str, Any]) -> bool:
@@ -216,48 +194,6 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
                 )
 
 
-def _numeric_shape_matches_a_dp_release(
-    col_snap: dict[str, Any], *, lower: float, upper: float, numeric_bins: int
-) -> bool:
-    """BLOCKER 2 item 3 (cheap shape evidence): an exact `compute_
-    distribution_snapshot` numeric column carries real `min`/`max`/`mean`/
-    `std`/`quantiles` (`quality/snapshot.py:566-575`); a genuine
-    `fit_dp_snapshot` numeric column NEVER does (guide section 4.2.1: `min`/
-    `max` are the declared domain bounds, `mean`/`std` are always `None`,
-    `quantiles` is always `{}`, and `bin_counts` always has exactly
-    `numeric_bins` entries).
-
-    This is a guard against copy-paste, not against an adversary, and the
-    security review corrected the page that used to claim otherwise. It
-    stops exactly one case: an ordinary EXACT snapshot with a fabricated
-    `dp` block bolted on, whose numeric `stats` still carries the real
-    min/max/mean/quantiles untouched. It stops nothing else. All four
-    fields read below are attacker-writable, and defeating the check
-    needs no DP knowledge and no reproduction of the artifact format --
-    null `mean`, `std` and `quantiles`, declare `numeric_bins` as the
-    length of the histogram already present, and declare the domain as
-    the observed min and max. The resulting artifact compiles
-    DP-verified while `bin_counts` are still the exact unnoised
-    histogram. Do not read the categorical path's lack of an equivalent
-    check as this path being defended; the asymmetry exists only for the
-    copy-paste case. See `docs/what-we-cannot-prove.md`, which is the
-    authority on this wording and is pinned by
-    `tests/unit/test_dp_claim_copy.py`."""
-    stats = col_snap.get("stats")
-    if not isinstance(stats, dict):
-        return False
-    bin_counts = stats.get("bin_counts")
-    return (
-        stats.get("min") == lower
-        and stats.get("max") == upper
-        and stats.get("mean") is None
-        and stats.get("std") is None
-        and stats.get("quantiles") == {}
-        and isinstance(bin_counts, list)
-        and len(bin_counts) == numeric_bins
-    )
-
-
 def _raise(code: str, *, table_name: Any, col_name: Any, message: str) -> NoReturn:
     raise PlanCompileError(
         code=code,
@@ -288,6 +224,9 @@ def verify_dp_snapshots(
             proof-stack identity is not a certified row); ``dp_snapshot_
             query_count_mismatch`` (declared columns/carriers don't
             reproduce the artifact's own `query_count`); ``dp_snapshot_
+            column_schema_mismatch`` (column_schema names/carriers agree in
+            aggregate count but not per column with the legacy
+            categorical_columns/numeric_domains declaration); ``dp_snapshot_
             carrier_invalid`` (a column's recorded kind x carrier pair is
             not allowed); ``dp_snapshot_kind_not_dp_eligible`` (kind not in
             the artifact's own numeric/categorical declaration);
@@ -391,7 +330,7 @@ def verify_dp_snapshots(
             # require it to agree with the categorical_columns/numeric_domains
             # reconstruction so the two declarations cannot disagree.
             expected_query_count = 1 + len(numeric_domains) + 2 * len(categorical_cols)
-            carrier_aware = _carrier_aware_query_count(dp_block)
+            carrier_aware = carrier_aware_query_count(dp_block)
             if carrier_aware is None or carrier_aware != expected_query_count:
                 _raise(
                     "dp_snapshot_query_count_mismatch",
@@ -417,6 +356,51 @@ def verify_dp_snapshots(
                         f"its own categorical_columns/numeric_domains recompute to "
                         f"{expected_query_count!r}. The artifact's declared schedule does not "
                         "match its declared columns."
+                    ),
+                )
+
+            # L-1: the reconstructed COUNT agreeing is necessary but not
+            # sufficient -- a name-disjoint or carrier/kind-transposed
+            # column_schema can reconstruct to the same count while describing
+            # different columns (e.g. one numeric + one categorical whose
+            # carriers are swapped between the two names). Pin per-column
+            # identity too: the column_schema's names must be exactly the union
+            # of the legacy categorical_columns/numeric_domains declaration, and
+            # each entry's carrier must match the kind THAT declaration assigns
+            # the column (number <-> numeric_domains, text/flag <->
+            # categorical_columns). `carrier_aware_query_count` already proved
+            # column_schema is a dict of dicts with known carriers (else
+            # carrier_aware is None and we raised above).
+            column_schema = dp_block["column_schema"]
+            schema_consistent = set(column_schema) == set(categorical_cols) | set(
+                numeric_domains
+            ) and all(
+                (
+                    spec["carrier"] == "number"
+                    and name in numeric_domains
+                    and name not in categorical_cols
+                )
+                or (
+                    spec["carrier"] in ("text", "flag")
+                    and name in categorical_cols
+                    and name not in numeric_domains
+                )
+                for name, spec in column_schema.items()
+            )
+            if not schema_consistent:
+                _raise(
+                    "dp_snapshot_column_schema_mismatch",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: the "
+                        "snapshot's column_schema names/carriers do not match its own "
+                        "categorical_columns/numeric_domains per column (schema names "
+                        f"{sorted(column_schema)!r} vs declared "
+                        f"{sorted(set(categorical_cols) | set(numeric_domains))!r}). A "
+                        "column_schema that only agrees in aggregate count but disagrees "
+                        "per column is a corrupted or hand-edited artifact, not a genuine "
+                        "release."
                     ),
                 )
 
@@ -470,7 +454,7 @@ def verify_dp_snapshots(
                     and isinstance(numeric_bins, int)
                     and not isinstance(numeric_bins, bool)
                 ):
-                    shape_ok = _numeric_shape_matches_a_dp_release(
+                    shape_ok = numeric_shape_matches_a_dp_release(
                         col_snap,
                         lower=float(domain[0]),
                         upper=float(domain[1]),

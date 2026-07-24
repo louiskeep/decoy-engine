@@ -667,7 +667,9 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
             "numeric_bins": 1,
             "categorical_columns": [],
             "numeric_domains": {"age": [0.0, 120.0]},
-            "column_schema": {"age": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}},
+            "column_schema": {
+                "age": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}
+            },
             "codec": {"id": "decoy-carrier-codec", "version": "1"},
             "boundary": "adapter",
             "provenance": _certified_provenance_dict(),
@@ -1074,3 +1076,68 @@ class TestDpDeclaredWithNoStatisticalColumns:
 
         out = generate_tables(plan)  # must not raise TypeError
         assert out["t"].column("id").to_pylist() == ["1", "2", "3", "4", "5"]
+
+
+class TestColumnSchemaPerColumnIdentity:
+    """L-1: verify_dp_snapshots reconstructs the artifact's query_count from
+    its column_schema and requires the count to agree with the legacy
+    categorical_columns/numeric_domains, but a count match is necessary, not
+    sufficient. A name-disjoint or carrier-transposed column_schema can
+    reconstruct to the same count while describing different columns; per-column
+    identity must also be pinned (set of names + per-name carrier<->kind)."""
+
+    def test_column_schema_name_disjoint_from_declaration_is_rejected(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        # One `number` entry (same count as the single-numeric declaration), but
+        # naming a column numeric_domains never declared.
+        artifact["dp"]["column_schema"] = {
+            "agex": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}
+        }
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_column_schema_mismatch"
+
+    def test_column_schema_carrier_swapped_between_columns_is_rejected(self, tmp_path):
+        # A two-column artifact (numeric "age" + categorical "b") whose
+        # column_schema swaps the carriers between the two names. The
+        # reconstructed count is unchanged (1 + one number + 2*one categorical),
+        # so only per-column identity catches it.
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        artifact["columns"]["b"] = {
+            "dtype": "object",
+            "kind": "categorical",
+            "carrier": "text",
+            "null_count": 0,
+            "non_null_count": 5,
+            "distinct_count": 1,
+            "stats": {"top_values": [{"value": "x", "count": 5}], "other_count": 0},
+        }
+        dp = artifact["dp"]
+        dp["categorical_columns"] = ["b"]
+        dp["numeric_domains"] = {"age": [0.0, 120.0]}
+        dp["query_count"] = 1 + 1 + 2 * 1  # 1 row_count + 1 numeric + 1 categorical pair
+        dp["column_schema"] = {
+            "age": {"kind": "categorical", "carrier": "text"},  # age is really numeric
+            "b": {
+                "kind": "numeric",
+                "carrier": "number",
+                "bounds": [0.0, 120.0],
+            },  # b is really text
+        }
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)  # verifies source_column "age"
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_column_schema_mismatch"
+
+    def test_matching_column_schema_still_verifies(self, tmp_path):
+        # The honest artifact (names and carriers agree per column) is unaffected
+        # by the tightened check -- it still verifies clean.
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned, _ = read_and_pin_snapshots(cfg)
+        verified, receipt = verify_dp_snapshots(cfg, pinned)
+        assert receipt is not None
+        assert ("t", "age") in verified
