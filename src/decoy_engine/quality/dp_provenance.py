@@ -235,13 +235,15 @@ CERTIFIED_PLATFORM = PlatformTriple(
 
 # Certified rows keyed by (platform, cpython_full) -> lock_fingerprint.
 #
-# The 3.10 row below is pinned from THIS repo's synced ``.venv`` -- a legitimate
-# certified row because the environment is the ``uv.lock`` resolution installed
-# with the project's dev/test profile (the full default + optional-dependency
-# groups uv resolves into the working environment). The frozen profile IS that
-# installed set; see ``assert_lock_matches_installed`` for the reproducibility
-# guard that proves the installed set is exactly the lock's marker-selected
-# pins.
+# The 3.10 row below is pinned from a REPRODUCIBLE synced environment: exactly
+# ``uv sync --frozen --extra dev --extra lint --extra vault`` (77 distributions =
+# 76 registry + the editable ``decoy-engine``). That exact command is the frozen
+# profile -- anyone who runs it against this ``uv.lock`` on Linux/x86-64/CPython
+# 3.10.20 reproduces this fingerprint. (An earlier draft pinned a "dirty" working
+# ``.venv`` that no single ``uv sync`` reproduced; that was the phase-3 Codex
+# MEDIUM -- fixed by pinning the clean ``dev+lint+vault`` profile the CI workflow
+# actually syncs.) See ``assert_lock_matches_installed`` for the guard that proves
+# the installed set is exactly the lock's marker-selected pins.
 #
 # CI ADDS THE OTHER ROWS. The dependency-matrix workflow
 # (``.github/workflows/dps-dependency-matrix.yml``) runs on exact-pinned CPython
@@ -253,7 +255,7 @@ CERTIFIED_PLATFORM = PlatformTriple(
 # row is added, that interpreter fails closed with ``dp_stack_uncertified``.
 _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], str] = {
     (CERTIFIED_PLATFORM, "3.10.20.final"): (
-        "dfa3ac1d054edb8dcf6fb303d8d9440d376fb5894c7843591d8e39f11975f0e7"
+        "6c0b2bbd4f5dc08d14350b86a6d4b61c6005d57e920b23b8308db1f84e57f56d"
     ),
 }
 

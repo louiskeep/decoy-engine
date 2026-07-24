@@ -455,11 +455,10 @@ Replaced: `dp_normalize.py` + the fit-API surface. Kept (adapted): `dp_budget`,
     its hash. Freeze the exact extras/groups profile used for certification and the
     project-inclusion policy (the editable `decoy-engine` dist); PEP 503 name
     canonicalization, exact version-string handling, duplicate-name rejection, and a
-    canonical serialization before hashing. (Illustrative counts drift with the
-    installed profile; the phase-3 certified env is 72 dists = 71 registry + 1
-    editable `decoy-engine`, and the fingerprint is only reproducible once the exact
-    `uv sync` profile is fixed. The certified value is the checked-in literal in
-    `dp_provenance._CERTIFIED_STACKS`, not any count in prose.)
+    canonical serialization before hashing. (The phase-3 certified env is the clean
+    reproducible profile `uv sync --frozen --extra dev --extra lint --extra vault` =
+    77 dists = 76 registry + 1 editable `decoy-engine`. The certified value is the
+    checked-in literal in `dp_provenance._CERTIFIED_STACKS`, not any count in prose.)
   - **Fingerprint fail-closed** on any unrelated package added to the env (safe but
     strict -> CLI/platform hosts need their own certified rows or an isolated fit env;
     this feeds ROADMAP item 2 wiring).
