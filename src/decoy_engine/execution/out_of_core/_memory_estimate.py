@@ -829,6 +829,12 @@ def enforce_ooc_memory_preflight(
         raise ExecutionError(code=estimate.code, message=estimate.message)
     if estimate.warned:
         _logger.warning(estimate.message)
+    # NB: in the fits-but-no-warn case this now returns the real
+    # binding_table/floor_bytes/cap_bytes from evaluate_capacity, where the
+    # pre-extraction code returned (None, 0, budget_bytes). The sole caller
+    # (_pipeline_route_exec.py) discards the return, so this is a deliberate,
+    # more-informative struct; a future consumer should not assume the old
+    # null/zero shape.
     return MemoryPreflight(
         ok=True,
         warned=estimate.warned,
