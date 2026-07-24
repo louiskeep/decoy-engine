@@ -210,6 +210,25 @@ def load_spec(
                 f"not in the snapshot (available: {available})."
             ),
         )
+    # M-2 (phase 5): verify_dp_snapshots already ACCEPTS a `flag`-carrier DP
+    # release, but the generation-side sampler (generation/statistical/
+    # _sample.py) does not yet decode flags -- it would str()-force the
+    # "true"/"false" tokens against the artifact's bool dtype. Until phase 6
+    # wires the flag decoder, refuse to compile a flag column into a sampler
+    # spec so the verify gate cannot open ahead of the sampler. Phase 6 removes
+    # this guard.
+    if col_entry.get("carrier") == "flag":
+        raise StatisticalSpecError(
+            code="statistical_dp_flag_sampler_unwired",
+            message=(
+                f"statistical column {name!r}: source column {source_column!r} is a DP "
+                "`flag` (bool-domain) release, which verify_dp_snapshots accepts but the "
+                "generation sampler cannot yet decode (the flag decoder lands in phase 6). "
+                "Generating it now would emit 'true'/'false' strings against the "
+                "artifact's bool dtype. Fit this column as `text`, or wait for phase 6."
+            ),
+        )
+
     kind = col_entry.get("kind")
     if kind not in _SUPPORTED_KINDS:
         raise StatisticalSpecError(

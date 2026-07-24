@@ -690,6 +690,55 @@ def _running_dp_accounting_version() -> str:
     return importlib.metadata.version("dp-accounting")
 
 
+def _flag_dp_artifact(*, epsilon_total=0.5, delta_total=1e-6, release_id="rFLAG"):
+    """A synthetic but internally-consistent `dps-marginal/v3` artifact for a
+    single `flag` (bool-domain) categorical column. Built by hand (no real
+    OpenDP fit) because both the L-1 schema-identity checks and the M-2
+    generate guard are pure functions of the artifact's own `dp`/`columns`
+    blocks; a real fit is exercised end to end in test_dp_flag_e2e.py."""
+    return {
+        "schema_version": DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
+        "row_count": 5,
+        "columns": {
+            "flag": {
+                "dtype": "bool",
+                "kind": "categorical",
+                "carrier": "flag",
+                "null_count": 0,
+                "non_null_count": 5,
+                "distinct_count": 2,
+                "stats": {
+                    "top_values": [
+                        {"value": "true", "count": 3},
+                        {"value": "false", "count": 2},
+                    ],
+                    "other_count": 0,
+                },
+            }
+        },
+        "joints": [],
+        "dp": {
+            "schema": "dps-marginal/v3",
+            "release_id": release_id,
+            "scope": "single-column-marginals",
+            "adjacency": "add-remove-one-row",
+            "epsilon_total": epsilon_total,
+            "delta_total": delta_total,
+            "accountant": "dp_accounting PLD composition over OpenDP privacy maps",
+            "opendp_version": _running_opendp_version(),
+            "dp_accounting_version": _running_dp_accounting_version(),
+            "query_count": 3,  # 1 row_count + 0 numeric + 2*1 categorical (flag pair)
+            "numeric_bins": 10,
+            "categorical_columns": ["flag"],
+            "numeric_domains": {},
+            "column_schema": {"flag": {"kind": "categorical", "carrier": "flag"}},
+            "codec": {"id": "decoy-carrier-codec", "version": "1"},
+            "boundary": "adapter",
+            "provenance": _certified_provenance_dict(),
+        },
+    }
+
+
 def _cfg_with_artifact(
     tmp_path, artifact, *, name="age", declared_epsilon=10.0, declared_delta=1e-6
 ):
@@ -1141,3 +1190,63 @@ class TestColumnSchemaPerColumnIdentity:
         verified, receipt = verify_dp_snapshots(cfg, pinned)
         assert receipt is not None
         assert ("t", "age") in verified
+
+
+class TestFlagGenerateGuardBeforePhase6:
+    """M-2: verify_dp_snapshots accepts a `flag` DP release, but until phase 6
+    wires the flag decoder in the sampler, the generate/compile-to-sample path
+    must fail closed -- the current str()-forcing sampler would emit
+    "true"/"false" strings against the artifact's bool dtype."""
+
+    def test_verify_accepts_flag_but_load_spec_refuses_until_phase6(self, tmp_path):
+        from decoy_engine.generation.statistical import load_spec
+        from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+        artifact = _flag_dp_artifact()
+        path = _write(tmp_path, "flag_synth.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+
+        # The SNAPSHOT-verification path still accepts the flag release.
+        pinned, _ = read_and_pin_snapshots(cfg)
+        verified, receipt = verify_dp_snapshots(cfg, pinned)
+        assert receipt is not None
+        assert ("t", "flag") in verified
+
+        # The GENERATE path (load_spec -> sampler spec) refuses it.
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(
+                {"name": "flag", "type": "statistical", "snapshot_file": path},
+                snapshot=artifact,
+                dp_verified=True,
+            )
+        assert exc.value.code == "statistical_dp_flag_sampler_unwired"
+
+    def test_compile_plan_refuses_a_flag_artifact_with_the_phase6_code(self, tmp_path):
+        artifact = _flag_dp_artifact()
+        path = _write(tmp_path, "flag_compile.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert exc.value.code == "statistical_dp_flag_sampler_unwired"
