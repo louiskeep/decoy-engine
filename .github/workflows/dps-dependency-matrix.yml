@@ -102,10 +102,10 @@ jobs:
           pinned = prov._CERTIFIED_STACKS.get(key)
           if pinned is None:
               print(f"row {key} not yet in manifest; reported fingerprint {live} for a maintainer to pin")
-          elif pinned != live:
-              raise SystemExit(f"FINGERPRINT DRIFT for {key}: manifest {pinned} != live {live}")
+          elif live not in pinned:
+              raise SystemExit(f"FINGERPRINT DRIFT for {key}: live {live} not in manifest {sorted(pinned)}")
           else:
-              print(f"row {key} matches manifest: {live}")
+              print(f"row {key} matches manifest (member {live} of {len(pinned)} certified profiles)")
           PY
 
       - name: Provenance gate unit tests

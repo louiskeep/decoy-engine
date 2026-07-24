@@ -673,7 +673,7 @@ wheels = [
 
 [[package]]
 name = "decoy-engine"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -685,6 +685,7 @@ dependencies = [
     { name = "lark" },
     { name = "numexpr" },
     { name = "opendp" },
+    { name = "packaging" },
     { name = "pandas" },
     { name = "polars" },
     { name = "psutil" },
@@ -759,6 +760,7 @@ requires-dist = [
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=2,<5" },
     { name = "numexpr", specifier = ">=2.8" },
     { name = "opendp", specifier = "==0.15.1" },
+    { name = "packaging", specifier = ">=21.0" },
     { name = "pandas", specifier = ">=1.5.0,<3" },
     { name = "paramiko", marker = "extra == 'sftp'", specifier = ">=3.0" },
     { name = "polars", specifier = ">=1.0,<2.0" },

@@ -253,9 +253,41 @@ CERTIFIED_PLATFORM = PlatformTriple(
 # to paste in as a new certified row; only patches CI actually exercises may be
 # admitted (section 3.8: "admit no patch the matrix does not exercise"). Until a
 # row is added, that interpreter fails closed with ``dp_stack_uncertified``.
-_CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], str] = {
-    (CERTIFIED_PLATFORM, "3.10.20.final"): (
-        "6c0b2bbd4f5dc08d14350b86a6d4b61c6005d57e920b23b8308db1f84e57f56d"
+# A given (platform, cpython) admits a SET of certified fingerprints, one per
+# reproducible locked profile tested on that interpreter: the engine's own
+# dev/CI lock, and the `decoy` CLI's pristine runtime profile (engine + CLI
+# runtime deps, no dev tooling), whose proof-critical library versions are pinned to EXACTLY the
+# certified ones (opendp/dp-accounting/numpy/scipy/pandas/pyarrow, per the
+# annotation below) so the DP behaviour is the tested behaviour; the CLI's extra
+# packages (typer/rich/...) are off the DP code path. Membership, not equality:
+# a distinct profile that pins the same proof-critical set earns its own row
+# rather than forcing an isolated fit environment (ROADMAP item 2 / phase 9,
+# CLI host wiring).
+_CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
+    (CERTIFIED_PLATFORM, "3.10.20.final"): frozenset(
+        {
+            # decoy-engine dev/CI certification profile: 77 distributions from
+            # `uv sync --frozen --extra dev --extra lint --extra vault` on Python
+            # 3.10.20 (the profile the dps-dependency-matrix workflow installs).
+            # Reproduces from the regenerated 0.5.0 uv.lock. The prior value
+            # (6c0b2bbd...) was this same 77-dist profile on the PRE-0.5.0 lock,
+            # before the release bump and the packaging>=21.0 direct dep, so it
+            # no longer matches a clean build; reverting only decoy-engine to
+            # 0.4.0 reproduces it exactly.
+            "895b9a20f0fc8a5cd84c94c49a4a7537866f9b45e656a9eb7463103dc8e81161",
+            # decoy-cli pristine RUNTIME profile: engine 0.5.0 + CLI (typer/rich/
+            # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
+            # The exact third-party set is pinned in the CLI repo's
+            # decoy-fix/requirements-certified.txt (proof-critical opendp/
+            # dp-accounting/numpy/scipy/pandas/pyarrow at the annotated versions,
+            # packaging==26.2). To reproduce: `--no-dev` install that file into a
+            # 3.10.20 venv and run the CLI repo's scripts/cert_smoke.py, which
+            # recomputes compute_lock_fingerprint over the running set (this hash)
+            # and then exercises fit -> dps-marginal/v3 -> generate end to end.
+            # Its legitimacy is verified in the CLI repo, not here. An earlier
+            # draft pinned a dev-polluted env (c2c766...); this is the clean one.
+            "5a2f7ef75ba38c5c338d5dcbc0a790f1c104cb7f6b49c2b25908540e63bb8495",
+        }
     ),
 }
 
@@ -301,7 +333,7 @@ def check_fit_environment() -> None:
     cpython = current_cpython()
     fingerprint = compute_lock_fingerprint(installed_distribution_set())
     certified = _CERTIFIED_STACKS.get((plat, cpython))
-    if certified is None or certified != fingerprint:
+    if certified is None or fingerprint not in certified:
         raise ProvenanceError(
             code="dp_stack_uncertified",
             message=(
@@ -333,7 +365,7 @@ def validate_recorded_provenance(recorded: object) -> None:
             ),
         )
     certified = _CERTIFIED_STACKS.get((prov.platform, prov.cpython))
-    if certified is None or certified != prov.fingerprint:
+    if certified is None or prov.fingerprint not in certified:
         raise ProvenanceError(
             code="dp_stack_uncertified",
             message=(

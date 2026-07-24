@@ -147,6 +147,15 @@ dependencies = [
     # implementation depends on `dp_accounting.pld`'s exact composition
     # shape. Supplies no mechanism and no noise -- accounting only.
     "dp-accounting==0.6.0",
+    # DPS-CODEC put `packaging.utils.canonicalize_name` /
+    # `packaging.markers.Marker` on the always-imported plan chain
+    # (quality/dp_provenance, reached via plan._checks_dp at engine import),
+    # so `import decoy_engine` now needs packaging at runtime. It was present
+    # transitively via build/test tooling, so every test env had it and the
+    # gap only shows on a pristine install -- same fresh-environment class as
+    # the pydantic and boto3 promotions above. Floor covers canonicalize_name
+    # and Marker, both long-stable.
+    "packaging>=21.0",
 ]
 
 [project.optional-dependencies]
