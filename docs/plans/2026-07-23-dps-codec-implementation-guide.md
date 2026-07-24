@@ -1,9 +1,13 @@
 # DPS-CODEC implementation guide
 
-Status: PLAN, revision 4 (remediated against Codex plan-review rounds 1-3, all
-BLOCK but each spec-detail-not-design; round 3 confirmed the architecture and that
-the OpenDP `make_count(bool)`/`make_count_by(bool)` mechanism direction works, and
-returned 4 specification changes now closed here). Author: Opus. Cycle: DPS-CODEC.
+Status: PLAN, revision 5 (remediated against Codex plan-review rounds 1-4, all
+BLOCK but each spec-detail-not-design; round 4 confirmed the carrier architecture is
+sound, probed the frozen epsilon ceiling and bool count mechanisms green, 44 tests
+pass, and returned 1 HIGH + 1 MEDIUM now closed here: the certified manifest gains
+SciPy + a single certified platform, `dp_accounting`'s SciPy dependency being part of
+the proof stack (round-4 HIGH-a) and CI being Linux-only (round-4 HIGH-b); and
+`StatisticalSpec.carrier` is `Optional[str]=None` so non-DP snapshots are not broken
+(round-4 MEDIUM)). Author: Opus. Cycle: DPS-CODEC.
 
 Expands ROADMAP §DPS item 5; grounded in the current code it modifies.
 
@@ -134,14 +138,17 @@ expected String"). So for `flag`:
   (probe-confirmed) and a bool-domain non-null `make_count(bool)`. `str` carrier keeps
   the existing str-domain pair. Selected by the column's carrier.
 - **Carrier reaches the sampler (round-3 BLOCKER):** `StatisticalSpec`
-  (`_spec.py:69`, a frozen dataclass with no carrier field today) gains a `carrier`
-  field, threaded through its `asdict` serialization, artifact reconstruction, and
-  `load_spec` validation, so the sampler knows a column's domain.
-- **Artifact encoding:** flag `top_values` keys serialize deterministically as the
-  canonical tokens `"true"`/`"false"` (not Python `str(bool)` `"True"/"False"`, not
-  `"0"/"1"`); the column records `carrier: "flag"`, `dtype: "bool"`. The verifier
-  accepts, for a flag column, ONLY the two unique canonical tokens `"true"`/`"false"`
-  (any other key is a `dp_snapshot` shape error).
+  (`_spec.py:69`, a frozen dataclass with no carrier field today) gains a
+  `carrier: Optional[str]` field defaulting to `None`, threaded through its `asdict`
+  serialization, artifact reconstruction, and `load_spec` validation, so the sampler
+  knows a column's domain. `None` = the legacy non-DP path (§3.9); a set carrier =
+  the codec path. It is mandatory + strictly validated only for verified DP-v3
+  columns.
+- **Artifact encoding:** flag `top_values[].value` entries serialize deterministically
+  as the canonical tokens `"true"`/`"false"` (not Python `str(bool)` `"True"/"False"`,
+  not `"0"/"1"`); the column records `carrier: "flag"`, `dtype: "bool"`. The verifier
+  accepts, for a flag column, ONLY the two canonical tokens `"true"`/`"false"` (any
+  other value fails closed with a coded `dp_flag_token_invalid` shape error).
 - **Generation output = one representation (round-3 BLOCKER):** the sampler
   (`_sample._categorical_tables`, `:156`) currently `str()`-forces every value. For a
   `flag` column it decodes `"true"/"false"` to Python `bool` and emits `bool` (artifact
@@ -216,43 +223,62 @@ the landed behaviour rather than a stronger paraphrase.
 
 ### 3.8 Dependency gate: exact certified manifest (round-2 HIGH-3)
 
-A STATIC certified manifest. Every row is a COMPLETE provenance tuple, not just the
-adapter libs (round-3 HIGH: enumerating only adapter deps and merely dropping the
-local compare could accept an artifact declaring an uncertified OpenDP version). Each
-row = `(boundary, python_minor, numpy, pandas?, pyarrow?, opendp, dp_accounting,
-codec_id, codec_version, schema_version)`. `opendp = 0.15.1`, `dp_accounting = 0.6.0`,
-`schema = dps-marginal/v3` for all v1 rows (confirmed against `uv.lock`).
+A STATIC certified manifest. Every row is the COMPLETE certified runtime identity of
+the proof stack, not just the adapter libs (round-4 HIGH: a tuple that omits a
+runtime dimension the proof actually depends on merely relocates version drift). The
+row identity has two parts:
+
+1. **Platform (round-4 HIGH-b).** v1 certifies **exactly one platform: Linux,
+   x86-64, CPython, glibc (manylinux)** -- the only platform our CI actually
+   exercises (`ci.yml` is Ubuntu-only). Fit derives the local platform
+   (`sys.platform`, `platform.machine()`, `platform.python_implementation()`, libc)
+   and fails closed with a coded `dp_platform_uncertified` error on anything else
+   (Windows, macOS, ARM, PyPy, musl). The artifact records the platform string;
+   generation validates it against the certified platform. Broadening to a full
+   multi-OS / multi-arch wheel-hash manifest is deferred (ROADMAP; see §10 decision) --
+   a false guarantee on an untested platform is exactly the bug class this redesign
+   exists to kill, so v1 refuses rather than over-certifies.
+
+2. **Version tuple.** Every row on that platform =
+   `(boundary, python_minor, numpy, scipy, pandas?, pyarrow?, opendp, dp_accounting,
+   codec_id, codec_version, schema_version)`. **SciPy is included (round-4 HIGH-a):**
+   `dp_accounting`'s PLD imports `scipy.fft/signal/special`, and SciPy is locked to a
+   different version per Python row, so it is part of the proof stack and must be
+   certified, not implied by the Python row. `opendp = 0.15.1`, `dp_accounting = 0.6.0`,
+   `schema = dps-marginal/v3` for all v1 rows (confirmed against `uv.lock`).
 
 **Pandas-adapter rows** (the DataFrame path; confirmed against `uv.lock`):
 
 ```
-(adapter, 3.10, numpy 2.2.6, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(adapter, 3.11, numpy 2.4.6, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(adapter, 3.12, numpy 2.5.0, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(adapter, 3.10, numpy 2.2.6, scipy 1.15.3, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(adapter, 3.11, numpy 2.4.6, scipy 1.17.1, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(adapter, 3.12, numpy 2.5.0, scipy 1.18.0, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
 ```
 
 **Direct-carrier rows** (a caller-supplied canonical `CarrierTable`; no pandas/pyarrow
-in the path, only Python + numpy for the float64 carrier):
+in the path, only Python + numpy for the float64 carrier -- but SciPy still certified,
+because the accountant runs on the direct path too):
 
 ```
-(direct, 3.10, numpy 2.2.6, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(direct, 3.11, numpy 2.4.6, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(direct, 3.12, numpy 2.5.0, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(direct, 3.10, numpy 2.2.6, scipy 1.15.3, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(direct, 3.11, numpy 2.4.6, scipy 1.17.1, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
+(direct, 3.12, numpy 2.5.0, scipy 1.18.0, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
 ```
 
-- **Fit time:** check the local COMPLETE tuple (boundary, python, numpy, pandas/pyarrow
-  if the adapter is used, opendp, dp_accounting, codec) against the manifest BEFORE
-  reading private data; fail closed on any uncertified component.
-- **Generation time:** check the artifact's RECORDED complete fit provenance against
-  the static manifest -- including OpenDP/`dp_accounting`/codec/schema, which
-  generation does NOT invoke and so must validate from the record, not from locally
-  installed libraries. This replaces the current compare-to-local-env at
-  `_checks_dp.py:277` (which both over-matches generation-irrelevant libs AND would,
-  if merely deleted, stop validating OpenDP entirely).
+- **Fit time:** check the local platform AND the local COMPLETE version tuple
+  (boundary, python, numpy, scipy, pandas/pyarrow if the adapter is used, opendp,
+  dp_accounting, codec) against the manifest BEFORE reading private data; fail closed
+  (`dp_platform_uncertified` / `dp_stack_uncertified`) on any uncertified component.
+- **Generation time:** check the artifact's RECORDED platform + complete fit
+  provenance against the static manifest -- including OpenDP/`dp_accounting`/SciPy/
+  codec/schema, which generation does NOT invoke and so must validate from the record,
+  not from locally installed libraries. This replaces the current compare-to-local-env
+  at `_checks_dp.py:277` (which both over-matches generation-irrelevant libs AND would,
+  if merely deleted, stop validating OpenDP/SciPy entirely).
 - The artifact records its `boundary` (adapter vs direct) so verification picks the
   right row class.
 - CI dependency-matrix workflow runs the crown-jewel adjacency property on EVERY
-  manifest row (adapter and direct).
+  manifest row (adapter and direct) on the certified Linux/x86-64 platform.
 - Recording versions is audit evidence, NOT authentication (the MAC is ROADMAP item 4
   / schema v4).
 
@@ -260,8 +286,20 @@ in the path, only Python + numpy for the float64 carrier):
 
 Codec metadata = `dps-marginal/v3`; artifact-auth MAC = `dps-marginal/v4` (update the
 ROADMAP MAC entry to v4 during build). v3 adds `column_schema`, per-column `carrier`,
-codec id/version, the recorded fit tuple, and the source-boundary flag. Pre-GA hard
-break, no shim.
+codec id/version, the recorded fit tuple (now including SciPy and the certified
+platform string), and the source-boundary flag. Pre-GA hard break, no shim.
+
+**Carrier is a DP-v3 field, not a break for non-DP snapshots (round-4 MEDIUM).**
+`StatisticalSpec.carrier` (§3.4) is `Optional[str]`, defaulting to `None`. It is
+mandatory and strictly validated (`number`/`flag`/`text`) ONLY for columns of a
+verified `dps-marginal/v3` DP artifact. Ordinary non-DP snapshots
+(`distribution-snapshot/v1` -- numeric/categorical/datetime/freetext) keep
+`carrier=None`, which is the explicit legacy sampling mode: `spec_to_dict` omits the
+field when `None` (older serialized Plans deserialize unchanged), `spec_from_dict` /
+`load_spec` default a missing `carrier` to `None`, and the sampler dispatches on
+`carrier is None` -> current behavior vs a set carrier -> the codec path. No top-level
+schema bump and no migration for non-DP snapshots; the carrier path is reached only
+through the DP fit API.
 
 ## 4. Fold in the comprehensive-review findings (modules KEPT)
 
@@ -274,7 +312,7 @@ break, no shim.
   overflows at ~709.783 on py3.10 (709.782 OK) and the exact boundary drifts by
   Python/`dp_accounting` version, so pin the ceiling well below every certified row's
   observed overflow — set `_DP_EPSILON_CEILING = 700.0` (comfortably under 709.78 on
-  all v1 manifest rows; a requested per-column ceiling that large is already far
+  all v1 manifest rows; a requested fit-wide epsilon ceiling that large is already far
   outside any real DP regime). Requests above it fail closed with a coded
   `dp_epsilon_unsupported` error BEFORE reading private data — never a raw
   `OverflowError` mid-composition. The CI dependency-matrix workflow asserts, per
@@ -308,9 +346,12 @@ break, no shim.
 - `plan/_checks_dp.py` (verification + query-count reconstruction `:305`; fix the
   generation-time version compare `:277`).
 - `generation/statistical/_sample.py` (flag artifact decoding + `other_mode`).
-- `generation/statistical/_spec.py` (DP-exemption wording `:184`).
+- `generation/statistical/_spec.py` (DP-exemption wording `:184`; add
+  `carrier: Optional[str] = None` and its `None`-omitting serialization).
 - `config/_global_settings.py` (generate-side config docs `:34`).
-- The dependency-matrix CI workflow + the static certified manifest file.
+- The dependency-matrix CI workflow (Linux/x86-64; certifies every row incl. SciPy +
+  the frozen epsilon-ceiling boundary probe) + the static certified manifest file
+  (rows now carry SciPy and the single certified platform string).
 - Plan serialization / compat fixtures; `test_dp_claim_copy.py`; CHANGELOG; and
   `docs/what-we-cannot-prove.md` (guarantee wording — this GATES).
 
@@ -371,9 +412,9 @@ v1 after the flag fix + closed pair table + full flag path (§3.4); no fixed-voc
 categorical now. 4. Accept `epsilon_total >= 0`; requested ceilings strictly positive.
 5. Adapter in-engine, in the end-to-end claim.
 
-## 10. One decision to surface to Cam (customer-facing, non-blocking)
+## 10. Decisions to surface to Cam (customer-facing, non-blocking)
 
-What we advertise:
+### 10a. What we advertise (the claim strength)
 
 - **(default, built here)** Keep the end-to-end DataFrame-row DP claim with the
   adapter certified as a stability-1 transformation under the exact-version gate,
@@ -385,3 +426,19 @@ What we advertise:
 
 Building the default; the carrier-level claim is the clean core, so we can tighten
 later without a rebuild. Flag if you want the stricter public claim from v1.
+
+### 10b. Certified-platform scope (round-4 HIGH)
+
+The DP guarantee is only honest on a platform we actually test, and CI is Ubuntu-only.
+
+- **(default, built here)** Certify **Linux / x86-64 / CPython / glibc only** for v1;
+  fit fails closed (`dp_platform_uncertified`) on any other OS/arch/interpreter. The
+  DP feature is unavailable off that platform rather than silently unverified. Minimal,
+  honest, fastest to GA, fully reversible (widen later).
+- **(broader)** Build a full multi-OS / multi-arch certification manifest with
+  per-wheel hashes and a CI matrix across Linux/macOS/Windows and x86-64/ARM, so DP
+  runs verified on more platforms from v1. Heavier machinery; more CI cost.
+
+Building the default (Linux/x86-64 fail-closed). This matches where the engine is
+actually tested today and can be broadened when a customer needs macOS/Windows/ARM DP.
+Flag if you want the broader platform manifest in v1.
