@@ -400,6 +400,20 @@ def _fit_dp_snapshot_with_backend(
     delta = float(delta)
     numeric_bins = int(numeric_bins)
 
+    # Snapshot the caller's schema once so a mutable mapping cannot drift the
+    # routing decision (which OpenDP measurement each column takes) away from the
+    # metadata recorded into the artifact: this function reads `column_schema`
+    # several times (parse -> route, sanitize/adapter -> values, then record), and
+    # a mapping whose iteration yields a different carrier on a later read could
+    # release under one mechanism while the artifact declares another, which the
+    # verifier trusts. Non-dict schemas (or non-dict per-column specs) fall through
+    # unfrozen to `_parse_column_schema`, which raises the normal coded error.
+    if isinstance(column_schema, dict):
+        column_schema = {
+            key: dict(spec) if isinstance(spec, dict) else spec
+            for key, spec in column_schema.items()
+        }
+
     # Parse the schema (public-only) into the mechanism domains and bounds the
     # schedule commits to, and reject degenerate derived bin edges -- all BEFORE
     # the proof-stack gate and before any private cell is read.

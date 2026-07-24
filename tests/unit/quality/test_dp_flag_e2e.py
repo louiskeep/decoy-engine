@@ -110,6 +110,41 @@ class TestFlagCarrierEndToEnd:
         assert ("t", "is_active") in verified
         assert ("t", "age") in verified
 
+    def test_column_schema_is_snapshot_once_at_entry(self):
+        """The fit must freeze the caller's schema on entry so a mutable mapping
+        cannot drift the routing decision (which mechanism a column takes) away
+        from the carrier recorded into the artifact, which the verifier trusts.
+        The tightest guard is that the caller's own mapping is iterated exactly
+        once: every later read hits the frozen copy, not the original."""
+        rng = np.random.default_rng(3)
+        df = pd.DataFrame(
+            {
+                "is_active": rng.choice([True, False], size=2000, p=[0.9, 0.1]),
+                "age": rng.integers(0, 120, size=2000).astype(float),
+            }
+        )
+
+        calls = {"n": 0}
+
+        class CountingSchema(dict):
+            def items(self):
+                calls["n"] += 1
+                return super().items()
+
+        schema = CountingSchema(
+            {
+                "is_active": {"kind": "categorical", "carrier": "flag"},
+                "age": {"kind": "numeric", "carrier": "number", "bounds": (0.0, 120.0)},
+            }
+        )
+        snap = fit_dp_snapshot(df, schema, epsilon=10.0, delta=1e-5)
+
+        # Iterated exactly once (the entry snapshot); the recorded carrier is the
+        # frozen value, consistent between the dp block and the column block.
+        assert calls["n"] == 1
+        assert snap["dp"]["column_schema"]["is_active"]["carrier"] == "flag"
+        assert snap["columns"]["is_active"]["carrier"] == "flag"
+
     def test_flag_column_with_a_mutated_carrier_fails_closed(self, tmp_path):
         snap = _fit_flag_plus_numeric()
         mutated = copy.deepcopy(snap)
