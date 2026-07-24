@@ -80,7 +80,14 @@ BUILD PROGRESS:
 - **Phase 7 (retire `dp_normalize.py` once the property/carrier suite subsumes its
   matrix) — NEXT.**
 - **Phase 8 (docs: `_spec.py`/`_global_settings.py` wording, claim-copy tests, CHANGELOG,
-  `what-we-cannot-prove.md`) — PENDING.**
+  `what-we-cannot-prove.md`) — PENDING.** MUST ALSO FIX (phase-7 finding): the DP artifact
+  ships `dp_policy._DP_NORMALIZATION_POLICY["categorical_labels"]` prose that still
+  describes the RETIRED dp_normalize behavior (bool/real/decimal/zero-imaginary-complex/
+  huge-int rendered as text labels). The `text` carrier now DROPS non-`str` cells (never
+  stringifies) and bool routes through the separate `flag` carrier, so this shipped claim
+  over-describes the release. Correct the artifact prose and restore the assertion in
+  `test_normalization_policy_is_identical_whatever_the_frame_holds` (phase 7 left a
+  KNOWN GAP comment there rather than assert false-but-passing text).
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
