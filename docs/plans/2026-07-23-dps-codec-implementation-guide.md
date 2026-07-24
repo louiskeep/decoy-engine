@@ -49,9 +49,26 @@ BUILD PROGRESS:
   bool) for flag; epsilon ceiling wired into composition; dp_ledger accepts
   epsilon_total >= 0. test_dp.py held at 1180 (no regression to live accounting).
 - **Phase 5 (orchestration + dps-marginal/v3 artifact: dp.py fit API, snapshot.py,
-  _checks_dp.py) — IN PROGRESS.** The integration phase: wires phases 1-4 into the live
-  fit path, bumps the artifact v2->v3 (pre-GA hard break), records the provenance
-  identity, and fixes _checks_dp.py:277 (provenance validation) + :436 (epsilon >= 0).
+  _checks_dp.py) — DONE & dual-gate cleared.** The integration phase: wired phases 1-4
+  into the live fit path (`column_schema` fit API through the adapter/carrier codecs),
+  bumped the artifact v2->v3 (pre-GA hard break) recording the proof-stack identity +
+  per-column carrier + source boundary, and rewired generation verification (recorded-
+  provenance validation, v3 schema, epsilon >= 0, carrier-aware query count + per-column
+  identity). Build `cafca62`; remediation `bfc9f80`/`4ccb67a` (dennis H1/M1), `07b15f5`->
+  `c6a46aa` (dennis H2 module split + H3 flag e2e + L1 verifier + M2 flag guard),
+  `60b4fcc` (Codex TOCTOU: freeze column_schema at entry), `aeda621` (Codex BLOCKER dp.py
+  size -> new dp_fit_schema.py; HIGH columns/dp carrier agreement; MEDIUM bounds freeze +
+  import-cycle break + kind/bounds cross-check). Gates: dennis logic-approved (round 1,
+  traced+probed the DP path correct) -> Codex 5 findings (round 2) -> all remediated ->
+  Codex APPROVE with 0 findings (round 3). Codex confirmed clean: number/text byte-
+  identity, flag bool-domain stability-1, query-count, provenance ordering, epsilon >= 0.
+  New pandas-free module `quality/dp_fit_schema.py`; `OpenDpReleaseSession` extracted to
+  `quality/dp_session.py` (phase-4 size debt). Full DP+plan+generation surface green.
+- **Phase 6 (flag artifact/generation semantics in `_sample.py`) — IN PROGRESS.**
+  Implement the generation-side flag decoder ("true"/"false" tokens -> bool, other_mode
+  rules for flag) and LIFT the phase-5 M2 fail-closed guard
+  (`statistical_dp_flag_sampler_unwired` in `generation/statistical/_spec.py`) now that
+  the sampler can decode flags.
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
