@@ -12,6 +12,16 @@ resolved environment + full CPython version instead of a curated tuple -- comple
 construction; (MEDIUM) the direct-carrier path is made genuinely pandas/pyarrow-free by
 splitting the adapter into a lazily-imported `carrier_adapter.py` with a CI
 import-isolation assertion). Author: Opus. Cycle: DPS-CODEC.
+BUILD PROGRESS:
+- **Phase 1 (carrier core) — DONE & dual-gate cleared.** Commits 7daaa2e (build)
+  -> 24752ef (dennis remediation: mypy gate, coverage guard, interrupt test) ->
+  75ec133 (Codex HIGH: structural bound validation) -> 6e8a9c5 (Codex LOW: coded
+  bound-conversion errors). dennis APPROVE + Codex APPROVE at 75ec133; crown-jewel
+  suite mutation-verified non-vacuous. `quality/carriers.py` (pandas-free),
+  `dp_schema.py`, `test_carriers.py` (62 passed, 1 phase-2 xfail). L1 (top-level
+  `__init__` eager pandas import) remains deferred to when the fit API lands.
+- **Phase 2 (pandas adapter) — IN PROGRESS.**
+
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
 build-ready, no residual carrier/codec/adjacency/artifact/compatibility design hole
