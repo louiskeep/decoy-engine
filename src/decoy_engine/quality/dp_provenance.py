@@ -148,14 +148,20 @@ def installed_distribution_set() -> tuple[tuple[str, str], ...]:
         name = str(canonicalize_name(raw_name))
         version = dist.version
         if name in seen:
-            raise ProvenanceError(
-                code="dp_provenance_duplicate_distribution",
-                message=(
-                    f"distribution {name!r} is installed more than once "
-                    f"(versions {seen[name]!r} and {version!r}); the proof-stack "
-                    "fingerprint would be ambiguous"
-                ),
-            )
+            # A leftover same-version dist-info produces an identical
+            # `name==version` line and so is NOT ambiguous for the hash -- collapse
+            # it. Only DIFFERENT versions of one canonical name are a genuine
+            # ambiguity the fingerprint cannot resolve; those fail closed.
+            if seen[name] != version:
+                raise ProvenanceError(
+                    code="dp_provenance_duplicate_distribution",
+                    message=(
+                        f"distribution {name!r} is installed at two different "
+                        f"versions ({seen[name]!r} and {version!r}); the proof-stack "
+                        "fingerprint would be ambiguous"
+                    ),
+                )
+            continue
         seen[name] = version
     return tuple(sorted(seen.items()))
 
@@ -443,7 +449,7 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
     else:
         import tomli as toml_reader  # 3.10 backport, pinned in the lock
 
-    from packaging.markers import InvalidMarker, Marker
+    from packaging.markers import Marker
 
     path = Path(lock_path) if lock_path is not None else _default_lock_path()
     try:
@@ -468,7 +474,7 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
         if not isinstance(entry, dict) or "name" not in entry or "version" not in entry:
             continue
         markers = entry.get("resolution-markers")
-        if markers and not _any_marker_true(markers, Marker, InvalidMarker):
+        if markers and not _any_marker_true(markers, Marker):
             continue
         name = str(canonicalize_name(str(entry["name"])))
         lock_active.setdefault(name, set()).add(str(entry["version"]))
@@ -496,7 +502,6 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
 def _any_marker_true(
     markers: object,
     marker_cls: type,
-    invalid_marker_cls: type[Exception],
 ) -> bool:
     """True if any marker string in ``markers`` evaluates true in the current
     environment. A malformed marker is treated as not-satisfied (it cannot
@@ -509,6 +514,14 @@ def _any_marker_true(
         try:
             if marker_cls(marker).evaluate():
                 return True
-        except invalid_marker_cls:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            # Any marker that cannot be constructed OR evaluated (InvalidMarker,
+            # UndefinedComparison, UndefinedEnvironmentName, ...) is treated as
+            # not-satisfied. That is the fail-CLOSED direction here: an
+            # un-evaluable locked version is not counted active, so a matching
+            # installed dist surfaces as a stray rather than being silently
+            # accepted. The try body is only marker construction + evaluation.
             continue
     return False

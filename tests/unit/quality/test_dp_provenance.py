@@ -86,6 +86,21 @@ def test_installed_distribution_set_rejects_duplicate_canonical_names(
     assert exc.value.code == "dp_provenance_duplicate_distribution"
 
 
+def test_installed_distribution_set_collapses_same_version_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A leftover same-version dist-info produces an identical name==version line,
+    # so it is not ambiguous for the hash -- collapse to one entry, do NOT raise
+    # (dennis phase-3 LOW-2). Only DIFFERENT versions of one name are ambiguous.
+    monkeypatch.setattr(
+        prov.importlib.metadata,
+        "distributions",
+        lambda: iter([_FakeDist("PyYAML", "6.0"), _FakeDist("pyyaml", "6.0")]),
+    )
+    result = prov.installed_distribution_set()
+    assert result == (("pyyaml", "6.0"),)
+
+
 def test_installed_distribution_set_rejects_unnamed_distribution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
