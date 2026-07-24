@@ -39,8 +39,19 @@ BUILD PROGRESS:
   guard), `_DP_EPSILON_CEILING=700.0` in dp_budget, draft CI matrix. Certified pin =
   6c0b2bbd... over the reproducible 77-dist profile. Fit/generation CALL-SITE wiring
   deferred to phase 5.
-- **Phase 4 (dp_schedule/dp_budget carrier plumbing: bool-domain measurements +
-  endpoints + eps-range + frozen cache key; dp_ledger >= 0) — IN PROGRESS.**
+- **Phase 4 (dp_schedule/dp_budget carrier plumbing) — DONE & dual-gate cleared.**
+  Commits 1005be0 (build) -> fcde874 (dennis LOWs: wording, unscheduled-pair guard).
+  dennis APPROVE (its own Codex concurred SOUND) + independent Codex APPROVE (0
+  findings; probe-proved legacy-crossing certificates byte-identical, bool measurements
+  stability-1 with certs identical to str, endpoint fallback cannot under-noise,
+  epsilon-700 ceiling fails closed with 0 backend calls). Carrier threaded through
+  CategoricalQuerySpec + frozen cache key; bool-domain make_count_by(bool)/make_count(
+  bool) for flag; epsilon ceiling wired into composition; dp_ledger accepts
+  epsilon_total >= 0. test_dp.py held at 1180 (no regression to live accounting).
+- **Phase 5 (orchestration + dps-marginal/v3 artifact: dp.py fit API, snapshot.py,
+  _checks_dp.py) — IN PROGRESS.** The integration phase: wires phases 1-4 into the live
+  fit path, bumps the artifact v2->v3 (pre-GA hard break), records the provenance
+  identity, and fixes _checks_dp.py:277 (provenance validation) + :436 (epsilon >= 0).
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
