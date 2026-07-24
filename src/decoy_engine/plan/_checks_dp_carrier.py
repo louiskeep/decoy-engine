@@ -202,11 +202,7 @@ def _is_finite_real(value: Any) -> bool:
     """A real number the numeric domain may use as a bound: an `int` or
     `float` (NOT a `bool` -- `True`/`False` are `int` subclasses that must not
     stand in for a domain edge) that is finite."""
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _canonical_bin_edges(lower: float, upper: float, numeric_bins: int) -> list[float]:

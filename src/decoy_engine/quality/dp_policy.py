@@ -18,34 +18,36 @@ _logger = logging.getLogger(__name__)
 # Identical bytes in every artifact: a policy that varied with the frame
 # would be an unnoised channel. Round 9 deleted the per-column drop
 # COUNT this comment used to point at; nothing below logs one.
-_DP_NORMALIZATION_POLICY = MappingProxyType({
-    "categorical_labels": (
-        "a declared text column releases only genuine str cells, kept verbatim "
-        "unless the value AS RECEIVED contains NUL or cannot be encoded as UTF-8 "
-        "(numpy fixed-width string storage strips a trailing NUL before the fit "
-        "sees it); a declared flag column releases the two canonical tokens 'true' "
-        "and 'false'. The carrier declared for the column drives this, not how "
-        "pandas happens to store the column"
-    ),
-    "categorical_unsupported": (
-        "released as null: in a text column every non-str cell (a boolean, any "
-        "number, decimal or complex value, a datetime or timedelta, a container, and "
-        "any other type); in a flag column every string or bytes value (even '1' or "
-        "'0') and every other cell that does not convert to an exact real 0 or 1 (a 2 "
-        "or a 0.5, a nonzero-imaginary complex, a datetime or timedelta, a container); "
-        "and in either, text whose value AS RECEIVED carries NUL or is not UTF-8 "
-        "encodable"
-    ),
-    "numeric_values": (
-        "float64, values outside the declared domain clamped to it, "
-        "infinities clamped to the nearer bound, NaN released as null"
-    ),
-    "numeric_unsupported": (
-        "released as null (a list, tuple or array cell; a datetime or "
-        "timedelta; a complex value with a nonzero imaginary part; and any "
-        "value that cannot be converted to a float)"
-    ),
-})
+_DP_NORMALIZATION_POLICY = MappingProxyType(
+    {
+        "categorical_labels": (
+            "a declared text column releases only genuine str cells, kept verbatim "
+            "unless the value AS RECEIVED contains NUL or cannot be encoded as UTF-8 "
+            "(numpy fixed-width string storage strips a trailing NUL before the fit "
+            "sees it); a declared flag column releases the two canonical tokens 'true' "
+            "and 'false'. The carrier declared for the column drives this, not how "
+            "pandas happens to store the column"
+        ),
+        "categorical_unsupported": (
+            "released as null: in a text column every non-str cell (a boolean, any "
+            "number, decimal or complex value, a datetime or timedelta, a container, and "
+            "any other type); in a flag column every string or bytes value (even '1' or "
+            "'0') and every other cell that does not convert to an exact real 0 or 1 (a 2 "
+            "or a 0.5, a nonzero-imaginary complex, a datetime or timedelta, a container); "
+            "and in either, text whose value AS RECEIVED carries NUL or is not UTF-8 "
+            "encodable"
+        ),
+        "numeric_values": (
+            "float64, values outside the declared domain clamped to it, "
+            "infinities clamped to the nearer bound, NaN released as null"
+        ),
+        "numeric_unsupported": (
+            "released as null (a list, tuple or array cell; a datetime or "
+            "timedelta; a complex value with a nonzero imaginary part; and any "
+            "value that cannot be converted to a float)"
+        ),
+    }
+)
 
 
 def _log_normalization_policy() -> None:

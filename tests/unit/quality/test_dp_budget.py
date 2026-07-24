@@ -12,6 +12,7 @@ accountant.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -435,18 +436,20 @@ class TestReleaseLedger:
         assert ledger.breakdown() == []
 
     def test_ten_releases_at_point_one_epsilon_sum_to_exactly_one(self):
-        """C-H1 (Codex HIGH): executed, plain `sum` over ten charges of
-        epsilon=0.1 gives `0.9999999999999999` (binary floating-point
-        term-by-term error), strictly LESS than a ceiling of exactly
-        `1.0` -- so a caller enforcing `total_epsilon() <= 1.0` would
-        accept a conservative total that is really `1.0`, not less.
-        `math.fsum` sums with a single final rounding and gives exactly
-        `1.0`. This pins the exact literal value, not an approx bound,
-        since the whole point is the difference between the two."""
+        """C-H1 (Codex HIGH): the ledger totals ten charges of epsilon=0.1 with
+        `math.fsum`, which rounds once and gives exactly `1.0` on every Python
+        version. A naive term-by-term `sum` is lossy on CPython <=3.11
+        (`0.9999999999999999`), which would let a caller enforcing
+        `total_epsilon() <= 1.0` accept a total that is really `1.0`, not less;
+        that is the defect `fsum` removes. NB: CPython 3.12 gave `sum`
+        compensated (Neumaier) summation (gh-100425), so plain `sum` is exact
+        there too -- the plain-sum value is version-dependent, so we pin the
+        `fsum` guarantee, not that artifact."""
         ledger = ReleaseLedger()
         for _ in range(10):
             ledger.charge("r", epsilon=0.1, delta=0.1)
-        assert sum([0.1] * 10) == 0.9999999999999999  # the plain-sum defect, restated
+        # The guarantee the ledger relies on, exact on every Python version.
+        assert math.fsum([0.1] * 10) == 1.0
         assert ledger.total_epsilon() == 1.0
         assert ledger.total_delta() == 1.0
 
