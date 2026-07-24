@@ -30,11 +30,43 @@ from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.plan._checks_dp import check_dp_generate_contract, verify_dp_snapshots
 from decoy_engine.plan._generation import read_and_pin_snapshots
 from decoy_engine.profile import Profile
-from decoy_engine.quality.dp import fit_dp_snapshot
+from decoy_engine.quality.dp import fit_dp_snapshot as _real_fit_dp_snapshot
+from decoy_engine.quality.dp_provenance import current_provenance
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
 )
+
+
+def _schema_from(categorical_columns=(), numeric_domains=None):
+    """Legacy-kwargs -> phase-5 `column_schema` translation for this suite (see
+    test_dp.py's `_schema_from`; the DPS-CODEC signature migration, guide
+    section 3.5)."""
+    schema: dict[str, dict] = {}
+    for c in categorical_columns:
+        schema[c] = {"kind": "categorical", "carrier": "text"}
+    for c, bounds in (numeric_domains or {}).items():
+        schema[c] = {"kind": "numeric", "carrier": "number", "bounds": bounds}
+    return schema
+
+
+def fit_dp_snapshot(frame, *, categorical_columns=(), numeric_domains=None, epsilon, delta):
+    return _real_fit_dp_snapshot(
+        frame, _schema_from(categorical_columns, numeric_domains), epsilon=epsilon, delta=delta
+    )
+
+
+def _certified_provenance_dict() -> dict:
+    """The RECORDED proof-stack identity a genuine `dps-marginal/v3` artifact
+    carries, in JSON-serializable shape. Computed live from the (certified) test
+    environment so `validate_recorded_provenance` accepts it, exactly as the
+    real fit records it (guide sections 3.8/3.9)."""
+    prov = current_provenance()
+    return {
+        "platform": dict(prov.platform._asdict()),
+        "cpython": prov.cpython,
+        "fingerprint": prov.fingerprint,
+    }
 
 
 def _profile() -> Profile:
@@ -187,7 +219,7 @@ class TestCheckDpGenerateContract:
 
 class TestDpCategoricalNowSupported:
     """Scope B binding decision: categorical DP IS supported when the
-    snapshot is a verified `dps-marginal/v2` release. This directly
+    snapshot is a verified `dps-marginal/v3` release. This directly
     supersedes Option A's blanket `dp_categorical_not_yet_supported`."""
 
     def test_dp_categorical_snapshot_compiles_without_allow_real_categories(self, tmp_path):
@@ -263,8 +295,15 @@ class TestDpCategoricalNowSupported:
         df = pd.DataFrame({"age": [12.0, 45.0, 67.0, 89.0, 30.0]})
         snap = compute_distribution_snapshot(df)  # ordinary, EXACT fit
         assert snap["columns"]["age"]["stats"]["mean"] is not None  # a REAL exact statistic
+        # The forger builds a full valid-shell v3 dp block (certified
+        # provenance, column_schema, a `number` carrier on the column) so the
+        # artifact passes the schema/provenance/query-count/carrier gates and
+        # reaches the numeric-shape guard -- which is the check under test: the
+        # exact snapshot's REAL mean can never look like a DP release's
+        # always-null shape.
+        snap["columns"]["age"]["carrier"] = "number"
         snap["dp"] = {
-            "schema": "dps-marginal/v2",
+            "schema": "dps-marginal/v3",
             "release_id": uuid.uuid4().hex,
             "scope": "single-column-marginals",
             "adjacency": "add-remove-one-row",
@@ -277,6 +316,12 @@ class TestDpCategoricalNowSupported:
             "numeric_bins": 10,
             "categorical_columns": [],
             "numeric_domains": {"age": [0.0, 120.0]},
+            "column_schema": {
+                "age": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}
+            },
+            "codec": {"id": "decoy-carrier-codec", "version": "1"},
+            "boundary": "adapter",
+            "provenance": _certified_provenance_dict(),
         }
         path = _write(tmp_path, "forged_numeric.json", snap)
         cfg = _dp_cfg(table_columns=[{"name": "age", "type": "statistical", "snapshot_file": path}])
@@ -289,7 +334,13 @@ class TestDpCategoricalNowSupported:
         plain argument, not derived from `snapshot["dp"]`."""
         df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
         snap = compute_distribution_snapshot(df)
-        snap["dp"] = {"schema": "dps-marginal/v2", "epsilon_total": 1.0, "delta_total": 1e-6}
+        snap["dp"] = {"schema": "dps-marginal/v3", "epsilon_total": 1.0, "delta_total": 1e-6}
+        # Phase 6: carrier is mandatory + strictly validated only when
+        # dp_verified=True (guide section 3.9); stamp a valid "text" carrier
+        # on the column so this direct dp_verified=True call matches that
+        # contract -- this test's point is the non-inference from
+        # snap["dp"], not carrier validation (covered elsewhere).
+        snap["columns"]["state"]["carrier"] = "text"
         spec_kwargs = {"name": "state", "type": "statistical", "snapshot_file": "x"}
         from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
@@ -300,6 +351,7 @@ class TestDpCategoricalNowSupported:
         # not the presence of snap["dp"].
         spec = load_spec(spec_kwargs, snapshot=snap, dp_verified=True)
         assert spec.kind == "categorical"
+        assert spec.carrier == "text"
 
 
 class TestFailClosedDpDeclaration:
@@ -592,6 +644,7 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
             "age": {
                 "dtype": "float64",
                 "kind": "numeric",
+                "carrier": "number",
                 "null_count": 0,
                 "non_null_count": 5,
                 "distinct_count": 5,
@@ -608,7 +661,7 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
         },
         "joints": [],
         "dp": {
-            "schema": "dps-marginal/v2",
+            "schema": "dps-marginal/v3",
             "release_id": release_id,
             "scope": "single-column-marginals",
             "adjacency": "add-remove-one-row",
@@ -621,6 +674,12 @@ def _numeric_dp_artifact(*, epsilon_total, delta_total=0.0, release_id="r1", dis
             "numeric_bins": 1,
             "categorical_columns": [],
             "numeric_domains": {"age": [0.0, 120.0]},
+            "column_schema": {
+                "age": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}
+            },
+            "codec": {"id": "decoy-carrier-codec", "version": "1"},
+            "boundary": "adapter",
+            "provenance": _certified_provenance_dict(),
             "_marker": distinct_marker,
         },
     }
@@ -636,6 +695,55 @@ def _running_dp_accounting_version() -> str:
     import importlib.metadata
 
     return importlib.metadata.version("dp-accounting")
+
+
+def _flag_dp_artifact(*, epsilon_total=0.5, delta_total=1e-6, release_id="rFLAG"):
+    """A synthetic but internally-consistent `dps-marginal/v3` artifact for a
+    single `flag` (bool-domain) categorical column. Built by hand (no real
+    OpenDP fit) because both the L-1 schema-identity checks and the M-2
+    generate guard are pure functions of the artifact's own `dp`/`columns`
+    blocks; a real fit is exercised end to end in test_dp_flag_e2e.py."""
+    return {
+        "schema_version": DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
+        "row_count": 5,
+        "columns": {
+            "flag": {
+                "dtype": "bool",
+                "kind": "categorical",
+                "carrier": "flag",
+                "null_count": 0,
+                "non_null_count": 5,
+                "distinct_count": 2,
+                "stats": {
+                    "top_values": [
+                        {"value": "true", "count": 3},
+                        {"value": "false", "count": 2},
+                    ],
+                    "other_count": 0,
+                },
+            }
+        },
+        "joints": [],
+        "dp": {
+            "schema": "dps-marginal/v3",
+            "release_id": release_id,
+            "scope": "single-column-marginals",
+            "adjacency": "add-remove-one-row",
+            "epsilon_total": epsilon_total,
+            "delta_total": delta_total,
+            "accountant": "dp_accounting PLD composition over OpenDP privacy maps",
+            "opendp_version": _running_opendp_version(),
+            "dp_accounting_version": _running_dp_accounting_version(),
+            "query_count": 3,  # 1 row_count + 0 numeric + 2*1 categorical (flag pair)
+            "numeric_bins": 10,
+            "categorical_columns": ["flag"],
+            "numeric_domains": {},
+            "column_schema": {"flag": {"kind": "categorical", "carrier": "flag"}},
+            "codec": {"id": "decoy-carrier-codec", "version": "1"},
+            "boundary": "adapter",
+            "provenance": _certified_provenance_dict(),
+        },
+    }
 
 
 def _cfg_with_artifact(
@@ -788,14 +896,22 @@ class TestReleaseIdLedger:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_query_count_mismatch"
 
-    def test_dp_artifact_from_a_different_library_version_is_rejected(self, tmp_path):
+    def test_dp_artifact_with_an_uncertified_proof_stack_is_rejected(self, tmp_path):
+        """Phase-5 migration (guide section 3.8): the old compare-to-local-env
+        library-version gate is replaced by proof-stack provenance validation.
+        Generation validates the artifact's RECORDED identity (platform triple,
+        full CPython version, lock fingerprint) against the static certified
+        set -- it does not recompute a fingerprint from its own libs. An artifact
+        whose recorded fingerprint is not a certified row fails closed. (The
+        human-readable `opendp_version` is now informational; mutating it alone
+        no longer gates, which is the point -- the fingerprint does.)"""
         artifact = _numeric_dp_artifact(epsilon_total=0.5)
-        artifact["dp"]["opendp_version"] = "0.0.0-not-installed"
+        artifact["dp"]["provenance"]["fingerprint"] = "0" * 64  # not a certified row
         cfg, _ = _cfg_with_artifact(tmp_path, artifact)
         pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
-        assert exc.value.code == "dp_snapshot_library_version_mismatch"
+        assert exc.value.code == "dp_snapshot_provenance_uncertified"
 
     def test_dp_snapshot_budget_malformed_nan_delta(self, tmp_path):
         artifact = _numeric_dp_artifact(epsilon_total=1.0, delta_total=float("nan"))
@@ -1016,3 +1132,191 @@ class TestDpDeclaredWithNoStatisticalColumns:
 
         out = generate_tables(plan)  # must not raise TypeError
         assert out["t"].column("id").to_pylist() == ["1", "2", "3", "4", "5"]
+
+
+class TestColumnSchemaPerColumnIdentity:
+    """L-1: verify_dp_snapshots reconstructs the artifact's query_count from
+    its column_schema and requires the count to agree with the legacy
+    categorical_columns/numeric_domains, but a count match is necessary, not
+    sufficient. A name-disjoint or carrier-transposed column_schema can
+    reconstruct to the same count while describing different columns; per-column
+    identity must also be pinned (set of names + per-name carrier<->kind)."""
+
+    def test_column_schema_name_disjoint_from_declaration_is_rejected(self, tmp_path):
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        # One `number` entry (same count as the single-numeric declaration), but
+        # naming a column numeric_domains never declared.
+        artifact["dp"]["column_schema"] = {
+            "agex": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 120.0]}
+        }
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_column_schema_mismatch"
+
+    def test_column_schema_carrier_swapped_between_columns_is_rejected(self, tmp_path):
+        # A two-column artifact (numeric "age" + categorical "b") whose
+        # column_schema swaps the carriers between the two names. The
+        # reconstructed count is unchanged (1 + one number + 2*one categorical),
+        # so only per-column identity catches it.
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        artifact["columns"]["b"] = {
+            "dtype": "object",
+            "kind": "categorical",
+            "carrier": "text",
+            "null_count": 0,
+            "non_null_count": 5,
+            "distinct_count": 1,
+            "stats": {"top_values": [{"value": "x", "count": 5}], "other_count": 0},
+        }
+        dp = artifact["dp"]
+        dp["categorical_columns"] = ["b"]
+        dp["numeric_domains"] = {"age": [0.0, 120.0]}
+        dp["query_count"] = 1 + 1 + 2 * 1  # 1 row_count + 1 numeric + 1 categorical pair
+        dp["column_schema"] = {
+            "age": {"kind": "categorical", "carrier": "text"},  # age is really numeric
+            "b": {
+                "kind": "numeric",
+                "carrier": "number",
+                "bounds": [0.0, 120.0],
+            },  # b is really text
+        }
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)  # verifies source_column "age"
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_column_schema_mismatch"
+
+    def test_matching_column_schema_still_verifies(self, tmp_path):
+        # The honest artifact (names and carriers agree per column) is unaffected
+        # by the tightened check -- it still verifies clean.
+        artifact = _numeric_dp_artifact(epsilon_total=0.5)
+        cfg, _ = _cfg_with_artifact(tmp_path, artifact)
+        pinned, _ = read_and_pin_snapshots(cfg)
+        verified, receipt = verify_dp_snapshots(cfg, pinned)
+        assert receipt is not None
+        assert ("t", "age") in verified
+
+
+class TestFlagGenerateWiredAtPhase6:
+    """Phase 6 lifts the phase-5 M-2 refusal: the flag decoder is now wired
+    into the sampler (`generation/statistical/_sample.py`), so a `flag` DP
+    release compiles into a sampler spec AND `compile_plan` accepts it end to
+    end, generating real Python `bool` values instead of refusing."""
+
+    def test_verify_accepts_flag_and_load_spec_now_compiles_it(self, tmp_path):
+        from decoy_engine.generation.statistical import load_spec
+
+        artifact = _flag_dp_artifact()
+        path = _write(tmp_path, "flag_synth.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+
+        # The SNAPSHOT-verification path still accepts the flag release.
+        pinned, _ = read_and_pin_snapshots(cfg)
+        verified, receipt = verify_dp_snapshots(cfg, pinned)
+        assert receipt is not None
+        assert ("t", "flag") in verified
+
+        # The GENERATE path (load_spec -> sampler spec) now compiles it, with
+        # the carrier threaded onto the spec so the sampler decodes flag.
+        spec = load_spec(
+            {"name": "flag", "type": "statistical", "snapshot_file": path},
+            snapshot=artifact,
+            dp_verified=True,
+        )
+        assert spec.carrier == "flag"
+
+    def test_compile_plan_and_generate_tables_produce_real_bool_values(self, tmp_path):
+        from decoy_engine.generation.synthesize import generate_tables
+
+        artifact = _flag_dp_artifact()
+        path = _write(tmp_path, "flag_compile.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")  # must not raise
+        out = generate_tables(plan)
+        values = out["t"]["flag"].to_pylist()
+        assert len(values) == 5
+        assert all(isinstance(v, bool) for v in values)
+        # The artifact's top_values carry both "true" and "false" (see
+        # _flag_dp_artifact); the sampler must be able to draw either.
+        assert set(values) <= {True, False}
+
+
+class TestFlagTokenShapeGuard:
+    """Guide section 3.4: verify_dp_snapshots accepts, for a `flag` column,
+    ONLY the two canonical tokens 'true'/'false' in top_values[].value; any
+    other token is a corrupted or hand-edited artifact and fails closed
+    with `dp_flag_token_invalid`, before the phase-6 sampler ever sees it."""
+
+    def test_bogus_flag_token_fails_closed_at_verify_time(self, tmp_path):
+        artifact = _flag_dp_artifact()
+        artifact["columns"]["flag"]["stats"]["top_values"] = [
+            {"value": "maybe", "count": 3},
+            {"value": "false", "count": 2},
+        ]
+        path = _write(tmp_path, "flag_bogus_token.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_flag_token_invalid"
+
+    def test_python_str_bool_token_also_fails_closed(self, tmp_path):
+        # "True"/"1" are real values a naive serializer could have emitted;
+        # only the canonical lowercase "true"/"false" passes.
+        artifact = _flag_dp_artifact()
+        artifact["columns"]["flag"]["stats"]["top_values"] = [
+            {"value": "True", "count": 3},
+            {"value": "false", "count": 2},
+        ]
+        path = _write(tmp_path, "flag_str_bool_token.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_flag_token_invalid"

@@ -47,6 +47,19 @@ def test_dp_claim_copy_is_marginal_and_names_joint_exclusion():
     assert "charged once" in text
 
 
+def test_dp_claim_copy_names_the_typed_carrier_and_its_adapter():
+    """DPS-CODEC phase 8: the guarantee is now stated over declared typed
+    carriers (`number`/`text`/`flag`), not pandas storage, and the pandas
+    adapter that produces them is itself certified as a stability-1
+    transformation. Pin the carrier-accurate claims so a future edit cannot
+    silently reintroduce the retired stringification wording."""
+    text = _doc_text()
+
+    assert "certified as a stability-1 transformation" in text
+    assert "text` column releases only genuine string cells" in text
+    assert "flag` column releases the two canonical labels `true` and `false`" in text
+
+
 def test_dp_claim_copy_names_no_removed_option_a_claims():
     """Every Option A overclaim guide section 8.1 lists must be gone."""
     text = _doc_text().lower()

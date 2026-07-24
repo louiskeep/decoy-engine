@@ -16,7 +16,7 @@ blanket-reject this module previously carried: `fit_dp_snapshot`'s
 categorical release is OpenDP-certified end to end, so a `kind:
 categorical` column IS accepted here, gated on the SAME provenance
 verification as numeric -- the snapshot's own `dp.categorical_columns`
-declaration, checked against a reproduced `dps-marginal/v2` schema, not
+declaration, checked against a reproduced `dps-marginal/v3` schema, not
 a truthy `dp` key alone.
 
 `verify_dp_snapshots` is the compile-time half of the guide's release-ID
@@ -29,13 +29,21 @@ ReadSnapshot`, guide section 4.7) -- it never calls `open()` itself.
 
 from __future__ import annotations
 
-import importlib.metadata
 import math
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from decoy_engine.plan._checks_dp_carrier import (
+    carrier_aware_query_count,
+    check_flag_tokens_canonical,
+    check_numeric_release_shape,
+    check_release_compatibility,
+    column_block_matches_schema,
+    schema_matches_legacy,
+)
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DpVerification
 from decoy_engine.quality.dp_ledger import ReleaseLedger
+from decoy_engine.quality.dp_provenance import ProvenanceError, validate_recorded_provenance
 from decoy_engine.quality.snapshot import DP_SNAPSHOT_SCHEMA_VERSION
 
 if TYPE_CHECKING:
@@ -190,48 +198,6 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
                 )
 
 
-def _numeric_shape_matches_a_dp_release(
-    col_snap: dict[str, Any], *, lower: float, upper: float, numeric_bins: int
-) -> bool:
-    """BLOCKER 2 item 3 (cheap shape evidence): an exact `compute_
-    distribution_snapshot` numeric column carries real `min`/`max`/`mean`/
-    `std`/`quantiles` (`quality/snapshot.py:566-575`); a genuine
-    `fit_dp_snapshot` numeric column NEVER does (guide section 4.2.1: `min`/
-    `max` are the declared domain bounds, `mean`/`std` are always `None`,
-    `quantiles` is always `{}`, and `bin_counts` always has exactly
-    `numeric_bins` entries).
-
-    This is a guard against copy-paste, not against an adversary, and the
-    security review corrected the page that used to claim otherwise. It
-    stops exactly one case: an ordinary EXACT snapshot with a fabricated
-    `dp` block bolted on, whose numeric `stats` still carries the real
-    min/max/mean/quantiles untouched. It stops nothing else. All four
-    fields read below are attacker-writable, and defeating the check
-    needs no DP knowledge and no reproduction of the artifact format --
-    null `mean`, `std` and `quantiles`, declare `numeric_bins` as the
-    length of the histogram already present, and declare the domain as
-    the observed min and max. The resulting artifact compiles
-    DP-verified while `bin_counts` are still the exact unnoised
-    histogram. Do not read the categorical path's lack of an equivalent
-    check as this path being defended; the asymmetry exists only for the
-    copy-paste case. See `docs/what-we-cannot-prove.md`, which is the
-    authority on this wording and is pinned by
-    `tests/unit/test_dp_claim_copy.py`."""
-    stats = col_snap.get("stats")
-    if not isinstance(stats, dict):
-        return False
-    bin_counts = stats.get("bin_counts")
-    return (
-        stats.get("min") == lower
-        and stats.get("max") == upper
-        and stats.get("mean") is None
-        and stats.get("std") is None
-        and stats.get("quantiles") == {}
-        and isinstance(bin_counts, list)
-        and len(bin_counts) == numeric_bins
-    )
-
-
 def _raise(code: str, *, table_name: Any, col_name: Any, message: str) -> NoReturn:
     raise PlanCompileError(
         code=code,
@@ -257,12 +223,17 @@ def verify_dp_snapshots(
 
     Raises:
         PlanCompileError: ``dp_budget_declaration_malformed`` (malformed
-            ceiling); ``dp_snapshot_not_dp_fit`` (no `dps-marginal/v2` `dp`
-            block); ``dp_snapshot_library_version_mismatch`` (opendp/
-            dp_accounting version mismatch); ``dp_snapshot_query_count_
-            mismatch`` (declared columns don't reproduce the artifact's
-            own `query_count`); ``dp_snapshot_kind_not_dp_eligible`` (kind
-            not in the artifact's own numeric/categorical declaration);
+            ceiling); ``dp_snapshot_not_dp_fit`` (no `dps-marginal/v3` `dp`
+            block); ``dp_snapshot_provenance_uncertified`` (the recorded
+            proof-stack identity is not a certified row); ``dp_snapshot_
+            query_count_mismatch`` (declared columns/carriers don't
+            reproduce the artifact's own `query_count`); ``dp_snapshot_
+            column_schema_mismatch`` (column_schema names/carriers agree in
+            aggregate count but not per column with the legacy
+            categorical_columns/numeric_domains declaration); ``dp_snapshot_
+            carrier_invalid`` (a column's recorded kind x carrier pair is
+            not allowed); ``dp_snapshot_kind_not_dp_eligible`` (kind not in
+            the artifact's own numeric/categorical declaration);
             ``dp_snapshot_missing_release_id``; ``dp_snapshot_budget_
             malformed`` (bad epsilon_total/delta_total);
             ``dp_release_id_conflict`` (same release_id, different
@@ -273,9 +244,6 @@ def verify_dp_snapshots(
     if ceiling is None:
         return frozenset(), None
     declared_epsilon, declared_delta = ceiling
-
-    running_opendp = importlib.metadata.version("opendp")
-    running_dp_accounting = importlib.metadata.version("dp-accounting")
 
     verified: set[tuple[str, str]] = set()
     release_id_to_digest: dict[str, str] = {}
@@ -319,23 +287,38 @@ def verify_dp_snapshots(
                     ),
                 )
 
-            if (
-                dp_block.get("opendp_version") != running_opendp
-                or dp_block.get("dp_accounting_version") != running_dp_accounting
-            ):
+            # Provenance gate (guide section 3.8, replacing the old
+            # compare-to-local-env at this line). Generation validates the
+            # artifact's RECORDED proof-stack identity (platform triple, full
+            # CPython version, lock fingerprint) against the static certified
+            # set -- it does NOT recompute a fingerprint from its own installed
+            # libraries, because the generating host may legitimately differ
+            # from the fitting host. The human-readable `opendp_version` /
+            # `dp_accounting_version` stay in the artifact as INFORMATIONAL
+            # annotation, but the GATE is the recorded identity's membership in
+            # the certified set, not a local-version equality (which both
+            # over-matched generation-irrelevant libs AND, if merely deleted,
+            # would stop validating the proof stack entirely).
+            try:
+                validate_recorded_provenance(dp_block.get("provenance"))
+            except ProvenanceError as exc:
                 _raise(
-                    "dp_snapshot_library_version_mismatch",
+                    "dp_snapshot_provenance_uncertified",
                     table_name=table_name,
                     col_name=col_name,
                     message=(
                         f"statistical column {col_name!r} in table {table_name!r}: the "
-                        f"snapshot was fit with opendp={dp_block.get('opendp_version')!r}, "
-                        f"dp_accounting={dp_block.get('dp_accounting_version')!r}; this "
-                        f"environment runs opendp={running_opendp!r}, "
-                        f"dp_accounting={running_dp_accounting!r}. A receipt this build "
-                        "cannot reproduce is not a receipt it may accept."
+                        f"snapshot's recorded proof stack is not a certified row [{exc.code}] "
+                        f"{exc.message}. A receipt fit on an uncertified platform/stack is not "
+                        "one this build may accept."
                     ),
                 )
+
+            # Release-shape identity (guide 3.9/4.4): require the exact codec,
+            # scope, adjacency and boundary this build's stability-1 argument is
+            # made for, before trusting any reconstruction below. A future codec
+            # version or a different adjacency must fail closed, not verify.
+            check_release_compatibility(dp_block, table_name=table_name, col_name=col_name)
 
             categorical_cols = dp_block.get("categorical_columns")
             numeric_domains = dp_block.get("numeric_domains")
@@ -349,7 +332,29 @@ def verify_dp_snapshots(
                         "snapshot's `dp` block is missing categorical_columns/numeric_domains."
                     ),
                 )
+            # Carrier-aware reconstruction (guide sections 3.4/3.9): a flag
+            # column's bool-domain grouped+total pair reconstructs the SAME
+            # categorical pair count as the text path. The v3 artifact records a
+            # per-column `column_schema`; reconstruct from it when present (which
+            # also validates every recorded carrier against the closed set), and
+            # require it to agree with the categorical_columns/numeric_domains
+            # reconstruction so the two declarations cannot disagree.
             expected_query_count = 1 + len(numeric_domains) + 2 * len(categorical_cols)
+            carrier_aware = carrier_aware_query_count(dp_block)
+            if carrier_aware is None or carrier_aware != expected_query_count:
+                _raise(
+                    "dp_snapshot_query_count_mismatch",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: the "
+                        "snapshot's column_schema carriers "
+                        f"(reconstructing to {carrier_aware!r}) do not agree with its "
+                        f"categorical_columns/numeric_domains ({expected_query_count!r}), or a "
+                        "recorded carrier is not one of ('number', 'flag', 'text'). The "
+                        "artifact's declared schedule does not match its declared columns."
+                    ),
+                )
             if dp_block.get("query_count") != expected_query_count:
                 _raise(
                     "dp_snapshot_query_count_mismatch",
@@ -361,6 +366,81 @@ def verify_dp_snapshots(
                         f"its own categorical_columns/numeric_domains recompute to "
                         f"{expected_query_count!r}. The artifact's declared schedule does not "
                         "match its declared columns."
+                    ),
+                )
+
+            # L-1: the reconstructed COUNT agreeing is necessary but not
+            # sufficient -- a name-disjoint or carrier/kind-transposed
+            # column_schema can reconstruct to the same count while describing
+            # different columns (e.g. one numeric + one categorical whose
+            # carriers are swapped between the two names). Pin per-column
+            # identity too: the column_schema's names must be exactly the union
+            # of the legacy categorical_columns/numeric_domains declaration, and
+            # each entry's carrier must match the kind THAT declaration assigns
+            # the column (number <-> numeric_domains, text/flag <->
+            # categorical_columns). `carrier_aware_query_count` already proved
+            # column_schema is a dict of dicts with known carriers (else
+            # carrier_aware is None and we raised above).
+            column_schema = dp_block["column_schema"]
+            schema_consistent = schema_matches_legacy(
+                column_schema, categorical_cols, numeric_domains
+            )
+            if not schema_consistent:
+                _raise(
+                    "dp_snapshot_column_schema_mismatch",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: the "
+                        "snapshot's column_schema names/carriers do not match its own "
+                        "categorical_columns/numeric_domains per column (schema names "
+                        f"{sorted(column_schema)!r} vs declared "
+                        f"{sorted(set(categorical_cols) | set(numeric_domains))!r}). A "
+                        "column_schema that only agrees in aggregate count but disagrees "
+                        "per column is a corrupted or hand-edited artifact, not a genuine "
+                        "release."
+                    ),
+                )
+
+            # Validate the verified column's own recorded carrier (guide section
+            # 3.9): a numeric column must carry `number`, a categorical column
+            # `text` or `flag`; any other value fails closed.
+            col_carrier = col_snap.get("carrier")
+            col_kind = col_snap.get("kind")
+            carrier_ok = (col_kind == "numeric" and col_carrier == "number") or (
+                col_kind == "categorical" and col_carrier in ("text", "flag")
+            )
+            if not carrier_ok:
+                _raise(
+                    "dp_snapshot_carrier_invalid",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: source "
+                        f"column {source_column!r} records carrier {col_carrier!r} for kind "
+                        f"{col_kind!r}, which is not an allowed kind x carrier pair (numeric->"
+                        "number, categorical->text/flag)."
+                    ),
+                )
+
+            # HIGH-2: the `columns` block's carrier/kind (which `load_spec`
+            # reads onto `StatisticalSpec.carrier`, and the sampler dispatches
+            # on) must equal the `dp.column_schema` entry for the same column.
+            # A `flag` release whose `columns` block is relabelled `text`
+            # would otherwise pass here while `dp.column_schema` still
+            # declares `flag`, reaching the sampler with the wrong carrier.
+            if not column_block_matches_schema(col_snap, column_schema, source_column):
+                _raise(
+                    "dp_snapshot_column_block_schema_mismatch",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: source "
+                        f"column {source_column!r} records carrier {col_carrier!r}/kind "
+                        f"{col_kind!r} in its columns block, which disagrees with the dp "
+                        f"block's column_schema entry {column_schema.get(source_column)!r}. "
+                        "The two recorded declarations for one column must be identical; a "
+                        "divergence is a corrupted or hand-edited artifact."
                     ),
                 )
 
@@ -382,38 +462,31 @@ def verify_dp_snapshots(
                 )
 
             if kind == "numeric":
-                domain = numeric_domains.get(source_column)
-                numeric_bins = dp_block.get("numeric_bins")
-                shape_ok = False
-                if (
-                    isinstance(domain, list)
-                    and len(domain) == 2
-                    and isinstance(domain[0], (int, float))
-                    and isinstance(domain[1], (int, float))
-                    and isinstance(numeric_bins, int)
-                    and not isinstance(numeric_bins, bool)
-                ):
-                    shape_ok = _numeric_shape_matches_a_dp_release(
-                        col_snap,
-                        lower=float(domain[0]),
-                        upper=float(domain[1]),
-                        numeric_bins=numeric_bins,
-                    )
-                if not shape_ok:
-                    _raise(
-                        "dp_snapshot_numeric_shape_mismatch",
-                        table_name=table_name,
-                        col_name=col_name,
-                        message=(
-                            f"statistical column {col_name!r} in table {table_name!r}: source "
-                            f"column {source_column!r} is declared numeric, but its stats block "
-                            "does not have the shape a genuine fit_dp_snapshot release always "
-                            "has (min/max equal to the declared domain bounds, mean/std null, "
-                            "quantiles empty, and len(bin_counts) == numeric_bins). This is the "
-                            "shape of an exact, non-DP snapshot with a copied or hand-written "
-                            "dp block, not a DP release for this column."
-                        ),
-                    )
+                # Domain sanity + copy-paste shape + canonical bin_edges, all in
+                # the pandas-free carrier-checks helper (keeps this orchestrator
+                # under the ~600-LOC cap). The edge check closes the Codex
+                # whole-feature HIGH: the sampler draws from bin_edges, so edges
+                # outside the declared domain would emit out-of-domain values.
+                check_numeric_release_shape(
+                    col_snap,
+                    dp_block,
+                    source_column=source_column,
+                    numeric_domains=numeric_domains,
+                    table_name=table_name,
+                    col_name=col_name,
+                )
+
+            # Guide 3.4 shape guard: a flag column's top_values must be only
+            # the two canonical tokens the fit emits, so a bogus token fails
+            # closed here instead of deep in the sampler's decode.
+            check_flag_tokens_canonical(
+                col_snap,
+                kind=kind,
+                col_carrier=col_carrier,
+                table_name=table_name,
+                col_name=col_name,
+                source_column=source_column,
+            )
 
             release_id = dp_block.get("release_id")
             if not isinstance(release_id, str) or not release_id:
@@ -429,11 +502,18 @@ def verify_dp_snapshots(
 
             epsilon_total = dp_block.get("epsilon_total")
             delta_total = dp_block.get("delta_total")
+            # Zero-epsilon accepted (guide section 4, zero-epsilon finding): the
+            # ledger already sums composed totals with `epsilon_total >= 0`
+            # (`dp_accounting` legitimately composes to exactly 0 at a large
+            # enough delta, e.g. eps=1/delta=0.9), and this reads a COMPOSED
+            # total, not a requested ceiling. A negative total is still
+            # impossible and fails closed; requested ceilings stay strictly
+            # positive at parse_dp_ceiling.
             eps_ok = (
                 isinstance(epsilon_total, (int, float))
                 and not isinstance(epsilon_total, bool)
                 and math.isfinite(epsilon_total)
-                and epsilon_total > 0
+                and epsilon_total >= 0
             )
             delta_ok = (
                 isinstance(delta_total, (int, float))
@@ -450,7 +530,7 @@ def verify_dp_snapshots(
                         f"statistical column {col_name!r} in table {table_name!r}: the "
                         f"snapshot's dp block has epsilon_total={epsilon_total!r}, "
                         f"delta_total={delta_total!r}, which must both be finite "
-                        "(epsilon_total > 0, delta_total >= 0)."
+                        "(epsilon_total >= 0, delta_total >= 0)."
                     ),
                 )
 

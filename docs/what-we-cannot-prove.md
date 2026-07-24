@@ -15,7 +15,7 @@ heuristic re-identification-risk signals to help you assess a dataset; those
 are diagnostics, not a proof.
 
 The one formal mechanism is `quality.dp.fit_dp_snapshot`, which produces a
-`dps-marginal/v2` release consumed by a `type: statistical` generate column
+`dps-marginal/v3` release consumed by a `type: statistical` generate column
 under a `global_settings.dp` declaration. Each column's privacy loss is
 certified by OpenDP's own privacy map (`Measurement.map`, `opendp==0.15.1`),
 and the fit-wide loss is composed by Google's `dp_accounting` (0.6.0) PLD
@@ -24,8 +24,19 @@ dominating-pair representation of each certified `(epsilon, delta)`, so the
 reported total is a valid upper bound rather than the tightest achievable
 one. This is a CONDITIONAL claim, not a blanket one: do not read "Decoy
 supports DP" as "every statistical column in every run is DP" -- most are
-not, unless the column's snapshot is a verified `dps-marginal/v2` release
+not, unless the column's snapshot is a verified `dps-marginal/v3` release
 consumed by a compiled, DP-verified Plan.
+
+The guarantee is stated over the typed carrier you declare for each column --
+`number`, `text`, or `flag` -- not over the column's pandas storage. A
+DataFrame is converted to that typed form by an in-engine adapter certified as
+a stability-1 transformation: adding or removing one input row changes at most
+one element of the released vector. That certification holds only on the
+exact locked set of Python distribution versions the proof was checked
+against, on one certified platform (Linux, x86-64, CPython, glibc); on any
+other platform or library set the fit refuses rather than release under an
+unverified proof. The adapter is inside the guarantee, and the certification
+is what makes it so; it is not a claim about pandas in general.
 
 > For a DP fit whose declared fit-wide privacy loss is `(epsilon, delta)`,
 > Decoy's released single-column numeric and categorical marginals, and
@@ -75,18 +86,26 @@ consumed by a compiled, DP-verified Plan.
 > types it happens to have would itself disclose whether the unusual
 > record was present.
 >
-> A declared categorical column releases only its text, boolean, and
-> numeric values -- including decimals, which are released from their
-> float64 image like any other real, so a decimal too large for float64
-> releases as `inf` rather than its exact value. Dates, timestamps and
-> timedeltas contribute nothing to
-> that column's release and are counted as nulls. This is a deliberate
-> restriction, not an oversight: a label derived from a time quantity is
-> a function of how pandas happens to be storing the column, and a
-> column's storage type is a function of ALL its rows, so one added row
+> A declared categorical column releases through one of two carriers you name
+> for it, and the carrier -- not how pandas happens to store the column --
+> decides what is released. A `text` column releases only genuine string cells,
+> kept verbatim unless the value as received contains a NUL or cannot be encoded
+> as UTF-8; every non-string cell (a boolean, any number, a decimal, a complex
+> value, a date, timestamp or timedelta, a container, or any other type)
+> contributes nothing and is counted as a null. A `flag` column releases the two
+> canonical labels `true` and `false`: it releases the matching label for any
+> cell that is not text or bytes and whose value converts to an exact real `0` or
+> `1` (a boolean, or the `0`/`1` an integer, float, decimal, or
+> zero-imaginary-complex holds after a concatenation reboxes the column's
+> storage), and counts as a null every text or bytes value (even `"1"` or `b"1"`)
+> and every other cell that does not (a `2`, a `0.5`, a nonzero-imaginary complex,
+> a date, or a container). This is a deliberate
+> restriction, not an oversight: deriving a label from
+> a value's pandas storage would make the label a function of how the column was
+> boxed, and a column's storage is a function of all its rows, so one added row
 > could otherwise change every label at once and break the adjacency the
-> certificate assumes. Cast such a column to strings upstream if you need
-> it released, accepting that the cast is then yours to keep stable.
+> certificate assumes. Casting a column to strings upstream releases it as text,
+> accepting that the cast is then yours to keep stable.
 >
 > A fully dropped column therefore reports close to zero non-null values,
 > which is indistinguishable from a genuinely empty column -- deliberately
@@ -96,11 +115,11 @@ consumed by a compiled, DP-verified Plan.
 > expect to be populated reports no values, check its type against this
 > paragraph before reading it as a finding about your data.
 >
-> Booleans release as `1` and `0`, not `True` and `False`, and therefore
-> share labels with the integers 1 and 0 in a mixed column. That
-> collision is deliberate: it is what makes a boolean column's labels
-> survive pandas re-typing it to integers or floats, which happens
-> whenever it is concatenated with a partition that holds either.
+> A boolean column is released by declaring it a `flag`: it emits the canonical
+> labels `true` and `false` through a boolean-domain measurement, so its release
+> does not depend on whether pandas has stored the column as booleans, integers,
+> or floats after a concatenation. A boolean value left in a `text` column is not
+> a string and is dropped; declare the column `flag` to release it.
 >
 > When several independent release IDs are consumed, their privacy losses
 > compose; repeated references to the same release ID are charged once, and
@@ -217,13 +236,19 @@ trusted from the artifact's own claim alone) certifies it:
   release actually happened.** `generate_tables` accepts only a compiled
   `Plan`; a categorical column's `allow_real_categories` consent gate is
   bypassed when the PLAN COMPILER's `verify_dp_snapshots` pass certifies
-  the pinned snapshot as a `dps-marginal/v2` release for that specific
+  the pinned snapshot as a `dps-marginal/v3` release for that specific
   column. That certification is a PURE FUNCTION of the artifact's OWN
   `dp` key: it checks that the block is internally consistent (the
-  declared library versions match the running environment, the declared
-  `query_count` recomputes from the declared columns, the declared kind
-  matches the column, cheap shape evidence for numeric columns), never
-  that an actual OpenDP fit produced the numbers it reports. A forged but
+  recorded proof-stack identity -- platform, CPython version and lock
+  fingerprint -- is one of this build's certified rows, NOT a live
+  comparison against the generating host's own installed libraries, which
+  may legitimately differ from the fitting host's; the recorded codec,
+  scope and adjacency are exactly the ones this build implements; the
+  declared `query_count` recomputes from the declared columns; the
+  declared kind matches the column; and, for numeric columns, the declared
+  domain is well-formed and the recorded `bin_edges` are the canonical
+  edges that domain implies), never that an actual OpenDP fit produced the
+  numbers it reports. A forged but
   internally consistent `dp` block -- correct library versions, a
   `query_count` that recomputes cleanly, a fresh `release_id`, a
   plausible `epsilon_total` -- attached to an ordinary EXACT snapshot

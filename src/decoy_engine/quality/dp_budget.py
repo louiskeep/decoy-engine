@@ -69,9 +69,9 @@ against them.
 
 from __future__ import annotations
 
-import math
+import importlib.metadata
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import opendp.prelude as _dp
 
@@ -98,6 +98,54 @@ _PLD_SEARCH_ITERATIONS = 40  # fixed-iteration bisection depth for eps_q search 
 _EPS_Q_FLOOR = 1e-9  # per-query epsilon floor; below this a schedule cannot be certified
 _I32_MAX = 2**31 - 1  # make_laplace_threshold's threshold argument is i32 (section 3.4)
 _SCALE_SEARCH_BOUNDS = (1e-12, 1e12)
+
+# A single CONCRETE conservative ceiling on the requested fit-wide epsilon
+# (guide section 4, comprehensive-review budget-calibration finding). The PLD
+# exponential overflows at ~709.783 on py3.10 (709.782 still OK) and the exact
+# boundary drifts by Python / dp_accounting version, so the ceiling is frozen
+# well below every certified manifest row's observed overflow -- NOT probed at
+# build time. A requested ceiling this large is already far outside any real DP
+# regime; requests above it must fail closed with a coded error BEFORE any
+# private data is read, never surface as a raw OverflowError mid-composition.
+# The dependency-matrix CI workflow asserts, per manifest row, that this ceiling
+# composes without overflow AND that the row's documented overflow point stays
+# above it (a boundary probe that fails the build if a version bump moves the
+# overflow at or below 700.0, forcing a deliberate re-pin).
+_DP_EPSILON_CEILING = 700.0
+
+# The exact versions of the two accounting libraries whose behaviour the
+# calibration/composition result depends on (guide section 4, frozen cache
+# key). They enter the budget cache key so a cached scalar allocation is never
+# reused across a version bump that could move a calibration or a composition.
+_OPENDP_VERSION = importlib.metadata.version("opendp")
+_DP_ACCOUNTING_VERSION = importlib.metadata.version("dp-accounting")
+
+
+def check_epsilon_supported(epsilon: float) -> None:
+    """Fail-closed guard for the requested fit-wide epsilon ceiling (guide
+    section 4). Raises a coded ``dp_epsilon_unsupported`` for any request above
+    ``_DP_EPSILON_CEILING`` (and for a NaN request, which cannot be certified),
+    so the fit refuses before reading private data instead of hitting a raw
+    ``OverflowError`` deep in PLD composition.
+
+    Wired into the composition path at ``OpenDpReleaseSession`` construction
+    (DPS-CODEC phase 4): the session calls this BEFORE the allocation search
+    runs any ``dp_accounting`` composition, so an over-ceiling request fails
+    with this coded error rather than an ``OverflowError`` mid-search. It does
+    not validate positivity -- that stays with the existing ceiling parse --
+    only the upper bound."""
+    # `not (epsilon <= ceiling)` (rather than `epsilon > ceiling`) so a NaN
+    # request, for which every comparison is False, also fails closed.
+    if not (epsilon <= _DP_EPSILON_CEILING):
+        raise DpBudgetError(
+            code="dp_epsilon_unsupported",
+            message=(
+                f"requested epsilon {epsilon!r} exceeds the supported ceiling "
+                f"{_DP_EPSILON_CEILING!r}; a budget this large is outside the "
+                "certified DP regime and would overflow PLD composition"
+            ),
+        )
+
 
 # A certified privacy loss is either a scalar epsilon (pure-epsilon release,
 # e.g. a Laplace count/histogram) or an (epsilon, delta) pair (a thresholded
@@ -168,6 +216,89 @@ def _search_largest(predicate, *, lower: float, upper: float) -> float:
     return lo
 
 
+def _binary_search_endpoint_aware(predicate: Any, *, bounds: tuple[Any, Any], T: Any = None) -> Any:
+    """`dp.binary_search` calibrated to a crossing, made robust to a predicate
+    that has NO crossing because it already holds at an endpoint (guide section
+    4, comprehensive-review budget-calibration finding: "check BOTH
+    ``binary_search`` endpoints; treat lower-endpoint-satisfies as feasible").
+
+    OpenDP's ``binary_search`` locates the boundary between where a monotone
+    predicate fails and where it holds, and RAISES ``ValueError`` when the
+    predicate does not change truth value inside ``bounds``. A non-crossing is
+    not always infeasible: when the predicate holds across the whole range it
+    is satisfied at the LOWER endpoint, which -- for these calibration searches
+    (smallest scale / smallest threshold that meets the target) -- is exactly
+    the answer ``binary_search`` would return for "smallest satisfying x". So on
+    a ``ValueError``: return the lower endpoint if the predicate holds there
+    (the least-noise feasible calibration), else the upper endpoint if it holds
+    there, else re-raise -- the predicate genuinely cannot be met anywhere in
+    bounds, which the allocation search (section 4.3.2) reads as infeasible.
+
+    The normal calibration regime (a real crossing inside bounds) never reaches
+    the ``except`` branch, so this returns EXACTLY what the bare ``binary_search``
+    would for every currently-calibrating fit; it only rescues the
+    endpoint-feasible case that the bare call would have raised on."""
+    try:
+        if T is not None:
+            return _dp.binary_search(predicate, bounds=bounds, T=T)
+        return _dp.binary_search(predicate, bounds=bounds)
+    except ValueError:
+        lower, upper = bounds
+        if predicate(lower):
+            return lower
+        if predicate(upper):
+            return upper
+        raise
+
+
+# --- budget calibration cache (guide section 4, allocation-cost finding) ----
+#
+# The allocation search (`_allocate_epsilon`) re-certifies the whole schedule
+# at many trial eps_q values, which is the fit's dominant compile-time cost. Two
+# fits over the IDENTICAL public (schedule, epsilon, delta) on the IDENTICAL
+# accounting-library versions allocate the IDENTICAL scalar eps_q -- the search
+# is a pure function of exactly those inputs and never of any value. So the
+# scalar allocation RESULT is cacheable. The cache stores ONLY that scalar
+# (never a Measurement and never a certificate -- those must always be read from
+# the object actually invoked, guide section 4/BLOCKER A2); a cache hit skips the
+# search but release-time still rebuilds and re-certifies every measurement.
+_ALLOCATION_CACHE: dict[tuple[object, ...], float] = {}
+
+# The stable production cache namespace. `_RealOpenDpBackend` is the only
+# backend that ever runs a real fit, and it is stateless + deterministic, so its
+# calibration is safe to share across sessions/fits under one fixed namespace.
+# Test doubles do NOT carry a namespace (they leave `cache_namespace` unset),
+# which routes them past the cache entirely -- a stateful/fake backend must
+# never read a scalar another session computed (guide section 4: "fake/stateful
+# test backends bypass the cache or use an instance-unique token").
+_REAL_BACKEND_CACHE_NAMESPACE = "real-opendp-contrib"
+
+
+def _budget_cache_key(
+    schedule: Schedule, epsilon: float, delta: float, namespace: str
+) -> tuple[object, ...]:
+    """The frozen budget cache key (guide section 4): the carrier-bearing
+    schedule signature (which already carries edges/bins and each categorical's
+    carrier), the requested epsilon and delta, the exact OpenDP and
+    dp_accounting versions, and the backend cache namespace. Any drift in any
+    component -- including a column's carrier -- yields a different key, so a
+    cached scalar can only be reused for a provably identical calibration."""
+    return (
+        schedule.signature(),
+        float(epsilon),
+        float(delta),
+        _OPENDP_VERSION,
+        _DP_ACCOUNTING_VERSION,
+        namespace,
+    )
+
+
+def _clear_budget_cache() -> None:
+    """Drop every cached scalar allocation. Test-only helper for isolating the
+    module-level cache between cases; production never clears it."""
+    _ALLOCATION_CACHE.clear()
+
+
 @dataclass
 class _Release:
     certificate: Certificate
@@ -196,27 +327,60 @@ class _OpenDpBackend(Protocol):
     def categorical_measurements(self, eps_q: float, delta_alloc: float) -> tuple[Any, Any]: ...
 
 
+@runtime_checkable
+class _FlagCapableBackend(Protocol):
+    """The extra capability a backend needs to serve a `flag`-carrier
+    categorical (guide section 3.4): the bool-domain measurement pair.
+
+    Kept SEPARATE from `_OpenDpBackend` (not merged into it) on purpose: the
+    existing str/number test doubles implement only the str-domain methods, and
+    the str/number release path must stay behaviorally unchanged (same released
+    values and certificates) -- adding a
+    required method to `_OpenDpBackend` would break every one of those doubles
+    under structural typing. The flag path is reached only for a `flag` carrier,
+    where `OpenDpReleaseSession` narrows the backend to this protocol first
+    (`runtime_checkable`, so a text-only double fails closed with a coded error
+    rather than an `AttributeError`). `_RealOpenDpBackend`, the sole production
+    backend, implements both protocols."""
+
+    def categorical_measurements_flag(
+        self, eps_q: float, delta_alloc: float
+    ) -> tuple[Any, Any]: ...
+
+
 class _RealOpenDpBackend:
     """The sole `_OpenDpBackend` implementation used outside tests: builds
     and invokes real OpenDP chains under `contrib` only (guide sections
-    4.4/4.5, verified end to end in the build venv per section 3.4)."""
+    4.4/4.5, verified end to end in the build venv per section 3.4). It also
+    implements `_FlagCapableBackend` (the bool-domain categorical pair)."""
+
+    # Stable production namespace (guide section 4): a stateless, deterministic
+    # backend may share its scalar calibration cache across every fit.
+    cache_namespace = _REAL_BACKEND_CACHE_NAMESPACE
+
+    def _count_over_domain(self, eps_q: float, domain: Any) -> _dp_mod.Measurement:
+        """`make_count >> then_laplace` over a caller-chosen atom domain. A
+        `make_count` release is defined over ANY recordwise vector under
+        `symmetric_distance()` (one added/removed row changes the count by
+        exactly 1 regardless of element type), so the same certified chain
+        serves the str-domain projections (row-count, text non-null total) and
+        the bool-domain non-null total for a `flag` column (guide section 3.4)."""
+        import opendp.measurements as meas
+        import opendp.transformations as tf
+
+        counter = tf.make_count(domain, _dp.symmetric_distance(), TO=int)
+        scale = _binary_search_endpoint_aware(
+            lambda s: (counter >> meas.then_laplace(scale=s)).map(1) <= eps_q,
+            bounds=_SCALE_SEARCH_BOUNDS,
+        )
+        return counter >> meas.then_laplace(scale=scale)
 
     def count_measurement(self, eps_q: float) -> _dp_mod.Measurement:
         """`make_count >> then_laplace`, shared by the row-count query and
         the categorical non-null-total query (guide section 4.5): both are
         a plain count over a recordwise string-typed projection under
         `symmetric_distance()`."""
-        import opendp.measurements as meas
-        import opendp.transformations as tf
-
-        domain = _dp.vector_domain(_dp.atom_domain(T=str))
-        metric = _dp.symmetric_distance()
-        counter = tf.make_count(domain, metric, TO=int)
-        scale = _dp.binary_search(
-            lambda s: (counter >> meas.then_laplace(scale=s)).map(1) <= eps_q,
-            bounds=_SCALE_SEARCH_BOUNDS,
-        )
-        return counter >> meas.then_laplace(scale=scale)
+        return self._count_over_domain(eps_q, _dp.vector_domain(_dp.atom_domain(T=str)))
 
     def numeric_measurement(
         self, eps_q: float, interior_edges: tuple[float, ...]
@@ -236,23 +400,29 @@ class _RealOpenDpBackend:
         transformation = tf.make_find_bin(domain, metric, edges=list(interior_edges)) >> (
             tf.then_count_by_categories(categories=list(range(numeric_bins)), null_category=False)
         )
-        scale = _dp.binary_search(
+        scale = _binary_search_endpoint_aware(
             lambda s: (transformation >> meas.then_laplace(scale=s)).map(1) <= eps_q,
             bounds=_SCALE_SEARCH_BOUNDS,
         )
         return transformation >> meas.then_laplace(scale=scale)
 
-    def categorical_measurements(
-        self, eps_q: float, delta_alloc: float
-    ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
+    def _grouped_over_domain(
+        self, eps_q: float, delta_alloc: float, atom: Any
+    ) -> _dp_mod.Measurement:
+        """The thresholded grouped count `make_count_by(T) >>
+        then_laplace_threshold` over a caller-chosen atom domain (guide section
+        4.5): `T=str` for a `text` carrier, `T=bool` for a `flag` carrier
+        (`make_count_by(bool)` probe-confirmed constructible in OpenDP 0.15.1).
+        The scale and threshold are calibrated exactly as before, now through
+        the endpoint-aware search."""
         import opendp.measurements as meas
         import opendp.transformations as tf
 
-        cat_domain = _dp.vector_domain(_dp.atom_domain(T=str))
+        cat_domain = _dp.vector_domain(atom)
         metric = _dp.symmetric_distance()
         count_by = tf.make_count_by(cat_domain, metric)
 
-        def chain(scale: float, threshold: float):
+        def chain(scale: float, threshold: float) -> _dp_mod.Measurement:
             # `dp.binary_search`'s stub always types its predicate/return as
             # `float` regardless of `T=int` (the runtime value IS an int
             # under `T=int`, per OpenDP's own i32 threshold contract --
@@ -260,17 +430,40 @@ class _RealOpenDpBackend:
             # the cast here is a type-only correction, not a behavior change.
             return count_by >> meas.then_laplace_threshold(scale=scale, threshold=int(threshold))
 
-        scale = _dp.binary_search(
+        scale = _binary_search_endpoint_aware(
             lambda s: chain(s, _I32_MAX).map(1)[0] <= eps_q,
             bounds=_SCALE_SEARCH_BOUNDS,
         )
-        threshold = _dp.binary_search(
+        threshold = _binary_search_endpoint_aware(
             lambda t: chain(scale, t).map(1)[1] <= delta_alloc,
             bounds=(1, _I32_MAX),
             T=int,
         )
-        grouped = chain(scale, threshold)
+        return chain(scale, threshold)
+
+    def categorical_measurements(
+        self, eps_q: float, delta_alloc: float
+    ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
+        """The str-domain (`text` carrier) grouped + non-null-total pair. The
+        legacy categorical path -- unchanged behaviour."""
+        grouped = self._grouped_over_domain(eps_q, delta_alloc, _dp.atom_domain(T=str))
         total = self.count_measurement(eps_q)
+        return grouped, total
+
+    def categorical_measurements_flag(
+        self, eps_q: float, delta_alloc: float
+    ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
+        """The bool-domain (`flag` carrier) grouped + non-null-total pair
+        (guide section 3.4). Same two-measurement categorical shape as the str
+        path, but both halves are built over `atom_domain(T=bool)`:
+        `make_count_by(bool)` for the thresholded grouped count and
+        `make_count(bool)` for the non-null total. The str-domain
+        `atom_domain(T=str)` cannot type a boolean vector ("inferred bool,
+        expected String"), which is exactly why a `flag` column needs this
+        variant. Both constructors are probe-confirmed constructible and
+        composable in OpenDP 0.15.1 / dp_accounting 0.6.0."""
+        grouped = self._grouped_over_domain(eps_q, delta_alloc, _dp.atom_domain(T=bool))
+        total = self._count_over_domain(eps_q, _dp.vector_domain(_dp.atom_domain(T=bool)))
         return grouped, total
 
 
@@ -301,305 +494,25 @@ class _FakeMeasurement:
         return self.released
 
 
-class OpenDpReleaseSession:
-    """Owns one fit's OpenDP measurements, certificates, and composition.
+# `OpenDpReleaseSession` was split into `dp_session.py` on a size-cap crossing
+# (CLAUDE.md's ~600-LOC cap). Re-export it here so the documented
+# `decoy_engine.quality.dp_budget.OpenDpReleaseSession` path (`quality/dp.py`,
+# the DP test suite) resolves unchanged.
+if TYPE_CHECKING:
+    pass
 
-    Construction touches no data: it stores the public schedule and the
-    fit-wide `(epsilon, delta)` request, and runs the section 4.3.2
-    allocation search (a pure function of the request and the public
-    query counts). Data is only touched by the `release_*` methods.
-    """
 
-    def __init__(
-        self,
-        schedule: Schedule,
-        *,
-        epsilon: float,
-        delta: float,
-        backend: _OpenDpBackend | None = None,
-    ) -> None:
-        self._schedule = schedule
-        self._epsilon = epsilon
-        self._delta = delta
-        self._delta_per_categorical = schedule.delta_per_categorical(delta)
-        self._releases: dict[str, _Release] = {}
-        self._reserved: set[str] = set()  # admitted, not yet recorded (M-2 -- see `_admit`)
-        # Production never passes `backend` (guide section 5 step 3): the
-        # default is the real OpenDP-backed implementation. Only tests
-        # substitute a double, and only to observe THIS session's own
-        # bookkeeping (schedule enforcement, certificate provenance) --
-        # never to fabricate a privacy guarantee.
-        self._backend: _OpenDpBackend = backend or _RealOpenDpBackend()
-        self._eps_q = self._allocate_epsilon()
+def __getattr__(name: str) -> Any:
+    # Lazy re-export, NOT an eager bottom-of-module import: `dp_session` imports
+    # the backend/protocols/calibration primitives defined ABOVE from this
+    # module, so importing `dp_session` FIRST re-enters `dp_budget` and an eager
+    # `dp_session.OpenDpReleaseSession` read here would touch a still-initializing
+    # module (AttributeError, masked whenever `dp_budget` happens to import
+    # first). Defer the import to first attribute access, by which point
+    # `dp_session` is fully initialized regardless of which module was imported
+    # first, breaking the cycle.
+    if name == "OpenDpReleaseSession":
+        from decoy_engine.quality.dp_session import OpenDpReleaseSession
 
-    # -- allocation (guide section 4.3.2) --------------------------------
-
-    def _certify_schedule(self, eps_q: float) -> list[Certificate]:
-        """Build every scheduled measurement at per-query epsilon `eps_q`
-        and read its certificate, WITHOUT touching data. Used only by the
-        allocation search; the real fit re-certifies each measurement at
-        release time against the values it actually sees.
-
-        Raises `_InfeasibleAtEpsQError` when OpenDP's own calibration search
-        cannot find a scale/threshold reaching `eps_q` (and, for the
-        thresholded chain, the allocated delta) within its search bounds --
-        this eps_q is simply not achievable, which the allocation search
-        (guide section 4.3.2) treats as "try a smaller eps_q", not a fit
-        failure.
-        """
-        try:
-            certificates: list[Certificate] = [self._count_measurement(eps_q).map(1)]
-            for q in self._schedule.numeric:
-                certificates.append(self._numeric_measurement(eps_q, q.interior_edges).map(1))
-            for _q in self._schedule.categorical:
-                grouped, total = self._categorical_measurements(eps_q, self._delta_per_categorical)
-                certificates.append(grouped.map(1))
-                certificates.append(total.map(1))
-        except ValueError as exc:
-            raise _InfeasibleAtEpsQError(str(exc)) from exc
-        return certificates
-
-    def _allocate_epsilon(self) -> float:
-        """Largest per-query epsilon whose schedule composes within the
-        request (guide section 4.3.2), found by fixed-iteration bisection
-        over `[_EPS_Q_FLOOR, epsilon]`.
-
-        Two-phase, not a single bisection, for a reason the guide's search
-        pseudocode does not anticipate: OpenDP's own `binary_search` for the
-        thresholded categorical chain raises (rather than returning a
-        value) when no scale/threshold in its search bounds reaches a
-        target this small -- confirmed in the build venv, a sufficiently
-        small `eps_q` makes the required scale so large that even
-        `threshold = i32::MAX` cannot bring delta down to the per-query
-        allocation. That failure is a genuine property of the mechanism at
-        extreme `eps_q`, not a bug to route around: below some feasibility
-        floor, no measurement can be constructed at all. Feasibility is
-        monotone in `eps_q` (larger `eps_q` needs less noise, which only
-        ever makes the delta bound easier to reach), so:
-
-        1. Bisect for the smallest feasible `eps_q` in the range.
-        2. Bisect for the largest `eps_q`, within the now-feasible range,
-           whose composed epsilon still fits the request (this is the
-           monotone predicate the guide's search literally names).
-
-        Both phases use `_PLD_SEARCH_ITERATIONS`/`_EPS_Q_FLOOR`; nothing
-        about the allocation POLICY (largest eps_q admitted by the
-        accountant) or the search's fixed-iteration bisection shape
-        changes -- this only makes that search robust to an OpenDP search
-        failure the guide's single-phase pseudocode does not handle.
-        """
-
-        def composed_epsilon_or_none(eps_q: float) -> float | None:
-            try:
-                certificates = self._certify_schedule(eps_q)
-            except _InfeasibleAtEpsQError:
-                return None
-            return _compose(certificates).get_epsilon_for_delta(self._delta)
-
-        def infeasible() -> DpBudgetError:
-            return DpBudgetError(
-                code="dp_budget_infeasible",
-                message=(
-                    f"the requested budget (epsilon={self._epsilon!r}, "
-                    f"delta={self._delta!r}) cannot fund a schedule of "
-                    f"{self._schedule.query_count} quer"
-                    f"{'y' if self._schedule.query_count == 1 else 'ies'}. Raise epsilon or "
-                    "delta, or fit fewer columns."
-                ),
-            )
-
-        # Phase 1: smallest feasible eps_q (monotone: feasible(eps_q) is
-        # False below a cutoff, True above; assumes upper=epsilon itself
-        # is feasible -- if it is not, no eps_q in range works at all).
-        if composed_epsilon_or_none(self._epsilon) is None:
-            raise infeasible()
-        lo, hi = _EPS_Q_FLOOR, self._epsilon
-        for _ in range(_PLD_SEARCH_ITERATIONS):
-            mid = (lo + hi) / 2.0
-            if composed_epsilon_or_none(mid) is not None:
-                hi = mid
-            else:
-                lo = mid
-        feasible_floor = hi
-
-        # Phase 2: within [feasible_floor, epsilon], composed_epsilon is
-        # defined and monotone increasing in eps_q; find the largest eps_q
-        # whose composed loss still fits the request.
-        floor_composed = composed_epsilon_or_none(feasible_floor)
-        if floor_composed is None or floor_composed > self._epsilon:
-            raise infeasible()
-
-        # C-H2 (Codex HIGH): `x or math.inf` treated a valid composed
-        # epsilon of exactly `0.0` as falsy, turning it into infinity and
-        # making the predicate false at its own lower bound. `is None` is
-        # the real feasibility check.
-        def _within_request(e: float) -> bool:
-            composed = composed_epsilon_or_none(e)
-            return composed is not None and composed <= self._epsilon
-
-        eps_q = _search_largest(_within_request, lower=feasible_floor, upper=self._epsilon)
-        composed = composed_epsilon_or_none(eps_q)
-        if composed is None or composed > self._epsilon:
-            raise infeasible()
-        return eps_q
-
-    # -- measurement construction (delegates to `self._backend`) ---------
-    #
-    # These three methods are thin delegators, never the construction
-    # site themselves: `_RealOpenDpBackend` (the default) is where the
-    # actual OpenDP calls live, so a test can substitute `self._backend`
-    # wholesale without this session's release/admission logic changing
-    # at all (guide section 5 step 3).
-
-    def _count_measurement(self, eps_q: float) -> _dp_mod.Measurement:
-        return self._backend.count_measurement(eps_q)
-
-    def _numeric_measurement(
-        self, eps_q: float, interior_edges: tuple[float, ...]
-    ) -> _dp_mod.Measurement:
-        return self._backend.numeric_measurement(eps_q, interior_edges)
-
-    def _categorical_measurements(
-        self, eps_q: float, delta_alloc: float
-    ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
-        return self._backend.categorical_measurements(eps_q, delta_alloc)
-
-    # -- release (data touched here, and only here) ----------------------
-
-    def _admit(self, name: str) -> None:
-        """Refuse an unscheduled or already-used query name BEFORE any
-        measurement is constructed or invoked (H2 / guide section 4.3.5
-        mitigation 2). This is deliberately a separate, PRE-invocation
-        step from `_record`: refusing AFTER the mechanism ran is not
-        refusing -- the mechanism would already have spent real privacy
-        budget that this refusal would then let vanish, never entering
-        the ledger. Every `release_*` method below calls this before
-        constructing or invoking anything. Reserves `name` (M-2) so a second
-        admission fails structurally, not by accident of ordering."""
-        if name not in self._schedule.query_names:
-            raise DpBudgetError(
-                code="dp_unscheduled_release",
-                message=(
-                    f"query {name!r} is not in this fit's frozen schedule "
-                    f"({self._schedule.query_names!r}). OpenDpReleaseSession refuses any "
-                    "release outside the schedule fixed at construction."
-                ),
-            )
-        if name in self._releases or name in self._reserved:
-            raise DpBudgetError(
-                code="dp_duplicate_release",
-                message=f"query {name!r} has already released once; a query may release only once.",
-            )
-        self._reserved.add(name)
-
-    def _record(self, name: str, certificate: Certificate, value: object) -> None:
-        """Record an already-invoked release and clear its reservation (M-2).
-        Called only AFTER `_admit`; performs no admission check itself."""
-        self._reserved.discard(name)
-        self._releases[name] = _Release(certificate=certificate, value=value)
-
-    def release_row_count(self, row_count: int) -> int:
-        """Row-count query: `make_count >> then_laplace` over a dummy
-        constant-string vector with one element per row -- a `make_count`
-        release is defined over ANY recordwise vector under
-        `symmetric_distance()` (one added/removed row changes the count by
-        exactly 1 regardless of the vector's element values), so this is
-        the same certified chain as the categorical non-null total, applied
-        to the table's own row-projection rather than one column's."""
-        name = self._schedule.row_count_name
-        self._admit(name)
-        measurement = self._count_measurement(self._eps_q)
-        certificate = measurement.map(1)  # L-1: read before invoke (never after)
-        released = measurement.invoke([""] * row_count)
-        self._record(name, certificate, released)
-        return int(released)
-
-    def release_numeric(self, name: str, values: list[float]) -> list[int]:
-        """One numeric marginal (guide section 4.4). `values` is the
-        already clamped, already null-excluded, recordwise projection of
-        one column. `interior_edges` come from the SAME `NumericQuerySpec`
-        the allocation search certified against (looked up by `name`, not
-        re-supplied by the caller), so the certified map(1) and the
-        actually-invoked measurement are provably the same chain -- the
-        mandated `make_find_bin >> then_count_by_categories >>
-        then_laplace` chain, never a bare mechanism over a pre-aggregated
-        Python count (binding decision 15)."""
-        spec = next((q for q in self._schedule.numeric if q.name == name), None)
-        if spec is None:
-            raise DpBudgetError(
-                code="dp_unscheduled_release",
-                message=f"query {name!r} is not a scheduled numeric query.",
-            )
-        self._admit(name)
-        measurement = self._numeric_measurement(self._eps_q, spec.interior_edges)
-        certificate = measurement.map(1)  # L-1
-        released = measurement.invoke(values)
-        self._record(name, certificate, released)
-        return list(released)
-
-    def release_categorical(
-        self, grouped_name: str, total_name: str, values: list[str]
-    ) -> tuple[dict[str, int], int]:
-        """One categorical column's pair of releases (guide section 4.5):
-        the thresholded unknown-key grouped count (`make_count_by >>
-        then_laplace_threshold`) and the noised non-null total
-        (`make_count >> then_laplace`), each its own scheduled query with
-        its own certificate. `values` is the already normalized,
-        null-excluded projection of one column. Both names are admitted
-        BEFORE either measurement is constructed (H2): a refusal on
-        `total_name` must not leave `grouped_name` already invoked."""
-        self._admit(grouped_name)
-        self._admit(total_name)
-        grouped_meas, total_meas = self._categorical_measurements(
-            self._eps_q, self._delta_per_categorical
-        )
-        grouped_certificate = grouped_meas.map(1)  # L-1
-        grouped_released = grouped_meas.invoke(values)
-        self._record(grouped_name, grouped_certificate, grouped_released)
-        total_certificate = total_meas.map(1)  # L-1
-        total_released = total_meas.invoke(values)
-        self._record(total_name, total_certificate, total_released)
-        return dict(grouped_released), int(total_released)
-
-    # -- composition and receipt ------------------------------------------
-
-    def certificate_count(self) -> int:
-        return len(self._releases)
-
-    def composed_loss(self) -> tuple[float, float]:
-        """`(epsilon_total, delta_total)` per guide section 4.3.4. Raises
-        `DpBudgetError` unless every scheduled query has released exactly
-        once (section 4.3.5 mitigation 3) and the composed result is
-        finite (a non-finite result means the composed mechanism's delta
-        floor exceeds the requested delta -- a real failure, not an
-        infinity to report)."""
-        missing = [n for n in self._schedule.query_names if n not in self._releases]
-        if missing:
-            raise DpBudgetError(
-                code="dp_schedule_incomplete",
-                message=(
-                    f"cannot report a fit-wide loss: {len(missing)} scheduled quer"
-                    f"{'y has' if len(missing) == 1 else 'ies have'} not released yet "
-                    f"({missing!r})."
-                ),
-            )
-        certificates = [self._releases[n].certificate for n in self._schedule.query_names]
-        composed = _compose(certificates)
-        epsilon_total = composed.get_epsilon_for_delta(self._delta)
-        if not math.isfinite(epsilon_total):
-            raise DpBudgetError(
-                code="dp_budget_infeasible",
-                message=(
-                    "the composed mechanism's delta floor exceeds the requested delta "
-                    f"({self._delta!r}); no finite epsilon_total exists at this delta."
-                ),
-            )
-        if epsilon_total > self._epsilon:
-            raise DpBudgetError(
-                code="dp_budget_infeasible",
-                message=(
-                    f"composed epsilon_total={epsilon_total!r} exceeds the requested "
-                    f"epsilon={self._epsilon!r}."
-                ),
-            )
-        return epsilon_total, self._delta
+        return OpenDpReleaseSession
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

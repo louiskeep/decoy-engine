@@ -186,17 +186,6 @@ ALLOWLIST: dict[str, int] = {
     # the 100-column line-length cap, forcing a multi-line call. Same
     # decomposition target stands.
     "src/decoy_engine/plan/_compile.py": 703,
-    # Round-3 remediation (2026-07-23), C-H2: crossed the 600 cap (600 -> 604)
-    # fixing `_allocate_epsilon`'s search predicate, which treated a valid
-    # composed epsilon of exactly `0.0` as falsy (`x or math.inf`) and
-    # under-spent the requested budget for categorical-only schedules. The
-    # named `_within_request` helper plus its explanatory comment (an
-    # `is None` check is not self-explanatory without one, per CLAUDE.md's
-    # comment rule) cost 4 net lines over the one-line lambda it replaces.
-    # Decompose the allocation-search half of `OpenDpReleaseSession` into a
-    # sibling module (mirroring `dp_schedule.py`'s split) when this file is
-    # next touched for a reason that adds real orchestration.
-    "src/decoy_engine/quality/dp_budget.py": 605,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the

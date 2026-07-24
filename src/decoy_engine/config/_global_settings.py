@@ -31,12 +31,12 @@ class DpGenerateSettings(BaseModel):
     pipeline consumes and rejects the config (`dp_budget_exceeded`) if
     that composed spend exceeds these declared values.
 
-    There is no `numeric_domains` field here: the real numeric-domain and
-    categorical-column declarations are `fit_dp_snapshot`'s own
-    `numeric_domains`/`categorical_columns` arguments at fit time
-    (`quality/dp.py`), a separate step from this generate-side ceiling
-    declaration. This block only declares the generate-side `(epsilon,
-    delta)` contract and gates the anti-DP generate-column knobs.
+    There is no per-column schema here: the real per-column domain and
+    carrier declarations are `fit_dp_snapshot`'s own `column_schema`
+    argument at fit time (`quality/dp.py`), a separate step from this
+    generate-side ceiling declaration. This block only declares the
+    generate-side `(epsilon, delta)` contract and gates the anti-DP
+    generate-column knobs.
     """
 
     model_config = ConfigDict(extra="forbid")

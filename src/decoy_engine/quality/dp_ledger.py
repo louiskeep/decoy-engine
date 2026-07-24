@@ -36,8 +36,16 @@ class ReleaseLedger:
     _charges: list[_LedgerCharge] = field(default_factory=list)
 
     def charge(self, label: str, *, epsilon: float, delta: float = 0.0) -> None:
-        if epsilon <= 0:
-            raise ValueError(f"epsilon must be > 0, got {epsilon!r}")
+        # Accept a COMPOSED epsilon_total of exactly 0 (guide section 4,
+        # zero-epsilon finding): `dp_accounting` legitimately composes to
+        # `epsilon_total == 0` at a large enough delta (probe-confirmed
+        # `epsilon=1, delta=0.9`), and this ledger sums already-composed release
+        # TOTALS, not requested ceilings -- so `>= 0` is the correct bound here.
+        # A negative total is still impossible and fails closed. (The requested
+        # fit-wide epsilon ceiling stays STRICTLY positive; that check lives at
+        # the fit's config parse, not in this post-composition sum.)
+        if epsilon < 0:
+            raise ValueError(f"epsilon must be >= 0, got {epsilon!r}")
         if delta < 0:
             raise ValueError(f"delta must be >= 0, got {delta!r}")
         self._charges.append(_LedgerCharge(label, float(epsilon), float(delta)))

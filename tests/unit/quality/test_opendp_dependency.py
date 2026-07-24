@@ -13,6 +13,8 @@ import ast
 import importlib
 import importlib.metadata
 import pathlib
+import subprocess
+import sys
 
 import opendp.prelude as dp
 import pytest
@@ -163,6 +165,31 @@ def _every_top_level_import(path: pathlib.Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             names.add(node.module)
     return names
+
+
+def test_dp_session_can_be_imported_before_dp_budget():
+    """MEDIUM-4 (Codex phase-5 review): `OpenDpReleaseSession` was split into
+    `quality/dp_session.py`, which imports the backend/protocol/calibration
+    primitives back from `quality/dp_budget.py`, while `dp_budget` re-exports the
+    class. The original eager bottom-of-module re-export
+    (`OpenDpReleaseSession = _dp_session.OpenDpReleaseSession`) made importing
+    `dp_session` FIRST raise `AttributeError` on a still-initializing module (the
+    cycle was masked only because `dp_budget` usually imports first). The
+    re-export is now a lazy module `__getattr__`. Import `dp_session` first in a
+    FRESH interpreter and confirm the class resolves both directly and via the
+    `dp_budget` re-export path."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from decoy_engine.quality.dp_session import OpenDpReleaseSession as A; "
+            "from decoy_engine.quality.dp_budget import OpenDpReleaseSession as B; "
+            "assert A is B and A.__name__ == 'OpenDpReleaseSession'",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_quality_dp_budget_is_the_only_module_that_imports_opendp_anywhere():

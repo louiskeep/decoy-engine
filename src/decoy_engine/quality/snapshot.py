@@ -73,14 +73,16 @@ import pandas as pd
 
 from decoy_engine.internal.pandas_compat import canonical_dtype_label
 
-DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
+# Single source of truth for the DP schema version is the pandas-free
+# `dp_schema` module (guide section 3.8), re-exported here for the existing
+# consumers (`plan/_checks_dp.py`, `quality/dp.py`) that import it from
+# `snapshot`. Owned outside this pandas-bearing module so `plan` can check
+# it, and the carrier core can anchor on it, without pulling pandas.
+from decoy_engine.quality.dp_schema import (
+    DP_SNAPSHOT_SCHEMA_VERSION as DP_SNAPSHOT_SCHEMA_VERSION,
+)
 
-# Owned here rather than in `quality/dp.py` so `plan` can check it
-# without importing the fit (which pulls OpenDP into plan compile).
-# dennis round 9 (LOW-1): it was duplicated as two independent
-# literals with nothing pinning them equal, so a one-sided bump would
-# silently reject every artifact.
-DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v2"
+DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
 
 
 class DistributionSnapshotError(Exception):

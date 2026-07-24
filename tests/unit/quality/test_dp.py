@@ -9,34 +9,90 @@ statistical mechanism tests.
 
 from __future__ import annotations
 
-import datetime
 import decimal
-import gc
-import itertools
 import json
 import logging
 import math
-import numbers
 import warnings
 from collections import Counter
 from collections.abc import Sequence
-from fractions import Fraction
-from typing import Any
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine.quality.carriers import CarrierError, decode_flag, decode_number, decode_text
 from decoy_engine.quality.dp import (
     DpError,
-    _fit_dp_snapshot_with_backend,
-    _normalize_categorical,
-    _normalize_numeric,
-    fit_dp_snapshot,
+)
+from decoy_engine.quality.dp import (
+    _fit_dp_snapshot_with_backend as _real_fit_dp_snapshot_with_backend,
+)
+from decoy_engine.quality.dp import (
+    fit_dp_snapshot as _real_fit_dp_snapshot,
 )
 from decoy_engine.quality.dp_budget import DpBudgetError, _FakeMeasurement
-from decoy_engine.quality.dp_normalize import _cells
+
+
+def _schema_from(categorical_columns=(), numeric_domains=None):
+    """Build a `column_schema` (the DPS-CODEC phase-5 fit API, guide section
+    3.5) from the legacy `categorical_columns`/`numeric_domains` kwargs this
+    suite was written against: a `text` carrier per categorical column, a
+    `number` carrier + `(lower, upper)` bounds per numeric column. This is the
+    spec-mandated signature migration (guide sections 3.5/6, pre-GA hard break),
+    NOT a behaviour change -- the real new-signature `fit_dp_snapshot` is
+    exercised unchanged, and the number/text release stays byte-identical (see
+    `TestCarrierPathReproducesNormalize` in test_dp_codec_golden.py)."""
+    schema: dict[str, dict] = {}
+    for c in categorical_columns:
+        schema[c] = {"kind": "categorical", "carrier": "text"}
+    for c, bounds in (numeric_domains or {}).items():
+        schema[c] = {"kind": "numeric", "carrier": "number", "bounds": bounds}
+    return schema
+
+
+def fit_dp_snapshot(
+    frame,
+    *,
+    categorical_columns=(),
+    numeric_domains=None,
+    epsilon,
+    delta,
+    numeric_bins=10,
+):
+    """Legacy-signature -> `column_schema` translation shim for this suite (see
+    `_schema_from`). Calls the real phase-5 `fit_dp_snapshot(source,
+    column_schema, ...)`."""
+    return _real_fit_dp_snapshot(
+        frame,
+        _schema_from(categorical_columns, numeric_domains),
+        epsilon=epsilon,
+        delta=delta,
+        numeric_bins=numeric_bins,
+    )
+
+
+def _fit_dp_snapshot_with_backend(
+    frame,
+    *,
+    categorical_columns=(),
+    numeric_domains=None,
+    epsilon,
+    delta,
+    numeric_bins=10,
+    _session_backend=None,
+):
+    """Legacy-signature translation shim for the private backend seam."""
+    return _real_fit_dp_snapshot_with_backend(
+        frame,
+        _schema_from(categorical_columns, numeric_domains),
+        epsilon=epsilon,
+        delta=delta,
+        numeric_bins=numeric_bins,
+        _session_backend=_session_backend,
+    )
+
 
 # The LITERAL name, not `_policy_logger.name` -- deriving it from the
 # module under test compares the value to itself, which is how a
@@ -71,31 +127,6 @@ class _RaisesOnConversion:
 _HOSTILE_SCALARS = (10**10000, _RaisesOnConversion())
 
 
-class _WarnsOnConversion:
-    """A scalar whose conversion emits a warning.
-
-    D-H1 (dennis round 4): the blanket warning suppression is the whole
-    remediation for the `ComplexWarning` disclosure channel, and nothing
-    could falsify removing it. Every existing test used a builtin
-    `complex`, which the complex guard drops before `float()` is ever
-    reached, so no warning could be emitted with or without the
-    suppression. Complex values can no longer serve as the probe at all
-    now that every complex width is dropped by kind. The suppression's
-    actual claim is content-independent ("no warning ever, whatever the
-    row holds"), so the probe is a value that warns during conversion
-    itself, which tests the invariant rather than one historical
-    instance of it.
-    """
-
-    def __float__(self) -> float:
-        warnings.warn("converting to float", UserWarning, stacklevel=1)
-        return 1.0
-
-    def __str__(self) -> str:
-        warnings.warn("rendering as str", UserWarning, stacklevel=1)
-        return "1"
-
-
 # Codex round 5: the keys in a DP column block that may legitimately
 # differ between two frames, because each is (or is derived from) a
 # quantity OpenDP released under noise. Every OTHER key must be a public
@@ -114,183 +145,6 @@ def _multiset_distance(left: Sequence[object], right: Sequence[object]) -> int:
     length while every element differs (dennis round 7, HIGH-1)."""
     lc, rc = Counter(left), Counter(right)
     return sum(((lc - rc) + (rc - lc)).values())
-
-
-# The adjacency matrix for the recordwise property. Pools straddle
-# float64's exact integer range in both signs, because that boundary is
-# where the round-6 canonicalization silently stopped working; `_obj`
-# pools are only constructible as object dtype.
-_ADJACENCY_POOLS: dict[str, tuple[list, bool]] = {
-    "small_int": ([1, 2, 3], False),
-    "boundary_int": ([2**53 + 1, 2**53 + 3], False),
-    "big_int": ([2**60 + 1, 2**60 + 3, 2**60 + 5], False),
-    "neg_big_int": ([-(2**60 + 1), -(2**60 + 3)], False),
-    "uint64": (list(np.array([2**64 - 1, 2**64 - 3], dtype=np.uint64)), False),
-    "float64": ([1.5, 2.5], False),
-    "integral_float": ([7.0, 8.0], False),
-    "float32": (list(np.array([0.1, 0.2], dtype=np.float32)), False),
-    "string": (["a", "b"], False),
-    "bool": ([True, False], False),
-    "timedelta": ([datetime.timedelta(days=1), datetime.timedelta(days=2)], False),
-    "datetime": ([np.datetime64("2020-01-01"), np.datetime64("2020-01-02")], False),
-    "timestamp": ([pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-02")], False),
-    "mixed_num_str": ([1, "a", 2.5], False),
-    "huge_int_obj": ([10**400, 10**401], True),
-    "decimal_obj": ([decimal.Decimal("1.5"), decimal.Decimal("2.5")], True),
-    # dennis round 8: extension dtypes were absent, and `boolean` is
-    # where the whole-column drop lived (numpy.bool_ is neither `bool`
-    # nor `numbers.Real`).
-    "ext_boolean": ([True, False], False),
-    "ext_Int64": ([1, 2**60 + 1], False),
-    "ext_Float64": ([1.5, 2.5], False),
-    "ext_string": (["a", "b"], False),
-    "complex_real": ([1 + 0j, 2 + 0j], False),
-    # dennis round 9: the day-resolution `datetime` pool above was the
-    # ONE unit that dodges the defect. `.item()` returns a datetime for
-    # second and microsecond resolution but an INT for nanosecond, which
-    # is pandas' native one, so only the ns pools falsify the gate.
-    "datetime_ns": ([np.datetime64("2020-01-01", "ns"), np.datetime64("2020-01-02", "ns")], False),
-    "datetime_us": ([np.datetime64("2020-01-01", "us"), np.datetime64("2020-01-02", "us")], False),
-    "datetime_s": ([np.datetime64("2020-01-01", "s"), np.datetime64("2020-01-02", "s")], False),
-    "timedelta_ns": ([np.timedelta64(5, "ns"), np.timedelta64(7, "ns")], False),
-    "timedelta_us": ([np.timedelta64(5, "us"), np.timedelta64(7, "us")], False),
-    "decimal_mixed": ([decimal.Decimal("1.5"), decimal.Decimal("2")], True),
-    # dennis round 10: pandas ships THREE dtype backends and the matrix
-    # covered two. `pd.ArrowDtype` is reachable without any adversary via
-    # `read_parquet`/`read_csv(dtype_backend="pyarrow")` or
-    # `convert_dtypes(dtype_backend="pyarrow")`, and pyarrow is a hard
-    # dependency. Its `__iter__` calls `as_py()` per element, which
-    # raised on an out-of-Python-range temporal and took the whole fit
-    # down with it (BLOCKER-1). The out-of-range pools below are the
-    # falsifying ones: `[ns]` is the only SAFE arrow resolution, the
-    # exact inverse of round 9's numpy finding.
-    "arrow_ts_s": ([0, 1], False),
-    "arrow_ts_s_overflow": ([0, 2**60], False),
-    "arrow_ts_us_overflow": ([0, 2**62], False),
-    "arrow_ts_ns": ([0, 1], False),
-    "arrow_duration_s_overflow": ([0, 2**60], False),
-    "arrow_date32_overflow": ([0, 2**30], False),
-    "arrow_time64_us_overflow": ([0, 2**60], False),
-    "arrow_int64": ([1, 2**60 + 1], False),
-    "arrow_string": (["a", "b"], False),
-    "arrow_bool": ([True, False], False),
-    "arrow_decimal128": ([decimal.Decimal("1.5"), decimal.Decimal("2.5")], False),
-    "arrow_float64": ([1.5, 2.5], False),
-}
-
-# Extension dtypes must be constructed with an explicit dtype; the plain
-# constructor would infer a numpy dtype and never exercise the box.
-_ADJACENCY_POOL_DTYPES: dict[str, Any] = {
-    "ext_boolean": "boolean",
-    "ext_Int64": "Int64",
-    "ext_Float64": "Float64",
-    "ext_string": "string",
-    "arrow_ts_s": pd.ArrowDtype(pa.timestamp("s")),
-    "arrow_ts_s_overflow": pd.ArrowDtype(pa.timestamp("s")),
-    "arrow_ts_us_overflow": pd.ArrowDtype(pa.timestamp("us")),
-    "arrow_ts_ns": pd.ArrowDtype(pa.timestamp("ns")),
-    "arrow_duration_s_overflow": pd.ArrowDtype(pa.duration("s")),
-    "arrow_date32_overflow": pd.ArrowDtype(pa.date32()),
-    "arrow_time64_us_overflow": pd.ArrowDtype(pa.time64("us")),
-    "arrow_int64": pd.ArrowDtype(pa.int64()),
-    "arrow_string": pd.ArrowDtype(pa.string()),
-    "arrow_bool": pd.ArrowDtype(pa.bool_()),
-    "arrow_decimal128": pd.ArrowDtype(pa.decimal128(20, 4)),
-    "arrow_float64": pd.ArrowDtype(pa.float64()),
-}
-
-# Pools whose raw values only MEAN what the pool intends under the pool's
-# own dtype. An arrow `timestamp[s]` pool holds the ints 0 and 1, which
-# are two timestamps under that dtype and two plain integers under any
-# other. Building the neighbour by re-inferring from a list therefore
-# yields different DATA, not a reboxing of the same data, and comparing
-# the two is meaningless. For these the list neighbour must be built
-# under the same schema; the `pd.concat` axis is already correct, since
-# it boxes the existing values rather than re-reading them.
-_ADJACENCY_REINTERPRETING_POOLS = frozenset(
-    {
-        "arrow_ts_s",
-        "arrow_ts_s_overflow",
-        "arrow_ts_us_overflow",
-        "arrow_ts_ns",
-        "arrow_duration_s_overflow",
-        "arrow_date32_overflow",
-        "arrow_time64_us_overflow",
-    }
-)
-
-# Pools that cannot reach a neighbour of a DIFFERENT dtype, so they carry
-# recordwise coverage and contribute nothing to boxing invariance. dennis
-# round 10 (MEDIUM-c) found two arrow pools silently in this state; the
-# audit that followed found five more that had always been. Recorded as
-# explicit decisions rather than silent zeros: the guard below fails both
-# when an unexempted pool reaches no dtype change AND when an exempted one
-# starts reaching them, so neither direction can drift unnoticed.
-_NO_CROSS_BOXING_NEIGHBOUR = frozenset(
-    {
-        # `pd.concat` itself raises while widening these to object, because
-        # the values sit so far outside the Python range, and their list
-        # axis is pinned to their own schema because they reinterpret.
-        "arrow_date32_overflow",
-        "arrow_time64_us_overflow",
-        # Already object, and object is the one dtype that cannot upcast:
-        # every added row leaves it object. They carry recordwise coverage
-        # and, deliberately, no boxing coverage.
-        #
-        # `string` is exempt only under the DEFAULT `future.infer_string`
-        # (Codex round 11): with that option enabled the base infers as
-        # `str` and an added numeric row widens it to `object`, so the pool
-        # reaches 21 cross-boxing neighbours and the exemption is wrong.
-        # The test below pins both halves of that so the dependency is
-        # recorded rather than silently inherited from a global default.
-        "string",
-        "mixed_num_str",
-        "huge_int_obj",
-        "decimal_obj",
-        "decimal_mixed",
-    }
-)
-
-# Added rows chosen to trigger a dtype change on the pools above.
-_ADJACENCY_ADDED: dict[str, object] = {
-    "none": None,
-    "nan": np.nan,
-    "pd_na": pd.NA,
-    "str": "x",
-    "float": 1.5,
-    "int": 7,
-    "huge_int": 2**70,
-    "bool": True,
-    "timedelta": datetime.timedelta(days=9),
-    "timestamp": pd.Timestamp("2021-06-01"),
-    # dennis round 8: complex was absent despite being the one type this
-    # module has a dedicated helper for. One complex row re-types a whole
-    # numeric column to complex128.
-    "complex_real": 3 + 0j,
-    "complex_imag": 1 + 1j,
-    # dennis round 10: fits in int64 (so the arrow pools accept it) but
-    # leaves the Python datetime range, so on an arrow temporal pool the
-    # neighbour differs by a cell whose FETCH raises rather than whose
-    # conversion fails. `huge_int` above cannot reach this: 2**70
-    # overflows int64 and the frame will not build at all.
-    "int64_out_of_python_range": 2**60,
-}
-
-
-def _build_series(values: list, dtype: Any) -> pd.Series:
-    """Build a pool or neighbour series under `dtype`.
-
-    Codex round 10 (MEDIUM): `pd.Series(..., dtype=pd.ArrowDtype(...))`
-    routes through pandas' own scalar coercion, which refuses several
-    arrow types outright -- `duration[s]` raised `OutOfBoundsTimedelta`
-    on an out-of-range value, so all 26 of its named cases reported
-    PASSED while executing zero assertions. `read_parquet` hands back an
-    arrow-native array that pandas never coerces, so build these the way
-    the data actually arrives.
-    """
-    if isinstance(dtype, pd.ArrowDtype):
-        return pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values, type=dtype.pyarrow_dtype)))
-    return pd.Series(values, dtype=dtype)
 
 
 def _public_part(column_block: dict) -> dict:
@@ -326,39 +180,51 @@ class TestConfigValidation:
         happens to be named `seed` or `rng`."""
         import inspect
 
-        sig = inspect.signature(fit_dp_snapshot)
+        # Introspect the REAL new-signature entrypoint (this suite's
+        # `fit_dp_snapshot` is a legacy-kwargs translation shim). The phase-5
+        # API is `fit_dp_snapshot(source, column_schema, *, epsilon, delta,
+        # numeric_bins)`; it still exposes no mechanism/backend injection
+        # parameter of any name.
+        sig = inspect.signature(_real_fit_dp_snapshot)
         assert set(sig.parameters) == {
-            "frame",
-            "categorical_columns",
-            "numeric_domains",
+            "source",
+            "column_schema",
             "epsilon",
             "delta",
             "numeric_bins",
         }
 
-    def test_dp_fit_rejects_missing_public_column_declarations(self):
+    def test_dp_fit_rejects_a_schema_column_absent_from_the_frame(self):
+        """Phase-5 migration: the fit fits exactly the columns declared in
+        `column_schema` (partial frame coverage is allowed -- a marginal release
+        describes what it declares). A declared column that is NOT in the frame
+        fails closed in the adapter with a coded `CarrierError`, before any cell
+        is read, rather than silently releasing nothing."""
         df = pd.DataFrame({"age": [1.0, 2.0], "state": ["a", "b"]})
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
+        with pytest.raises(CarrierError) as exc:
+            _real_fit_dp_snapshot(
                 df,
-                categorical_columns=["state"],
-                numeric_domains={},  # "age" undeclared
+                {"missing": {"kind": "categorical", "carrier": "text"}},
                 epsilon=1.0,
                 delta=1e-6,
             )
-        assert exc.value.code == "dp_column_declaration_incomplete"
+        assert exc.value.code == "dp_adapter_missing_column"
 
-    def test_dp_fit_rejects_overlapping_public_column_declarations(self):
+    def test_dp_fit_rejects_an_unknown_carrier(self):
+        """Phase-5 migration: a per-column carrier outside the closed set
+        (`number`/`flag`/`text`) is rejected before any private cell is read.
+        (The legacy `categorical + numeric` OVERLAP this test used to cover is
+        structurally impossible now: `column_schema` keys are unique, so a
+        column declares exactly one carrier by construction.)"""
         df = pd.DataFrame({"age": [1.0, 2.0]})
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
+        with pytest.raises(CarrierError) as exc:
+            _real_fit_dp_snapshot(
                 df,
-                categorical_columns=["age"],
-                numeric_domains={"age": (0.0, 120.0)},
+                {"age": {"carrier": "bogus", "bounds": (0.0, 120.0)}},
                 epsilon=1.0,
                 delta=1e-6,
             )
-        assert exc.value.code == "dp_column_declaration_overlap"
+        assert exc.value.code == "dp_carrier_unknown"
 
     @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "abc"])
     def test_invalid_epsilon_rejected(self, bad):
@@ -405,12 +271,16 @@ class TestConfigValidation:
         "bounds", [(120.0, 0.0), (0.0, 0.0), (float("nan"), 1.0), (0.0, float("inf"))]
     )
     def test_invalid_numeric_domain_rejected(self, bounds):
+        # Phase-5 migration: number-carrier bounds are validated by the carrier
+        # layer (`_validate_bound` + the order check), so a malformed/misordered
+        # domain now fails closed with a coded `CarrierError` (nonfinite bound or
+        # bad order) rather than the legacy `DpError('dp_numeric_domain_invalid')`.
         df = pd.DataFrame({"age": [1.0, 2.0]})
-        with pytest.raises(DpError) as exc:
+        with pytest.raises(CarrierError) as exc:
             fit_dp_snapshot(
                 df, categorical_columns=[], numeric_domains={"age": bounds}, epsilon=1.0, delta=1e-6
             )
-        assert exc.value.code == "dp_numeric_domain_invalid"
+        assert exc.value.code in ("dp_carrier_bounds_order", "dp_carrier_bounds_nonfinite")
 
     @pytest.mark.parametrize(
         ("bounds", "bins"),
@@ -460,33 +330,14 @@ class TestConfigValidation:
         )
         assert len(snap["columns"]["age"]["stats"]["bin_counts"]) == bins
 
-    @pytest.mark.parametrize(
-        ("frame_cols", "cats", "doms"),
-        [
-            ({5: [0.5, 0.6]}, [], {5: (0.0, 1.0)}),
-            ({"5": [0.5, 0.6]}, [], {5: (0.0, 1.0)}),
-            ({"5": ["a", "b"]}, [5], {}),
-        ],
-        ids=["non_string_frame_label", "non_string_numeric_key", "non_string_categorical_member"],
-    )
-    def test_non_string_column_declarations_are_rejected(self, frame_cols, cats, doms):
-        """D-MEDIUM-1 (dennis round 6) / C-L-1 (Codex round 6): round 5
-        closed only the FRAME side, while this test's own docstring
-        described the declaration case. The mirror cases: a non-string
-        `numeric_domains` key died on a bare `KeyError` inside the fit,
-        and a non-string `categorical_columns` member SUCCEEDED silently,
-        because that path only ever needs the name. Parametrizing over
-        all three is the point, since the single-fixture version passed
-        while two of them were live."""
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
-                pd.DataFrame(frame_cols),
-                categorical_columns=cats,
-                numeric_domains=doms,
-                epsilon=2.0,
-                delta=1e-6,
-            )
-        assert exc.value.code == "dp_column_label_not_a_string"
+    # Phase-5 migration: the legacy `dp_column_label_not_a_string` and
+    # `dp_column_label_not_a_string` (frame-side) rejections are removed. The
+    # new API matches `column_schema` keys directly against the frame's column
+    # labels (a schema column absent from the frame fails closed with
+    # `dp_adapter_missing_column`, covered above), and the carrier layer no
+    # longer stringifies declarations, so there is no str-coercion mismatch to
+    # guard. Column-name typing is the adapter's concern and is covered by
+    # test_carriers.py's adapter suite.
 
     def test_declarations_are_read_once_so_a_drifting_mapping_cannot_slip_past(self):
         """D-LOW-1 (dennis round 6): the declarations were read three
@@ -523,33 +374,19 @@ class TestConfigValidation:
         # what the artifact reports, not whatever the mapping drifted to.
         assert snap["columns"]["age"]["stats"]["bin_edges"][-1] == 100.0
 
-    def test_non_string_frame_column_labels_are_rejected(self):
-        """D-L-A (dennis round 5): validation compared `str(label)` sets
-        while the fit loop indexed with the stringified name, so an
-        integer column `5` declared as `numeric_domains={5: ...}` passed
-        validation and then died on `frame["5"]` with a bare `KeyError`.
-        Fail-closed and no leak, but the wrong exception type from a
-        module that documents coded errors."""
-        df = pd.DataFrame({5: [0.5, 0.6]})
-        with pytest.raises(DpError) as exc:
-            fit_dp_snapshot(
-                df, categorical_columns=[], numeric_domains={5: (0.0, 1.0)}, epsilon=2.0, delta=1e-6
-            )
-        assert exc.value.code == "dp_column_label_not_a_string"
-
     def test_duplicate_frame_column_labels_are_rejected(self):
-        """D-M4: `frame.columns` was compared as a set, so `["x", "x"]`
-        passed the coverage check. `frame["x"]` then returns a DataFrame,
-        which both normalizers iterate as column LABELS, and the fit was
-        accepted while releasing a distribution over the string "x"
-        rather than over the data. No leak, but a DP artifact that
-        silently describes the wrong thing."""
+        """A schema key that selects TWO frame columns (`df[name]` is a
+        DataFrame, not a Series) is a structural, columns-level problem, not a
+        row-value one. The adapter rejects it with a coded `CarrierError` before
+        any cell is read, rather than silently releasing a distribution over the
+        column label. (Phase-5 migration: this was `dp_column_declaration_
+        duplicated` in the legacy fit; the carrier adapter owns it now.)"""
         df = pd.DataFrame([["CA", "NY"], ["TX", "CA"]], columns=["x", "x"])
-        with pytest.raises(DpError) as exc:
+        with pytest.raises(CarrierError) as exc:
             fit_dp_snapshot(
                 df, categorical_columns=["x"], numeric_domains={}, epsilon=2.0, delta=1e-6
             )
-        assert exc.value.code == "dp_column_declaration_duplicated"
+        assert exc.value.code == "dp_adapter_duplicate_column"
 
     def test_numeric_bins_default_is_ten_and_recorded_in_artifact(self):
         df = pd.DataFrame({"age": [1.0, 2.0, 3.0]})
@@ -633,375 +470,15 @@ class TestRecordwiseNormalization:
     """D-M6/C-B2: the one stability claim Decoy makes on its own (guide
     section 3.3 item 1) is that preprocessing is recordwise -- every input
     row contributes AT MOST one element to a column's normalized vector.
-    Pinned directly at the `_normalize_numeric`/`_normalize_categorical`
-    seam, independent of the OpenDP mechanism."""
 
-    def test_normalize_numeric_output_length_equals_non_null_input_length(self):
-        series = pd.Series([1.0, None, 3.0, float("nan"), 5.0])
-        out = _normalize_numeric(series, lower=0.0, upper=10.0)
-        assert len(out) == 3  # 1.0, 3.0, 5.0 -- None and NaN excluded
-
-    def test_normalize_numeric_removing_one_row_removes_at_most_one_element(self):
-        base = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0])
-        base_out = _normalize_numeric(base, lower=0.0, upper=10.0)
-        for i in range(len(base)):
-            dropped = base.drop(base.index[i]).reset_index(drop=True)
-            dropped_out = _normalize_numeric(dropped, lower=0.0, upper=10.0)
-            assert _multiset_distance(base_out, dropped_out) <= 1
-
-    def test_normalize_categorical_output_length_equals_non_null_input_length(self):
-        series = pd.Series(["a", None, "b", None, "c"])
-        out = _normalize_categorical(series)
-        assert len(out) == 3
-
-    def test_normalize_categorical_removing_one_row_removes_at_most_one_element(self):
-        base = pd.Series(["a", "b", "c", "d", "e"])
-        base_out = _normalize_categorical(base)
-        for i in range(len(base)):
-            dropped = base.drop(base.index[i]).reset_index(drop=True)
-            dropped_out = _normalize_categorical(dropped)
-            assert _multiset_distance(base_out, dropped_out) <= 1
-
-    def test_the_string_pool_exemption_depends_on_a_pandas_global(self):
-        """Codex round 11: `string`'s exemption reads as a property of the
-        data, and it is really a property of `pd.options.future.infer_string`.
-
-        Under the default the pool is object dtype and nothing widens it.
-        Enable the option and the base infers as `str`, an added numeric row
-        widens to `object`, and the exemption is simply wrong -- so when that
-        option becomes the default, the exemption must go. Pin both halves
-        now rather than discover it as a silent coverage loss then."""
-        values = ["a", "b"]
-        original = pd.options.future.infer_string
-        try:
-            pd.options.future.infer_string = False
-            assert pd.Series(values).dtype == object
-            assert pd.Series([*values, 7]).dtype == object  # no widening: exemption holds
-
-            pd.options.future.infer_string = True
-            widened = pd.Series(values)
-            assert widened.dtype != object  # infers as `str`
-            assert pd.Series([*values, 7]).dtype != widened.dtype  # widening IS reachable
-        finally:
-            pd.options.future.infer_string = original
-
-    @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
-    def test_every_declared_pool_actually_produces_a_comparison(self, pool_id):
-        """Codex round 10 (MEDIUM): a pool whose construction raises is
-        silently skipped by both matrix tests, so it reports PASSED on
-        every one of its named cases while executing zero assertions.
-        `arrow_duration_s_overflow` did exactly that for all 26 of its
-        cases, and the only reason it was noticed was a second model
-        counting them.
-
-        A skip on a SPECIFIC added row is legitimate -- pandas genuinely
-        refuses some combinations. A pool that never builds at all, or
-        that never yields a single neighbour across the whole added-row
-        axis, is a false green and must fail loudly."""
-        pool, obj = _ADJACENCY_POOLS[pool_id]
-        pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
-
-        built = 0
-        compared = 0
-        cross_boxing = 0
-        for dtype in (
-            (object,) if (obj or pool_id in _ADJACENCY_REINTERPRETING_POOLS) else (object, None)
-        ):
-            try:
-                base = _build_series(list(pool), pool_dtype or dtype)
-            except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                continue
-            built += 1
-            list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
-            for added in _ADJACENCY_ADDED.values():
-                for make in ("list", "concat"):
-                    try:
-                        neighbour = (
-                            _build_series([*pool, added], list_dtype)
-                            if make == "list"
-                            else pd.concat([base, pd.Series([added])], ignore_index=True)
-                        )
-                    except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                        continue
-                    compared += 1
-                    if neighbour.dtype != base.dtype:
-                        cross_boxing += 1
-
-        assert built, f"{pool_id}: the pool itself never builds; every one of its cases is vacuous"
-        assert compared, f"{pool_id}: builds but yields no neighbour on any added row; vacuous"
-        if pool_id in _NO_CROSS_BOXING_NEIGHBOUR:
-            assert not cross_boxing, (
-                f"{pool_id} is exempted from the cross-boxing requirement but now reaches "
-                f"{cross_boxing} such neighbours; drop the exemption"
-            )
-        else:
-            assert cross_boxing, (
-                f"{pool_id}: every neighbour has the base's own dtype, so it exercises the "
-                "fetch guard but contributes nothing to boxing invariance, which is what "
-                "this matrix exists to prove. Either give it a reachable dtype change or "
-                "add it to _NO_CROSS_BOXING_NEIGHBOUR with the reason."
-            )
-
-    @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
-    @pytest.mark.parametrize("added_id", sorted(_ADJACENCY_ADDED), ids=sorted(_ADJACENCY_ADDED))
-    def test_categorical_normalization_is_multiset_recordwise(self, pool_id, added_id):
-        """The property `map(1)` actually assumes, stated as a MULTISET
-        bound over genuine one-row neighbours, across a dtype matrix.
-
-        dennis round 7 (HIGH-1): the two tests carrying this property's
-        name compared CARDINALITY only. Both neighbours had length 3
-        while every element differed, so they passed while the guarantee
-        was broken -- the structural reason this defect class recurred
-        twice. A length bound is not the property; the composed
-        (epsilon, delta) is only sound if the normalized MULTISETS differ
-        by at most one element.
-
-        The matrix is the point. The pools straddle float64's exact
-        integer range in both signs and cross `str`/`bool`/extension/
-        unsupported types; the added rows are the values that trigger a
-        dtype change (null, NaN, an incompatible string, a float, a huge
-        int, a complex). Neither construction forces `dtype=object`,
-        because that is the one dtype that cannot upcast -- forcing it is
-        exactly how the sibling test below passed with the coercion
-        removed.
-
-        BOTH construction axes are required (dennis round 8). Building
-        the neighbour as `pd.Series([*pool, added])` cannot produce
-        bool->int64, bool->float, or real->complex128 boxing at all: list
-        construction re-infers from scratch, while `pd.concat` boxes the
-        EXISTING values into the combined dtype, which is what a
-        partitioned or chunked read actually does. The list-only matrix
-        reported zero violations on four separate guarantee breaks."""
-        pool, obj = _ADJACENCY_POOLS[pool_id]
-        added = _ADJACENCY_ADDED[added_id]
-        pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
-
-        # The two passes are only degenerate for a REINTERPRETING pool,
-        # where `list_dtype = pool_dtype` regardless of `dtype`. For any
-        # other pinned-dtype pool they build DIFFERENT list neighbours --
-        # `object` in one pass, re-inferred in the other -- and collapsing
-        # the axis on `pool_dtype` deleted 279 of 942 cross-boxing
-        # comparisons (dennis round 11, HIGH-1). What went with them:
-        # `ext_boolean`/`arrow_bool` -> numpy `bool`, which is the
-        # `np.bool_` transition round 8 added that pool FOR, and
-        # `ext_Int64`/`ext_Float64`/`arrow_int64`/`arrow_float64` ->
-        # `complex128`, which is round 8's real-to-complex re-typing.
-        # The cross-boxing guard did not catch it because ("list",
-        # "object") still differs from the base dtype.
-        for dtype in (
-            (object,) if (obj or pool_id in _ADJACENCY_REINTERPRETING_POOLS) else (object, None)
-        ):
-            build_dtype = pool_dtype or dtype
-            try:
-                base = _build_series(list(pool), build_dtype)
-            except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                continue  # pandas itself refuses the pool
-            base_labels = _normalize_categorical(base)
-
-            neighbours = []
-            list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
-            try:
-                neighbours.append(_build_series([*pool, added], list_dtype))
-            except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                pass
-            try:  # concat: boxes the EXISTING values into the joint dtype
-                neighbours.append(pd.concat([base, pd.Series([added])], ignore_index=True))
-            except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                pass
-            if not neighbours:
-                continue
-
-            for neighbour in neighbours:
-                assert _multiset_distance(base_labels, _normalize_categorical(neighbour)) <= 1, (
-                    f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
-                )
-
-    @pytest.mark.parametrize("n", [8, 40], ids=["small", "wide"])
-    @pytest.mark.parametrize(
-        "base_value",
-        [0, 2**53 - 4, 2**60, -(2**60)],
-        ids=["small", "at_float64_limit", "beyond_float64", "negative_beyond"],
-    )
-    def test_categorical_labels_are_stable_when_a_null_upcasts_the_column(self, n, base_value):
-        """Codex round 6, the one defect in this program that broke the
-        DP guarantee itself rather than a test or an error contract.
-
-        pandas upcasts an integer column to float64 the moment a null
-        enters it, so under plain `str()` EVERY label changed when ONE
-        row was added:
-
-            ints 0..7            -> ["0" ... "7"]
-            ints 0..7 and a null -> ["0.0" ... "7.0"]
-
-        The normalized multisets differed by 2n elements while the
-        grouped-count measurement certifies `map(1)`, so the composed
-        `(epsilon, delta)` understated the true sensitivity by a factor
-        of the column's cardinality. Normalization was recordwise GIVEN A
-        FRAME, but a frame's storage dtype is a function of ALL its rows.
-
-        Every recordwise test before this one used STRING fixtures, which
-        never upcast, which is why five review rounds missed it. Integer
-        fixtures are the point here.
-
-        dennis round 7 (HIGH-2) added the MAGNITUDE axis. `range(n)` is
-        exactly the range where the round-6 fix could not fail: those
-        values survive the float64 round-trip, so `str(int(raw))` and
-        `str(int(float(raw)))` agree. Beyond 2**53 they do not, and the
-        released distribution collapsed to a single label. The
-        `beyond_float64` ids are the falsifier; `small` still pins the
-        original round-6 regression."""
-        values = [base_value + 2 * i for i in range(n)]
-        base = pd.Series(values)
-        neighbour = pd.Series([*values, None])
-        assert base.dtype != neighbour.dtype  # the upcast this guards against
-        base_labels = _normalize_categorical(base)
-        neighbour_labels = _normalize_categorical(neighbour)
-        # Adding one null row adds no label and changes none of the rest.
-        assert base_labels == neighbour_labels
-        assert _multiset_distance(base_labels, neighbour_labels) == 0
-
-    def test_canonical_label_merges_integral_reals_but_preserves_everything_else(self):
-        """An integral real renders as its integer string whatever its
-        storage width, so the upcast above cannot move it, and a
-        non-finite float renders from its float64 image, so `inf` stays
-        "inf".
-
-        `bool` renders "1"/"0" and NOT "True"/"False" (dennis round 8).
-        The round-7 version of this test pinned "True"/"False" and the
-        round-7 docstring defended it, both backwards: a bool column's
-        float64 image is 1.0/0.0, and pandas re-types bool to int64 or
-        float64 on ordinary neighbours, so "True"/"False" moved 1600
-        labels on an 800-row column while "1"/"0" does not move at all.
-        The resulting `True`/`1` collision is a coarsening and can only
-        weaken a release, which is the disposition already accepted for
-        `7`/`7.0`."""
-        series = pd.Series(
-            [7, 7.0, np.int64(7), np.float64(7.0), 7.5, True, False, "CA", float("inf")],
-            dtype=object,
-        )
-        assert _normalize_categorical(series) == [
-            "7",
-            "7",
-            "7",
-            "7",
-            "7.5",
-            "1",
-            "0",
-            "CA",
-            "inf",
-        ]
-
-    @pytest.mark.parametrize("pool_id", sorted(_ADJACENCY_POOLS), ids=sorted(_ADJACENCY_POOLS))
-    @pytest.mark.parametrize("added_id", sorted(_ADJACENCY_ADDED), ids=sorted(_ADJACENCY_ADDED))
-    def test_numeric_normalization_is_multiset_recordwise(self, pool_id, added_id):
-        """The same matrix against `_normalize_numeric`.
-
-        dennis round 8 (HIGH-1, item 4): the numeric path had NO adjacency
-        matrix -- only the two pre-existing drop-one-row loops over a
-        fixed float fixture. That is how BLOCKER-4 survived in the very
-        code C-B2 claimed to have closed: one complex row re-typed the
-        column to complex128, every previously-real value arrived boxed
-        as complex and was dropped as "unconvertible", and the released
-        bin_counts went from two populated bins to all zeros."""
-        pool, obj = _ADJACENCY_POOLS[pool_id]
-        added = _ADJACENCY_ADDED[added_id]
-        pool_dtype = _ADJACENCY_POOL_DTYPES.get(pool_id)
-        bounds = {"lower": -(2.0**62), "upper": 2.0**62}
-
-        for dtype in (
-            (object,) if (obj or pool_id in _ADJACENCY_REINTERPRETING_POOLS) else (object, None)
-        ):
-            try:
-                base = _build_series(list(pool), pool_dtype or dtype)
-            except (OverflowError, ValueError, TypeError):
-                continue
-            base_out = _normalize_numeric(base, **bounds)
-
-            neighbours = []
-            list_dtype = pool_dtype if pool_id in _ADJACENCY_REINTERPRETING_POOLS else dtype
-            try:
-                neighbours.append(_build_series([*pool, added], list_dtype))
-            except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                pass
-            try:  # concat: boxes the EXISTING values into the joint dtype
-                neighbours.append(pd.concat([base, pd.Series([added])], ignore_index=True))
-            except (OverflowError, ValueError, TypeError, pa.ArrowException):
-                pass
-
-            for neighbour in neighbours:
-                assert _multiset_distance(base_out, _normalize_numeric(neighbour, **bounds)) <= 1, (
-                    f"{pool_id} + {added_id}: {base.dtype} -> {neighbour.dtype}"
-                )
-
-    def test_integers_too_large_for_float64_are_labelled_not_dropped(self):
-        """Routing reals through their float64 image means `float(raw)`
-        can raise `OverflowError` for a big enough integer. Falling back
-        to the exact integer string is sound rather than a special case:
-        such a value cannot live in an `int64` column, so pandas holds it
-        in `object` dtype, which never upcasts, so nothing can move the
-        label.
-
-        Without the fallback these rows drop instead. That is not a
-        guarantee break -- dropping stays recordwise -- which is exactly
-        why it needs its own test: the adjacency matrix passes either
-        way, and dennis round 7 called the silent loss out specifically."""
-        huge = [10**400, 10**401]
-        series = pd.Series(huge, dtype=object)
-        assert _normalize_categorical(series) == [str(v) for v in huge]
-
-    def test_datetimelike_values_are_rejected_at_every_resolution(self):
-        """Round 9, both reviewers: `.item()` is type-ERASING.
-
-        `np.datetime64(...,"ns").item()` returns an `int` (epoch
-        nanoseconds), and an `int` passes the real-number gate, so a date
-        column was labelled with its raw epoch integers -- releasing the
-        timestamps themselves in a privacy product -- while the same
-        values boxed as `pandas.Timestamp` were correctly dropped. The
-        numeric path broke independently, because
-        `float(np.datetime64(...,"ns"))` also succeeds.
-
-        Resolution is the axis, so it is the axis under test. `s` and
-        `us` unbox to `datetime.datetime` and were always rejected; only
-        `ns`, which is pandas' native resolution, unboxed to `int`."""
-        for unit in ("s", "ms", "us", "ns"):
-            stamps = pd.Series([np.datetime64(f"2020-01-0{1 + i % 3}", unit) for i in range(30)])
-            deltas = pd.Series([np.timedelta64(i % 3, unit) for i in range(30)])
-            for series in (stamps, deltas):
-                assert _normalize_categorical(series) == [], f"labelled at {unit}"
-                assert _normalize_numeric(series, lower=0.0, upper=1e20) == [], (
-                    f"converted at {unit}"
-                )
-
-        # The pandas and Python boxes of the same quantities, which were
-        # always rejected -- the disposition must not depend on the box.
-        boxed = pd.Series(
-            [pd.Timestamp("2020-01-01"), pd.Timedelta(1, "D"), datetime.date(2020, 1, 1)],
-            dtype=object,
-        )
-        assert _normalize_categorical(boxed) == []
-
-    def test_complex_is_labelled_only_when_its_imaginary_part_is_zero(self):
-        """dennis round 9 (MEDIUM-1): a surviving mutant.
-
-        Replacing `if raw.imag != 0:` with `if False:` -- so a genuinely
-        complex value gets its real part labelled instead of dropped --
-        passed all 639 tests. The numeric twin died on the matrix; the
-        categorical side had pure coverage asymmetry. Both directions are
-        pinned here in one place."""
-        series = pd.Series([1 + 0j, 2 + 0j, 3 + 4j], dtype=object)
-        assert _normalize_categorical(series) == ["1", "2"]
-        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.0, 2.0]
-
-    def test_decimal_is_treated_the_same_by_both_normalizers(self):
-        """dennis round 9 (MEDIUM-2): `Decimal` is `numbers.Number` but
-        not `numbers.Real`, so the categorical gate dropped every one
-        while the numeric path converted them happily -- two normalizers
-        disagreeing about the same value on an ABC-registration accident
-        rather than any boxing argument. `float(Decimal)` is exactly the
-        float64-image rule already in use."""
-        series = pd.Series([decimal.Decimal("1.5"), decimal.Decimal("2")], dtype=object)
-        assert _normalize_categorical(series) == ["1.5", "2"]
-        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.5, 2.0]
+    Phase 7 retired `dp_normalize.py`, the module this class used to pin
+    directly at the `_normalize_numeric`/`_normalize_categorical` seam: that
+    coverage now lives in `test_carriers.py` against the carrier codecs that
+    replaced it (`decode_number`/`decode_text`), proven equal-strength before
+    the deletion (see the phase-7 removal commit). What remains here are the
+    tests that exercise the real `fit_dp_snapshot` pipeline end to end rather
+    than a normalizer function directly -- the policy artifact, and totality
+    against hostile/unfetchable content."""
 
     def test_the_policy_log_fires_unconditionally(self, caplog):
         """dennis round 9: mutation M9 made the logger inert and survived
@@ -1078,20 +555,31 @@ class TestRecordwiseNormalization:
         # numeric line said "non-finite clamped" while NaN is dropped and
         # FINITE out-of-domain values are clamped too. A policy that
         # ships in every artifact has to be true.
+        #
+        # Phase 8: the categorical lines above described the retired
+        # `dp_normalize` stringification path (a bool/number/decimal cell
+        # rendered as a label). DPS-CODEC replaced that with declared typed
+        # carriers -- `text` releases only genuine `str` cells and `flag`
+        # releases the canonical `true`/`false` tokens -- so the pin below is
+        # the carrier-accurate text, and the KNOWN GAP this test used to carry
+        # is closed.
         assert blocks[0] == {
             "categorical_labels": (
-                "text kept verbatim unless the value AS RECEIVED contains NUL or cannot be "
-                "encoded as UTF-8, noting that numpy fixed-width string storage strips a "
-                "trailing NUL before the fit sees it; "
-                "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
-                "image; an integer or rational too large for float64 rendered by its own exact "
-                "string form instead, up to the interpreter's decimal-conversion limit; a decimal or "
-                "extended-precision real too large for float64 released as the infinity its "
-                "float64 image becomes; NaN released as null"
+                "a declared text column releases only genuine str cells, kept verbatim "
+                "unless the value AS RECEIVED contains NUL or cannot be encoded as UTF-8 "
+                "(numpy fixed-width string storage strips a trailing NUL before the fit "
+                "sees it); a declared flag column releases the two canonical tokens 'true' "
+                "and 'false'. The carrier declared for the column drives this, not how "
+                "pandas happens to store the column"
             ),
             "categorical_unsupported": (
-                "released as null (datetime, timedelta, text whose value AS RECEIVED carries "
-                "NUL or is not UTF-8 encodable, and any other type)"
+                "released as null: in a text column every non-str cell (a boolean, any "
+                "number, decimal or complex value, a datetime or timedelta, a container, and "
+                "any other type); in a flag column every string or bytes value (even '1' or "
+                "'0') and every other cell that does not convert to an exact real 0 or 1 (a 2 "
+                "or a 0.5, a nonzero-imaginary complex, a datetime or timedelta, a container); "
+                "and in either, text whose value AS RECEIVED carries NUL or is not UTF-8 "
+                "encodable"
             ),
             "numeric_values": (
                 "float64, values outside the declared domain clamped to it, "
@@ -1108,200 +596,61 @@ class TestRecordwiseNormalization:
                 "value that cannot be converted to a float)"
             ),
         }
-        # Each numeric-unsupported path the policy now names drops to null.
-        assert _normalize_numeric(pd.Series([[1]], dtype=object), lower=0.0, upper=10.0) == []
-        assert (
-            _normalize_numeric(
-                pd.Series([pd.Timestamp("2020-01-01")], dtype=object), lower=0.0, upper=10.0
-            )
-            == []
+        # Each numeric-unsupported/numeric-values path the policy names, pinned
+        # against the carrier codec that implements it (phase 7 retired the
+        # `dp_normalize._normalize_numeric` oracle these used to call; the
+        # golden vectors in test_dp_codec_golden.py pin that `decode_number`
+        # matches it byte-for-byte on the values shared here).
+        assert decode_number([1], lower=0.0, upper=10.0)[1] is False
+        assert decode_number(pd.Timestamp("2020-01-01"), lower=0.0, upper=10.0)[1] is False
+        assert decode_number(1 + 2j, lower=0.0, upper=10.0)[1] is False
+        assert decode_number(object(), lower=0.0, upper=10.0)[1] is False
+        assert decode_number(float("nan"), lower=0.0, upper=10.0)[1] is False
+        assert decode_number(99.0, lower=0.0, upper=10.0) == (10.0, True)
+        assert decode_number(float("-inf"), lower=0.0, upper=10.0) == (0.0, True)
+
+        # Each claim the pinned prose makes about the `text` and `flag`
+        # carriers, exercised against the real codec -- not just pinned text
+        # (Codex round 9's own complaint about the pre-carrier version of
+        # this test, now applied to the carrier-accurate replacement).
+        assert decode_text("a") == ("a", True)  # text verbatim
+        assert decode_text("a\x00b")[1] is False  # NUL drops
+        assert decode_text("\ud800")[1] is False  # surrogate drops
+        assert decode_text(pd.Timestamp("2020-01-01"))[1] is False  # temporal drops
+        assert decode_text(True)[1] is False  # a bool cell is not a str: dropped
+        assert decode_text(1)[1] is False  # a number cell is not a str: dropped
+        assert decode_text(decimal.Decimal("1.5"))[1] is False  # nor a decimal
+        assert decode_flag(True) == (True, True)
+        assert decode_flag(False) == (False, True)
+        assert decode_flag(2)[1] is False  # an int outside {0, 1} is not a flag value
+        assert decode_flag("true")[1] is False  # text is never a flag value
+
+        # The two canonical release tokens themselves, end to end through a
+        # real fit: a `flag` column's retained category serializes as
+        # `"true"`/`"false"`, never `str(bool)`'s `"True"`/`"False"` and never
+        # `"1"`/`"0"` (guide section 3.4; full end-to-end coverage lives in
+        # `test_dp_flag_e2e.py`).
+        flag_snap = _real_fit_dp_snapshot(
+            pd.DataFrame({"f": [True] * 190 + [False] * 10}),
+            {"f": {"kind": "categorical", "carrier": "flag"}},
+            epsilon=8.0,
+            delta=1e-6,
         )
-        assert _normalize_numeric(pd.Series([1 + 2j], dtype=object), lower=0.0, upper=10.0) == []
-        assert _normalize_numeric(pd.Series([object()], dtype=object), lower=0.0, upper=10.0) == []
-        assert _normalize_categorical(pd.Series(["a"], dtype=object)) == ["a"]  # text verbatim
-        assert _normalize_categorical(pd.Series([True], dtype=object)) == ["1"]  # bool -> image
-        assert _normalize_categorical(pd.Series([decimal.Decimal("1.5")], dtype=object)) == ["1.5"]
-        assert _normalize_categorical(pd.Series([1 + 0j], dtype=object)) == ["1"]  # zero-imaginary
-        assert _normalize_categorical(pd.Series([10**400], dtype=object)) == [str(10**400)]  # exact
-        assert _normalize_categorical(pd.Series([pd.Timestamp("2020-01-01")], dtype=object)) == []
-        # Each exception the corrected text now claims.
-        assert _normalize_categorical(pd.Series(["a\x00b"], dtype=object)) == []
-        assert _normalize_categorical(pd.Series(["\ud800"], dtype=object)) == []
-        assert _normalize_categorical(pd.Series([10**5000], dtype=object)) == []
-        # Codex round 10 (LOW): the overflow fallback is not integer-only.
-        # It fires for ANY accepted real whose float() overflows, and
-        # renders that value's own exact repr -- a Fraction stays a
-        # fraction, which the previous "integers ... rendered exactly"
-        # wording denied.
-        assert _normalize_categorical(pd.Series([Fraction(10**400, 3)], dtype=object)) == [
-            str(Fraction(10**400, 3))
-        ]
-        # dennis + Codex round 11: the exact-repr branch is `except
-        # OverflowError`, so only types whose `__float__` RAISES reach it.
-        # Decimal and longdouble return inf silently and fall through to the
-        # float64 image, which the previous "a real too large for float64"
-        # wording denied -- and which also collides with a genuine infinity.
-        assert _normalize_categorical(pd.Series([decimal.Decimal("1E+400")], dtype=object)) == [
-            "inf"
-        ]
-        assert _normalize_categorical(pd.Series([np.longdouble("1e400")], dtype=object)) == ["inf"]
-        assert _normalize_numeric(pd.Series([float("nan")]), lower=0.0, upper=10.0) == []
-        assert _normalize_numeric(pd.Series([99.0]), lower=0.0, upper=10.0) == [10.0]
-        assert _normalize_numeric(pd.Series([float("-inf")]), lower=0.0, upper=10.0) == [0.0]
-
-    def test_nul_bearing_labels_drop_rather_than_silently_merging(self):
-        """dennis round 10 (MEDIUM-1): a label is truncated at its first
-        NUL when it crosses into OpenDP, so three distinct source values
-        released as one, and the artifact asserted a `top_values` entry
-        that was not a value in the source.
-
-        Not a DP break -- a many-to-one label map is recordwise and
-        boxing-invariant, so it can only coarsen -- but a silent
-        truncation at the release boundary, which the repo does not
-        permit. The uniform disposition is to drop."""
-        series = pd.Series(["a\x00b"] * 3 + ["a"] * 3 + ["a\x00c"] * 3 + ["keep"], dtype=object)
-        assert _normalize_categorical(series) == ["a"] * 3 + ["keep"]
-
-    @pytest.mark.parametrize(
-        "backing",
-        ["object", "string", "string[pyarrow]", "arrow", "category", "numpy_U"],
-    )
-    def test_the_nul_disposition_is_recorded_for_every_string_backing(self, backing):
-        """dennis round 10 (MEDIUM-a): the regression above covers only
-        `dtype=object`, and the drop is NOT uniform across backings.
-
-        numpy's fixed-width `U` dtype strips trailing NULs AT STORAGE, so
-        `"a\x00"` reaches the normalizer as `"a"` -- indistinguishable from
-        a genuine `"a"`, with the information destroyed before the fit sees
-        the frame. We cannot make that uniform; we can only be accurate
-        about it, which is why the policy string says "as received".
-
-        Checked rather than assumed: this is not a DP break. Trailing-NUL
-        stripping is irreversible and no pandas operation moves an object
-        column into `U`, so no one-row neighbour can flip a column between
-        the two dispositions. INTERIOR NUL drops everywhere, which is the
-        case that actually merged distinct values.
-
-        Pinned per backing so the divergence is on the record rather than
-        latent, and so a future change to either side shows up here."""
-        trailing, interior, plain = "a\x00", "a\x00b", "ab"
-        values = [trailing, interior, plain]
-        if backing == "numpy_U":
-            series = pd.Series(np.array(values))
-        elif backing == "arrow":
-            series = pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values)))
-        elif backing == "category":
-            series = pd.Series(values, dtype="category")
-        else:
-            series = pd.Series(values, dtype=backing)
-
-        labels = _normalize_categorical(series)
-
-        # Interior NUL always drops; plain text always survives.
-        assert interior not in labels
-        assert plain in labels
-        if backing == "numpy_U":
-            # Already truncated to "a" before we saw it, so it survives as
-            # ordinary text. This asymmetry is deliberate and disclosed.
-            assert labels == ["a", plain]
-        else:
-            assert labels == [plain]
-
-    def test_unlabellable_types_drop_rather_than_raise(self):
-        """Codex round 7 named timedelta and datetime columns as moving
-        every label across a coercion: a `timedelta64` column labels
-        "1 days 00:00:00", and one incompatible row forces `object`,
-        where the same value labels "1 day, 0:00:00".
-
-        They are dropped rather than labelled, and dropped rather than
-        REJECTED. Dropping is the only disposition that is both total and
-        coercion-invariant: the value drops identically under either
-        boxing, so no added row can move a surviving label. Raising would
-        reopen the fit-success channel C-B4 closed -- an all-string frame
-        would succeed where its one-row neighbour carrying a timedelta
-        raised, a probability-0-vs-1 observable that breaks
-        (epsilon, delta) for any delta < 1 before a single released
-        number is considered."""
-        mixed = pd.Series(
-            ["a", datetime.timedelta(days=1), pd.Timestamp("2020-01-01"), decimal.Decimal("1.5")],
-            dtype=object,
-        )
-        # `Decimal` survives since round 9 (dennis MEDIUM-2): it has a
-        # float64 image like any other number, and dropping it was an
-        # ABC-registration accident rather than a boxing argument.
-        assert _normalize_categorical(mixed) == ["a", "1.5"]  # total: no raise
-
-        # The coercion Codex demonstrated, now invariant because both
-        # boxings drop.
-        deltas = [datetime.timedelta(days=1), datetime.timedelta(days=2)]
-        native = pd.Series(deltas)
-        coerced = pd.Series([*deltas, "x"])
-        assert native.dtype != coerced.dtype  # timedelta64 -> object
-        assert (
-            _multiset_distance(_normalize_categorical(native), _normalize_categorical(coerced)) <= 1
-        )
-
-    def test_normalize_numeric_never_warns_on_exotic_content(self):
-        series = pd.Series(["1", 1 + 2j, None, object(), "not a number"], dtype=object)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _normalize_numeric(series, lower=0.0, upper=10.0)
-        assert caught == [], [str(w.message) for w in caught]
-
-    @pytest.mark.parametrize(
-        "normalize",
-        [
-            lambda s: _normalize_numeric(s, lower=0.0, upper=10.0),
-            _normalize_categorical,
-        ],
-        ids=["numeric", "categorical"],
-    )
-    def test_no_warning_escapes_when_the_conversion_itself_warns(self, normalize):
-        """D-H1: deleting either blanket suppression used to leave every
-        test green, because the only warning-capable probe in the suite
-        was a builtin `complex`, which the complex guard drops before
-        `float()` runs. This probes the invariant the suppression
-        actually claims -- no warning escapes regardless of row content
-        -- with a value that warns during conversion itself. Removing
-        either `simplefilter("ignore")` lets the warning through and
-        fails this."""
-        series = pd.Series(["1", _WarnsOnConversion(), "3"], dtype=object)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            normalize(series)
-        assert caught == [], [str(w.message) for w in caught]
-
-    def test_infinities_clamp_to_the_declared_bounds_rather_than_dropping(self):
-        """D-M2: the documented `+-inf` behaviour (clamp to the declared
-        bound) had no assertion, so replacing the clamp with a drop left
-        every targeted test green. Fidelity rather than privacy, since
-        either behaviour is recordwise, but it is a stated contract."""
-        series = pd.Series([float("inf"), float("-inf")], dtype=object)
-        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [10.0, 0.0]
-
-    def test_normalization_is_total_over_scalars_that_raise_on_conversion(self):
-        """C-B4: normalization must not raise on ANY row content. Each
-        hostile scalar below raises a DIFFERENT exception type, so a
-        handler that enumerates conversion errors it thought of (the
-        `(TypeError, ValueError)` this replaced) fails here rather than
-        passing on the one type it happens to name."""
-        for hostile in _HOSTILE_SCALARS:
-            series = pd.Series(["1", hostile, "3"], dtype=object)
-            numeric = _normalize_numeric(series, lower=0.0, upper=10.0)
-            categorical = _normalize_categorical(series)
-            # Dropped like any other unconvertible value: the two
-            # convertible rows survive, the hostile row contributes none.
-            assert numeric == [1.0, 3.0], (hostile, numeric)
-            assert categorical == ["1", "3"], (hostile, categorical)
+        flag_tokens = {entry["value"] for entry in flag_snap["columns"]["f"]["stats"]["top_values"]}
+        assert flag_tokens
+        assert flag_tokens <= {"true", "false"}
 
     def test_categorical_labels_that_cannot_be_encoded_are_dropped_not_raised(self):
         """C-B4, second location: a lone surrogate is a valid Python
         `str`, so `str()` succeeds and normalization used to pass it
         through. It then raised `UnicodeEncodeError` where the label
         crossed into OpenDP -- the same fit-success channel one layer
-        down. Totality has to hold against the release boundary."""
-        series = pd.Series(["a", "\ud800", "b"], dtype=object)
-        assert _normalize_categorical(series) == ["a", "b"]
+        down. Totality has to hold against the release boundary.
+
+        The codec-level drop (`decode_text("\\ud800")`) is pinned directly in
+        `test_carriers.py::TestRegressionSeeds.test_nul_and_surrogate_text`;
+        what this test proves is that the REAL fit, end to end, still
+        succeeds on a surrogate-bearing column rather than raising."""
         snap = fit_dp_snapshot(
             pd.DataFrame({"c": ["a", "\ud800", "b"]}, dtype=object),
             categorical_columns=["c"],
@@ -1310,92 +659,6 @@ class TestRecordwiseNormalization:
             delta=1e-6,
         )
         assert "c" in snap["columns"]
-
-    @pytest.mark.parametrize(
-        "value",
-        [1 + 2j, np.complex64(1 + 2j), np.complex128(1 + 2j)],
-        ids=["builtin", "complex64", "complex128"],
-    )
-    def test_every_complex_width_is_unconvertible_not_silently_real(self, value):
-        """C-B2 was closed with `isinstance(raw, complex)`, which catches
-        the builtin and `complex128` (it subclasses `complex`) but NOT
-        `complex64`, where `float()` silently returns the real part. A
-        parametrized test is the point here: the unparametrized version
-        passed on the two widths that happen to subclass `complex` while
-        the third kept `1.0`."""
-        series = pd.Series([value], dtype=object)
-        assert _normalize_numeric(series, lower=0.0, upper=10.0) == []
-
-    def test_real_numeric_types_survive_the_complex_guard(self):
-        """The guard drops complex only. Widening it to something that
-        also rejects ordinary numpy reals would silently empty real
-        columns, so pin the negative case alongside."""
-        series = pd.Series([np.float64(3.0), np.int64(4), 5.0, "6"], dtype=object)
-        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [3.0, 4.0, 5.0, 6.0]
-
-    def test_null_check_that_raises_on_content_does_not_take_the_fit_down(self):
-        """C-B4, third location: deciding nullness runs the value's own
-        dunders, so the null step is content-dependent too.
-        `pd.isna(Decimal("sNaN"))` raises `InvalidOperation`, which the
-        vectorized `Series.dropna()` propagated from outside the
-        conversion guard. A row whose null check cannot be evaluated is
-        not fatal -- which is the claim under test, and it is unchanged.
-
-        Since round 7 the `Decimal` is dropped by the type gate rather
-        than labelled, so it contributes no element. The C-B4 property
-        this test exists for is TOTALITY, not presence: the fit must not
-        raise on content. It does not."""
-        series = pd.Series(["a", decimal.Decimal("sNaN"), "b"], dtype=object)
-        assert _normalize_categorical(series) == ["a", "b"]
-
-    def test_per_row_null_exclusion_excludes_every_null_flavour(self):
-        """The null step went from vectorized to per-row, so pin what it
-        must still do: every null flavour excluded.
-
-        This no longer claims equivalence to `dropna()`. Round 7 narrowed
-        the labelled domain to `str`/`bool`/reals, so array-valued cells
-        drop at the type gate where `dropna()` kept them. That is a
-        deliberate widening of the drop, not a regression -- dropping is
-        recordwise and can only coarsen a release. The equivalence claim
-        was itself the round-5 defect (it was asserted and false), so it
-        is stated as the narrower true thing instead."""
-        nulls = pd.Series(["a", None, np.nan, pd.NA, pd.NaT, "b"], dtype=object)
-        assert _normalize_categorical(nulls) == ["a", "b"]
-        arrays = pd.Series(["a", [1, 2], {"k": 1}, "b"], dtype=object)
-        assert _normalize_categorical(arrays) == ["a", "b"]
-
-    @pytest.mark.parametrize(
-        "container",
-        [[None], [np.nan], np.array([np.nan]), [1, 2], np.array([1, 2]), []],
-        ids=["list_none", "list_nan", "array_nan", "list_two", "array_two", "empty"],
-    )
-    def test_container_cells_are_treated_uniformly_whatever_their_length(self, container):
-        """Codex round 5: `pd.isna` on a container returns an ARRAY of
-        per-element verdicts, not a verdict about the cell. The previous
-        `bool(pd.isna(raw))` check raised for a MULTI-element array, so
-        those cells took one path, but for a SINGLETON it silently
-        returned that one element's verdict and took another. Container
-        cells were being treated differently BY LENGTH, which is the
-        regression this pins.
-
-        Round 7 changed the disposition from "present and labelled" to
-        "dropped at the type gate", but the invariant is the same one and
-        is what matters: length must not decide. All six containers now
-        drop uniformly.
-
-        The earlier version of this test used only `[1, 2]`, whose
-        two-element array takes the raising path, so it passed while the
-        singleton regression was live. Parametrizing across lengths is
-        the whole point."""
-        series = pd.Series(["a", container, "b"], dtype=object)
-        assert _normalize_categorical(series) == ["a", "b"]
-
-    def test_normalize_categorical_keeps_ordinary_non_ascii_labels(self):
-        """The encodability guard drops only what cannot be represented.
-        Ordinary non-ASCII text takes the non-`isascii()` branch and must
-        survive it, or the guard would silently gut international data."""
-        series = pd.Series(["café", "日本語", "naïve"], dtype=object)
-        assert _normalize_categorical(series) == ["café", "日本語", "naïve"]
 
     def test_fit_succeeds_identically_on_neighbours_differing_by_a_hostile_row(self):
         """C-B4, the channel itself: fit success is an observable. If one
@@ -1506,296 +769,6 @@ class TestRecordwiseNormalization:
             delta=1e-6,
         )
         assert "n" in snap["columns"]
-
-
-class TestTotalityGuardStructure:
-    """dennis round 11 (HIGH-2): three consecutive rounds of guard
-    remediation landed in `dp_normalize` -- the `BaseException` widening,
-    the `KeyboardInterrupt`/`SystemExit` re-raise, and the `GeneratorExit`
-    split -- and not one of them had a regression test. Mutants reverting
-    each of the three survived the whole suite. The only thing in the repo
-    describing the guard structure was a docstring.
-
-    CAREFUL when extending these: `_pytest.outcomes.Failed` derives from
-    `BaseException`, not `Exception`, and is in no re-raise tuple, so an
-    `assert` placed inside a mock cell's dunder is SWALLOWED by the guard
-    and the test reports green (dennis round 11, MEDIUM-2). Every mock
-    below records into a list the test inspects afterwards; none asserts
-    inside a dunder.
-    """
-
-    def test_a_cell_raising_a_bare_base_exception_drops_rather_than_aborting(self):
-        """Kills the mutant narrowing either guard back to `Exception`.
-
-        Codex round 10's BLOCKER: `float()` on the numeric path has no type
-        gate ahead of it, so a cell whose `__float__` raised a direct
-        `BaseException` subclass escaped and made fit success a
-        probability-0-versus-1 observable.
-
-        Codex round 12 caught that the categorical half of this was inert:
-        an object that merely defines a raising `__str__` never reaches
-        `str()`, because `_canonical_label` rejects it at the type gate
-        first, so `__str__` is never called and the categorical guard is
-        never exercised. The value has to be a registered `numbers.Real`
-        whose `__float__` raises, which reaches the `float()` inside
-        `_canonical_label`, past the gate."""
-
-        class Sentinel(BaseException):
-            pass
-
-        class NumericHostile:
-            def __float__(self):
-                raise Sentinel("from __float__ on the numeric path")
-
-        @numbers.Real.register
-        class CategoricalHostile:
-            # Registered so it passes `_canonical_label`'s `numbers.Real`
-            # gate and reaches its `float()`; that is the only categorical
-            # route to a BaseException at the guard.
-            def __float__(self):
-                raise Sentinel("from __float__ inside _canonical_label")
-
-        class ArrayHostile:
-            # Reaches the categorical NULL-CHECK guard, which the label-raising
-            # `CategoricalHostile` above does not: `pd.isna` calls a cell's
-            # `__array__` (Codex round 13). With that guard narrowed to
-            # `Exception`, this bare `BaseException` escapes and aborts the fit
-            # instead of dropping the row.
-            def __array__(self, *args, **kwargs):
-                raise Sentinel("from __array__ in the null check")
-
-        numeric = pd.Series([1.0, 2.0, NumericHostile()], dtype=object)
-        assert _normalize_numeric(numeric, lower=0.0, upper=10.0) == [1.0, 2.0]
-        categorical = pd.Series(["a", "b", CategoricalHostile()], dtype=object)
-        assert _normalize_categorical(categorical) == ["a", "b"]
-        null_check = pd.Series(["a", "b", ArrayHostile()], dtype=object)
-        assert _normalize_categorical(null_check) == ["a", "b"]
-
-    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
-    def test_an_interrupt_from_a_cell_still_propagates(self, interrupt):
-        """Kills the mutant dropping `KeyboardInterrupt`/`SystemExit` from
-        the two normalizer re-raise tuples. Totality is deliberately NOT
-        absolute here: an operator must be able to stop a long fit and a
-        caller must be able to exit the process. That residual is a
-        documented domain restriction, so it needs a test as much as the
-        guard does.
-
-        Both paths, because they have separate guards (Codex round 12): the
-        numeric one via `float()`, the categorical one via a registered
-        `numbers.Real` whose `__float__` raises, since a plain object is
-        rejected at the type gate before any dunder that could raise runs."""
-
-        class NumericInterrupter:
-            def __float__(self):
-                raise interrupt
-
-        @numbers.Real.register
-        class CategoricalInterrupter:
-            def __float__(self):
-                raise interrupt
-
-        with pytest.raises(interrupt):
-            _normalize_numeric(
-                pd.Series([1.0, NumericInterrupter()], dtype=object), lower=0.0, upper=1.0
-            )
-        with pytest.raises(interrupt):
-            _normalize_categorical(pd.Series(["a", CategoricalInterrupter()], dtype=object))
-
-    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
-    def test_an_interrupt_from_the_null_check_still_propagates(self, interrupt):
-        """Kills the mutant narrowing the categorical NULL-CHECK guard to
-        `Exception`, or dropping its `KeyboardInterrupt`/`SystemExit` re-raise
-        (dennis + Codex round 13). Distinct from the label-guard case above:
-        that one reaches `float()` inside `_canonical_label`; this one reaches
-        the earlier `pd.isna(raw)`. An in-source note used to call this guard
-        unreachable, on the theory that `pd.isna` never runs a cell's dunders.
-        It does: `pd.isna` calls a cell's `__array__`, so a cell whose
-        `__array__` raises an interrupt routes it straight through this guard,
-        which must re-raise rather than swallow it into a dropped row. Without
-        this test both null-guard mutants survived the whole suite."""
-
-        class ArrayInterrupter:
-            def __array__(self, *args, **kwargs):
-                raise interrupt
-
-        with pytest.raises(interrupt):
-            _normalize_categorical(pd.Series(["a", ArrayInterrupter()], dtype=object))
-
-    def test_len_that_raises_propagates_like_array(self):
-        """`count = len(series)` shares the setup's fail-loud disposition
-        with `series.array`: both are content-dependent container code, both
-        propagate rather than silently degrade. The `array` test covers one
-        half; this covers the length so a future guard around only one of
-        them cannot reintroduce the silent-null release on the other."""
-
-        class LenFails(pd.Series):
-            boom = False
-
-            def __len__(self):
-                if type(self).boom:
-                    raise SystemError("len depends on nothing this test controls")
-                return super().__len__()
-
-        series = LenFails([1.0, 2.0, 3.0])
-        LenFails.boom = True
-        try:
-            with pytest.raises(SystemError):
-                _normalize_numeric(series, lower=0.0, upper=10.0)
-        finally:
-            LenFails.boom = False
-
-    def test_a_consumer_exception_thrown_into_cells_propagates(self):
-        """Kills the mutant that wraps the `yield` in a guard which
-        preserves finalization but swallows a consumer's `throw` (Codex
-        round 12). The `yield` is outside every guard precisely so an
-        exception injected by the consumer is the consumer's, not a fetch
-        failure to be dropped."""
-        generator = _cells(pd.Series([1.0, 2.0, 3.0], dtype=object))
-        next(generator)
-        with pytest.raises(ValueError):
-            generator.throw(ValueError("injected by the consumer"))
-
-    def test_a_container_cell_drops_under_every_boxing(self):
-        """Codex round 12 (BLOCKER): an Arrow `list` column arrives cell by
-        cell as a Python `list`, which `float()` rejects, so it drops. Add
-        one null and pandas widens to `object`, reboxing each `list` as a
-        length-1 `ndarray`, and `float(np.array([1]))` SUCCEEDS -- distance
-        N on an N-row column against a `map(1)` certificate. Both boxings
-        must drop, on both paths."""
-        for arrow_type, value in (
-            (pa.list_(pa.int64()), 1),
-            (pa.large_list(pa.int64()), 2),
-            (pa.list_(pa.float64()), 1.5),
-        ):
-            base = pd.Series(
-                pd.arrays.ArrowExtensionArray(pa.array([[value], [value]], type=arrow_type))
-            )
-            neighbour = pd.concat([base, pd.Series([None])], ignore_index=True)
-            assert base.array[0].__class__ is not neighbour.array[0].__class__  # boxing changed
-            assert _normalize_numeric(base, lower=0.0, upper=1e9) == []
-            assert _normalize_numeric(neighbour, lower=0.0, upper=1e9) == []
-            assert _normalize_categorical(base) == []
-            assert _normalize_categorical(neighbour) == []
-
-    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
-    def test_an_interrupt_from_the_FETCH_also_propagates(self, interrupt):
-        """The re-raise tuple in `_cells` is separate from the ones in the
-        two normalizers, and the test above only covers the latter: it
-        raises from `__float__`, which the numeric guard catches, never
-        reaching the fetch. A mutant that emptied `_cells`'s tuple survived
-        because of exactly that gap."""
-
-        class RaisingGetItem:
-            def __init__(self, values, interrupt):
-                self._values, self._interrupt = list(values), interrupt
-
-            def __len__(self):
-                return len(self._values)
-
-            def __getitem__(self, index):
-                if self._values[index] == 999.0:
-                    raise self._interrupt
-                return self._values[index]
-
-        class ArraySeries(pd.Series):
-            _raising = None
-
-            @property
-            def array(self):
-                return self._raising
-
-        series = ArraySeries([1.0, 999.0, 2.0])
-        series._raising = RaisingGetItem([1.0, 999.0, 2.0], interrupt)
-
-        with pytest.raises(interrupt):
-            list(_cells(series))
-        with pytest.raises(interrupt):
-            _normalize_numeric(series, lower=0.0, upper=10.0)
-
-    def test_cells_stays_a_conforming_generator_when_finalized_early(self):
-        """Kills the mutant moving the `yield` back inside the fetch guard.
-        The `yield` is outside every guard, so a finalization `GeneratorExit`
-        propagates from it; if a guard wrapped the `yield` and swallowed it,
-        CPython would raise `RuntimeError: generator ignored GeneratorExit`
-        and every consumer that stops early would see it."""
-        series = pd.Series([1.0, 2.0, 3.0, 4.0], dtype=object)
-
-        generator = _cells(series)
-        next(generator)
-        generator.close()  # raises RuntimeError if the generator is non-conforming
-
-        for _ in itertools.islice(_cells(series), 2):
-            pass
-
-        for _ in _cells(series):
-            break
-
-        abandoned = _cells(series)
-        next(abandoned)
-        del abandoned
-        gc.collect()
-
-    def test_a_generator_exit_raised_by_the_fetch_drops_one_row(self):
-        """Codex round 11: with the fetch and the `yield` in one `try`, a
-        `GeneratorExit` arriving FROM the fetch was indistinguishable from
-        finalization, and the re-raise added for the latter aborted the fit
-        for the former -- so an array raising it from `__getitem__` took the
-        whole fit down while the docstring promised one dropped row."""
-
-        class RaisingGetItem:
-            def __init__(self, values):
-                self._values = list(values)
-
-            def __len__(self):
-                return len(self._values)
-
-            def __getitem__(self, index):
-                if self._values[index] == 999.0:
-                    raise GeneratorExit("raised by __getitem__")
-                return self._values[index]
-
-        class ArraySeries(pd.Series):
-            _raising = None
-
-            @property
-            def array(self):
-                return self._raising
-
-        series = ArraySeries([1.0, 999.0, 2.0])
-        series._raising = RaisingGetItem([1.0, 999.0, 2.0])
-
-        assert list(_cells(series)) == [1.0, 2.0]
-        assert _normalize_numeric(series, lower=0.0, upper=10.0) == [1.0, 2.0]
-
-    def test_content_dependent_setup_fails_loud_rather_than_releasing_nulls(self):
-        """The disposition for a container whose setup runs content-dependent
-        code, decided across three rounds.
-
-        Codex round 11 wanted `series.array`/`len(series)` guarded so such a
-        container did not abort the fit. Codex round 12 and dennis round 12
-        both showed the guard I added was worse than the disease: swallowing
-        the failure and returning [] emits an artifact asserting the column
-        is ~100% null, which is both a lie about the data and an unbounded
-        multiset difference from the frame's one-row neighbour dressed up as
-        success. The input is out of domain either way -- a container whose
-        setup executes caller code is as live as an object in a cell (see
-        `dp_normalize`'s DOMAIN block) -- so the choice is between two
-        out-of-domain dispositions, and failing LOUD is the honest one: it
-        never emits a lying release, and it matches how a cell-dunder
-        interrupt is handled. So the setup is unguarded and the exception
-        propagates."""
-
-        class SetupFails(pd.Series):
-            @property
-            def array(self):
-                if len(self) > 2:
-                    raise SystemError("setup depends on row count")
-                return pd.Series.array.fget(self)
-
-        with pytest.raises(SystemError):
-            _normalize_numeric(SetupFails([1.0, 2.0, 3.0]), lower=0.0, upper=10.0)
-        # A frame whose setup does NOT raise is read normally.
-        assert _normalize_numeric(SetupFails([1.0, 2.0]), lower=0.0, upper=10.0) == [1.0, 2.0]
 
 
 class TestReleaseIds:
@@ -2066,8 +1039,11 @@ class TestArtifactShape:
             delta=1e-6,
             _session_backend=_RecordingBackend(),
         )
-        expected_numeric = _normalize_numeric(df["age"], lower=0.0, upper=120.0)
-        expected_cat = _normalize_categorical(df["cat"])
+        # Pinned rather than computed via the retired `dp_normalize` oracle
+        # (phase 7): "age" drops the NaN and the None, clamps 200.0 to the
+        # 120.0 bound; "cat" drops the None.
+        expected_numeric = [1.5, 120.0, 50.25]
+        expected_cat = ["a", "b", "a", "c"]
         assert recorded["numeric"] == expected_numeric
         # Unrounded floats reach the measurement -- 1.5/50.25 stay
         # fractional, 200.0 is clamped to the domain bound (120.0) but not
@@ -2287,7 +1263,6 @@ class TestDisclosureChannelRegressions:
         first -- an observable with probability 0 on one neighbour and 1
         on the other, which alone violates any (epsilon, delta) guarantee
         with delta < 1. Both neighbours must now emit zero warnings."""
-        import warnings
 
         domains = {"age": (0.0, 10.0)}
         neighbor_a = pd.DataFrame({"age": pd.Series(["1"], dtype=object)})

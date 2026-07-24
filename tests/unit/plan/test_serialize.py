@@ -47,8 +47,11 @@ def _dp_fit_mixed(tmp_path, *, n=400, epsilon=5.0, delta=1e-6, name: str = "dp.j
     )
     snap = fit_dp_snapshot(
         df,
-        categorical_columns=["state"],
-        numeric_domains={"age": (0.0, 120.0)},
+        # Phase-5 `column_schema` fit API (guide section 3.5).
+        {
+            "state": {"kind": "categorical", "carrier": "text"},
+            "age": {"kind": "numeric", "carrier": "number", "bounds": (0.0, 120.0)},
+        },
         epsilon=epsilon,
         delta=delta,
     )

@@ -73,6 +73,26 @@ verification receipt from the pinned artifact bytes.
 See `docs/what-we-cannot-prove.md` for the full claim wording and every
 documented limit.
 
+### Added (DPS-CODEC: declared typed carriers replace pandas-storage-driven DP normalization, 2026-07-23)
+
+Replaces `fit_dp_snapshot`'s `categorical_columns`/`numeric_domains`
+declaration with a `column_schema` of per-column declared typed carriers
+(`number`, `text`, `flag`), each released through a total, boxing-invariant
+codec (`quality/carriers.py`) rather than the retired `quality/dp_normalize.py`
+pandas value-level stringification. A `text` column releases only genuine
+`str` cells; a `flag` column releases the canonical `true`/`false` tokens
+through a boolean-domain measurement, so a boolean column's release no longer
+depends on whether pandas has stored it as booleans, integers, or floats. The
+pandas-to-carrier adapter is certified as a stability-1 transformation under
+an exact-locked-version proof-stack gate (one certified platform: Linux,
+x86-64, CPython, glibc), and the fit refuses to release on any other platform
+or library set rather than proceed under an unverified proof. The artifact
+version bumps `dps-marginal/v2` -> `dps-marginal/v3`; generation decodes a
+`flag` column's release to genuine Python `bool`, not a string. Engine-side
+only: CLI and platform wiring for the new `column_schema` contract is
+pre-GA/not yet built, so this is not yet a claim about any shipped surface
+outside the engine's own fit/verify/generate path.
+
 ### Added (TX-1: activate + document `text_redact` NER, 2026-07-20)
 
 The `text_redact` `ner` option (spaCy person-name/location detection) was
