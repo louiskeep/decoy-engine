@@ -64,8 +64,9 @@ def _log_normalization_policy() -> None:
     OUTSIDE the conversion guard. `pandas.isna(Decimal("sNaN"))` raises
     `InvalidOperation`, so a one-row neighbour made the whole fit raise
     where its neighbour emitted an artifact -- the exact fit-success
-    channel `dp_normalize` exists to close, reintroduced by the
-    remediation that was meant to improve the operator's signal.
+    channel `dp_normalize` existed to close (now the carrier codecs',
+    see `quality/carriers.py`), reintroduced by the remediation that was
+    meant to improve the operator's signal.
 
     So the message is now fixed text on every fit: it never reads a
     value, never counts, and never branches. The operator learns that
