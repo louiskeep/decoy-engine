@@ -521,6 +521,18 @@ Replaced: `dp_normalize.py` + the fit-API surface. Kept (adapted): `dp_budget`,
 Gates per phase: dennis (Opus) then Codex; Opus may take the hardest carrier/adapter/
 orchestration build given DPS difficulty.
 
+**Carry-forward from the phase-5 review (dennis M1) — undeclared-column omission.**
+The DataFrame fit path (`dataframe_to_carrier_table`) fits exactly the columns named
+in `column_schema` and silently ignores any extra frame column; only a schema column
+absent from the frame fails closed (`dp_adapter_missing_column`). This is
+spec-sanctioned (§3.5, "extra frame columns ignored") and is NOT a DP leak (nothing
+about an omitted column is released), but it removes the old API's full-coverage safety
+net, so a caller could believe a column is DP-protected when it was never in the
+schema. The direct-`CarrierTable` path does not have this gap (`sanitize_carrier_table`
+requires `set(columns) == set(schema)`). The CLI + platform seam (item 9) MUST require
+explicit acknowledgement of undeclared frame columns rather than dropping them silently,
+and the customer docs must state the omission behavior.
+
 ## 9. Resolved open questions
 
 1. Datetime/timedelta null-only, reject before unboxing. 2. Exact dependency tuples
