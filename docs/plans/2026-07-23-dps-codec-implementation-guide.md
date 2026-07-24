@@ -64,11 +64,23 @@ BUILD PROGRESS:
   identity, flag bool-domain stability-1, query-count, provenance ordering, epsilon >= 0.
   New pandas-free module `quality/dp_fit_schema.py`; `OpenDpReleaseSession` extracted to
   `quality/dp_session.py` (phase-4 size debt). Full DP+plan+generation surface green.
-- **Phase 6 (flag artifact/generation semantics in `_sample.py`) — IN PROGRESS.**
-  Implement the generation-side flag decoder ("true"/"false" tokens -> bool, other_mode
-  rules for flag) and LIFT the phase-5 M2 fail-closed guard
-  (`statistical_dp_flag_sampler_unwired` in `generation/statistical/_spec.py`) now that
-  the sampler can decode flags.
+- **Phase 6 (flag artifact/generation semantics in `_sample.py`) — DONE & dual-gate
+  cleared.** Generation-side flag decoder ("true"/"false" -> genuine Python `bool`),
+  `carrier` threaded onto the frozen `StatisticalSpec` (dropped from serialization when
+  `None`, honored only for a compiler-verified column), `other_mode="emit"` rejected for
+  flag, a verifier-side canonical-token shape guard (`dp_flag_token_invalid`), and the
+  phase-5 M2 guard lifted. Build `bb95747`; remediation `bc33c1a` (dennis+Codex HIGH: the
+  M2-lift went too far -- an unverified recognizable v3 flag artifact fell to the legacy
+  `str()` path and emitted strings against a `bool` dtype; restored fail-closed via
+  `statistical_flag_requires_dp_declaration`, gated on the `dp`-block-presence
+  discriminator so the guide-3.9 legacy path for ordinary snapshots is preserved). Gates:
+  dennis BLOCK 1 HIGH (its own Codex reproduced it) -> remediated -> independent Codex
+  APPROVE 0 findings. Known LOW carried forward: `plan/_checks_dp.py` at exactly 600 LOC
+  (zero headroom; next editor extracts). Full generation+plan+quality surface green.
+- **Phase 7 (retire `dp_normalize.py` once the property/carrier suite subsumes its
+  matrix) — NEXT.**
+- **Phase 8 (docs: `_spec.py`/`_global_settings.py` wording, claim-copy tests, CHANGELOG,
+  `what-we-cannot-prove.md`) — PENDING.**
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
