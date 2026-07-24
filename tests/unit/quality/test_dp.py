@@ -575,10 +575,11 @@ class TestRecordwiseNormalization:
             "categorical_unsupported": (
                 "released as null: in a text column every non-str cell (a boolean, any "
                 "number, decimal or complex value, a datetime or timedelta, a container, and "
-                "any other type); in a flag column every string (even '1' or '0') and every "
-                "other cell that does not convert to an exact real 0 or 1 (a 2 or a 0.5, a "
-                "nonzero-imaginary complex, a datetime or timedelta, a container); and in "
-                "either, text whose value AS RECEIVED carries NUL or is not UTF-8 encodable"
+                "any other type); in a flag column every string or bytes value (even '1' or "
+                "'0') and every other cell that does not convert to an exact real 0 or 1 (a 2 "
+                "or a 0.5, a nonzero-imaginary complex, a datetime or timedelta, a container); "
+                "and in either, text whose value AS RECEIVED carries NUL or is not UTF-8 "
+                "encodable"
             ),
             "numeric_values": (
                 "float64, values outside the declared domain clamped to it, "

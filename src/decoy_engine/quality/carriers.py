@@ -103,22 +103,6 @@ class CarrierError(Exception):
 # --- Boxing-invariant scalar predicates (numpy-only, no pandas) ------------
 
 
-def _unbox(raw: Any) -> Any:
-    """Strip the numpy scalar box, leaving the value it holds.
-
-    pandas chooses the box from the whole column's contents, so the gate
-    must see the value, not the box: `numpy.bool_` is neither `bool` nor a
-    `numbers.Real`, so a naive type check drops an entire nullable-boolean
-    column. `.item()` maps every numpy scalar to its Python equivalent.
-    It is TYPE-ERASING, not gate-preserving, so callers must reject
-    datetimelike values BEFORE calling it: `datetime64[ns].item()` returns
-    an epoch INT, which would pass a real-number gate and release the
-    timestamps themselves."""
-    if isinstance(raw, np.generic):
-        return raw.item()
-    return raw
-
-
 def _is_datetimelike(raw: Any) -> bool:
     """A time quantity has no categorical label and no numeric value.
 
@@ -203,11 +187,14 @@ def decode_number(value: Any, *, lower: float, upper: float) -> tuple[float, boo
 
 
 def decode_flag(value: Any) -> tuple[bool, bool]:
-    """Total flag codec (guide section 3.2). Accepts `bool`, the exact
-    int/float 0/1 reboxings, and a zero-imaginary complex whose real is
-    exactly 0 or 1 (this is the bool->complex128 collapse a `1j` neighbour
-    forces). Everything else -- strings/bytes (a `"1"` is not a flag),
-    nonzero imaginary, 0.5, 2 -- is invalid."""
+    """Total flag codec (guide section 3.2). After rejecting strings/bytes
+    (a `"1"` is not a flag), containers, datetimelikes, and a nonzero
+    imaginary, accepts any remaining value whose `float()` is exactly 0.0
+    or 1.0 -- `bool`, the int/float 0/1 reboxings, a zero-imaginary complex
+    whose real is 0 or 1 (the bool->complex128 collapse a `1j` neighbour
+    forces), and equally a `Decimal`/`Fraction`/any `__float__` object that
+    resolves to 0 or 1. Everything else -- a `"1"`, `b"1"`, a nonzero
+    imaginary, 0.5, 2 -- is invalid."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:

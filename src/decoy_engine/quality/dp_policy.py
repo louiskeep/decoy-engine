@@ -9,6 +9,7 @@ states it, both of which must stay content-independent.
 from __future__ import annotations
 
 import logging
+from types import MappingProxyType
 
 _logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ _logger = logging.getLogger(__name__)
 # Identical bytes in every artifact: a policy that varied with the frame
 # would be an unnoised channel. Round 9 deleted the per-column drop
 # COUNT this comment used to point at; nothing below logs one.
-_DP_NORMALIZATION_POLICY = {
+_DP_NORMALIZATION_POLICY = MappingProxyType({
     "categorical_labels": (
         "a declared text column releases only genuine str cells, kept verbatim "
         "unless the value AS RECEIVED contains NUL or cannot be encoded as UTF-8 "
@@ -29,10 +30,11 @@ _DP_NORMALIZATION_POLICY = {
     "categorical_unsupported": (
         "released as null: in a text column every non-str cell (a boolean, any "
         "number, decimal or complex value, a datetime or timedelta, a container, and "
-        "any other type); in a flag column every string (even '1' or '0') and every "
-        "other cell that does not convert to an exact real 0 or 1 (a 2 or a 0.5, a "
-        "nonzero-imaginary complex, a datetime or timedelta, a container); and in "
-        "either, text whose value AS RECEIVED carries NUL or is not UTF-8 encodable"
+        "any other type); in a flag column every string or bytes value (even '1' or "
+        "'0') and every other cell that does not convert to an exact real 0 or 1 (a 2 "
+        "or a 0.5, a nonzero-imaginary complex, a datetime or timedelta, a container); "
+        "and in either, text whose value AS RECEIVED carries NUL or is not UTF-8 "
+        "encodable"
     ),
     "numeric_values": (
         "float64, values outside the declared domain clamped to it, "
@@ -43,7 +45,7 @@ _DP_NORMALIZATION_POLICY = {
         "timedelta; a complex value with a nonzero imaginary part; and any "
         "value that cannot be converted to a float)"
     ),
-}
+})
 
 
 def _log_normalization_policy() -> None:
@@ -80,8 +82,8 @@ def _log_normalization_policy() -> None:
     """
     _logger.info(
         "dp fit: a declared text column releases only genuine string values and a "
-        "declared flag column releases 'true'/'false' for a cell that converts to an "
-        "exact real 0 or 1; every other cell (a string, a number that is not 0 or 1, "
+        "declared flag column releases 'true'/'false' for a boolean or a number equal "
+        "to 0 or 1; every other cell (a string or bytes, a number that is not 0 or 1, "
         "a boolean in a text column, datetimes, timedeltas, containers and other "
         "types) is released as null. This message is fixed and does not indicate "
         "whether any value in this frame was affected."

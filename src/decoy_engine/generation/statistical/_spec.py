@@ -182,6 +182,26 @@ def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
     return digest, snap
 
 
+def _snapshot_declares_flag(
+    snap: Mapping[str, Any], col_entry: Mapping[str, Any], source_column: str
+) -> bool:
+    """Does a recognizable DP artifact declare this column a `flag` release --
+    in EITHER of the two places it records a carrier? The `columns` block entry
+    (`col_entry`) and the authoritative `dp.column_schema` entry must agree for a
+    genuine release, but the unverified-refusal below must fire if the column is
+    a flag by EITHER, so zeroing only the columns-block carrier (which
+    `verify_dp_snapshots` never gets to catch, because an undeclared-DP pipeline
+    early-returns) cannot slip a bool column onto the legacy `str()` path. Reading
+    the carrier to REFUSE is always safe; the non-inference rule forbids only
+    reading it to GRANT an exemption."""
+    if col_entry.get("carrier") == "flag":
+        return True
+    dp_block = snap.get("dp")
+    schema = dp_block.get("column_schema") if isinstance(dp_block, Mapping) else None
+    entry = schema.get(source_column) if isinstance(schema, Mapping) else None
+    return isinstance(entry, Mapping) and entry.get("carrier") == "flag"
+
+
 def load_spec(
     col_cfg: dict[str, Any],
     *,
@@ -250,7 +270,9 @@ def load_spec(
                     "'number'/'flag'/'text'."
                 ),
             )
-    elif isinstance(snap.get("dp"), Mapping) and col_entry.get("carrier") == "flag":
+    elif isinstance(snap.get("dp"), Mapping) and _snapshot_declares_flag(
+        snap, col_entry, source_column
+    ):
         # A recognizable DP artifact (it carries a `dp` block) whose column is a
         # `flag` (bool-domain) release reached generation WITHOUT the compiler
         # verifying it: this pipeline declares no `global_settings.dp`, so
@@ -261,9 +283,13 @@ def load_spec(
         # always safe (the non-inference rule forbids only reading it to GRANT
         # an exemption). Phase 5's now-lifted M-2 guard failed closed here
         # unconditionally; this restores it for the flag case with a directive.
-        # An ordinary distribution-snapshot/v1 column with a stray `carrier` and
-        # NO `dp` block stays on the legacy path (guide section 3.9) -- hence the
-        # `snap["dp"]` presence condition.
+        # The `flag` is recognized from EITHER carrier location (Codex
+        # whole-feature BLOCKER): keying only on the columns-block carrier let a
+        # split-declaration artifact -- columns carrier zeroed, dp.column_schema
+        # still `flag` -- bypass this on the undeclared-DP path where no verifier
+        # runs. An ordinary distribution-snapshot/v1 column with a stray
+        # `carrier` and NO `dp` block stays on the legacy path (guide section
+        # 3.9) -- hence the `snap["dp"]` presence condition.
         raise StatisticalSpecError(
             code="statistical_flag_requires_dp_declaration",
             message=(

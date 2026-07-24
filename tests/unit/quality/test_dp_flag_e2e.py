@@ -307,3 +307,124 @@ class TestFlagCarrierGeneratesRealBoolEndToEnd:
         with pytest.raises(PlanCompileError) as exc:
             compile_plan(cfg, _profile(), decoy_engine_version="test")
         assert exc.value.code == "statistical_flag_requires_dp_declaration"
+
+    def test_split_carrier_flag_without_dp_declaration_is_refused(self, tmp_path):
+        """Codex whole-feature BLOCKER: on the undeclared-DP path no verifier
+        runs, so `load_spec` is the sole guard. Keying its refusal only on the
+        columns-block carrier let a split-declaration artifact -- columns carrier
+        DELETED, `dp.column_schema` still `flag` -- bypass it and emit
+        'true'/'false' strings against the bool dtype. The refusal now reads the
+        authoritative `dp.column_schema` too, so it fails closed."""
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        assert tampered["dp"]["column_schema"]["is_active"]["carrier"] == "flag"
+        # Delete ONLY the columns-block carrier; the authoritative dp-side
+        # declaration still marks this a flag release.
+        del tampered["columns"]["is_active"]["carrier"]
+        path = _write(tmp_path, "split_nodp.json", tampered)
+        cfg = {
+            "global_settings": {"seed": 1},  # deliberately NO dp declaration
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "is_active",
+                            "type": "statistical",
+                            "snapshot_file": path,
+                            "allow_real_categories": True,
+                        },
+                    ],
+                }
+            ],
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert exc.value.code == "statistical_flag_requires_dp_declaration"
+
+
+class TestConsumeSideReleaseIdentity:
+    """Codex whole-feature BLOCKER/HIGH: `verify_dp_snapshots` must require the
+    exact codec/scope/adjacency this build's stability-1 argument is made for,
+    and must reject numeric edges pushed outside the declared domain (which the
+    sampler would otherwise draw from and emit out-of-domain values)."""
+
+    def test_future_codec_version_is_rejected(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        tampered["dp"]["codec"]["version"] = "2"  # a codec generation this build does not implement
+        cfg = _cfg_for(_write(tmp_path, "codec2.json", tampered))
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_codec_unsupported"
+
+    def test_unknown_codec_id_is_rejected(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        tampered["dp"]["codec"]["id"] = "some-other-codec"
+        cfg = _cfg_for(_write(tmp_path, "codecid.json", tampered))
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_codec_unsupported"
+
+    def test_mismatched_adjacency_is_rejected(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        tampered["dp"]["adjacency"] = "replace-one-row"  # a different, unproven adjacency
+        cfg = _cfg_for(_write(tmp_path, "adj.json", tampered))
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_release_shape_unsupported"
+
+    def test_novel_boundary_is_rejected(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        tampered["dp"]["boundary"] = "handwritten"  # not one of the certified boundaries
+        cfg = _cfg_for(_write(tmp_path, "boundary.json", tampered))
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_release_shape_unsupported"
+
+    def test_bin_edges_pushed_outside_the_domain_are_rejected(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        edges = tampered["columns"]["age"]["stats"]["bin_edges"]
+        # Push the top edge far outside the declared [0, 120] domain, keeping
+        # the edge COUNT intact so only a canonical-edge check catches it.
+        edges[-1] = 10_000.0
+        cfg = _cfg_for(_write(tmp_path, "edges.json", tampered))
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_numeric_edges_mismatch"
+
+    def test_interior_edges_perturbed_are_rejected(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        edges = tampered["columns"]["age"]["stats"]["bin_edges"]
+        # Nudge an interior edge off the canonical grid (still inside the
+        # domain, same count): a genuine release never has non-canonical edges.
+        edges[1] = edges[1] + 0.5
+        cfg = _cfg_for(_write(tmp_path, "interior.json", tampered))
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_numeric_edges_mismatch"
+
+    def test_normalization_policy_is_isolated_per_artifact(self):
+        """Codex whole-feature MEDIUM: each artifact must own its policy dict, so
+        mutating one cannot bleed into the shared module value and thence every
+        later artifact."""
+        a = _fit_flag_plus_numeric()
+        b = _fit_flag_plus_numeric()
+        assert a["dp"]["normalization_policy"] == b["dp"]["normalization_policy"]
+        assert a["dp"]["normalization_policy"] is not b["dp"]["normalization_policy"]
+        a["dp"]["normalization_policy"]["categorical_labels"] = "TAMPERED"
+        assert b["dp"]["normalization_policy"]["categorical_labels"] != "TAMPERED"
+        c = _fit_flag_plus_numeric()
+        assert c["dp"]["normalization_policy"]["categorical_labels"] != "TAMPERED"

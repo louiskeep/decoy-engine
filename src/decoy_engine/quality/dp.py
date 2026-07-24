@@ -88,8 +88,10 @@ from decoy_engine.quality.dp_policy import (
 from decoy_engine.quality.dp_provenance import check_fit_environment, current_provenance
 from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
 from decoy_engine.quality.dp_schema import (
+    DP_ADJACENCY,
     DP_CODEC_ID,
     DP_CODEC_VERSION,
+    DP_RELEASE_SCOPE,
     DP_SNAPSHOT_SCHEMA_VERSION,
 )
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
@@ -101,8 +103,9 @@ if TYPE_CHECKING:
     # imported lazily, inside the fit, only when a DataFrame is actually passed.
     import pandas as pd
 
-DP_RELEASE_SCOPE = "single-column-marginals"
-DP_ADJACENCY = "add-remove-one-row"
+# `DP_RELEASE_SCOPE` / `DP_ADJACENCY` now live in the pandas-free `dp_schema`
+# module (imported above) so the plan-time verifier can require them without
+# pulling this pandas-touching orchestrator into its import closure.
 DP_ACCOUNTANT_LABEL = "dp_accounting PLD composition over OpenDP privacy maps"
 
 _DEFAULT_NUMERIC_BINS = 10
@@ -487,7 +490,11 @@ def _fit_dp_snapshot_with_backend(
             "release_id": release_id,
             "scope": DP_RELEASE_SCOPE,
             "adjacency": DP_ADJACENCY,
-            "normalization_policy": _DP_NORMALIZATION_POLICY,
+            # Fresh per-artifact copy (guide section 3.9): the module value is an
+            # immutable mapping, but each artifact must own its dict so a caller
+            # mutating one returned artifact's policy cannot bleed into the shared
+            # module value and thence into every subsequent artifact.
+            "normalization_policy": dict(_DP_NORMALIZATION_POLICY),
             "epsilon_total": epsilon_total,
             "delta_total": delta_total,
             "accountant": DP_ACCOUNTANT_LABEL,

@@ -27,3 +27,19 @@ DP_SNAPSHOT_SCHEMA_VERSION = "dps-marginal/v3"
 # of the library-version annotation, which the proof-stack fingerprint gates.
 DP_CODEC_ID = "decoy-carrier-codec"
 DP_CODEC_VERSION = "1"
+
+# Release-shape identity recorded in the v3 artifact (guide sections 3.9/4.4).
+# The consume-side verifier (`plan/_checks_dp.py`) must require these EXACT
+# values on every accepted artifact: the stability-1 adjacency argument is
+# specific to single-column marginals under add/remove-one-row, so an artifact
+# recording a different scope or adjacency (or a codec version this build does
+# not implement) is not one whose guarantee this consumer can stand behind, and
+# is rejected rather than accepted as DP-verified. Kept here, pandas-free, so
+# both the fit (`quality/dp.py`) and the plan-time verifier reference one
+# source of truth (dennis round 9 rationale for the schema version).
+DP_RELEASE_SCOPE = "single-column-marginals"
+DP_ADJACENCY = "add-remove-one-row"
+# The `boundary` records how the fit reached its values: a pandas adapter
+# (`carrier_adapter.py`) or a direct pandas-free CarrierTable. Both are
+# certified; the field must be one of these known values, not absent or novel.
+DP_BOUNDARY_VALUES = ("adapter", "direct")

@@ -35,8 +35,9 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from decoy_engine.plan._checks_dp_carrier import (
     carrier_aware_query_count,
     check_flag_tokens_canonical,
+    check_numeric_release_shape,
+    check_release_compatibility,
     column_block_matches_schema,
-    numeric_shape_matches_a_dp_release,
     schema_matches_legacy,
 )
 from decoy_engine.plan._errors import PlanCompileError
@@ -313,6 +314,12 @@ def verify_dp_snapshots(
                     ),
                 )
 
+            # Release-shape identity (guide 3.9/4.4): require the exact codec,
+            # scope, adjacency and boundary this build's stability-1 argument is
+            # made for, before trusting any reconstruction below. A future codec
+            # version or a different adjacency must fail closed, not verify.
+            check_release_compatibility(dp_block, table_name=table_name, col_name=col_name)
+
             categorical_cols = dp_block.get("categorical_columns")
             numeric_domains = dp_block.get("numeric_domains")
             if not isinstance(categorical_cols, list) or not isinstance(numeric_domains, dict):
@@ -455,38 +462,19 @@ def verify_dp_snapshots(
                 )
 
             if kind == "numeric":
-                domain = numeric_domains.get(source_column)
-                numeric_bins = dp_block.get("numeric_bins")
-                shape_ok = False
-                if (
-                    isinstance(domain, list)
-                    and len(domain) == 2
-                    and isinstance(domain[0], (int, float))
-                    and isinstance(domain[1], (int, float))
-                    and isinstance(numeric_bins, int)
-                    and not isinstance(numeric_bins, bool)
-                ):
-                    shape_ok = numeric_shape_matches_a_dp_release(
-                        col_snap,
-                        lower=float(domain[0]),
-                        upper=float(domain[1]),
-                        numeric_bins=numeric_bins,
-                    )
-                if not shape_ok:
-                    _raise(
-                        "dp_snapshot_numeric_shape_mismatch",
-                        table_name=table_name,
-                        col_name=col_name,
-                        message=(
-                            f"statistical column {col_name!r} in table {table_name!r}: source "
-                            f"column {source_column!r} is declared numeric, but its stats block "
-                            "does not have the shape a genuine fit_dp_snapshot release always "
-                            "has (min/max equal to the declared domain bounds, mean/std null, "
-                            "quantiles empty, and len(bin_counts) == numeric_bins). This is the "
-                            "shape of an exact, non-DP snapshot with a copied or hand-written "
-                            "dp block, not a DP release for this column."
-                        ),
-                    )
+                # Domain sanity + copy-paste shape + canonical bin_edges, all in
+                # the pandas-free carrier-checks helper (keeps this orchestrator
+                # under the ~600-LOC cap). The edge check closes the Codex
+                # whole-feature HIGH: the sampler draws from bin_edges, so edges
+                # outside the declared domain would emit out-of-domain values.
+                check_numeric_release_shape(
+                    col_snap,
+                    dp_block,
+                    source_column=source_column,
+                    numeric_domains=numeric_domains,
+                    table_name=table_name,
+                    col_name=col_name,
+                )
 
             # Guide 3.4 shape guard: a flag column's top_values must be only
             # the two canonical tokens the fit emits, so a bogus token fails

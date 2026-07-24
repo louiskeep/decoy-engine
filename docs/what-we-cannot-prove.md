@@ -94,11 +94,12 @@ is what makes it so; it is not a claim about pandas in general.
 > value, a date, timestamp or timedelta, a container, or any other type)
 > contributes nothing and is counted as a null. A `flag` column releases the two
 > canonical labels `true` and `false`: it releases the matching label for any
-> non-string cell whose value converts to an exact real `0` or `1` (a boolean, or
-> the `0`/`1` an integer, float, decimal, or zero-imaginary-complex holds after a
-> concatenation reboxes the column's storage), and counts as a null every string
-> (even `"1"` or `"0"`) and every other cell that does not (a `2`, a `0.5`, a
-> nonzero-imaginary complex, a date, or a container). This is a deliberate
+> cell that is not text or bytes and whose value converts to an exact real `0` or
+> `1` (a boolean, or the `0`/`1` an integer, float, decimal, or
+> zero-imaginary-complex holds after a concatenation reboxes the column's
+> storage), and counts as a null every text or bytes value (even `"1"` or `b"1"`)
+> and every other cell that does not (a `2`, a `0.5`, a nonzero-imaginary complex,
+> a date, or a container). This is a deliberate
 > restriction, not an oversight: deriving a label from
 > a value's pandas storage would make the label a function of how the column was
 > boxed, and a column's storage is a function of all its rows, so one added row
@@ -238,10 +239,16 @@ trusted from the artifact's own claim alone) certifies it:
   the pinned snapshot as a `dps-marginal/v3` release for that specific
   column. That certification is a PURE FUNCTION of the artifact's OWN
   `dp` key: it checks that the block is internally consistent (the
-  declared library versions match the running environment, the declared
-  `query_count` recomputes from the declared columns, the declared kind
-  matches the column, cheap shape evidence for numeric columns), never
-  that an actual OpenDP fit produced the numbers it reports. A forged but
+  recorded proof-stack identity -- platform, CPython version and lock
+  fingerprint -- is one of this build's certified rows, NOT a live
+  comparison against the generating host's own installed libraries, which
+  may legitimately differ from the fitting host's; the recorded codec,
+  scope and adjacency are exactly the ones this build implements; the
+  declared `query_count` recomputes from the declared columns; the
+  declared kind matches the column; and, for numeric columns, the declared
+  domain is well-formed and the recorded `bin_edges` are the canonical
+  edges that domain implies), never that an actual OpenDP fit produced the
+  numbers it reports. A forged but
   internally consistent `dp` block -- correct library versions, a
   `query_count` that recomputes cleanly, a fresh `release_id`, a
   plausible `epsilon_total` -- attached to an ordinary EXACT snapshot
