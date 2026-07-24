@@ -511,13 +511,12 @@ def _fit_dp_snapshot_with_backend(
         # emission/insertion order can never leak into the artifact.
         if carrier == "flag":
             retained = [
-                (_flag_token(label), _serialize_count(count)) for label, count in grouped_raw.items()
+                (_flag_token(label), _serialize_count(count))
+                for label, count in grouped_raw.items()
             ]
             dtype_label = _DP_FLAG_DTYPE_LABEL
         else:
-            retained = [
-                (label, _serialize_count(count)) for label, count in grouped_raw.items()
-            ]
+            retained = [(label, _serialize_count(count)) for label, count in grouped_raw.items()]
             dtype_label = _DP_CATEGORICAL_DTYPE_LABEL
         retained.sort(key=lambda pair: (-pair[1], pair[0]))
         non_null_total = _serialize_count(total_raw)
