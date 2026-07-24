@@ -20,7 +20,16 @@ BUILD PROGRESS:
   suite mutation-verified non-vacuous. `quality/carriers.py` (pandas-free),
   `dp_schema.py`, `test_carriers.py` (62 passed, 1 phase-2 xfail). L1 (top-level
   `__init__` eager pandas import) remains deferred to when the fit API lands.
-- **Phase 2 (pandas adapter) — IN PROGRESS.**
+- **Phase 2 (pandas adapter) — DONE & dual-gate cleared.** Commits 7495086 (build,
+  DataFrame-path crown-jewel arm un-xfailed) -> d76ef46 (dennis LOW-1: coded
+  duplicate-column error) -> 9556773 (Codex LOWs: string carrier/kind validation,
+  MultiIndex ambiguous-column guard, real complex128 boxing seed). dennis APPROVE +
+  Codex APPROVE. `quality/carrier_adapter.py` (lazily imported; guarded positional
+  per-cell fetch -> phase-1 codecs -> sanitize; closed kind x carrier validation).
+  Codex mutation-confirmed the crown-jewel is non-vacuous and found no stability-1
+  break. test_carriers.py 97 passed; direct-path isolation intact.
+- **Phase 3 (certified lock-fingerprint manifest + fit/generation gates + CI matrix) —
+  IN PROGRESS.**
 
 GATE OUTCOME: Codex round 6 (framed as the explicit build-now-vs-revise decision)
 probed the fingerprint + adapter split and returned **A -- BUILD NOW**: revision 6 is
