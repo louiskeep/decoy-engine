@@ -895,6 +895,21 @@ class TestColumnSchemaValidation:
             dataframe_to_carrier_table(pd.DataFrame({"a": [1]}), {"b": {"carrier": "text"}})
         assert exc.value.code == "dp_adapter_missing_column"
 
+    def test_duplicate_column_label_fails_identically_on_empty_and_one_row(self) -> None:
+        # A schema key mapping to two frame columns makes df[name] a DataFrame,
+        # not a Series -- a columns-level structural problem. It must fail with a
+        # coded error before any cell read, the same way on an empty frame and
+        # its one-row neighbour (data-independent), not leak a raw AttributeError.
+        schema = {"n": {"carrier": "number", "bounds": (0.0, 9.0)}}
+        codes = []
+        for rows in ([[], []], [[1.0], [2.0]]):  # empty then one-row neighbour
+            frame = pd.DataFrame(dict(enumerate(rows)))
+            frame.columns = ["n", "n"]  # duplicate label
+            with pytest.raises(CarrierError) as exc:
+                dataframe_to_carrier_table(frame, schema)
+            codes.append(exc.value.code)
+        assert codes == ["dp_adapter_duplicate_column", "dp_adapter_duplicate_column"]
+
     @pytest.mark.parametrize(
         "bounds",
         [("0", "1"), (0.0, float("nan")), (float("-inf"), 1.0), (5.0, 1.0), (None, 1.0)],

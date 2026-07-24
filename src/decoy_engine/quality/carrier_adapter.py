@@ -278,6 +278,16 @@ def dataframe_to_carrier_table(df: pd.DataFrame, column_schema: dict[str, dict])
             code="dp_adapter_missing_column",
             message=f"DataFrame is missing schema columns: {sorted(missing)}",
         )
+    # A schema key that maps to two DataFrame columns makes `df[name]` a
+    # DataFrame, not a Series; that is a structural (columns-level) problem, not
+    # a row-value one, so reject it with a coded error before any cell read
+    # rather than letting `_fetch_positional` raise a raw AttributeError.
+    duplicated = [name for name in column_schema if list(df.columns).count(name) > 1]
+    if duplicated:
+        raise CarrierError(
+            code="dp_adapter_duplicate_column",
+            message=f"DataFrame has duplicate labels for schema columns: {sorted(duplicated)}",
+        )
     row_count = len(df)
     columns: dict[str, Column] = {}
     for name, spec in column_schema.items():
