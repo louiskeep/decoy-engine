@@ -91,21 +91,36 @@ def _integral_reboxings(n: int) -> list[Any]:
     return boxes
 
 
+def _box_signatures(boxes: Sequence[Any]) -> set:
+    """The distinct (python type, numpy dtype) shapes in a reboxing set.
+
+    Mirrors the non-vacuous coverage guard at test_dp.py:688: an invariance
+    test asserting a decode set collapses to one element passes VACUOUSLY if
+    the inputs share a box, so every invariance test pins that its inputs
+    actually span differing boxes -- a future trim of the strategy then fails
+    loudly instead of silently proving nothing."""
+    return {(type(b).__name__, getattr(b, "dtype", None)) for b in boxes}
+
+
 class TestCodecBoxingInvariance:
     @settings(max_examples=300, suppress_health_check=[HealthCheck.too_slow])
     @given(n=st.integers(min_value=-(2**23), max_value=2**23))
     def test_number_codec_is_invariant_across_every_integral_reboxing(self, n: int) -> None:
+        boxes = _integral_reboxings(n)
+        assert len(_box_signatures(boxes)) >= 6, "reboxing strategy went vacuous"
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # a codec that leaks a warning fails here
-            results = {decode_number(box, **_WIDE) for box in _integral_reboxings(n)}
+            results = {decode_number(box, **_WIDE) for box in boxes}
         assert results == {(float(n), True)}, (n, results)
 
     @settings(max_examples=300, suppress_health_check=[HealthCheck.too_slow])
     @given(n=st.integers(min_value=-8, max_value=8))
     def test_flag_codec_collapses_every_reboxing_of_zero_and_one(self, n: int) -> None:
+        boxes = _integral_reboxings(n)
+        assert len(_box_signatures(boxes)) >= 6, "reboxing strategy went vacuous"
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            results = {decode_flag(box) for box in _integral_reboxings(n)}
+            results = {decode_flag(box) for box in boxes}
         if n == 0:
             assert results == {(False, True)}, results
         elif n == 1:
@@ -116,6 +131,7 @@ class TestCodecBoxingInvariance:
     @given(f=st.floats(allow_nan=False, allow_infinity=False, min_value=-1e12, max_value=1e12))
     def test_number_codec_is_invariant_across_real_and_zero_imag_complex(self, f: float) -> None:
         boxes = [f, np.float64(f), complex(f, 0), np.complex128(complex(f, 0))]
+        assert len(_box_signatures(boxes)) >= 4, "reboxing strategy went vacuous"
         results = {decode_number(box, **_WIDE) for box in boxes}
         # -0.0 is normalized to 0.0, so compare against the codec's own image.
         expected = decode_number(f, **_WIDE)
@@ -131,6 +147,7 @@ class TestCodecBoxingInvariance:
         # NUL and lone surrogates are excluded here (they have their own seed);
         # this pins that an ordinary str and its numpy box decode identically.
         boxes = [s, np.str_(s)]
+        assert len(_box_signatures(boxes)) >= 2, "reboxing strategy went vacuous"
         results = {decode_text(box) for box in boxes}
         assert results == {(s, True)}, (s, results)
 
@@ -313,7 +330,20 @@ class TestRegressionSeeds:
         assert decode_number(10**10000, **_WIDE)[1] is False
 
     @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
-    def test_an_interrupt_from_a_cell_hook_propagates(self, interrupt: type[BaseException]) -> None:
+    @pytest.mark.parametrize(
+        "decode",
+        [
+            pytest.param(lambda v: decode_number(v, **_WIDE), id="number"),
+            pytest.param(decode_flag, id="flag"),
+            pytest.param(decode_text, id="text"),
+        ],
+    )
+    def test_an_interrupt_from_a_cell_hook_propagates(
+        self, decode: Any, interrupt: type[BaseException]
+    ) -> None:
+        # Every codec runs null-detection (`_is_container` -> `np.ndim` -> `__array__`)
+        # before its own conversion, so an interrupt raised from a cell's hook must
+        # escape all three -- it is never swallowed by the broad drop-to-null guard.
         class Interrupts:
             def __float__(self) -> float:
                 raise interrupt()
@@ -322,7 +352,7 @@ class TestRegressionSeeds:
                 raise interrupt()
 
         with pytest.raises(interrupt):
-            decode_number(Interrupts(), **_WIDE)
+            decode(Interrupts())
 
     def test_decimal_is_treated_as_a_real_number(self) -> None:
         assert decode_number(decimal.Decimal("1.5"), **_WIDE) == (1.5, True)

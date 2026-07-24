@@ -166,7 +166,12 @@ def decode_number(value: Any, *, lower: float, upper: float) -> tuple[float, boo
     the bound; a finite out-of-domain value clamps into `[lower, upper]`;
     the result is a signed-zero-normalized binary64. Returns `(value,
     valid)`; the value at an invalid position is an arbitrary canonical
-    `0.0`."""
+    `0.0`. A `float`-parseable `str`/`bytes` IS parsed (e.g. `"5"` -> 5.0):
+    this is carried forward deliberately from `dp_normalize._normalize_numeric`
+    (`dp_normalize.py:280`, bare `float(raw)`) so the property suite is
+    equal-strength to the matrix it replaces -- do not "fix" it into a
+    divergence. It is intentionally asymmetric with the flag codec, which
+    rejects `str`/`bytes` to kill the `float("1")->True` smuggle."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # section 3.7 single-threaded precondition
         try:
@@ -310,7 +315,7 @@ def _check_validity(validity: Any, row_count: int, name: str) -> np.ndarray:
     return validity
 
 
-def _sanitize_number(name: str, col: NumberColumn, spec: dict, row_count: int) -> NumberColumn:
+def _sanitize_number(name: str, col: Column, spec: dict, row_count: int) -> NumberColumn:
     if not isinstance(col, NumberColumn):
         raise CarrierError(
             code="dp_carrier_type_mismatch",
@@ -346,7 +351,7 @@ def _sanitize_number(name: str, col: NumberColumn, spec: dict, row_count: int) -
     return NumberColumn(values=out_values, validity=out_validity)
 
 
-def _sanitize_flag(name: str, col: FlagColumn, row_count: int) -> FlagColumn:
+def _sanitize_flag(name: str, col: Column, row_count: int) -> FlagColumn:
     if not isinstance(col, FlagColumn):
         raise CarrierError(
             code="dp_carrier_type_mismatch",
@@ -375,7 +380,7 @@ def _sanitize_flag(name: str, col: FlagColumn, row_count: int) -> FlagColumn:
     return FlagColumn(values=out_values, validity=out_validity)
 
 
-def _sanitize_text(name: str, col: TextColumn, row_count: int) -> TextColumn:
+def _sanitize_text(name: str, col: Column, row_count: int) -> TextColumn:
     if not isinstance(col, TextColumn):
         raise CarrierError(
             code="dp_carrier_type_mismatch",
