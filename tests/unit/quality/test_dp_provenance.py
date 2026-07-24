@@ -154,8 +154,9 @@ def test_pinned_row_matches_this_env_when_this_env_is_certified() -> None:
     key = (prov.current_platform(), prov.current_cpython())
     if key not in prov._CERTIFIED_STACKS:
         pytest.skip(f"this environment {key} is not a pinned certified row")
-    assert prov._CERTIFIED_STACKS[key] == prov.compute_lock_fingerprint(
-        prov.installed_distribution_set()
+    assert (
+        prov.compute_lock_fingerprint(prov.installed_distribution_set())
+        in prov._CERTIFIED_STACKS[key]
     )
     prov.check_fit_environment()  # must not raise
 
@@ -211,6 +212,37 @@ def test_check_fit_environment_rejects_drifted_fingerprint(
     assert exc.value.code == "dp_stack_uncertified"
 
 
+def test_check_fit_environment_accepts_each_member_rejects_non_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fit-gate membership, deterministic (independent of which venv runs the
+    # test): every pinned member of a certified row passes check_fit_environment,
+    # while a well-formed non-member and an empty set both fail closed. The lock
+    # guard is stubbed so this isolates the membership decision from the
+    # installed-vs-lock check that has its own tests.
+    (key,) = list(prov._CERTIFIED_STACKS.items())
+    (plat, cpython), members = key
+    assert len(members) >= 2  # engine dev/CI profile + certified CLI runtime
+    monkeypatch.setattr(prov, "current_platform", lambda: plat)
+    monkeypatch.setattr(prov, "current_cpython", lambda: cpython)
+    monkeypatch.setattr(prov, "assert_lock_matches_installed", lambda *a, **k: None)
+
+    for fp in members:
+        monkeypatch.setattr(prov, "compute_lock_fingerprint", lambda _s, _fp=fp: _fp)
+        prov.check_fit_environment()  # a pinned member must not raise
+
+    monkeypatch.setattr(prov, "compute_lock_fingerprint", lambda _s: "0" * 64)
+    with pytest.raises(ProvenanceError) as exc:
+        prov.check_fit_environment()
+    assert exc.value.code == "dp_stack_uncertified"
+
+    monkeypatch.setattr(prov, "_CERTIFIED_STACKS", {(plat, cpython): frozenset()})
+    monkeypatch.setattr(prov, "compute_lock_fingerprint", lambda _s: next(iter(members)))
+    with pytest.raises(ProvenanceError) as exc_empty:
+        prov.check_fit_environment()
+    assert exc_empty.value.code == "dp_stack_uncertified"
+
+
 # ---------------------------------------------------------------------------
 # Generation-time gate: validate a RECORDED identity (no local recompute).
 # ---------------------------------------------------------------------------
@@ -218,11 +250,11 @@ def test_check_fit_environment_rejects_drifted_fingerprint(
 
 def _certified_record() -> dict[str, Any]:
     (key,) = list(prov._CERTIFIED_STACKS.items())
-    (plat, cpython), fingerprint = key
+    (plat, cpython), fingerprints = key
     return {
         "platform": plat._asdict(),
         "cpython": cpython,
-        "fingerprint": fingerprint,
+        "fingerprint": sorted(fingerprints)[0],
     }
 
 
@@ -232,7 +264,8 @@ def test_validate_recorded_provenance_accepts_certified_record() -> None:
 
 def test_validate_recorded_provenance_accepts_provenance_and_triple_objects() -> None:
     (key,) = list(prov._CERTIFIED_STACKS.items())
-    (plat, cpython), fingerprint = key
+    (plat, cpython), fingerprints = key
+    fingerprint = sorted(fingerprints)[0]
     prov.validate_recorded_provenance(
         Provenance(platform=plat, cpython=cpython, fingerprint=fingerprint)
     )
@@ -265,6 +298,24 @@ def test_validate_recorded_provenance_rejects_wrong_fingerprint() -> None:
     record["fingerprint"] = "deadbeef" * 8
     with pytest.raises(ProvenanceError) as exc:
         prov.validate_recorded_provenance(record)
+    assert exc.value.code == "dp_stack_uncertified"
+
+
+def test_certified_row_admits_multiple_fingerprints() -> None:
+    """A certified row maps to a SET of fingerprints (the engine build env plus
+    the certified CLI env), matched by membership, not equality. Every pinned
+    member must validate on that key; an unpinned fingerprint must not."""
+    (key,) = list(prov._CERTIFIED_STACKS.items())
+    (plat, cpython), fingerprints = key
+    assert len(fingerprints) >= 2  # engine build env + certified CLI env
+    for fp in fingerprints:
+        prov.validate_recorded_provenance(
+            {"platform": plat._asdict(), "cpython": cpython, "fingerprint": fp}
+        )  # each pinned member validates
+    with pytest.raises(ProvenanceError) as exc:
+        prov.validate_recorded_provenance(
+            {"platform": plat._asdict(), "cpython": cpython, "fingerprint": "0" * 64}
+        )
     assert exc.value.code == "dp_stack_uncertified"
 
 

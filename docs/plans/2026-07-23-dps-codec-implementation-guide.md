@@ -37,7 +37,8 @@ BUILD PROGRESS:
   over the complete installed dist set + full CPython + single Linux/x86-64 platform;
   fail-closed check_fit_environment / validate_recorded_provenance; lock==installed
   guard), `_DP_EPSILON_CEILING=700.0` in dp_budget, draft CI matrix. Certified pin =
-  6c0b2bbd... over the reproducible 77-dist profile. Fit/generation CALL-SITE wiring
+  895b9a20... over the reproducible 77-dist profile (was 6c0b2bbd... on the pre-0.5.0
+  lock, re-minted after the lock repair). Fit/generation CALL-SITE wiring
   deferred to phase 5.
 - **Phase 4 (dp_schedule/dp_budget carrier plumbing) — DONE & dual-gate cleared.**
   Commits 1005be0 (build) -> fcde874 (dennis LOWs: wording, unscheduled-pair guard).
