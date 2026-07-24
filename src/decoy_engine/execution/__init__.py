@@ -111,6 +111,7 @@ from decoy_engine.execution._transactional_sink import (
     ParquetTransactionalSink,
     TransactionalSink,
 )
+from decoy_engine.execution.capacity import estimate_job_capacity
 from decoy_engine.execution.out_of_core import (
     SUPPORTED_STRATEGIES as OUT_OF_CORE_SUPPORTED_STRATEGIES,
 )
@@ -158,6 +159,7 @@ __all__ = [
     "check_out_of_core_compatibility",
     "classify_job",
     "classify_table_kinds",
+    "estimate_job_capacity",
     "get_default_executor",
     "order_work",
     "probe_fits",

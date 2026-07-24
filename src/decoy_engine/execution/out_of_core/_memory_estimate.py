@@ -70,7 +70,8 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._budget import (
@@ -81,14 +82,33 @@ from decoy_engine.execution.out_of_core._budget import (
 _logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CapacityEstimate",
+    "CapacityInputs",
+    "CapacityVerdict",
     "MemoryPreflight",
     "actual_duckdb_cap_bytes",
     "declared_minimum_ceiling_bytes",
     "enforce_ooc_memory_preflight",
+    "evaluate_capacity",
     "memory_limit_for",
     "predict_ooc_build_floor_bytes",
     "resolve_phase_memory_limits",
 ]
+
+# The one route name `evaluate_capacity` treats as "this job's memory floor
+# is actually priceable" -- anything else (full_frame, sequential, a
+# rejected-before-read job, "no relationships at all") is NOT_APPLICABLE by
+# construction, matching the OOC-FK-route-only scope the CLI capacity checker
+# documents (v1 does not cover generate-path or non-FK single-table sizing).
+_OUT_OF_CORE_ROUTE = "out_of_core"
+
+# The one refusal code `evaluate_capacity`'s fan-in guard (via
+# `actual_duckdb_cap_bytes` -> `_per_instance_mib`) can raise -- caught
+# narrowly so it converts to an INSUFFICIENT verdict instead of propagating,
+# while any OTHER `ExecutionError` (e.g. `out_of_core_concurrency_invalid`, a
+# caller-usage bug, not a capacity refusal) still propagates untouched (R3:
+# an unexpected estimator exception is never swallowed into a verdict).
+_FANIN_EXCEEDS_BUDGET_CODE = "out_of_core_fanin_exceeds_budget"
 
 
 def _per_instance_mib(budget_bytes: int, live_instances: int) -> int:
@@ -367,6 +387,282 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
     return _BUILD_FLOOR_BASE_BYTES + int(_BUILD_FLOOR_BYTES_PER_ROW * rows)
 
 
+class CapacityVerdict(str, Enum):
+    """The tri-plus-one state `evaluate_capacity` returns.
+
+    Only `INSUFFICIENT` may ever cause a caller to refuse a job or exit a
+    distinct capacity code -- `UNKNOWN` and `NOT_APPLICABLE` are both "no
+    verdict", for different reasons, and neither is a refusal:
+
+    - `FIT`: priced and clears the budget.
+    - `INSUFFICIENT`: priced and does not clear the budget -- `code` names
+      which of the two refusal codes fired.
+    - `UNKNOWN`: EXPECTED indeterminacy -- the budget is undetectable, or a
+      parent table's row count cannot be priced exactly (e.g. a CSV source,
+      whose count is a byte-size estimate). Never treat this as a pass; also
+      never treat it as a failure -- a genuinely unpriceable job is neither.
+    - `NOT_APPLICABLE`: this job's execution route is not `out_of_core`, so
+      the out-of-core-FK memory floor this evaluator prices does not apply
+      to it at all (a different route, a rejected-before-read job, or a job
+      with no FK relationships).
+    """
+
+    FIT = "fit"
+    INSUFFICIENT = "insufficient"
+    UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
+
+
+@dataclass(frozen=True)
+class CapacityInputs:
+    """The typed, already-derived inputs `evaluate_capacity` prices.
+
+    Deliberately the SAME shape `enforce_ooc_memory_preflight` always
+    computed inline (`parent_table_rows`, `incoming_edge_counts`, `sink`)
+    plus two fields only the estimate-only entrypoint ever populates:
+
+    - `route`: the execution route this job's config/graph actually
+      resolves to (`"out_of_core"`, `"full_frame"`, `"sequential"`, or a
+      caller-chosen label for a rejected-before-read job). The mid-run gate
+      always passes `"out_of_core"` (it only ever runs on that route);
+      `estimate_job_capacity` passes whatever the routing decision returned,
+      so `evaluate_capacity` can return `NOT_APPLICABLE` for any other route
+      without the caller having to special-case it up front.
+    - `unresolved_parent_tables`: parent tables whose row count could not be
+      priced EXACTLY (a CSV byte-size estimate, not a footer/exact count).
+      Always empty on the mid-run path (every source there is a real
+      `pa.Table` or `LazySource`, always exact); populated only by
+      `estimate_job_capacity` when a parent table's source format has no
+      cheap exact count. Non-empty forces `UNKNOWN` -- never refuse on an
+      approximation (R6).
+    """
+
+    route: str
+    parent_table_rows: Mapping[str, int]
+    incoming_edge_counts: Mapping[str, int]
+    sink: bool
+    unresolved_parent_tables: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class CapacityEstimate:
+    """The verdict `evaluate_capacity` returns -- the ONE result shape both
+    the mid-run gate and the estimate-only entrypoint agree on.
+
+    `verdict`/`code`/`needed_bytes`/`available_bytes`/`route`/`message` are
+    the public contract a CLI caller renders and asserts against (both
+    refusal codes are carried in `code`, never only embedded in `message`
+    text). `needed_bytes`/`available_bytes` are exact byte counts; GiB is a
+    display-only conversion of them, never a separate source of truth.
+
+    `warned`/`binding_table`/`floor_bytes`/`cap_bytes` exist so
+    `enforce_ooc_memory_preflight` can reconstruct the pre-existing
+    `MemoryPreflight` shape (its own warn-band advisory, which predates this
+    evaluator and has its own tests) without re-running the floor/cap loop a
+    second time -- a CLI caller normally has no reason to read them.
+    """
+
+    verdict: CapacityVerdict
+    code: str | None
+    needed_bytes: int | None
+    available_bytes: int | None
+    route: str
+    message: str
+    warned: bool = False
+    binding_table: str | None = None
+    floor_bytes: int = 0
+    cap_bytes: int | None = None
+
+
+def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> CapacityEstimate:
+    """The PURE capacity evaluator both gates share (R1 anti-drift): given
+    already-derived `CapacityInputs` and a resolved `budget_bytes` (the SAME
+    `OutOfCoreBudget.budget_bytes` `resolve_ooc_memory_limit` returns, never
+    re-derived by a caller), decide FIT/INSUFFICIENT/UNKNOWN/NOT_APPLICABLE
+    without raising for the ordinary refusal case.
+
+    This is the per-table floor/cap loop `enforce_ooc_memory_preflight` used
+    to run inline, extracted so a second caller (`estimate_job_capacity`) can
+    ask the SAME question the mid-run gate answers -- on the SAME typed
+    inputs -- without duplicating the loop, the warn-band threshold, or the
+    message wording. `enforce_ooc_memory_preflight` now calls this and raises
+    only when the verdict is `INSUFFICIENT`; the estimate-only path just
+    returns whatever this function returns.
+
+    Route and priceability gate first, before any budget math: a job whose
+    route is not `out_of_core`, or that pins a parent table this caller
+    could not price exactly, has nothing here to evaluate -- returning early
+    keeps those two "no verdict" reasons from ever reaching the floor/cap
+    loop below (which assumes every input is real and priceable).
+
+    An un-sizeable fan-in split (`actual_duckdb_cap_bytes` raising
+    `out_of_core_fanin_exceeds_budget`) is the ONE `ExecutionError` this
+    function catches and folds into `INSUFFICIENT` -- it is a second,
+    equally real refusal shape (a co-live joiner/build split that cannot fit
+    even DuckDB's 1 MB minimum), not a defect. Any OTHER `ExecutionError`
+    (e.g. `out_of_core_concurrency_invalid`, a caller passing a malformed
+    `live_instances`) is a genuine usage bug and propagates unchanged -- R3's
+    rule that an unexpected estimator exception is never swallowed into a
+    verdict.
+    """
+    if inputs.route != _OUT_OF_CORE_ROUTE:
+        return CapacityEstimate(
+            verdict=CapacityVerdict.NOT_APPLICABLE,
+            code=None,
+            needed_bytes=None,
+            available_bytes=budget_bytes,
+            route=inputs.route,
+            message=(
+                f"this job's execution route is {inputs.route!r}, not out_of_core; "
+                "the out-of-core-FK capacity check does not apply to it."
+            ),
+        )
+    if inputs.unresolved_parent_tables:
+        names = ", ".join(sorted(inputs.unresolved_parent_tables))
+        return CapacityEstimate(
+            verdict=CapacityVerdict.UNKNOWN,
+            code=None,
+            needed_bytes=None,
+            available_bytes=budget_bytes,
+            route=inputs.route,
+            message=(
+                f"cannot price an exact row count for table(s) {names} (no cheap exact "
+                "count available for that source format); refusing to gate on an "
+                "approximation, so capacity is not checked for this job."
+            ),
+        )
+    if budget_bytes is None:
+        return CapacityEstimate(
+            verdict=CapacityVerdict.UNKNOWN,
+            code=None,
+            needed_bytes=None,
+            available_bytes=None,
+            route=inputs.route,
+            message=(
+                "available memory is not detectable on this host (no cgroup limit, no "
+                "readable host RAM figure); capacity is not checked (fail-open)."
+            ),
+        )
+
+    worst_fail: tuple[int, str, int, int] | None = None  # (margin, table, floor, cap)
+    worst_warn: tuple[int, str, int, int] | None = None
+    for table, rows in inputs.parent_table_rows.items():
+        floor_bytes = predict_ooc_build_floor_bytes(rows)
+        incoming = inputs.incoming_edge_counts.get(table, 0)
+        live = 1 if inputs.sink else incoming + 1
+        try:
+            cap_bytes = actual_duckdb_cap_bytes(budget_bytes, live)
+        except ExecutionError as exc:
+            if exc.code != _FANIN_EXCEEDS_BUDGET_CODE:
+                raise
+            return CapacityEstimate(
+                verdict=CapacityVerdict.INSUFFICIENT,
+                code=exc.code,
+                needed_bytes=None,
+                available_bytes=budget_bytes,
+                route=inputs.route,
+                message=exc.message,
+                binding_table=table,
+            )
+        margin = floor_bytes - cap_bytes
+        if worst_fail is None or margin > worst_fail[0]:
+            worst_fail = (margin, table, floor_bytes, cap_bytes)
+        if floor_bytes >= _OOC_MEM_WARN_FRACTION * cap_bytes:
+            if worst_warn is None or margin > worst_warn[0]:
+                worst_warn = (margin, table, floor_bytes, cap_bytes)
+
+    # A pure-joiner leaf (incoming edges only, no build) has no floor(t), so
+    # it is never in `parent_table_rows` -- its OWN fan-in is guarded here,
+    # up front, at the JOINER split (a different number than build-phase
+    # `live` above on the sink path), same as the pre-extraction gate did.
+    for table, incoming in inputs.incoming_edge_counts.items():
+        live = incoming if inputs.sink else incoming + 1
+        try:
+            actual_duckdb_cap_bytes(budget_bytes, live)
+        except ExecutionError as exc:
+            if exc.code != _FANIN_EXCEEDS_BUDGET_CODE:
+                raise
+            return CapacityEstimate(
+                verdict=CapacityVerdict.INSUFFICIENT,
+                code=exc.code,
+                needed_bytes=None,
+                available_bytes=budget_bytes,
+                route=inputs.route,
+                message=exc.message,
+                binding_table=table,
+            )
+
+    if worst_fail is not None and worst_fail[0] > 0:
+        _, table, floor_bytes, cap_bytes = worst_fail
+        incoming = inputs.incoming_edge_counts.get(table, 0)
+        floor_gib = floor_bytes / (1024**3)
+        cap_gib = cap_bytes / (1024**3)
+        needed_bytes = declared_minimum_ceiling_bytes(
+            floor_bytes, incoming_edges=incoming, sink=inputs.sink
+        )
+        needed_gib = needed_bytes / (1024**3)
+        return CapacityEstimate(
+            verdict=CapacityVerdict.INSUFFICIENT,
+            code="out_of_core_insufficient_memory",
+            needed_bytes=needed_bytes,
+            available_bytes=budget_bytes,
+            route=inputs.route,
+            message=(
+                f"predicted resident floor ~{floor_gib:.2f} GiB for table {table!r} exceeds "
+                f"the actual build cap ~{cap_gib:.2f} GiB it would receive; this job needs "
+                f"approximately {needed_gib:.0f} GB of memory (a host/cgroup ceiling that size). "
+                "Increase host/cgroup memory or reduce table size."
+            ),
+            binding_table=table,
+            floor_bytes=floor_bytes,
+            cap_bytes=cap_bytes,
+        )
+
+    if worst_fail is None:
+        # No parent tables at all (an out-of-core job with no build-phase
+        # table to price) -- nothing to warn about, nothing to recommend.
+        return CapacityEstimate(
+            verdict=CapacityVerdict.FIT,
+            code=None,
+            needed_bytes=None,
+            available_bytes=budget_bytes,
+            route=inputs.route,
+            message="no build-phase parent table to price; capacity check passes.",
+            cap_bytes=budget_bytes,
+        )
+
+    binding = worst_warn if worst_warn is not None else worst_fail
+    _, table, floor_bytes, cap_bytes = binding
+    incoming = inputs.incoming_edge_counts.get(table, 0)
+    needed_bytes = declared_minimum_ceiling_bytes(
+        floor_bytes, incoming_edges=incoming, sink=inputs.sink
+    )
+    warned = worst_warn is not None
+    if warned:
+        floor_gib = floor_bytes / (1024**3)
+        cap_gib = cap_bytes / (1024**3)
+        recommend_gib = needed_bytes / (1024**3)
+        message = (
+            f"out-of-core memory advisory: predicted resident floor ~{floor_gib:.2f} GiB for "
+            f"table {table!r} (actual build cap ~{cap_gib:.2f} GiB); recommend a host/cgroup "
+            f"ceiling of >= {recommend_gib:.0f} GB for margin."
+        )
+    else:
+        message = "capacity check passes; no table nears its build cap."
+    return CapacityEstimate(
+        verdict=CapacityVerdict.FIT,
+        code=None,
+        needed_bytes=needed_bytes,
+        available_bytes=budget_bytes,
+        route=inputs.route,
+        message=message,
+        warned=warned,
+        binding_table=table,
+        floor_bytes=floor_bytes,
+        cap_bytes=cap_bytes,
+    )
+
+
 @dataclass(frozen=True)
 class MemoryPreflight:
     """Result of the hybrid out-of-core memory capacity check.
@@ -510,89 +806,34 @@ def enforce_ooc_memory_preflight(
     joiner's `actual_duckdb_cap_bytes` called to trigger the shared guard,
     at the JOINER split -- a DIFFERENT number than build-phase `live(t)`
     above on the sink path (`1`), so this is a distinct check.
+
+    R1 anti-drift: the floor/cap loop above is no longer inline here -- it
+    is `evaluate_capacity`, a pure function this gate and the estimate-only
+    `estimate_job_capacity` (CLI `decoy preflight`) both call on the SAME
+    typed `CapacityInputs`, so the two can never independently drift on what
+    "fits" means. This function is now a thin translation shim: build the
+    inputs, ask the evaluator, raise on `INSUFFICIENT` (unchanged caller
+    contract -- every existing test in this module keeps passing against
+    the same codes/messages), otherwise log the advisory (if any) and
+    reconstruct the pre-existing `MemoryPreflight` shape from the evaluator's
+    answer.
     """
-    if budget_bytes is None:
-        return MemoryPreflight(
-            ok=True,
-            warned=False,
-            detectable=False,
-            binding_table=None,
-            floor_bytes=0,
-            cap_bytes=None,
-        )
-
-    worst_fail: tuple[int, str, int, int] | None = None  # (margin, table, floor, cap)
-    worst_warn: tuple[int, str, int, int] | None = None
-    for table, rows in parent_table_rows.items():
-        floor_bytes = predict_ooc_build_floor_bytes(rows)
-        incoming = incoming_edge_counts.get(table, 0)
-        live = 1 if sink else incoming + 1
-        # Raises out_of_core_fanin_exceeds_budget (round-2 Fix C) before any
-        # DuckDB work if this table's own split is un-sizeable -- the
-        # earliest point this preflight has the information to catch it.
-        cap_bytes = actual_duckdb_cap_bytes(budget_bytes, live)
-        margin = floor_bytes - cap_bytes
-        if worst_fail is None or margin > worst_fail[0]:
-            worst_fail = (margin, table, floor_bytes, cap_bytes)
-        if floor_bytes >= _OOC_MEM_WARN_FRACTION * cap_bytes:
-            if worst_warn is None or margin > worst_warn[0]:
-                worst_warn = (margin, table, floor_bytes, cap_bytes)
-
-    # SUB-FIX 3: guard every joiner's fan-in up front too (leaves included).
-    # `live` is the JOINER split, differing from build-phase `live` above on
-    # the sink path (`incoming` vs `1`); return value unused, just triggers.
-    for incoming in incoming_edge_counts.values():
-        live = incoming if sink else incoming + 1
-        actual_duckdb_cap_bytes(budget_bytes, live)
-
-    if worst_fail is not None and worst_fail[0] > 0:
-        _, table, floor_bytes, cap_bytes = worst_fail
-        incoming = incoming_edge_counts.get(table, 0)
-        floor_gib = floor_bytes / (1024**3)
-        cap_gib = cap_bytes / (1024**3)
-        needed_gib = declared_minimum_ceiling_bytes(
-            floor_bytes, incoming_edges=incoming, sink=sink
-        ) / (1024**3)
-        raise ExecutionError(
-            code="out_of_core_insufficient_memory",
-            message=(
-                f"predicted resident floor ~{floor_gib:.2f} GiB for table {table!r} exceeds "
-                f"the actual build cap ~{cap_gib:.2f} GiB it would receive; this job needs "
-                f"approximately {needed_gib:.0f} GB of memory (a host/cgroup ceiling that size). "
-                "Increase host/cgroup memory or reduce table size."
-            ),
-        )
-
-    if worst_warn is None:
-        return MemoryPreflight(
-            ok=True,
-            warned=False,
-            detectable=True,
-            binding_table=None,
-            floor_bytes=0,
-            cap_bytes=budget_bytes,
-        )
-
-    _, table, floor_bytes, cap_bytes = worst_warn
-    incoming = incoming_edge_counts.get(table, 0)
-    floor_gib = floor_bytes / (1024**3)
-    cap_gib = cap_bytes / (1024**3)
-    recommend_gib = declared_minimum_ceiling_bytes(
-        floor_bytes, incoming_edges=incoming, sink=sink
-    ) / (1024**3)
-    _logger.warning(
-        "out-of-core memory advisory: predicted resident floor ~%.2f GiB for table %r "
-        "(actual build cap ~%.2f GiB); recommend a host/cgroup ceiling of >= %.0f GB for margin.",
-        floor_gib,
-        table,
-        cap_gib,
-        recommend_gib,
+    inputs = CapacityInputs(
+        route=_OUT_OF_CORE_ROUTE,
+        parent_table_rows=parent_table_rows,
+        incoming_edge_counts=incoming_edge_counts,
+        sink=sink,
     )
+    estimate = evaluate_capacity(inputs, budget_bytes)
+    if estimate.verdict is CapacityVerdict.INSUFFICIENT:
+        raise ExecutionError(code=estimate.code, message=estimate.message)
+    if estimate.warned:
+        _logger.warning(estimate.message)
     return MemoryPreflight(
         ok=True,
-        warned=True,
-        detectable=True,
-        binding_table=table,
-        floor_bytes=floor_bytes,
-        cap_bytes=cap_bytes,
+        warned=estimate.warned,
+        detectable=budget_bytes is not None,
+        binding_table=estimate.binding_table,
+        floor_bytes=estimate.floor_bytes,
+        cap_bytes=estimate.cap_bytes,
     )
