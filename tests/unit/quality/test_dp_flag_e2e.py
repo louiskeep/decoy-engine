@@ -278,3 +278,32 @@ class TestFlagCarrierGeneratesRealBoolEndToEnd:
         values = out["t"]["is_active"].to_pylist()
         assert len(values) == 5
         assert all(v is True for v in values)
+
+    def test_v3_flag_artifact_without_dp_declaration_is_refused(self, tmp_path):
+        """dennis/Codex phase-6 HIGH (end-to-end): a real v3 flag artifact used
+        in a pipeline that does NOT declare global_settings.dp -- so the release
+        is never verified and the flag decoder never engages -- must fail closed
+        at compile, NOT generate str 'true'/'false' against the bool dtype. This
+        is exactly the path the lifted M-2 guard used to close unconditionally."""
+        snap = _fit_flag_plus_numeric()
+        path = _write(tmp_path, "flag_nodp.json", snap)
+        cfg = {
+            "global_settings": {"seed": 1},  # deliberately NO dp declaration
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "is_active",
+                            "type": "statistical",
+                            "snapshot_file": path,
+                            "allow_real_categories": True,
+                        },
+                    ],
+                }
+            ],
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(cfg, _profile(), decoy_engine_version="test")
+        assert exc.value.code == "statistical_flag_requires_dp_declaration"

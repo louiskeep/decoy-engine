@@ -250,6 +250,31 @@ def load_spec(
                     "'number'/'flag'/'text'."
                 ),
             )
+    elif isinstance(snap.get("dp"), Mapping) and col_entry.get("carrier") == "flag":
+        # A recognizable DP artifact (it carries a `dp` block) whose column is a
+        # `flag` (bool-domain) release reached generation WITHOUT the compiler
+        # verifying it: this pipeline declares no `global_settings.dp`, so
+        # `verify_dp_snapshots` early-returned and `dp_verified` is False. The
+        # flag decoder never engages, so the legacy `str()` path would emit the
+        # STRINGS "true"/"false" against the artifact's `bool` dtype -- silent
+        # type corruption. Fail closed: reading the carrier key to REFUSE is
+        # always safe (the non-inference rule forbids only reading it to GRANT
+        # an exemption). Phase 5's now-lifted M-2 guard failed closed here
+        # unconditionally; this restores it for the flag case with a directive.
+        # An ordinary distribution-snapshot/v1 column with a stray `carrier` and
+        # NO `dp` block stays on the legacy path (guide section 3.9) -- hence the
+        # `snap["dp"]` presence condition.
+        raise StatisticalSpecError(
+            code="statistical_flag_requires_dp_declaration",
+            message=(
+                f"statistical column {name!r}: source column {source_column!r} is a DP "
+                "`flag` (bool-domain) release (the snapshot carries a `dp` block), but this "
+                "pipeline does not declare `global_settings.dp`, so the release is not "
+                "verified and the flag decoder does not engage -- the sampler would emit "
+                "'true'/'false' strings against the artifact's `bool` dtype. Declare "
+                "`global_settings.dp` so this column is verified and generated as bool."
+            ),
+        )
 
     kind = col_entry.get("kind")
     if kind not in _SUPPORTED_KINDS:

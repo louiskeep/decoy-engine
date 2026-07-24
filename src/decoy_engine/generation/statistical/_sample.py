@@ -186,9 +186,10 @@ def _categorical_tables(spec: StatisticalSpec) -> tuple[list[Any], list[float]]:
     weights = [float(e["count"]) for e in top]
     other = float(spec.stats.get("other_count") or 0)
     if other > 0 and spec.other_mode == "emit":
-        # load_spec rejects other_mode="emit" for a flag carrier (guide
-        # section 3.4), so OTHER_TOKEN never joins a bool values list here;
-        # this branch is reached by flag columns only defensively.
+        # OTHER_TOKEN is a str, correct only on the legacy (carrier=None) path
+        # that reaches this branch. A flag column never does: load_spec rejects
+        # other_mode="emit" for a flag carrier (guide section 3.4), so a str
+        # placeholder can never join a bool values list.
         values.append(OTHER_TOKEN)
         weights.append(other)
     # redistribute: tail mass is dropped from the table, which scales the

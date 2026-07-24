@@ -261,6 +261,24 @@ class TestFlagCarrierSampling:
             load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
         assert exc.value.code == "statistical_dp_carrier_invalid"
 
+    def test_unverified_v3_flag_artifact_is_refused_not_stringified(self):
+        """dennis/Codex phase-6 HIGH: a recognizable DP artifact (it carries a
+        `dp` block) with a `flag` column, reached WITHOUT compiler verification
+        (no `global_settings.dp` -> `dp_verified=False`), must fail closed
+        rather than fall to the legacy str() path and emit "true"/"false"
+        strings against the bool dtype. Reading the carrier here only to REFUSE
+        is permitted by the non-inference rule (which forbids reading it to
+        GRANT an exemption)."""
+        snap = _flag_snapshot([{"value": "true", "count": 3}, {"value": "false", "count": 2}])
+        snap["dp"] = {"schema": "dps-marginal/v3", "epsilon_total": 1.0, "delta_total": 1e-6}
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(
+                _col("flag", "unused", allow_real_categories=True),
+                snapshot=snap,
+                dp_verified=False,
+            )
+        assert exc.value.code == "statistical_flag_requires_dp_declaration"
+
 
 class TestCarrierSerialization:
     """Guide section 3.9: `carrier` is a DP-v3-only field. `spec_to_dict`
