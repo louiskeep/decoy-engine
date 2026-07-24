@@ -19,15 +19,17 @@ under test is the one the whole redesign exists to protect (guide
 Both are subject to the section 3.7 residual exclusions (KeyboardInterrupt/
 SystemExit from a cell's own hooks propagate; live/executable cells are out
 of domain). The crown-jewel properties use Hypothesis (section 7 strategy);
-the known defects from the predecessor `dp_normalize.py` matrix are carried
-forward as explicit regression SEEDS so this suite is at least as strong
-before that module is retired (phase 7).
+the known defects from the predecessor `dp_normalize.py` matrix were carried
+forward as explicit regression SEEDS so this suite was at least as strong as
+that matrix before it was retired (phase 7).
 """
 
 from __future__ import annotations
 
 import datetime
 import decimal
+import gc
+import itertools
 import subprocess
 import sys
 import warnings
@@ -266,8 +268,12 @@ class TestRegressionSeeds:
         [
             np.datetime64("2020-01-01", "ns"),
             np.datetime64("2020-01-01", "s"),
+            np.datetime64("2020-01-01", "ms"),
+            np.datetime64("2020-01-01", "us"),
             pd.Timestamp("2020-01-01"),
             np.timedelta64(5, "ns"),
+            np.timedelta64(5, "ms"),
+            np.timedelta64(5, "us"),
             datetime.timedelta(days=1),
             datetime.date(2020, 1, 1),
         ],
@@ -275,14 +281,37 @@ class TestRegressionSeeds:
     def test_arrow_and_numpy_temporals_are_invalid_for_every_carrier(self, temporal: Any) -> None:
         # `float(np.datetime64(...,'ns'))` SUCCEEDS and returns the epoch
         # integer, so temporal rejection cannot rely on conversion failing.
+        # `_is_datetimelike` gates on dtype KIND, checked before any unboxing,
+        # so every numpy resolution takes the same path -- the retired
+        # `dp_normalize` needed all four units pinned because its bug was in
+        # `.item()`'s resolution-dependent return type; ms/us are carried
+        # forward here so a future reader does not have to re-derive that the
+        # carrier gate has no such dependency.
         assert decode_number(temporal, **_WIDE)[1] is False
         assert decode_flag(temporal)[1] is False
         assert decode_text(temporal)[1] is False
 
-    @pytest.mark.parametrize("container", [[1], np.array([1]), (1,), [1, 2, 3], np.array([1, 2])])
+    @pytest.mark.parametrize(
+        "container",
+        [
+            [1],
+            np.array([1]),
+            (1,),
+            [1, 2, 3],
+            np.array([1, 2]),
+            [None],
+            [np.nan],
+            np.array([np.nan]),
+            [],
+        ],
+    )
     def test_list_and_ndarray_containers_drop_under_every_boxing(self, container: Any) -> None:
         # `float(np.array([1]))` returns the sole element; the container guard
         # must precede the conversion so a length-1 array drops like a list.
+        # `np.ndim` is content- and length-agnostic (unlike the retired
+        # `dp_normalize`'s `pd.isna`-then-length special case), so a null-
+        # holding or empty container is pinned alongside the ordinary ones
+        # rather than assumed to follow from them.
         assert decode_number(container, **_WIDE)[1] is False
         assert decode_flag(container)[1] is False
         assert decode_text(container)[1] is False
@@ -595,6 +624,7 @@ class TestMalformedNumberBoundsFailStructurally:
 # ---------------------------------------------------------------------------
 
 from decoy_engine.quality.carrier_adapter import (  # noqa: E402  # after the fixtures above
+    _fetch_positional,
     dataframe_to_carrier_table,
 )
 
@@ -759,6 +789,47 @@ class TestDataFrameBoxingRegressionSeeds:
         released = released_values(dataframe_to_carrier_table(base, schema))["t"]
         assert released == ["a", "c"]  # NUL truncates, surrogate is not UTF-8
 
+    @pytest.mark.parametrize(
+        "backing",
+        ["object", "string", "string[pyarrow]", "arrow", "category", "numpy_U"],
+    )
+    def test_nul_disposition_is_uniform_across_every_string_backing(self, backing: str) -> None:
+        # Ported from the retired `dp_normalize` matrix (phase 7): numpy's
+        # fixed-width `U` dtype strips a trailing NUL at storage, before the
+        # fit ever sees the cell, so it is not the fit's disposition to make
+        # uniform -- only an interior NUL (which actually merges distinct
+        # source values) must drop identically on every backing.
+        trailing, interior, plain = "a\x00", "a\x00b", "ab"
+        values = [trailing, interior, plain]
+        if backing == "numpy_U":
+            series = pd.Series(np.array(values))
+        elif backing == "arrow":
+            series = pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values)))
+        elif backing == "category":
+            series = pd.Series(values, dtype="category")
+        else:
+            series = pd.Series(values, dtype=backing)
+        released = released_values(
+            dataframe_to_carrier_table(pd.DataFrame({"t": series}), {"t": {"carrier": "text"}})
+        )["t"]
+        assert interior not in released
+        assert plain in released
+        if backing == "numpy_U":
+            assert released == ["a", plain]  # already truncated before the fit sees it
+        else:
+            assert released == [plain]
+
+    def test_a_null_check_that_raises_on_content_does_not_take_the_fit_down(self) -> None:
+        # `pd.isna(Decimal("sNaN"))` raises `InvalidOperation` from OUTSIDE any
+        # codec, in the adapter's own null check. A row whose nullness cannot
+        # be decided must be treated as present and left to the codec (which
+        # is total), not allowed to abort the fit.
+        series = pd.Series(["a", decimal.Decimal("sNaN"), "b"], dtype=object)
+        released = released_values(
+            dataframe_to_carrier_table(pd.DataFrame({"t": series}), {"t": {"carrier": "text"}})
+        )["t"]
+        assert released == ["a", "b"]  # the Decimal is present, then dropped by the codec
+
     def test_temporal_column_is_all_invalid_for_number_and_text(self) -> None:
         # float(np.datetime64(...,'ns')) SUCCEEDS and returns the epoch integer,
         # so a temporal column must be rejected, never released as its raw ints.
@@ -829,6 +900,183 @@ class TestAdapterTotality:
         schema = {"n": {"carrier": "number", "bounds": (-1e9, 1e9)}}
         with pytest.raises(interrupt):
             dataframe_to_carrier_table(df, schema)
+
+
+class TestCodecHostileHookHandling:
+    """Two guards the retired `dp_normalize` matrix pinned that a plain
+    `RuntimeError` probe does not reach (phase 7 gap closure, found while
+    proving the carrier suite subsumes that matrix before deleting it).
+
+    A `BaseException` subclass that is NOT `KeyboardInterrupt`/`SystemExit`
+    must still be swallowed into an invalid cell, not escape: the codecs'
+    `except BaseException` is deliberately wider than `except Exception`, and
+    a mutant narrowing it to `Exception` passes every `RuntimeError`-based
+    test in this file while letting a bare `BaseException` abort the fit.
+
+    A cell whose own conversion hook WARNS must not leak that warning past
+    the codec's suppression: the existing invariance tests wrap calls in
+    `simplefilter("error")`, but none of their generated values warns on its
+    own account, so a mutant deleting the suppression would still pass them."""
+
+    def test_a_bare_base_exception_from_a_hook_drops_rather_than_aborts(self) -> None:
+        class Sentinel(BaseException):
+            pass
+
+        class Hostile:
+            def __float__(self) -> float:
+                raise Sentinel("from __float__")
+
+            def __array__(self, *a: Any, **k: Any) -> Any:
+                raise Sentinel("from __array__")
+
+        cell = Hostile()
+        assert decode_number(cell, **_WIDE)[1] is False
+        assert decode_flag(cell)[1] is False
+        assert decode_text(cell)[1] is False
+
+    def test_no_warning_escapes_when_a_cell_warns_during_its_own_conversion(self) -> None:
+        class WarnsOnConversion:
+            def __float__(self) -> float:
+                warnings.warn("converting to float", UserWarning, stacklevel=1)
+                return 1.0
+
+            def __str__(self) -> str:
+                warnings.warn("rendering as str", UserWarning, stacklevel=1)
+                return "1"
+
+        cell = WarnsOnConversion()
+        for decode in (lambda v: decode_number(v, **_WIDE), decode_flag, decode_text):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                decode(cell)
+            assert caught == [], [str(w.message) for w in caught]
+
+
+class TestFetchGeneratorConformance:
+    """`_fetch_positional` (carrier_adapter.py) shares the exact fetch-inside/
+    yield-outside generator shape the retired `dp_normalize._cells` had, and
+    the same fragility: three separate review rounds found a guard that
+    dropped the wrong side of a `GeneratorExit`, swallowed a consumer's
+    `throw()`, or guarded content-independent setup that should fail loud.
+    Ported directly onto `_fetch_positional` (phase 7 gap closure) rather
+    than assumed inherited, because it is a distinct function that could
+    drift from its ancestor's structure without any test noticing."""
+
+    def test_a_consumer_exception_thrown_into_the_fetch_propagates(self) -> None:
+        series = pd.Series([1.0, 2.0, 3.0], dtype=object)
+        generator = _fetch_positional(series)
+        next(generator)
+        with pytest.raises(ValueError):
+            generator.throw(ValueError("injected by the consumer"))
+
+    def test_fetch_stays_a_conforming_generator_when_finalized_early(self) -> None:
+        series = pd.Series([1.0, 2.0, 3.0, 4.0], dtype=object)
+
+        generator = _fetch_positional(series)
+        next(generator)
+        generator.close()  # raises RuntimeError if the generator is non-conforming
+
+        for _ in itertools.islice(_fetch_positional(series), 2):
+            pass
+
+        for _ in _fetch_positional(series):
+            break
+
+        abandoned = _fetch_positional(series)
+        next(abandoned)
+        del abandoned
+        gc.collect()
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_an_interrupt_from_the_positional_fetch_itself_propagates(
+        self, interrupt: type[BaseException]
+    ) -> None:
+        # Distinct from the adapter-level interrupt test above: that one
+        # raises from __array__/__float__ (null check / codec). This raises
+        # from the POSITIONAL FETCH (`values[i]`) itself, the other half of
+        # `_fetch_positional`'s own re-raise tuple.
+        class RaisingGetItem:
+            def __init__(self, values: list, interrupt: type[BaseException]) -> None:
+                self._values, self._interrupt = list(values), interrupt
+
+            def __len__(self) -> int:
+                return len(self._values)
+
+            def __getitem__(self, index: int) -> Any:
+                if self._values[index] == 999.0:
+                    raise self._interrupt
+                return self._values[index]
+
+        class ArraySeries(pd.Series):
+            _raising = None
+
+            @property
+            def array(self) -> Any:
+                return self._raising
+
+        series = ArraySeries([1.0, 999.0, 2.0])
+        series._raising = RaisingGetItem([1.0, 999.0, 2.0], interrupt)
+        with pytest.raises(interrupt):
+            list(_fetch_positional(series))
+
+    def test_a_generator_exit_from_the_fetch_drops_one_cell(self) -> None:
+        # Codex round 11's finding on `_cells`, carried onto `_fetch_positional`:
+        # a GeneratorExit arriving FROM the fetch must not be indistinguishable
+        # from finalization -- it drops just that cell, not the whole fit.
+        class RaisingGetItem:
+            def __init__(self, values: list) -> None:
+                self._values = list(values)
+
+            def __len__(self) -> int:
+                return len(self._values)
+
+            def __getitem__(self, index: int) -> Any:
+                if self._values[index] == 999.0:
+                    raise GeneratorExit("raised by __getitem__")
+                return self._values[index]
+
+        class ArraySeries(pd.Series):
+            _raising = None
+
+            @property
+            def array(self) -> Any:
+                return self._raising
+
+        series = ArraySeries([1.0, 999.0, 2.0])
+        series._raising = RaisingGetItem([1.0, 999.0, 2.0])
+        assert list(_fetch_positional(series)) == [(1.0, True), (None, False), (2.0, True)]
+
+    def test_len_that_raises_propagates_like_array(self) -> None:
+        class LenFails(pd.Series):
+            boom = False
+
+            def __len__(self) -> int:
+                if type(self).boom:
+                    raise SystemError("len depends on nothing this test controls")
+                return super().__len__()
+
+        series = LenFails([1.0, 2.0, 3.0])
+        LenFails.boom = True
+        try:
+            with pytest.raises(SystemError):
+                list(_fetch_positional(series))
+        finally:
+            LenFails.boom = False
+
+    def test_content_dependent_setup_fails_loud_rather_than_releasing_nulls(self) -> None:
+        # A container whose setup (`.array`) runs row-dependent caller code is
+        # out of domain (as live as an object in a cell); failing loud is the
+        # honest disposition, never a silent near-null release.
+        class SetupFails(pd.Series):
+            @property
+            def array(self) -> Any:
+                if len(self) > 2:
+                    raise SystemError("setup depends on row count")
+                return pd.Series.array.fget(self)
+
+        with pytest.raises(SystemError):
+            list(_fetch_positional(SetupFails([1.0, 2.0, 3.0])))
+        assert list(_fetch_positional(SetupFails([1.0, 2.0]))) == [(1.0, True), (2.0, True)]
 
 
 class TestColumnSchemaValidation:
