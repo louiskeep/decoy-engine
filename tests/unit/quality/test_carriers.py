@@ -38,6 +38,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -589,21 +590,327 @@ class TestMalformedNumberBoundsFailStructurally:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end DataFrame arm (phase 2 adapter) -- expected to fail for now
+# End-to-end DataFrame arm (phase 2 adapter): the crown jewel over the pandas
+# boundary -- THE place the original bug lived (guide sections 3.6/7).
 # ---------------------------------------------------------------------------
 
+from decoy_engine.quality.carrier_adapter import (  # noqa: E402  # after the fixtures above
+    dataframe_to_carrier_table,
+)
 
-@pytest.mark.xfail(reason="adapter lands in DPS-CODEC phase 2", strict=False)
-def test_dataframe_to_carrier_table_end_to_end_adjacency() -> None:
-    from decoy_engine.quality.carrier_adapter import dataframe_to_carrier_table
+_DF_SCHEMA = {
+    "num": {"carrier": "number", "bounds": (-1e9, 1e9)},
+    "flag": {"carrier": "flag"},
+    "text": {"carrier": "text"},
+}
 
-    schema = {"n": {"carrier": "number", "bounds": (-1e9, 1e9)}}
-    base = pd.DataFrame({"n": [1.0, 2.0, 3.0]})
-    neighbour = pd.DataFrame({"n": [1.0, 2.0]})
-    t_base = sanitize_carrier_table(dataframe_to_carrier_table(base, schema), schema)
-    t_other = sanitize_carrier_table(dataframe_to_carrier_table(neighbour, schema), schema)
-    assert abs(t_base.row_count - t_other.row_count) == 1
-    assert _multiset_distance(released_values(t_base)["n"], released_values(t_other)["n"]) <= 1
+
+def _df(rows: list[tuple[Any, Any, Any]]) -> pd.DataFrame:
+    """Build the three-carrier frame from Python cells, letting pandas infer
+    each column's storage dtype -- so a neighbour naturally reboxes (int+None
+    -> float64, bool+1j -> object, etc.), which is the whole point."""
+    return pd.DataFrame(
+        {
+            "num": [r[0] for r in rows],
+            "flag": [r[1] for r in rows],
+            "text": [r[2] for r in rows],
+        }
+    )
+
+
+def _through_adapter(df: pd.DataFrame) -> CarrierTable:
+    # The documented pipeline (task): DataFrame -> adapter -> sanitize. The
+    # adapter already certifies its own output, so the outer sanitize is an
+    # idempotent no-op; running it anyway pins that the pipeline as specified
+    # holds and stays boxing-invariant end to end.
+    return sanitize_carrier_table(dataframe_to_carrier_table(df, _DF_SCHEMA), _DF_SCHEMA)
+
+
+# Cell strategies that span the boxings pandas derives from a whole column, so
+# a one-row neighbour reboxes existing cells while OpenDP's map(1) does not.
+_NUM_CELL = st.one_of(
+    st.floats(allow_nan=False, allow_infinity=False, min_value=-1e6, max_value=1e6),
+    st.integers(min_value=-(10**6), max_value=10**6),
+    st.sampled_from([None, float("nan"), float("inf"), float("-inf"), 2 + 0j, 2 + 3j]),
+)
+_FLAG_CELL = st.one_of(
+    st.booleans(),
+    st.sampled_from([0, 1, 0.0, 1.0, None, 1j, 2, np.True_, np.False_]),
+)
+_TEXT_CELL = st.one_of(
+    st.text(alphabet=st.characters(), max_size=6),
+    st.sampled_from([None, "a\x00b", "\ud800", 5, 1.5, True]),
+)
+
+
+@st.composite
+def _df_rows(draw: Any) -> tuple[list[tuple[Any, Any, Any]], tuple[Any, Any, Any]]:
+    n = draw(st.integers(min_value=0, max_value=6))
+    num = draw(st.lists(_NUM_CELL, min_size=n, max_size=n))
+    flag = draw(st.lists(_FLAG_CELL, min_size=n, max_size=n))
+    text = draw(st.lists(_TEXT_CELL, min_size=n, max_size=n))
+    extra = (draw(_NUM_CELL), draw(_FLAG_CELL), draw(_TEXT_CELL))
+    return list(zip(num, flag, text, strict=True)), extra
+
+
+class TestDataFrameCrownJewel:
+    """The end-to-end adjacency invariant over the pandas boundary: for a
+    DataFrame and its add/remove-one-row neighbour, `dataframe_to_carrier_table
+    -> sanitize_carrier_table -> released_values` changes each column's released
+    multiset by at most one INCLUDING the row-count projection, with no raise or
+    warning (subject to the section 3.7 exclusions). This is the property the
+    original value-level pandas inference violated -- one added row reboxed a
+    whole column and moved distance-N labels against a stability-1 certificate."""
+
+    @settings(max_examples=250, suppress_health_check=[HealthCheck.too_slow])
+    @given(data=_df_rows(), op=st.sampled_from(["add", "remove"]))
+    def test_add_or_remove_one_row_changes_each_released_vector_by_at_most_one(
+        self, data: tuple[list[tuple[Any, Any, Any]], tuple[Any, Any, Any]], op: str
+    ) -> None:
+        rows, extra = data
+        if op == "remove" and not rows:
+            op = "add"
+        if op == "add":
+            base_rows, neighbour_rows = rows, [*rows, extra]
+        else:
+            k = len(rows) // 2
+            base_rows, neighbour_rows = rows, [r for i, r in enumerate(rows) if i != k]
+
+        # Frame construction is caller-side setup (like reading a file); the
+        # adapter is the component the DP claim requires not to warn, so the
+        # error filter wraps only the adapter+sanitize pipeline.
+        base_df, neighbour_df = _df(base_rows), _df(neighbour_rows)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # adapter path must not warn
+            base = _through_adapter(base_df)
+            other = _through_adapter(neighbour_df)
+
+        assert abs(base.row_count - other.row_count) == 1
+        rel_base, rel_other = released_values(base), released_values(other)
+        for name in _DF_SCHEMA:
+            assert _multiset_distance(rel_base[name], rel_other[name]) <= 1, name
+
+    def test_dataframe_to_carrier_table_end_to_end_adjacency(self) -> None:
+        # The original phase-1 xfail seed, now passing: an int-column frame and
+        # its one-row-shorter neighbour differ by exactly one released element.
+        schema = {"n": {"carrier": "number", "bounds": (-1e9, 1e9)}}
+        base = pd.DataFrame({"n": [1.0, 2.0, 3.0]})
+        neighbour = pd.DataFrame({"n": [1.0, 2.0]})
+        t_base = sanitize_carrier_table(dataframe_to_carrier_table(base, schema), schema)
+        t_other = sanitize_carrier_table(dataframe_to_carrier_table(neighbour, schema), schema)
+        assert abs(t_base.row_count - t_other.row_count) == 1
+        assert _multiset_distance(released_values(t_base)["n"], released_values(t_other)["n"]) <= 1
+
+
+class TestDataFrameBoxingRegressionSeeds:
+    """The specific pandas reboxings the crown jewel exists to survive, pinned
+    as explicit seeds so a strategy trim can never silently stop covering them
+    (guide section 7). Each asserts the released vector is boxing-invariant and
+    the neighbour is distance <= 1."""
+
+    def test_int_plus_none_reboxes_column_to_float_but_values_hold(self) -> None:
+        # The canonical case: an int64 column becomes float64 the moment a null
+        # enters it, reboxing every existing cell. The released values must not
+        # move (1 == 1.0 under OpenDP atomic f64 equality); the null drops.
+        schema = {"n": {"carrier": "number", "bounds": (-1e9, 1e9)}}
+        base = pd.DataFrame({"n": [1, 2, 3]})
+        neighbour = pd.DataFrame({"n": [1, 2, 3, None]})
+        assert base["n"].dtype == np.dtype("int64")
+        assert neighbour["n"].dtype == np.dtype("float64")
+        rel_base = released_values(dataframe_to_carrier_table(base, schema))["n"]
+        rel_other = released_values(dataframe_to_carrier_table(neighbour, schema))["n"]
+        assert Counter(rel_base) == Counter([1.0, 2.0, 3.0])
+        assert Counter(rel_other) == Counter([1.0, 2.0, 3.0])  # None dropped
+        assert _multiset_distance(rel_base, rel_other) == 0
+
+    def test_bool_column_with_one_1j_appended_reboxes_but_flags_hold(self) -> None:
+        # Appending `1j` widens a bool column to object/complex; every True is
+        # reboxed to (1+0j) and must still read True, while the 1j cell drops.
+        schema = {"f": {"carrier": "flag"}}
+        base = pd.DataFrame({"f": [True, False, True]})
+        neighbour = pd.DataFrame({"f": [True, False, True, 1j]})
+        assert base["f"].dtype == np.dtype("bool")
+        assert neighbour["f"].dtype == np.dtype("object")
+        rel_base = released_values(dataframe_to_carrier_table(base, schema))["f"]
+        rel_other = released_values(dataframe_to_carrier_table(neighbour, schema))["f"]
+        assert [bool(x) for x in rel_base] == [True, False, True]
+        assert [bool(x) for x in rel_other] == [True, False, True]  # 1j dropped
+        assert _multiset_distance(rel_base, rel_other) == 0
+
+    def test_nullable_boolean_extension_column(self) -> None:
+        schema = {"f": {"carrier": "flag"}}
+        base = pd.DataFrame({"f": pd.array([True, False, pd.NA], dtype="boolean")})
+        neighbour = pd.DataFrame({"f": pd.array([True, False, pd.NA, True], dtype="boolean")})
+        rel_base = released_values(dataframe_to_carrier_table(base, schema))["f"]
+        rel_other = released_values(dataframe_to_carrier_table(neighbour, schema))["f"]
+        assert [bool(x) for x in rel_base] == [True, False]  # pd.NA drops
+        assert [bool(x) for x in rel_other] == [True, False, True]
+        assert _multiset_distance(rel_base, rel_other) == 1
+
+    def test_nul_and_surrogate_text_cells_drop(self) -> None:
+        schema = {"t": {"carrier": "text"}}
+        base = pd.DataFrame({"t": ["a", "a\x00b", "\ud800", "c"]})
+        released = released_values(dataframe_to_carrier_table(base, schema))["t"]
+        assert released == ["a", "c"]  # NUL truncates, surrogate is not UTF-8
+
+    def test_temporal_column_is_all_invalid_for_number_and_text(self) -> None:
+        # float(np.datetime64(...,'ns')) SUCCEEDS and returns the epoch integer,
+        # so a temporal column must be rejected, never released as its raw ints.
+        stamps = [pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-02")]
+        num = dataframe_to_carrier_table(
+            pd.DataFrame({"n": stamps}), {"n": {"carrier": "number", "bounds": (-1e18, 1e18)}}
+        )
+        txt = dataframe_to_carrier_table(pd.DataFrame({"t": stamps}), {"t": {"carrier": "text"}})
+        assert released_values(num)["n"] == []
+        assert released_values(txt)["t"] == []
+
+    def test_arrow_list_cell_drops_under_both_boxings(self) -> None:
+        # An Arrow list<int64> column arrives cell-by-cell as a list; one null
+        # widens it to object, reboxing each cell as a length-1 ndarray. Both
+        # are containers, not scalars, and must drop identically (float() on a
+        # length-1 ndarray would otherwise return its sole element).
+        schema = {"n": {"carrier": "number", "bounds": (-1e9, 1e9)}}
+        arrow_list = pd.DataFrame(
+            {"n": pd.Series(pd.arrays.ArrowExtensionArray(pa.array([[1], [2], [3]])))}
+        )
+        object_ndarrays = pd.DataFrame(
+            {"n": pd.Series([np.array([1]), np.array([2]), np.array([3])])}
+        )
+        assert released_values(dataframe_to_carrier_table(arrow_list, schema))["n"] == []
+        assert released_values(dataframe_to_carrier_table(object_ndarrays, schema))["n"] == []
+
+
+class TestAdapterTotality:
+    """The adapter is total over data values (section 3.7): a cell whose FETCH
+    raises is dropped, never allowed to abort the fit -- fit success is itself
+    an observable, so a value that took one frame down where its one-row
+    neighbour succeeded would break (epsilon, delta)."""
+
+    def test_a_pyarrow_backed_cell_that_cannot_be_fetched_is_dropped_not_crashed(self) -> None:
+        # pd.ArrowDtype's positional read calls as_py(), which raises
+        # OverflowError when the stored integer leaves the Python datetime
+        # range. The unfetchable "ts" cell must drop while the valid "n" column
+        # still releases -- no OverflowError escapes the fit.
+        unfetchable = pd.Series(
+            pd.arrays.ArrowExtensionArray(pa.array([0, 1, 2**60], type=pa.timestamp("s")))
+        )
+        df = pd.DataFrame({"ts": unfetchable, "n": [1.0, 2.0, 3.0]})
+        schema = {
+            "ts": {"carrier": "number", "bounds": (-1e18, 1e18)},
+            "n": {"carrier": "number", "bounds": (-1e9, 1e9)},
+        }
+        table = dataframe_to_carrier_table(df, schema)
+        assert table.row_count == 3
+        rel = released_values(table)
+        assert rel["ts"] == []  # temporal + one unfetchable cell, all dropped
+        assert rel["n"] == [1.0, 2.0, 3.0]
+
+    @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+    def test_an_interrupt_from_a_cell_hook_propagates_through_the_adapter(
+        self, interrupt: type[BaseException]
+    ) -> None:
+        # A cell whose __array__ raises an interrupt during null detection must
+        # let the interrupt escape (section 3.7), not swallow it into a dropped
+        # cell -- an operator's Ctrl-C during a hostile cell must still work.
+        class Interrupts:
+            def __array__(self, *a: Any, **k: Any) -> Any:
+                raise interrupt()
+
+            def __float__(self) -> float:
+                raise interrupt()
+
+        df = pd.DataFrame({"n": pd.Series([Interrupts()], dtype=object)})
+        schema = {"n": {"carrier": "number", "bounds": (-1e9, 1e9)}}
+        with pytest.raises(interrupt):
+            dataframe_to_carrier_table(df, schema)
+
+
+class TestColumnSchemaValidation:
+    """`column_schema` and the closed release-kind x carrier table (section 3.3)
+    are validated BEFORE any private cell is read, so a malformed schema fails
+    loud and data-independently with a coded CarrierError."""
+
+    def test_unknown_carrier_fails_loud(self) -> None:
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(pd.DataFrame({"c": [1]}), {"c": {"carrier": "bogus"}})
+        assert exc.value.code == "dp_carrier_unknown"
+
+    def test_missing_carrier_fails_loud(self) -> None:
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(pd.DataFrame({"c": [1]}), {"c": {"bounds": (0.0, 1.0)}})
+        assert exc.value.code == "dp_carrier_unknown"
+
+    def test_number_carrier_without_bounds_fails_loud(self) -> None:
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(pd.DataFrame({"n": [1.0]}), {"n": {"carrier": "number"}})
+        assert exc.value.code == "dp_carrier_bounds_missing"
+
+    @pytest.mark.parametrize(
+        ("kind", "carrier", "ok"),
+        [
+            ("numeric", "number", True),
+            ("categorical", "text", True),
+            ("categorical", "flag", True),
+            ("categorical", "number", False),  # OpenDP has no float make_count_by
+            ("numeric", "text", False),
+            ("numeric", "flag", False),
+        ],
+    )
+    def test_closed_kind_carrier_table(self, kind: str, carrier: str, ok: bool) -> None:
+        spec: dict[str, Any] = {"kind": kind, "carrier": carrier}
+        if carrier == "number":
+            spec["bounds"] = (-1.0, 1.0)
+        df = pd.DataFrame({"c": [0]})
+        if ok:
+            dataframe_to_carrier_table(df, {"c": spec})  # no raise
+        else:
+            with pytest.raises(CarrierError) as exc:
+                dataframe_to_carrier_table(df, {"c": spec})
+            assert exc.value.code == "dp_kind_carrier_mismatch"
+
+    def test_unknown_kind_fails_loud(self) -> None:
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(
+                pd.DataFrame({"c": ["x"]}), {"c": {"kind": "ordinal", "carrier": "text"}}
+            )
+        assert exc.value.code == "dp_kind_unknown"
+
+    def test_kind_is_optional(self) -> None:
+        # The phase-1 schemas carry no `kind`; the carrier alone must suffice.
+        released = released_values(
+            dataframe_to_carrier_table(pd.DataFrame({"t": ["a", "b"]}), {"t": {"carrier": "text"}})
+        )
+        assert released["t"] == ["a", "b"]
+
+    def test_non_dataframe_source_fails_loud(self) -> None:
+        not_a_frame: Any = {"n": [1, 2]}
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(
+                not_a_frame, {"n": {"carrier": "number", "bounds": (0.0, 9.0)}}
+            )
+        assert exc.value.code == "dp_adapter_source_type"
+
+    def test_schema_column_absent_from_frame_fails_loud(self) -> None:
+        with pytest.raises(CarrierError) as exc:
+            dataframe_to_carrier_table(pd.DataFrame({"a": [1]}), {"b": {"carrier": "text"}})
+        assert exc.value.code == "dp_adapter_missing_column"
+
+    @pytest.mark.parametrize(
+        "bounds",
+        [("0", "1"), (0.0, float("nan")), (float("-inf"), 1.0), (5.0, 1.0), (None, 1.0)],
+    )
+    def test_malformed_bounds_fail_identically_on_empty_and_one_row(self, bounds: tuple) -> None:
+        # Bounds are schema config, not data: a malformed bound must fail the
+        # same coded way whether the frame is empty or holds a row, so it never
+        # becomes a fit-success observable (the phase-1 Codex HIGH, at the
+        # adapter boundary).
+        schema = {"n": {"carrier": "number", "bounds": bounds}}
+        codes = []
+        for frame in (pd.DataFrame({"n": pd.Series([], dtype=float)}), pd.DataFrame({"n": [0.5]})):
+            with pytest.raises(CarrierError) as exc:
+                dataframe_to_carrier_table(frame, schema)
+            codes.append(exc.value.code)
+        assert codes[0] == codes[1], codes
 
 
 # ---------------------------------------------------------------------------
