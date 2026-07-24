@@ -22,7 +22,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.quality.carriers import CarrierError, decode_number, decode_text
+from decoy_engine.quality.carriers import CarrierError, decode_flag, decode_number, decode_text
 from decoy_engine.quality.dp import (
     DpError,
 )
@@ -555,20 +555,28 @@ class TestRecordwiseNormalization:
         # numeric line said "non-finite clamped" while NaN is dropped and
         # FINITE out-of-domain values are clamped too. A policy that
         # ships in every artifact has to be true.
+        #
+        # Phase 8: the categorical lines above described the retired
+        # `dp_normalize` stringification path (a bool/number/decimal cell
+        # rendered as a label). DPS-CODEC replaced that with declared typed
+        # carriers -- `text` releases only genuine `str` cells and `flag`
+        # releases the canonical `true`/`false` tokens -- so the pin below is
+        # the carrier-accurate text, and the KNOWN GAP this test used to carry
+        # is closed.
         assert blocks[0] == {
             "categorical_labels": (
-                "text kept verbatim unless the value AS RECEIVED contains NUL or cannot be "
-                "encoded as UTF-8, noting that numpy fixed-width string storage strips a "
-                "trailing NUL before the fit sees it; "
-                "boolean, real, decimal and zero-imaginary complex rendered from the float64 "
-                "image; an integer or rational too large for float64 rendered by its own exact "
-                "string form instead, up to the interpreter's decimal-conversion limit; a decimal or "
-                "extended-precision real too large for float64 released as the infinity its "
-                "float64 image becomes; NaN released as null"
+                "a declared text column releases only genuine str cells, kept verbatim "
+                "unless the value AS RECEIVED contains NUL or cannot be encoded as UTF-8 "
+                "(numpy fixed-width string storage strips a trailing NUL before the fit "
+                "sees it); a declared flag column releases the two canonical tokens 'true' "
+                "and 'false'. The carrier declared for the column drives this, not how "
+                "pandas happens to store the column"
             ),
             "categorical_unsupported": (
-                "released as null (datetime, timedelta, text whose value AS RECEIVED carries "
-                "NUL or is not UTF-8 encodable, and any other type)"
+                "released as null: in a text column every non-str cell (a boolean, any "
+                "number, decimal or complex value, a datetime or timedelta, a container, and "
+                "any other type); in a flag column every non-boolean cell; and in either, "
+                "text whose value AS RECEIVED carries NUL or is not UTF-8 encodable"
             ),
             "numeric_values": (
                 "float64, values outside the declared domain clamped to it, "
@@ -598,26 +606,36 @@ class TestRecordwiseNormalization:
         assert decode_number(99.0, lower=0.0, upper=10.0) == (10.0, True)
         assert decode_number(float("-inf"), lower=0.0, upper=10.0) == (0.0, True)
 
-        # KNOWN GAP, flagged rather than silently asserted around: the
-        # `categorical_labels` prose above still describes the retired
-        # `dp_normalize` categorical path, which STRINGIFIED a bool, real,
-        # decimal, zero-imaginary complex, or too-large-for-float64 cell. The
-        # `text` carrier that actually backs a categorical release today never
-        # does that -- it drops any non-`str` cell instead, by design (guide
-        # section 3.2 "never `str()`"; the divergence is pinned at
-        # `test_text_carrier_is_strict_about_non_strings_by_design` in
-        # test_dp_codec_golden.py). That makes the stringification half of the
-        # pinned policy dict stale prose that this test cannot honestly assert
-        # against real behaviour; a bool-typed categorical column now routes
-        # through the separate `flag` carrier instead of being labelled text at
-        # all. Updating `dp_policy._DP_NORMALIZATION_POLICY`'s wording is out
-        # of this phase's scope (retiring `dp_normalize.py`, not auditing
-        # `dp_policy.py`'s prose) and needs its own follow-up. What DOES still
-        # hold for the `text` carrier is asserted below.
+        # Each claim the pinned prose makes about the `text` and `flag`
+        # carriers, exercised against the real codec -- not just pinned text
+        # (Codex round 9's own complaint about the pre-carrier version of
+        # this test, now applied to the carrier-accurate replacement).
         assert decode_text("a") == ("a", True)  # text verbatim
         assert decode_text("a\x00b")[1] is False  # NUL drops
         assert decode_text("\ud800")[1] is False  # surrogate drops
         assert decode_text(pd.Timestamp("2020-01-01"))[1] is False  # temporal drops
+        assert decode_text(True)[1] is False  # a bool cell is not a str: dropped
+        assert decode_text(1)[1] is False  # a number cell is not a str: dropped
+        assert decode_text(decimal.Decimal("1.5"))[1] is False  # nor a decimal
+        assert decode_flag(True) == (True, True)
+        assert decode_flag(False) == (False, True)
+        assert decode_flag(2)[1] is False  # an int outside {0, 1} is not a flag value
+        assert decode_flag("true")[1] is False  # text is never a flag value
+
+        # The two canonical release tokens themselves, end to end through a
+        # real fit: a `flag` column's retained category serializes as
+        # `"true"`/`"false"`, never `str(bool)`'s `"True"`/`"False"` and never
+        # `"1"`/`"0"` (guide section 3.4; full end-to-end coverage lives in
+        # `test_dp_flag_e2e.py`).
+        flag_snap = _real_fit_dp_snapshot(
+            pd.DataFrame({"f": [True] * 190 + [False] * 10}),
+            {"f": {"kind": "categorical", "carrier": "flag"}},
+            epsilon=8.0,
+            delta=1e-6,
+        )
+        flag_tokens = {entry["value"] for entry in flag_snap["columns"]["f"]["stats"]["top_values"]}
+        assert flag_tokens
+        assert flag_tokens <= {"true", "false"}
 
     def test_categorical_labels_that_cannot_be_encoded_are_dropped_not_raised(self):
         """C-B4, second location: a lone surrogate is a valid Python
