@@ -325,7 +325,19 @@ def _validate_bound(name: str, which: str, b: Any) -> float:
             code="dp_carrier_bounds_type",
             message=f"column {name!r}: {which} bound must be a real number, got {type(b).__name__}",
         )
-    fb = float(b)
+    try:
+        fb = float(b)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:
+        # A Real whose float() itself raises (a hostile __float__, an int too
+        # large to convert) is still a malformed bound -- normalize to a coded
+        # structural error rather than letting a raw OverflowError/RuntimeError
+        # escape. Data-independent: happens before any cell is read.
+        raise CarrierError(
+            code="dp_carrier_bounds_type",
+            message=f"column {name!r}: {which} bound could not be read as a float ({type(exc).__name__})",
+        ) from exc
     if not math.isfinite(fb):
         raise CarrierError(
             code="dp_carrier_bounds_nonfinite",

@@ -554,6 +554,7 @@ class TestMalformedNumberBoundsFailStructurally:
             (None, 1.0),  # non-real
             (0 + 1j, 1.0),  # complex
             (True, 5.0),  # bool bound must not pass as 1.0
+            (10**10000, 1.0),  # int too large for float() -> OverflowError, coded
         ],
     )
     def test_malformed_bounds_fail_identically_on_empty_and_one_row(self, bounds: tuple) -> None:
@@ -565,6 +566,21 @@ class TestMalformedNumberBoundsFailStructurally:
             codes.append(exc.value.code)
         # Same structural failure regardless of row count -> data-independent.
         assert codes[0] == codes[1], codes
+
+    def test_a_bound_whose_float_conversion_raises_becomes_a_coded_error(self) -> None:
+        # A numbers.Real whose float() itself raises must normalize to a coded
+        # CarrierError, not leak a raw RuntimeError -- and still data-independently.
+        class HostileFloat(float):
+            def __float__(self) -> float:
+                raise RuntimeError("boom")
+
+        schema = {"n": {"carrier": "number", "bounds": (HostileFloat(0.0), 1.0)}}
+        codes = []
+        for rows in ([], [0.5]):
+            with pytest.raises(CarrierError) as exc:
+                sanitize_carrier_table(self._num_table(rows), schema)
+            codes.append(exc.value.code)
+        assert codes == ["dp_carrier_bounds_type", "dp_carrier_bounds_type"]
 
     def test_well_formed_bounds_still_sanitize(self) -> None:
         schema = {"n": {"carrier": "number", "bounds": (-9.0, 9.0)}}
