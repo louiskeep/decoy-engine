@@ -93,11 +93,13 @@ is what makes it so; it is not a claim about pandas in general.
 > as UTF-8; every non-string cell (a boolean, any number, a decimal, a complex
 > value, a date, timestamp or timedelta, a container, or any other type)
 > contributes nothing and is counted as a null. A `flag` column releases the two
-> canonical labels `true` and `false`; it counts as a null every cell that is
-> neither a boolean nor the integer, float, or zero-imaginary-complex `0` or `1`
-> that a boolean becomes when a concatenation reboxes the column's storage (a
-> string such as `"1"`, a `2`, a `0.5`, a date, or a container all contribute
-> nothing). This is a deliberate restriction, not an oversight: deriving a label from
+> canonical labels `true` and `false`: it releases the matching label for any
+> non-string cell whose value converts to an exact real `0` or `1` (a boolean, or
+> the `0`/`1` an integer, float, decimal, or zero-imaginary-complex holds after a
+> concatenation reboxes the column's storage), and counts as a null every string
+> (even `"1"` or `"0"`) and every other cell that does not (a `2`, a `0.5`, a
+> nonzero-imaginary complex, a date, or a container). This is a deliberate
+> restriction, not an oversight: deriving a label from
 > a value's pandas storage would make the label a function of how the column was
 > boxed, and a column's storage is a function of all its rows, so one added row
 > could otherwise change every label at once and break the adjacency the

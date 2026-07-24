@@ -29,10 +29,10 @@ _DP_NORMALIZATION_POLICY = {
     "categorical_unsupported": (
         "released as null: in a text column every non-str cell (a boolean, any "
         "number, decimal or complex value, a datetime or timedelta, a container, and "
-        "any other type); in a flag column every cell that is neither a boolean nor "
-        "the integer, float or zero-imaginary-complex 0 or 1 a boolean is reboxed to "
-        "(a string, a 2 or 0.5, a datetime, a container); and in either, text whose "
-        "value AS RECEIVED carries NUL or is not UTF-8 encodable"
+        "any other type); in a flag column every string (even '1' or '0') and every "
+        "other cell that does not convert to an exact real 0 or 1 (a 2 or a 0.5, a "
+        "nonzero-imaginary complex, a datetime or timedelta, a container); and in "
+        "either, text whose value AS RECEIVED carries NUL or is not UTF-8 encodable"
     ),
     "numeric_values": (
         "float64, values outside the declared domain clamped to it, "
@@ -80,8 +80,9 @@ def _log_normalization_policy() -> None:
     """
     _logger.info(
         "dp fit: a declared text column releases only genuine string values and a "
-        "declared flag column releases 'true'/'false'; every other cell (numbers, a "
-        "boolean in a text column, datetimes, timedeltas and other types) is released "
-        "as null. This message is fixed and does not indicate whether any value in "
-        "this frame was affected."
+        "declared flag column releases 'true'/'false' for a cell that converts to an "
+        "exact real 0 or 1; every other cell (a string, a number that is not 0 or 1, "
+        "a boolean in a text column, datetimes, timedeltas, containers and other "
+        "types) is released as null. This message is fixed and does not indicate "
+        "whether any value in this frame was affected."
     )
