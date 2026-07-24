@@ -90,19 +90,35 @@ class StatisticalSpec:
     # F4). Carrying the digest here lets the statistical generator branch
     # reuse it instead, closing that reopen without touching the sampler.
     snapshot_digest: str | None = None
+    # DPS-CODEC phase 6 (guide section 3.4/3.9): the column's typed DP carrier
+    # (`number`/`flag`/`text`), or None. `None` is the legacy non-DP sampling
+    # path (every `distribution-snapshot/v1` column, unconditionally -- a
+    # stray `carrier` key there is never honored, see `load_spec`); a set
+    # carrier is the codec path a verified `dps-marginal/v3` DP release uses.
+    # The sampler (`_sample.py`) dispatches on `carrier is None` for exactly
+    # this reason, so legacy behavior stays byte-identical.
+    carrier: str | None = None
 
 
 def spec_to_dict(spec: StatisticalSpec) -> dict[str, Any]:
     """Plain-dict form of a validated `StatisticalSpec`, for embedding into
     `PinnedStatisticalSpec.spec` (guide section 4.7). `dataclasses.asdict`
     is exact here because every field is already a JSON-shaped value
-    (str/dict/bool/None)."""
-    return asdict(spec)
+    (str/dict/bool/None). `carrier` is dropped from the output when `None`
+    (guide section 3.9): it is a DP-v3-only field, so a legacy
+    `distribution-snapshot/v1` spec serializes exactly as it did before
+    phase 6, and an older serialized Plan deserializes unchanged."""
+    data = asdict(spec)
+    if data.get("carrier") is None:
+        del data["carrier"]
+    return data
 
 
 def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
     """Inverse of `spec_to_dict`: reconstruct a `StatisticalSpec` from its
-    plain-dict (or thawed frozen-mapping) form."""
+    plain-dict (or thawed frozen-mapping) form. A missing `carrier` key
+    (every pre-phase-6 serialized spec, and every legacy non-DP spec)
+    defaults to `None`, matching `spec_to_dict`'s omission."""
     return StatisticalSpec(
         column=str(data["column"]),
         source_column=str(data["source_column"]),
@@ -114,6 +130,7 @@ def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
         joint=dict(data["joint"]) if data.get("joint") is not None else None,
         parent_first=bool(data["parent_first"]),
         snapshot_digest=data.get("snapshot_digest"),
+        carrier=data.get("carrier"),
     )
 
 
@@ -210,24 +227,29 @@ def load_spec(
                 f"not in the snapshot (available: {available})."
             ),
         )
-    # M-2 (phase 5): verify_dp_snapshots already ACCEPTS a `flag`-carrier DP
-    # release, but the generation-side sampler (generation/statistical/
-    # _sample.py) does not yet decode flags -- it would str()-force the
-    # "true"/"false" tokens against the artifact's bool dtype. Until phase 6
-    # wires the flag decoder, refuse to compile a flag column into a sampler
-    # spec so the verify gate cannot open ahead of the sampler. Phase 6 removes
-    # this guard.
-    if col_entry.get("carrier") == "flag":
-        raise StatisticalSpecError(
-            code="statistical_dp_flag_sampler_unwired",
-            message=(
-                f"statistical column {name!r}: source column {source_column!r} is a DP "
-                "`flag` (bool-domain) release, which verify_dp_snapshots accepts but the "
-                "generation sampler cannot yet decode (the flag decoder lands in phase 6). "
-                "Generating it now would emit 'true'/'false' strings against the "
-                "artifact's bool dtype. Fit this column as `text`, or wait for phase 6."
-            ),
-        )
+    # DP-v3 carrier (phase 6, guide section 3.4/3.9): mandatory and strictly
+    # validated ONLY for a column the compiler has verified as a genuine DP
+    # release (`dp_verified` is the compiler's own verdict, threaded in --
+    # never derived by reading the snapshot's own `carrier` key, same
+    # non-inference rule as the `allow_real_categories` exemption below). An
+    # ordinary `distribution-snapshot/v1` column keeps `carrier=None` -- the
+    # legacy sampling path -- even if a stray `carrier` key is present,
+    # because `verify_dp_snapshots` never ran over it to make that key mean
+    # anything. `verify_dp_snapshots` already re-validated the carrier
+    # against kind for a genuine DP release before `dp_verified` was set, so
+    # the check here is defense-in-depth, not the primary gate.
+    carrier: str | None = None
+    if dp_verified:
+        carrier = col_entry.get("carrier")
+        if carrier not in ("number", "flag", "text"):
+            raise StatisticalSpecError(
+                code="statistical_dp_carrier_invalid",
+                message=(
+                    f"statistical column {name!r}: source column {source_column!r} is a "
+                    f"verified DP release but records carrier {carrier!r}, not one of "
+                    "'number'/'flag'/'text'."
+                ),
+            )
 
     kind = col_entry.get("kind")
     if kind not in _SUPPORTED_KINDS:
@@ -334,6 +356,20 @@ def load_spec(
             ),
         )
 
+    # `emit` inserts OTHER_TOKEN ("__other__") as a sampled value, which is not
+    # a flag value -- a bool column has exactly two categories and no tail
+    # placeholder to emit. Flag columns redistribute tail mass across
+    # true/false instead (guide section 3.4).
+    if carrier == "flag" and other_mode == "emit":
+        raise StatisticalSpecError(
+            code="statistical_flag_other_mode_emit_invalid",
+            message=(
+                f"statistical column {name!r}: other_mode='emit' is not valid for a "
+                f"`flag` carrier column ({OTHER_TOKEN!r} is not a bool value); use "
+                "other_mode='redistribute' (the default) for flag columns."
+            ),
+        )
+
     condition_on = col_cfg.get("condition_on")
     joint: dict[str, Any] | None = None
     parent_first = False
@@ -374,4 +410,5 @@ def load_spec(
         joint=joint,
         parent_first=parent_first,
         snapshot_digest=snapshot_digest,
+        carrier=carrier,
     )

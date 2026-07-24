@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from decoy_engine.plan._checks_dp_carrier import (
     carrier_aware_query_count,
+    check_flag_tokens_canonical,
     column_block_matches_schema,
     numeric_shape_matches_a_dp_release,
     schema_matches_legacy,
@@ -415,12 +416,12 @@ def verify_dp_snapshots(
                     ),
                 )
 
-            # HIGH-2: the `columns` block's carrier/kind (which the generation
-            # sampler and the phase-6 `flag` safety stop read) must equal the
-            # `dp.column_schema` entry for the same column. A `flag` release whose
-            # `columns` block is relabelled `text` would otherwise pass here while
-            # `dp.column_schema` still declares `flag`, slipping past the sampler
-            # stop onto the text sampling path.
+            # HIGH-2: the `columns` block's carrier/kind (which `load_spec`
+            # reads onto `StatisticalSpec.carrier`, and the sampler dispatches
+            # on) must equal the `dp.column_schema` entry for the same column.
+            # A `flag` release whose `columns` block is relabelled `text`
+            # would otherwise pass here while `dp.column_schema` still
+            # declares `flag`, reaching the sampler with the wrong carrier.
             if not column_block_matches_schema(col_snap, column_schema, source_column):
                 _raise(
                     "dp_snapshot_column_block_schema_mismatch",
@@ -486,6 +487,18 @@ def verify_dp_snapshots(
                             "dp block, not a DP release for this column."
                         ),
                     )
+
+            # Guide 3.4 shape guard: a flag column's top_values must be only
+            # the two canonical tokens the fit emits, so a bogus token fails
+            # closed here instead of deep in the sampler's decode.
+            check_flag_tokens_canonical(
+                col_snap,
+                kind=kind,
+                col_carrier=col_carrier,
+                table_name=table_name,
+                col_name=col_name,
+                source_column=source_column,
+            )
 
             release_id = dp_block.get("release_id")
             if not isinstance(release_id, str) or not release_id:

@@ -335,6 +335,12 @@ class TestDpCategoricalNowSupported:
         df = pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
         snap = compute_distribution_snapshot(df)
         snap["dp"] = {"schema": "dps-marginal/v3", "epsilon_total": 1.0, "delta_total": 1e-6}
+        # Phase 6: carrier is mandatory + strictly validated only when
+        # dp_verified=True (guide section 3.9); stamp a valid "text" carrier
+        # on the column so this direct dp_verified=True call matches that
+        # contract -- this test's point is the non-inference from
+        # snap["dp"], not carrier validation (covered elsewhere).
+        snap["columns"]["state"]["carrier"] = "text"
         spec_kwargs = {"name": "state", "type": "statistical", "snapshot_file": "x"}
         from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
@@ -345,6 +351,7 @@ class TestDpCategoricalNowSupported:
         # not the presence of snap["dp"].
         spec = load_spec(spec_kwargs, snapshot=snap, dp_verified=True)
         assert spec.kind == "categorical"
+        assert spec.carrier == "text"
 
 
 class TestFailClosedDpDeclaration:
@@ -1192,15 +1199,14 @@ class TestColumnSchemaPerColumnIdentity:
         assert ("t", "age") in verified
 
 
-class TestFlagGenerateGuardBeforePhase6:
-    """M-2: verify_dp_snapshots accepts a `flag` DP release, but until phase 6
-    wires the flag decoder in the sampler, the generate/compile-to-sample path
-    must fail closed -- the current str()-forcing sampler would emit
-    "true"/"false" strings against the artifact's bool dtype."""
+class TestFlagGenerateWiredAtPhase6:
+    """Phase 6 lifts the phase-5 M-2 refusal: the flag decoder is now wired
+    into the sampler (`generation/statistical/_sample.py`), so a `flag` DP
+    release compiles into a sampler spec AND `compile_plan` accepts it end to
+    end, generating real Python `bool` values instead of refusing."""
 
-    def test_verify_accepts_flag_but_load_spec_refuses_until_phase6(self, tmp_path):
+    def test_verify_accepts_flag_and_load_spec_now_compiles_it(self, tmp_path):
         from decoy_engine.generation.statistical import load_spec
-        from decoy_engine.generation.statistical._spec import StatisticalSpecError
 
         artifact = _flag_dp_artifact()
         path = _write(tmp_path, "flag_synth.json", artifact)
@@ -1223,16 +1229,18 @@ class TestFlagGenerateGuardBeforePhase6:
         assert receipt is not None
         assert ("t", "flag") in verified
 
-        # The GENERATE path (load_spec -> sampler spec) refuses it.
-        with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(
-                {"name": "flag", "type": "statistical", "snapshot_file": path},
-                snapshot=artifact,
-                dp_verified=True,
-            )
-        assert exc.value.code == "statistical_dp_flag_sampler_unwired"
+        # The GENERATE path (load_spec -> sampler spec) now compiles it, with
+        # the carrier threaded onto the spec so the sampler decodes flag.
+        spec = load_spec(
+            {"name": "flag", "type": "statistical", "snapshot_file": path},
+            snapshot=artifact,
+            dp_verified=True,
+        )
+        assert spec.carrier == "flag"
 
-    def test_compile_plan_refuses_a_flag_artifact_with_the_phase6_code(self, tmp_path):
+    def test_compile_plan_and_generate_tables_produce_real_bool_values(self, tmp_path):
+        from decoy_engine.generation.synthesize import generate_tables
+
         artifact = _flag_dp_artifact()
         path = _write(tmp_path, "flag_compile.json", artifact)
         cfg = {
@@ -1247,6 +1255,68 @@ class TestFlagGenerateGuardBeforePhase6:
                 }
             ],
         }
+        plan = compile_plan(cfg, _profile(), decoy_engine_version="test")  # must not raise
+        out = generate_tables(plan)
+        values = out["t"]["flag"].to_pylist()
+        assert len(values) == 5
+        assert all(isinstance(v, bool) for v in values)
+        # The artifact's top_values carry both "true" and "false" (see
+        # _flag_dp_artifact); the sampler must be able to draw either.
+        assert set(values) <= {True, False}
+
+
+class TestFlagTokenShapeGuard:
+    """Guide section 3.4: verify_dp_snapshots accepts, for a `flag` column,
+    ONLY the two canonical tokens 'true'/'false' in top_values[].value; any
+    other token is a corrupted or hand-edited artifact and fails closed
+    with `dp_flag_token_invalid`, before the phase-6 sampler ever sees it."""
+
+    def test_bogus_flag_token_fails_closed_at_verify_time(self, tmp_path):
+        artifact = _flag_dp_artifact()
+        artifact["columns"]["flag"]["stats"]["top_values"] = [
+            {"value": "maybe", "count": 3},
+            {"value": "false", "count": 2},
+        ]
+        path = _write(tmp_path, "flag_bogus_token.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        pinned, _ = read_and_pin_snapshots(cfg)
         with pytest.raises(PlanCompileError) as exc:
-            compile_plan(cfg, _profile(), decoy_engine_version="test")
-        assert exc.value.code == "statistical_dp_flag_sampler_unwired"
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_flag_token_invalid"
+
+    def test_python_str_bool_token_also_fails_closed(self, tmp_path):
+        # "True"/"1" are real values a naive serializer could have emitted;
+        # only the canonical lowercase "true"/"false" passes.
+        artifact = _flag_dp_artifact()
+        artifact["columns"]["flag"]["stats"]["top_values"] = [
+            {"value": "True", "count": 3},
+            {"value": "false", "count": 2},
+        ]
+        path = _write(tmp_path, "flag_str_bool_token.json", artifact)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 10.0, "delta": 1e-4}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "flag", "type": "statistical", "snapshot_file": path}
+                    ],
+                }
+            ],
+        }
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_flag_token_invalid"

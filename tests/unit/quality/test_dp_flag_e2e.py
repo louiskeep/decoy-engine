@@ -1,4 +1,4 @@
-"""DPS-CODEC phase 5: end-to-end regression guard for the `flag` carrier.
+"""DPS-CODEC phases 5-6: end-to-end regression guard for the `flag` carrier.
 
 Phase 5 wired the `flag` (bool-domain) carrier through the live fit
 (`quality/dp.py`) and the compile-time verifier (`plan/_checks_dp.py`), but no
@@ -8,20 +8,29 @@ a bool column produces a v3 artifact whose flag column serializes as the
 canonical `"true"`/`"false"` tokens against a `bool` dtype, whose DP block
 counts the flag as a categorical PAIR, which `verify_dp_snapshots` accepts, and
 whose per-column carrier fails closed when mutated.
+
+Phase 6 wired the flag decoder into the sampler (`generation/statistical/
+_sample.py`) and lifted the phase-5 generate-side refusal, so this file also
+carries the real fit all the way through `compile_plan` -> `generate_tables`
+and asserts the output is genuine Python `bool`, not the `"true"`/`"false"`
+strings a pre-phase-6 sampler would have emitted.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from decoy_engine.plan import PlanCompileError
+from decoy_engine.generation.synthesize import generate_tables
+from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._generation import read_and_pin_snapshots
+from decoy_engine.profile import Profile
 from decoy_engine.quality.dp import fit_dp_snapshot
 
 
@@ -212,3 +221,60 @@ class TestFlagCarrierEndToEnd:
         assert frozen["x"] is not schema["x"]
         bounds.append(999.0)  # mutate the caller's original list after the freeze
         assert frozen["x"]["bounds"] == (0.0, 100.0)  # frozen copy is unaffected
+
+
+def _profile() -> Profile:
+    return Profile(
+        schema_version=1,
+        tables=(),
+        relationships=(),
+        profiled_at=datetime.now(timezone.utc),
+        decoy_engine_version="test",
+    )
+
+
+class TestFlagCarrierGeneratesRealBoolEndToEnd:
+    """Phase 6: the flag decoder is wired into the sampler, so the M-2
+    generate-side refusal lifts and a real OpenDP fit over a flag column
+    generates real Python `bool` values through compile_plan ->
+    generate_tables, both when the release retains both categories and when
+    it retains only one."""
+
+    def test_both_categories_generate_real_bool_values(self, tmp_path):
+        snap = _fit_flag_plus_numeric()
+        tokens = {e["value"] for e in snap["columns"]["is_active"]["stats"]["top_values"]}
+        assert tokens == {"true", "false"}  # both categories survived thresholding
+        path = _write(tmp_path, "flag_gen_both.json", snap)
+        plan = compile_plan(_cfg_for(path), _profile(), decoy_engine_version="test")
+        out = generate_tables(plan)
+        values = out["t"]["is_active"].to_pylist()
+        assert len(values) == 5
+        assert all(isinstance(v, bool) for v in values)
+
+    def test_one_category_generates_the_single_surviving_bool_value(self, tmp_path):
+        # Every row is True, so the thresholded release retains only "true".
+        rng = np.random.default_rng(9)
+        n = 2000
+        df = pd.DataFrame(
+            {
+                "is_active": np.ones(n, dtype=bool),
+                "age": rng.integers(0, 120, size=n).astype(float),
+            }
+        )
+        snap = fit_dp_snapshot(
+            df,
+            {
+                "is_active": {"kind": "categorical", "carrier": "flag"},
+                "age": {"kind": "numeric", "carrier": "number", "bounds": (0.0, 120.0)},
+            },
+            epsilon=10.0,
+            delta=1e-5,
+        )
+        tokens = {e["value"] for e in snap["columns"]["is_active"]["stats"]["top_values"]}
+        assert tokens == {"true"}
+        path = _write(tmp_path, "flag_gen_one.json", snap)
+        plan = compile_plan(_cfg_for(path), _profile(), decoy_engine_version="test")
+        out = generate_tables(plan)
+        values = out["t"]["is_active"].to_pylist()
+        assert len(values) == 5
+        assert all(v is True for v in values)

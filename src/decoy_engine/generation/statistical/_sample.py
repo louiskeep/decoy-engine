@@ -11,7 +11,10 @@ Methodology:
 - Categorical: weighted draw over the snapshot's top_values. Tail mass
   (`other_count`) either redistributes proportionally onto the top
   values (default) or emits the OTHER_TOKEN placeholder
-  (`other_mode: emit`).
+  (`other_mode: emit`). A `flag`-carrier column (DPS-CODEC phase 6, guide
+  section 3.4) decodes the artifact's canonical "true"/"false" tokens to
+  Python `bool` instead of the legacy `str()`-forced categorical value --
+  one representation in, one representation out.
 - Datetime: weighted year choice from year_bins, uniform timestamp
   within the year, clamped to the observed [min, max].
 - Freetext: LENGTH-ONLY surrogate text. Target length drawn from the
@@ -153,12 +156,39 @@ def _numeric_row(rng: random.Random, edges: list[float], cum: list[float]) -> fl
     return lo + rng.random() * (hi - lo)
 
 
-def _categorical_tables(spec: StatisticalSpec) -> tuple[list[str], list[float]]:
+def _decode_flag_token(token: object, column: str) -> bool:
+    """The one legal decode for a `flag`-carrier top_values entry: the
+    artifact always serializes the canonical `"true"`/`"false"` tokens
+    (`quality/dp.py::_flag_token`), never Python `str(bool)` `"True"`/
+    `"False"` and never `"0"`/`"1"`. Anything else is a corrupted or
+    hand-edited artifact that `plan._checks_dp_carrier.
+    check_flag_tokens_canonical` should already have refused at compile
+    time; this is defense-in-depth for a direct/unvalidated-dict caller."""
+    if token == "true":  # noqa: S105 -- an artifact token literal, not a credential
+        return True
+    if token == "false":  # noqa: S105 -- an artifact token literal, not a credential
+        return False
+    raise StatisticalSpecError(
+        code="statistical_flag_token_invalid",
+        message=(
+            f"statistical column {column!r}: flag top_values entry {token!r} is "
+            "not the canonical 'true'/'false'."
+        ),
+    )
+
+
+def _categorical_tables(spec: StatisticalSpec) -> tuple[list[Any], list[float]]:
     top = spec.stats.get("top_values") or []
-    values = [str(e["value"]) for e in top]
+    if spec.carrier == "flag":
+        values: list[Any] = [_decode_flag_token(e["value"], spec.column) for e in top]
+    else:
+        values = [str(e["value"]) for e in top]
     weights = [float(e["count"]) for e in top]
     other = float(spec.stats.get("other_count") or 0)
     if other > 0 and spec.other_mode == "emit":
+        # load_spec rejects other_mode="emit" for a flag carrier (guide
+        # section 3.4), so OTHER_TOKEN never joins a bool values list here;
+        # this branch is reached by flag columns only defensively.
         values.append(OTHER_TOKEN)
         weights.append(other)
     # redistribute: tail mass is dropped from the table, which scales the

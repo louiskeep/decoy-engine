@@ -15,8 +15,15 @@ import json
 import pandas as pd
 import pytest
 
-from decoy_engine.generation.statistical import StatisticalSpecError, load_spec, sample_column
+from decoy_engine.generation.statistical import (
+    StatisticalSpecError,
+    load_spec,
+    sample_column,
+    spec_from_dict,
+    spec_to_dict,
+)
 from decoy_engine.generation.statistical._spec import _load_snapshot
+from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 
 def _load_spec(col_cfg: dict, **kwargs) -> object:
@@ -153,6 +160,132 @@ class TestCategoricalSampling:
         with pytest.raises(StatisticalSpecError) as exc:
             _load_spec(_col("state", snap, allow_real_categories=1))
         assert exc.value.code == "statistical_allow_real_categories_invalid_type"
+
+
+def _flag_snapshot(top_values: list[dict], other_count: int = 0) -> dict:
+    """A minimal `columns` block for a `flag`-carrier categorical column --
+    shaped like the `dp.py`-produced artifact (`carrier: "flag"`,
+    `dtype: "bool"`, canonical `"true"`/`"false"` tokens) but hand-built,
+    since `load_spec` only reads `snapshot["columns"]` and trusts the
+    caller's `dp_verified` flag rather than the artifact's own `dp` block
+    (see the module docstring's non-inference rule)."""
+    non_null = sum(e["count"] for e in top_values)
+    return {
+        "schema_version": DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
+        "row_count": non_null + other_count,
+        "columns": {
+            "flag": {
+                "dtype": "bool",
+                "kind": "categorical",
+                "carrier": "flag",
+                "null_count": 0,
+                "non_null_count": non_null,
+                "distinct_count": len(top_values),
+                "stats": {"top_values": top_values, "other_count": other_count},
+            }
+        },
+        "joints": [],
+    }
+
+
+class TestFlagCarrierSampling:
+    """DPS-CODEC phase 6: the `carrier` field threaded onto `StatisticalSpec`
+    and the flag decode in `_sample.py::_categorical_tables`."""
+
+    def test_load_spec_reads_carrier_only_when_dp_verified(self):
+        snap = _flag_snapshot([{"value": "true", "count": 3}, {"value": "false", "count": 2}])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        assert spec.carrier == "flag"
+
+    def test_stray_carrier_on_non_dp_column_stays_on_legacy_path(self):
+        """Guide section 3.9: an ordinary (non-DP-verified) snapshot column
+        keeps carrier=None even with a stray `carrier` key present, because
+        `verify_dp_snapshots` never ran over it to make that key mean
+        anything -- so the legacy str()-forced sampler path stays in
+        effect, not the bool decode."""
+        snap = _flag_snapshot([{"value": "true", "count": 3}, {"value": "false", "count": 2}])
+        spec = load_spec(
+            _col("flag", "unused", allow_real_categories=True), snapshot=snap, dp_verified=False
+        )
+        assert spec.carrier is None
+        out = sample_column(spec, 20, col_seed=1)
+        assert all(isinstance(v, str) for v in out)
+        assert set(out) <= {"true", "false"}
+
+    def test_flag_column_decodes_to_python_bool_both_categories(self):
+        snap = _flag_snapshot([{"value": "true", "count": 9}, {"value": "false", "count": 1}])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        out = sample_column(spec, 200, col_seed=3)
+        assert all(isinstance(v, bool) for v in out)
+        assert set(out) <= {True, False}
+
+    def test_flag_column_one_category_only(self):
+        snap = _flag_snapshot([{"value": "true", "count": 5}])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        out = sample_column(spec, 50, col_seed=4)
+        assert all(v is True for v in out)
+
+    def test_empty_top_values_is_degenerate_not_a_crash(self):
+        snap = _flag_snapshot([])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        with pytest.raises(StatisticalSpecError) as exc:
+            sample_column(spec, 5, col_seed=1)
+        assert exc.value.code == "statistical_stats_degenerate"
+
+    def test_all_zero_weight_top_values_is_degenerate_not_a_crash(self):
+        # An aggressively DP-noised release can clamp every retained count to
+        # zero (the coded degenerate error, not random.choices's ValueError).
+        snap = _flag_snapshot([{"value": "true", "count": 0}, {"value": "false", "count": 0}])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        with pytest.raises(StatisticalSpecError) as exc:
+            sample_column(spec, 5, col_seed=1)
+        assert exc.value.code == "statistical_stats_degenerate"
+
+    def test_bogus_flag_token_fails_closed_at_sample_time(self):
+        snap = _flag_snapshot([{"value": "maybe", "count": 5}])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        with pytest.raises(StatisticalSpecError) as exc:
+            sample_column(spec, 5, col_seed=1)
+        assert exc.value.code == "statistical_flag_token_invalid"
+
+    def test_other_mode_emit_rejected_for_flag(self):
+        snap = _flag_snapshot([{"value": "true", "count": 5}], other_count=2)
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("flag", "unused", other_mode="emit"), snapshot=snap, dp_verified=True)
+        assert exc.value.code == "statistical_flag_other_mode_emit_invalid"
+
+    def test_dp_verified_column_missing_carrier_fails_closed(self):
+        snap = _flag_snapshot([{"value": "true", "count": 3}])
+        del snap["columns"]["flag"]["carrier"]
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        assert exc.value.code == "statistical_dp_carrier_invalid"
+
+
+class TestCarrierSerialization:
+    """Guide section 3.9: `carrier` is a DP-v3-only field. `spec_to_dict`
+    drops it when `None` so an older serialized Plan (every legacy
+    non-DP spec) round-trips byte-identically; `spec_from_dict` defaults a
+    missing key back to `None`."""
+
+    def test_none_carrier_omitted_from_serialized_form(self, tmp_path):
+        snap = _write_snapshot(tmp_path, _source_df())
+        spec = _load_spec(_col("state", snap, allow_real_categories=True))
+        assert spec.carrier is None
+        data = spec_to_dict(spec)
+        assert "carrier" not in data
+        restored = spec_from_dict(data)
+        assert restored.carrier is None
+        assert restored == spec
+
+    def test_set_carrier_round_trips_through_serialization(self):
+        snap = _flag_snapshot([{"value": "true", "count": 3}, {"value": "false", "count": 2}])
+        spec = load_spec(_col("flag", "unused"), snapshot=snap, dp_verified=True)
+        data = spec_to_dict(spec)
+        assert data["carrier"] == "flag"
+        restored = spec_from_dict(data)
+        assert restored.carrier == "flag"
+        assert restored == spec
 
 
 class TestHighCardinalitySampling:

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.plan._errors import PlanCompileError
+
 
 def carrier_aware_query_count(dp_block: dict[str, Any]) -> int | None:
     """Reconstruct the artifact's own `query_count` from its recorded
@@ -83,18 +85,66 @@ def schema_matches_legacy(
 def column_block_matches_schema(
     col_snap: dict[str, Any], column_schema: dict[str, Any], source_column: str
 ) -> bool:
-    """HIGH-2: the per-column `columns` block's own `carrier`/`kind` -- which the
-    generation sampler and the phase-6 `flag` safety stop (`_spec.py`) read --
-    must equal the `dp.column_schema` entry for the same column. If they
-    disagree, a `flag` release could be relabelled `text` in the `columns` block
-    (while `dp.column_schema` still declares `flag`), passing verification and
-    slipping past the phase-6 flag-sampler stop onto the text sampling path.
-    Pin agreement between the two recorded carriers at the verify gate."""
+    """HIGH-2: the per-column `columns` block's own `carrier`/`kind` -- which
+    `load_spec` (`_spec.py`) reads onto `StatisticalSpec.carrier` and the
+    sampler dispatches on -- must equal the `dp.column_schema` entry for the
+    same column. If they disagree, a `flag` release could be relabelled
+    `text` in the `columns` block (while `dp.column_schema` still declares
+    `flag`), passing verification and reaching the sampler with the wrong
+    carrier: the bool "true"/"false" tokens would decode through the legacy
+    str() categorical path instead of the flag bool decode. Pin agreement
+    between the two recorded carriers at the verify gate."""
     spec = column_schema.get(source_column)
     if not isinstance(spec, dict):
         return False
     return col_snap.get("carrier") == spec.get("carrier") and col_snap.get("kind") == spec.get(
         "kind"
+    )
+
+
+def _flag_tokens_are_canonical(col_snap: dict[str, Any]) -> bool:
+    """Guide section 3.4 shape guard: a `flag` column's `top_values[].value`
+    entries must be exactly the canonical `"true"`/`"false"` tokens the fit
+    path (`quality/dp.py::_flag_token`) always emits. It is data-independent
+    (checks the shape of the recorded tokens, not any private value), so it
+    catches a corrupted or hand-edited artifact carrying a bogus token
+    (`"1"`, `"True"`, `"maybe"`, ...) that the phase-6 sampler's canonical
+    decode (`generation/statistical/_sample.py::_decode_flag_token`) would
+    otherwise refuse only at generate time, well after verification passed."""
+    stats = col_snap.get("stats")
+    if not isinstance(stats, dict):
+        return False
+    top_values = stats.get("top_values")
+    if not isinstance(top_values, list):
+        return False
+    return all(
+        isinstance(entry, dict) and entry.get("value") in ("true", "false") for entry in top_values
+    )
+
+
+def check_flag_tokens_canonical(
+    col_snap: dict[str, Any],
+    *,
+    kind: Any,
+    col_carrier: Any,
+    table_name: Any,
+    col_name: Any,
+    source_column: str,
+) -> None:
+    """Raising wrapper around `_flag_tokens_are_canonical`, kept here (not in
+    `_checks_dp.py`) so `verify_dp_snapshots`'s own call site stays a single
+    expression -- that module is the orchestrator CLAUDE.md's ~600-LOC cap
+    applies to. A no-op for anything but a `flag` categorical column."""
+    if kind != "categorical" or col_carrier != "flag" or _flag_tokens_are_canonical(col_snap):
+        return
+    raise PlanCompileError(
+        code="dp_flag_token_invalid",
+        path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
+        message=(
+            f"statistical column {col_name!r} in table {table_name!r}: source "
+            f"column {source_column!r} is a flag release with a top_values "
+            "token other than the canonical 'true'/'false'."
+        ),
     )
 
 
