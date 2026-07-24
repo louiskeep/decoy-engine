@@ -100,6 +100,7 @@ def _fit_dp_snapshot_with_backend(
         _session_backend=_session_backend,
     )
 
+
 # The LITERAL name, not `_policy_logger.name` -- deriving it from the
 # module under test compares the value to itself, which is how a
 # garbage-policy mutant survived twice earlier in this program.
