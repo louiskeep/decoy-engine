@@ -157,3 +157,58 @@ class TestFlagCarrierEndToEnd:
         with pytest.raises(PlanCompileError) as exc:
             verify_dp_snapshots(cfg, pinned)
         assert exc.value.code == "dp_snapshot_carrier_invalid"
+
+    def test_columns_block_carrier_must_agree_with_dp_column_schema(self, tmp_path):
+        """HIGH-2 (Codex phase-5): the `columns` block carrier (which the M-2
+        flag-sampler stop and generation read) must equal the dp block's
+        column_schema entry. Relabelling the columns block `text` while the dp
+        block still declares `flag` would slip the unwired flag release onto the
+        text sampler; verification must catch the disagreement."""
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        # Leave dp.column_schema.is_active.carrier == "flag" (valid categorical),
+        # but relabel ONLY the columns-block carrier to "text": each field is
+        # categorical-family-valid on its own, so only cross-field agreement
+        # catches it.
+        assert tampered["dp"]["column_schema"]["is_active"]["carrier"] == "flag"
+        tampered["columns"]["is_active"]["carrier"] = "text"
+        path = _write(tmp_path, "split_carrier.json", tampered)
+        cfg = _cfg_for(path)
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_column_block_schema_mismatch"
+
+    def test_column_schema_numeric_bounds_contradiction_fails_closed(self, tmp_path):
+        """MEDIUM-5 (Codex phase-5): the v3 column_schema must agree with the
+        legacy numeric_domains in KIND and BOUNDS, not only carrier and set
+        membership. A column_schema that records different bounds while keeping a
+        valid numeric_domains (which the numeric path trusts) would otherwise
+        verify."""
+        snap = _fit_flag_plus_numeric()
+        tampered = copy.deepcopy(snap)
+        # numeric_domains.age stays the honest domain; only column_schema.age
+        # bounds are contradicted.
+        tampered["dp"]["column_schema"]["age"]["bounds"] = [0.0, 999.0]
+        path = _write(tmp_path, "bad_bounds.json", tampered)
+        cfg = _cfg_for(path)
+        pinned, _ = read_and_pin_snapshots(cfg)
+        with pytest.raises(PlanCompileError) as exc:
+            verify_dp_snapshots(cfg, pinned)
+        assert exc.value.code == "dp_snapshot_column_schema_mismatch"
+
+    def test_freeze_column_schema_freezes_nested_bounds(self):
+        """MEDIUM-3 (Codex phase-5): the entry snapshot must freeze the nested
+        `bounds` too, not only the carrier/kind entries, or a caller mutating the
+        bounds list after entry could desync the recorded domain from the
+        schedule edges."""
+        from decoy_engine.quality.dp_fit_schema import freeze_column_schema
+
+        bounds = [0.0, 100.0]
+        schema = {"x": {"kind": "numeric", "carrier": "number", "bounds": bounds}}
+        frozen = freeze_column_schema(schema)
+        assert frozen["x"]["bounds"] == (0.0, 100.0)
+        assert isinstance(frozen["x"]["bounds"], tuple)
+        assert frozen["x"] is not schema["x"]
+        bounds.append(999.0)  # mutate the caller's original list after the freeze
+        assert frozen["x"]["bounds"] == (0.0, 100.0)  # frozen copy is unaffected

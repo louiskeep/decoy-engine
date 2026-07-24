@@ -497,10 +497,22 @@ class _FakeMeasurement:
 # `OpenDpReleaseSession` was split into `dp_session.py` on a size-cap crossing
 # (CLAUDE.md's ~600-LOC cap). Re-export it here so the documented
 # `decoy_engine.quality.dp_budget.OpenDpReleaseSession` path (`quality/dp.py`,
-# the DP test suite) resolves unchanged. This import lives at the BOTTOM because
-# `dp_session` imports the backend, protocols, and calibration primitives
-# defined ABOVE from this module; by here they exist, so the cycle resolves
-# (the same bottom-of-module re-export pattern as `generation/_plan_entry.py`).
-from decoy_engine.quality import dp_session as _dp_session  # noqa: E402
+# the DP test suite) resolves unchanged.
+if TYPE_CHECKING:
+    pass
 
-OpenDpReleaseSession = _dp_session.OpenDpReleaseSession
+
+def __getattr__(name: str) -> Any:
+    # Lazy re-export, NOT an eager bottom-of-module import: `dp_session` imports
+    # the backend/protocols/calibration primitives defined ABOVE from this
+    # module, so importing `dp_session` FIRST re-enters `dp_budget` and an eager
+    # `dp_session.OpenDpReleaseSession` read here would touch a still-initializing
+    # module (AttributeError, masked whenever `dp_budget` happens to import
+    # first). Defer the import to first attribute access, by which point
+    # `dp_session` is fully initialized regardless of which module was imported
+    # first, breaking the cycle.
+    if name == "OpenDpReleaseSession":
+        from decoy_engine.quality.dp_session import OpenDpReleaseSession
+
+        return OpenDpReleaseSession
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -39,6 +39,65 @@ def carrier_aware_query_count(dp_block: dict[str, Any]) -> int | None:
     return 1 + numeric + 2 * categorical
 
 
+def schema_matches_legacy(
+    column_schema: dict[str, Any],
+    categorical_cols: list[Any],
+    numeric_domains: dict[str, Any],
+) -> bool:
+    """MEDIUM-5: the v3 `column_schema` must agree with the artifact's own legacy
+    `categorical_columns`/`numeric_domains` declaration per column in name,
+    carrier, KIND, and (for a `number` carrier) the numeric bounds -- not merely
+    in carrier and set membership. A reconstructed count agreeing is necessary
+    but not sufficient (a name-disjoint or carrier-transposed schema can match
+    the count), and an artifact that records a contradictory `kind` or different
+    `bounds` while keeping a valid `numeric_domains` would otherwise verify
+    because the numeric path trusts `numeric_domains`. Any mismatch is a
+    corrupted or hand-edited artifact, not a genuine release."""
+    if set(column_schema) != set(categorical_cols) | set(numeric_domains):
+        return False
+    for name, spec in column_schema.items():
+        if not isinstance(spec, dict):
+            return False
+        carrier = spec.get("carrier")
+        kind = spec.get("kind")
+        if carrier == "number":
+            if name not in numeric_domains or name in categorical_cols:
+                return False
+            if kind != "numeric":
+                return False
+            bounds = spec.get("bounds")
+            if not isinstance(bounds, (list, tuple)) or tuple(bounds) != tuple(
+                numeric_domains[name]
+            ):
+                return False
+        elif carrier in ("text", "flag"):
+            if name not in categorical_cols or name in numeric_domains:
+                return False
+            if kind != "categorical":
+                return False
+        else:
+            return False
+    return True
+
+
+def column_block_matches_schema(
+    col_snap: dict[str, Any], column_schema: dict[str, Any], source_column: str
+) -> bool:
+    """HIGH-2: the per-column `columns` block's own `carrier`/`kind` -- which the
+    generation sampler and the phase-6 `flag` safety stop (`_spec.py`) read --
+    must equal the `dp.column_schema` entry for the same column. If they
+    disagree, a `flag` release could be relabelled `text` in the `columns` block
+    (while `dp.column_schema` still declares `flag`), passing verification and
+    slipping past the phase-6 flag-sampler stop onto the text sampling path.
+    Pin agreement between the two recorded carriers at the verify gate."""
+    spec = column_schema.get(source_column)
+    if not isinstance(spec, dict):
+        return False
+    return col_snap.get("carrier") == spec.get("carrier") and col_snap.get("kind") == spec.get(
+        "kind"
+    )
+
+
 def numeric_shape_matches_a_dp_release(
     col_snap: dict[str, Any], *, lower: float, upper: float, numeric_bins: int
 ) -> bool:

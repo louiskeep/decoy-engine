@@ -68,9 +68,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine.quality.carriers import (
-    CarrierError,
     CarrierTable,
-    _validate_bound,
     released_values,
     sanitize_carrier_table,
 )
@@ -78,6 +76,10 @@ from decoy_engine.quality.dp_budget import (
     DpBudgetError,
     OpenDpReleaseSession,
     _OpenDpBackend,
+)
+from decoy_engine.quality.dp_fit_schema import (
+    freeze_column_schema,
+    parse_column_schema,
 )
 from decoy_engine.quality.dp_policy import (
     _DP_NORMALIZATION_POLICY,
@@ -115,18 +117,6 @@ _DP_NUMERIC_DTYPE_LABEL = "float64"
 _DP_CATEGORICAL_DTYPE_LABEL = "object"
 _DP_FLAG_DTYPE_LABEL = "bool"
 
-# The closed release-kind x carrier table (guide section 3.3). `kind` is
-# OPTIONAL in `column_schema` (the carrier alone drives the codec and the
-# mechanism), but when a caller supplies a `kind` it is validated against this
-# table so an impossible pair (categorical + number, which OpenDP has no float
-# `make_count_by` for) fails loud rather than silently mis-releasing. Kept in
-# sync with `carrier_adapter._KIND_TO_CARRIERS` so the DataFrame and direct
-# paths accept exactly the same schema.
-_KIND_TO_CARRIERS: dict[str, tuple[str, ...]] = {
-    "numeric": ("number",),
-    "categorical": ("text", "flag"),
-}
-
 _logger = logging.getLogger(__name__)
 
 
@@ -150,9 +140,9 @@ def _dp_versions() -> tuple[str, str]:
 def _validate_fit_params(*, epsilon: float, delta: float, numeric_bins: int) -> None:
     """Validate the fit-level knobs. Reads only public request parameters, never
     a value (guide section 4.2). Positivity/range checks here mirror what the
-    landed fit enforced; the per-column carrier/bounds validation moved to the
-    carrier layer (`_parse_column_schema` + `sanitize_carrier_table` / the
-    adapter)."""
+    landed fit enforced; the per-column carrier/bounds validation lives in
+    `dp_fit_schema.parse_column_schema` + `sanitize_carrier_table` / the
+    adapter."""
     try:
         epsilon = float(epsilon)
     except (TypeError, ValueError) as exc:
@@ -187,81 +177,6 @@ def _validate_fit_params(*, epsilon: float, delta: float, numeric_bins: int) -> 
             code="dp_numeric_bins_invalid",
             message=f"numeric_bins must be an int >= 2; got {numeric_bins!r}.",
         )
-
-
-def _parse_column_schema(
-    column_schema: Any,
-) -> tuple[dict[str, tuple[float, float]], dict[str, str]]:
-    """Split a validated `column_schema` into numeric bounds and categorical
-    carriers for schedule construction.
-
-    Reads only the public schema, never a value, so it runs BEFORE the proof
-    stack gate and BEFORE any private cell is fetched. Structural problems (not
-    a dict, a bad carrier, a malformed/misordered number bound, an impossible
-    kind x carrier pair) fail loud with the SAME coded `CarrierError` the
-    carrier layer raises, so the DataFrame and direct paths reject an identical
-    schema identically. The authoritative per-cell FFI-safety validation is
-    still `sanitize_carrier_table`'s (run on every input); this is only what the
-    schedule needs to know a column's mechanism domain and bin edges."""
-    if not isinstance(column_schema, dict):
-        raise CarrierError(
-            code="dp_schema_type",
-            message=f"column_schema must be a dict, got {type(column_schema).__name__}",
-        )
-    numeric_bounds: dict[str, tuple[float, float]] = {}
-    categorical_carriers: dict[str, str] = {}
-    for name, spec in column_schema.items():
-        if not isinstance(spec, dict):
-            raise CarrierError(
-                code="dp_schema_column_type",
-                message=f"column {name!r}: schema entry must be a dict, got {type(spec).__name__}",
-            )
-        carrier = spec.get("carrier")
-        if not isinstance(carrier, str) or carrier not in ("number", "flag", "text"):
-            raise CarrierError(
-                code="dp_carrier_unknown",
-                message=(
-                    f"column {name!r}: unknown carrier {carrier!r}, expected one of "
-                    "('number', 'flag', 'text')"
-                ),
-            )
-        kind = spec.get("kind")
-        if kind is not None:
-            if not isinstance(kind, str) or kind not in _KIND_TO_CARRIERS:
-                raise CarrierError(
-                    code="dp_kind_unknown",
-                    message=(
-                        f"column {name!r}: unknown kind {kind!r}, expected one of "
-                        f"{tuple(_KIND_TO_CARRIERS)}"
-                    ),
-                )
-            allowed = _KIND_TO_CARRIERS[kind]
-            if carrier not in allowed:
-                raise CarrierError(
-                    code="dp_kind_carrier_mismatch",
-                    message=(
-                        f"column {name!r}: kind {kind!r} does not allow carrier {carrier!r} "
-                        f"(allowed: {allowed})"
-                    ),
-                )
-        if carrier == "number":
-            bounds = spec.get("bounds")
-            if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
-                raise CarrierError(
-                    code="dp_carrier_bounds_missing",
-                    message=f"column {name!r}: a 'number' carrier requires (lower, upper) bounds",
-                )
-            lower = _validate_bound(name, "lower", bounds[0])
-            upper = _validate_bound(name, "upper", bounds[1])
-            if not lower < upper:
-                raise CarrierError(
-                    code="dp_carrier_bounds_order",
-                    message=f"column {name!r}: bounds must satisfy lower < upper, got ({lower}, {upper})",
-                )
-            numeric_bounds[name] = (lower, upper)
-        else:
-            categorical_carriers[name] = carrier
-    return numeric_bounds, categorical_carriers
 
 
 def _interior_edges(lower: float, upper: float, numeric_bins: int) -> tuple[float, ...]:
@@ -400,24 +315,15 @@ def _fit_dp_snapshot_with_backend(
     delta = float(delta)
     numeric_bins = int(numeric_bins)
 
-    # Snapshot the caller's schema once so a mutable mapping cannot drift the
-    # routing decision (which OpenDP measurement each column takes) away from the
-    # metadata recorded into the artifact: this function reads `column_schema`
-    # several times (parse -> route, sanitize/adapter -> values, then record), and
-    # a mapping whose iteration yields a different carrier on a later read could
-    # release under one mechanism while the artifact declares another, which the
-    # verifier trusts. Non-dict schemas (or non-dict per-column specs) fall through
-    # unfrozen to `_parse_column_schema`, which raises the normal coded error.
-    if isinstance(column_schema, dict):
-        column_schema = {
-            key: dict(spec) if isinstance(spec, dict) else spec
-            for key, spec in column_schema.items()
-        }
+    # Freeze the caller's schema once (carrier + bounds, both mapping levels) so
+    # a mutable mapping cannot drift the routing decision or domain away from the
+    # metadata recorded into the artifact between this function's several reads.
+    column_schema = freeze_column_schema(column_schema)
 
     # Parse the schema (public-only) into the mechanism domains and bounds the
     # schedule commits to, and reject degenerate derived bin edges -- all BEFORE
     # the proof-stack gate and before any private cell is read.
-    numeric_bounds, categorical_carriers = _parse_column_schema(column_schema)
+    numeric_bounds, categorical_carriers = parse_column_schema(column_schema)
     numeric_cols = sorted(numeric_bounds)
     categorical_cols = sorted(categorical_carriers)
     for col in numeric_cols:

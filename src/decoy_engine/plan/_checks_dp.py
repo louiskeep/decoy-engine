@@ -34,7 +34,9 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from decoy_engine.plan._checks_dp_carrier import (
     carrier_aware_query_count,
+    column_block_matches_schema,
     numeric_shape_matches_a_dp_release,
+    schema_matches_legacy,
 )
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DpVerification
@@ -372,20 +374,8 @@ def verify_dp_snapshots(
             # column_schema is a dict of dicts with known carriers (else
             # carrier_aware is None and we raised above).
             column_schema = dp_block["column_schema"]
-            schema_consistent = set(column_schema) == set(categorical_cols) | set(
-                numeric_domains
-            ) and all(
-                (
-                    spec["carrier"] == "number"
-                    and name in numeric_domains
-                    and name not in categorical_cols
-                )
-                or (
-                    spec["carrier"] in ("text", "flag")
-                    and name in categorical_cols
-                    and name not in numeric_domains
-                )
-                for name, spec in column_schema.items()
+            schema_consistent = schema_matches_legacy(
+                column_schema, categorical_cols, numeric_domains
             )
             if not schema_consistent:
                 _raise(
@@ -422,6 +412,27 @@ def verify_dp_snapshots(
                         f"column {source_column!r} records carrier {col_carrier!r} for kind "
                         f"{col_kind!r}, which is not an allowed kind x carrier pair (numeric->"
                         "number, categorical->text/flag)."
+                    ),
+                )
+
+            # HIGH-2: the `columns` block's carrier/kind (which the generation
+            # sampler and the phase-6 `flag` safety stop read) must equal the
+            # `dp.column_schema` entry for the same column. A `flag` release whose
+            # `columns` block is relabelled `text` would otherwise pass here while
+            # `dp.column_schema` still declares `flag`, slipping past the sampler
+            # stop onto the text sampling path.
+            if not column_block_matches_schema(col_snap, column_schema, source_column):
+                _raise(
+                    "dp_snapshot_column_block_schema_mismatch",
+                    table_name=table_name,
+                    col_name=col_name,
+                    message=(
+                        f"statistical column {col_name!r} in table {table_name!r}: source "
+                        f"column {source_column!r} records carrier {col_carrier!r}/kind "
+                        f"{col_kind!r} in its columns block, which disagrees with the dp "
+                        f"block's column_schema entry {column_schema.get(source_column)!r}. "
+                        "The two recorded declarations for one column must be identical; a "
+                        "divergence is a corrupted or hand-edited artifact."
                     ),
                 )
 
