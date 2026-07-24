@@ -1,13 +1,19 @@
 # DPS-CODEC implementation guide
 
-Status: PLAN, revision 5 (remediated against Codex plan-review rounds 1-4, all
-BLOCK but each spec-detail-not-design; round 4 confirmed the carrier architecture is
-sound, probed the frozen epsilon ceiling and bool count mechanisms green, 44 tests
-pass, and returned 1 HIGH + 1 MEDIUM now closed here: the certified manifest gains
-SciPy + a single certified platform, `dp_accounting`'s SciPy dependency being part of
-the proof stack (round-4 HIGH-a) and CI being Linux-only (round-4 HIGH-b); and
-`StatisticalSpec.carrier` is `Optional[str]=None` so non-DP snapshots are not broken
-(round-4 MEDIUM)). Author: Opus. Cycle: DPS-CODEC.
+Status: PLAN, revision 6 (remediated against Codex plan-review rounds 1-5, all
+BLOCK but each spec-detail-not-design; round 5 confirmed the carrier architecture is
+sound, the `carrier=None` non-DP compatibility CLOSED, 1,273 tests pass, and returned
+a HIGH + MEDIUM now closed here at the ROOT rather than by another hand-patch: (HIGH)
+hand-enumerating the proof stack's transitive deps is unwinnable whack-a-mole (round 4
+missed SciPy; round 5 missed attrs/absl-py/wrapt/Deprecated/polars/dateutil/pytz/six +
+the CPython patch), so §3.8 now certifies a mechanical LOCK FINGERPRINT over the whole
+resolved environment + full CPython version instead of a curated tuple -- complete by
+construction; (MEDIUM) the direct-carrier path is made genuinely pandas/pyarrow-free by
+splitting the adapter into a lazily-imported `carrier_adapter.py` with a CI
+import-isolation assertion). Author: Opus. Cycle: DPS-CODEC.
+NOTE: this is the 5th consecutive spec-detail BLOCK; per the anti-bad-loop guard the
+re-gate-vs-build-now decision is being surfaced to Cam rather than auto-spinning a 6th
+review.
 
 Expands ROADMAP §DPS item 5; grounded in the current code it modifies.
 
@@ -139,11 +145,14 @@ expected String"). So for `flag`:
   the existing str-domain pair. Selected by the column's carrier.
 - **Carrier reaches the sampler (round-3 BLOCKER):** `StatisticalSpec`
   (`_spec.py:69`, a frozen dataclass with no carrier field today) gains a
-  `carrier: Optional[str]` field defaulting to `None`, threaded through its `asdict`
+  `carrier: Optional[str]` field defaulting to `None`, threaded through
   serialization, artifact reconstruction, and `load_spec` validation, so the sampler
   knows a column's domain. `None` = the legacy non-DP path (§3.9); a set carrier =
   the codec path. It is mandatory + strictly validated only for verified DP-v3
-  columns.
+  columns. Serialization drops the key when `carrier is None` (post-`asdict`, so older
+  serialized Plans round-trip byte-identically); a regression asserts that a stray
+  `carrier` on an ordinary `distribution-snapshot/v1` column stays on the legacy
+  sampling path.
 - **Artifact encoding:** flag `top_values[].value` entries serialize deterministically
   as the canonical tokens `"true"`/`"false"` (not Python `str(bool)` `"True"/"False"`,
   not `"0"/"1"`); the column records `carrier: "flag"`, `dtype: "bool"`. The verifier
@@ -239,55 +248,72 @@ row identity has two parts:
    a false guarantee on an untested platform is exactly the bug class this redesign
    exists to kill, so v1 refuses rather than over-certifies.
 
-2. **Version tuple.** Every row on that platform =
-   `(boundary, python_minor, numpy, scipy, pandas?, pyarrow?, opendp, dp_accounting,
-   codec_id, codec_version, schema_version)`. **SciPy is included (round-4 HIGH-a):**
-   `dp_accounting`'s PLD imports `scipy.fft/signal/special`, and SciPy is locked to a
-   different version per Python row, so it is part of the proof stack and must be
-   certified, not implied by the Python row. `opendp = 0.15.1`, `dp_accounting = 0.6.0`,
-   `schema = dps-marginal/v3` for all v1 rows (confirmed against `uv.lock`).
+2. **Proof-stack fingerprint, NOT a hand-enumerated tuple (round-5 HIGH — root-cause
+   fix).** Rounds 4 and 5 showed that hand-listing the versioned distributions the
+   proof depends on is unwinnable whack-a-mole: round 4 was missing SciPy; round 5 was
+   missing `attrs`, `absl-py`, `Deprecated`, `wrapt` (the eager PLD/OpenDP import
+   path), `polars` (pulled by `opendp.prelude`'s broad extras import), and
+   `python-dateutil`/`pytz`/`six` (the pandas adapter), plus the full CPython patch
+   version. The transitive closure is large and drifts, so any curated subset will
+   always be incomplete. **The fix is to stop enumerating and fingerprint the whole
+   resolved lock.** Each certified row is:
 
-**Pandas-adapter rows** (the DataFrame path; confirmed against `uv.lock`):
+   `(boundary, platform_triple, cpython_full_version, lock_fingerprint)`
 
-```
-(adapter, 3.10, numpy 2.2.6, scipy 1.15.3, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(adapter, 3.11, numpy 2.4.6, scipy 1.17.1, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(adapter, 3.12, numpy 2.5.0, scipy 1.18.0, pandas 2.3.3, pyarrow 24.0.0, opendp 0.15.1, dp_accounting 0.6.0, ...)
-```
+   where `lock_fingerprint` = a stable hash (e.g. SHA-256) over the sorted
+   `(distribution_name, version)` pairs of the ENTIRE resolved locked environment for
+   that `(platform, cpython)` marker set, as pinned in `uv.lock`. This is complete by
+   construction — every transitive dep (attrs, absl-py, wrapt, Deprecated, polars,
+   dateutil, pytz, six, and anything a future bump adds) is in the lock, hence in the
+   fingerprint — and mechanically derivable, so it needs no maintenance as deps change.
+   `cpython_full_version` is the full `major.minor.micro` + release level, NOT just the
+   minor (round-5: a bare `3.10` row admits a moving patch release, but the PLD overflow
+   boundary and other numerics can drift by patch). The human-readable key versions
+   (numpy, scipy, opendp 0.15.1, dp_accounting 0.6.0, pandas, pyarrow) are retained as
+   INFORMATIONAL annotation in the manifest and artifact for auditability, but the GATE
+   is the fingerprint, not the annotation.
 
-**Direct-carrier rows** (a caller-supplied canonical `CarrierTable`; no pandas/pyarrow
-in the path, only Python + numpy for the float64 carrier -- but SciPy still certified,
-because the accountant runs on the direct path too):
-
-```
-(direct, 3.10, numpy 2.2.6, scipy 1.15.3, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(direct, 3.11, numpy 2.4.6, scipy 1.17.1, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
-(direct, 3.12, numpy 2.5.0, scipy 1.18.0, -, -, opendp 0.15.1, dp_accounting 0.6.0, ...)
-```
-
-- **Fit time:** check the local platform AND the local COMPLETE version tuple
-  (boundary, python, numpy, scipy, pandas/pyarrow if the adapter is used, opendp,
-  dp_accounting, codec) against the manifest BEFORE reading private data; fail closed
-  (`dp_platform_uncertified` / `dp_stack_uncertified`) on any uncertified component.
-- **Generation time:** check the artifact's RECORDED platform + complete fit
-  provenance against the static manifest -- including OpenDP/`dp_accounting`/SciPy/
-  codec/schema, which generation does NOT invoke and so must validate from the record,
-  not from locally installed libraries. This replaces the current compare-to-local-env
-  at `_checks_dp.py:277` (which both over-matches generation-irrelevant libs AND would,
-  if merely deleted, stop validating OpenDP/SciPy entirely).
+- **CI establishes the certified fingerprints.** The dependency-matrix workflow, pinned
+  to EXACT CPython patches (not floating minors), computes the fingerprint for each
+  certified `(boundary, platform, cpython)` row and runs the crown-jewel adjacency
+  property there; the fingerprint CI observes IS the certified value written into the
+  static manifest. Certify only patches CI actually runs; admit no patch the matrix
+  does not exercise.
+- **Fit time:** derive the local platform triple + full CPython version, and compute
+  the local fingerprint from `importlib.metadata` over the installed distributions;
+  check membership in the static certified set BEFORE reading private data. Fail closed
+  with a coded error on any mismatch (`dp_platform_uncertified` for platform/interp,
+  `dp_stack_uncertified` for a fingerprint miss).
+- **Generation time:** validate the artifact's RECORDED `(platform, cpython,
+  lock_fingerprint)` against the static certified set — the same complete identity is
+  checked from the record, which generation does not recompute from locally installed
+  libraries. This replaces the current compare-to-local-env at `_checks_dp.py:277`
+  (which both over-matches generation-irrelevant libs AND, if merely deleted, would
+  stop validating the proof stack entirely).
 - The artifact records its `boundary` (adapter vs direct) so verification picks the
-  right row class.
-- CI dependency-matrix workflow runs the crown-jewel adjacency property on EVERY
-  manifest row (adapter and direct) on the certified Linux/x86-64 platform.
-- Recording versions is audit evidence, NOT authentication (the MAC is ROADMAP item 4
-  / schema v4).
+  right row class; the boundary also drives the import-isolation assertion below.
+- Recording the identity is audit evidence, NOT authentication (the MAC is ROADMAP
+  item 4 / schema v4).
+- **Direct-carrier import isolation (round-5 MEDIUM).** The direct path must actually
+  BE pandas/pyarrow-free, not merely omit them from an annotation. Today `dp.py:55`
+  imports pandas eagerly and the proposed `carriers.py` bundles the adapter with the
+  core carriers. Split it: `quality/carriers.py` (core `CarrierTable`, columns, codecs,
+  `sanitize_carrier_table`) imports NEITHER pandas nor pyarrow; the DataFrame adapter
+  lives in a separate submodule (`quality/carrier_adapter.py`) imported LAZILY only
+  when a DataFrame is passed to `fit_dp_snapshot`. A direct-row CI assertion imports and
+  exercises the direct-carrier path in a subprocess and asserts `pandas`/`pyarrow` are
+  absent from `sys.modules`. (The fingerprint itself is over the installed lock and so
+  is identical for both boundaries in one venv; the boundary distinction is enforced by
+  this import-isolation assertion and by the honest per-boundary annotation, not by two
+  different hashes.)
 
 ### 3.9 Artifact schema (round-1 HIGH: v3/v4)
 
 Codec metadata = `dps-marginal/v3`; artifact-auth MAC = `dps-marginal/v4` (update the
 ROADMAP MAC entry to v4 during build). v3 adds `column_schema`, per-column `carrier`,
-codec id/version, the recorded fit tuple (now including SciPy and the certified
-platform string), and the source-boundary flag. Pre-GA hard break, no shim.
+codec id/version, the recorded proof-stack identity (§3.8: platform triple, full
+CPython version, and the lock fingerprint), and the source-boundary flag. Pre-GA hard
+break, no shim.
 
 **Carrier is a DP-v3 field, not a break for non-DP snapshots (round-4 MEDIUM).**
 `StatisticalSpec.carrier` (§3.4) is `Optional[str]`, defaulting to `None`. It is
@@ -338,8 +364,12 @@ through the DP fit API.
 `quality/dp_normalize.py` (removed), `dp_budget.py`, `dp_ledger.py`, `dp_policy.py`,
 `dp.py`, and:
 
-- `quality/carriers.py` (NEW — `CarrierTable`, columns, codecs, adapter,
-  `sanitize_carrier_table`; the public import path).
+- `quality/carriers.py` (NEW — `CarrierTable`, columns, codecs,
+  `sanitize_carrier_table`; the public import path; imports NEITHER pandas nor pyarrow).
+- `quality/carrier_adapter.py` (NEW — the DataFrame->CarrierTable pandas adapter, split
+  out of `carriers.py` and imported lazily only when a DataFrame is passed, so the
+  direct-carrier path stays pandas/pyarrow-free; round-5 MEDIUM). Remove the eager
+  pandas import at `dp.py:55`.
 - `quality/dp_schedule.py` (add `carrier` to `CategoricalQuerySpec`; carrier enters
   the schedule + cache signature).
 - `quality/snapshot.py` (schema owner, `:78`).
@@ -349,9 +379,12 @@ through the DP fit API.
 - `generation/statistical/_spec.py` (DP-exemption wording `:184`; add
   `carrier: Optional[str] = None` and its `None`-omitting serialization).
 - `config/_global_settings.py` (generate-side config docs `:34`).
-- The dependency-matrix CI workflow (Linux/x86-64; certifies every row incl. SciPy +
-  the frozen epsilon-ceiling boundary probe) + the static certified manifest file
-  (rows now carry SciPy and the single certified platform string).
+- The dependency-matrix CI workflow (Linux/x86-64, pinned to exact CPython patches;
+  computes the certified lock fingerprint per row, runs the crown-jewel adjacency
+  property, the frozen epsilon-ceiling boundary probe, and the direct-carrier
+  import-isolation assertion) + the static certified manifest file (rows =
+  `(boundary, platform, cpython_full, lock_fingerprint)` + informational version
+  annotation).
 - Plan serialization / compat fixtures; `test_dp_claim_copy.py`; CHANGELOG; and
   `docs/what-we-cannot-prove.md` (guarantee wording — this GATES).
 
