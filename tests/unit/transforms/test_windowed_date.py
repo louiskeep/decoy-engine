@@ -387,7 +387,7 @@ class TestWindowedDateGeneratePath:
     def test_windowed_date_in_generate_table(self) -> None:
         import pandas as pd
 
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -416,7 +416,7 @@ class TestWindowedDateGeneratePath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         starts = tbl.column("start").to_pylist()
         ends = tbl.column("end").to_pylist()
         for start, end in zip(starts, ends, strict=True):

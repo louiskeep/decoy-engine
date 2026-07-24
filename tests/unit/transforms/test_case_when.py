@@ -268,7 +268,7 @@ class TestCaseWhenThroughRealRunPath:
 
     def test_case_when_in_generate_mode_branches_correctly(self) -> None:
         """case_when in a generate table branches per row values."""
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -295,7 +295,7 @@ class TestCaseWhenThroughRealRunPath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         grades = tbl.column("grade").to_pylist()
         # score is always 85 -> grade should be "A"
         assert grades == ["A", "A", "A"]

@@ -25,8 +25,8 @@ Sequencing contract (PO directive 2026-06-01 + FC-1 spec):
      a relationship-bearing pure-mask job takes the bounded-memory
      sequential path (early return); everything else continues below.
   6. Split `tables:` into generate-kind (have `generate_columns`) and
-     mask-kind (have `columns`). Call `generate_tables(config, ...)`
-     FIRST so generate outputs exist as Arrow tables.
+     mask-kind (have `columns`). Call `generate_tables(plan, ...)` FIRST
+     (Plan-only, guide 4.8/9) so generate outputs exist as Arrow tables.
   7. Merge generate outputs into the `sources` dict the mask adapter
      reads. A mask table whose FK parent is a generate table reads the
      generate output as if it were a source: the generate-side value
@@ -464,13 +464,13 @@ def run_pipeline(
     # TB-1: only full_frame / auto-chunk below needs every source resident.
     resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)
 
-    # Step 1: generate-kind tables. The synthesize entry filters by
-    # `generate_columns` presence already (synthesize.py:113), so passing
-    # the full config is safe even when mask tables are present.
+    # Step 1: generate-kind tables. Plan-only (guide 4.8/9): passing the
+    # whole Plan is safe even with mask tables present, since synthesize
+    # filters by `generate_columns` presence internally.
     generate_outputs: dict[str, pa.Table] = {}
     if has_generate_table:
         generate_outputs = generate_tables(
-            config,
+            plan,
             derive_key=derive_key,
             instance_default_locale=instance_default_locale,
         )

@@ -1,75 +1,131 @@
-"""Differentially private release of distribution snapshots.
+"""Differentially private fit of a distribution snapshot (DPS Scope B).
 
-`apply_dp_noise` turns an exact `distribution-snapshot/v1` (the `decoy
-fit` artifact) into a noisy release: every count in the snapshot gets
-independent Laplace noise, exact moments that leak individual values
-are removed, and min/max collapse to histogram-edge resolution. The
-samplers in `generation/statistical` consume the noisy artifact
-unchanged (weights are relative; they normalize).
+`fit_dp_snapshot` replaces the parked Option A `apply_dp_noise`. Where
+Option A noised an already-computed EXACT snapshot (rank, threshold
+comparison, and moment removal all happening on private values Decoy had
+already materialized), this fit never materializes an exact distribution
+at all: every released quantity -- a numeric bin count, a categorical
+label's count, the categorical non-null total, the table row count --
+comes directly out of a chained OpenDP `Transformation >> Measurement`
+invoked on a normalized, recordwise projection of the source frame
+(binding decision 15). `quality.dp_budget.OpenDpReleaseSession` is the
+sole place in this codebase that constructs or invokes an OpenDP
+measurement (guide section 4.3.5 mitigation 1); this module drives the
+session through the fixed public schedule and serializes what it
+releases. It does not import `opendp` or `dp_accounting` itself.
 
-Methodology (per the established-methodology rule):
+DPS-CODEC phase 5 wiring (guide sections 3.5/3.6/3.8/3.9). The recordwise
+projection is now ONE canonical typed-carrier layer (`quality/carriers.py`)
+converted through a single total, boxing-invariant codec per carrier, not the
+scattered pandas value-level inference of `dp_normalize.py`. A `DataFrame`
+source routes through the lazily-imported pandas adapter
+(`quality/carrier_adapter.py`); a directly-supplied `CarrierTable` routes
+through `sanitize_carrier_table` WITHOUT importing the adapter (OpenDP itself
+still loads pandas transitively -- the pandas-free guarantee is over the codec
+CORE, `carriers.py`, not the full OpenDP-backed fit). The number/text carriers
+keep the exact str/number OpenDP release the fit landed with (the phase-1
+codecs reproduce `_normalize_*` byte-for-byte on the values in their domain);
+the `flag` carrier takes the phase-4 bool-domain measurement pair. Before any
+private cell is read the fit fails closed on an uncertified proof stack
+(`check_fit_environment`, section 3.8) and records that identity into the
+`dps-marginal/v3` artifact so generation can re-validate it.
 
-- The Laplace mechanism: Dwork, McSherry, Nissim, Smith, "Calibrating
-  Noise to Sensitivity in Private Data Analysis" (TCC 2006). Each
-  released count gets noise drawn from Laplace(scale = sensitivity /
-  epsilon).
-- Histogram release pattern: OpenDP / SmartNoise noisy histograms.
-  Under add/remove-one-row adjacency, one row changes exactly one bin
-  of a disjoint histogram by 1, so per-bin sensitivity is 1 and the
-  bins of ONE histogram compose in parallel (the whole histogram costs
-  a single epsilon).
-- Framing: NIST SP 800-188 (de-identifying government datasets),
-  which treats DP releases of aggregate statistics as the formal
-  alternative to ad-hoc suppression.
+Source patterns (per CLAUDE.md's "use established methodology" rule):
+OpenDP's [transformation user guide](
+https://docs.opendp.org/en/stable/api/user-guide/transformations/index.html)
+for the `make_find_bin >> then_count_by_categories` / `make_count_by` /
+`make_count` chain shapes, and its [thresholded noise mechanisms](
+https://docs.opendp.org/en/stable/api/user-guide/measurements/
+thresholded-noise-mechanisms.html) for `then_laplace_threshold`'s
+propose-test-release semantics (Korolova, Kenthapadi, Mishra, Ntoulas,
+"Releasing Search Queries and Clicks Privately", WWW 2009; Dwork & Roth,
+*Algorithmic Foundations of DP*, Sec. 3). `dp_accounting.pld`'s
+dominating-pair composition is cited in `quality/dp_budget.py`, which
+owns that half of the accounting split (guide section 3.3).
 
-Budget accounting, stated honestly: `epsilon` here is PER RELEASED
-HISTOGRAM. A snapshot of k columns releases k histograms plus the
-table-level counts, which compose SEQUENTIALLY: the total budget is on
-the order of (k + 1) * epsilon, not epsilon. The `dp` metadata block
-records `scope: "per-column-histogram"` so downstream consumers cannot
-misread the guarantee.
+What Scope B covers, precisely (see `docs/what-we-cannot-prove.md` for
+the full statement): single-column numeric and categorical marginals
+under one fit-wide `(epsilon, delta)`, add-or-remove-one-row adjacency.
+Joint distributions, cross-column correlation, conditional sampling, and
+non-numeric/non-categorical kinds remain out of scope; `scope` is an
+explicit literal discriminator in the artifact (`"single-column-
+marginals"`) so a future joint mechanism has a seam without this build
+inventing dormant fields for it (guide section 1).
 
-What this release does NOT protect (recorded caveats, see also
-docs/what-we-cannot-prove.md):
-
-- Bin EDGES and category LABELS remain data-dependent supports: the
-  histogram range comes from the real min/max and `top_values` carries
-  real category strings (already gated behind the
-  `allow_real_categories` opt-in). SmartNoise mitigates with fixed,
-  data-independent bin ranges and thresholded category release; both
-  are recorded follow-ups.
-- Joint contingency tables: rejected in v1 (`dp_joint_unsupported`).
-  Releasing marginals plus joints under one stated epsilon without
-  composition accounting would overclaim; refit without `--joint` or
-  omit epsilon.
-
-Noise source: fresh OS entropy (`numpy.random.default_rng()`), NEVER
-the job seed. Seeding noise from material the config holder owns would
-let them subtract the noise exactly and void the guarantee, which is
-why OpenDP's release RNG is explicitly non-seedable. The `rng`
-parameter exists for tests only. The reproducibility boundary is the
-ARTIFACT: generation from a fixed noisy snapshot is fully
-deterministic (the samplers are seeded; the snapshot is just weights).
-
-Interplay with the generation-time fidelity warn-gate: DP removes
-exact numeric quantiles, so the gate's numeric comparator reports
-`no_quantiles` (not comparable) for DP'd columns; categorical and
-datetime columns still score (TVD over counts). Lower fidelity against
-the noisy artifact is the privacy/utility trade working as intended.
+The embedded-artifact 16 MiB cap (`plan/_generation.py`) follows the
+HC-5 high-cardinality precedent (`quality/snapshot.py`'s
+`_HIGH_CARDINALITY_MAX_LABEL_BYTES`): a fail-closed size fence is a typed
+compile error, never a silent truncation.
 """
 
 from __future__ import annotations
 
-import copy
+import importlib.metadata
+import itertools
+import logging
 import math
-from datetime import datetime, timedelta
-from typing import Any
+import uuid
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+from decoy_engine.quality.carriers import (
+    CarrierTable,
+    released_values,
+    sanitize_carrier_table,
+)
+from decoy_engine.quality.dp_budget import (
+    DpBudgetError,
+    OpenDpReleaseSession,
+    _OpenDpBackend,
+)
+from decoy_engine.quality.dp_fit_schema import (
+    freeze_column_schema,
+    parse_column_schema,
+)
+from decoy_engine.quality.dp_policy import (
+    _DP_NORMALIZATION_POLICY,
+    _log_normalization_policy,
+)
+from decoy_engine.quality.dp_provenance import check_fit_environment, current_provenance
+from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
+from decoy_engine.quality.dp_schema import (
+    DP_ADJACENCY,
+    DP_CODEC_ID,
+    DP_CODEC_VERSION,
+    DP_RELEASE_SCOPE,
+    DP_SNAPSHOT_SCHEMA_VERSION,
+)
+from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
+
+if TYPE_CHECKING:
+    # Annotation-only: the direct-`CarrierTable` path must not import pandas,
+    # so `pandas` is never imported at module load (the eager `import pandas as
+    # pd` this module carried through phase 4 is gone). The DataFrame adapter is
+    # imported lazily, inside the fit, only when a DataFrame is actually passed.
+    import pandas as pd
+
+# `DP_RELEASE_SCOPE` / `DP_ADJACENCY` now live in the pandas-free `dp_schema`
+# module (imported above) so the plan-time verifier can require them without
+# pulling this pandas-touching orchestrator into its import closure.
+DP_ACCOUNTANT_LABEL = "dp_accounting PLD composition over OpenDP privacy maps"
+
+_DEFAULT_NUMERIC_BINS = 10
+
+# The emitted `dtype` label is a function of the caller's public carrier
+# declaration, never of the private frame's storage dtype (guide section
+# 4.2.1): number releases float64 counts, text releases `str` labels
+# ("object"), flag releases the two canonical bool tokens ("bool"). Reading the
+# frame's own pandas dtype would be content-dependent (an int column upcasts to
+# float64 the moment a null enters it) -- the leak the carrier redesign closes.
+_DP_NUMERIC_DTYPE_LABEL = "float64"
+_DP_CATEGORICAL_DTYPE_LABEL = "object"
+_DP_FLAG_DTYPE_LABEL = "bool"
+
+_logger = logging.getLogger(__name__)
 
 
 class DpError(Exception):
-    """Invalid DP release request. Machine-readable code."""
+    """Invalid DP fit request, or a budget the accountant could not
+    certify. Machine-readable code."""
 
     def __init__(self, *, code: str, message: str) -> None:
         self.code = code
@@ -77,120 +133,394 @@ class DpError(Exception):
         super().__init__(f"[{code}] {message}")
 
 
-def apply_dp_noise(
-    snapshot: dict[str, Any],
-    *,
-    epsilon: float,
-    rng: np.random.Generator | None = None,
-) -> dict[str, Any]:
-    """Return a NEW snapshot dict with Laplace-noised counts.
+def _dp_versions() -> tuple[str, str]:
+    return (
+        importlib.metadata.version("opendp"),
+        importlib.metadata.version("dp-accounting"),
+    )
 
-    Args:
-        snapshot: A `distribution-snapshot/v1` dict (not mutated).
-        epsilon: Per-histogram privacy budget; must be a finite float
-            greater than zero (an infinite "DP" flag that is a silent
-            no-op is a footgun, so it is rejected).
-        rng: Noise source override for TESTS ONLY. Production callers
-            leave it None for fresh OS entropy; see the module
-            docstring for why the job seed must never be used.
 
-    Returns:
-        A deep-copied snapshot with noised counts, exact moments
-        removed, edge-resolution min/max, and a `dp` metadata block.
-        The result stays schema `distribution-snapshot/v1` (the `dp`
-        key is additive; loaders ignore unknown keys).
-
-    Raises:
-        DpError: ``code='dp_epsilon_invalid'`` when epsilon is not a
-            finite positive float; ``code='dp_joint_unsupported'`` when
-            the snapshot carries joint contingency tables (no
-            composition accounting in v1).
-    """
+def _validate_fit_params(*, epsilon: float, delta: float, numeric_bins: int) -> None:
+    """Validate the fit-level knobs. Reads only public request parameters, never
+    a value (guide section 4.2). Positivity/range checks here mirror what the
+    landed fit enforced; the per-column carrier/bounds validation lives in
+    `dp_fit_schema.parse_column_schema` + `sanitize_carrier_table` / the
+    adapter."""
     try:
         epsilon = float(epsilon)
     except (TypeError, ValueError) as exc:
         raise DpError(
-            code="dp_epsilon_invalid",
-            message=f"epsilon must be a number; got {epsilon!r}.",
+            code="dp_epsilon_invalid", message=f"epsilon must be a number; got {epsilon!r}."
         ) from exc
     if not math.isfinite(epsilon) or epsilon <= 0:
         raise DpError(
             code="dp_epsilon_invalid",
-            message=(
-                f"epsilon must be a finite float > 0; got {epsilon!r}. A "
-                "non-positive or infinite epsilon would be a no-op labeled DP."
-            ),
+            message=f"epsilon must be a finite float > 0; got {epsilon!r}.",
         )
-    if snapshot.get("joints"):
+    try:
+        delta = float(delta)
+    except (TypeError, ValueError) as exc:
         raise DpError(
-            code="dp_joint_unsupported",
+            code="dp_delta_invalid", message=f"delta must be a number; got {delta!r}."
+        ) from exc
+    # Settled (guide section 9.10 item 2): delta=0 is rejected even for a
+    # numeric-only fit. Uniformity across fits wins over the marginally
+    # stronger pure-epsilon claim a numeric-only fit could otherwise carry.
+    if not math.isfinite(delta) or not (0.0 < delta < 1.0):
+        raise DpError(
+            code="dp_delta_invalid",
             message=(
-                "this snapshot carries joint contingency tables; releasing "
-                "marginals plus joints under one epsilon needs sequential "
-                "composition accounting, which v1 does not do. Refit without "
-                "--joint, or omit --epsilon."
+                f"delta must be a finite float in (0, 1); got {delta!r}. delta=0 is "
+                "rejected even for an all-numeric fit (uniformity across fits), and "
+                "delta>=1 is not a meaningful failure probability."
+            ),
+        )
+    if not isinstance(numeric_bins, int) or isinstance(numeric_bins, bool) or numeric_bins < 2:
+        raise DpError(
+            code="dp_numeric_bins_invalid",
+            message=f"numeric_bins must be an int >= 2; got {numeric_bins!r}.",
+        )
+
+
+def _interior_edges(lower: float, upper: float, numeric_bins: int) -> tuple[float, ...]:
+    """Interior cut points only: `numeric_bins` categories need `numeric_bins -
+    1` interior edges spanning the declared domain (guide section 4.4); derived
+    from the public domain + numeric_bins, never from data."""
+    return tuple(lower + (upper - lower) * i / numeric_bins for i in range(1, numeric_bins))
+
+
+def _check_derived_edges(name: str, lower: float, upper: float, numeric_bins: int) -> None:
+    """Reject a declaration whose DERIVED bin edges overflow or collapse to
+    non-unique values (guide section 4.4; carried forward from the landed fit's
+    D-M-B guard).
+
+    A finite `lower < upper` is not enough: `(0.0, 1.7e308)` overflows the edge
+    arithmetic and a pair of adjacent floats under a high `numeric_bins`
+    collapses to non-strictly-increasing edges, which OpenDP would otherwise
+    reject with a raw `OpenDPException` at the FFI -- AFTER the row-count release
+    has already charged the session. Derived here from PUBLIC declarations only,
+    before any value is touched, and raised as a coded `DpError`."""
+    full = [lower, *_interior_edges(lower, upper, numeric_bins), upper]
+    if not all(math.isfinite(e) for e in full) or any(b <= a for a, b in itertools.pairwise(full)):
+        raise DpError(
+            code="dp_numeric_domain_invalid",
+            message=(
+                f"column {name!r}=({lower!r}, {upper!r}) with numeric_bins={numeric_bins} "
+                "derives bin edges that are not finite and strictly increasing (the domain is "
+                "too wide, or too narrow for this many bins). Narrow the domain or reduce "
+                "numeric_bins."
             ),
         )
 
-    generator = rng if rng is not None else np.random.default_rng()
-    scale = 1.0 / epsilon
 
-    def _noisy(count: Any) -> int:
-        # float() unwraps the numpy scalar so round() returns a python int
-        # (round(np.float64) stays numpy and would not JSON-serialize).
-        return max(0, round(float(count) + float(generator.laplace(0.0, scale))))
+def _flag_token(value: object) -> str:
+    """The canonical serialized token for a flag category (guide section 3.4):
+    `"true"`/`"false"`, never Python `str(bool)` `"True"/"False"` and never
+    `"0"/"1"`. The generation-side decoder (phase 6) is the inverse."""
+    return "true" if value else "false"
 
-    out = copy.deepcopy(snapshot)
-    if "row_count" in out:
-        out["row_count"] = _noisy(out["row_count"])
-    for col_entry in (out.get("columns") or {}).values():
-        for key in ("null_count", "non_null_count", "distinct_count"):
-            if key in col_entry:
-                col_entry[key] = _noisy(col_entry[key])
-        stats = col_entry.get("stats") or {}
-        kind = col_entry.get("kind")
-        if kind == "numeric" and stats.get("bin_counts"):
-            stats["bin_counts"] = [_noisy(c) for c in stats["bin_counts"]]
-            # Exact moments leak (a quantile IS a real value's neighborhood;
-            # the samplers never read them). Min/max collapse to the
-            # histogram edges, which the noised release already exposes.
-            stats["quantiles"] = {}
-            stats["mean"] = None
-            stats["std"] = None
-            edges = stats.get("bin_edges") or []
-            if len(edges) >= 2:
-                stats["min"] = edges[0]
-                stats["max"] = edges[-1]
-        elif kind == "categorical":
-            for item in stats.get("top_values") or []:
-                item["count"] = _noisy(item["count"])
-            if "other_count" in stats:
-                stats["other_count"] = _noisy(stats["other_count"])
-        elif kind == "datetime" and stats.get("year_bins"):
-            for item in stats["year_bins"]:
-                item["count"] = _noisy(item["count"])
-            years = [int(b["year"]) for b in stats["year_bins"]]
-            # Year-bin resolution: the sampler draws a year then a uniform
-            # timestamp within it, so exact min/max only ever clamped the
-            # boundary years. Widening them to year bounds removes the two
-            # real record timestamps from the artifact.
-            stats["min"] = datetime(min(years), 1, 1).isoformat()
-            stats["max"] = (datetime(max(years) + 1, 1, 1) - timedelta(seconds=1)).isoformat()
-        elif kind == "freetext" and stats.get("length_bin_counts"):
-            stats["length_bin_counts"] = [_noisy(c) for c in stats["length_bin_counts"]]
-            length = stats.get("length") or {}
-            length["mean"] = None
-            length["std"] = None
-            edges = stats.get("length_bin_edges") or []
-            if len(edges) >= 2:
-                length["min"] = int(edges[0])
-                length["max"] = int(edges[-1])
 
-    out["dp"] = {
-        "epsilon": epsilon,
-        "mechanism": "laplace",
-        "sensitivity": 1,
-        "adjacency": "add-remove-one-row",
-        "scope": "per-column-histogram",
+def fit_dp_snapshot(
+    source: pd.DataFrame | CarrierTable,
+    column_schema: dict[str, dict],
+    *,
+    epsilon: float,
+    delta: float,
+    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
+) -> dict[str, Any]:
+    """Public DP fit entrypoint. Always uses the real OpenDP-backed session.
+
+    The fit routes the source through the canonical typed-carrier layer (guide
+    sections 3.5/3.6): a `pandas.DataFrame` goes through the lazily-imported
+    adapter (`dataframe_to_carrier_table`), a directly-supplied `CarrierTable`
+    goes straight through `sanitize_carrier_table` without importing the
+    adapter. Either way the per-column released vector comes from the sanitized
+    `CarrierTable`, so `DataFrame -> CarrierTable -> OpenDP vector` (and the
+    direct path) is stability-1 by construction, subject to the guide section
+    3.7 residual exclusions.
+
+    Before any private cell is read the fit fails closed on an uncertified proof
+    stack (`check_fit_environment`) and on an over-ceiling epsilon
+    (`check_epsilon_supported`, inside the session). It records the certified
+    proof-stack identity into the `dps-marginal/v3` artifact so generation can
+    re-validate it.
+
+    Args:
+        source: A `pandas.DataFrame` (routed through the pandas adapter) OR a
+            canonical `CarrierTable` (routed directly, pandas-free). Not mutated.
+        column_schema: `{name: {"carrier": ..., "kind"?: ..., "bounds"?: ...}}`.
+            `carrier` is `"number"` (histogram-count marginal; requires
+            `(lower, upper)` `bounds`), `"text"` (str-domain categorical), or
+            `"flag"` (bool-domain categorical); an optional `kind`
+            (`"numeric"`/`"categorical"`) is checked against the closed kind x
+            carrier table. This is the ONLY per-column declaration; it replaces
+            the removed `categorical_columns`/`numeric_domains` (pre-GA hard
+            break, guide section 6). For a `DataFrame` the schema's columns must
+            exist in the frame (extra frame columns are ignored); for a
+            `CarrierTable` the schema's keys must equal the table's columns.
+        epsilon: Fit-wide privacy budget request. Finite, > 0.
+        delta: Fit-wide failure-probability request. Finite, in (0, 1) --
+            rejected at 0 even for an all-numeric fit.
+        numeric_bins: Bin count per numeric column. Int >= 2, default 10; one
+            fit-level value for v1, recorded in the artifact so bin edges are
+            reproducible from public metadata alone.
+
+    Returns:
+        A `distribution-snapshot/v1` artifact whose additive `dp` block carries
+        schema `dps-marginal/v3` (guide section 3.9): the accountant's composed
+        `(epsilon_total, delta_total)`, a data-independent `release_id`, the
+        `column_schema` with per-column carriers, the codec id/version, the
+        recorded proof-stack identity, the source `boundary`, and the public
+        schedule metadata. No exact per-column scalar, no suppressed label, and
+        no calibrated scale or threshold is ever emitted.
+
+    Raises:
+        DpError: malformed fit-level configuration (`dp_epsilon_invalid`,
+            `dp_delta_invalid`, `dp_numeric_bins_invalid`,
+            `dp_numeric_domain_invalid`).
+        CarrierError: malformed `column_schema`, bounds, or a per-cell/shape
+            violation the carrier layer refuses (see `quality/carriers.py` /
+            `quality/carrier_adapter.py`).
+        ProvenanceError: the running proof stack is not a certified row
+            (`dp_platform_uncertified`, `dp_stack_uncertified`).
+        DpBudgetError: `dp_epsilon_unsupported` (over the ceiling) or
+            `dp_budget_infeasible` (the request cannot fund the schedule).
+    """
+    return _fit_dp_snapshot_with_backend(
+        source,
+        column_schema,
+        epsilon=epsilon,
+        delta=delta,
+        numeric_bins=numeric_bins,
+        _session_backend=None,
+    )
+
+
+def _fit_dp_snapshot_with_backend(
+    source: pd.DataFrame | CarrierTable,
+    column_schema: dict[str, dict],
+    *,
+    epsilon: float,
+    delta: float,
+    numeric_bins: int = _DEFAULT_NUMERIC_BINS,
+    _session_backend: _OpenDpBackend | None = None,
+) -> dict[str, Any]:
+    """Unsupported internal seam. `fit_dp_snapshot` is a thin wrapper that
+    always passes `_session_backend=None`; this module does not export this
+    name, and no non-test code path calls it directly (guide section 4
+    private-seam finding). `_session_backend`, when set, passes an
+    `_OpenDpBackend` double into the `OpenDpReleaseSession` this call constructs,
+    so a test can observe the session's OWN certificate/schedule bookkeeping
+    independent of real OpenDP noise. Production callers cannot reach this
+    function at all, only `fit_dp_snapshot`."""
+    _validate_fit_params(epsilon=epsilon, delta=delta, numeric_bins=numeric_bins)
+    epsilon = float(epsilon)
+    delta = float(delta)
+    numeric_bins = int(numeric_bins)
+
+    # Freeze the caller's schema once (carrier + bounds, both mapping levels) so
+    # a mutable mapping cannot drift the routing decision or domain away from the
+    # metadata recorded into the artifact between this function's several reads.
+    column_schema = freeze_column_schema(column_schema)
+
+    # Parse the schema (public-only) into the mechanism domains and bounds the
+    # schedule commits to, and reject degenerate derived bin edges -- all BEFORE
+    # the proof-stack gate and before any private cell is read.
+    numeric_bounds, categorical_carriers = parse_column_schema(column_schema)
+    numeric_cols = sorted(numeric_bounds)
+    categorical_cols = sorted(categorical_carriers)
+    for col in numeric_cols:
+        lower, upper = numeric_bounds[col]
+        _check_derived_edges(col, lower, upper, numeric_bins)
+
+    # Fail closed on an uncertified proof stack BEFORE reading private data
+    # (guide section 3.8): the (epsilon, delta) guarantee is only honest on a
+    # tested platform + locked distribution set. Record the certified identity
+    # into the artifact so generation can re-validate it without recomputing a
+    # fingerprint from its own (possibly different) libraries.
+    check_fit_environment()
+    provenance = current_provenance()
+
+    # The release ID is minted once, before any value is touched, and depends on
+    # nothing but this call happening -- data-independent by construction. A
+    # byte-for-byte copy of one artifact retains its ID (copying JSON does not
+    # re-run this line).
+    release_id = uuid.uuid4().hex
+
+    schedule = Schedule(
+        row_count_name="row_count",
+        numeric=tuple(
+            NumericQuerySpec(
+                name=f"numeric:{c}",
+                interior_edges=_interior_edges(
+                    numeric_bounds[c][0], numeric_bounds[c][1], numeric_bins
+                ),
+            )
+            for c in numeric_cols
+        ),
+        categorical=tuple(
+            CategoricalQuerySpec(
+                grouped_name=f"categorical_grouped:{c}",
+                total_name=f"categorical_total:{c}",
+                carrier=categorical_carriers[c],
+            )
+            for c in categorical_cols
+        ),
+    )
+    # Session construction runs the allocation search (data-independent) and
+    # fails closed on an over-ceiling / NaN epsilon via `check_epsilon_supported`
+    # before any composition -- still before any private cell is read.
+    session = OpenDpReleaseSession(schedule, epsilon=epsilon, delta=delta, backend=_session_backend)
+
+    # Convert the source to a certified `CarrierTable`. THIS reads private data,
+    # so it comes after the proof-stack gate. A `CarrierTable` routes directly
+    # through `sanitize_carrier_table` (no pandas adapter imported); a DataFrame
+    # routes through the lazily-imported adapter.
+    if isinstance(source, CarrierTable):
+        boundary = "direct"
+        table = sanitize_carrier_table(source, column_schema)
+    else:
+        boundary = "adapter"
+        from decoy_engine.quality.carrier_adapter import dataframe_to_carrier_table
+
+        table = dataframe_to_carrier_table(source, column_schema)
+    released = released_values(table)
+
+    row_count_released = _serialize_count(session.release_row_count(table.row_count))
+
+    columns_block: dict[str, dict[str, Any]] = {}
+    for col in numeric_cols:
+        lower, upper = numeric_bounds[col]
+        numeric_values = [float(v) for v in released[col]]
+        raw_counts = session.release_numeric(f"numeric:{col}", numeric_values)
+        bin_counts = [_serialize_count(c) for c in raw_counts]
+        bin_edges = [lower, *_interior_edges(lower, upper, numeric_bins), upper]
+        non_null_count = sum(bin_counts)
+        columns_block[col] = {
+            "dtype": _DP_NUMERIC_DTYPE_LABEL,
+            "kind": "numeric",
+            "carrier": "number",
+            "null_count": max(0, row_count_released - non_null_count),
+            "non_null_count": non_null_count,
+            "distinct_count": sum(1 for c in bin_counts if c > 0),
+            "stats": {
+                "bin_edges": bin_edges,
+                "bin_counts": bin_counts,
+                "min": lower,
+                "max": upper,
+                "mean": None,
+                "std": None,
+                "quantiles": {},
+            },
+        }
+
+    _log_normalization_policy()
+
+    for col in categorical_cols:
+        carrier = categorical_carriers[col]
+        cat_values: list[Any]
+        if carrier == "flag":
+            cat_values = [bool(v) for v in released[col]]
+        else:
+            cat_values = list(released[col])
+        grouped_raw, total_raw = session.release_categorical(
+            f"categorical_grouped:{col}", f"categorical_total:{col}", cat_values
+        )
+        # Serialize (round) only AFTER OpenDP has completed threshold selection:
+        # `grouped_raw` already holds only the labels OpenDP retained. A flag
+        # column's bool keys serialize to the canonical "true"/"false" tokens
+        # (guide section 3.4). Sort by (-released_count, token) -- a total order
+        # because released tokens are distinct -- so the mechanism's
+        # emission/insertion order can never leak into the artifact.
+        if carrier == "flag":
+            retained = [
+                (_flag_token(label), _serialize_count(count))
+                for label, count in grouped_raw.items()
+            ]
+            dtype_label = _DP_FLAG_DTYPE_LABEL
+        else:
+            retained = [(label, _serialize_count(count)) for label, count in grouped_raw.items()]
+            dtype_label = _DP_CATEGORICAL_DTYPE_LABEL
+        retained.sort(key=lambda pair: (-pair[1], pair[0]))
+        non_null_total = _serialize_count(total_raw)
+        other_count = max(0, non_null_total - sum(count for _label, count in retained))
+        columns_block[col] = {
+            "dtype": dtype_label,
+            "kind": "categorical",
+            "carrier": carrier,
+            "null_count": max(0, row_count_released - non_null_total),
+            "non_null_count": non_null_total,
+            "distinct_count": len(retained) + (1 if other_count > 0 else 0),
+            "stats": {
+                "top_values": [{"value": label, "count": count} for label, count in retained],
+                "other_count": other_count,
+            },
+        }
+
+    if session.certificate_count() != schedule.query_count:
+        # Section 4.3.5 mitigation 4, restated at the call site: this can only
+        # fire if a future change bypasses the loop structure above, since every
+        # scheduled query is released exactly once by construction here. Kept as
+        # a hard assertion because it is what proves the schedule was exhausted.
+        raise DpBudgetError(
+            code="dp_schedule_mismatch",
+            message=(
+                f"certified {session.certificate_count()} releases but the schedule "
+                f"declares {schedule.query_count} queries."
+            ),
+        )
+    epsilon_total, delta_total = session.composed_loss()
+
+    opendp_version, dp_accounting_version = _dp_versions()
+    recorded_schema = {
+        col: (
+            {"kind": "numeric", "carrier": "number", "bounds": list(numeric_bounds[col])}
+            if col in numeric_bounds
+            else {"kind": "categorical", "carrier": categorical_carriers[col]}
+        )
+        for col in (*numeric_cols, *categorical_cols)
     }
-    return out
+    return {
+        "schema_version": DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
+        "row_count": row_count_released,
+        "columns": columns_block,
+        "joints": [],
+        "dp": {
+            "schema": DP_SNAPSHOT_SCHEMA_VERSION,
+            "release_id": release_id,
+            "scope": DP_RELEASE_SCOPE,
+            "adjacency": DP_ADJACENCY,
+            # Fresh per-artifact copy (guide section 3.9): the module value is an
+            # immutable mapping, but each artifact must own its dict so a caller
+            # mutating one returned artifact's policy cannot bleed into the shared
+            # module value and thence into every subsequent artifact.
+            "normalization_policy": dict(_DP_NORMALIZATION_POLICY),
+            "epsilon_total": epsilon_total,
+            "delta_total": delta_total,
+            "accountant": DP_ACCOUNTANT_LABEL,
+            "opendp_version": opendp_version,
+            "dp_accounting_version": dp_accounting_version,
+            "query_count": schedule.query_count,
+            "numeric_bins": numeric_bins,
+            "categorical_columns": categorical_cols,
+            "numeric_domains": {
+                c: [numeric_bounds[c][0], numeric_bounds[c][1]] for c in numeric_cols
+            },
+            # v3 additions (guide section 3.9).
+            "column_schema": recorded_schema,
+            "codec": {"id": DP_CODEC_ID, "version": DP_CODEC_VERSION},
+            "boundary": boundary,
+            "provenance": {
+                "platform": dict(provenance.platform._asdict()),
+                "cpython": provenance.cpython,
+                "fingerprint": provenance.fingerprint,
+            },
+        },
+    }
+
+
+def _serialize_count(value: float) -> int:
+    """`max(0, int(round(v)))` -- the one place a released noisy value becomes a
+    serialized count, and only after OpenDP has completed whatever selection it
+    was going to do (guide section 4.4 step 7 / 4.5 step 6)."""
+    return max(0, round(float(value)))

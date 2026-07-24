@@ -13,6 +13,8 @@ from decoy_engine.generation.statistical._spec import (
     StatisticalSpec,
     StatisticalSpecError,
     load_spec,
+    spec_from_dict,
+    spec_to_dict,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "StatisticalSpecError",
     "load_spec",
     "sample_column",
+    "spec_from_dict",
+    "spec_to_dict",
 ]

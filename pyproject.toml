@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # `decoy-engine`. The CLI dist renamed to `decoy-cli`; the engine
 # library dist did not.
 name = "decoy-engine"
-version = "0.4.0"
+version = "0.5.0"
 description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs against pandas / polars substrates. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,7 +65,13 @@ dependencies = [
     # section 3.3) and the proof manifest. Bump only as a reviewed, golden-and-
     # manifest-regenerating change. Was an unpinned floor (>=13.0.0), which let
     # the proof-manifest drift across environments.
-    "faker==40.31.0",
+    # Held at 40.23.0: the dependabot bump to 40.31.0 (#47) skipped the
+    # manifest-regen + review this pin requires, and 40.31.0 silently drops
+    # five person providers (name/first/last/full/email) from the registry and
+    # shifts the name pools the proof manifest is generated against. Migrating
+    # to a newer Faker is a dedicated, provider-regression-fixing task on the
+    # roadmap, not a chore bump.
+    "faker==40.23.0",
     "psutil>=5.9.0",
     "pyarrow>=14.0.0",
     # Used by decoy_engine.disguises.schema for the Disguise model.
@@ -122,6 +128,34 @@ dependencies = [
     # closed grammar so arbitrary Python execution is impossible.
     # Core dep: derived/case_when are core strategies, not optional.
     "lark>=1.1",
+    # DPS Scope B (2026-07-22): OpenDP supplies every per-column DP mechanism
+    # and its certified privacy map; exact pin because the implementation
+    # depends on privacy-critical `contrib`-gated APIs (make_find_bin,
+    # make_count_by, then_laplace_threshold) and their exact metric/domain
+    # shapes. MIT license, compatible with Apache-2.0. Upgrade only through a
+    # dependency review with mechanism regression tests (guide section 3.1).
+    # STOP: never install the `opendp[polars]` extra or import
+    # `opendp.extras.polars` -- it FFI-pins polars==1.36.1, which conflicts
+    # with Decoy's polars>=1,<2 range (2026-07-22 spike, docs/plans/
+    # 2026-07-22-dps-scope-b-spike-result.md). This build has no Polars
+    # dependency of its own.
+    "opendp==0.15.1",
+    # Google's standalone, pure-Python privacy accountant (Apache-2.0, no
+    # native build step). Composes each OpenDP-certified per-column
+    # (epsilon, delta) into one fit-wide privacy-loss-distribution total via
+    # `dp_accounting.pld`'s dominating-pair construction. Exact pin: the
+    # implementation depends on `dp_accounting.pld`'s exact composition
+    # shape. Supplies no mechanism and no noise -- accounting only.
+    "dp-accounting==0.6.0",
+    # DPS-CODEC put `packaging.utils.canonicalize_name` /
+    # `packaging.markers.Marker` on the always-imported plan chain
+    # (quality/dp_provenance, reached via plan._checks_dp at engine import),
+    # so `import decoy_engine` now needs packaging at runtime. It was present
+    # transitively via build/test tooling, so every test env had it and the
+    # gap only shows on a pristine install -- same fresh-environment class as
+    # the pydantic and boto3 promotions above. Floor covers canonicalize_name
+    # and Marker, both long-stable.
+    "packaging>=21.0",
 ]
 
 [project.optional-dependencies]
@@ -319,6 +353,7 @@ markers = [
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
     "ml: STORM field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
+    "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 77-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
@@ -753,6 +788,11 @@ module = [
     # Per the established convention (same pattern as duckdb, faker, etc.).
     "lark",
     "lark.*",
+    # dp_accounting (Google, Apache-2.0) ships no py.typed marker; DPS
+    # Scope B's composition accountant (quality/dp_budget.py). opendp
+    # itself ships stubs and needs no override.
+    "dp_accounting",
+    "dp_accounting.*",
 ]
 ignore_missing_imports = true
 

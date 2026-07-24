@@ -14,34 +14,352 @@ mathematical bound on re-identification risk. The `storm` profiler reports
 heuristic re-identification-risk signals to help you assess a dataset; those
 are diagnostics, not a proof.
 
-The one formal mechanism is `decoy fit --epsilon` (`quality/dp.py`): the
-distribution snapshot's COUNTS are released with per-count Laplace noise
-(sensitivity 1, add/remove-one-row adjacency), exact quantiles and means are
-removed, and min/max collapse to histogram-edge resolution. Read the scope
-narrowly:
+The one formal mechanism is `quality.dp.fit_dp_snapshot`, which produces a
+`dps-marginal/v3` release consumed by a `type: statistical` generate column
+under a `global_settings.dp` declaration. Each column's privacy loss is
+certified by OpenDP's own privacy map (`Measurement.map`, `opendp==0.15.1`),
+and the fit-wide loss is composed by Google's `dp_accounting` (0.6.0) PLD
+composition over those per-column certificates. The composition uses a
+dominating-pair representation of each certified `(epsilon, delta)`, so the
+reported total is a valid upper bound rather than the tightest achievable
+one. This is a CONDITIONAL claim, not a blanket one: do not read "Decoy
+supports DP" as "every statistical column in every run is DP" -- most are
+not, unless the column's snapshot is a verified `dps-marginal/v3` release
+consumed by a compiled, DP-verified Plan.
 
-- The budget is PER COLUMN HISTOGRAM. A snapshot of k columns composes
-  sequentially to roughly (k + 1) * epsilon total; the artifact's `dp` block
-  records this scope.
-- Bin edges and category labels remain DATA-DEPENDENT supports: the histogram
-  range comes from the real min/max and categorical `top_values` carry real
-  category strings (gated behind `allow_real_categories`). A fully
-  data-independent release (fixed bin ranges, thresholded category sets) is a
-  recorded follow-up.
-- A `high_cardinality: true` column (HC-5, e.g. an ICD-10-CM/NDC/HCPCS code
-  field) intentionally retains its FULL observed vocabulary with no top-K
-  collapse, so its snapshot artifact exposes every distinct code AND
-  rare-code presence/absence at fit time — treat that artifact with the same
-  care as a raw extract of that column, on top of the `allow_real_categories`
-  gate it already requires.
-- Joint contingency tables are rejected under `--epsilon` (no composition
-  accounting in v1).
-- Nothing downstream of the snapshot inherits the guarantee: generation
-  samples from the noisy artifact deterministically, and masking is entirely
-  outside it.
+The guarantee is stated over the typed carrier you declare for each column --
+`number`, `text`, or `flag` -- not over the column's pandas storage. A
+DataFrame is converted to that typed form by an in-engine adapter certified as
+a stability-1 transformation: adding or removing one input row changes at most
+one element of the released vector. That certification holds only on the
+exact locked set of Python distribution versions the proof was checked
+against, on one certified platform (Linux, x86-64, CPython, glibc); on any
+other platform or library set the fit refuses rather than release under an
+unverified proof. The adapter is inside the guarantee, and the certification
+is what makes it so; it is not a claim about pandas in general.
 
-If your use case requires a formal privacy guarantee over the masked or
-generated DATA, Decoy alone does not supply it.
+> For a DP fit whose declared fit-wide privacy loss is `(epsilon, delta)`,
+> Decoy's released single-column numeric and categorical marginals, and
+> synthetic columns generated solely as post-processing of a DP-verified
+> pinned Plan, are covered by that fit's approximate `(epsilon, delta)`
+> differential privacy guarantee under add-or-remove-one-row adjacency.
+>
+> This guarantee is marginal only. It does not cover joint distributions,
+> cross-column correlations, conditional sampling, masked outputs, non-DP
+> snapshots, or forged artifacts.
+>
+> Adjacency is over the rows of the DataFrame handed to the fit, not over
+> the records of the file that frame was loaded from. pandas infers a
+> column's type from ALL of its values, so one extra record in a source
+> file can change how every other value in that column is parsed: a
+> column of zero-padded account numbers reads as integers and releases
+> `1, 2, 3`, and one non-numeric record later re-types it as text,
+> releasing `001, 002, 003`. Every label moved, from one added record.
+>
+> This caveat covers PARSING ONLY, and is a precondition on the caller.
+> It does not excuse anything that happens after a frame exists. Once
+> you hand a DataFrame to the fit, releasing the same value identically
+> whatever container pandas has put it in is Decoy's obligation, not
+> yours -- if two frames differing by one row disagree about a value
+> they both contain, that is a defect here and not an instance of the
+> caveat above.
+>
+> Frame cells must be VALUES, not live objects carrying executable
+> behaviour. Converting a cell runs that cell's own methods, so an object
+> whose `__float__` or `__str__` raises can abort the fit, and whether
+> the fit aborted is itself observable. Every such failure is caught and
+> the row dropped, with two deliberate exceptions: `KeyboardInterrupt`
+> and `SystemExit` are re-raised so that an operator can still interrupt
+> a running fit and a caller can still exit the process. A cell that
+> raises either of those from its own methods is outside this guarantee.
+> Nothing loaded from a file can be such a cell -- Parquet, CSV, JSON and
+> Arrow all produce values, and Decoy reads plans with `yaml.safe_load`
+> and has no pickle path -- so reaching this requires already running
+> code inside the fitting process, which is strictly more capability than
+> the gap yields.
+>
+> To carry the guarantee back to a source file, materialize the frame
+> under a fixed schema that does not depend on the file's contents:
+> explicit `dtype=` for every declared column, and no inferred date
+> parsing. Decoy cannot verify that you did. By the time the fit sees a
+> frame the parse has already happened, and refusing a frame based on the
+> types it happens to have would itself disclose whether the unusual
+> record was present.
+>
+> A declared categorical column releases through one of two carriers you name
+> for it, and the carrier -- not how pandas happens to store the column --
+> decides what is released. A `text` column releases only genuine string cells,
+> kept verbatim unless the value as received contains a NUL or cannot be encoded
+> as UTF-8; every non-string cell (a boolean, any number, a decimal, a complex
+> value, a date, timestamp or timedelta, a container, or any other type)
+> contributes nothing and is counted as a null. A `flag` column releases the two
+> canonical labels `true` and `false`: it releases the matching label for any
+> cell that is not text or bytes and whose value converts to an exact real `0` or
+> `1` (a boolean, or the `0`/`1` an integer, float, decimal, or
+> zero-imaginary-complex holds after a concatenation reboxes the column's
+> storage), and counts as a null every text or bytes value (even `"1"` or `b"1"`)
+> and every other cell that does not (a `2`, a `0.5`, a nonzero-imaginary complex,
+> a date, or a container). This is a deliberate
+> restriction, not an oversight: deriving a label from
+> a value's pandas storage would make the label a function of how the column was
+> boxed, and a column's storage is a function of all its rows, so one added row
+> could otherwise change every label at once and break the adjacency the
+> certificate assumes. Casting a column to strings upstream releases it as text,
+> accepting that the cast is then yours to keep stable.
+>
+> A fully dropped column therefore reports close to zero non-null values,
+> which is indistinguishable from a genuinely empty column -- deliberately
+> so, since a signal that appeared only when values were dropped would
+> itself disclose that they were. Every fit logs the policy above
+> unconditionally, whether or not anything was affected. If a column you
+> expect to be populated reports no values, check its type against this
+> paragraph before reading it as a finding about your data.
+>
+> A boolean column is released by declaring it a `flag`: it emits the canonical
+> labels `true` and `false` through a boolean-domain measurement, so its release
+> does not depend on whether pandas has stored the column as booleans, integers,
+> or floats after a concatenation. A boolean value left in a `text` column is not
+> a string and is dropped; declare the column `flag` to release it.
+>
+> When several independent release IDs are consumed, their privacy losses
+> compose; repeated references to the same release ID are charged once, and
+> conflicting artifacts carrying one release ID are rejected.
+>
+> The guarantee is over DATA VALUES. A cell holding an arbitrary executable
+> Python object that seizes process control is outside it, and outside the
+> adjacency relation the claim is stated over.
+
+**The data-model boundary.** Preprocessing is total over data: no scalar
+value can make a fit raise, warn, or otherwise become observable, so fit
+success is not a channel. Totality is enforced with `except BaseException`
+rather than `except Exception`, because a cell whose `__float__` raised a
+direct `BaseException` subclass escaped the narrower form and aborted the
+fit. Two types are deliberately re-raised rather than caught,
+`KeyboardInterrupt` and `SystemExit`, so that an operator can still
+interrupt a long fit and a caller can still exit the process. A cell holding
+an object whose `__str__` or `__float__` raises one of those two can
+therefore still make a fit terminate where its one-row neighbour succeeded.
+
+The same boundary covers a `DataFrame` whose own container runs caller code:
+a `Series` subclass whose `array` or length depends on the rows it holds is
+as live as an object in a cell, and for such a frame the fit raises rather
+than silently releasing an almost-entirely-null column. Neither of these
+arises from a frame built by reading a file; both require the caller to put
+executable behaviour into the data structure itself.
+
+That is the whole residual, and both cross-model reviewers judged it out of
+scope, as do we: such a value is not data, it is code that hijacks process
+control, and a caller who can place it in the frame already controls the
+process. Catching `KeyboardInterrupt` and `SystemExit` as well would be the
+worse trade, because it would swallow a genuine Ctrl-C during a long fit. We
+state the boundary rather than leave it implicit, because "no row content can
+affect fit success" is otherwise read as unconditional.
+
+**The single-threaded boundary.** Totality also rests on suppressing warnings,
+via `warnings.catch_warnings()` plus `simplefilter("ignore")`. That mechanism
+swaps a process-global filter list and restores it on exit, so it is not
+thread-safe. A concurrent thread that installs `simplefilter("error")` inside
+that window would turn a content-dependent warning back into an exception and
+reopen the fit-success channel described above.
+
+`fit_dp_snapshot` is a caller-facing entrypoint and the engine does not fit
+snapshots inside its own concurrency, so no in-engine caller can reach this.
+Python 3.10 offers no thread-safe alternative (`catch_warnings(action=...)`
+arrived later), so we record the boundary rather than restructure around it:
+run a DP fit on one thread, or do not install warning filters concurrently
+with one.
+
+**What is covered.** A statistical generate column's marginal carries the
+declared `(epsilon, delta)` guarantee only when its snapshot was produced by
+`fit_dp_snapshot` for that specific column, and the compiled Plan's
+`dp_verification` receipt (reproduced from the pinned snapshot bytes, never
+trusted from the artifact's own claim alone) certifies it:
+
+- **Numeric columns**, released as a fixed-bin-count histogram over a
+  caller-declared domain (`numeric_domains`), via `make_find_bin >>
+  then_count_by_categories >> then_laplace`.
+- **Categorical columns**, released as a thresholded top-label set plus a
+  non-null total, via `make_count_by >> then_laplace_threshold` (grouped)
+  and `make_count >> then_laplace` (total).
+- **Row count**, released once per fit via `make_count >> then_laplace`,
+  shared across every column in that fit.
+
+**What is NOT covered, ever:**
+
+- **Cross-column correlation and conditional synthesis.** The protected
+  release scope is single-column marginals only. Joint contingency tables,
+  `condition_on` sampling, and any cross-column structure carry no privacy
+  accounting; a preserved marginal says nothing about preserved
+  correlation. Joint-distribution DP (PrivBayes/MST/AIM-style mechanisms) is
+  a separate, larger, not-yet-built effort, out of scope for this
+  single-column-marginals build.
+- **Masked output.** Still carries no epsilon (masking is a deterministic
+  transform, entirely outside this mechanism).
+- **Datetime and freetext columns.** Not eligible for a DP release; only
+  numeric and categorical kinds are ever accepted by the compile-time
+  provenance check.
+- **`high_cardinality: true` and `allow_real_categories: true` columns.**
+  Both retain or release real, non-DP vocabulary and are anti-DP by
+  construction; a DP-declared pipeline hard-rejects either at compile time.
+- **A Plan embedding an exact, non-DP snapshot inherits that snapshot's
+  full sensitivity.** Pinning a snapshot's bytes into the Plan (so
+  generation never rereads a path) is required for the generation
+  capability regardless of whether that snapshot is DP-fit; an exact
+  snapshot referenced by a non-DP-declared pipeline carries no privacy
+  reduction just because it is now embedded in a Plan file.
+- **Numeric domains and column kinds are public metadata**, declared by the
+  caller at fit time and recorded in the artifact -- they cost no privacy
+  budget, but they are not protected either; do not treat them as secret.
+- **Categorical label discovery consumes privacy budget.** Which labels
+  survive the release's threshold is itself a private-data-dependent
+  outcome, budgeted as part of the fit's query schedule, not a free
+  side-channel.
+
+**What is enforced mechanically versus what is an operator precondition.**
+
+- **`OpenDpReleaseSession` is the sole OpenDP call site.** It enforces a
+  fixed query schedule (refuses an unscheduled or duplicate release,
+  refuses a loss report before the schedule completes) and records every
+  certificate as `measurement.map(1)` on the object actually invoked,
+  never the calibration target -- there is no runtime assertion that
+  compares the two; this is what the session's own construction always
+  does. The fixed schedule is enforced by
+  Decoy, not by the DP library: an OpenDP-native compositor that would
+  itself refuse an unscheduled query is unavailable in this build (it
+  requires a Polars version Decoy does not run -- see the dependency
+  decision below). A defect in Decoy's release session could therefore
+  under-count a release, and no library would catch it; the mitigations are
+  the single call site, refusal of unscheduled/repeated queries, and the
+  certificate-count assertion, not a library-enforced backstop.
+- **DP generation requires a DP-verified pinned Plan -- and "verified" is
+  a consistency check over a self-declared block, not a proof the
+  release actually happened.** `generate_tables` accepts only a compiled
+  `Plan`; a categorical column's `allow_real_categories` consent gate is
+  bypassed when the PLAN COMPILER's `verify_dp_snapshots` pass certifies
+  the pinned snapshot as a `dps-marginal/v3` release for that specific
+  column. That certification is a PURE FUNCTION of the artifact's OWN
+  `dp` key: it checks that the block is internally consistent (the
+  recorded proof-stack identity -- platform, CPython version and lock
+  fingerprint -- is one of this build's certified rows, NOT a live
+  comparison against the generating host's own installed libraries, which
+  may legitimately differ from the fitting host's; the recorded codec,
+  scope and adjacency are exactly the ones this build implements; the
+  declared `query_count` recomputes from the declared columns; the
+  declared kind matches the column; and, for numeric columns, the declared
+  domain is well-formed and the recorded `bin_edges` are the canonical
+  edges that domain implies), never that an actual OpenDP fit produced the
+  numbers it reports. A forged but
+  internally consistent `dp` block -- correct library versions, a
+  `query_count` that recomputes cleanly, a fresh `release_id`, a
+  plausible `epsilon_total` -- attached to an ordinary EXACT snapshot
+  passes every one of those checks and is treated as verified. This was
+  demonstrated directly: an exact `compute_distribution_snapshot` with a
+  fabricated `dp` block bolted on compiles clean and generates real
+  source values into synthetic output. The numeric shape check (comparing
+  `stats.min`/`max`/`mean`/`std`/`quantiles`/`bin_counts` length against
+  what a genuine release can ever look like) catches exactly one case: a
+  verbatim `dp` block copied onto an untouched exact snapshot, which still
+  carries its real `mean`, `std` and `quantiles`. It stops nothing else, and
+  defeating it requires no knowledge of DP and no reproduction of the artifact
+  format. Every field it reads is attacker-writable: set `mean`, `std` and
+  `quantiles` to null and empty, declare `numeric_bins` as the length of the
+  histogram already in the snapshot, and declare the numeric domain as the
+  observed min and max. That artifact compiles DP-verified while its
+  `bin_counts` are still the exact, unnoised histogram and its declared domain
+  is still the real minimum and maximum. Treat this check as a guard against
+  copy-paste, not against an adversary. Successful compilation alone does not
+  protect a caller who bypasses the compiled Plan and calls internal
+  generation helpers directly with unvalidated data, and it does not
+  protect a caller who feeds the compiler a snapshot they wrote by hand.
+- **Independent release IDs compose; the same ID is charged once.**
+  Release IDs are privacy-ledger identities, never derived from content,
+  timestamps, paths, or row counts. Distinct release IDs referenced by a
+  pipeline compose via basic sequential composition; the same release ID
+  referenced by many columns is charged once, keyed by ID, not by content
+  digest. A release ID reused with a DIFFERENT digest is rejected as a
+  conflicting artifact (`dp_release_id_conflict`), never silently
+  re-charged or silently accepted as a duplicate. A content hash never
+  identifies a privacy release by itself.
+- **Serialized Plan files are integrity-checked internally, not
+  authenticated against a hostile replacement.** `plan_from_yaml`
+  recomputes each embedded snapshot's digest from its pinned bytes and
+  rejects a mismatch, and recomputes the `dp_verification` receipt from
+  those same revalidated bytes rather than trusting the serialized receipt
+  verbatim. This catches accidental corruption and a forged receipt on an
+  otherwise-genuine pinned artifact. It has no authentication value: the
+  digest and the bytes it covers live in the same attacker-controlled file,
+  so an edit that recomputes the digest passes. The dangerous direction is
+  the reverse of the one the check defends. Keep an honest plan's `dp` block
+  exactly as minted, replace only the pinned snapshot's `top_values` with
+  real source values, recompute the digest, and the plan loads, generates
+  those real values, and produces a receipt carrying the ORIGINAL genuine
+  release ID and its genuine `epsilon_total`. Note what is NOT being
+  described: substituting a wholesale exact snapshot does not work, because
+  such a snapshot carries no `dp` block and the provenance check rejects it.
+  The working edit is the surgical one, which is also the harder one to
+  notice. Nothing in that receipt
+  distinguishes it from an honest one, so an auditor reading the receipt has
+  no signal. Nothing signs the file itself.
+- **The consumed snapshot is trusted to be genuine, and the consequence is
+  not only budget understatement -- it is real source vocabulary reaching
+  synthetic output.** The provenance check reads the snapshot JSON at
+  face value: it defends against honest misconfiguration (pointing a
+  DP-declared pipeline at a non-DP-fit artifact, or an artifact whose
+  internal schedule doesn't match its own declared columns) and against
+  the realistic case of a stale exact artifact with a copied-in `dp`
+  block (the numeric shape check above), not against anyone willing to edit
+  four fields. That numeric shape defense is numeric only: an exact and a DP
+  categorical `stats` block carry identical keys (compare
+  `quality/snapshot.py`'s `top_values`/`other_count` shape against
+  `quality/dp.py`'s), so there is no shape evidence to compare for a
+  categorical column. The numeric-versus-categorical asymmetry is real for the
+  copy-paste case alone -- a literally stale numeric block is caught and a
+  literally stale categorical block is not -- and it vanishes entirely against
+  a deliberate forger, for whom the two paths cost the same. Do not read the
+  asymmetry as the numeric path being defended.
+  A DP artifact's
+  recorded `epsilon_total` and `delta_total` are self-declared; Decoy
+  verifies internal consistency and release-ID uniqueness, but a
+  hand-edited artifact can understate what it actually spent -- and, for
+  a categorical column specifically, a forged-but-consistent `dp` block
+  is what grants the `allow_real_categories` exemption, so the consequence
+  of accepting one is not a budget-accounting error but the REAL,
+  non-private category values in that artifact's `top_values` being
+  sampled straight into generated output. The compile-time ceiling check
+  is a policy control over artifacts Decoy itself produced, not a defense
+  against a caller who edits their own artifacts.
+- **DP artifacts reveal exactly the labels and counts deliberately released
+  by OpenDP.** The artifact never carries exact row counts, exact distinct
+  counts, suppressed label names, suppressed noisy counts, per-query
+  certificate breakdowns, or an RNG seed.
+
+**Snapshot bytes are read once and pinned, never reopened.** `compile_plan`
+reads every referenced snapshot path exactly once, embeds the exact bytes
+and a SHA-256 digest into the Plan, and neither `generate_tables` nor the
+fidelity gate reopens a `snapshot_file` path afterward -- both consume the
+pinned, parsed artifact from the compiled Plan. This closes a
+read-time-of-check/read-time-of-use window where a file swapped between two
+separate reads within one compilation, or between compile and generate,
+could serve different bytes to different consumers; generation reads only
+the pinned artifact.
+
+**DP-fit output is not reproducible run to run, by design.** `fit_dp_snapshot`
+draws its Laplace/threshold noise from OpenDP's own entropy, never from the
+job seed: seeding the noise from material the config holder controls would
+let them subtract it back out and recover the true counts, voiding the
+guarantee. So each DP release draws fresh noise -- applying the mechanism
+twice to identical data and the same fit parameters yields a different noisy
+release every time. This is separate from Decoy's normal determinism
+contract, not a weakening of it: once a specific release artifact exists and
+is pinned into a compiled Plan, generating synthetic rows from it is fully
+seed-reproducible as usual (the samplers are seeded; the release is just
+weights). Do not expect byte-identical DP artifacts across repeated fits,
+and do not treat the job seed as a privacy-relevant secret for the DP
+mechanism, since it plays no part in the noise draw.
+
+If your use case requires a formal privacy guarantee over MASKED data, over
+generated JOINT or conditional structure, or over datetime or freetext
+columns, Decoy alone does not supply it.
 
 ## It does not certify legal or regulatory compliance
 

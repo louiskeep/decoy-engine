@@ -502,3 +502,51 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
         check (not falsy check) accepts it."""
         cfg = self._wrap({"name": "i", "type": "sequence", "start": 0})
         PipelineConfig.model_validate(cfg)  # must not raise
+
+
+class TestGlobalSettingsSerializationSchema:
+    """D-M-A (dennis round 5): the `dp` omission serializer is a
+    `@model_serializer(mode="wrap")`, and pydantic discards a model's
+    SERIALIZATION json schema when one is attached. `GlobalSettings` came
+    back as `{}` and `DpGenerateSettings` vanished from `$defs`, while
+    validation mode stayed intact. No consumer reads the
+    serialization-mode schema today, so it was latent rather than live,
+    but it was a real regression in the core schema that nothing
+    covered."""
+
+    def test_serialization_mode_schema_still_enumerates_fields(self):
+        from decoy_engine.config import PipelineConfig
+
+        schema = PipelineConfig.model_json_schema(mode="serialization")
+        global_settings = schema["$defs"]["GlobalSettings"]
+        assert global_settings.get("properties"), global_settings
+        assert "dp" in global_settings["properties"]
+        assert "seed" in global_settings["properties"]
+        assert "DpGenerateSettings" in schema["$defs"]
+
+    @pytest.mark.parametrize("mode", ["validation", "serialization"])
+    def test_advertised_dp_schema_matches_what_validation_accepts(self, mode):
+        """C-M-1 (Codex round 6): both schema modes advertised `dp` as
+        `DpGenerateSettings | null` with default `null`, while validation
+        REFUSES an explicit null. A schema-driven client could therefore
+        generate a schema-valid config that pydantic rejects. The
+        existing tests compared property NAMES only, so they passed while
+        the schema and the model disagreed."""
+        from decoy_engine.config import PipelineConfig
+
+        dp = PipelineConfig.model_json_schema(mode=mode)["$defs"]["GlobalSettings"]["properties"][
+            "dp"
+        ]
+        assert "null" not in str(dp), dp
+        assert "default" not in dp, dp
+        assert dp.get("$ref", "").endswith("DpGenerateSettings"), dp
+
+    def test_validation_and_serialization_modes_agree_on_field_names(self):
+        from decoy_engine.config import PipelineConfig
+
+        validation = PipelineConfig.model_json_schema(mode="validation")
+        serialization = PipelineConfig.model_json_schema(mode="serialization")
+        assert (
+            validation["$defs"]["GlobalSettings"]["properties"].keys()
+            == serialization["$defs"]["GlobalSettings"]["properties"].keys()
+        )

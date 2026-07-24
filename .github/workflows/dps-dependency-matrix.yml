@@ -1,0 +1,126 @@
+# DPS-CODEC dependency-matrix workflow (guide section 3.8 / build order step 3).
+#
+# STATUS: DRAFT. This workflow has NOT yet run on GitHub Actions -- its YAML
+# parses locally, but live-CI validation (the exact-patch runners actually
+# resolving the lock and reproducing the pinned fingerprint) is OUTSTANDING.
+#
+# WHY THIS EXISTS. A DP artifact's (epsilon, delta) guarantee is only honest on
+# the exact software stack it was tested against. This job establishes the
+# certified LOCK FINGERPRINT per (platform, exact-CPython-patch) row: it
+# computes the fingerprint mechanically over the complete resolved lock, proves
+# the environment matches the lock (Codex round-6 lock==installed guard), runs
+# the crown-jewel adjacency property that the whole redesign protects, probes
+# the frozen epsilon ceiling, and asserts the direct-carrier path is genuinely
+# pandas/pyarrow-free. The fingerprint CI observes IS the value pinned into the
+# static manifest (src/decoy_engine/quality/dp_provenance.py::_CERTIFIED_STACKS).
+#
+# EXACT PATCHES, NOT FLOATING MINORS (section 3.8). setup-python is pinned to
+# exact CPython patches; a bare "3.11" would admit a moving patch release, but
+# the PLD overflow boundary and other numerics drift by patch. "Certify only
+# patches CI actually runs; admit no patch the matrix does not exercise." When a
+# row is not yet in the manifest, the "compute + report" step PRINTS the
+# fingerprint for a maintainer to paste in; once pasted, the "assert against
+# manifest" step enforces it as a regression guard.
+#
+# v1 certifies exactly ONE platform: Linux / x86-64 / CPython / glibc (ubuntu).
+# Broadening to macOS/Windows/ARM/musl is deferred (ROADMAP; guide section 10b).
+
+name: dps-dependency-matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/decoy_engine/quality/dp_provenance.py"
+      - "src/decoy_engine/quality/carriers.py"
+      - "src/decoy_engine/quality/carrier_adapter.py"
+      - "src/decoy_engine/quality/dp_budget.py"
+      - "uv.lock"
+      - ".github/workflows/dps-dependency-matrix.yml"
+
+jobs:
+  fingerprint-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      # fail-fast off: each row's fingerprint/probe result is independent
+      # evidence; one uncertified patch should not hide the others' output.
+      fail-fast: false
+      matrix:
+        # Exact CPython patches. The 3.10.20 row is the one pinned in the
+        # static manifest today; the 3.11.x / 3.12.x rows are the ones CI
+        # establishes (their lock resolution differs -- e.g. scipy 1.17.1 on
+        # 3.11, 1.18.0 on 3.12 -- so their fingerprints differ and a maintainer
+        # pastes each into _CERTIFIED_STACKS once this job first reports it).
+        python-version:
+          - "3.10.20"
+          - "3.11.9"
+          - "3.12.7"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Pin the exact CPython patch
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync the EXACT locked environment
+        # --frozen: install strictly from uv.lock, never re-resolve. The extra
+        # set here MUST reproduce the certification profile (the set the pinned
+        # 3.10.20 fingerprint was computed over); the lock==installed guard
+        # below fails the build if it does not, so a profile drift is caught
+        # rather than silently changing the certified hash. Maintainer TODO on
+        # first green run: confirm this invocation reproduces the pinned 3.10.20
+        # fingerprint, then lock it.
+        run: uv sync --frozen --extra dev --extra lint --extra vault --python ${{ matrix.python-version }}
+
+      - name: Guard -- lock == installed (Codex round-6)
+        # The fingerprint is only reproducible once the installed set is proven
+        # to be exactly the marker-selected uv.lock pins. This fails closed on
+        # any stray install or version drift.
+        run: uv run python -c "from decoy_engine.quality.dp_provenance import assert_lock_matches_installed as a; a(); print('LOCK==INSTALLED OK')"
+
+      - name: Compute + report the certified fingerprint for this row
+        # Prints the platform triple, full CPython version, and lock
+        # fingerprint. For a row already in the manifest this is cross-checked
+        # by the next step; for a not-yet-certified row this is the value a
+        # maintainer pastes into _CERTIFIED_STACKS.
+        run: uv run python -c "from decoy_engine.quality.dp_provenance import current_provenance as p; x=p(); print('PLATFORM', tuple(x.platform)); print('CPYTHON', x.cpython); print('FINGERPRINT', x.fingerprint)"
+
+      - name: Assert this row matches the static manifest (regression guard)
+        # If (platform, cpython) is already a certified row, the live
+        # fingerprint MUST equal the pinned literal -- otherwise a dependency
+        # drifted without a deliberate re-pin. If the row is not yet present,
+        # this step is a no-op (the compute step above reported the value to
+        # paste); it never silently certifies an unpinned row.
+        run: |
+          uv run python - <<'PY'
+          from decoy_engine.quality import dp_provenance as prov
+          key = (prov.current_platform(), prov.current_cpython())
+          live = prov.compute_lock_fingerprint(prov.installed_distribution_set())
+          pinned = prov._CERTIFIED_STACKS.get(key)
+          if pinned is None:
+              print(f"row {key} not yet in manifest; reported fingerprint {live} for a maintainer to pin")
+          elif live not in pinned:
+              raise SystemExit(f"FINGERPRINT DRIFT for {key}: live {live} not in manifest {sorted(pinned)}")
+          else:
+              print(f"row {key} matches manifest (member {live} of {len(pinned)} certified profiles)")
+          PY
+
+      - name: Provenance gate unit tests
+        run: uv run pytest tests/unit/quality/test_dp_provenance.py -q
+
+      - name: Crown-jewel adjacency property (the guarantee the redesign protects)
+        run: uv run pytest tests/unit/quality/test_carriers.py -q
+
+      - name: Epsilon-ceiling boundary probe
+        # The frozen ceiling guard (guide section 4). NOTE: this runs the pure
+        # guard's boundary tests. The LIVE PLD-overflow probe -- assert the
+        # ceiling composes without overflow AND that this row's documented
+        # overflow point stays above 700.0 -- needs the budget-composition call
+        # path that lands in DPS-CODEC phase 4/5; wire it in here then.
+        run: uv run pytest tests/unit/quality/test_dp_budget.py -q -k "EpsilonCeiling or epsilon"
+
+      - name: Direct-carrier import isolation (pandas/pyarrow-free)
+        run: uv run pytest tests/unit/quality/test_carriers.py tests/unit/quality/test_dp_provenance.py -q -k "import"

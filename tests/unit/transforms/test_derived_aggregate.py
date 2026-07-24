@@ -359,7 +359,7 @@ class TestDerivedAggregateGeneratePath:
 
     def test_derived_aggregate_sum_in_generate_table(self) -> None:
         """sum in generate mode aggregates an already-generated sibling column."""
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -387,7 +387,7 @@ class TestDerivedAggregateGeneratePath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         totals = tbl.column("total").to_pylist()
         amounts = tbl.column("amount").to_pylist()
         expected_sum = sum(amounts)
@@ -395,7 +395,7 @@ class TestDerivedAggregateGeneratePath:
         assert all(t == expected_sum for t in totals)
 
     def test_derived_aggregate_mean_in_generate_table(self) -> None:
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -423,7 +423,7 @@ class TestDerivedAggregateGeneratePath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         avg_vals = tbl.column("avg_val").to_pylist()
         # All values are 8, so mean is 8.0
         assert all(abs(v - 8.0) < 1e-9 for v in avg_vals)

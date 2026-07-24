@@ -235,7 +235,7 @@ class TestGroupKeyGeneratePath:
     """group_key wired into the generate_tables synthesize path."""
 
     def test_group_key_in_generate_table(self) -> None:
-        from decoy_engine.generation.synthesize import generate_tables
+        from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
             "version": 1,
@@ -262,7 +262,7 @@ class TestGroupKeyGeneratePath:
             ],
             "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
         }
-        tbl = generate_tables(cfg)["t"]
+        tbl = compile_and_generate(cfg)["t"]
         clusters = tbl.column("cluster").to_pylist()
         keys = tbl.column("cluster_key").to_pylist()
         # Build a map: cluster -> set of keys for that cluster

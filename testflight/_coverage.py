@@ -84,6 +84,14 @@ _STRATEGY_ALLOWLIST: dict[str, str] = {
         "backlog item (see group_key); also unit-tested in "
         "tests/unit/transforms/test_windowed_date.py."
     ),
+    "top_code": (
+        "HC-3b numeric generalization (top-code values at/above a threshold, e.g. "
+        "age 90+ -> 90). None of the current jobs declare a column whose canonical "
+        "mask is top-coding; generalization in these jobs is done by bucketize / "
+        "geo_generalize instead. Exercised by tests/unit/execution/test_top_code.py "
+        "and tests/unit/plan/test_checks_top_code.py. A dedicated healthcare "
+        "age-generalization test-flight job is a tracked backlog item."
+    ),
 }
 
 # Generate-column types (from the live config._tables.GENERATE_TYPES set,

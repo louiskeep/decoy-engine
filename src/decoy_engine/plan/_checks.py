@@ -284,7 +284,12 @@ def check_composite_columns_length_match(profile: Profile) -> None:
             )
 
 
-def check_statistical_columns(config: dict[str, Any]) -> None:
+def check_statistical_columns(
+    config: dict[str, Any],
+    pinned: dict[str, Any] | None = None,
+    dp_verified_columns: frozenset[tuple[str, str]] = frozenset(),
+    failures: dict[str, Any] | None = None,
+) -> list[tuple[str, str, str, dict[str, Any]]]:
     """Validate `type: statistical` generate columns against their snapshots.
 
     Compile-check ownership table row #12 (capability-gaps WS3,
@@ -293,12 +298,29 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
     artifact, the snapshot kind has no sampler (an all-null "empty"
     column; freetext is admitted since deferred follow-up 4), a
     categorical column lacks the `allow_real_categories: true`
-    disclosure opt-in, or
-    `condition_on` names a pair the snapshot has no joint table for.
-    `generation/statistical.load_spec` owns those verdicts (one set of
-    error codes for compile time and generation time); this check adds
-    the declared-order rule load_spec cannot see: the condition_on
-    column must be generated BEFORE its dependent in the same table.
+    disclosure opt-in (unless the compiler has DP-verified it, guide
+    section 5), or `condition_on` names a pair the snapshot has no joint
+    table for. `generation/statistical.load_spec` owns those verdicts
+    (one set of error codes for compile time and generation time); this
+    check adds the declared-order rule load_spec cannot see: the
+    condition_on column must be generated BEFORE its dependent in the
+    same table.
+
+    `pinned` is the compiler's `{path: ReadSnapshot}` read-once map
+    (`plan._generation.read_and_pin_snapshots`). `failures` is that same
+    read-once pass's `{path: StatisticalSpecError}` classification of
+    every path it could not open or parse (C-M1, round-3 remediation): a
+    path absent from `pinned` raises the CLASSIFIED failure from
+    `failures` rather than reopening it, so a compile that ran the read-
+    once pass never calls `open()` a second time for any path. `failures
+    =None` means no read-once pass ran at all (a direct/legacy caller,
+    e.g. a test building a spec by hand); only then does this function
+    fall back to a direct read via `plan._generation.resolve_pinned_
+    snapshot`. `dp_verified_columns` is the `(table, column)` set
+    `plan._checks_dp.verify_dp_snapshots` certified as an OpenDP release.
+    Returns `(table_name, column_name,
+    snapshot_path, spec_dict)` per validated statistical column, in
+    declared order, fed to `plan._generation.build_generation_plan`.
 
     Config + snapshot artifact only (no profile, no source data): the
     snapshot is a config-referenced fitted-model file, so config-only
@@ -311,9 +333,12 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
     case (a `faker`/`sequence`/... column carrying a stray `high_cardinality`
     key) is caught here instead.
     """
-    from decoy_engine.generation.statistical import load_spec
+    from decoy_engine.generation.statistical import load_spec, spec_to_dict
     from decoy_engine.generation.statistical._spec import StatisticalSpecError
+    from decoy_engine.plan._generation import resolve_pinned_snapshot
 
+    pinned = pinned or {}
+    column_specs: list[tuple[str, str, str, dict[str, Any]]] = []
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
         if not isinstance(table_entry, dict):
@@ -335,8 +360,28 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
                     ),
                 )
             if col_type == "statistical":
+                snapshot_file = col_entry.get("snapshot_file")
+                if not snapshot_file:
+                    raise PlanCompileError(
+                        code="statistical_snapshot_file_required",
+                        path=f"tables.{table_name}.generate_columns.{col_name}",
+                        message=f"statistical column {col_name!r} requires `snapshot_file`.",
+                    )
+                snapshot_file = str(snapshot_file)
+                read = pinned.get(snapshot_file)
                 try:
-                    spec = load_spec(col_entry)
+                    snap = resolve_pinned_snapshot(snapshot_file, pinned, failures)
+                    dp_verified = (table_name, col_name) in dp_verified_columns
+                    # Thread the read-once pass's own digest onto the spec
+                    # (guide section 4.7/4.8, defect F4) so generation-time
+                    # seed derivation reuses it instead of reopening
+                    # snapshot_file to rehash it later.
+                    spec = load_spec(
+                        col_entry,
+                        snapshot=snap,
+                        dp_verified=dp_verified,
+                        snapshot_digest=read.sha256 if read is not None else None,
+                    )
                 except StatisticalSpecError as exc:
                     raise PlanCompileError(
                         code=exc.code,
@@ -354,7 +399,9 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
                             f"conditional sampling needs the parent first."
                         ),
                     )
+                column_specs.append((table_name, col_name, snapshot_file, spec_to_dict(spec)))
             seen.append(str(col_name))
+    return column_specs
 
 
 def _check_ner_available_for_strategy(config: dict[str, Any], strategy: str) -> None:

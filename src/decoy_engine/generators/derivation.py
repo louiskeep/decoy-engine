@@ -89,7 +89,9 @@ def _snapshot_content_digest(path: str) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
+def strategy_config_fingerprint(
+    column_config: dict[str, Any], *, snapshot_content_digest: str | None = None
+) -> str:
     """SHA-256 hex of canonical JSON of the strategy-relevant config.
 
     Canonical JSON: sorted keys, no whitespace, default ``ensure_ascii``
@@ -101,13 +103,27 @@ def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
     ``_SNAPSHOT_FILE_KEY``): its value in the payload is replaced with the
     SHA-256 of the referenced file's bytes so the seed follows the
     distribution, not the filesystem location.
+
+    ``snapshot_content_digest``, when given, is used verbatim instead of
+    reading ``snapshot_file`` from disk (same ``"sha256:<hex>"`` shape
+    ``_snapshot_content_digest`` returns). DPS Scope B (guide section
+    4.7/4.8): a Plan-pinned caller already knows this file's content
+    digest from compile time -- `StatisticalSpec.snapshot_digest` -- and
+    must not reopen the path merely to rederive a value it already has
+    (defect F4). Direct/standalone callers with no Plan (the tests in
+    `test_gen_derive_context.py`/`test_r3_10_generation_key_contract.py`)
+    omit this and keep today's read-the-file behavior unchanged.
     """
     payload = {
         k: v for k, v in (column_config or {}).items() if k not in _EXCLUDED_FROM_FINGERPRINT
     }
     snapshot_file = payload.get(_SNAPSHOT_FILE_KEY)
     if snapshot_file:
-        payload[_SNAPSHOT_FILE_KEY] = _snapshot_content_digest(str(snapshot_file))
+        payload[_SNAPSHOT_FILE_KEY] = (
+            snapshot_content_digest
+            if snapshot_content_digest is not None
+            else _snapshot_content_digest(str(snapshot_file))
+        )
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -170,6 +186,8 @@ class GenDeriveContext:
         derive_key: Callable[[str], bytes] | None,
         column_config: dict[str, Any],
         fallback_seed: int,
+        *,
+        snapshot_content_digest: str | None = None,
     ) -> GenDeriveContext:
         """Resolve the 32-byte column root, preserving the four-path order of
         the legacy `synthetic_column_seed` (fresh / legacy / keyed / unkeyed).
@@ -178,6 +196,11 @@ class GenDeriveContext:
         before (now consuming all 32 bytes, not the first 4). Raises on a
         `derive_key` resolver failure (QA-1 M18 contract) rather than
         silently degrading to the unkeyed path.
+
+        `snapshot_content_digest` passes straight through to
+        `strategy_config_fingerprint` (a `type: statistical` column's
+        already-pinned digest, guide section 4.7/4.8); every other column
+        type ignores it.
         """
         cfg = column_config or {}
 
@@ -197,7 +220,9 @@ class GenDeriveContext:
                 ) from exc
             return cls(root)
 
-        fingerprint = strategy_config_fingerprint(cfg)
+        fingerprint = strategy_config_fingerprint(
+            cfg, snapshot_content_digest=snapshot_content_digest
+        )
 
         if derive_key is not None:
             try:

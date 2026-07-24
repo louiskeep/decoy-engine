@@ -20,7 +20,8 @@ Backend type literals per S1 stub registry distinction (resolution of B3).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import Any, Literal, Union, cast
 
 # Post-S5 R6 reshape (per spec §6 + cross-sprint contracts §2.4 + R6):
 # `deterministic_map` is REMOVED from the cardinality enumeration. The
@@ -302,3 +303,119 @@ class Plan:
     namespaces: tuple[NamespaceBinding, ...]
     ordering: tuple[OrderingNode, ...]
     plan_compile: PlanCompileResult
+    # DPS Scope B (guide section 4.7): None for a Plan compiled without any
+    # `type: statistical` generate columns, or for an older serialized Plan
+    # deserialized for reporting/diagnostics only (`plan_from_yaml` loads it,
+    # but `generate_tables` rejects it -- guide step 7/8). A Plan WITH
+    # statistical generate columns always carries one.
+    generation: GenerationPlan | None = None
+
+
+# ---------------------------------------------------------------------
+# Pinned generation payload (DPS Scope B, guide section 4.7)
+# ---------------------------------------------------------------------
+
+# A recursively immutable JSON value: lists become tuples, dicts become
+# `MappingProxyType` wrapping already-frozen values, all the way down.
+# There is no third-party frozen-mapping dependency here (CLAUDE.md: use
+# established methodology, don't reach for a new dependency for
+# something this small) -- `MappingProxyType` refuses item assignment at
+# the Python level, and `_freeze_json` never leaves a mutable dict or
+# list reachable from a frozen value, which is the practical immutability
+# guarantee `test_compiled_generation_plan_is_recursively_immutable`
+# checks (no external reference to the underlying mutable container
+# survives the freeze).
+FrozenJsonValue = Union[
+    None,
+    bool,
+    int,
+    float,
+    str,
+    tuple["FrozenJsonValue", ...],
+    "MappingProxyType[str, FrozenJsonValue]",
+]
+
+
+def freeze_json(value: Any) -> FrozenJsonValue:
+    """Recursively convert a plain JSON-shaped value (dicts/lists/scalars)
+    into its frozen equivalent. Pure function; never mutates `value`."""
+    if isinstance(value, dict):
+        return MappingProxyType({str(k): freeze_json(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_json(v) for v in value)
+    # Base case: a JSON scalar (None/bool/int/float/str) already matches
+    # `FrozenJsonValue`. The caller contract (a plain JSON-shaped value)
+    # is what makes this cast sound, not a runtime check -- there is no
+    # further container type left to recurse into here.
+    return cast("FrozenJsonValue", value)
+
+
+def unfreeze_json(value: FrozenJsonValue) -> Any:
+    """Inverse of `freeze_json`: back to plain dicts/lists for JSON
+    serialization (e.g. YAML round-trip, guide section 4.7)."""
+    if isinstance(value, MappingProxyType):
+        return {k: unfreeze_json(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [unfreeze_json(v) for v in value]
+    return value
+
+
+@dataclass(frozen=True)
+class PinnedSnapshot:
+    """One snapshot artifact's bytes, embedded verbatim into the Plan.
+
+    `source_path` is diagnostic metadata only after compile -- generation
+    and the fidelity gate never reopen it (guide section 4.7/4.8).
+    `payload_b64` is the exact bytes read at compile time, base64-encoded
+    for YAML embedding; `sha256` is that same content's digest, recomputed
+    and verified on `plan_from_yaml` deserialization. `release_id` is the
+    artifact's own `dp.release_id` when present (a DP-fit snapshot), else
+    `None` (an exact, non-DP snapshot).
+    """
+
+    source_path: str
+    sha256: str
+    payload_b64: str
+    release_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PinnedStatisticalSpec:
+    """One `type: statistical` generate column's validated spec, frozen at
+    compile time against the pinned snapshot bytes (guide section 4.7)."""
+
+    table_name: str
+    column_name: str
+    snapshot_index: int  # index into GenerationPlan.snapshots
+    spec: FrozenJsonValue
+
+
+@dataclass(frozen=True)
+class DpVerification:
+    """The compiler's DP verification receipt (guide section 4.7/6 row A2):
+    reproduced from the embedded artifacts at `plan_from_yaml` time, never
+    trusted from the artifact's own unverified claim alone."""
+
+    scope: Literal["single-column-marginals"]
+    release_ids: tuple[str, ...]
+    epsilon_total: float
+    delta_total: float
+
+
+@dataclass(frozen=True)
+class GenerationPlan:
+    """Everything `generate_tables` needs, pinned at compile time so
+    generation and the fidelity gate never reopen a snapshot path (guide
+    section 4.7/4.8, closing F3/F4 in the defect matrix).
+
+    `config_json` is the embedded, exact generate-side configuration
+    (table/column declarations, seed material lives in `SeedEnvelope`
+    separately); `snapshots`/`statistical_specs` are the read-once-pinned
+    artifacts and their frozen parsed specs; `dp_verification` is `None`
+    when no consumed column declared DP.
+    """
+
+    config_json: str
+    snapshots: tuple[PinnedSnapshot, ...] = field(default_factory=tuple)
+    statistical_specs: tuple[PinnedStatisticalSpec, ...] = field(default_factory=tuple)
+    dp_verification: DpVerification | None = None

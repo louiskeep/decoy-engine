@@ -18,41 +18,57 @@ The returned dict is keyed `schema_version = "distribution-snapshot/v1"`
 so downstream consumers can branch on schema evolution without sniffing
 shape. The shape is documented in `snapshot.compute_distribution_snapshot`
 and pinned by tests/snapshots/test_distribution_snapshot_baseline.py.
+
+Package exports are resolved LAZILY (PEP 562 `__getattr__`). Every
+submodule reachable eagerly here pulls pandas (and pyarrow), so an eager
+re-export made `import decoy_engine.quality.carriers` -- the pandas-free
+DP carrier core -- drag pandas in via this `__init__` (guide
+2026-07-23-dps-codec-implementation-guide.md section 3.8). Deferring the
+imports to first attribute access keeps the public names working while
+letting the carrier subtree be imported clean; the import-isolation test
+in tests/unit/quality/test_carriers.py is the proof.
 """
 
-from decoy_engine.quality.diagnostic import (
-    QUALITY_DIAGNOSTIC_SCHEMA_VERSION,
-    compute_diagnostic,
-)
-from decoy_engine.quality.fidelity import (
-    QUALITY_FIDELITY_SCHEMA_VERSION,
-    compute_fidelity,
-)
-from decoy_engine.quality.policy import (
-    QUALITY_POLICY_SCHEMA_VERSION,
-    apply_quality_policy,
-)
-from decoy_engine.quality.report import (
-    QUALITY_REPORT_SCHEMA_VERSION,
-    assemble_quality_report,
-    compute_quality_report,
-    score_to_grade,
-)
-from decoy_engine.quality.shape_fidelity import (
-    QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION,
-    compute_shape_fidelity,
-)
-from decoy_engine.quality.snapshot import (
-    DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
-    compute_distribution_snapshot,
-)
-from decoy_engine.quality.synth_report import (
-    SYNTH_REPORT_SCHEMA_VERSION,
-    assemble_synth_report,
-    compute_attack_metrics,
-    compute_dcr,
-    compute_new_row_synthesis,
-)
+import importlib
+from typing import Any
+
+# name -> submodule providing it. Kept explicit (not derived) so the
+# public surface is auditable and a typo fails loudly at access time.
+_LAZY_EXPORTS: dict[str, str] = {
+    "QUALITY_DIAGNOSTIC_SCHEMA_VERSION": "diagnostic",
+    "compute_diagnostic": "diagnostic",
+    "QUALITY_FIDELITY_SCHEMA_VERSION": "fidelity",
+    "compute_fidelity": "fidelity",
+    "QUALITY_POLICY_SCHEMA_VERSION": "policy",
+    "apply_quality_policy": "policy",
+    "QUALITY_REPORT_SCHEMA_VERSION": "report",
+    "assemble_quality_report": "report",
+    "compute_quality_report": "report",
+    "score_to_grade": "report",
+    "QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION": "shape_fidelity",
+    "compute_shape_fidelity": "shape_fidelity",
+    "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION": "snapshot",
+    "compute_distribution_snapshot": "snapshot",
+    "SYNTH_REPORT_SCHEMA_VERSION": "synth_report",
+    "assemble_synth_report": "synth_report",
+    "compute_attack_metrics": "synth_report",
+    "compute_dcr": "synth_report",
+    "compute_new_row_synthesis": "synth_report",
+}
+
+
+def __getattr__(name: str) -> Any:
+    submodule = _LAZY_EXPORTS.get(name)
+    if submodule is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(f"{__name__}.{submodule}"), name)
+    globals()[name] = value  # cache so subsequent access skips __getattr__
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(list(globals()) + list(_LAZY_EXPORTS))
+
 
 __all__ = [
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
