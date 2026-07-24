@@ -99,6 +99,45 @@ _EPS_Q_FLOOR = 1e-9  # per-query epsilon floor; below this a schedule cannot be 
 _I32_MAX = 2**31 - 1  # make_laplace_threshold's threshold argument is i32 (section 3.4)
 _SCALE_SEARCH_BOUNDS = (1e-12, 1e12)
 
+# A single CONCRETE conservative ceiling on the requested fit-wide epsilon
+# (guide section 4, comprehensive-review budget-calibration finding). The PLD
+# exponential overflows at ~709.783 on py3.10 (709.782 still OK) and the exact
+# boundary drifts by Python / dp_accounting version, so the ceiling is frozen
+# well below every certified manifest row's observed overflow -- NOT probed at
+# build time. A requested ceiling this large is already far outside any real DP
+# regime; requests above it must fail closed with a coded error BEFORE any
+# private data is read, never surface as a raw OverflowError mid-composition.
+# The dependency-matrix CI workflow asserts, per manifest row, that this ceiling
+# composes without overflow AND that the row's documented overflow point stays
+# above it (a boundary probe that fails the build if a version bump moves the
+# overflow at or below 700.0, forcing a deliberate re-pin).
+_DP_EPSILON_CEILING = 700.0
+
+
+def check_epsilon_supported(epsilon: float) -> None:
+    """Fail-closed guard for the requested fit-wide epsilon ceiling (guide
+    section 4). Raises a coded ``dp_epsilon_unsupported`` for any request above
+    ``_DP_EPSILON_CEILING`` (and for a NaN request, which cannot be certified),
+    so the fit refuses before reading private data instead of hitting a raw
+    ``OverflowError`` deep in PLD composition.
+
+    This is the pure guard; wiring it into the actual budget composition entry
+    point (alongside the strictly-positive check) lands with the fit
+    orchestration in DPS-CODEC phase 4/5. It does not validate positivity --
+    that stays with the existing ceiling parse -- only the upper bound."""
+    # `not (epsilon <= ceiling)` (rather than `epsilon > ceiling`) so a NaN
+    # request, for which every comparison is False, also fails closed.
+    if not (epsilon <= _DP_EPSILON_CEILING):
+        raise DpBudgetError(
+            code="dp_epsilon_unsupported",
+            message=(
+                f"requested epsilon {epsilon!r} exceeds the supported ceiling "
+                f"{_DP_EPSILON_CEILING!r}; a budget this large is outside the "
+                "certified DP regime and would overflow PLD composition"
+            ),
+        )
+
+
 # A certified privacy loss is either a scalar epsilon (pure-epsilon release,
 # e.g. a Laplace count/histogram) or an (epsilon, delta) pair (a thresholded
 # release). One uniform representation enters composition either way

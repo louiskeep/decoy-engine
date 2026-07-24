@@ -18,10 +18,12 @@ from typing import Any
 import pytest
 
 from decoy_engine.quality.dp_budget import (
+    _DP_EPSILON_CEILING,
     _EPS_Q_FLOOR,
     DpBudgetError,
     OpenDpReleaseSession,
     _FakeMeasurement,
+    check_epsilon_supported,
 )
 from decoy_engine.quality.dp_ledger import ReleaseLedger
 from decoy_engine.quality.dp_schedule import CategoricalQuerySpec, NumericQuerySpec, Schedule
@@ -441,3 +443,33 @@ class TestReleaseLedger:
         assert sum([0.1] * 10) == 0.9999999999999999  # the plain-sum defect, restated
         assert ledger.total_epsilon() == 1.0
         assert ledger.total_delta() == 1.0
+
+
+class TestEpsilonCeiling:
+    """The frozen epsilon ceiling (guide section 4). A requested fit-wide
+    epsilon above `_DP_EPSILON_CEILING` must fail closed with a coded error
+    BEFORE any private data is read, never surface as a raw OverflowError deep
+    in PLD composition. This is the pure guard; the composition call site wires
+    it in at DPS-CODEC phase 4/5."""
+
+    def test_ceiling_is_the_frozen_conservative_value(self) -> None:
+        # Pinned literal, not a build-time probe: 700.0 sits comfortably below
+        # the ~709.78 PLD overflow on every v1 manifest row.
+        assert _DP_EPSILON_CEILING == 700.0
+
+    @pytest.mark.parametrize("epsilon", [0.5, 1.0, 100.0, 699.999, 700.0])
+    def test_accepts_at_or_below_ceiling(self, epsilon: float) -> None:
+        check_epsilon_supported(epsilon)  # must not raise
+
+    @pytest.mark.parametrize("epsilon", [700.0001, 709.783, 1e6, float("inf")])
+    def test_rejects_above_ceiling(self, epsilon: float) -> None:
+        with pytest.raises(DpBudgetError) as exc:
+            check_epsilon_supported(epsilon)
+        assert exc.value.code == "dp_epsilon_unsupported"
+
+    def test_rejects_nan_request(self) -> None:
+        # NaN cannot be certified; every comparison is False, so the
+        # `not (eps <= ceiling)` form fails it closed rather than admitting it.
+        with pytest.raises(DpBudgetError) as exc:
+            check_epsilon_supported(float("nan"))
+        assert exc.value.code == "dp_epsilon_unsupported"
