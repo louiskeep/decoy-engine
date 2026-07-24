@@ -236,8 +236,8 @@ def _binary_search_endpoint_aware(predicate: Any, *, bounds: tuple[Any, Any], T:
     bounds, which the allocation search (section 4.3.2) reads as infeasible.
 
     The normal calibration regime (a real crossing inside bounds) never reaches
-    the ``except`` branch, so this is byte-identical to the bare
-    ``binary_search`` for every currently-calibrating fit; it only rescues the
+    the ``except`` branch, so this returns EXACTLY what the bare ``binary_search``
+    would for every currently-calibrating fit; it only rescues the
     endpoint-feasible case that the bare call would have raised on."""
     try:
         if T is not None:
@@ -335,7 +335,8 @@ class _FlagCapableBackend(Protocol):
 
     Kept SEPARATE from `_OpenDpBackend` (not merged into it) on purpose: the
     existing str/number test doubles implement only the str-domain methods, and
-    the str/number release path must stay byte-for-byte unchanged -- adding a
+    the str/number release path must stay behaviorally unchanged (same released
+    values and certificates) -- adding a
     required method to `_OpenDpBackend` would break every one of those doubles
     under structural typing. The flag path is reached only for a `flag` carrier,
     where `OpenDpReleaseSession` narrows the backend to this protocol first
@@ -687,8 +688,8 @@ class OpenDpReleaseSession:
     ) -> tuple[_dp_mod.Measurement, _dp_mod.Measurement]:
         """Select the categorical measurement pair by the column's carrier
         (guide section 3.4). `"text"` keeps the existing str-domain pair --
-        byte-identical to before, the only carrier any legacy schedule or
-        test double exercises. `"flag"` takes the bool-domain pair, which
+        behaviorally identical to before (same released values and certificates),
+        the only carrier any legacy schedule or test double exercises. `"flag"` takes the bool-domain pair, which
         requires a `_FlagCapableBackend`; a text-only backend on a flag column
         fails closed with a coded error rather than an `AttributeError`. Any
         other carrier is rejected: `categorical + number` has no OpenDP float
@@ -816,7 +817,20 @@ class OpenDpReleaseSession:
             ),
             None,
         )
-        carrier = spec.carrier if spec is not None else "text"
+        if spec is None:
+            # Both names were admitted individually, but they do not resolve to
+            # ONE scheduled categorical spec, so the carrier is unknown. Fail
+            # closed with a coded error rather than silently defaulting to the
+            # str/text domain (which would only surface later as a bare OpenDP
+            # TypeError on a genuine flag column).
+            raise DpBudgetError(
+                code="dp_budget_categorical_pair_unscheduled",
+                message=(
+                    f"no scheduled categorical query pairs grouped={grouped_name!r} "
+                    f"with total={total_name!r}; cannot determine the carrier"
+                ),
+            )
+        carrier = spec.carrier
         grouped_meas, total_meas = self._categorical_measurements(
             self._eps_q, self._delta_per_categorical, carrier
         )

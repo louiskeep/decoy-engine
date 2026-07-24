@@ -136,6 +136,39 @@ class TestBoolDomainMeasurements:
             )
         assert exc.value.code == "dp_carrier_backend_unsupported"
 
+    def test_crossed_grouped_total_pair_fails_closed(self) -> None:
+        # A grouped/total name pair that does not resolve to ONE scheduled spec
+        # (both names valid, but from different queries) must fail closed with a
+        # coded error, not silently default the carrier to text (dennis LOW-2).
+        from decoy_engine.quality.dp_budget import _FakeMeasurement
+
+        class _StrBackend:
+            cache_namespace = None
+
+            def count_measurement(self, eps_q: float):
+                return _FakeMeasurement(certificate=0.1, released=5)
+
+            def categorical_measurements(self, eps_q: float, delta_alloc: float):
+                return (
+                    _FakeMeasurement(certificate=(0.1, 1e-9), released={}),
+                    _FakeMeasurement(certificate=0.1, released=0),
+                )
+
+        schedule = Schedule(
+            row_count_name="rc",
+            numeric=(),
+            categorical=(
+                CategoricalQuerySpec("categorical_grouped:a", "categorical_total:a"),
+                CategoricalQuerySpec("categorical_grouped:b", "categorical_total:b"),
+            ),
+        )
+        session = OpenDpReleaseSession(schedule, epsilon=4.0, delta=1e-3, backend=_StrBackend())
+        session.release_row_count(10)
+        with pytest.raises(DpBudgetError) as exc:
+            # grouped from query 'a', total from query 'b' -> no single spec pairs them.
+            session.release_categorical("categorical_grouped:a", "categorical_total:b", ["x"])
+        assert exc.value.code == "dp_budget_categorical_pair_unscheduled"
+
 
 class TestCarrierInCacheKey:
     """Guide section 3.4/4: the carrier enters the schedule signature and the
