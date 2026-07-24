@@ -29,8 +29,10 @@ _DP_NORMALIZATION_POLICY = {
     "categorical_unsupported": (
         "released as null: in a text column every non-str cell (a boolean, any "
         "number, decimal or complex value, a datetime or timedelta, a container, and "
-        "any other type); in a flag column every non-boolean cell; and in either, "
-        "text whose value AS RECEIVED carries NUL or is not UTF-8 encodable"
+        "any other type); in a flag column every cell that is neither a boolean nor "
+        "the integer, float or zero-imaginary-complex 0 or 1 a boolean is reboxed to "
+        "(a string, a 2 or 0.5, a datetime, a container); and in either, text whose "
+        "value AS RECEIVED carries NUL or is not UTF-8 encodable"
     ),
     "numeric_values": (
         "float64, values outside the declared domain clamped to it, "
