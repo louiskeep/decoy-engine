@@ -34,7 +34,7 @@ layer:
 
 | Mutants | Mutation | Killed by |
 |---|---|---|
-| `_validate_fit_params` delta-except: `code=None` / `code="XX...XX"` / `code="DP_DELTA_INVALID"` / `code=`-preserved-but-`from exc` dropped | the `float(delta)` `TypeError`/`ValueError` branch -- the config tests only pass numeric bad values, so a non-numeric delta never reached it | `test_validate_fit_params_rejects_non_numeric_delta` (`delta="abc"`, asserts code `dp_delta_invalid`) |
+| `_validate_fit_params` delta-except: `code=None` / `code="XX...XX"` / `code="DP_DELTA_INVALID"` / `message=` kwarg dropped (-> `TypeError`, `DpError` has no message default) | the `float(delta)` `TypeError`/`ValueError` branch -- the config tests only pass numeric bad values, so a non-numeric delta never reached it | `test_validate_fit_params_rejects_non_numeric_delta` (`delta="abc"`, asserts code `dp_delta_invalid`) |
 | `_validate_fit_params` bins: `numeric_bins < 2` -> `<= 2` and `< 3` | both reject a legitimate two-bin fit | `test_validate_fit_params_accepts_the_minimum_two_bins` (asserts `_validate_fit_params(..., numeric_bins=2) is None`) |
 | `DpError.__init__` `self.message = None` | nulls the surfaced `.message` attribute | `test_dp_error_exposes_code_and_message_attributes` (asserts `.code` and `.message`) |
 
@@ -54,6 +54,13 @@ None)`. Changes only `str(exc)` / `exc.args[0]`; callers branch on `.code` and
 read `.message` (both separately set and asserted), and no test inspects
 `str(exc)`. Nothing observable in the tested surface changes. (Same shape as the
 `ProvenanceError` str-arg survivor; see `quality_dp_provenance.md`.)
+
+### CHAINING-METADATA (if emitted): `from exc` drop
+A mutant that drops `from exc` on a raise (e.g. the delta-except branch) only
+changes the exception's `__cause__` / `__suppress_context__`; no test reads
+`__cause__` or `__context__`, so it is unobservable and equivalent. It is NOT
+killed by `test_validate_fit_params_rejects_non_numeric_delta`, which asserts
+`.code` (unchanged by dropping `from exc`).
 
 ## Mechanism grading (deferred to CI cert-gate)
 

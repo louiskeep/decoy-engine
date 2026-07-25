@@ -137,8 +137,23 @@ result flows only into the message prose, so they are wording too.
 
 ## Regenerate
 
+First repoint `[tool.mutmut]` in `pyproject.toml` at THIS module (the config is
+per-module and may currently target a different one):
+
 ```
-uv run --frozen --extra dev --extra lint --extra vault python -m mutmut run
-uv run --frozen --extra dev --extra lint --extra vault python -m mutmut results
-uv run --frozen --extra dev --extra lint --extra vault python -m mutmut show <mutant-id>
+only_mutate = ["src/decoy_engine/quality/dp_provenance.py"]
+pytest_add_cli_args_test_selection = [
+    "tests/unit/quality/test_dp_provenance.py",
+    "tests/property/test_dp_provenance_invariants.py",
+]
+```
+
+Then run (a bare `mutmut run` grades whatever `only_mutate` points at, not
+necessarily this module):
+
+```
+rm -rf mutants
+python -m mutmut run
+python -m mutmut results
+python -m mutmut show <mutant-id>
 ```
