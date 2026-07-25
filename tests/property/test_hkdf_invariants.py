@@ -193,7 +193,7 @@ def test_expand_output_length_matches_request(prk: bytes, info: bytes, length: i
 def test_expand_rejects_length_over_max(prk: bytes, info: bytes, length: int) -> None:
     """RFC 5869 section 2.3: `dkLen` above `255 * HashLen` has no defined
     expansion and must raise, not silently truncate or wrap."""
-    with pytest.raises(ValueError, match="exceeds RFC 5869 maximum"):
+    with pytest.raises(ValueError, match=f"exceeds RFC 5869 maximum {_MAX_LENGTH}"):
         hkdf_expand(prk, info, length)
 
 
