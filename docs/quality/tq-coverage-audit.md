@@ -62,7 +62,12 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
   not the default shell (see the crown-jewel DP notes).
 
 ## Coverage ledger (fill as batches land)
-| Batch | modules covered | logic-mutant score range | bugs found | branch |
+| Batch | modules: authored / graded | logic-mutant score | bugs found | branch |
 |---|---|---|---|---|
-| crown jewels | 8 | (grading in progress) | see `tq-findings.md` | `tq/crown-jewels` |
-| A-F | pending | | | |
+| TQ-0 pilot | 1 / 1 | `_graph` 100% | none | `tq/ri-fk-graph` |
+| crown jewels | 8 / 2 | `_hkdf` 100%, `_derive` 100%; other 6 authored, grading DEFERRED | see `tq-findings.md` | `tq/crown-jewels` |
+| A-F sweep | 0 / 0 (pending) | | | |
+
+Grading is the throughput bottleneck (a mutmut run > a subagent's turn). Authoring
+is fast and parallel. Next run: grade the 6 deferred crown jewels via harness-tracked
+background mutmut jobs, then sweep-author batches A-F (fast) and grade in batches.
