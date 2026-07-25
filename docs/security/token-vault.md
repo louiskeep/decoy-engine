@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-14
+---
+
 # Token vault: handling and threat model
 
 The token vault (`decoy_engine.vault`, `decoy run --vault`,

@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-17
+---
+
 # All-null chunk breaks string-output coarsening strategies (chunked route)
 
 Status: open, low priority. Discovered 2026-07-17 during the HC-3(b) `top_code`

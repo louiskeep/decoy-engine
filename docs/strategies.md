@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-21
+---
+
 # Strategy catalog
 
 A column's `strategy` (mask mode) or `type` (generate mode) selects how its

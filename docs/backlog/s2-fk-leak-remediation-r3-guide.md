@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-06
+---
+
 # S2 BLOCKER Remediation Guide (Round 3): exhaustive FK-topology leak closure
 
 **Tech-lead-authored (Opus). Build agent: Sonnet. Implement strictly from this guide.**

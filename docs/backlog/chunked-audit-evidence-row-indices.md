@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-17
+---
+
 # Chunked audit-evidence row indices are chunk-local and under-report
 
 Status: open, low priority. Discovered 2026-07-17 during the HC-3(b) `top_code`

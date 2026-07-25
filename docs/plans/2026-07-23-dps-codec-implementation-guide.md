@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-24
+---
+
 # DPS-CODEC implementation guide
 
 Status: PLAN COMPLETE / BUILD-READY (Codex round-6 verdict: A -- BUILD NOW),

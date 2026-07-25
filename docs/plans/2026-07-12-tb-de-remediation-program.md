@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-14
+---
+
 # Track B + Adversarial-Remediation Program
 
 - **Status:** ACTIVE (autonomous `/loop`, self-paced), opened 2026-07-12.

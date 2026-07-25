@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-13
+---
+
 # TB-3 results: local cgroup-capped validation of the OOM-avoidance router
 
 - **Status:** COMPLETE, all three proofs GREEN (2026-07-13).

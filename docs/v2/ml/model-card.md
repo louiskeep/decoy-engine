@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-18
+---
+
 # Model Card: lgbm-v1 (Decoy Engine Column Classifier)
 
 Gate reference: ml-benchmarking-and-privacy.md §B.7 (9-section model card).

@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-13
+---
+
 # TB-4 results: MEASURED k_path calibration for the OOM-avoidance estimator
 
 - **Status:** COMPLETE (2026-07-13). Two OOM-unsafe placeholders found and fixed.

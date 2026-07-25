@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-22
+---
+
 # DPS Scope B: dependency spike result (STOP)
 
 **Date:** 2026-07-22

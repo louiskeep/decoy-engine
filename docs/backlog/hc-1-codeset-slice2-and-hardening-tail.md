@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-17
+---
+
 # HC-1 code_set: slice-2 scope + hardening tail
 
 Status: backlog. Written at HC-1 slice-1 merge (2026-07-17). Slice 1 (provenance

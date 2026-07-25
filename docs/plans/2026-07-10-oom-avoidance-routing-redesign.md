@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-13
+---
+
 # OOM-Avoidance Execution-Routing Redesign — Implementation Spec
 
 - **Date:** 2026-07-10

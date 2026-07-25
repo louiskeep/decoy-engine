@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-14
+---
+
 # DE-02 KeyProvider Design: Separating Public Seed from Masking Key Material
 
 **Finding:** DE-02 (CRITICAL) in

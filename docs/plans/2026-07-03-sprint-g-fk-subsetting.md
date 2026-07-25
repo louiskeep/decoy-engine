@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-03
+---
+
 # Sprint G: FK-Aware Subsetting Core (engine)
 
 Source spec: `decoy-platform` `docs/backlog/capability-review-2026-07/sprint-g-fk-subsetting-core.md`

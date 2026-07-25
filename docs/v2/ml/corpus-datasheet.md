@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-18
+---
+
 # Corpus Datasheet: Decoy Engine STORM Extended Fixture Corpus
 
 Gate reference: ml-benchmarking-and-privacy.md §B.3 (7-section datasheet).

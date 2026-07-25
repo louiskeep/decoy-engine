@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-05-20
+---
+
 # SQL And Expression Injection Surfaces
 
 Sprint 3.2 security audit. Sprint 6 remediation.

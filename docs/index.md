@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-22
+---
+
 # decoy-engine Docs
 
 In-repo documentation for `decoy-engine`. Start here.

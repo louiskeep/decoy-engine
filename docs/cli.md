@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-18
+---
+
 # Command-line interface
 
 The `decoy` command (distributed on PyPI as `decoy-cli`) is the recommended way

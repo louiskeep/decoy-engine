@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-03
+---
+
 # Sprint G implementation guide: FK-aware subsetting engine core (SS1-SS5)
 
 Status: implementation-ready design. Companion to

@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-14
+---
+
 # Track B Completion Program — Autoroute to Avoid OOM at Any Size
 
 - **Status:** ACTIVE (Cam selected Track B, 2026-07-12). Executed via autonomous `/loop`.

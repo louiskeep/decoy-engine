@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-14
+---
+
 # DE-01 FPE Remediation Design: Custom Format-Preserving Encryption
 
 **Finding:** DE-01 (CRITICAL) in

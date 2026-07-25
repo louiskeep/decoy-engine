@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-11
+---
+
 # Program: Test-Flight Golden-Gate Hardening (TH-1 .. TH-4)
 
 Source of goal: adversarial review of the acceptance test-flight suite by an independent

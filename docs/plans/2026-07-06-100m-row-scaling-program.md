@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-09
+---
+
 # Program: 100M-Row FK Scaling (engine + platform)
 
 Source of goal: Cam directive 2026-07-06 - "my goal with this app is 100M+ rows."

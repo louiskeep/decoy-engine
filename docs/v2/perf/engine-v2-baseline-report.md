@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-06-27
+---
+
 # Engine V2 Baseline Report
 
 **Source:** benchmark CI run captured in `tests/perf_fixtures/engine-v2-baseline.json`

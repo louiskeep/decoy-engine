@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-23
+---
+
 # Decoy DPS Scope B implementation guide
 
 ## 1. Context and non-goals

@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-06-26
+---
+
 # decoy-engine — Remediation Source Document
 
 **Status:** Source-of-truth findings register. Downstream implementation plans are built FROM this document; it does not itself contain per-step implementation specs.

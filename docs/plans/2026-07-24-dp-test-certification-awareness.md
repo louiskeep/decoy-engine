@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-24
+---
+
 # Plan: DP test certification-awareness (CI fix #4)
 
 Status: PLAN v2 (Opus-authored 2026-07-24, Codex plan-reviewed REVISE -> revised; build-ready). The

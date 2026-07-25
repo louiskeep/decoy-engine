@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-18
+---
+
 # Determinism and the seed protocol
 
 Decoy is deterministic by design: the same inputs produce the same masked or

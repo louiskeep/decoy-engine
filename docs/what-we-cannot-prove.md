@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-24
+---
+
 # What Decoy does not prove
 
 Decoy is a practical de-identification and synthetic-data tool. It applies

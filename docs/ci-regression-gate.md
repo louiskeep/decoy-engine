@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-06-27
+---
+
 # CI regression gate
 
 The `regression-gate` job in `.github/workflows/ci.yml` is the single

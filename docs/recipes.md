@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-06-13
+---
+
 # Recipes
 
 Five end-to-end recipes. Each one is runnable as written. The CLI paths use

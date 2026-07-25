@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-06
+---
+
 # Relationships and referential integrity
 
 When you mask a parent table and a child table that share a key, the join

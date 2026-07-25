@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-09
+---
+
 # Program: Bounded-Memory Profiling + Reject-Before-Read (consultant-2026-07-09 F1/F2)
 
 Source of goal: external architecture review `docs/engine-consultant-findings-2026-07-09.md`

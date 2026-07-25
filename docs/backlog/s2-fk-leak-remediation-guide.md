@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-06
+---
+
 # S2 BLOCKER Remediation Guide: quarantine-aware FK resolution (raw-PII child leak)
 
 **Tech-lead-authored (Opus). Build agent: Sonnet. Implement strictly from this guide.**

@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-20
+---
+
 # Free-text NER (person names + locations)
 
 `text_redact`'s regex detector catalog covers structured PII (SSNs, emails,

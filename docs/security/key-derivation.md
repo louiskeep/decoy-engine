@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-14
+---
+
 # Key derivation and the KeyProvider model
 
 This document describes how `decoy-engine` sources the secret behind every

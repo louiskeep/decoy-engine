@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-14
+---
+
 # Adversarial Architecture Review Plan
 
 ## Objective

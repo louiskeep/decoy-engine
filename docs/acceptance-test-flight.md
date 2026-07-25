@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-11
+---
+
 # Acceptance test-flight suite
 
 The acceptance test-flight suite is a set of deliberately-run, high-complexity

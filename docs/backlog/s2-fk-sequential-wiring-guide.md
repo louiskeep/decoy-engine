@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-05
+---
+
 # S2 (A2) Implementation Guide: wire FK-sequential into `run_pipeline`
 
 **Tech-lead-authored (Opus). Build agent: Sonnet. Implement strictly from this guide.**

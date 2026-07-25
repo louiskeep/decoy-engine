@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-22
+---
+
 # Mimesis adoption evaluation, 2026-06-12
 
 First full run of the S7 parity suite (`providers_v2/mimesis/_parity.py`)

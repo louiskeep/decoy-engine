@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-18
+---
+
 # CH-3: cryptic-header recognition -- lexicon ablation and disposition
 
 Status: **DECIDED (2026-07-19).** The CH-1/CH-2 header-role lexicon does NOT

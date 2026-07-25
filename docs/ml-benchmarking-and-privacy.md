@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-06-27
+---
+
 # ML field-recognition: benchmarking & privacy standards
 
 **Status:** authoritative standard. GATE-1 prerequisite for the ML depth sprints

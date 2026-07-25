@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-17
+---
+
 # HC-5 CLI `decoy fit` wiring — deferred follow-up
 
 Status: **DEFERRED**, engine-only slice merged 2026-07-17. This is the CLI-sibling

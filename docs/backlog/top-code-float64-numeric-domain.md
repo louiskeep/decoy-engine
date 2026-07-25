@@ -1,3 +1,8 @@
+---
+Status: proposal
+Last reviewed: 2026-07-17
+---
+
 # top_code non-integer column domain — RESOLVED (Option A′)
 
 Status: **RESOLVED** 2026-07-17 via Option A′ (Codex cross-model decision,

@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-03
+---
+
 # Decoy Compatibility Contract — The Frozen Surface
 
 > **Status:** governance document. **Audience:** every engineer touching

@@ -1,3 +1,8 @@
+---
+Status: plan
+Last reviewed: 2026-07-22
+---
+
 > **SUPERSEDED 2026-07-21.** The single cross-repo roadmap is now
 > `decoy-platform/docs/ROADMAP.md` (engine + CLI + platform + web). Track "what to
 > do next" there, not here. The 100M-row FK scaling program below is COMPLETE (see

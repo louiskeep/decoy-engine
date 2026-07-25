@@ -1,3 +1,8 @@
+---
+Status: current
+Last reviewed: 2026-07-18
+---
+
 # Quickstart
 
 The shortest real path: install `decoy-engine`, describe a mask in a small
