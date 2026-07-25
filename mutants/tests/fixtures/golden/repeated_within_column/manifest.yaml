@@ -1,0 +1,16 @@
+fixture_name: repeated_within_column
+description: Single column with intentional within-column repetition; exercises unique
+  vs reuse cardinality divergence.
+files:
+- table: duplicates
+  path: duplicates.csv
+  format: csv
+relationships: []
+invariants_post_mask:
+- 'with cardinality_mode=reuse: distinct masked values equals distinct source values'
+- 'with cardinality_mode=unique: every row gets a unique masked value (pool must support
+  200 unique values)'
+expected_orphans: 0
+gating_sprints:
+- S5
+- S6

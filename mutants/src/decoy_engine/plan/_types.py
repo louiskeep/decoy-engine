@@ -1,0 +1,421 @@
+"""Frozen dataclasses defining the Plan shape.
+
+Plan is the planner's output: a versioned, audit-grade description of
+how a pipeline will execute. Same input (config, profile, engine_version)
+produces a byte-identical Plan; that's the S1 determinism contract.
+
+All types frozen, all collections tuples (not lists). The plan is
+read-only by construction; mutation goes through a new compile.
+
+The YAML serialization shape (what gets written into a job manifest)
+sits next to the dataclass shape via `_serialize.py`. Both forms hold
+the same content; the dataclass is what S2-S13 consume in-engine, the
+YAML is what gets archived for audit + replay.
+
+Cardinality mode literals per S1 spec §2.
+Orphan policy literals per S2 spec §3 TODO 4 (no default).
+Backend type literals per S1 stub registry distinction (resolution of B3).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Literal, Union, cast
+
+# Post-S5 R6 reshape (per spec §6 + cross-sprint contracts §2.4 + R6):
+# `deterministic_map` is REMOVED from the cardinality enumeration. The
+# conflated "deterministic-vs-random" semantic moved to a sibling
+# `deterministic: bool` plan field (see Plan/PlanRelationship). The two
+# fields compose orthogonally; the 2x4 matrix lives in S5 spec §6.
+# Plan-compile raises `plan_schema_deterministic_map_renamed` on any
+# config still using the legacy keyword (pre-GA hard delete per
+# best-practices §8.1).
+CardinalityMode = Literal[
+    "reuse",
+    "unique",
+    "match_source_cardinality",
+    "scale_source_cardinality",
+]
+
+OrphanPolicy = Literal["preserve", "remap", "warn", "fail"]
+
+BackendType = Literal["faker", "mimesis", "pool", "decoy_native"]
+
+
+# ---------------------------------------------------------------------
+# Seed envelope
+# ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ColumnSeed:
+    """Per-column masking strategy + namespace binding.
+
+    Post-S3 (per spec §5.5 plan-schema delta): no per-column seed integer.
+    Determinism is fully expressed by
+    `derive(plan.seed_envelope.job_seed, namespace, source_bytes)`;
+    per-column distinctness comes from the namespace string + the source
+    bytes, not from a per-column seed.
+
+    Post-S5 (per spec §6 + R6 reshape): `deterministic` is a first-class
+    per-column field. Composes orthogonally with `cardinality_mode` (the
+    2x4 matrix in S5 spec §6). Defaults to False when the plan YAML
+    omits the field; plan-compile fails on legacy `cardinality_mode:
+    deterministic_map` with a rename error directing to the new shape.
+    """
+
+    namespace: str | None
+    strategy: str
+    # `provider` is required for generator strategies (faker); scalar transforms
+    # (hash/redact/truncate/...) have no provider and read their settings from
+    # `provider_config`. None for those (D4: require a provider only for faker).
+    provider: str | None
+    backend_type: BackendType
+    backend_version: str
+    cardinality_mode: CardinalityMode
+    deterministic: bool = False
+    provider_config: tuple[tuple[str, Any], ...] = field(default_factory=tuple)
+    coherent_with: tuple[str, ...] = field(default_factory=tuple)
+    # MG-1 S1 (2026-06-01): GDPR-aware technique classification.
+    # Drives the FE strategy-picker badge ("Pseudonymisation" /
+    # "Anonymisation" / "Synthetic" / "Passthrough"). Set by
+    # plan-compile from the central TECHNIQUE_CLASS_BY_STRATEGY map
+    # (decoy_engine.execution._technique_class). None means
+    # "unclassified" -- the FE renders a needs-review badge so a
+    # newly-added strategy can't ship without an explicit label.
+    technique_class: str | None = None
+    # MG-3 / M3 (2026-05-31): conditional masking. When set, the
+    # runner evaluates the expression via numexpr (df.eval) against
+    # the column's frame; the strategy runs ONLY on rows where the
+    # predicate is True, and rows where it is False passthrough
+    # untouched. Expression scope is locked to the per-column scope-
+    # clamp pattern (local_dict={}, global_dict={}) carried forward
+    # from the Dennis C1 patch on _transforms.py. None preserves the
+    # legacy "always run" behavior (byte-identical for any plan that
+    # doesn't set the field).
+    when: str | None = None
+    # MG-6 D1 (2026-05-31): distribution-behavior classification.
+    # Sibling of `technique_class`; drives the FE drift-badge
+    # threshold logic in MG-6 D2 (low drift on a preserves_all
+    # column is success; low drift on a destroys_frequency column
+    # is a problem). Set by plan-compile from the central
+    # distribution_behavior_for() resolver which handles the
+    # dynamic categorical case (preserves_all when weights/
+    # from_profile is set, destroys_frequency otherwise). For
+    # `nested`, this field carries the sentinel "inherits" and
+    # the manifest layer substitutes the child's value.
+    distribution_behavior: str | None = None
+    # Deferred follow-up 8c (2026-06-12): the installed spaCy model
+    # package version for text_redact columns with `ner` configured.
+    # NER output is deterministic per model VERSION, so this stamp is
+    # what makes a plan's text_redact bytes auditable across
+    # environments (sibling of the backend_version stamp). None for
+    # every other column, and when the model has no package metadata.
+    ner_model_version: str | None = None
+    # DE-11 (2026-07-13): pool_size / scale resolved ONCE at compile from
+    # `ColumnConfig`'s top-level fields. `pool_size` falls back to
+    # `provider_config.pool_size` when only that location is set; the two
+    # must agree when both are set -- `_build_seed_envelope` raises
+    # `pool_size_location_conflict` otherwise. `scale` has one documented
+    # location (top-level only; no reader ever consulted
+    # `provider_config.scale`), so it is a straight copy. Prior to this
+    # field, `pool_size` was validated at compile (plan/_checks.py,
+    # generation/pool/_validate.py) but never copied onto ColumnSeed, so
+    # every runtime consumer silently re-read (or defaulted) a value
+    # compile never actually stamped. None means neither location set a
+    # value; runtime consumers keep their own defaults (10_000 for
+    # pool_size, 2.0 for scale) in that case.
+    pool_size: int | None = None
+    scale: float | None = None
+    # DE-02 (Codex item 6b, 2026-07-14): the column is `vault: true` -- its
+    # source->masked mapping is persisted, Fernet-encrypted, into the token vault
+    # for later reversal. That makes it a KEYED re-identification surface
+    # regardless of the masking strategy (a `redact` + `vault: true` column still
+    # stores reversible plaintext PII), so `plan_has_keyed_strategy` treats a
+    # vault column as keyed and the GA gate requires a real secret for it. Stamped
+    # from the column config's `vault` flag at compile.
+    vault: bool = False
+
+
+@dataclass(frozen=True)
+class GroupSeed:
+    """Per-composite-group namespace binding.
+
+    A composite FK column tuple gets one GroupSeed for the whole tuple
+    instead of N independent ColumnSeed entries. The key under
+    `per_group` is the canonical-joined column name (sorted column names
+    joined with `__`).
+
+    Post-S3: no per-group seed integer; determinism keys off the
+    namespace string + canonical-tuple source bytes via `derive(...)`.
+    """
+
+    namespace: str
+    coherent_columns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TableSeed:
+    """Per-table grouping of ColumnSeed + GroupSeed entries.
+
+    Post-S3: no `table_seed` integer; tables are not a separate axis in
+    `derive(...)`. Namespace strings already encode the per-table-binding
+    structure where it matters.
+    """
+
+    per_column: tuple[tuple[str, ColumnSeed], ...] = field(default_factory=tuple)
+    per_group: tuple[tuple[str, GroupSeed], ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class SeedEnvelope:
+    """Top-level seed material.
+
+    Post-S3 (per spec §5.5): `job_seed` is `bytes` (exactly 8 bytes), not
+    `int`. It is the sole entropy input to
+    `decoy_engine.determinism.derive(...)`. The config-side `int` (or
+    `str`, or absent) for `seed:` is normalized to bytes exactly once at
+    the pipeline-config adapter boundary in `compile_plan`.
+    """
+
+    job_seed: bytes
+    per_table: tuple[tuple[str, TableSeed], ...] = field(default_factory=tuple)
+
+
+# ---------------------------------------------------------------------
+# Relationships + namespaces + ordering
+# ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlanRelationshipEnd:
+    """One side of a FK relationship in the Plan.
+
+    Mirrors `decoy_engine.profile.Relationship` parent/child structure
+    but at the planner layer: `namespace` is always resolved (non-None
+    at this point because S2's `build_namespace_registry` runs before
+    the relationship lands in the Plan).
+    """
+
+    table: str
+    columns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlanRelationship:
+    """One FK relationship in the Plan, with orphan_policy resolved."""
+
+    parent: PlanRelationshipEnd
+    children: tuple[PlanRelationshipEnd, ...]
+    orphan_policy: OrphanPolicy
+    namespace: str | None  # may be None for unnamed FK relationships
+
+    def __post_init__(self) -> None:
+        if not self.children:
+            raise ValueError(
+                f"PlanRelationship {self.parent.table}.{self.parent.columns}: "
+                "children must be non-empty."
+            )
+        parent_len = len(self.parent.columns)
+        if parent_len == 0:
+            raise ValueError(f"PlanRelationship: parent {self.parent.table} has empty columns.")
+        for child in self.children:
+            if len(child.columns) != parent_len:
+                raise ValueError(
+                    f"PlanRelationship {self.parent.table}.{self.parent.columns} -> "
+                    f"{child.table}.{child.columns}: parent columns length "
+                    f"{parent_len} != child columns length {len(child.columns)}. "
+                    "Composite FK relationships require matching column tuples on "
+                    "both sides (S1 check composite_columns_length_match)."
+                )
+
+
+@dataclass(frozen=True)
+class NamespaceBinding:
+    """One namespace and the (table, columns) tuples bound to it.
+
+    Post-S3 (per spec §5.5): no `seed` int field. Namespace strings feed
+    into `derive(...)` directly; per-namespace seed material is not
+    stored.
+    """
+
+    namespace: str
+    declared_by: tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True)
+class OrderingNode:
+    """One step in the topologically-ordered mask plan.
+
+    Composite parents are a single node (whole column tuple); children
+    fire after every parent node they depend on.
+    """
+
+    table: str
+    columns: tuple[str, ...]
+
+
+# ---------------------------------------------------------------------
+# Compile result + top-level Plan
+# ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlanCompileResult:
+    """Result block embedded in every Plan.
+
+    `checks_passed` is the list of compile-time checks that ran and
+    passed in this compile. `checks_skipped` is the list of profile-
+    dependent checks that did NOT run (e.g. when --no-profile was set;
+    resolution of S1 spec review H2). `warnings` and `errors` carry
+    non-fatal observations (errors here are recoverable; fatal errors
+    raise `PlanCompileError` directly).
+    """
+
+    checks_passed: tuple[str, ...] = field(default_factory=tuple)
+    checks_skipped: tuple[str, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Versioned plan artifact: the output of `compile_plan`.
+
+    Frozen dataclass; same compile input produces a byte-identical Plan.
+    The `seed_protocol_version` field tracks the determinism-envelope
+    version: S1 stamped `0` (placeholder seed derivation); S3 bumped to `1`
+    when real HMAC-keyed material landed; the F-series corrections bumped to
+    `2` (coordinated Faker-seeding + canonicalize-integer fixes that shift
+    deterministic output). A manifest carrying an older version cannot be
+    reproduced by builds at a newer version (per S1 spec H1 + done-definition
+    release-notes rule).
+    """
+
+    plan_version: int
+    seed_protocol_version: int
+    engine_version: str
+    pipeline_config_hash: str
+    profile_hash: str
+    seed_envelope: SeedEnvelope
+    relationships: tuple[PlanRelationship, ...]
+    namespaces: tuple[NamespaceBinding, ...]
+    ordering: tuple[OrderingNode, ...]
+    plan_compile: PlanCompileResult
+    # DPS Scope B (guide section 4.7): None for a Plan compiled without any
+    # `type: statistical` generate columns, or for an older serialized Plan
+    # deserialized for reporting/diagnostics only (`plan_from_yaml` loads it,
+    # but `generate_tables` rejects it -- guide step 7/8). A Plan WITH
+    # statistical generate columns always carries one.
+    generation: GenerationPlan | None = None
+
+
+# ---------------------------------------------------------------------
+# Pinned generation payload (DPS Scope B, guide section 4.7)
+# ---------------------------------------------------------------------
+
+# A recursively immutable JSON value: lists become tuples, dicts become
+# `MappingProxyType` wrapping already-frozen values, all the way down.
+# There is no third-party frozen-mapping dependency here (CLAUDE.md: use
+# established methodology, don't reach for a new dependency for
+# something this small) -- `MappingProxyType` refuses item assignment at
+# the Python level, and `_freeze_json` never leaves a mutable dict or
+# list reachable from a frozen value, which is the practical immutability
+# guarantee `test_compiled_generation_plan_is_recursively_immutable`
+# checks (no external reference to the underlying mutable container
+# survives the freeze).
+FrozenJsonValue = Union[
+    None,
+    bool,
+    int,
+    float,
+    str,
+    tuple["FrozenJsonValue", ...],
+    "MappingProxyType[str, FrozenJsonValue]",
+]
+
+
+def freeze_json(value: Any) -> FrozenJsonValue:
+    """Recursively convert a plain JSON-shaped value (dicts/lists/scalars)
+    into its frozen equivalent. Pure function; never mutates `value`."""
+    if isinstance(value, dict):
+        return MappingProxyType({str(k): freeze_json(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_json(v) for v in value)
+    # Base case: a JSON scalar (None/bool/int/float/str) already matches
+    # `FrozenJsonValue`. The caller contract (a plain JSON-shaped value)
+    # is what makes this cast sound, not a runtime check -- there is no
+    # further container type left to recurse into here.
+    return cast("FrozenJsonValue", value)
+
+
+def unfreeze_json(value: FrozenJsonValue) -> Any:
+    """Inverse of `freeze_json`: back to plain dicts/lists for JSON
+    serialization (e.g. YAML round-trip, guide section 4.7)."""
+    if isinstance(value, MappingProxyType):
+        return {k: unfreeze_json(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [unfreeze_json(v) for v in value]
+    return value
+
+
+@dataclass(frozen=True)
+class PinnedSnapshot:
+    """One snapshot artifact's bytes, embedded verbatim into the Plan.
+
+    `source_path` is diagnostic metadata only after compile -- generation
+    and the fidelity gate never reopen it (guide section 4.7/4.8).
+    `payload_b64` is the exact bytes read at compile time, base64-encoded
+    for YAML embedding; `sha256` is that same content's digest, recomputed
+    and verified on `plan_from_yaml` deserialization. `release_id` is the
+    artifact's own `dp.release_id` when present (a DP-fit snapshot), else
+    `None` (an exact, non-DP snapshot).
+    """
+
+    source_path: str
+    sha256: str
+    payload_b64: str
+    release_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PinnedStatisticalSpec:
+    """One `type: statistical` generate column's validated spec, frozen at
+    compile time against the pinned snapshot bytes (guide section 4.7)."""
+
+    table_name: str
+    column_name: str
+    snapshot_index: int  # index into GenerationPlan.snapshots
+    spec: FrozenJsonValue
+
+
+@dataclass(frozen=True)
+class DpVerification:
+    """The compiler's DP verification receipt (guide section 4.7/6 row A2):
+    reproduced from the embedded artifacts at `plan_from_yaml` time, never
+    trusted from the artifact's own unverified claim alone."""
+
+    scope: Literal["single-column-marginals"]
+    release_ids: tuple[str, ...]
+    epsilon_total: float
+    delta_total: float
+
+
+@dataclass(frozen=True)
+class GenerationPlan:
+    """Everything `generate_tables` needs, pinned at compile time so
+    generation and the fidelity gate never reopen a snapshot path (guide
+    section 4.7/4.8, closing F3/F4 in the defect matrix).
+
+    `config_json` is the embedded, exact generate-side configuration
+    (table/column declarations, seed material lives in `SeedEnvelope`
+    separately); `snapshots`/`statistical_specs` are the read-once-pinned
+    artifacts and their frozen parsed specs; `dp_verification` is `None`
+    when no consumed column declared DP.
+    """
+
+    config_json: str
+    snapshots: tuple[PinnedSnapshot, ...] = field(default_factory=tuple)
+    statistical_specs: tuple[PinnedStatisticalSpec, ...] = field(default_factory=tuple)
+    dp_verification: DpVerification | None = None

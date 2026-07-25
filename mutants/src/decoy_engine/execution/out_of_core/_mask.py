@@ -1,0 +1,318 @@
+"""Shared per-column masking for the out-of-core route.
+
+One masking kernel, never re-lowered per consumer: the strategy dispatch here
+is the single lowering of the admitted out-of-core strategies (hash, redact,
+truncate, passthrough) onto the backend-neutral kernel arrays
+(kernel/_scalar.py), the same single-kernel principle the out-of-core design
+doc mandates (docs/relationships-out-of-core-sprints.md §0.1). Because every
+kernel array is per-value deterministic, masking a row-slice equals the same
+rows of a whole-column mask, which is what lets `mask_batch` process one
+RecordBatch at a time byte-identically to the whole-table `mask_table` path.
+
+Known caveat for streaming consumers: `redact_array` infers its output type
+from the values, so an all-null batch yields a null-typed column where a batch
+with values yields the `redact_with` type. A fixed-schema writer over batch
+streams must account for that (the FK columns already do, via the batch join's
+up-front type resolution).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import pyarrow as pa
+
+from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError, StrategyError
+from decoy_engine.execution.out_of_core._mask_group_b import (
+    GROUP_B_STRATEGIES,
+    categorical_array,
+    fpe_array,
+    group_b_output_type,
+    text_redact_array,
+)
+from decoy_engine.execution.out_of_core._mask_group_c import (
+    GROUP_C_STRATEGIES,
+    group_c_array,
+    group_c_output_type,
+)
+from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
+
+if TYPE_CHECKING:
+    from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
+    from decoy_engine.transforms._codeset_loader import _CorpusRecord
+
+
+def table_seed(plan: Plan, table_name: str) -> TableSeed | None:
+    """Return the plan's TableSeed for one table, or None when unplanned."""
+    for candidate_name, candidate_seed in plan.seed_envelope.per_table:
+        if candidate_name == table_name:
+            return candidate_seed
+    return None
+
+
+def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None]:
+    """Validated truncate kernel params, or raise on an invalid config.
+
+    Fail-closed, matching the pandas oracle (`_strategies/_truncate.py`): an
+    invalid length/keep/mask_char raises `StrategyError` with the SAME codes the
+    oracle raises (`truncate_length_invalid`, `truncate_keep_invalid`,
+    `truncate_mask_char_invalid`), never a silent fallback. A masking primitive
+    must never publish the raw source value on a bad config; centralizing the
+    validation here keeps the mask dispatch and the batch join's output typing
+    agreeing on exactly when the config is rejected.
+    """
+    length = cfg.get("length")
+    if not isinstance(length, int) or length < 1:
+        raise StrategyError(
+            code="truncate_length_invalid",
+            strategy="truncate",
+            message=(
+                f"truncate has invalid length {length!r} ({type(length).__name__}); "
+                "length must be an integer >= 1."
+            ),
+        )
+    keep = cfg.get("keep")
+    if keep is None:
+        keep = "tail" if bool(cfg.get("from_end", False)) else "head"
+    if keep not in ("head", "tail"):
+        raise StrategyError(
+            code="truncate_keep_invalid",
+            strategy="truncate",
+            message=f"truncate has invalid keep {keep!r}.",
+        )
+    mask_char = cfg.get("mask_char")
+    if mask_char is not None and (not isinstance(mask_char, str) or len(mask_char) != 1):
+        raise StrategyError(
+            code="truncate_mask_char_invalid",
+            strategy="truncate",
+            message=(
+                f"truncate has invalid mask_char {mask_char!r} ({type(mask_char).__name__}); "
+                "mask_char must be a single character."
+            ),
+        )
+    return length, keep, mask_char
+
+
+def mask_column(
+    values: pa.Array | pa.ChunkedArray,
+    seed: ColumnSeed,
+    mask_key: bytes,
+    *,
+    column: str | None = None,
+    corpus_record: _CorpusRecord | None = None,
+) -> pa.Array:
+    """Apply one admitted strategy to one column (or column slice).
+
+    `mask_key` is the DE-02 keyed-mask IKM fed at the one substituted slot: the
+    8-byte `job_seed` when no secret is present (byte-identical to pre-DE-02) or a
+    32-byte KeyProvider mask root under a secret. Every keyed leaf below
+    (fpe/categorical/hash/group_c) receives it in its `job_seed`-named IKM slot.
+
+    `column` carries the column name for strategies whose output depends on it
+    (fpe's per-column tweak). It is None only on the FK parent-key / remap call
+    paths, which the compat gate restricts to the column-independent strategies
+    (hash/redact/truncate/passthrough), so a None column never reaches a
+    strategy that needs it.
+
+    `corpus_record` (Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE
+    remediation) is forwarded to the `code_set` Group (c) kernel only -- see
+    `_mask_group_c._code_set_array`'s docstring. Every other strategy ignores it.
+    """
+    job_seed = mask_key
+    cfg = provider_config_to_dict(seed.provider_config)
+    if seed.strategy in GROUP_B_STRATEGIES:
+        if seed.strategy == "fpe":
+            return fpe_array(
+                values, job_seed=job_seed, namespace=seed.namespace, column=column, cfg=cfg
+            )
+        if seed.strategy == "text_redact":
+            return text_redact_array(values, plan=seed)
+        return categorical_array(
+            values,
+            job_seed=job_seed,
+            namespace=seed.namespace,
+            deterministic=seed.deterministic,
+            cfg=cfg,
+        )
+    if seed.strategy in GROUP_C_STRATEGIES:
+        return group_c_array(
+            values, seed, job_seed, column=column, cfg=cfg, corpus_record=corpus_record
+        )
+    if seed.strategy == "passthrough":
+        return passthrough_array(values)
+    if seed.strategy == "redact":
+        return redact_array(values, redact_with=cfg.get("redact_with", "REDACTED"))
+    if seed.strategy == "truncate":
+        # Fail-closed: truncate_params raises on an invalid config rather than
+        # letting the raw column pass through unmasked.
+        length, keep, mask_char = truncate_params(cfg)
+        return truncate_array(values, length=length, keep=keep, mask_char=mask_char)
+    if seed.strategy == "hash":
+        if seed.namespace is None:
+            raise ExecutionError(
+                code="hash_requires_namespace",
+                message="hash strategy requires a namespace.",
+            )
+        raw_truncate = cfg.get("truncate")
+        truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
+        return hash_array(values, seed=job_seed, namespace=seed.namespace, truncate=truncate)
+    raise ExecutionError(
+        code="out_of_core_strategy_unsupported",
+        message=f"strategy {seed.strategy!r} is not supported by the out-of-core runner.",
+    )
+
+
+def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None) -> pa.DataType:
+    """The Arrow type `mask_column` emits for a column of `source_type`.
+
+    Resolved from the plan alone so a streaming consumer can fix an output
+    schema before any data is seen. `redact` is typed from the constant
+    replacement scalar with the same inference `redact_array` uses, so the
+    analytic type matches the data-derived one whenever the column carries at
+    least one non-null value (an entirely-null column infers null-typed
+    instead; per-batch consumers reconcile that with a cast). `source_type`
+    may be None only for strategies whose output type does not depend on it.
+    """
+    cfg = provider_config_to_dict(seed.provider_config)
+    if seed.strategy in GROUP_B_STRATEGIES:
+        return group_b_output_type(seed, cfg, source_type)
+    if seed.strategy in GROUP_C_STRATEGIES:
+        return group_c_output_type(seed, cfg)
+    if seed.strategy == "hash":
+        return pa.string()
+    if seed.strategy == "truncate":
+        # Validate fail-closed (raises on an invalid config, exactly as the
+        # mask would); a valid truncate always emits string.
+        truncate_params(cfg)
+        return pa.string()
+    if seed.strategy == "redact":
+        # from_pandas matches redact_array's own inference, which treats
+        # degenerate scalars (None, NaN) as nulls rather than typed values.
+        return pa.array([cfg.get("redact_with", "REDACTED")], from_pandas=True).type
+    if seed.strategy == "passthrough":
+        return _required_source_type(source_type, seed.strategy)
+    raise ExecutionError(
+        code="out_of_core_strategy_unsupported",
+        message=f"strategy {seed.strategy!r} is not supported by the out-of-core runner.",
+    )
+
+
+def _required_source_type(source_type: pa.DataType | None, strategy: str) -> pa.DataType:
+    if source_type is None:
+        raise ExecutionError(
+            code="out_of_core_source_schema_required",
+            message=(
+                f"strategy {strategy!r} passes the source column type through, "
+                "which a schema-less batch stream cannot provide up front."
+            ),
+        )
+    return source_type
+
+
+def mask_table(
+    plan: Plan,
+    table_name: str,
+    table: pa.Table,
+    *,
+    skip_columns: frozenset[str],
+    mask_key: bytes | None = None,
+    code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
+) -> pa.Table:
+    """Whole-table, whole-column masking.
+
+    The runner masks per batch (`mask_batch`); this is the single-shot
+    lowering it must reproduce, retained as the executable definition the
+    parity suites pin the streaming path against.
+
+    `mask_key` (DE-02) is the keyed-mask IKM; None falls back to `job_seed`
+    (byte-identical to pre-DE-02).
+
+    `code_set_corpus_records` (Codex round-6 P2 MASKING/EVIDENCE VERSION
+    DIVERGENCE remediation), keyed by column name: the pinned `_CorpusRecord`
+    a `code_set` column should mask off, resolved once by the caller. `None`
+    (the default) falls back to a fresh per-value resolve, matching pre-fix
+    behavior -- this whole-table entry point runs the values of one column in
+    one shot, so it has no cross-call divergence surface of its own; the
+    parameter exists so a caller that already pinned records for `mask_batch`
+    can pass the SAME dict here too (e.g. a parity test comparing both).
+    """
+    seed = table_seed(plan, table_name)
+    if seed is None:
+        return table
+    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+    records = code_set_corpus_records or {}
+    out = table
+    for column, column_seed in seed.per_column:
+        if column in skip_columns:
+            continue
+        if column not in out.column_names:
+            continue
+        masked = mask_column(
+            out.column(column), column_seed, key, column=column, corpus_record=records.get(column)
+        )
+        out = out.set_column(out.schema.get_field_index(column), column, masked)
+    return out
+
+
+def mask_batch(
+    plan: Plan,
+    table_name: str,
+    batch: pa.RecordBatch,
+    *,
+    skip_columns: frozenset[str] = frozenset(),
+    mask_key: bytes | None = None,
+    code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
+) -> pa.RecordBatch:
+    """Mask one RecordBatch's non-FK columns per the plan.
+
+    Byte-identical to the corresponding row-slice of the whole-table mask (the
+    kernels are per-value deterministic), with one exception: an all-null
+    batch under a redact strategy emits a null-typed column where the
+    whole-table slice carries the `redact_with` type. A fixed-schema consumer
+    then fails loudly (ArrowInvalid) rather than corrupts; reconciling that
+    schema is the streaming runner's job, per the module docstring.
+    `skip_columns` carries the FK child columns whose replacement belongs to
+    the join, not the mask.
+
+    `code_set_corpus_records` (Codex round-6 P2 MASKING/EVIDENCE VERSION
+    DIVERGENCE remediation), keyed by column name: the pinned `_CorpusRecord`
+    a `code_set` column should mask off. The runner resolves this ONCE per
+    table, before the first batch streams, and passes the SAME dict to every
+    `mask_batch` call for that table -- without it, a customer corpus file
+    replaced mid-stream could make a later batch mask off a different corpus
+    version than an earlier one, or than the evidence stamped once per table.
+    `None` (the default) falls back to a fresh per-value resolve per batch,
+    matching pre-fix behavior.
+    """
+    seed = table_seed(plan, table_name)
+    if seed is None:
+        return batch
+    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+    records = code_set_corpus_records or {}
+    fields = list(batch.schema)
+    arrays = list(batch.columns)
+    for column, column_seed in seed.per_column:
+        if column in skip_columns:
+            continue
+        idx = batch.schema.get_field_index(column)
+        if idx < 0:
+            continue
+        masked = mask_column(
+            arrays[idx], column_seed, key, column=column, corpus_record=records.get(column)
+        )
+        arrays[idx] = masked
+        # Same field semantics as Table.set_column with a bare name: the field
+        # type follows the masked array, prior field metadata is not carried.
+        fields[idx] = pa.field(column, masked.type)
+    return pa.record_batch(arrays, schema=pa.schema(fields, metadata=batch.schema.metadata))
+
+
+__all__ = [
+    "mask_batch",
+    "mask_column",
+    "mask_table",
+    "masked_output_type",
+    "table_seed",
+    "truncate_params",
+]

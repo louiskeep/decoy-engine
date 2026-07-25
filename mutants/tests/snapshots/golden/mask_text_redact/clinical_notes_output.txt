@@ -1,0 +1,10 @@
+Patient seen today for follow-up. Contact email [REDACTED].
+SSN on file: [REDACTED]. Provider phone [REDACTED].
+Provider NPI [REDACTED] reviewed labs and EHR.
+Diagnosis [REDACTED] (pneumonia, unspecified) confirmed.
+Billing card on file [REDACTED] valid through next year.
+Wire payment IBAN [REDACTED]sent.
+Discharge instructions delivered. Follow-up scheduled.
+See referral packet at [REDACTED] for details.
+Second contact email [REDACTED] on file.
+No real PHI in this file; all identifiers are faker-generated.

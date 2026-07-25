@@ -1,0 +1,39 @@
+tier: small
+rows: 1000
+seed: 20260526
+column_count: 11
+columns:
+- name: customer_id
+  kind: id_int
+  strategy_band: cheap
+- name: ssn
+  kind: ssn
+  strategy_band: cheap
+- name: account_balance
+  kind: amount_float
+  strategy_band: cheap
+- name: full_name
+  kind: full_name
+  strategy_band: medium
+- name: dob
+  kind: date_past
+  strategy_band: medium
+- name: score
+  kind: score_int
+  strategy_band: medium
+- name: email
+  kind: email
+  strategy_band: expensive
+- name: transaction_amount
+  kind: amount_float
+  strategy_band: expensive
+- name: zip
+  kind: zip5
+  strategy_band: expensive
+- name: status
+  kind: category_status
+  strategy_band: null
+- name: created_at
+  kind: timestamp_recent
+  strategy_band: null
+parquet_sha256: 35bbeb9995b888a87aca2e4115d9664fc4261ba34d91ae4211b8e342089a9a6c

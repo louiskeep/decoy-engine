@@ -1,0 +1,22 @@
+fixture_name: repeated_across_tables
+description: primary_emails.email and login_emails.email share ~50% values; exercises
+  namespace separation (same vs different namespaces).
+files:
+- table: primary_emails
+  path: primary_emails.csv
+  format: csv
+- table: login_emails
+  path: login_emails.csv
+  format: csv
+relationships: []
+invariants_post_mask:
+- 'with separate namespaces: primary.email and login.email mask independently (same
+  source value -> different masked values)'
+- 'with same namespace: primary.email and login.email mask consistently (same source
+  value -> same masked value)'
+expected_orphans: 0
+gating_sprints:
+- S2
+- S3
+- S6
+- S7

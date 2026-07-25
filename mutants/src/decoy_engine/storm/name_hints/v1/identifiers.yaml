@@ -1,0 +1,31 @@
+# Government / asset identifier detectors.
+
+detectors:
+  - detector_id: license_num
+    description: Driver's license, professional license, or certificate number column.
+    patterns:
+      - license
+      - licence
+      - cert
+      - certificate
+      - credential
+      - license_num
+      - license_number
+      - cert_num
+      - cert_id
+      - drivers_license
+      - drivers_lic
+      - dl_num
+      - dl_number
+      - dlnum
+
+  - detector_id: vehicle_id
+    description: Vehicle identification (VIN, license plate, fleet number) column.
+    patterns:
+      - vin
+      - vehicle_id
+      - vehicle_num
+      - vehicle_serial
+      - license_plate
+      - plate_num
+      - plate_number

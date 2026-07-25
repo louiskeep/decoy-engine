@@ -1,0 +1,106 @@
+# GLBA Disguise - Gramm-Leach-Bliley Act (Financial Modernization Act)
+#
+# Built for banking, insurance, and financial-services workloads where the
+# dataset carries Non-Public Personal Information (NPI): defined by the GLBA
+# Safeguards Rule (16 CFR Part 314) as any non-public personally identifiable
+# financial information a consumer provides to obtain a financial product or
+# service. The 2023 Safeguards Rule update added specific technical controls
+# (encryption, access controls) that Decoy's masked outputs satisfy out of
+# the box.
+#
+# Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
+
+id: glba
+version: "2026-06-12"
+name: "GLBA Disguise"
+summary: "GLBA Safeguards Rule NPI protection: SSN, account numbers, PAN, and identity fields."
+regulation: "Gramm-Leach-Bliley Act - GLBA Safeguards Rule (16 CFR Part 314), updated 2023"
+primary_buyer: "Banking, insurance, and financial services engineers"
+
+triggers:
+  any_detectors:
+    - ssn
+    - iban
+    - pan
+  co_occurrence:
+    # Reliable financial-services signature: identity + account + date.
+    - [ssn, person_name, email]
+    - [iban, person_name, us_phone]
+  min_score: 0.4
+
+# Strict-mode fail-safe contract (detection sprint, V1). The GLBA
+# Safeguards Rule (16 CFR Part 314) defines NPI as non-public financial
+# information a consumer provides to obtain a financial product or
+# service: SSN, account numbers, card numbers, plus the standard
+# identity + contact attributes the institution holds.
+expected_fields:
+  - ssn
+  - pan
+  - iban
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - us_zip
+  - [iso_date, us_date, eu_date]
+
+field_rules:
+  - detectors: [ssn]
+    mask: fpe
+    params:
+      charset: digits
+    why: "SSN is the primary NPI identifier under GLBA. Format-preserving digits keep the 9-digit shape; deterministic so FK joins survive."
+
+  - detectors: [pan]
+    mask: fpe
+    params:
+      charset: digits
+      validate_luhn: true
+    why: "PAN -> format-preserving 16-digit + valid Luhn. Same strategy as the PCI Disguise; FK joins survive via determinism."
+
+  - detectors: [iban]
+    mask: fpe
+    params:
+      charset: ALPHANUM
+    why: "Bank account number -> format-preserving alphanumeric. Account-level joins survive; no cleartext account number persists."
+
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Consumer first names: NPI per GLBA §6809(4)(A)."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Consumer last names: NPI per GLBA §6809(4)(A)."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Consumer full names: NPI per GLBA §6809(4)(A). Replaced with realistic fake values so QA datasets remain usable."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Consumer contact email: NPI. Realistic substitution preserves dataset density without leaking identity."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Consumer phone number: NPI per GLBA. Realistic fake preserves format for downstream validation."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "Consumer ZIP: quasi-identifier when combined with DOB or name. Truncate to 3 digits reduces re-identification risk while preserving regional analytics."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Financial dates (origination, payment, maturity): ±30d jitter preserves cohort and time-series analytics while breaking exact timestamp correlation."

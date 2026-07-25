@@ -1,0 +1,38 @@
+fixture_name: nullable_fk
+description: Reviews.reviewer_id is a nullable FK to employees.employee_id; ~20% nulls
+  represent self-reviews.
+files:
+- table: employees
+  path: employees.csv
+  format: csv
+- table: reviews
+  path: reviews.csv
+  format: csv
+relationships:
+- parent:
+    table: employees
+    columns:
+    - employee_id
+  children:
+  - table: reviews
+    columns:
+    - employee_id
+  orphan_policy: fail
+  namespace: employee_identity
+- parent:
+    table: employees
+    columns:
+    - employee_id
+  children:
+  - table: reviews
+    columns:
+    - reviewer_id
+  orphan_policy: preserve
+  namespace: employee_identity
+invariants_post_mask:
+- non-null reviewer_id values resolve to a masked employee
+- null reviewer_id values remain null after mask (no synthetic reviewer invented)
+expected_orphans: 0
+gating_sprints:
+- S2
+- S9

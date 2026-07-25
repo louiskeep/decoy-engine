@@ -1,0 +1,28 @@
+fixture_name: orphan_fk
+description: Orders.customer_id contains ~10 IDs that no longer exist in customers;
+  exercises orphan_fk_policy_completeness check (S2 row 6).
+files:
+- table: customers
+  path: customers.csv
+  format: csv
+- table: orders
+  path: orders.csv
+  format: csv
+relationships:
+- parent:
+    table: customers
+    columns:
+    - customer_id
+  children:
+  - table: orders
+    columns:
+    - customer_id
+  orphan_policy: warn
+  namespace: customer_identity
+invariants_post_mask:
+- non-orphan orders.customer_id values resolve to a masked customer
+- orphan_policy applies to the ~10 orphan rows per the declared policy
+expected_orphans: 10
+gating_sprints:
+- S2
+- S9

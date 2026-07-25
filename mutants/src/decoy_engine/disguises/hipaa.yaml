@@ -1,0 +1,356 @@
+# HIPAA Safe Harbor - full 18-identifier coverage (SP-11 tightened posture).
+#
+# HIPAA Privacy Rule Safe Harbor identifiers (45 CFR 164.514(b)(2)):
+#  A  Names                       -> person_name -> faker
+#  B  Geographic data (<=ZIP)     -> us_zip -> geo_generalize (k_threshold: 20000)
+#                                 -> address -> faker (see NOTE 1)
+#  C  Dates                       -> iso_date / us_date / eu_date -> date_shift
+#  D  Telephone numbers           -> us_phone -> faker
+#  E  Fax numbers                 -> fax_number -> faker
+#  F  Electronic mail             -> email -> faker
+#  G  SSNs                        -> ssn -> fpe (digits)
+#  H  Medical record numbers      -> mrn -> fpe (alphanum)
+#  I  Health-plan beneficiary IDs -> health_plan_id -> redact
+#  J  Account numbers             -> iban -> fpe (ALPHANUM)
+#  K  Certificate/license numbers -> license_num -> redact
+#  L  Vehicle identifiers / VINs  -> vehicle_id -> fpe (ALPHANUM)
+#  M  Device identifiers          -> device_id -> redact
+#  N  Web URLs                    -> url -> redact
+#  O  IP addresses                -> ipv4 -> faker (ipv4)
+#  P  Biometric identifiers       -> biometric_id -> redact
+#  Q  Full-face photographs       -> photo path/URL COLUMNS via biometric_id
+#     name hints (photo, photo_url, face_id, headshot, ...) -> redact.
+#     LIMITATION: image FILE CONTENT is out of scope; only references
+#     (paths/URLs) stored in columns are masked.
+#  R  Any unique identifying code -> ssn / npi / mrn / health_plan_id
+#
+# Clinical identifiers (beyond Safe Harbor):
+#  ICD-10-CM diagnosis codes -> icd10 -> code_set icd10, chapter_preserve: true
+#  National Provider IDs     -> npi   -> fpe (digits, checksum: npi)
+#
+# ── SP-11 tightened posture ──────────────────────────────────────────────────
+#
+# Four previously-weak strategies replaced (SP-11 / 2026-06-28):
+#
+#  1. NPI (was: fpe digits, no checksum): now fpe + checksum: npi.
+#     Masked NPIs are valid by construction per the CMS NPPES check-digit
+#     spec. This matters when masked data feeds downstream NPI validation.
+#
+#  2. ICD-10 (was: truncate to 3 chars): now code_set icd10 with chapter_preserve.
+#     Output is always a real ICD-10-CM code in the same chapter (first letter).
+#     A cardiovascular I-code masks to another I-code, not a random truncation.
+#
+#  3. ZIP / us_zip (was: truncate to 3 digits): now geo_generalize.
+#     Implements the HIPAA Safe Harbor cascade (45 CFR 164.514(b)(2)(i)(B)):
+#     zip5 -> zip3 (skipping HHS-restricted prefixes) -> state -> suppress.
+#     Default k_threshold: 20000 matches the Safe Harbor population floor.
+#
+#  4. Address (was: faker street_address - unchanged in pack field_rule):
+#     The pack's address field_rule continues to use faker for standalone
+#     address columns. When address, zip, city, and state appear together,
+#     use joint_mask: us_zip5_city_state in the recipe YAML for geographic
+#     consistency (real zip+city+state tuples). joint_mask requires a key_by
+#     column name that is dataset-specific and cannot be set pack-wide.
+#
+# ── Honest coverage notes (SP-11) ────────────────────────────────────────────
+#
+#  FREE-TEXT (clinical_notes, claim_description, etc.):
+#    No 'clinical_notes' or 'claim_description' detector is registered in STORM.
+#    The pack cannot auto-route free-text columns. Configure text_mask manually:
+#
+#      columns:
+#        - name: clinical_notes
+#          strategy: text_mask
+#          provider_config:
+#            unmatched_span_policy: redact   # SAFE DEFAULT
+#
+#    text_mask's built-in path masks the 11 TIER-1 detectors (ssn, npi, icd10,
+#    us_phone, email, etc.) within each cell. Unmatched prose (including names
+#    and dates not separately detected) is REDACTED by the redact policy.
+#    This is the safe default: no undetected PII passes through in the clear.
+#    Use unmatched_span_policy: passthrough ONLY when surrounding prose is
+#    known to contain no sensitive content.
+#
+#  HCPCS / NDC procedure and drug codes:
+#    The hcpcs and ndc corpora are shipped for manual use with code_set.
+#    No STORM detectors are registered for 'hcpcs' or 'ndc'; the pack cannot
+#    route these columns automatically. Configure code_set manually:
+#
+#      columns:
+#        - name: procedure_code
+#          strategy: code_set
+#          provider_config:
+#            code_set: hcpcs
+#
+#  LOINC laboratory codes:
+#    The LOINC code_set corpus is NOT shipped (SP-09 carry-forward). Configure
+#    LOINC columns with a customer corpus or a passthrough with manual review.
+#    Do not claim Safe Harbor compliance for LOINC columns using truncation.
+#
+#  DIFFERENTIAL PRIVACY (M11):
+#    No strategy in this pack provides differential-privacy-grade guarantees.
+#    k-anonymity (geo_generalize k_threshold) and format-preserving encryption
+#    (fpe) are pseudonymisation / anonymisation techniques, not DP. If DP-grade
+#    de-identification is required, this pack does not satisfy that requirement.
+#
+# ── Regulatory anchor ────────────────────────────────────────────────────────
+#
+#  Primary authority: 45 CFR 164.514(b)(2) HIPAA Privacy Rule, Safe Harbor
+#  de-identification standard. Published by HHS Office for Civil Rights.
+#  See: https://www.hhs.gov/hipaa/for-professionals/privacy/special-topics/de-identification/
+
+id: hipaa
+version: "2026-06-29"
+name: "HIPAA Safe Harbor"
+summary: "Full HIPAA Safe Harbor (45 CFR 164.514(b)(2)): all 18 identifier categories + clinical detectors. SP-11 tightened posture: NPI valid-by-construction (fpe+checksum:npi), ICD-10 chapter-preserved (code_set), ZIP Safe Harbor cascade (geo_generalize). 2026-06-29: MRN charset widened alphanum->ALPHANUM (FPE passthrough-leak fix; covers uppercase letters in institution-specific MRN formats). See YAML comments for honest coverage limits: LOINC/HCPCS/NDC require manual config, free-text requires manual text_mask, M11 DP absent."
+regulation: "HIPAA Privacy Rule - Safe Harbor (45 CFR 164.514(b)(2))"
+primary_buyer: "Healthcare data engineers"
+
+triggers:
+  any_detectors:
+    - ssn
+    - mrn
+    - npi
+    - icd10
+  co_occurrence:
+    - [iso_date, us_zip, person_name]
+    - [us_date, us_zip, person_name]
+    # SSN + name + date is the canonical HIPAA dataset shape (patient roster
+    # with identifiers + visit/DOB dates). Including it explicitly so HIPAA
+    # outranks generic-PII bundles when the data is healthcare-shaped.
+    - [ssn, person_name, iso_date]
+    - [ssn, person_name, us_date]
+    - [iso_date, mrn]
+    - [us_zip, mrn]
+  min_score: 0.4
+
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. HIPAA Safe Harbor enumerates 18 identifier
+# categories; each row below corresponds to one (A-R per 45 CFR
+# 164.514(b)(2)). Strings are single detectors; nested lists are any-of
+# groups. Permissive mode bypasses with an audit trail.
+expected_fields:
+  - [first_name, last_name, person_name]   # A: Names
+  - us_zip                                  # B: Geographic
+  - [iso_date, us_date, eu_date]            # C: Dates (DOB + visit dates)
+  - us_phone                                # D: Telephone
+  - fax_number                              # E: Fax
+  - email                                   # F: Email
+  - ssn                                     # G: SSN
+  - mrn                                     # H: Medical Record Numbers
+  - health_plan_id                          # I: Health-plan beneficiary
+  - iban                                    # J: Account numbers (bank)
+  - license_num                             # K: Certificate / license
+  - vehicle_id                              # L: VIN / vehicle
+  - device_id                               # M: Device identifiers
+  - url                                     # N: URLs
+  - ipv4                                    # O: IP addresses
+  - biometric_id                            # P: Biometric
+  - address                                 # B (street; ZIP handled above)
+  # Clinical (beyond SH):
+  - icd10                                   # ICD-10-CM diagnosis codes
+  - npi                                     # National Provider Identifier
+
+field_rules:
+  # A: Names (split per-detector so first_name and last_name columns
+  # get the matching Faker provider instead of the catch-all faker.name).
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Safe Harbor section A: first names -> realistic fake first name."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Safe Harbor section A: last names -> realistic fake last name."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Safe Harbor section A: full names -> realistic fake name."
+
+  # B: Geographic data (ZIP -> Safe Harbor cascade)
+  # SP-11: replaced truncate(3) with geo_generalize (Safe Harbor cascade).
+  # Implements 45 CFR 164.514(b)(2)(i)(B): ZIP3 prefixes with population
+  # below 20,000 (HHS restricted list) cascade to state or suppress.
+  # The default k_threshold=20000 matches the Safe Harbor population floor.
+  - detectors: [us_zip]
+    mask: geo_generalize
+    params:
+      type: zip
+      cascade: [zip5, zip3, state, suppress]
+      k_threshold: 20000
+    why: "Safe Harbor section B: ZIP -> HIPAA Safe Harbor cascade (45 CFR 164.514(b)(2)(i)(B)). zip3 prefixes in the HHS restricted list (population < 20000) cascade to state or suppress. SP-11 replaces the prior truncate(3) strategy."
+
+  # B (street): street-address columns get a realistic fake street address.
+  # Complements the us_zip rule above; together they cover Safe Harbor
+  # geographic data (street + ZIP). Closes the gap where `address` was an
+  # expected_field with no field_rule, so streets passed through unmasked.
+  #
+  # NOTE: For datasets where address, city, zip, and state appear together,
+  # use joint_mask: us_zip5_city_state in the recipe YAML instead. joint_mask
+  # produces a real, geographically consistent (city, state, zip) tuple.
+  # joint_mask requires a key_by column name that is dataset-specific and
+  # cannot be set pack-wide, so this pack defaults to faker for standalone
+  # address columns.
+  - detectors: [address]
+    mask: faker
+    params:
+      faker_type: street_address
+    why: "Safe Harbor section B: street-address columns get a realistic fake street address; ZIP is generalised separately by the us_zip rule. NOTE: for co-located zip+city+state columns, configure joint_mask: us_zip5_city_state in the recipe YAML for geographic consistency."
+
+  # C: Dates (all three date formats)
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Safe Harbor section C: dates -> plus/minus 30d random shift. Preserves analytic distribution; breaks correlations. Covers DOB and visit dates."
+
+  # D: Telephone numbers
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Safe Harbor section D: telephone -> realistic fake."
+
+  # E: Fax numbers
+  - detectors: [fax_number]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Safe Harbor section E: fax numbers -> realistic fake phone number."
+
+  # F: Electronic mail addresses
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Safe Harbor section F: email -> realistic fake."
+
+  # G: Social Security Numbers - FPE keeps the 9-digit + dash shape;
+  # determinism is provided by the instance master key so FK joins
+  # survive masking. (Pre-V1 hashed; FPE strictly upgrades both shape
+  # and join behavior.)
+  - detectors: [ssn]
+    mask: fpe
+    params:
+      charset: digits
+    why: "Safe Harbor section G: SSN -> format-preserving digits; deterministic so FK joins survive."
+
+  # H: Medical record numbers
+  # charset: ALPHANUM (0-9 + A-Z + a-z) covers the full alphanumeric superset.
+  # MRN formats are institution-specific (no universal standard; 45 CFR 164.514(b)(2)
+  # Safe Harbor section H identifies MRNs as identifiers without specifying a format).
+  # Formats range from purely numeric (e.g. "0001234567" in many Epic deployments) to
+  # uppercase-containing alphanumeric (e.g. "MRN12345A", "A1234567890B").
+  # charset=alphanum (0-9+a-z, no uppercase A-Z) leaks any uppercase letter in the
+  # source value verbatim: FPE's preserve_separators mode (default: true) leaves
+  # characters outside the charset in place unchanged.  Using ALPHANUM ensures every
+  # alphanumeric character -- including uppercase -- is inside the charset and is
+  # therefore permuted, not passed through.  Conservative fix: only the charset is
+  # widened; strategy, namespace, and checksum are unchanged.
+  - detectors: [mrn]
+    mask: fpe
+    params:
+      charset: ALPHANUM
+    why: "Safe Harbor section H: medical record numbers -> format-preserving alphanumeric (ALPHANUM: 0-9+A-Z+a-z); joins survive. ALPHANUM covers the full alphanumeric superset so no character in any plausible MRN value passes through verbatim (FPE passthrough leak class, 2026-06-29). alphanum (0-9+a-z) was under-covering: uppercase letters present in the source would have been passed through in clear."
+
+  # I: Health-plan beneficiary numbers (no universal format: redact)
+  - detectors: [health_plan_id]
+    mask: redact
+    params:
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor section I: health-plan IDs vary too widely for FPE in V1; redacted."
+
+  # J: Account numbers (IBAN covers bank accounts; general account columns
+  #     are caught by health_plan_id / license_num name-hint rules when named
+  #     accordingly, e.g. account_id, account_num)
+  - detectors: [iban]
+    mask: fpe
+    params:
+      charset: ALPHANUM
+    why: "Safe Harbor section J: IBAN -> format-preserving alphanumeric; joins survive."
+
+  # K: Certificate and license numbers (no universal format: redact)
+  - detectors: [license_num]
+    mask: redact
+    params:
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor section K: license/certificate formats vary too widely for FPE in V1."
+
+  # L: Vehicle identifiers and serial numbers (VINs)
+  - detectors: [vehicle_id]
+    mask: fpe
+    params:
+      charset: ALPHANUM
+    why: "Safe Harbor section L: VINs -> format-preserving 17-char alphanumeric; joins survive."
+
+  # M: Device identifiers and serial numbers (no universal format: redact)
+  - detectors: [device_id]
+    mask: redact
+    params:
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor section M: device identifier formats vary too widely for FPE in V1."
+
+  # N: Web Universal Resource Locators (URLs)
+  - detectors: [url]
+    mask: redact
+    params:
+      redact_with: "[URL REDACTED]"
+    why: "Safe Harbor section N: URLs -> redacted. URLs often embed patient or provider identifying path components."
+
+  # O: IP addresses
+  - detectors: [ipv4]
+    mask: faker
+    params:
+      faker_type: ipv4
+    why: "Safe Harbor section O: IPv4 addresses -> realistic fake IP."
+
+  # P + Q: Biometric identifiers AND full-face photo references. The
+  # biometric_id name hints include photo/face terms, so columns holding
+  # photo paths or URLs route here. Image file content is explicitly out
+  # of scope: the engine masks column values (the references), not the
+  # image bytes they point at.
+  - detectors: [biometric_id]
+    mask: redact
+    params:
+      redact_with: "[BIOMETRIC REDACTED]"
+    why: "Safe Harbor section P biometric identifiers and section Q full-face photo path/URL columns -> redacted. Biometrics are permanent; any exposure is irreversible. Section Q limitation: only column-stored references are masked, never image file content."
+
+  # Clinical: ICD-10-CM diagnosis codes -> code_set with chapter preservation.
+  # SP-11: replaced truncate(3) with code_set icd10 + chapter_preserve: true.
+  # Output is always a real ICD-10-CM code (CMS FY2024, US public domain) in
+  # the same chapter as the input. A cardiovascular I-code masks to another
+  # I-chapter code; a respiratory J-code stays in J; etc.
+  # The HMAC-keyed selection (RFC 2104) is deterministic so provider-level
+  # analytics survive masking.
+  #
+  # HCPCS and NDC: shipped corpora exist but no STORM detectors are registered
+  # for these code types. Configure code_set: hcpcs or code_set: ndc manually
+  # in the recipe YAML for procedure and drug code columns.
+  # LOINC: corpus NOT shipped (SP-09 carry-forward). Do not claim Safe Harbor
+  # compliance for LOINC columns without manual review.
+  - detectors: [icd10]
+    mask: code_set
+    params:
+      code_set: icd10
+      chapter_preserve: true
+    why: "ICD-10-CM codes -> code_set icd10 with chapter_preserve: true (SP-11). Output is always a real CMS ICD-10-CM code in the same chapter as the input. Replaces the prior truncate(3) strategy, which produced 3-char prefixes rather than valid codes."
+
+  # Clinical: National Provider Identifiers -> FPE with NPI checksum.
+  # SP-11: added checksum: npi so masked NPIs are valid by construction.
+  # The Feistel permutation rewrites the 9-digit body and then recomputes
+  # the check digit per the CMS NPPES spec (Luhn applied to prefix 80840 +
+  # 9-digit body). Masked NPIs pass NPI validators used in downstream systems.
+  # The 1/2 leading digit is preserved (NPPES allocates only 1- and 2-prefixed
+  # NPIs). Deterministic so provider-level joins survive masking.
+  - detectors: [npi]
+    mask: fpe
+    params:
+      charset: digits
+      checksum: npi
+    why: "National Provider Identifiers -> FPE digits with checksum: npi (SP-11). Masked NPIs are valid by construction per the CMS NPPES check-digit spec. Deterministic so provider-level joins survive masking."

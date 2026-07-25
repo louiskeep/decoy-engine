@@ -1,0 +1,100 @@
+# Base detectors: contact, identifier, networking. Every Decoy install
+# uses these regardless of vertical.
+#
+# Each entry maps a detector_id (matching a `detect_*` function in
+# decoy_engine.storm.detectors) to the column-name substrings whose
+# presence boosts that detector's confidence at scan time. The loader
+# combines `patterns` into one case-insensitive regex via the existing
+# `_hint(terms)` helper; behavior matches the pre-extraction
+# `_NAME_HINTS` dict bit-for-bit (verified by
+# tests/snapshots/test_name_hints_baseline.py).
+
+detectors:
+  - detector_id: email
+    description: Email address column.
+    patterns:
+      - email
+      - e_mail
+      - mail
+      - emailaddress
+      - email_address
+      - email_addr
+      - mail_addr
+      - contact_email
+
+  - detector_id: ssn
+    description: US Social Security Number column.
+    patterns:
+      - ssn
+      - social_security
+      - social_security_num
+      - social_security_number
+      - socsec
+      - socialsec
+      - ss_num
+      - ss_no
+
+  # Detection sprint additions: tel, phn, mob, cel, wphone, hphone -- plus
+  # work_phone / home_phone / cell_phone / mobile_phone spelled-out forms.
+  - detector_id: us_phone
+    description: US phone number column.
+    patterns:
+      - phone
+      - phn
+      - tel
+      - telephone
+      - mobile
+      - cell
+      - mob
+      - cel
+      - wphone
+      - hphone
+      - work_phone
+      - home_phone
+      - cell_phone
+      - mobile_phone
+      - day_phone
+      - night_phone
+      - primary_phone
+      - phone_num
+      - phone_number
+      - contact_phone
+
+  - detector_id: us_zip
+    description: US ZIP / postal code column.
+    patterns:
+      - zip
+      - zip_code
+      - zipcode
+      - postal
+      - postal_code
+      - post_code
+      - postcode
+      - zipcde
+      - zip_cd
+
+  - detector_id: url
+    description: URL / web address column.
+    patterns:
+      - url
+      - uri
+      - href
+      - link
+      - website
+      - web_address
+      - endpoint
+      - site
+
+  - detector_id: ipv4
+    description: IPv4 network address column.
+    patterns:
+      - ip
+      - ipv4
+      - ip_addr
+      - ip_address
+      - ipaddr
+      - client_ip
+      - remote_ip
+      - src_ip
+      - dst_ip
+      - source_ip

@@ -1,0 +1,630 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "tool": "scripts/run_engine_v2_baseline.py",
+    "substrates": [
+      "pandas",
+      "polars"
+    ],
+    "environment": "ci-ubuntu-latest-py311",
+    "note": "Ship-quality numbers come from the standardized benchmark CI (.github/workflows/benchmark.yml). Local runs are indicative only."
+  },
+  "results": [
+    {
+      "strategy": "passthrough",
+      "tier": "small",
+      "column": "customer_id",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 1.484,
+        "p95_ms": 1.573,
+        "mean_ms": 1.513,
+        "max_ms": 1.581,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.374,
+        "peak_rss_delta_kb": 12,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 0.454,
+        "p95_ms": 0.496,
+        "mean_ms": 0.462,
+        "max_ms": 0.499,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.325,
+        "peak_rss_delta_kb": 15000,
+        "error": null
+      }
+    },
+    {
+      "strategy": "redact",
+      "tier": "small",
+      "column": "ssn",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 2.11,
+        "p95_ms": 2.16,
+        "mean_ms": 2.088,
+        "max_ms": 2.161,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.363,
+        "peak_rss_delta_kb": 2308,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 0.701,
+        "p95_ms": 0.761,
+        "mean_ms": 0.68,
+        "max_ms": 0.768,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.355,
+        "peak_rss_delta_kb": 8168,
+        "error": null
+      }
+    },
+    {
+      "strategy": "truncate",
+      "tier": "small",
+      "column": "ssn",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 2.306,
+        "p95_ms": 2.424,
+        "mean_ms": 2.32,
+        "max_ms": 2.443,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.284,
+        "peak_rss_delta_kb": 348,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 0.648,
+        "p95_ms": 0.699,
+        "mean_ms": 0.657,
+        "max_ms": 0.706,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.314,
+        "peak_rss_delta_kb": 1280,
+        "error": null
+      }
+    },
+    {
+      "strategy": "faker",
+      "tier": "small",
+      "column": "full_name",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 34.926,
+        "p95_ms": 40.65,
+        "mean_ms": 36.364,
+        "max_ms": 41.963,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.696,
+        "peak_rss_delta_kb": 856,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 35.533,
+        "p95_ms": 35.701,
+        "mean_ms": 35.423,
+        "max_ms": 35.735,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.518,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      }
+    },
+    {
+      "strategy": "date_shift",
+      "tier": "small",
+      "column": "dob",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 21.001,
+        "p95_ms": 21.059,
+        "mean_ms": 20.912,
+        "max_ms": 21.07,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.76,
+        "peak_rss_delta_kb": 516,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 21.301,
+        "p95_ms": 21.713,
+        "mean_ms": 21.183,
+        "max_ms": 21.799,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.679,
+        "peak_rss_delta_kb": 236,
+        "error": null
+      }
+    },
+    {
+      "strategy": "bucketize",
+      "tier": "small",
+      "column": "score",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 3.682,
+        "p95_ms": 4.084,
+        "mean_ms": 3.79,
+        "max_ms": 4.128,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.415,
+        "peak_rss_delta_kb": 384,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 3.21,
+        "p95_ms": 3.392,
+        "mean_ms": 3.243,
+        "max_ms": 3.4,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.403,
+        "peak_rss_delta_kb": 76,
+        "error": null
+      }
+    },
+    {
+      "strategy": "hash",
+      "tier": "small",
+      "column": "email",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 11.532,
+        "p95_ms": 11.71,
+        "mean_ms": 11.577,
+        "max_ms": 11.717,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.718,
+        "peak_rss_delta_kb": 32,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 8.953,
+        "p95_ms": 8.988,
+        "mean_ms": 8.953,
+        "max_ms": 8.99,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.55,
+        "peak_rss_delta_kb": 260,
+        "error": null
+      }
+    },
+    {
+      "strategy": "categorical",
+      "tier": "small",
+      "column": "status",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 12.177,
+        "p95_ms": 12.761,
+        "mean_ms": 12.207,
+        "max_ms": 12.805,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.833,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 9.441,
+        "p95_ms": 9.496,
+        "mean_ms": 9.425,
+        "max_ms": 9.497,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.515,
+        "peak_rss_delta_kb": 280,
+        "error": null
+      }
+    },
+    {
+      "strategy": "shuffle",
+      "tier": "small",
+      "column": "email",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 2.259,
+        "p95_ms": 2.446,
+        "mean_ms": 2.299,
+        "max_ms": 2.483,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.456,
+        "peak_rss_delta_kb": 220,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 1.153,
+        "p95_ms": 1.205,
+        "mean_ms": 1.144,
+        "max_ms": 1.214,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.385,
+        "peak_rss_delta_kb": 68,
+        "error": null
+      }
+    },
+    {
+      "strategy": "formula",
+      "tier": "small",
+      "column": "transaction_amount",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 9.005,
+        "p95_ms": 9.336,
+        "mean_ms": 9.052,
+        "max_ms": 9.408,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.834,
+        "peak_rss_delta_kb": 12,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 8.695,
+        "p95_ms": 8.732,
+        "mean_ms": 8.681,
+        "max_ms": 8.739,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.569,
+        "peak_rss_delta_kb": 320,
+        "error": null
+      }
+    },
+    {
+      "strategy": "fpe",
+      "tier": "small",
+      "column": "ssn",
+      "rows": 1000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 39.815,
+        "p95_ms": 40.243,
+        "mean_ms": 39.888,
+        "max_ms": 40.346,
+        "iterations": 5,
+        "boundary_conversion_ms": 1.908,
+        "peak_rss_delta_kb": 224,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 39.333,
+        "p95_ms": 39.989,
+        "mean_ms": 39.419,
+        "max_ms": 40.12,
+        "iterations": 5,
+        "boundary_conversion_ms": 0.479,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      }
+    },
+    {
+      "strategy": "passthrough",
+      "tier": "medium",
+      "column": "customer_id",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 7.56,
+        "p95_ms": 8.135,
+        "mean_ms": 7.666,
+        "max_ms": 8.205,
+        "iterations": 5,
+        "boundary_conversion_ms": 7.401,
+        "peak_rss_delta_kb": 32788,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 20.912,
+        "p95_ms": 22.172,
+        "mean_ms": 21.325,
+        "max_ms": 22.224,
+        "iterations": 5,
+        "boundary_conversion_ms": 20.907,
+        "peak_rss_delta_kb": 126440,
+        "error": null
+      }
+    },
+    {
+      "strategy": "redact",
+      "tier": "medium",
+      "column": "ssn",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 28.018,
+        "p95_ms": 28.642,
+        "mean_ms": 28.06,
+        "max_ms": 28.771,
+        "iterations": 5,
+        "boundary_conversion_ms": 11.559,
+        "peak_rss_delta_kb": 32172,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 21.582,
+        "p95_ms": 23.717,
+        "mean_ms": 22.21,
+        "max_ms": 23.895,
+        "iterations": 5,
+        "boundary_conversion_ms": 21.336,
+        "peak_rss_delta_kb": 23732,
+        "error": null
+      }
+    },
+    {
+      "strategy": "truncate",
+      "tier": "medium",
+      "column": "ssn",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 27.699,
+        "p95_ms": 29.037,
+        "mean_ms": 28.151,
+        "max_ms": 29.053,
+        "iterations": 5,
+        "boundary_conversion_ms": 11.828,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 22.554,
+        "p95_ms": 25.263,
+        "mean_ms": 23.332,
+        "max_ms": 25.637,
+        "iterations": 5,
+        "boundary_conversion_ms": 21.388,
+        "peak_rss_delta_kb": 41196,
+        "error": null
+      }
+    },
+    {
+      "strategy": "faker",
+      "tier": "medium",
+      "column": "full_name",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 955.232,
+        "p95_ms": 1022.367,
+        "mean_ms": 967.564,
+        "max_ms": 1038.576,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.813,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 976.808,
+        "p95_ms": 979.94,
+        "mean_ms": 975.029,
+        "max_ms": 980.089,
+        "iterations": 5,
+        "boundary_conversion_ms": 23.845,
+        "peak_rss_delta_kb": 76200,
+        "error": null
+      }
+    },
+    {
+      "strategy": "date_shift",
+      "tier": "medium",
+      "column": "dob",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 1566.487,
+        "p95_ms": 1586.443,
+        "mean_ms": 1569.191,
+        "max_ms": 1589.962,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.518,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 1579.091,
+        "p95_ms": 1588.688,
+        "mean_ms": 1580.187,
+        "max_ms": 1590.821,
+        "iterations": 5,
+        "boundary_conversion_ms": 25.616,
+        "peak_rss_delta_kb": 118416,
+        "error": null
+      }
+    },
+    {
+      "strategy": "bucketize",
+      "tier": "medium",
+      "column": "score",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 59.872,
+        "p95_ms": 63.304,
+        "mean_ms": 60.839,
+        "max_ms": 63.386,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.296,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 77.401,
+        "p95_ms": 79.743,
+        "mean_ms": 77.29,
+        "max_ms": 79.971,
+        "iterations": 5,
+        "boundary_conversion_ms": 23.477,
+        "peak_rss_delta_kb": 70960,
+        "error": null
+      }
+    },
+    {
+      "strategy": "hash",
+      "tier": "medium",
+      "column": "email",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 903.478,
+        "p95_ms": 907.328,
+        "mean_ms": 902.661,
+        "max_ms": 907.912,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.598,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 813.161,
+        "p95_ms": 815.816,
+        "mean_ms": 813.381,
+        "max_ms": 816.422,
+        "iterations": 5,
+        "boundary_conversion_ms": 25.398,
+        "peak_rss_delta_kb": 135456,
+        "error": null
+      }
+    },
+    {
+      "strategy": "categorical",
+      "tier": "medium",
+      "column": "status",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 929.927,
+        "p95_ms": 934.385,
+        "mean_ms": 928.049,
+        "max_ms": 934.624,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.701,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 844.685,
+        "p95_ms": 849.106,
+        "mean_ms": 845.694,
+        "max_ms": 850.072,
+        "iterations": 5,
+        "boundary_conversion_ms": 25.416,
+        "peak_rss_delta_kb": 114080,
+        "error": null
+      }
+    },
+    {
+      "strategy": "shuffle",
+      "tier": "medium",
+      "column": "email",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 72.223,
+        "p95_ms": 77.657,
+        "mean_ms": 74.014,
+        "max_ms": 77.977,
+        "iterations": 5,
+        "boundary_conversion_ms": 25.443,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 86.588,
+        "p95_ms": 89.565,
+        "mean_ms": 86.336,
+        "max_ms": 90.042,
+        "iterations": 5,
+        "boundary_conversion_ms": 22.933,
+        "peak_rss_delta_kb": 88580,
+        "error": null
+      }
+    },
+    {
+      "strategy": "formula",
+      "tier": "medium",
+      "column": "transaction_amount",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 634.092,
+        "p95_ms": 642.659,
+        "mean_ms": 634.275,
+        "max_ms": 644.48,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.735,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 649.206,
+        "p95_ms": 653.327,
+        "mean_ms": 649.358,
+        "max_ms": 653.453,
+        "iterations": 5,
+        "boundary_conversion_ms": 22.697,
+        "peak_rss_delta_kb": 112016,
+        "error": null
+      }
+    },
+    {
+      "strategy": "fpe",
+      "tier": "medium",
+      "column": "ssn",
+      "rows": 100000,
+      "correctness_gate": "PASS",
+      "correctness_detail": "ran clean; masked; pandas==polars",
+      "pandas": {
+        "p50_ms": 3600.06,
+        "p95_ms": 3639.851,
+        "mean_ms": 3605.293,
+        "max_ms": 3642.951,
+        "iterations": 5,
+        "boundary_conversion_ms": 8.597,
+        "peak_rss_delta_kb": 0,
+        "error": null
+      },
+      "polars": {
+        "p50_ms": 3594.082,
+        "p95_ms": 3607.155,
+        "mean_ms": 3594.484,
+        "max_ms": 3610.074,
+        "iterations": 5,
+        "boundary_conversion_ms": 27.353,
+        "peak_rss_delta_kb": 111220,
+        "error": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+"""Tests for classify_fields (ML3.1).
+
+Gate reference: ml-benchmarking-and-privacy.md §B.4 (no raw cell values in
+output) and Sprint C ML3.1 spec (engine library function, not HTTP endpoint).
+
+Tests:
+  - classify_fields returns None when DECOY_ML_DISABLED=1 (off-by-default).
+  - classify_fields returns None when pack_dir is missing.
+  - classify_fields returns a dict when pack is present and ML enabled.
+  - Output shape: each column key has label, calibrated_confidence, band,
+    model_pack_id, model_pack_version, feature_schema_version.
+  - §B.4 asserting test: no raw cell values in output.
+  - Empty DataFrame returns empty dict (not None).
+  - Determinism: same input -> same output (two calls on same df).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
+
+_LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
+
+
+@pytest.fixture(autouse=True)
+def _clean_signing_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate every test here from an operator-configured signing environment.
+
+    The committed lgbm-v1 pack is unsigned (platform signs at deploy). These
+    tests assert the DE-04 Option C default posture: trusted default accepts,
+    untrusted external refuses. A stray ``DECOY_PACK_SIGNING_KEY`` (would let a
+    signed external copy verify) or ``DECOY_PACK_REQUIRE_SIGNATURE=1`` (would
+    make even the trusted default demand a signature -> None) in the ambient
+    env would silently change what is under test, so clear both.
+    """
+    monkeypatch.delenv("DECOY_PACK_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("DECOY_PACK_REQUIRE_SIGNATURE", raising=False)
+
+
+def _ml_extra_available() -> bool:
+    """True when the optional `ml` extra (scikit-learn + lightgbm) is installed.
+    classify_fields degrades to None without it, so live-pack tests that assert a
+    real result must skip rather than fail in a base `.[dev]` CI install."""
+    try:
+        import lightgbm  # noqa: F401
+        import sklearn  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+_needs_live_pack = pytest.mark.skipif(
+    not _LIVE_PACK.exists() or not _ml_extra_available(),
+    reason="lgbm-v1 pack or ml extra (scikit-learn/lightgbm) not installed",
+)
+
+
+# ── §B.4 no-raw-values asserting test ────────────────────────────────────────
+
+
+@_needs_live_pack
+def test_classify_fields_output_contains_no_raw_cell_values() -> None:
+    """§B.4: classify_fields output must not contain any raw input cell values.
+
+    This is the asserting test required by ml-benchmarking-and-privacy.md §B.4.
+    The output dict is serialised to JSON and checked against a sample of the
+    actual cell values from the input DataFrame.
+    """
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    # Create a small DataFrame with distinctive PII-like values.
+    df = pd.DataFrame(
+        {
+            "ssn_col": ["123-45-6789", "987-65-4321", "111-22-3333"],
+            "email_col": ["alice@example.com", "bob@test.org", "carol@domain.net"],
+            "plain_id": [1001, 1002, 1003],
+        }
+    )
+
+    result = classify_fields(df)
+    assert result is not None, "classify_fields returned None with a live pack"
+
+    output_json = json.dumps(result)
+
+    # Collect raw cell values that are long enough to be distinctive.
+    raw_values = []
+    for col in df.columns:
+        for v in df[col].dropna().tolist():
+            s = str(v)
+            if len(s) >= 8:
+                raw_values.append(s)
+
+    leaked = [v for v in raw_values if v in output_json]
+    assert not leaked, (
+        "§B.4 VIOLATION: raw cell values found in classify_fields output:\n"
+        + "\n".join(f"  {v!r}" for v in leaked)
+    )
+
+
+# ── Off-by-default: DECOY_ML_DISABLED ────────────────────────────────────────
+
+
+def test_classify_fields_returns_none_when_ml_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """classify_fields returns None when DECOY_ML_DISABLED=1 (off-by-default)."""
+    monkeypatch.setenv("DECOY_ML_DISABLED", "1")
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    df = pd.DataFrame({"col_a": ["foo", "bar"]})
+    result = classify_fields(df)
+    assert result is None
+
+
+def test_classify_fields_returns_none_when_pack_missing(tmp_path: Path) -> None:
+    """classify_fields returns None (not raises) when pack_dir is missing."""
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    df = pd.DataFrame({"col_a": ["foo", "bar"]})
+    result = classify_fields(df, pack_dir=tmp_path / "nonexistent")
+    assert result is None
+
+
+@_needs_live_pack
+def test_classify_fields_rejects_unsigned_external_pack_dir(tmp_path: Path) -> None:
+    """DE-04 Option C public contract: a caller-supplied (untrusted) pack_dir is
+    fail-closed when unsigned -- classify_fields degrades to None (regex
+    baseline) rather than joblib.load-ing an unverified pack. The identical
+    bytes loaded as the default (no pack_dir) are trusted and DO classify, so
+    this proves it is the untrusted boundary, not the pack, that is refused.
+
+    Signing env isolation is provided by the module autouse fixture.
+    """
+    import shutil
+
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    external = tmp_path / "external-pack"
+    shutil.copytree(_LIVE_PACK, external)  # a copy of the (unsigned) first-party pack
+
+    df = pd.DataFrame({"email_addr": ["a@b.com", "c@d.com"]})
+    # As an untrusted external pack_dir: refused -> None.
+    assert classify_fields(df, pack_dir=external) is None
+    # The same bytes as the trusted default: classified.
+    assert classify_fields(df) is not None
+
+
+# ── Output shape ──────────────────────────────────────────────────────────────
+
+_EXPECTED_KEYS = {
+    "label",
+    "calibrated_confidence",
+    "band",
+    "model_pack_id",
+    "model_pack_version",
+    "feature_schema_version",
+}
+
+
+@_needs_live_pack
+def test_classify_fields_output_shape() -> None:
+    """Each column result has exactly the required keys (no extra, no missing)."""
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    df = pd.DataFrame(
+        {
+            "ssn": ["123-45-6789", "987-65-4321"],
+            "name": ["Alice Smith", "Bob Jones"],
+        }
+    )
+    result = classify_fields(df)
+    assert result is not None
+
+    for col_name, col_result in result.items():
+        missing = _EXPECTED_KEYS - set(col_result.keys())
+        assert not missing, f"Missing keys in column {col_name!r}: {missing}"
+
+        # label is str or None
+        label = col_result["label"]
+        assert label is None or isinstance(label, str), (
+            f"label must be str | None, got {type(label)}"
+        )
+
+        # calibrated_confidence is a float in [0, 1]
+        conf = col_result["calibrated_confidence"]
+        assert isinstance(conf, float), "calibrated_confidence must be float"
+        assert 0.0 <= conf <= 1.0, f"calibrated_confidence {conf} out of [0, 1]"
+
+        # band is one of the three valid values
+        band = col_result["band"]
+        assert band in ("high", "review", "low"), f"band must be high/review/low, got {band!r}"
+
+        # provenance strings are non-empty
+        assert col_result["model_pack_id"], "model_pack_id must be non-empty"
+        assert col_result["model_pack_version"], "model_pack_version must be non-empty"
+        assert col_result["feature_schema_version"], "feature_schema_version must be non-empty"
+
+
+# ── Empty DataFrame ───────────────────────────────────────────────────────────
+
+
+@_needs_live_pack
+def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
+    """An empty DataFrame (0 columns) returns {} not None."""
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    df = pd.DataFrame()
+    result = classify_fields(df)
+    assert result == {}, f"Expected empty dict, got {result!r}"
+
+
+# ── Determinism ───────────────────────────────────────────────────────────────
+
+
+@_needs_live_pack
+def test_classify_fields_is_deterministic() -> None:
+    """Same DataFrame + same pack -> identical result on two calls."""
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    df = pd.DataFrame(
+        {
+            "email": ["user@example.com", "admin@test.org"],
+            "amount": [100.50, 250.00],
+            "ssn": ["123-45-6789", "987-65-4321"],
+        }
+    )
+
+    result_a = classify_fields(df)
+    result_b = classify_fields(df)
+
+    assert result_a is not None
+    assert result_b is not None
+    assert result_a == result_b, "classify_fields is not deterministic"

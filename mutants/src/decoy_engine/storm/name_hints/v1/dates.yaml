@@ -1,0 +1,39 @@
+# Date detectors. The three locale variants (iso / us / eu) share the
+# same column-name vocabulary; the detector functions in
+# decoy_engine.storm.detectors choose the right value-shape regex based
+# on the format of the cells underneath the matched column.
+#
+# Adding a new term here adds it to ALL three detectors. To attach a
+# term to ONE locale only, move that detector to its own list.
+
+detectors:
+  - detector_id: iso_date
+    description: ISO-8601 (YYYY-MM-DD) date column.
+    patterns: &date_terms
+      - date
+      - created
+      - updated
+      - modified
+      - dob
+      - birth
+      - start
+      - end
+      - due
+      - effective
+      - expir
+      - bdate
+      - b_date
+      - birth_dt
+      - bday
+      - birthday
+      - date_of_birth
+      - birth_date
+      - dt
+
+  - detector_id: us_date
+    description: US-format (MM/DD/YYYY) date column.
+    patterns: *date_terms
+
+  - detector_id: eu_date
+    description: EU-format (DD/MM/YYYY) date column.
+    patterns: *date_terms
