@@ -111,10 +111,18 @@ the usual build-artifact patterns; confirm before committing).
 `pytest --cov` breaks in this repo: coverage's `source=` filtering reloads
 modules, and duckdb's compiled `_duckdb._sqltypes` submodule does not survive the
 reload (`'_duckdb' is not a package`). The fix is to import duckdb BEFORE
-coverage starts. For a one-off measurement, run coverage in-process with duckdb
-pre-imported (see `scripts/` or the pilot's runner). TQ-3 owns the CI-side fix
-(a `.pth` / `sitecustomize` pre-import, or a coverage plugin) before the
-diff-coverage ratchet lands.
+coverage starts. Measure a module's coverage with the committed in-process runner
+`scripts/tq_coverage.py` (it pre-imports duckdb, then starts coverage, then runs
+pytest):
+
+```
+uv run --frozen --extra dev --extra lint --extra vault \
+    python scripts/tq_coverage.py <cov.source.module> <test paths...> -q
+```
+
+Coverage is CONTEXT, not the DoD bar (the mutation score is). TQ-3 owns the
+CI-side fix (a `.pth` / `sitecustomize` pre-import, or a coverage plugin) before
+the diff-coverage ratchet lands.
 
 ## Definition of done and bars
 
@@ -137,15 +145,31 @@ so the policy is:
 - The bar (including the 100% crypto/RI mandate) applies to LOGIC/behavior
   mutants: operators, comparisons, boundaries, control flow, constants that
   affect an outcome, and the `code`/type of a raised error.
-- A mutation that changes ONLY error-message prose (not the raised `code`, not a
-  `path`/field a caller asserts on, not control flow) is classified EQUIVALENT
-  for scoring. It is not a correctness defect; asserting exact message wording is
-  brittle and low-value. Tests still SHOULD assert the load-bearing parts of a
-  message (the offending value, the enumerated valid options, the `path`), which
-  kills the meaningful string mutants and leaves only pure-wording ones.
+- A string-literal mutation is EQUIVALENT for scoring ONLY when the literal is
+  confined to the human `message` of a raised error (or a log line) and nothing
+  else. Decide this by what the CODE does with the literal, not by what a test
+  happens to check:
+  - EQUIVALENT: the literal is interpolated into an error/log message and never
+    returned, serialized, compared, or used as a `code`/`path`/key. Changing its
+    prose changes no observable outcome.
+  - NOT equivalent (a real logic mutant, must be killed): the literal is
+    RETURNED, written to output, used in a `==`/`in` comparison, becomes an error
+    `code` or `path`, is a sentinel/format token (e.g. `masked_orphan_<id>`), a
+    dict key, or any value that flows past the message. A wrong such string is a
+    real bug. When in doubt, treat it as NOT equivalent and kill it.
+- Tests SHOULD still assert the load-bearing parts of a message (the offending
+  value, the enumerated valid options, the `path`); those arrive via f-string
+  interpolation of variables, which string-literal mutation cannot hit, so those
+  tests keep passing and only pure-wording variants survive.
 - Report both numbers: the raw mutmut score AND the logic-mutant score (raw minus
-  equivalent message-wording survivors), with the equivalent set listed. The
-  logic-mutant score is the one the bar is applied to.
+  the equivalent survivors), with the equivalent set listed. The logic-mutant
+  score is the one the bar is applied to.
+- SHIP AN EQUIVALENT-MUTANT LEDGER (DoD): if any survivor is left alive, commit
+  `docs/quality/mutation-ledgers/<module>.md` listing each survivor's id, its
+  mutation diff, its class (WORDING / DEFAULT / other), and the one-line argument
+  for why no input can kill it. The `mutants/` cache is gitignored and ephemeral,
+  so a reviewer cannot re-audit the honesty claim without this committed ledger.
+  See `relationships_graph.md` for the pilot's.
 
 ## Pilot result (`relationships/_graph.py`)
 

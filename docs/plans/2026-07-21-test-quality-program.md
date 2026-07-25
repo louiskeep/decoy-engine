@@ -161,8 +161,14 @@ config established (`source_paths` at package root, `only_mutate` per module).
 | Mutation (logic) | -- | 100% (0 logic mutants survive) |
 
 The 27 raw survivors are all equivalent mutants (23 error-message wording, 4
-no-op `.get(k, [])`->`None` defaults; see the playbook for the argument). No bug
-found in `_graph.py`. The RI 100% bar is met on logic mutants.
+no-op `.get(k, [])`->`None` defaults). The auditable per-mutant ledger is
+`docs/quality/mutation-ledgers/relationships_graph.md`. No bug found in
+`_graph.py`. The RI 100% bar is met on logic mutants.
+
+Reproduce: the committed `[tool.mutmut]` selection includes the oracle file, so
+a plain `mutmut run` yields the 89.1% end-state. The 73.7% BASELINE was measured
+with the unit-only selection `pytest_add_cli_args_test_selection =
+["tests/unit/relationships/"]` (temporarily drop the property file, run, restore).
 
 **Policy established (needs Cam confirm):** the bar (incl. the 100% crypto/RI
 mandate) is applied to LOGIC mutants; error-message-wording mutants are

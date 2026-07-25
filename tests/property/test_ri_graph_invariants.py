@@ -122,6 +122,7 @@ def test_ordering_respects_every_edge(data) -> None:
     """The RI-critical invariant: every parent node precedes its child node,
     so no child masks before the parent whose keys it references."""
     rels, lookup = data
+    assume(len(rels) > 0)  # a zero-edge graph makes this property vacuous
     graph = _build(rels, lookup)
     for e in graph.edges:
         parent_node = (e.parent_table, e.parent_columns)
