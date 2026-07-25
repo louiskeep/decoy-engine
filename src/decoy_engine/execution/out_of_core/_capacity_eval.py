@@ -438,6 +438,7 @@ def enforce_ooc_memory_preflight(
     )
     estimate = evaluate_capacity(inputs, budget_bytes)
     if estimate.verdict is CapacityVerdict.INSUFFICIENT:
+        assert estimate.code is not None  # an INSUFFICIENT estimate always names its refusal code
         raise ExecutionError(code=estimate.code, message=estimate.message)
     if estimate.warned:
         _logger.warning(estimate.message)
