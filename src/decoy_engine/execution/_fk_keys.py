@@ -131,8 +131,17 @@ def fk_key_value(value: object) -> object:
 # key types go up to 38/76 significant digits, so normalizing under the
 # default context could silently round a legitimate high-precision key -- a
 # correctness bug worse than the one being fixed. 200 digits is comfortably
-# above decimal256's ceiling with headroom to spare, so normalize() only ever
-# strips trailing-zero exponent, never rounds a real value.
+# above decimal256's ceiling with headroom, so for a Decimal-typed key
+# normalize() only ever strips a trailing-zero exponent, never rounds.
+#
+# The RI fix (float branch of `fk_join_key`) also routes floats here via
+# `Decimal(a_float)`, whose EXACT expansion CAN exceed 200 digits (a subnormal
+# like `Decimal(5e-324)` is ~751 digits and IS rounded to 200 here). That does
+# not break the fold's injectivity: two distinct IEEE doubles differ within
+# ~17 significant decimal digits, far inside 200, so their rounded tokens stay
+# distinct; and an equal float/Decimal pair has a short exact expansion that
+# never rounds. So a float can round here without ever colliding with a
+# different key -- rounding only trims digits both members already share.
 _DECIMAL_JOIN_CONTEXT: Final = decimal.Context(prec=200)
 
 

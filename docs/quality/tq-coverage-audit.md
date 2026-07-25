@@ -70,7 +70,7 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 | `determinism/_derive` | yes / yes | 100% (3 equiv) | none | `tq/crown-jewels` |
 | `keyprovider` | yes / yes | 100% (25 equiv) | resolve_mask_key precedence gap closed | `tq/crown-jewels` |
 | `transforms/fpe` | yes / yes | 100% (~42 equiv) | Luhn self-ref + Feistel KATs pinned | `tq/crown-jewels` |
-| `execution/_fk_keys` | yes / yes | 100% (32 equiv) | continue/break + dtype gaps; 1 dead branch | `tq/crown-jewels` |
+| `execution/_fk_keys` | yes / yes (re-graded post-fix `7e7be68`) | 100% (32 equiv) | continue/break + dtype gaps; 1 dead branch; float/Decimal route fix re-graded, 110/142 killed, all 32 survivors equivalent | `tq/crown-jewels` |
 | `quality/dp_budget` | yes / yes | 100% (18 equiv) | calibration + tolerance-masked mutants | `tq/crown-jewels` |
 | `quality/dp` | yes / DEFERRED | -- | cert-gated: 47/88 tests skip off certified profile; grade on CI cert-gate | `tq/crown-jewels` |
 | `quality/dp_provenance` | yes / DEFERRED | -- | monkeypatch-heavy suite: 87/87 survive; needs direct impl tests | `tq/crown-jewels` |

@@ -369,9 +369,11 @@ def test_join_key_tuple_framing_prevents_concatenation_collision() -> None:
 @given(scalar_values(), scalar_values())
 def test_different_python_types_never_share_a_join_token_unless_folded(a, b) -> None:
     """NAMESPACE ISOLATION mechanism #1: `fk_join_key`'s per-type tag prefix
-    (`\\x00INT:`/`\\x00STR:`/`\\x00DEC:`/`\\x00FLOAT:`/`\\x00OBJ:...`) keeps
-    unrelated types from colliding on token text alone. Restated as the same
-    two-sided property as the tuple version, at the single-value level."""
+    (`\\x00INT:`/`\\x00STR:`/`\\x00DEC:`/`\\x00OBJ:...`) keeps unrelated types
+    from colliding on token text alone. (Floats share the `\\x00DEC:` tag with
+    Decimals by design since the RI fix -- an equal-valued float and Decimal
+    MUST fold to one token.) Restated as the same two-sided property as the
+    tuple version, at the single-value level."""
     if fk_key_value(a) == fk_key_value(b):
         assert fk_join_key(a) == fk_join_key(b)
     else:

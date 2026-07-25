@@ -1194,6 +1194,73 @@ def test_child_fk_join_normalizes_decimal_parent_against_numeric_child(
     assert warnings == ()
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [OrphanPolicy.FAIL, OrphanPolicy.WARN, OrphanPolicy.PRESERVE, OrphanPolicy.REMAP],
+)
+def test_child_fk_join_fractional_float_parent_matches_fractional_decimal_child(
+    tmp_path, policy: OrphanPolicy
+) -> None:
+    """Finding #1 (FK float/Decimal route divergence) end-to-end regression.
+
+    The token-level fix lives in `fk_join_key`: a fractional float parent key
+    now encodes through its exact `Decimal(value)` expansion so it folds with an
+    equal-valued Decimal child key onto ONE `\\x00DEC:` token. This exercises
+    that fix on the full out-of-core route -- the reverse type direction and the
+    fractional case that `test_child_fk_join_normalizes_decimal_parent_against_numeric_child`
+    (Decimal parent, whole-number int/float child) does not cover.
+
+    Every value here is a power-of-two fraction that is exact in both float64 and
+    decimal128 (12.5, 2.5, 3.5), so Python's `12.5 == Decimal("12.5")` holds and
+    the dict-keyed pandas oracle sees zero orphans. Before the fix the
+    out-of-core encoder tagged the float parent `\\x00FLOAT:` and the Decimal
+    child `\\x00DEC:`, so the LEFT JOIN missed every row and the two routes
+    disagreed on orphan status -- FAIL would raise a false violation, and
+    WARN/PRESERVE/REMAP would misclassify matched rows. Post-fix every policy
+    must agree with the oracle: zero orphans, identical output.
+    """
+    plan = _decimal_passthrough_plan()
+    edge = _rel("customers", "customer_id", "orders", "customer_id", "cust", policy)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table({"customer_id": pa.array([12.5, 2.5, 3.5], type=pa.float64())})
+    child = pa.table(
+        {
+            "customer_id": pa.array(
+                [Decimal("12.5"), Decimal("2.5"), Decimal("3.5")], type=pa.decimal128(3, 1)
+            )
+        }
+    )
+    sources = {"customers": parent, "orders": child}
+
+    pandas = PandasExecutionAdapter().run(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        namespace_registry=_NS,
+    )
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    remap_values = None
+    if policy is OrphanPolicy.REMAP:
+        remap_values = _out_of_core_runner._remap_values(plan, edge, child)
+    out, warnings = mask_child_fk(
+        child=child,
+        edge=edge,
+        parent_relation=relation,
+        temp_dir=tmp_path,
+        remap_values=remap_values,
+    )
+
+    out_col = out.column("customer_id").to_pylist()
+    pandas_col = pandas.outputs["orders"].column("customer_id").to_pylist()
+    assert out_col == pandas_col
+    for ooc_val, oracle_val in zip(out_col, pandas_col, strict=True):
+        assert type(ooc_val) is type(oracle_val), (
+            f"type mismatch: {ooc_val!r} ({type(ooc_val)}) vs {oracle_val!r} ({type(oracle_val)})"
+        )
+    assert warnings == ()
+
+
 def test_child_fk_join_decimal_parent_does_not_over_normalize_distinct_keys(tmp_path) -> None:
     """Codex round-2 Finding A: prove the Decimal normalization is not a
     blanket collapse. A child key with no Python-equal Decimal parent key

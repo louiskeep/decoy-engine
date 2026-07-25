@@ -8,7 +8,7 @@ listed here for a decision. Ordered by stakes.
 
 ## TQ-1 crown jewels (2026-07-25, branch `tq/crown-jewels`)
 
-### 1. FK key route divergence: float vs Decimal of equal value (RI, worth root-cause)
+### 1. FK key route divergence: float vs Decimal of equal value (RI) -- RESOLVED (7e7be68)
 `execution/_fk_keys.py`. `fk_key_value(12.5) == fk_key_value(Decimal("12.5"))` is
 `True` (Python numeric tower), so the full-frame / sequential route (a plain-dict
 `parent_map`) treats an equal-valued float parent key and Decimal child FK as ONE
@@ -17,8 +17,12 @@ out-of-core route (string-token map) treats the SAME pair as a NON-match. Two
 routes can disagree on whether a child row is an orphan for mixed
 float64/decimal128 FK columns of equal value. RI is worst-blast-radius; confirm
 whether a real schema can produce that column pairing, and if so, unify the two
-routes' key identity. Pinned:
-`test_fk_keys_invariants.py::test_fractional_float_and_decimal_of_equal_value_do_not_share_a_join_token`.
+routes' key identity. **FIXED in `7e7be68`** (fk_join_key encodes a fractional
+float through its exact `Decimal(value)` expansion so float/Decimal fold to one
+`\x00DEC:` token IFF Python `==` holds; dennis-SOUND). Regression sentries:
+`test_fk_keys_invariants.py::test_fractional_float_and_equal_decimal_share_a_join_token`
+and `::test_float_and_decimal_that_are_unequal_keep_distinct_join_tokens`, plus
+an end-to-end route-parity case (fractional float parent vs Decimal child).
 
 ### 2. `hkdf_expand` does not validate negative length (crypto, minor)
 `determinism/_hkdf.py`. A negative `length` is not rejected: `n = (length+31)//32`

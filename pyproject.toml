@@ -924,9 +924,13 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/determinism/_derive.py"]
+only_mutate = ["src/decoy_engine/execution/_fk_keys.py"]
 pytest_add_cli_args_test_selection = [
-    "tests/unit/determinism/test_derive.py",
-    "tests/property/test_derive_invariants.py",
+    "tests/unit/execution/test_de10_fk_lossless_typing.py",
+    "tests/unit/execution/test_de10_chunked_fk_declared_dtype.py",
+    "tests/unit/execution/test_de10_chunked_fk_passthrough.py",
+    "tests/unit/execution/test_out_of_core_relation.py",
+    "tests/unit/kernel/test_kernel_contracts.py",
+    "tests/property/test_fk_keys_invariants.py",
 ]
 # debug = true  # flip on to see the raw pytest invocation/output when diagnosing.

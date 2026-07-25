@@ -1,5 +1,20 @@
 # Equivalent-mutant ledger: `_fk_keys.py`
 
+**Re-graded post-fix 2026-07-25 (commit `7e7be68`, finding #1 fix).** The
+float-vs-Decimal route-divergence fix rewrote `fk_join_key`'s float branch to
+encode through `_decimal_join_token(Decimal(value))`. A clean re-run confirms the
+grade holds: **142 mutants, 110 killed, 32 survived**, and every one of the 32
+survivors is a member of the equivalent set catalogued below (all in
+`lossless_fk_int_values`, `fk_nullable_int_array`, `to_pandas_fk_safe`). No
+survivor lands in `fk_join_key` or `_decimal_join_token`: the new float-branch
+mutants (`x_fk_join_key__mutmut_*`, `x__decimal_join_token__mutmut_*`) are all
+killed by the token-level pins in `test_fk_keys_invariants.py`
+(`test_fractional_float_and_equal_decimal_share_a_join_token`,
+`test_float_and_decimal_that_are_unequal_keep_distinct_join_tokens`) and the
+route-parity case
+`test_out_of_core_relation.py::test_child_fk_join_fractional_float_parent_matches_fractional_decimal_child`.
+LOGIC-100% preserved.
+
 TQ crown-jewels pass, 2026-07-25. A mutmut run against `execution/_fk_keys.py`
 (runtime FK key preservation, the RI crown jewel) left **51 survivors**. Every
 survivor was classified LOGIC or EQUIVALENT per
