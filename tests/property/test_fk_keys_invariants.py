@@ -65,10 +65,12 @@ import pytest
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
+import decoy_engine.execution._fk_keys as _fk_keys_module
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
     FK_KEY_DTYPE_UNSUPPORTED_CODE,
     NULL_FK_KEY,
+    _decimal_join_token,
     fk_all_null_array,
     fk_columns_for_table,
     fk_join_key,
@@ -703,3 +705,215 @@ def test_to_pandas_fk_safe_leaves_non_fk_columns_unprotected() -> None:
     out = to_pandas_fk_safe(table, {"fk_col"})
     assert str(out["fk_col"].dtype) == "Int64"
     assert str(out["plain_col"].dtype) == "float64"
+
+
+# --------------------------------------------------------------------------
+# TQ crown-jewels mutation-kill pass (docs/quality/mutation-ledgers/execution_fk_keys.md).
+# The properties above already pin every documented invariant; the tests
+# below target LOGIC survivors from the mutmut run that no existing test
+# happened to exercise: the numbers.Number NaN comparison, the Decimal
+# join-token's context/zero-sign/repr steps, the OBJ: type tag, the tuple
+# framing's empty join separator, the float-representable boundary, the
+# pd.isna null classification (including its except fallback), a
+# continue-vs-break loop-control mutation in three different loops, and two
+# dtype-boundary comparisons. Equivalent (message-prose-only or true no-op)
+# survivors are left alive and ledgered, not tested here.
+# --------------------------------------------------------------------------
+
+
+def test_fk_key_value_number_nan_collapses_to_null_fk_key() -> None:
+    """`is_nan = value != value` (the `numbers.Number` branch's only way to
+    detect NaN, since not every Number subtype exposes `math.isnan`) must
+    stay a real comparison: `Decimal("NaN")` is a `numbers.Number` that is
+    not `Integral`/`float`, so it reaches this exact line. A mutated
+    `is_nan = None` is falsy just like `False`, so the NaN check never fires
+    and the function instead falls into the `int(value)` conversion below,
+    which raises `ValueError` on a NaN Decimal and is swallowed by the
+    broad `except` -- returning the raw NaN Decimal unchanged instead of the
+    `NULL_FK_KEY` sentinel every other null-like value collapses to."""
+    assert fk_key_value(Decimal("NaN")) is NULL_FK_KEY
+
+
+def test_decimal_join_token_preserves_precision_beyond_default_context() -> None:
+    """`_decimal_join_token`'s `.normalize()` call must use the module's wide
+    `_DECIMAL_JOIN_CONTEXT` (prec=200), not the ambient default context
+    (prec=28): a 41-significant-digit fractional Decimal exceeds the
+    default's precision, so normalizing under the default context would
+    silently ROUND it before the token is minted -- corrupting the join key
+    for a legitimate high-precision Arrow decimal128/decimal256 value. Uses
+    a fractional value (not int-equal) so `fk_key_value` does not fold it to
+    a plain `int` first and this actually reaches the Decimal branch."""
+    value = Decimal("1." + "1" * 40)
+    assert len(value.as_tuple().digits) > 28  # exceeds decimal's default 28-digit context
+    assert fk_join_key(value) == f"\x00DEC:{value!r}"
+
+
+def test_decimal_join_token_zero_sign_is_canonicalized_to_non_negative() -> None:
+    """`_decimal_join_token`'s own docstring: `.normalize()` alone preserves
+    an all-zero value's sign (`Decimal('-0')` stays negative-zero), so the
+    function explicitly re-canonicalizes a zero result via `abs(canonical)`.
+    Tested directly against the private helper (not through `fk_join_key`)
+    because `fk_key_value` folds any int-equal Decimal -- including every
+    zero, regardless of scale or sign -- to a plain `int` before it would
+    ever reach this function through the only production call site; the
+    helper's own zero-canonicalization branch is otherwise unreachable via
+    the public API (see report: DEAD-BRANCH observation, not a bug)."""
+    assert _decimal_join_token(Decimal("0")) == "Decimal('0')"
+    assert _decimal_join_token(Decimal("-0")) == "Decimal('0')"
+
+
+def test_decimal_join_token_reflects_the_actual_value() -> None:
+    """`return repr(canonical)` must return the CANONICALIZED VALUE's repr,
+    not a constant: a mutated `repr(None)` would mint the identical
+    `"\\x00DEC:None"` token for every distinct Decimal, silently merging
+    every fractional-Decimal FK key into one join bucket."""
+    assert fk_join_key(Decimal("5.5")) == "\x00DEC:Decimal('5.5')"
+    assert fk_join_key(Decimal("5.5")) != fk_join_key(Decimal("7.25"))
+
+
+def test_fk_join_key_obj_tag_uses_the_value_s_actual_type_name() -> None:
+    """The catch-all `\\x00OBJ:{type(normalized).__qualname__}:{normalized!r}`
+    branch (anything `fk_key_value` returns unchanged: not None/bool/int/
+    float/str/Decimal) must tag with the VALUE's real type, not a constant
+    `NoneType` -- otherwise two different unsupported types would collide on
+    the same OBJ: token whenever their `repr()` also happened to coincide,
+    and every OBJ:-tagged key would misreport its own type."""
+    assert fk_join_key([1, 2]) == "\x00OBJ:list:[1, 2]"
+    assert fk_join_key((1, 2)) == "\x00OBJ:tuple:(1, 2)"
+
+
+@given(scalar_values(), scalar_values())
+def test_fk_join_key_tuple_uses_no_separator_between_components(a, b) -> None:
+    """`"".join(...)` -- the empty-string separator -- is why concatenating
+    two SINGLE-component tuples' tokens equals the TWO-component tuple's
+    token: a `join` call over exactly one part never inserts a separator
+    (there is nothing to separate), so `fk_join_key_tuple((a,))` and
+    `fk_join_key_tuple((b,))` are each just their one length-prefixed part,
+    and the real "".join over both parts is plain concatenation. A mutated
+    non-empty separator (e.g. `"XXXX".join(...)`) would insert junk between
+    the two parts in the two-component call but not in either one-component
+    call, breaking this identity -- while `fk_join_key_tuple`'s own
+    injectivity properties above are indifferent to which separator is used
+    (they only compare tokens to each other), so they cannot catch this."""
+    token_a = fk_join_key_tuple((a,))
+    token_b = fk_join_key_tuple((b,))
+    assert token_a + token_b == fk_join_key_tuple((a, b))
+
+
+@given(st.floats(min_value=-1e6, max_value=1e6, allow_nan=False, allow_infinity=False))
+def test_lossless_fk_int_values_exact_float_bound_is_inclusive_on_both_sides(some_float) -> None:
+    """`_is_exactly_float_representable`'s docstring-cited bound
+    (`_EXACT_FLOAT_INT_BOUND = 2**53`) is INCLUSIVE on both ends (module
+    docstring: 'the largest magnitude every integer up to AND INCLUDING it
+    can round-trip through float64 exactly'). A column pairing a genuine
+    float with an int at EXACTLY `+2**53` or `-2**53` must NOT be flagged
+    unrepresentable -- a `<`/`<=` boundary flip on either side would
+    wrongly fail-closed on the one value each bound is supposed to still
+    admit."""
+    bound = 2**53
+    assert lossless_fk_int_values([bound, some_float, None]) is None
+    assert lossless_fk_int_values([-bound, some_float, None]) is None
+
+
+def test_lossless_fk_int_values_pd_na_is_classified_as_a_null_slot() -> None:
+    """`is_null = bool(pd.isna(value))` is how a masked value read back off a
+    nullable `Int64` parent column (`pd.NA`, not plain `None`) is recognized
+    as a null FK component (module docstring: 'pd.NA ... a masked value read
+    back off a nullable Int64 parent column'). A mutated `is_null = None` (or
+    `bool(None)`) is unconditionally falsy, so `pd.NA` would instead fall
+    into the non-null/non-Integral bucket and flip `saw_non_int` -- silently
+    turning a legitimate all-int-plus-nulls column into a 'not pure int'
+    classification."""
+    assert lossless_fk_int_values([pd.NA, 5, 10]) == [None, 5, 10]
+
+
+def test_lossless_fk_int_values_array_like_element_falls_to_non_int_bucket() -> None:
+    """The `except (TypeError, ValueError): is_null = False` fallback (for a
+    `pd.isna` call that returns an array-like result instead of a scalar
+    bool, e.g. because the FK value component is itself list-shaped) must
+    stay `False` -- letting the value fall through to the ordinary
+    Integral/non-Integral classification below -- NOT `True`, which would
+    misclassify a genuinely unclassifiable value as a null slot and hide it
+    from `saw_non_int`, silently turning a column that should return `None`
+    (not a pure-int shape) into one this function reports as pure-int."""
+    values = [[1, 2], 5]  # a list-shaped element trips pd.isna's array-like path
+    assert lossless_fk_int_values(values) is None
+
+
+def test_lossless_fk_int_values_processes_every_value_after_a_null() -> None:
+    """The null-slot branch's `continue` must move on to the NEXT value, not
+    terminate the loop (a mutated `break` would silently truncate the
+    classified column at the first null, discarding every later value)."""
+    assert lossless_fk_int_values([None, 1, 2, 3]) == [None, 1, 2, 3]
+
+
+def test_fk_nullable_int_array_uint64_max_is_a_valid_boundary_not_an_overflow() -> None:
+    """`if value > _UINT64_MAX:` must be strictly-greater: `_UINT64_MAX`
+    itself (`2**64 - 1`) is `UInt64`'s own maximum representable value and
+    must round-trip, not raise. A mutated `>=` would wrongly reject the one
+    value at the boundary that IS exactly representable."""
+    uint64_max = 2**64 - 1
+    arr = fk_nullable_int_array([uint64_max])
+    assert str(arr.dtype) == "UInt64"
+    assert int(arr[0]) == uint64_max
+
+
+def test_fk_nullable_int_array_int64_min_is_a_valid_boundary_not_an_overflow() -> None:
+    """`elif value < _INT64_MIN:` must be strictly-less: `_INT64_MIN`
+    (`-(2**63)`) itself is `Int64`'s own minimum representable value and
+    must round-trip, not raise. A mutated `<=` would wrongly reject the one
+    value at the boundary that IS exactly representable."""
+    int64_min = -(2**63)
+    arr = fk_nullable_int_array([int64_min])
+    assert str(arr.dtype) == "Int64"
+    assert int(arr[0]) == int64_min
+
+
+def test_to_pandas_fk_safe_skips_an_absent_fk_column_and_still_protects_the_rest() -> None:
+    """`if col not in table.column_names: continue` must move on to the NEXT
+    named FK column, not abandon the loop -- a mutated `break` would silence
+    protection for every FK column listed AFTER the first one that happens
+    to be absent from this particular table (e.g. a relationship edge whose
+    other side lives on a different table)."""
+    table = pa.table({"present_int": pa.array([1, None, 2**60], type=pa.int64())})
+    out = to_pandas_fk_safe(table, ["missing_col", "present_int"])
+    assert str(out["present_int"].dtype) == "Int64"
+
+
+def test_to_pandas_fk_safe_skips_a_non_integer_fk_column_and_still_protects_the_rest() -> None:
+    """`if not pa.types.is_integer(arrow_type): continue` must move on to the
+    NEXT named FK column, not abandon the loop -- a mutated `break` would
+    silence protection for every FK column listed AFTER the first
+    non-integer one (e.g. a string-typed natural key column sharing a table
+    with an integer surrogate FK column)."""
+    table = pa.table(
+        {
+            "str_col": pa.array(["a", "b", "c"], type=pa.string()),
+            "int_col": pa.array([1, None, 2**60], type=pa.int64()),
+        }
+    )
+    out = to_pandas_fk_safe(table, ["str_col", "int_col"])
+    assert str(out["int_col"].dtype) == "Int64"
+
+
+def test_to_pandas_fk_safe_cast_failure_raises_the_coded_execution_error(monkeypatch) -> None:
+    """The `except (pa.lib.ArrowInvalid, OverflowError) as exc:` handler must
+    re-raise with `code=FK_KEY_DTYPE_UNSUPPORTED_CODE` -- the SAME coded
+    error every other route in this module raises for a genuinely
+    unrepresentable FK key (module docstring). A mutated `code=None`, or the
+    `code=` kwarg dropped entirely (which raises a bare `TypeError` from
+    `ExecutionError.__init__`'s required keyword-only parameter instead of
+    a coded `ExecutionError`), both break a caller that branches on
+    `ExecutionError.code`. The cast failure itself is not reachable from any
+    well-formed Arrow table (module docstring: 'not reachable ... but a
+    fail-closed backstop'), so the `types_mapper` hook is monkeypatched to
+    force it."""
+
+    def _always_fails(_arrow_type: object) -> None:
+        raise pa.lib.ArrowInvalid("forced for test")
+
+    monkeypatch.setattr(_fk_keys_module, "_exact_fk_types_mapper", _always_fails)
+    table = pa.table({"k": pa.array([1, 2, 3], type=pa.int64())})
+    with pytest.raises(ExecutionError) as ei:
+        to_pandas_fk_safe(table, {"k"})
+    assert ei.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
