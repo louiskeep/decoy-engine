@@ -63,6 +63,15 @@ class TestTruncateV1ByteIdentity:
         with pytest.raises(StrategyError) as exc:
             handler.run(df.copy(), "col", _seed({"length": 0}), _FakeCtx())
         assert exc.value.code == "truncate_length_invalid"
+        assert exc.value.strategy == "truncate"
+
+    def test_length_one_is_valid(self):
+        # length == 1 is the smallest valid length; it must truncate, not raise
+        # (pins the `< 1` boundary against drift to `<= 1` / `< 2`).
+        df = pd.DataFrame({"col": ["hello", "ab"]})
+        handler = TruncateHandler()
+        out, _ = handler.run(df.copy(), "col", _seed({"length": 1}), _FakeCtx())
+        assert out["col"].tolist() == ["h", "a"]
 
 
 class TestTruncateNewKeepShape:
@@ -112,6 +121,7 @@ class TestTruncateNewKeepShape:
                 _FakeCtx(),
             )
         assert exc.value.code == "truncate_keep_invalid"
+        assert exc.value.strategy == "truncate"
 
 
 class TestTruncateMaskChar:
@@ -167,6 +177,7 @@ class TestTruncateMaskChar:
                 _FakeCtx(),
             )
         assert exc.value.code == "truncate_mask_char_invalid"
+        assert exc.value.strategy == "truncate"
 
     def test_mask_char_rejects_non_string(self):
         df = pd.DataFrame({"col": ["hello"]})
