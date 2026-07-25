@@ -108,7 +108,11 @@ class TestShuffle:
         # The unseeded rng branch (deterministic=False) is a distinct code path;
         # a mutant that nulls that rng would crash here. No namespace needed.
         src = pa.table({"c": ["a", "b", "c", "d", "e", None]})
-        out = _run(_plan("c", _col("shuffle", deterministic=False)), src).output.column("c").to_pylist()
+        out = (
+            _run(_plan("c", _col("shuffle", deterministic=False)), src)
+            .output.column("c")
+            .to_pylist()
+        )
         assert out[5] is None
         assert Counter(v for v in out if v is not None) == Counter(["a", "b", "c", "d", "e"])
 
