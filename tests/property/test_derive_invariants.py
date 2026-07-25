@@ -238,6 +238,7 @@ def test_derive_index_overflow_raises(seed, namespace, source, pool_size) -> Non
     with pytest.raises(DeterminismError) as excinfo:
         derive_index(seed, namespace, source, pool_size=pool_size)
     assert excinfo.value.code == "pool_size_overflow"
+    assert str(pool_size) in excinfo.value.message
 
 
 @given(_valid_seed, _namespace_text, _source, st.integers(min_value=-(2**32), max_value=0))
@@ -245,6 +246,20 @@ def test_derive_index_invalid_pool_size_raises(seed, namespace, source, pool_siz
     with pytest.raises(DeterminismError) as excinfo:
         derive_index(seed, namespace, source, pool_size=pool_size)
     assert excinfo.value.code == "pool_size_invalid"
+    assert str(pool_size) in excinfo.value.message
+
+
+@given(_valid_seed, _namespace_text, _source)
+def test_derive_index_accepts_pool_size_at_max_boundary(seed, namespace, source) -> None:
+    """`derive_index` docstring: the `2**56` ceiling raises above it, which
+    means the boundary value itself (`pool_size == _POOL_SIZE_MAX`) must be
+    ACCEPTED, not rejected. `pool_size > _POOL_SIZE_MAX` off-by-one to
+    `>=` would reject this exact value while still passing every example
+    the random `_wide_length`-style sampling in the neighboring tests
+    happens to draw, since `_POOL_SIZE_MAX` itself is a single point in a
+    huge integer range."""
+    idx = derive_index(seed, namespace, source, pool_size=_POOL_SIZE_MAX)
+    assert 0 <= idx < _POOL_SIZE_MAX
 
 
 # --------------------------------------------------------------------------
@@ -283,6 +298,10 @@ def test_seed_wrong_length_raises_for_any_invalid_length(bad_length, namespace, 
     with pytest.raises(DeterminismError) as excinfo:
         derive(seed, namespace, source)
     assert excinfo.value.code == "seed_wrong_length"
+    # The offending length is load-bearing diagnostic content (tells the
+    # caller what it actually got), not decorative prose -- a message that
+    # dropped it (or went missing) would ship a useless error.
+    assert str(bad_length) in excinfo.value.message
 
 
 @given(_valid_seed, _source)
@@ -290,6 +309,7 @@ def test_empty_namespace_raises_regardless_of_seed_and_source(seed, source) -> N
     with pytest.raises(DeterminismError) as excinfo:
         derive(seed, "", source)
     assert excinfo.value.code == "namespace_empty"
+    assert excinfo.value.message
 
 
 # --------------------------------------------------------------------------
