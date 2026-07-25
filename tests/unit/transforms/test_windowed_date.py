@@ -180,6 +180,71 @@ class TestWindowedDateBounds:
         above = sum(1 for d in result if pd.Timestamp(d) >= midpoint)
         assert above > 50, f"Expected >50 above midpoint, got {above}"
 
+    def _offsets(self, result, anchor):
+        import pandas as pd
+
+        return {(pd.Timestamp(d) - pd.Timestamp(anchor)).days for d in result}
+
+    def test_deterministic_output_is_the_pinned_known_answer(self) -> None:
+        # The existing determinism test only checks run1 == run2; a mutated
+        # per-row seed (i.to_bytes(8) -> to_bytes(9), or [:8] -> [:9]) stays
+        # self-consistent, so it survives that. Pin the exact seeded output so
+        # any change to the seed derivation or the uniform draw fails here.
+        anchors = ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]
+        result = self._apply(anchors, min_days=0, max_days=100)
+        assert result == ["2024-01-09", "2024-04-06", "2024-03-09", "2024-06-24", "2024-12-07"]
+
+    def test_late_distribution_output_is_the_pinned_known_answer(self) -> None:
+        # Uniform returns the first draw and never touches the second (`b`); only
+        # early/late draw b and take min/max(a, b). Pin the exact late sequence
+        # so any change to the b draw's bounds (min dropped, max +-1) alters the
+        # sequence and fails here -- the bias tests only check a coarse midpoint
+        # split and miss those.
+        anchors = ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]
+        result = self._apply(anchors, min_days=0, max_days=100, distribution="late")
+        assert result == ["2024-02-09", "2024-05-20", "2024-03-09", "2024-08-14", "2024-12-07"]
+
+    def test_late_distribution_nonzero_min_known_answer(self) -> None:
+        # min_days=20 (non-zero) so the b draw's LOWER bound matters: a
+        # min-dropped `rng.integers(max_days + 1)` mutant draws from [0, max]
+        # instead of [min, max] and shifts the sequence. (The min=0 KAT above
+        # cannot see it, since integers(0, max+1) == integers(min, max+1) there.)
+        anchors = ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]
+        result = self._apply(anchors, min_days=20, max_days=100, distribution="late")
+        assert result == ["2024-02-21", "2024-05-27", "2024-03-16", "2024-08-20", "2024-12-10"]
+
+    def test_both_window_endpoints_are_reachable(self) -> None:
+        # A mutated sampling bound (rng.integers(min, max - 1) or a dropped
+        # min_days) silently drops an endpoint while staying inside the window,
+        # so the "all within window" test cannot see it. Over enough rows every
+        # offset in a small window must appear.
+        anchors = ["2024-01-01"] * 60
+        assert self._offsets(self._apply(anchors, min_days=0, max_days=3), "2024-01-01") == {
+            0,
+            1,
+            2,
+            3,
+        }
+
+    def test_symmetric_window_is_not_collapsed_to_min(self) -> None:
+        # span = max_days - min_days; a `max_days + min_days` mutant makes span 0
+        # for a symmetric window (min=-max), which would collapse every row to
+        # min_days. A real symmetric window samples the whole range.
+        offs = self._offsets(
+            self._apply(["2024-06-15"] * 40, min_days=-5, max_days=5), "2024-06-15"
+        )
+        assert len(offs) > 1 and max(offs) > -5
+
+    def test_adjacent_window_reaches_both_days(self) -> None:
+        # span == 1 (max = min + 1): a `span == 1` early-return mutant would pin
+        # every row to min_days. Both offsets must appear.
+        assert self._offsets(
+            self._apply(["2024-01-01"] * 40, min_days=0, max_days=1), "2024-01-01"
+        ) == {
+            0,
+            1,
+        }
+
 
 class TestWindowedDateDeterminism:
     """Two identical seeded runs produce byte-identical output."""
