@@ -37,3 +37,6 @@ docs/api/
 # (hatchling honors it); the sdist target also excludes them belt-and-suspenders.
 .claude/worktrees/
 .hypothesis/
+
+# mutmut working tree (mutation testing); never committed
+mutants/

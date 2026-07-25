@@ -143,3 +143,35 @@ of baseline. An abstract "80% everywhere" set before measurement is a guess.
 Start at GATE-TQ0: pick the pilot module and the mutation-bar policy, then run
 TQ-0 (install `pytest-cov`, baseline coverage + `mutmut`, write property/
 metamorphic tests to the bar, ship the template).
+
+---
+
+## TQ-0 results (2026-07-25, branch `tq/ri-fk-graph`)
+
+Pilot module: `relationships/_graph.py` (RI/FK graph). Playbook shipped at
+`docs/quality/module-test-quality-playbook.md`; tests at
+`tests/property/test_ri_graph_invariants.py` (28 property/metamorphic + targeted
+tests). Tooling: `pytest-cov` + `mutmut` added to the `dev` extra; `[tool.mutmut]`
+config established (`source_paths` at package root, `only_mutate` per module).
+
+| Metric | Existing (example) tests | + oracle layer |
+|---|---|---|
+| Coverage | 91% | 99% (oracle suite alone) |
+| Mutation (raw) | 73.7% (65/247 survived) | 89.1% (27/247 survived) |
+| Mutation (logic) | -- | 100% (0 logic mutants survive) |
+
+The 27 raw survivors are all equivalent mutants (23 error-message wording, 4
+no-op `.get(k, [])`->`None` defaults; see the playbook for the argument). No bug
+found in `_graph.py`. The RI 100% bar is met on logic mutants.
+
+**Policy established (needs Cam confirm):** the bar (incl. the 100% crypto/RI
+mandate) is applied to LOGIC mutants; error-message-wording mutants are
+classified equivalent because mutmut 3.x cannot skip string mutation selectively
+(`should_mutate` is file-level). Both raw and logic scores are reported.
+
+**Owed to TQ-3:** the coverage/duckdb CI fix (import duckdb before coverage;
+`pytest --cov` otherwise breaks `_duckdb._sqltypes`). The pilot measured coverage
+with an in-process runner that pre-imports duckdb.
+
+Gates: dennis pending; Codex per the standard gate. GATE-TQ1 (fan-out) proceeds
+on a sound TQ-0 template.

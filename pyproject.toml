@@ -925,5 +925,8 @@ fail_under = 0
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
 only_mutate = ["src/decoy_engine/relationships/_graph.py"]
-pytest_add_cli_args_test_selection = ["tests/unit/relationships/"]
+pytest_add_cli_args_test_selection = [
+    "tests/unit/relationships/",
+    "tests/property/test_ri_graph_invariants.py",
+]
 # debug = true  # flip on to see the raw pytest invocation/output when diagnosing.

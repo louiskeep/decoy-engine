@@ -252,6 +252,42 @@ def test_multi_parent_conflicting_policy_is_rejected() -> None:
     with pytest.raises(PlanCompileError) as ei:
         _build(rels, lookup)
     assert ei.value.code == "orphan_policy_conflict"
+    # Load-bearing fields, not just the code: `path` names the offending
+    # child tuple and `message` enumerates the actual conflicting policy
+    # VALUES (not just that a conflict happened) so an operator can act on
+    # the error without re-deriving it from the config.
+    assert ei.value.path == "relationships[c.('pid',)]"
+    assert "c.('pid',)" in ei.value.message
+    assert "['fail', 'preserve']" in ei.value.message
+
+
+def test_cycle_error_reports_exact_cycle_participants() -> None:
+    """`fk_cycle`'s reported node list is the actual cycle membership, not
+    every node with nonzero indegree or only nodes with indegree > 1: an
+    isolated upstream node (X, indegree 0 after Kahn drains it) must NOT be
+    reported, and a cycle node whose indegree lands at exactly 1 (B) MUST
+    be reported. Both boundary values (`>= 0` and `> 1`) are wrong in
+    opposite directions from the correct `> 0`."""
+    rels = (
+        Relationship("X", ("id",), "A", ("id",), namespace="ns"),
+        Relationship("A", ("id",), "B", ("id",), namespace="ns"),
+        Relationship("B", ("id",), "A", ("id",), namespace="ns"),
+    )
+    lookup = {
+        ("X", ("id",), "A", ("id",)): OrphanPolicy.PRESERVE,
+        ("A", ("id",), "B", ("id",)): OrphanPolicy.PRESERVE,
+        ("B", ("id",), "A", ("id",)): OrphanPolicy.PRESERVE,
+    }
+    with pytest.raises(PlanCompileError) as ei:
+        _build(rels, lookup)
+    assert ei.value.code == "fk_cycle"
+    assert ei.value.path == "relationships"
+    # X drains to indegree 0 during Kahn's algorithm and is not part of any
+    # cycle; A and B both end at indegree 1 and are the actual cycle.
+    assert "X" not in ei.value.message
+    assert "2 nodes" in ei.value.message
+    assert "[('A', ('id',)), ('B', ('id',))]" in ei.value.message
+    assert "deterministic mask order" in ei.value.message
 
 
 # --------------------------------------------------------------------------
@@ -300,6 +336,9 @@ def test_missing_policy_field_is_rejected() -> None:
     with pytest.raises(PlanCompileError) as ei:
         check_orphan_fk_policy_completeness(config, rels)
     assert ei.value.code == "orphan_fk_policy_missing"
+    assert ei.value.path == "relationships[0]"
+    assert "p.['id']" in ei.value.message
+    assert "does not declare an orphan_policy" in ei.value.message
 
 
 def test_invalid_policy_value_is_rejected() -> None:
@@ -308,6 +347,12 @@ def test_invalid_policy_value_is_rejected() -> None:
     with pytest.raises(PlanCompileError) as ei:
         check_orphan_fk_policy_completeness(config, rels)
     assert ei.value.code == "orphan_fk_policy_invalid"
+    assert ei.value.path == "relationships[0].orphan_policy"
+    # The offending value AND the enumerated valid options are both
+    # load-bearing: an operator needs to see what was declared and what
+    # was actually allowed.
+    assert "orphan_policy='sometimes'" in ei.value.message
+    assert "'preserve', 'remap', 'warn', 'fail'" in ei.value.message
 
 
 def test_relationship_absent_from_config_is_rejected() -> None:
@@ -315,6 +360,9 @@ def test_relationship_absent_from_config_is_rejected() -> None:
     with pytest.raises(PlanCompileError) as ei:
         check_orphan_fk_policy_completeness({"relationships": []}, rels)
     assert ei.value.code == "orphan_fk_policy_missing"
+    assert ei.value.path == "relationships[p.('id',)->c.('pid',)]"
+    assert "p.('id',) -> c.('pid',)" in ei.value.message
+    assert "'preserve', 'remap', 'warn', 'fail'" in ei.value.message
 
 
 def test_duplicate_conflicting_policy_is_rejected() -> None:
@@ -338,6 +386,11 @@ def test_duplicate_conflicting_policy_is_rejected() -> None:
     with pytest.raises(PlanCompileError) as ei:
         check_orphan_fk_policy_completeness(config, rels)
     assert ei.value.code == "orphan_fk_policy_duplicate"
+    assert ei.value.path == "relationships[1]"
+    assert "p.['id']" in ei.value.message
+    assert "c.['pid']" in ei.value.message
+    assert "orphan_policy='fail'" in ei.value.message
+    assert "declared 'preserve'" in ei.value.message
 
 
 def test_build_raises_on_lookup_key_missing() -> None:
@@ -349,6 +402,9 @@ def test_build_raises_on_lookup_key_missing() -> None:
     with pytest.raises(PlanCompileError) as ei:
         _build(rels, {})  # empty lookup: the key is missing
     assert ei.value.code == "orphan_fk_policy_missing"
+    assert ei.value.path == "relationships[p.('id',)->c.('pid',)]"
+    assert "p.('id',) -> c.('pid',) has no orphan_policy" in ei.value.message
+    assert "check_orphan_fk_policy_completeness must run" in ei.value.message
 
 
 @pytest.mark.parametrize(
@@ -426,3 +482,211 @@ def test_same_parent_different_child_may_differ() -> None:
     resolved = check_orphan_fk_policy_completeness(config, rels)
     assert resolved[("emp", ("id",), "rev", ("employee_id",))] is OrphanPolicy.PRESERVE
     assert resolved[("emp", ("id",), "rev", ("reviewer_id",))] is OrphanPolicy.REMAP
+
+
+# --------------------------------------------------------------------------
+# Malformed-entry TYPE guards: each of these is an `and`-chained isinstance
+# check (`isinstance(x, T1) and isinstance(y, T2) and all(...)`). A bug that
+# loosens any leg to `or` still rejects most malformed shapes (the other legs
+# still fail), so the naive "just malformed" case does not distinguish the
+# correct `and` from a broken `or` -- both skip the entry and both end up
+# raising the same `orphan_fk_policy_missing`. These cases are built so the
+# non-type-checked leg happens to coincide with the real relationship's key
+# under the "or" bug (e.g. `tuple("i") == ("i",)`), which makes a broken `or`
+# WRONGLY accept the entry and resolve without error, while the correct
+# `and` rejects it and raises `orphan_fk_policy_missing`.
+# --------------------------------------------------------------------------
+
+
+def test_parent_columns_string_is_rejected_even_when_char_tuple_would_match() -> None:
+    """`parent.columns` as a bare string (not a list) must be rejected even
+    when its character-tuple happens to equal the real column tuple."""
+    rels = (Relationship("p", ("i",), "c", ("pid",), namespace="ns"),)
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": "p", "columns": "i"},  # string, not list
+                "children": [{"table": "c", "columns": ["pid"]}],
+                "orphan_policy": "preserve",
+            }
+        ]
+    }
+    with pytest.raises(PlanCompileError) as ei:
+        check_orphan_fk_policy_completeness(config, rels)
+    assert ei.value.code == "orphan_fk_policy_missing"
+
+
+def test_parent_table_non_string_is_rejected_even_when_it_equals_the_real_value() -> None:
+    """`parent.table` that is not a `str` must be rejected even when it is
+    == the real relationship's `parent_table` (a type violation the static
+    `Relationship` type hint doesn't enforce at runtime)."""
+    rels = (Relationship(1, ("id",), "c", ("pid",), namespace="ns"),)  # type: ignore[arg-type]
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": 1, "columns": ["id"]},  # int, not str
+                "children": [{"table": "c", "columns": ["pid"]}],
+                "orphan_policy": "preserve",
+            }
+        ]
+    }
+    with pytest.raises(PlanCompileError) as ei:
+        check_orphan_fk_policy_completeness(config, rels)
+    assert ei.value.code == "orphan_fk_policy_missing"
+
+
+def test_child_columns_string_is_rejected_even_when_char_tuple_would_match() -> None:
+    """`children[].columns` as a bare string must be rejected even when its
+    character-tuple happens to equal the real child column tuple."""
+    rels = (Relationship("par", ("id",), "chi", ("p",), namespace="ns"),)
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": "par", "columns": ["id"]},
+                "children": [{"table": "chi", "columns": "p"}],  # string, not list
+                "orphan_policy": "preserve",
+            }
+        ]
+    }
+    with pytest.raises(PlanCompileError) as ei:
+        check_orphan_fk_policy_completeness(config, rels)
+    assert ei.value.code == "orphan_fk_policy_missing"
+
+
+def test_child_table_non_string_is_rejected_even_when_it_equals_the_real_value() -> None:
+    """`children[].table` that is not a `str` must be rejected even when it
+    == the real relationship's `child_table`."""
+    rels = (Relationship("par", ("id",), 2, ("pid",), namespace="ns"),)  # type: ignore[arg-type]
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": "par", "columns": ["id"]},
+                "children": [{"table": 2, "columns": ["pid"]}],  # int, not str
+                "orphan_policy": "preserve",
+            }
+        ]
+    }
+    with pytest.raises(PlanCompileError) as ei:
+        check_orphan_fk_policy_completeness(config, rels)
+    assert ei.value.code == "orphan_fk_policy_missing"
+
+
+# --------------------------------------------------------------------------
+# Malformed-entry SKIP is `continue`, not `break`: a malformed entry must
+# not abort the whole config scan, or every relationship declared AFTER the
+# first malformed entry silently loses its policy. Each case below puts a
+# malformed entry first and a well-formed, load-bearing entry second.
+# --------------------------------------------------------------------------
+
+
+def test_malformed_entry_does_not_abort_scan_of_later_entries() -> None:
+    """A non-dict list item (`entry-not-dict`) is skipped; entries after it
+    still resolve."""
+    rel2 = Relationship("p2", ("id",), "c2", ("pid",), namespace="ns")
+    config = {
+        "relationships": [
+            "oops-not-a-dict",
+            {
+                "parent": {"table": "p2", "columns": ["id"]},
+                "children": [{"table": "c2", "columns": ["pid"]}],
+                "orphan_policy": "warn",
+            },
+        ]
+    }
+    resolved = check_orphan_fk_policy_completeness(config, (rel2,))
+    assert resolved[("p2", ("id",), "c2", ("pid",))] is OrphanPolicy.WARN
+
+
+def test_malformed_parent_field_does_not_abort_scan_of_later_entries() -> None:
+    """A non-dict `parent` field is skipped; entries after it still
+    resolve."""
+    rel2 = Relationship("p2", ("id",), "c2", ("pid",), namespace="ns")
+    config = {
+        "relationships": [
+            {"parent": "not-a-dict"},
+            {
+                "parent": {"table": "p2", "columns": ["id"]},
+                "children": [{"table": "c2", "columns": ["pid"]}],
+                "orphan_policy": "warn",
+            },
+        ]
+    }
+    resolved = check_orphan_fk_policy_completeness(config, (rel2,))
+    assert resolved[("p2", ("id",), "c2", ("pid",))] is OrphanPolicy.WARN
+
+
+def test_malformed_parent_identity_does_not_abort_scan_of_later_entries() -> None:
+    """A missing `parent.table` (so `parent_table` fails the type guard) is
+    skipped; entries after it still resolve."""
+    rel2 = Relationship("p2", ("id",), "c2", ("pid",), namespace="ns")
+    config = {
+        "relationships": [
+            {"parent": {"columns": ["id"]}},  # no "table" key
+            {
+                "parent": {"table": "p2", "columns": ["id"]},
+                "children": [{"table": "c2", "columns": ["pid"]}],
+                "orphan_policy": "warn",
+            },
+        ]
+    }
+    resolved = check_orphan_fk_policy_completeness(config, (rel2,))
+    assert resolved[("p2", ("id",), "c2", ("pid",))] is OrphanPolicy.WARN
+
+
+def test_malformed_children_field_does_not_abort_scan_of_later_entries() -> None:
+    """A non-list `children` field on one entry is skipped; a later,
+    unrelated entry still resolves."""
+    rel2 = Relationship("p2", ("id",), "c2", ("pid",), namespace="ns")
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": "p1", "columns": ["id"]},
+                "orphan_policy": "preserve",
+                "children": "not-a-list",
+            },
+            {
+                "parent": {"table": "p2", "columns": ["id"]},
+                "children": [{"table": "c2", "columns": ["pid"]}],
+                "orphan_policy": "warn",
+            },
+        ]
+    }
+    resolved = check_orphan_fk_policy_completeness(config, (rel2,))
+    assert resolved[("p2", ("id",), "c2", ("pid",))] is OrphanPolicy.WARN
+
+
+def test_malformed_child_entry_does_not_abort_scan_of_later_children() -> None:
+    """A non-dict child in one entry's `children` list is skipped; a later
+    child of the SAME entry still resolves."""
+    rel2 = Relationship("p", ("id",), "c2", ("pid2",), namespace="ns")
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": "p", "columns": ["id"]},
+                "orphan_policy": "preserve",
+                "children": ["not-a-dict", {"table": "c2", "columns": ["pid2"]}],
+            }
+        ]
+    }
+    resolved = check_orphan_fk_policy_completeness(config, (rel2,))
+    assert resolved[("p", ("id",), "c2", ("pid2",))] is OrphanPolicy.PRESERVE
+
+
+def test_malformed_child_identity_does_not_abort_scan_of_later_children() -> None:
+    """A child dict with a non-str `table` is skipped; a later, well-formed
+    child of the SAME entry still resolves."""
+    rel2 = Relationship("p", ("id",), "c2", ("pid2",), namespace="ns")
+    config = {
+        "relationships": [
+            {
+                "parent": {"table": "p", "columns": ["id"]},
+                "orphan_policy": "preserve",
+                "children": [
+                    {"table": 123, "columns": ["pid1"]},  # int, not str
+                    {"table": "c2", "columns": ["pid2"]},
+                ],
+            }
+        ]
+    }
+    resolved = check_orphan_fk_policy_completeness(config, (rel2,))
+    assert resolved[("p", ("id",), "c2", ("pid2",))] is OrphanPolicy.PRESERVE
