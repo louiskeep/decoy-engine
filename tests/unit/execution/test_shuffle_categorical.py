@@ -6,6 +6,7 @@ from collections import Counter
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -56,6 +57,19 @@ def _run(plan: Any, table: pa.Table) -> ExecutionResult:
     )
 
 
+class _Ctx:
+    """Minimal StrategyContext stand-in for direct handler.run() calls (the
+    pandas-level dtype/index behavior is only observable before the Arrow
+    conversion the pipeline applies)."""
+
+    job_seed = _SEED
+    mask_key = _SEED
+
+
+def _direct_seed() -> ColumnSeed:
+    return _col("shuffle", namespace="sh", deterministic=True)
+
+
 class TestShuffle:
     def test_preserves_multiset_and_nulls_deterministic(self) -> None:
         src = pa.table({"c": ["a", "b", "c", None, "a"]})
@@ -88,6 +102,46 @@ class TestShuffle:
         with pytest.raises(ExecutionError) as exc:
             _run(_plan("c", _col("shuffle", namespace=None, deterministic=True)), src)
         assert exc.value.code == "shuffle_requires_namespace"
+        assert exc.value.strategy == "shuffle"
+
+    def test_non_deterministic_shuffle_runs_and_preserves_multiset(self) -> None:
+        # The unseeded rng branch (deterministic=False) is a distinct code path;
+        # a mutant that nulls that rng would crash here. No namespace needed.
+        src = pa.table({"c": ["a", "b", "c", "d", "e", None]})
+        out = _run(_plan("c", _col("shuffle", deterministic=False)), src).output.column("c").to_pylist()
+        assert out[5] is None
+        assert Counter(v for v in out if v is not None) == Counter(["a", "b", "c", "d", "e"])
+
+    def test_deterministic_permutation_is_the_pinned_known_answer(self) -> None:
+        # Pins the exact derive-seeded permutation, so a mutated seed slice
+        # (derive(...)[:8] -> [:9]) or a nulled deterministic rng produces a
+        # different order and fails here. Computed once from the real handler.
+        src = pa.table({"c": ["a", "b", "c", "d", "e"]})
+        seed = _col("shuffle", namespace="sh", deterministic=True)
+        out = _run(_plan("c", seed), src).output.column("c").to_pylist()
+        assert out == ["d", "e", "c", "a", "b"]
+
+    def test_output_keeps_object_dtype_and_null_not_nan(self) -> None:
+        # Q13: an int column widens to float64 in pandas once it carries a null;
+        # the handler wraps the output in an explicit object-dtype Series so the
+        # assignment does not re-infer float64 (which would turn the null into
+        # NaN). Direct handler call so the pandas dtype is observable pre-Arrow.
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        df = pd.DataFrame({"n": [10, 20, 30, 40, 50]})  # pure int64, no null
+        out, _ = ShuffleStrategyHandler().run(df.copy(), "n", _direct_seed(), _Ctx())
+        assert out["n"].dtype == object  # a dropped dtype=object re-infers int64
+
+    def test_non_default_index_preserved_and_aligned(self) -> None:
+        # The output Series must carry the source index; a RangeIndex (index=None
+        # or dropped) misaligns against a non-default-index frame on assignment
+        # and blanks every row to NaN.
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        df = pd.DataFrame({"c": ["a", "b", "c", "d", "e"]}, index=[10, 20, 30, 40, 50])
+        out, _ = ShuffleStrategyHandler().run(df.copy(), "c", _direct_seed(), _Ctx())
+        assert list(out.index) == [10, 20, 30, 40, 50]
+        assert Counter(out["c"]) == Counter(["a", "b", "c", "d", "e"])  # no NaN blanks
 
 
 class TestCategorical:

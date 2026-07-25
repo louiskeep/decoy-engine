@@ -924,8 +924,8 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/execution/_strategies/_bucket_perturb.py"]
+only_mutate = ["src/decoy_engine/execution/_strategies/_shuffle.py"]
 pytest_add_cli_args_test_selection = [
-    "tests/unit/execution/test_bucket_perturb.py",
+    "tests/unit/execution/test_shuffle_categorical.py",
 ]
 # debug = true  # flip on to see the raw pytest invocation/output when diagnosing.
