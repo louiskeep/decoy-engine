@@ -26,13 +26,12 @@ function's docstring (cited per test):
   Python types must fold to ONE join token (bool/int/whole-float/whole-
   Decimal all become the same int; None/NaN all become `NULL_FK_KEY`;
   `_decimal_join_token`'s docstring documents that a Decimal's trailing-zero
-  SCALE must not affect its token). Where the module does NOT claim
-  consistency (a fractional float vs. an equal-valued fractional Decimal,
-  which the plain-dict pandas oracle WOULD still fold via Python's numeric
-  tower but `fk_join_key` type-tags apart), a test pins the observed gap
-  instead of asserting a false universal claim -- see
-  `test_fractional_float_and_decimal_of_equal_value_do_not_share_a_join_token`
-  and the report's "weak spot" note.
+  SCALE must not affect its token). A fractional float and an equal-valued
+  fractional Decimal ALSO fold to one token (RI fix, 2026-07-25): the token
+  route encodes a float through its exact decimal expansion, so it matches a
+  Decimal IFF Python's numeric tower says they are equal -- see
+  `test_fractional_float_and_equal_decimal_share_a_join_token` and
+  `test_float_and_decimal_that_are_unequal_keep_distinct_join_tokens`.
 - NAMESPACE ISOLATION: this module implements two independent isolation
   mechanisms, both tested directly: `fk_join_key`'s per-type tag prefix
   (`\\x00INT:`/`\\x00STR:`/`\\x00DEC:`/...) keeps different Python types from
@@ -296,26 +295,35 @@ def test_decimal_scale_only_difference_shares_one_join_token(n) -> None:
 
 
 @given(st.integers(min_value=-(10**6), max_value=10**6))
-def test_fractional_float_and_decimal_of_equal_value_do_not_share_a_join_token(n) -> None:
-    """DOCUMENTED GAP, not a universal consistency claim: `Decimal('N.5') ==
-    N.5` (float) and they hash equal (Python's numeric tower spans float and
-    Decimal too, not just Decimal-to-Decimal), so a plain-dict `parent_map`
-    (the pandas full-frame/sequential oracle) already treats a fractional
-    float parent key and an equal-valued fractional Decimal child FK as ONE
-    key. But `fk_join_key` type-tags its branches (`\\x00FLOAT:` vs.
-    `\\x00DEC:`) and does NOT fold this cross-type case the way it folds
-    whole-valued int/float/Decimal or same-type Decimal scale differences.
-    This pins the CURRENT observed behavior (see report 'weak spot'): if a
-    real relationship's parent and child FK columns ever carry a fractional
-    key under two different Arrow numeric types (float64 vs. decimal128),
-    the string-token route (out-of-core) would treat a legitimate match as
-    an orphan while the pandas dict-based oracle would not."""
+def test_fractional_float_and_equal_decimal_share_a_join_token(n) -> None:
+    """RI fix (2026-07-25, Codex-confirmed): a fractional float and an
+    equal-valued fractional Decimal must mint the SAME join token, because the
+    pandas full-frame/sequential oracle's plain-dict `parent_map` already
+    treats them as ONE key (`N.5 == Decimal('N.5')` under Python's numeric
+    tower). The out-of-core string-token route must agree, or a legitimate
+    child match becomes a false orphan on that route only. The token route now
+    folds a fractional float through its EXACT decimal expansion so it matches
+    a Decimal IFF the two values are genuinely equal."""
     value_str = f"{n}.5"
     as_float = float(value_str)
     as_decimal = Decimal(value_str)
-    assume(as_float == as_decimal)  # only the genuinely float-exact cases
+    assume(as_float == as_decimal)  # only the genuinely float-exact cases (N.5 always is)
     assert fk_key_value(as_float) == fk_key_value(as_decimal)  # the dict oracle folds these
-    assert fk_join_key(as_float) != fk_join_key(as_decimal)  # the token route does not
+    assert fk_join_key(as_float) == fk_join_key(as_decimal)  # the token route now folds them too
+
+
+def test_float_and_decimal_that_are_unequal_keep_distinct_join_tokens() -> None:
+    """The flip side of the RI fix: the fold must NOT over-match. A float that
+    is not exactly equal to a same-text Decimal (the classic `0.1` case --
+    `0.1 != Decimal('0.1')` in Python because the float is not exactly 0.1)
+    keeps a DISTINCT token, matching that the dict oracle also keeps them
+    apart. Folding these would be a WORSE bug (a spurious FK match)."""
+    assert Decimal("0.1") != 0.1  # Python numeric-tower fact this test rests on
+    assert fk_join_key(0.1) != fk_join_key(Decimal("0.1"))
+    # but the float's own exact expansion round-trips to itself. Decimal(0.1)
+    # (the float, not the string) is deliberate here -- it IS the exact value
+    # the float carries, which is exactly what fk_join_key encodes a float as.
+    assert fk_join_key(0.1) == fk_join_key(Decimal(0.1))  # noqa: RUF032
 
 
 # --------------------------------------------------------------------------

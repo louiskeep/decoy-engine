@@ -171,7 +171,22 @@ def fk_join_key(value: object) -> str:
     if isinstance(normalized, int):
         return f"\x00INT:{normalized}"
     if isinstance(normalized, float):
-        return f"\x00FLOAT:{normalized!r}"
+        # RI fix (2026-07-25, Codex-confirmed): a FRACTIONAL float and an
+        # equal-valued fractional Decimal must mint the SAME join token, because
+        # the pandas oracle's plain-dict parent_map already treats them as one
+        # key whenever Python's numeric tower says they are equal
+        # (`12.5 == Decimal("12.5")` is True). Type-tagging them apart
+        # (`\x00FLOAT:` vs `\x00DEC:`) made the out-of-core route disagree with
+        # the dict route -- a real referential-integrity divergence (a valid
+        # child looked like an orphan on one route only). Encode the float
+        # through its EXACT decimal expansion and the same `_decimal_join_token`
+        # a Decimal uses, so the token matches IFF the values are truly equal:
+        # `Decimal(12.5)` is `Decimal('12.5')` (same token as `Decimal("12.5")`),
+        # while `Decimal(0.1)` is the exact 0.1000...0625 expansion (a different
+        # token from `Decimal("0.1")`, matching that `0.1 != Decimal("0.1")` in
+        # Python). Infinity round-trips through Decimal cleanly; NaN never
+        # reaches here (fk_key_value folds it to NULL_FK_KEY).
+        return f"\x00DEC:{_decimal_join_token(Decimal(normalized))}"
     if isinstance(normalized, str):
         return f"\x00STR:{len(normalized)}:{normalized}"
     if isinstance(normalized, Decimal):
