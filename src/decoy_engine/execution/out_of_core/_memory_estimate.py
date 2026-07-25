@@ -1,11 +1,18 @@
-"""Phase-aware DuckDB memory sizing plus the hybrid capacity preflight for
-the out-of-core FK route.
+"""Phase-aware DuckDB memory sizing, plus the row-based build-floor model and
+ceiling-recommendation math the capacity verdict layer (`_capacity_eval.py`)
+prices jobs against.
 
 Split out from `_budget.py` rather than appended there, the same move
 `_spill_estimate.py` already made for the disk-side estimator: `_budget.py`
 is within a handful of lines of the 600-LOC orchestration cap (CLAUDE.md
 "Engineering best practices"), so a sibling module holds the new surface
-instead of forcing a decomposition mid-sprint.
+instead of forcing a decomposition mid-sprint. This module later crossed
+that same cap itself once the hybrid capacity preflight (item 2 below) grew
+large enough to need its own tests and types; `_capacity_eval.py` now holds
+that verdict layer. It imports this module's sizing primitives by module-
+object reference (see its own docstring for why) rather than the other way
+around -- this module imports NOTHING from `_capacity_eval`, so the
+dependency stays strictly one-way and there is no import cycle.
 
 TWO THINGS LIVE HERE, ONE ROOT CAUSE EACH FIXES:
 
@@ -27,50 +34,49 @@ TWO THINGS LIVE HERE, ONE ROOT CAUSE EACH FIXES:
    own incoming-edge count, plain counts from its caller like `_budget.py`
    rather than depending on `decoy_engine.relationships`.
 
-2. THE HYBRID CAPACITY PREFLIGHT (`predict_ooc_build_floor_bytes` /
-   `enforce_ooc_memory_preflight`). Phase-aware caps LOWER the floor but
+2. THE BUILD-FLOOR MODEL (`predict_ooc_build_floor_bytes`) AND ITS CEILING
+   INVERSE (`declared_minimum_ceiling_bytes`), which the capacity verdict
+   layer (`_capacity_eval.evaluate_capacity` / `enforce_ooc_memory_
+   preflight`) prices jobs against. Phase-aware caps LOWER the floor but
    cannot always eliminate it: a big enough parent table's relation-build
    dedup still needs real non-spillable resident state that DuckDB cannot
    push to `temp_directory` no matter how generous the `memory_limit`.
    Cam's governing decision is a HYBRID gate: warn near that floor,
    hard-fail beyond it, so a job that cannot fit is refused BEFORE any
    DuckDB work runs rather than left to OOM mid-job -- the never-crash
-   guarantee, with item 1 above as the floor-lowering fix underneath it.
+   guarantee, with item 1 above as the floor-lowering fix underneath it. The
+   gate's own mechanics (thresholds, the per-table loop, warn/fail
+   fractions) live in `_capacity_eval.py`; this module keeps only the row-
+   based floor model and the ceiling math that gate calls.
 
-   THE GATE MUST COMPARE AGAINST THE EXACT CAP THE BUILD WILL GET, NOT A
-   FRACTION OF THE RAW MEMORY CEILING. `resolve_ooc_memory_limit` (`_budget.
-   py`) already subtracts a reserve from the ceiling, and item 1's
-   phase-aware division then splits THAT budget again by per-table
-   liveness; a preflight re-deriving its own fraction of the raw ceiling can
-   pass a job whose real, phase-aware cap is starved -- the BLOCKER this
-   sprint's remediation closes (a 100M-row/4GB run was ADMITTED by a
-   ceiling-fraction check, then OOMed inside DuckDB's own accounting). So
-   `enforce_ooc_memory_preflight` takes `budget_bytes` -- THE SAME
-   `OutOfCoreBudget.budget_bytes` `run_out_of_core_route` resolves at its one
-   `resolve_ooc_memory_limit` call site, reused rather than re-derived --
-   plus sink-ness and each table's own incoming-edge count, and computes
-   `cap(t)` via `actual_duckdb_cap_bytes(budget_bytes, live)`, the SAME
-   per-instance computation `memory_limit_for` uses to size the real
-   connection's string. `budget_bytes // live` ALONE is NOT `cap(t)`:
-   DuckDB reads `memory_limit_for`'s `"NNMB"` string as base-10 megabytes,
-   so the true cap is `actual_duckdb_cap_bytes`'s smaller decimal number --
-   comparing a floor to the larger binary number let a job whose floor
-   cleared it but exceeded the real decimal cap through, then OOM inside
-   DuckDB (round-2's remediation closes this denomination mismatch, on top
-   of item 1's phase-liveness one). The warn/fail fractions below multiply
-   THAT actual cap, never the raw ceiling nor the binary division -- see
-   `enforce_ooc_memory_preflight`'s docstring for why this preflight is a
-   HARD gate where the sibling `_spill_estimate.enforce_ooc_disk_preflight`
-   is advisory-only (disk spill has a soft failure mode; a resident-memory
-   floor above the cap does not).
+   `predict_ooc_build_floor_bytes` MUST BE COMPARED AGAINST THE EXACT CAP
+   THE BUILD WILL GET, NOT A FRACTION OF THE RAW MEMORY CEILING.
+   `resolve_ooc_memory_limit` (`_budget.py`) already subtracts a reserve
+   from the ceiling, and item 1's phase-aware division then splits THAT
+   budget again by per-table liveness; a caller re-deriving its own
+   fraction of the raw ceiling can pass a job whose real, phase-aware cap is
+   starved -- the BLOCKER this sprint's remediation closes (a 100M-row/4GB
+   run was ADMITTED by a ceiling-fraction check, then OOMed inside DuckDB's
+   own accounting). `_capacity_eval.evaluate_capacity` computes `cap(t)` via
+   `actual_duckdb_cap_bytes(budget_bytes, live)`, the SAME per-instance
+   computation `memory_limit_for` uses to size the real connection's
+   string. `budget_bytes // live` ALONE is NOT `cap(t)`: DuckDB reads
+   `memory_limit_for`'s `"NNMB"` string as base-10 megabytes, so the true
+   cap is `actual_duckdb_cap_bytes`'s smaller decimal number -- comparing a
+   floor to the larger binary number let a job whose floor cleared it but
+   exceeded the real decimal cap through, then OOM inside DuckDB (round-2's
+   remediation closes this denomination mismatch, on top of item 1's
+   phase-liveness one). `declared_minimum_ceiling_bytes` inverts that same
+   actual-cap model to report a truthful minimum ceiling, never a
+   raw-ceiling approximation -- see its own docstring for why this preflight
+   is a HARD gate where the sibling `_spill_estimate.enforce_ooc_disk_
+   preflight` is advisory-only (disk spill has a soft failure mode; a
+   resident-memory floor above the cap does not).
 """
 
 from __future__ import annotations
 
-import logging
 import math
-from collections.abc import Mapping
-from dataclasses import dataclass
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._budget import (
@@ -78,13 +84,9 @@ from decoy_engine.execution.out_of_core._budget import (
     _OOC_RESERVE_FRACTION,
 )
 
-_logger = logging.getLogger(__name__)
-
 __all__ = [
-    "MemoryPreflight",
     "actual_duckdb_cap_bytes",
     "declared_minimum_ceiling_bytes",
-    "enforce_ooc_memory_preflight",
     "memory_limit_for",
     "predict_ooc_build_floor_bytes",
     "resolve_phase_memory_limits",
@@ -224,18 +226,7 @@ def resolve_phase_memory_limits(
     return memory_limit, resident_joiner, memory_limit, resident_build
 
 
-# --- Part B: hybrid capacity preflight -------------------------------------
-
-# WARN band lower edge, as a fraction of the ACTUAL per-table build cap
-# `cap(t)` (never the raw memory ceiling -- see the module docstring's
-# remediation note). `cap(t)` is already the exact byte count
-# `resolve_phase_memory_limits` hands the real DuckDB connection, so a floor
-# at or below it should, in principle, complete; the WARN band exists only
-# because `predict_ooc_build_floor_bytes` is itself a conservative model, not
-# because `cap(t)` carries slack of its own -- the HARD-FAIL bound is the
-# full cap (fraction 1.0: `floor(t) > cap(t)`, no additional margin), since
-# `cap(t)` IS the number that will starve the build, not an estimate of it.
-_OOC_MEM_WARN_FRACTION = 0.6
+# --- Part B: the build-floor model and its ceiling inverse ------------------
 
 # The relation-build dedup's non-spillable floor, per row of the largest
 # parent table (see `predict_ooc_build_floor_bytes`'s docstring for the
@@ -367,34 +358,6 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
     return _BUILD_FLOOR_BASE_BYTES + int(_BUILD_FLOOR_BYTES_PER_ROW * rows)
 
 
-@dataclass(frozen=True)
-class MemoryPreflight:
-    """Result of the hybrid out-of-core memory capacity check.
-
-    Covers every parent table `enforce_ooc_memory_preflight` was given, not
-    one row count: `binding_table` names whichever table drove the
-    `ok`/`warned` outcome (the argmax of `floor(t) - cap(t)` on a hard-fail;
-    the tightest warn-band table otherwise), and `floor_bytes` / `cap_bytes`
-    are THAT table's own numbers, not a job-wide aggregate -- the invariant
-    this gate enforces is per-table (`_memory_estimate` module docstring).
-    `binding_table` is `None` when there is nothing to report: no parent
-    tables at all, or a clean run with no warning.
-
-    `detectable=False` marks the fail-open case: no real `budget_bytes` to
-    gate against (host-RAM detection failed and no explicit budget was
-    supplied), matching the same fall-through `resolve_ooc_memory_limit`
-    already documents for Part A's phase-aware caps -- the caller proceeds
-    rather than inventing a cap to check floors against.
-    """
-
-    ok: bool
-    warned: bool
-    detectable: bool
-    binding_table: str | None
-    floor_bytes: int
-    cap_bytes: int | None
-
-
 def declared_minimum_ceiling_bytes(floor_bytes: int, *, incoming_edges: int, sink: bool) -> int:
     """The smallest whole-GiB memory ceiling that, fed back through
     `resolve_ooc_memory_limit` then `actual_duckdb_cap_bytes`, yields a build
@@ -455,144 +418,3 @@ def declared_minimum_ceiling_bytes(floor_bytes: int, *, incoming_edges: int, sin
     gib = 1024**3
     whole_gib = -(-ceiling_needed_bytes // gib)  # ceil to a whole GiB, never under
     return whole_gib * gib
-
-
-def enforce_ooc_memory_preflight(
-    parent_table_rows: Mapping[str, int],
-    *,
-    budget_bytes: int | None,
-    sink: bool,
-    incoming_edge_counts: Mapping[str, int],
-) -> MemoryPreflight:
-    """The out-of-core route's HYBRID (warn near the floor, hard-fail beyond
-    it) memory capacity gate -- Cam's governing decision (module docstring
-    item 2): "never OOM, or declare minimums so the user knows what power
-    they need."
-
-    Deliberately asymmetric with the sibling disk preflight (advisory-only,
-    `_spill_estimate.enforce_ooc_disk_preflight`): an under-predicted disk
-    estimate still hits the runtime `check_temp_disk_budget` backstop and
-    aborts cleanly, but a resident-memory floor above its cap has no such
-    backstop -- DuckDB's allocator raises a raw, uncatchable "bad
-    allocation" mid-query -- so THIS preflight must actually reject.
-
-    `parent_table_rows` prices one row count per build-phase (outgoing-FK)
-    table; `budget_bytes` is the SAME `OutOfCoreBudget.budget_bytes`
-    `resolve_ooc_memory_limit` resolved at the route's one call site
-    (reused, never re-derived); `sink` is whether this run streams to a
-    sink; `incoming_edge_counts` is each table's own fan-in. For every
-    table `t`:
-
-        live(t)  = 1                                      if sink
-                 = incoming_edge_counts[t] + 1              otherwise
-        floor(t) = predict_ooc_build_floor_bytes(parent_table_rows[t])
-        cap(t)   = actual_duckdb_cap_bytes(budget_bytes, live(t))
-
-    the SAME split `memory_limit_for` uses to size the real connection AND
-    the ACTUAL bytes DuckDB enforces (round-2 Fix B: the binary
-    `budget_bytes // live(t)` alone is a larger number that would admit a
-    floor exceeding the true decimal cap). `cap(t)`'s own sizing can raise
-    `out_of_core_fanin_exceeds_budget` (round-2 Fix C) on an un-sizeable
-    split, before any DuckDB work, same as an insufficient-memory hard-fail.
-    Otherwise HARD-FAILS (`out_of_core_insufficient_memory`, before any
-    DuckDB work) if `floor(t) > cap(t)` for ANY `t` (binding table =
-    `argmax_t (floor(t) - cap(t))`); otherwise WARNS (never blocks) if
-    `floor(t) >= _OOC_MEM_WARN_FRACTION * cap(t)` for the tightest such
-    table. `budget_bytes=None` (host-RAM detection failed, no explicit
-    budget, mirroring `resolve_ooc_memory_limit`) fails OPEN: Part A's caps
-    fall back to the flat `memory_limit` here too, so no real per-table cap
-    is left to gate a floor against.
-
-    A pure-joiner leaf (incoming edges only, no build) has no `floor(t)`,
-    so it is not in `parent_table_rows`; its OWN fan-in is still guarded
-    HERE, up front (round-3 Fix C, SUB-FIX 3): after the build-phase loop,
-    every table in `incoming_edge_counts` (leaves included) has its
-    joiner's `actual_duckdb_cap_bytes` called to trigger the shared guard,
-    at the JOINER split -- a DIFFERENT number than build-phase `live(t)`
-    above on the sink path (`1`), so this is a distinct check.
-    """
-    if budget_bytes is None:
-        return MemoryPreflight(
-            ok=True,
-            warned=False,
-            detectable=False,
-            binding_table=None,
-            floor_bytes=0,
-            cap_bytes=None,
-        )
-
-    worst_fail: tuple[int, str, int, int] | None = None  # (margin, table, floor, cap)
-    worst_warn: tuple[int, str, int, int] | None = None
-    for table, rows in parent_table_rows.items():
-        floor_bytes = predict_ooc_build_floor_bytes(rows)
-        incoming = incoming_edge_counts.get(table, 0)
-        live = 1 if sink else incoming + 1
-        # Raises out_of_core_fanin_exceeds_budget (round-2 Fix C) before any
-        # DuckDB work if this table's own split is un-sizeable -- the
-        # earliest point this preflight has the information to catch it.
-        cap_bytes = actual_duckdb_cap_bytes(budget_bytes, live)
-        margin = floor_bytes - cap_bytes
-        if worst_fail is None or margin > worst_fail[0]:
-            worst_fail = (margin, table, floor_bytes, cap_bytes)
-        if floor_bytes >= _OOC_MEM_WARN_FRACTION * cap_bytes:
-            if worst_warn is None or margin > worst_warn[0]:
-                worst_warn = (margin, table, floor_bytes, cap_bytes)
-
-    # SUB-FIX 3: guard every joiner's fan-in up front too (leaves included).
-    # `live` is the JOINER split, differing from build-phase `live` above on
-    # the sink path (`incoming` vs `1`); return value unused, just triggers.
-    for incoming in incoming_edge_counts.values():
-        live = incoming if sink else incoming + 1
-        actual_duckdb_cap_bytes(budget_bytes, live)
-
-    if worst_fail is not None and worst_fail[0] > 0:
-        _, table, floor_bytes, cap_bytes = worst_fail
-        incoming = incoming_edge_counts.get(table, 0)
-        floor_gib = floor_bytes / (1024**3)
-        cap_gib = cap_bytes / (1024**3)
-        needed_gib = declared_minimum_ceiling_bytes(
-            floor_bytes, incoming_edges=incoming, sink=sink
-        ) / (1024**3)
-        raise ExecutionError(
-            code="out_of_core_insufficient_memory",
-            message=(
-                f"predicted resident floor ~{floor_gib:.2f} GiB for table {table!r} exceeds "
-                f"the actual build cap ~{cap_gib:.2f} GiB it would receive; this job needs "
-                f"approximately {needed_gib:.0f} GB of memory (a host/cgroup ceiling that size). "
-                "Increase host/cgroup memory or reduce table size."
-            ),
-        )
-
-    if worst_warn is None:
-        return MemoryPreflight(
-            ok=True,
-            warned=False,
-            detectable=True,
-            binding_table=None,
-            floor_bytes=0,
-            cap_bytes=budget_bytes,
-        )
-
-    _, table, floor_bytes, cap_bytes = worst_warn
-    incoming = incoming_edge_counts.get(table, 0)
-    floor_gib = floor_bytes / (1024**3)
-    cap_gib = cap_bytes / (1024**3)
-    recommend_gib = declared_minimum_ceiling_bytes(
-        floor_bytes, incoming_edges=incoming, sink=sink
-    ) / (1024**3)
-    _logger.warning(
-        "out-of-core memory advisory: predicted resident floor ~%.2f GiB for table %r "
-        "(actual build cap ~%.2f GiB); recommend a host/cgroup ceiling of >= %.0f GB for margin.",
-        floor_gib,
-        table,
-        cap_gib,
-        recommend_gib,
-    )
-    return MemoryPreflight(
-        ok=True,
-        warned=True,
-        detectable=True,
-        binding_table=table,
-        floor_bytes=floor_bytes,
-        cap_bytes=cap_bytes,
-    )

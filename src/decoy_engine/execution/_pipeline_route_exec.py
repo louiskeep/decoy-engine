@@ -275,7 +275,7 @@ def run_out_of_core_route(
     """
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
-    from decoy_engine.execution.out_of_core._memory_estimate import enforce_ooc_memory_preflight
+    from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
     from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
 
     resolved_sources = sources
