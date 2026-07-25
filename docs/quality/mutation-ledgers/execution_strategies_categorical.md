@@ -83,7 +83,7 @@ Grouped by the method the mutant lands in.
 
 ## EQUIVALENT (44)
 
-### Error-message prose (34)
+### Error-message prose (37)
 
 `StrategyError` carries a machine `code` + `strategy` (both asserted) and a human
 `message`. These mutants set `message=None`, drop the `message=` kwarg (it

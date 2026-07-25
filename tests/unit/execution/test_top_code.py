@@ -598,9 +598,7 @@ class TestObjectBottomCoding:
 
     def _run_bottom(self) -> pd.DataFrame:
         df = pd.DataFrame({"v": ["-50", "-10", "5", "200"]}, dtype=object)
-        seed = _col(
-            (("cap", 100), ("over_label", "BIG"), ("floor", -10), ("under_label", "SMALL"))
-        )
+        seed = _col((("cap", 100), ("over_label", "BIG"), ("floor", -10), ("under_label", "SMALL")))
         out, _ = TopCodeStrategyHandler().run(df.copy(), "v", seed, _FakeCtx())
         return out
 
@@ -618,9 +616,7 @@ class TestObjectSeriesIndexAlignment:
 
     def test_non_default_index_preserved_and_aligned(self) -> None:
         df = pd.DataFrame({"v": ["-50", "5", "200"]}, index=[10, 20, 30], dtype=object)
-        seed = _col(
-            (("cap", 100), ("over_label", "BIG"), ("floor", -10), ("under_label", "SMALL"))
-        )
+        seed = _col((("cap", 100), ("over_label", "BIG"), ("floor", -10), ("under_label", "SMALL")))
         out, _ = TopCodeStrategyHandler().run(df.copy(), "v", seed, _FakeCtx())
         assert list(out.index) == [10, 20, 30]
         assert out["v"].tolist() == ["SMALL", "5", "BIG"]

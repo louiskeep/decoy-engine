@@ -22,7 +22,7 @@ score 100%.
 
 ## EQUIVALENT (14)
 
-### WORDING (11): error-message prose only
+### WORDING (12): error-message prose only
 `StrategyError` carries a machine `code` + `strategy` (both asserted) and a human
 `message`. mutmut sets `message=None`, drops the `message=` kwarg (it defaults to
 `""`, so the raise still succeeds -- contrast `strategy=`, which is required and
