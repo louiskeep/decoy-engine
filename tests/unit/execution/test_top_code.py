@@ -24,6 +24,7 @@ exactly (only its Python type changes).
 from __future__ import annotations
 
 from dataclasses import replace
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -42,7 +43,11 @@ from decoy_engine.execution import (
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
-from decoy_engine.execution._strategies._top_code import TopCodeStrategyHandler
+from decoy_engine.execution._strategies._top_code import (
+    TopCodeStrategyHandler,
+    _is_usable_bound,
+    _parse_exact,
+)
 from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -494,3 +499,239 @@ class TestObjectColumnExactParse:
         seed = _col((("cap", 89), ("over_label", "90+")))
         out = _run(_plan("v", seed), src)
         assert out.output.column("v").to_pylist() == ["50.5", "90+"]
+
+
+class TestParseExactContract:
+    """Pin `_parse_exact`'s machine-readable classification tuple exactly. The
+    tag ("int"/"frac"/"bad") drives whether a cell is generalized, quarantined,
+    or fails the column closed; the int value is the exact content rendered
+    in-range. Direct calls are the only way to lock the return CONTRACT (the
+    object path only branches on "bad"/"frac", so the "int" tag and the unused
+    second element of "bad"/"frac" are otherwise invisible)."""
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            (True, ("bad", 0)),  # bool is never a meaningful age/score
+            (False, ("bad", 0)),
+            (89, ("int", 89)),  # native int, arbitrary precision
+            (-5, ("int", -5)),
+            (89.0, ("int", 89)),  # integral float normalizes, no ".0"
+            (89.5, ("frac", 0)),  # fractional float
+            (float("inf"), ("bad", 0)),  # non-finite float
+            (float("nan"), ("bad", 0)),
+            ("89", ("int", 89)),  # integer-valued numeric string
+            ("89.0", ("int", 89)),  # integral decimal notation
+            ("-7", ("int", -7)),
+            ("89.5", ("frac", 0)),  # fractional decimal string
+            ("abc", ("bad", 0)),  # non-numeric string
+            ("Infinity", ("bad", 0)),  # Decimal-parseable but non-finite
+            ("NaN", ("bad", 0)),
+            (Decimal("89"), ("int", 89)),
+            (Decimal("89.5"), ("frac", 0)),
+        ],
+    )
+    def test_parse_exact_tuple(self, value: Any, expected: tuple[str, int]) -> None:
+        assert _parse_exact(value) == expected
+
+
+class TestIsUsableBoundContract:
+    """`_is_usable_bound` gates every resolvable cap/floor. `math.isfinite` must
+    be reached ONLY for floats (a huge Python int is classified by magnitude,
+    never an OverflowError), inf/nan reject, and a finite float accepts."""
+
+    def test_finite_float_is_usable(self) -> None:
+        assert _is_usable_bound(50.0) is True
+
+    def test_finite_int_is_usable(self) -> None:
+        assert _is_usable_bound(89) is True
+
+    def test_huge_python_int_rejected_without_overflow(self) -> None:
+        # 10**400 overflows float(): the guard must classify it by magnitude,
+        # not call math.isfinite on it. Returns False, never raises.
+        assert _is_usable_bound(10**400) is False
+
+    def test_infinite_float_rejected(self) -> None:
+        assert _is_usable_bound(float("inf")) is False
+
+    def test_nan_float_rejected(self) -> None:
+        assert _is_usable_bound(float("nan")) is False
+
+
+class TestNumericPathRowError:
+    """The NON-object (already-numeric) coercion path records a RowError for a
+    non-null cell that fails coercion, never a silent keep-original. A pandas
+    `StringDtype` column is NOT object dtype, so it takes this path yet can hold
+    a non-numeric cell -- the path's live trigger. Pins the machine fields
+    (column/row_index/trigger) and that the failure is quarantined, not raised."""
+
+    def _run_string_dtype(self) -> tuple[pd.DataFrame, _FakeCtx]:
+        df = pd.DataFrame({"age": pd.array(["23", "abc", "90"], dtype="string")})
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+        return out, ctx
+
+    def test_uncoercible_cell_is_quarantined_not_raised(self) -> None:
+        # errors="coerce" (not the default "raise") turns "abc" into a RowError
+        # rather than aborting the whole run.
+        out, ctx = self._run_string_dtype()
+        assert out["age"].iloc[0] == "23"
+        assert out["age"].iloc[1] == "abc"  # original kept, not rewritten
+        assert out["age"].iloc[2] == "90+"
+
+    def test_row_error_machine_fields(self) -> None:
+        _, ctx = self._run_string_dtype()
+        assert len(ctx.row_errors) == 1
+        err = ctx.row_errors[0]
+        assert err.column == "age"
+        assert err.row_index == 1
+        assert err.trigger == "format_error"
+
+
+class TestObjectBottomCoding:
+    """Bottom-coding on the exact-parse object path: floor/under_label must both
+    flow into `_classify_object_column`, the `< floor` boundary is strict (a
+    value AT the floor stays in-range), and only below-floor cells become the
+    under label."""
+
+    def _run_bottom(self) -> pd.DataFrame:
+        df = pd.DataFrame({"v": ["-50", "-10", "5", "200"]}, dtype=object)
+        seed = _col(
+            (("cap", 100), ("over_label", "BIG"), ("floor", -10), ("under_label", "SMALL"))
+        )
+        out, _ = TopCodeStrategyHandler().run(df.copy(), "v", seed, _FakeCtx())
+        return out
+
+    def test_object_bottom_coding_boundaries(self) -> None:
+        # -50 below floor -> SMALL; -10 AT floor stays in-range; 5 in-range;
+        # 200 above cap -> BIG.
+        assert self._run_bottom()["v"].tolist() == ["SMALL", "-10", "5", "BIG"]
+
+
+class TestObjectSeriesIndexAlignment:
+    """The masks/render Series `_classify_object_column` returns must carry the
+    SOURCE column's index, not a fresh RangeIndex: `run` aligns them against the
+    original column by index, so a dropped/None index misaligns and corrupts the
+    output. Driven with a non-default index so RangeIndex is observably wrong."""
+
+    def test_non_default_index_preserved_and_aligned(self) -> None:
+        df = pd.DataFrame({"v": ["-50", "5", "200"]}, index=[10, 20, 30], dtype=object)
+        seed = _col(
+            (("cap", 100), ("over_label", "BIG"), ("floor", -10), ("under_label", "SMALL"))
+        )
+        out, _ = TopCodeStrategyHandler().run(df.copy(), "v", seed, _FakeCtx())
+        assert list(out.index) == [10, 20, 30]
+        assert out["v"].tolist() == ["SMALL", "5", "BIG"]
+
+    def test_in_range_mask_alignment_observed_via_uncoercible_passthrough(self) -> None:
+        # A misaligned in_range_mask (RangeIndex instead of the [10,20,30,40]
+        # column index) collapses `result.where(~in_range_mask, in_range_str)`
+        # to use in_range_str everywhere, so the uncoercible "abc" cell (which
+        # must PASS THROUGH unchanged, trap T4) is silently overwritten with the
+        # None the render holds at that row. Only an uncoercible cell at a
+        # non-default index exposes this: an all-coercible column masks it (the
+        # render already holds the right value at in-range rows).
+        df = pd.DataFrame({"v": [67, "abc", 88, 200]}, index=[10, 20, 30, 40], dtype=object)
+        seed = _col((("cap", 100), ("over_label", "BIG")))
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(df.copy(), "v", seed, ctx)
+        assert list(out.index) == [10, 20, 30, 40]
+        # "abc" passes through byte-for-byte; a misaligned mask would null it.
+        assert out["v"].tolist() == ["67", "abc", "88", "BIG"]
+        assert [(e.trigger, e.row_index) for e in ctx.row_errors] == [("format_error", 1)]
+
+
+class TestObjectNullBreak:
+    """A null cell on the object path is a per-cell `continue` (passthrough),
+    NOT a `break`: cells after a null must still be classified and generalized."""
+
+    def test_tail_after_null_still_generalized(self) -> None:
+        df = pd.DataFrame({"age": ["40", None, "200"]}, dtype=object)
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), _FakeCtx()
+        )
+        # If a null short-circuited the loop, "200" would leak unchanged.
+        assert out["age"].tolist() == ["40", None, "90+"]
+
+
+class TestObjectRowErrorColumnField:
+    def test_array_like_cell_row_error_names_column(self) -> None:
+        # A non-scalar cell's RowError must carry the real column name.
+        df = pd.DataFrame({"age": [40, [1, 2], 90]}, dtype=object)
+        ctx = _FakeCtx()
+        TopCodeStrategyHandler().run(df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx)
+        assert len(ctx.row_errors) == 1
+        assert ctx.row_errors[0].column == "age"
+
+
+class TestFractionalObjectStrategyField:
+    def test_fractional_column_error_attributes_strategy(self) -> None:
+        # The column-level fail-closed error must be attributed to top_code.
+        df = pd.DataFrame({"age": ["40", "89.5"]}, dtype=object)
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler().run(
+                df.copy(), "age", _col((("preset", "hipaa_age"),)), _FakeCtx()
+            )
+        assert exc.value.code == "top_code_non_integral_object_column"
+        assert exc.value.strategy == "top_code"
+
+
+class TestWarningEmittedForOverOnlyTail:
+    def test_over_only_still_emits_warning(self) -> None:
+        # The evidence warning fires when EITHER tail generalizes, not only when
+        # both do -- an over-only column must still be flagged.
+        df = pd.DataFrame({"age": [89, 90, 105]})
+        _, warnings = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), _FakeCtx()
+        )
+        assert len(warnings) == 1
+        assert warnings[0].code == "top_code_generalized"
+        assert warnings[0].detail["over_count"] == 2
+        assert warnings[0].detail["under_count"] == 0
+
+
+class TestErrorMachineFields:
+    """Every fail-closed StrategyError carries the machine-readable
+    strategy/code the boundary attributes failures by -- pinned so a dropped or
+    mangled `strategy=`/`code=` is caught, independent of the prose message."""
+
+    def test_unresolvable_bound_strategy_and_code(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler().run(pd.DataFrame({"age": [23]}), "age", _col(()), _FakeCtx())
+        assert exc.value.code == "top_code_bounds_unresolvable"
+        assert exc.value.strategy == "top_code"
+
+    def test_preflight_strategy_field(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler().preflight(_col((("preset", "hipaa_age"),)), _FakeCtx())
+        assert exc.value.code == "top_code_with_when_unsupported"
+        assert exc.value.strategy == "top_code"
+
+
+class TestResolveMachineFields:
+    """Direct resolver assertions on the machine fields of each fail-closed
+    branch, plus the empty-label rejection (the `or` in the label guard)."""
+
+    def test_resolve_top_empty_over_label_is_unresolvable(self) -> None:
+        # An empty over_label is unusable (not a real label) -> None.
+        assert TopCodeStrategyHandler._resolve_top_bound({"cap": 50, "over_label": ""}) is None
+
+    def test_invalid_floor_strategy_field(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler._resolve_bottom_bound({"floor": -(2**53), "under_label": "U"})
+        assert exc.value.code == "top_code_bounds_unresolvable"
+        assert exc.value.strategy == "top_code"
+
+    def test_floor_without_under_label_code_and_strategy(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler._resolve_bottom_bound({"floor": 0})
+        assert exc.value.code == "top_code_bounds_unresolvable"
+        assert exc.value.strategy == "top_code"
+
+    def test_empty_under_label_rejected(self) -> None:
+        # floor present with an empty under_label must fail closed, not degrade.
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler._resolve_bottom_bound({"floor": 0, "under_label": ""})
+        assert exc.value.code == "top_code_bounds_unresolvable"

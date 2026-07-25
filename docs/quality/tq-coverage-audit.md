@@ -83,8 +83,30 @@ mechanism path is cert-gated and grades on the CI cert-gate profile (its
 pure/fail-closed layer is gradeable locally). No source bugs found; findings in
 `tq-findings.md`.
 
-## Step 4 (full-codebase sweep) -- NOT started
+## Step 4 (full-codebase sweep) -- IN PROGRESS
 Batches A-F above. Harness that works: the MAIN LOOP owns each mutmut run as a
 tracked `run_in_background` bash job (survives turns), serially; a fresh agent
 does the fast classify+kill per module (no mutmut). Do NOT delegate the mutmut
 run to a subagent (it outlasts the turn and loops).
+
+**Tractability finding (2026-07-25):** the execution SUBSTRATES (Batch A:
+`_pandas_adapter`, `_sequential`, `_chunked`, ...) are primarily
+INTEGRATION-tested; their covering suites are slow (`tests/unit/execution` = 174s
+full-run) so a broad-selection mutmut run is multi-hour per module. The
+per-column STRATEGIES and TRANSFORMS have fast focused unit suites
+(`test_top_code.py` = 0.5s) and grade in minutes. Grade strategies/transforms
+with a FOCUSED direct-unit-test selection first (conservative: it under-counts
+integration-test kills, so any test written to kill a "survivor" still adds real
+focused coverage; note the scoped selection in each ledger). Substrates need
+either scoped selections per module or a dedicated multi-hour background program.
+
+**Step-4 modules graded:**
+| Module | mutants / killed | logic score | branch |
+|---|---|---|---|
+| `execution/_strategies/_top_code` | 415 / 354 | 100% (61 equiv) | `tq/crown-jewels` |
+
+Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
+`_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,
+`_windowed_date`; zero-direct-test gaps to author-then-grade: `_geo_generalize`,
+`_bucket_perturb`, `_derived`, `_derived_aggregate`, `_formula`. Then transforms
+(`date_shift`, `code_set`), then plan, then the integration-heavy substrates.
