@@ -67,6 +67,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -106,6 +108,21 @@ _PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
 # un-sizeable fan-in split, ...) is a genuine defect, not a detection
 # failure, and must propagate rather than being swallowed into a verdict.
 _RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
+
+# Raised when a declared source cannot be read or parsed while profiling it for
+# the capacity estimate -- a file that is present but truncated, corrupt, or not
+# the declared format (a corrupt Parquet raises `pyarrow.ArrowInvalid`, a
+# `ValueError` subclass; other readers raise `OSError`/`ValueError`). This is an
+# EXPECTED "this source is unusable" condition, distinct from an unexpected
+# internal defect: the profile read is the FIRST time preflight/`run_pipeline`
+# actually touches source bytes, so a bad file surfaces here. It is re-raised as
+# THIS typed code (rather than the raw reader exception) so the CLI can render a
+# clean capacity finding for it while still letting every other exception from
+# `estimate_job_capacity` propagate untyped (R3, Codex re-gate MEDIUM). The
+# narrow catch wraps ONLY the `profile_source` call, and config-shape defects
+# are already filtered out upstream (schema validation + profile-free plan
+# checks), so a caught error here is a genuine source-read failure.
+_SOURCE_UNPROFILABLE_CODE = "capacity_source_unprofilable"
 
 # The ONLY `ExecutionError` codes `decide_execution_route` raises for a job it
 # would refuse BEFORE reading any data (its full-frame OOM-risk guard,
@@ -200,10 +217,14 @@ def estimate_job_capacity(
     priced exactly, `FIT`/`INSUFFICIENT` otherwise -- see `evaluate_capacity`
     for the shared decision this defers to once the inputs are derived.
 
-    Propagates any OTHER exception (a genuine config/compile defect,
-    `PlanCompileError`, an unreadable source, ...) rather than swallowing it
-    into a verdict (R3): an unexpected failure here is a real problem the
-    caller needs to see, not a silent "capacity unknown".
+    A source that cannot be read or parsed while profiling (missing between
+    the caller's own file check and now, truncated, corrupt, or not the
+    declared format) raises `ExecutionError(code="capacity_source_unprofilable")`
+    -- a typed, EXPECTED "this source is unusable" condition the caller can
+    render as a clean finding. Propagates any OTHER exception (a genuine
+    config/compile defect, `PlanCompileError`, ...) untyped rather than
+    swallowing it into a verdict (R3): an unexpected failure here is a real
+    problem the caller needs to see, not a silent "capacity unknown".
     """
     from decoy_engine import __version__ as engine_version
     from decoy_engine.plan import compile_plan
@@ -230,7 +251,22 @@ def estimate_job_capacity(
     # here rather than re-derived so the relationship graph and per-table
     # row counts this function prices are the identical numbers the real run
     # would compute for the same config.
-    profile = profile_source(config, seed=job_seed)
+    try:
+        profile = profile_source(config, seed=job_seed)
+    except (pa.lib.ArrowException, OSError, ValueError) as exc:
+        # A present-but-corrupt/wrong-format source (or one that became
+        # unreadable between the CLI's own file check and now) fails HERE, in
+        # the profile read. Re-raise as a typed, expected condition so the
+        # caller reports it cleanly instead of crashing on a raw reader
+        # traceback; anything not a source-read error still propagates untyped.
+        raise ExecutionError(
+            code=_SOURCE_UNPROFILABLE_CODE,
+            message=(
+                "a declared source could not be read or parsed while estimating "
+                f"capacity ({type(exc).__name__}: {exc}); the file may be truncated, "
+                "corrupt, or not the declared format."
+            ),
+        ) from exc
 
     if not profile.relationships:
         return _not_applicable(

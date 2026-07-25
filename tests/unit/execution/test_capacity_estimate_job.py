@@ -397,6 +397,18 @@ class TestBudgetResolutionR3:
         est = estimate_job_capacity(config, tmp_path)
         assert est.verdict is CapacityVerdict.NOT_APPLICABLE
 
+    def test_corrupt_source_raises_typed_unprofilable_not_raw(self, tmp_path: Path) -> None:
+        # A present-but-corrupt source (opens fine, but is not valid Parquet)
+        # fails when profile_source reads it. It must surface as the TYPED
+        # capacity_source_unprofilable ExecutionError -- an expected "unusable
+        # source" condition a caller can render cleanly -- not a raw
+        # pyarrow.ArrowInvalid the caller has to guess at (Codex re-gate MEDIUM).
+        config = _ooc_config(tmp_path)
+        (tmp_path / "child.parquet").write_bytes(b"NOT_A_PARQUET_FILE_corrupt")
+        with pytest.raises(ExecutionError) as ei:
+            estimate_job_capacity(config, tmp_path)
+        assert ei.value.code == "capacity_source_unprofilable"
+
 
 class TestBaseDirResolution:
     def test_relative_source_path_resolves_against_base_dir_not_cwd(
