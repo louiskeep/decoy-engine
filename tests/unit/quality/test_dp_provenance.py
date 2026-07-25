@@ -403,6 +403,8 @@ def test_assert_lock_matches_installed_detects_version_drift(
         prov.assert_lock_matches_installed(lock_path=lock)
     assert exc.value.code == "dp_lock_installed_mismatch"
     assert "drift" in exc.value.message
+    # The offending name==version must survive into the report, not be nulled.
+    assert "foo==2.0" in exc.value.message
 
 
 def test_assert_lock_matches_installed_detects_stray_install(
@@ -414,6 +416,8 @@ def test_assert_lock_matches_installed_detects_stray_install(
         prov.assert_lock_matches_installed(lock_path=lock)
     assert exc.value.code == "dp_lock_installed_mismatch"
     assert "stray" in exc.value.message
+    # The offending name==version must survive into the report, not be nulled.
+    assert "bar==1.0" in exc.value.message
 
 
 def test_assert_lock_matches_installed_respects_markers(
@@ -472,3 +476,201 @@ def test_dp_provenance_imports_neither_pandas_nor_pyarrow() -> None:
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
     assert "ISOLATION_OK" in proc.stdout, proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# TQ crown-jewels mutation-kill pass (2026-07-25).
+#
+# The tests above validate the fail-closed GATE logic by monkeypatching the
+# real fingerprint / distribution-set / platform helpers, so mutations INSIDE
+# those helpers survive. The tests below grade those implementation functions
+# directly, plus the uncovered malformed-record and lock-guard branches, to
+# kill the LOGIC survivors from the baseline mutmut run. See
+# docs/quality/mutation-ledgers/quality_dp_provenance.md.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_lock_fingerprint_known_answer() -> None:
+    # Pins the exact pre-hash serialization (sorted name==version per line,
+    # newline-joined) to a hand-computed sha256, so any change to the separator
+    # bytes changes the digest and fails here.
+    dist_set = [("beta", "2.0"), ("alpha", "1.0")]
+    assert (
+        prov.compute_lock_fingerprint(dist_set)
+        == "1aae3c6af7745e831aea5a0fcea2383818a79ad75aee7b65db642b6f5aaf95e0"
+    )
+
+
+def test_canonical_serialization_is_bare_newline_joined_sorted() -> None:
+    # The separator is a bare newline, not a wrapped or alternate token.
+    assert prov._canonical_serialization([("beta", "2.0"), ("alpha", "1.0")]) == (
+        "alpha==1.0\nbeta==2.0"
+    )
+
+
+def test_installed_distribution_set_processes_dists_after_a_collapsed_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A same-version duplicate is collapsed and iteration must CONTINUE, so a
+    # distribution listed after the duplicate is still included.
+    monkeypatch.setattr(
+        prov.importlib.metadata,
+        "distributions",
+        lambda: iter([_FakeDist("aaa", "1.0"), _FakeDist("aaa", "1.0"), _FakeDist("zzz", "2.0")]),
+    )
+    assert prov.installed_distribution_set() == (("aaa", "1.0"), ("zzz", "2.0"))
+
+
+def test_current_platform_libc_is_the_real_family_not_unknown() -> None:
+    # libc comes from libc_ver()[0] with an "unknown" fallback; on this glibc
+    # host it is the real family and never the fallback sentinel.
+    import platform as _platform
+
+    expected = _platform.libc_ver()[0] or "unknown"
+    assert prov.current_platform().libc == expected
+    assert prov.current_platform().libc != "unknown"
+
+
+def test_current_platform_libc_falls_back_to_unknown_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # When libc_ver reports no family (musl / non-glibc), libc is exactly the
+    # literal "unknown" sentinel, which is what makes such a host != certified.
+    monkeypatch.setattr(prov.platform, "libc_ver", lambda: ("", "", ""))
+    assert prov.current_platform().libc == "unknown"
+
+
+def test_validate_recorded_provenance_rejects_platform_of_unsupported_type() -> None:
+    # A recorded platform that is neither a PlatformTriple, mapping, nor 4-seq
+    # hits the else branch; its coded error is dp_provenance_record_malformed.
+    record = _certified_record()
+    record["platform"] = 42
+    with pytest.raises(ProvenanceError) as exc:
+        prov.validate_recorded_provenance(record)
+    assert exc.value.code == "dp_provenance_record_malformed"
+
+
+def test_validate_recorded_provenance_rejects_platform_fields_not_all_strings() -> None:
+    # A 4-element platform sequence whose fields are not all strings hits the
+    # all-strings guard; coded dp_provenance_record_malformed.
+    record = _certified_record()
+    record["platform"] = ["linux", "x86_64", "CPython", 123]
+    with pytest.raises(ProvenanceError) as exc:
+        prov.validate_recorded_provenance(record)
+    assert exc.value.code == "dp_provenance_record_malformed"
+
+
+def test_assert_lock_matches_installed_no_package_array_is_parse_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A lockfile that parses but has no [[package]] array is a coded parse error.
+    monkeypatch.setattr(prov, "installed_distribution_set", lambda: (("foo", "1.0"),))
+    lock = _write_lock(tmp_path, "version = 1\n")
+    with pytest.raises(ProvenanceError) as exc:
+        prov.assert_lock_matches_installed(lock_path=lock)
+    assert exc.value.code == "dp_lock_parse_error"
+
+
+def test_assert_lock_matches_installed_skips_entries_missing_name_or_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An entry missing name OR version must be skipped, not indexed; a valid
+    # entry alongside it still drives the drift check. An or->and swap in the
+    # shape guard would dereference the missing key and crash instead.
+    monkeypatch.setattr(prov, "installed_distribution_set", lambda: (("foo", "2.0"),))
+    lock = _write_lock(
+        tmp_path,
+        '[[package]]\nname = "foo"\nversion = "1.0"\n\n'
+        '[[package]]\nname = "bar"\n\n'  # missing version
+        '[[package]]\nversion = "9.9"\n',  # missing name
+    )
+    with pytest.raises(ProvenanceError) as exc:
+        prov.assert_lock_matches_installed(lock_path=lock)
+    assert exc.value.code == "dp_lock_installed_mismatch"
+    assert "foo==2.0 (lock:" in exc.value.message
+
+
+def test_assert_lock_matches_installed_continues_past_a_malformed_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A malformed entry (no name, no version) is skipped WITHOUT abandoning the
+    # loop, so a valid entry after it is still indexed.
+    monkeypatch.setattr(prov, "installed_distribution_set", lambda: (("foo", "1.0"),))
+    lock = _write_lock(
+        tmp_path,
+        '[[package]]\nlicense = "MIT"\n\n'  # neither name nor version
+        '[[package]]\nname = "foo"\nversion = "1.0"\n',
+    )
+    prov.assert_lock_matches_installed(lock_path=lock)  # foo matches; must not raise
+
+
+def test_assert_lock_matches_installed_honors_a_true_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An entry whose marker is TRUE here must be indexed as active, so a matching
+    # installed dist is not flagged a stray. Nulling _any_marker_true's args
+    # would treat every marked entry as inactive.
+    monkeypatch.setattr(prov, "installed_distribution_set", lambda: (("foo", "1.0"),))
+    lock = _write_lock(
+        tmp_path,
+        '[[package]]\nname = "foo"\nversion = "1.0"\n'
+        f"resolution-markers = [\"sys_platform == '{sys.platform}'\"]\n",
+    )
+    prov.assert_lock_matches_installed(lock_path=lock)  # marker true here; must not raise
+
+
+def test_assert_lock_matches_installed_continues_past_a_marker_inactive_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A marker-inactive entry is skipped WITHOUT abandoning the loop, so a valid
+    # entry after it is still indexed.
+    monkeypatch.setattr(prov, "installed_distribution_set", lambda: (("foo", "1.0"),))
+    lock = _write_lock(
+        tmp_path,
+        '[[package]]\nname = "winonly"\nversion = "1.0"\n'
+        "resolution-markers = [\"sys_platform == 'win32'\"]\n\n"
+        '[[package]]\nname = "foo"\nversion = "1.0"\n',
+    )
+    prov.assert_lock_matches_installed(lock_path=lock)  # foo matches; must not raise
+
+
+def test_any_marker_true_evaluates_a_true_marker() -> None:
+    from packaging.markers import Marker
+
+    # A list with a marker satisfied on THIS host returns True.
+    assert prov._any_marker_true([f"sys_platform == '{sys.platform}'"], Marker) is True
+
+
+def test_any_marker_true_false_marker_is_not_satisfied() -> None:
+    from packaging.markers import Marker
+
+    # A marker not satisfied here returns False.
+    assert prov._any_marker_true(["sys_platform == 'win32'"], Marker) is False
+
+
+def test_any_marker_true_non_list_is_false() -> None:
+    from packaging.markers import Marker
+
+    # A non-list markers value cannot make a version active.
+    assert prov._any_marker_true("not-a-list", Marker) is False
+    assert prov._any_marker_true(None, Marker) is False
+
+
+def test_any_marker_true_ignores_non_string_elements_but_evaluates_the_rest() -> None:
+    from packaging.markers import Marker
+
+    # A non-str element is skipped (not evaluated, not loop-ending); a later true
+    # marker still returns True.
+    assert prov._any_marker_true([123, f"sys_platform == '{sys.platform}'"], Marker) is True
+
+
+def test_any_marker_true_malformed_marker_is_not_satisfied_and_does_not_stop() -> None:
+    from packaging.markers import Marker
+
+    # A malformed marker is fail-closed (not-satisfied) and does not abort the
+    # scan, so a later true marker still returns True.
+    assert prov._any_marker_true(["!!! not a marker", "x ==="], Marker) is False
+    assert (
+        prov._any_marker_true(["!!! not a marker", f"sys_platform == '{sys.platform}'"], Marker)
+        is True
+    )

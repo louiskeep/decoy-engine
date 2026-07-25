@@ -73,12 +73,14 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 | `execution/_fk_keys` | yes / yes (re-graded post-fix `7e7be68`) | 100% (32 equiv) | continue/break + dtype gaps; 1 dead branch; float/Decimal route fix re-graded, 110/142 killed, all 32 survivors equivalent | `tq/crown-jewels` |
 | `quality/dp_budget` | yes / yes | 100% (18 equiv) | calibration + tolerance-masked mutants | `tq/crown-jewels` |
 | `quality/dp` | yes / DEFERRED | -- | cert-gated: 47/88 tests skip off certified profile; grade on CI cert-gate | `tq/crown-jewels` |
-| `quality/dp_provenance` | yes / DEFERRED | -- | monkeypatch-heavy suite: 87/87 survive; needs direct impl tests | `tq/crown-jewels` |
+| `quality/dp_provenance` | yes / yes | 100% (51 equiv) | re-graded: 309 mutants, 253 killed, 51 equiv (46 wording + 1 encode-case + 1 str-arg + 3 env-conditional version-guard); 36 logic killed by 17 new direct tests | `tq/crown-jewels` |
 
 **Result: both 100%-MANDATORY families (crypto + RI/FK) fully graded to
-logic-100%.** 6/8 crown jewels graded; 2 DP modules (measure-first) have committed
-oracle suites but grading deferred for documented environment/test-approach
-reasons (see the two `quality_dp*.md` ledgers). No source bugs found; findings in
+logic-100%.** 7/8 crown jewels graded (dp_provenance re-graded to logic-100% once
+its implementation functions were tested directly rather than through the
+monkeypatched gate). Only `quality/dp` remains partly deferred: its OpenDP
+mechanism path is cert-gated and grades on the CI cert-gate profile (its
+pure/fail-closed layer is gradeable locally). No source bugs found; findings in
 `tq-findings.md`.
 
 ## Step 4 (full-codebase sweep) -- NOT started
