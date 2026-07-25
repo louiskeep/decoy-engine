@@ -360,6 +360,43 @@ class TestBudgetResolutionR3:
         with pytest.raises(ExecutionError, match="test double"):
             estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
 
+    def test_unexpected_routing_error_propagates_not_swallowed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # R3 (Codex re-gate HIGH): the two `decide_execution_route` catches must
+        # fold ONLY a genuine reject-before-read code into NOT_APPLICABLE; an
+        # unexpected routing code is a defect and must propagate, never be
+        # swallowed into a false "fine".
+        config = _ooc_config(tmp_path)
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise ExecutionError(
+                code="some_unexpected_routing_bug",
+                message="a routing defect that is NOT a reject-before-read (test double).",
+            )
+
+        monkeypatch.setattr(capacity_mod, "decide_execution_route", _boom)
+        with pytest.raises(ExecutionError, match="test double"):
+            estimate_job_capacity(config, tmp_path)
+
+    def test_expected_reject_code_folds_to_not_applicable(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # The flip side: a genuine reject-before-read code IS expected here and
+        # folds to NOT_APPLICABLE (the capacity check does not apply to a job
+        # the router would refuse before reading any data).
+        config = _ooc_config(tmp_path)
+
+        def _reject(*_args: Any, **_kwargs: Any) -> Any:
+            raise ExecutionError(
+                code="fk_full_frame_oom_risk_rejected",
+                message="full-frame OOM risk; would be rejected before read (test double).",
+            )
+
+        monkeypatch.setattr(capacity_mod, "decide_execution_route", _reject)
+        est = estimate_job_capacity(config, tmp_path)
+        assert est.verdict is CapacityVerdict.NOT_APPLICABLE
+
 
 class TestBaseDirResolution:
     def test_relative_source_path_resolves_against_base_dir_not_cwd(

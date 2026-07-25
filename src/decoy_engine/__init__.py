@@ -89,6 +89,8 @@ from decoy_engine.errors import (
     ValidationError,
 )
 from decoy_engine.execution import (
+    CapacityEstimate,
+    CapacityVerdict,
     ExecutionAdapter,
     ExecutionError,
     ExecutionEvent,
@@ -285,6 +287,8 @@ __all__ = [
     "AdapterError",
     "BackendAdapter",
     "CapabilityMatrix",
+    "CapacityEstimate",
+    "CapacityVerdict",
     "CardinalityMode",
     "CheckResult",
     "CompositeAdapter",

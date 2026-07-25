@@ -211,8 +211,12 @@ def test_all_lists_every_public_name():
         "WeakMaskSecret",
         # OOM capacity estimator (2026-07-24): estimate-only entrypoint for
         # the out-of-core-FK memory gate, imported by the CLI across the
-        # in-process boundary (ADR-0001).
+        # in-process boundary (ADR-0001). The result types are exported too so
+        # the CLI matches on `estimate.verdict` via a PUBLIC name rather than a
+        # private engine module (Codex re-gate P3 root-cause).
         "estimate_job_capacity",
+        "CapacityEstimate",
+        "CapacityVerdict",
     }
     assert set(decoy_engine.__all__) == expected
 

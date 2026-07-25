@@ -120,6 +120,10 @@ from decoy_engine.execution.out_of_core import (
     OutOfCoreRejection,
     check_out_of_core_compatibility,
 )
+from decoy_engine.execution.out_of_core._capacity_eval import (
+    CapacityEstimate,
+    CapacityVerdict,
+)
 from decoy_engine.execution.polars import PolarsExecutionAdapter
 
 __all__ = [
@@ -130,6 +134,8 @@ __all__ = [
     "OUT_OF_CORE_SUPPORTED_STRATEGIES",
     "OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT",
     "VALID_SUBSTRATES",
+    "CapacityEstimate",
+    "CapacityVerdict",
     "ExecutionAdapter",
     "ExecutionError",
     "ExecutionEvent",

@@ -19,7 +19,7 @@ needed exactly that, without duplicating the gate's floor/cap math (and
 risking the two answers drifting apart over time).
 
 - **`evaluate_capacity(inputs: CapacityInputs, budget_bytes) -> CapacityEstimate`**
-  (`execution/out_of_core/_memory_estimate.py`): the floor/cap loop
+  (`execution/out_of_core/_capacity_eval.py`): the floor/cap loop
   `enforce_ooc_memory_preflight` used to run inline, extracted into a pure
   function both the mid-run gate and the new estimate-only entrypoint call
   on the same typed inputs. Returns a tri-plus-one verdict (`FIT` /
@@ -35,9 +35,12 @@ risking the two answers drifting apart over time).
   only (never a full-frame read); a source whose row count is only an
   estimate (CSV) makes the whole verdict `UNKNOWN` rather than gating a
   refusal on a guess. Returns `NOT_APPLICABLE` for a job that would not
-  take the out-of-core-FK route at all (no relationships, below the size
-  threshold, an incompatible shape, or a job the engine would reject before
-  read).
+  take the out-of-core-FK route at all (no relationships, an incompatible
+  shape, or a job the engine would reject before read). A small,
+  out-of-core-COMPATIBLE job below the row-count threshold is NOT assumed
+  applicable: because a real run's byte-estimate routing can send it
+  out-of-core regardless of size, its verdict downgrades to `UNKNOWN` (never
+  a false `NOT_APPLICABLE`) unless it prices cleanly there.
 - No engine version bump, no lock regeneration: this is additive-only
   (new module, new dataclasses/enum, a re-export), and the CLI's floor
   stays `decoy-engine>=0.5.0`. An older CLI capability-detects the new

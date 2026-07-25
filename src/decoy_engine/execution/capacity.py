@@ -107,6 +107,18 @@ _PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
 # failure, and must propagate rather than being swallowed into a verdict.
 _RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
 
+# The ONLY `ExecutionError` codes `decide_execution_route` raises for a job it
+# would refuse BEFORE reading any data (its full-frame OOM-risk guard,
+# `_pipeline_routing.py`): a real run raises the same code at the same point,
+# so folding these into a `rejected_before_read` NOT_APPLICABLE here is honest
+# -- the capacity check simply does not apply to a job that never reaches the
+# out-of-core route. Any OTHER `ExecutionError` from that call is an unexpected
+# routing defect, NOT a reject-before-read, and must propagate rather than be
+# swallowed into a false NOT_APPLICABLE (R3, Codex re-gate HIGH).
+_ROUTING_REJECT_CODES = frozenset(
+    {"fk_full_frame_oom_risk_rejected", "fk_full_frame_oom_risk_rejected_estimated"}
+)
+
 
 def _resolve_source_path(raw_path: str, base_dir: Path) -> Path:
     """Mirror the CLI's `run.py:_resolve_path`: a relative path resolves
@@ -265,6 +277,11 @@ def estimate_job_capacity(
             use_probe_routing=False,
         )
     except ExecutionError as exc:
+        # Only a genuine reject-before-read code folds into NOT_APPLICABLE; any
+        # other routing ExecutionError is an unexpected defect and propagates
+        # (R3, Codex re-gate HIGH -- do not swallow it into a false "fine").
+        if exc.code not in _ROUTING_REJECT_CODES:
+            raise
         return _not_applicable(
             "rejected_before_read",
             f"this job would be rejected before read by the engine's routing guard "
@@ -318,11 +335,14 @@ def estimate_job_capacity(
                 full_frame_fits_estimate=False,
                 use_probe_routing=False,
             )
-        except ExecutionError:
-            # The worst case is a reject-before-read, not an out-of-core
-            # admission -- a real run would raise there too, which is a
-            # different (and already honest) NOT_APPLICABLE outcome from the
-            # row-count route computed above; nothing to promote.
+        except ExecutionError as exc:
+            # A reject-before-read is the worst case: a real run would raise
+            # there too, a different (and already honest) NOT_APPLICABLE from
+            # the row-count route above; nothing to promote. But only a genuine
+            # reject code is expected here -- any other ExecutionError is an
+            # unexpected routing defect and propagates (R3, Codex re-gate HIGH).
+            if exc.code not in _ROUTING_REJECT_CODES:
+                raise
             byte_route = None
         if byte_route == _OUT_OF_CORE_ROUTE:
             route = _OUT_OF_CORE_ROUTE
