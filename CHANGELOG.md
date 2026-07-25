@@ -9,6 +9,43 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (OOM checker v1: a pure capacity evaluator + an estimate-only entrypoint for the out-of-core-FK memory gate, 2026-07-24)
+
+The out-of-core-FK route's memory-capacity gate (`enforce_ooc_memory_
+preflight`) has always run mid-execution, on real derived inputs, and
+raised before any DuckDB work starts. There was no way to ask the same
+question BEFORE a run -- the CLI's new `decoy preflight` capacity check
+needed exactly that, without duplicating the gate's floor/cap math (and
+risking the two answers drifting apart over time).
+
+- **`evaluate_capacity(inputs: CapacityInputs, budget_bytes) -> CapacityEstimate`**
+  (`execution/out_of_core/_capacity_eval.py`): the floor/cap loop
+  `enforce_ooc_memory_preflight` used to run inline, extracted into a pure
+  function both the mid-run gate and the new estimate-only entrypoint call
+  on the same typed inputs. Returns a tri-plus-one verdict (`FIT` /
+  `INSUFFICIENT` / `UNKNOWN` / `NOT_APPLICABLE`) instead of raising;
+  `enforce_ooc_memory_preflight` is now a thin shim that raises only on
+  `INSUFFICIENT`. Every existing test in this module passes unchanged
+  (same codes, same message text, same `MemoryPreflight` shape).
+- **`estimate_job_capacity(config_dump, base_dir, *, budget_bytes=None)`**
+  (new module `execution/capacity.py`, re-exported from `decoy_engine.
+  execution` and `decoy_engine`): derives the SAME routing decision, parent
+  table rows, and fan-in counts `run_pipeline` would, without dispatching
+  to a runner. Parquet/fixed_width row counts come from footer metadata
+  only (never a full-frame read); a source whose row count is only an
+  estimate (CSV) makes the whole verdict `UNKNOWN` rather than gating a
+  refusal on a guess. Returns `NOT_APPLICABLE` for a job that would not
+  take the out-of-core-FK route at all (no relationships, an incompatible
+  shape, or a job the engine would reject before read). A small,
+  out-of-core-COMPATIBLE job below the row-count threshold is NOT assumed
+  applicable: because a real run's byte-estimate routing can send it
+  out-of-core regardless of size, its verdict downgrades to `UNKNOWN` (never
+  a false `NOT_APPLICABLE`) unless it prices cleanly there.
+- No engine version bump, no lock regeneration: this is additive-only
+  (new module, new dataclasses/enum, a re-export), and the CLI's floor
+  stays `decoy-engine>=0.5.0`. An older CLI capability-detects the new
+  entrypoint via `hasattr` and degrades gracefully when it is absent.
+
 ### Added (DPS Scope B: per-column OpenDP marginal differential privacy for `generate`, numeric and categorical, 2026-07-22)
 
 Supersedes the prior unreleased Option A entry outright (pre-GA hard

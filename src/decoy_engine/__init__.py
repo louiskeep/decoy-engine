@@ -89,6 +89,8 @@ from decoy_engine.errors import (
     ValidationError,
 )
 from decoy_engine.execution import (
+    CapacityEstimate,
+    CapacityVerdict,
     ExecutionAdapter,
     ExecutionError,
     ExecutionEvent,
@@ -96,6 +98,7 @@ from decoy_engine.execution import (
     PandasExecutionAdapter,
     StrategyError,
     classify_table_kinds,
+    estimate_job_capacity,
     get_default_executor,
     run_pipeline,
     select_execution_adapter,
@@ -284,6 +287,8 @@ __all__ = [
     "AdapterError",
     "BackendAdapter",
     "CapabilityMatrix",
+    "CapacityEstimate",
+    "CapacityVerdict",
     "CardinalityMode",
     "CheckResult",
     "CompositeAdapter",
@@ -387,6 +392,7 @@ __all__ = [
     "emit_quarantine",
     "emit_step",
     "emit_throughput_sample",
+    "estimate_job_capacity",
     "generate_tables",
     "get_default_executor",
     "get_default_pool_cache",

@@ -111,6 +111,7 @@ from decoy_engine.execution._transactional_sink import (
     ParquetTransactionalSink,
     TransactionalSink,
 )
+from decoy_engine.execution.capacity import estimate_job_capacity
 from decoy_engine.execution.out_of_core import (
     SUPPORTED_STRATEGIES as OUT_OF_CORE_SUPPORTED_STRATEGIES,
 )
@@ -118,6 +119,10 @@ from decoy_engine.execution.out_of_core import (
     OutOfCoreCompatibility,
     OutOfCoreRejection,
     check_out_of_core_compatibility,
+)
+from decoy_engine.execution.out_of_core._capacity_eval import (
+    CapacityEstimate,
+    CapacityVerdict,
 )
 from decoy_engine.execution.polars import PolarsExecutionAdapter
 
@@ -129,6 +134,8 @@ __all__ = [
     "OUT_OF_CORE_SUPPORTED_STRATEGIES",
     "OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT",
     "VALID_SUBSTRATES",
+    "CapacityEstimate",
+    "CapacityVerdict",
     "ExecutionAdapter",
     "ExecutionError",
     "ExecutionEvent",
@@ -158,6 +165,7 @@ __all__ = [
     "check_out_of_core_compatibility",
     "classify_job",
     "classify_table_kinds",
+    "estimate_job_capacity",
     "get_default_executor",
     "order_work",
     "probe_fits",
