@@ -68,15 +68,21 @@ from __future__ import annotations
 
 import math
 
+import opendp.measurements as meas
+import opendp.prelude as _dp
+import opendp.transformations as tf
 import pytest
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
+import decoy_engine.quality.dp_budget as dp_budget
 from decoy_engine.quality.dp_budget import (
     _DP_EPSILON_CEILING,
     Certificate,
     DpBudgetError,
+    _binary_search_endpoint_aware,
     _compose,
+    _RealOpenDpBackend,
     check_epsilon_supported,
 )
 
@@ -363,3 +369,207 @@ def test_pure_epsilon_composition_matches_basic_sequential_composition(certs: li
     naive_sum = math.fsum(certs)
     assert composed_epsilon == pytest.approx(naive_sum, abs=_ADDITIVITY_TOL)
     assert composed_epsilon >= naive_sum - _UNDER_SUM_TOL
+
+
+# --------------------------------------------------------------------------
+# TQ crown-jewels mutation-kill pass (2026-07-25). Targeted tests for the
+# LOGIC survivors from the mutmut run against `dp_budget.py` that the
+# invariant suite above did not reach -- either because they live below the
+# public `_compose`/`check_epsilon_supported` surface (`_search_largest`,
+# `_binary_search_endpoint_aware`) or because they are calibration-precision
+# bugs in `_RealOpenDpBackend` that no existing test pins tightly enough to
+# notice (every real-backend test in `tests/unit/quality/test_dp_budget.py`
+# asserts on the fit-wide COMPOSED total, never on one measurement's own
+# `.map(1)` against its calibration target). Full classification and the
+# EQUIVALENT survivors these deliberately do NOT chase:
+# `docs/quality/mutation-ledgers/quality_dp_budget.md`.
+# --------------------------------------------------------------------------
+
+
+def test_search_largest_returns_the_lower_bound_when_predicate_fails_everywhere() -> None:
+    """LOGIC (mutmut_1: `if not predicate(lower)` -> `if predicate(lower)`).
+    The documented floor case: a predicate that never holds in range must
+    return `lower` untouched, never enter the bisection loop."""
+    assert dp_budget._search_largest(lambda x: x > 100.0, lower=0.0, upper=1.0) == 0.0
+
+
+def test_search_largest_bisects_to_the_predicates_crossing_point() -> None:
+    """LOGIC (mutmut_1 branch inversion; mutmut_8: `mid = (lo + hi) / 2.0` ->
+    `/ 3.0`). Known-answer bisection: for `predicate(x) = x <= 0.37` over
+    `[0, 1]`, 40 iterations of TRUE bisection converge to ~2^-40 of the true
+    boundary (comfortably inside `abs=1e-6`); the inverted-predicate mutant
+    returns `lower` (0.0) instead, and the `/3.0` mutant converges to a
+    different fixed point entirely (empirically ~0.222 for this predicate,
+    off by ~0.15 -- not float noise)."""
+    result = dp_budget._search_largest(lambda x: x <= 0.37, lower=0.0, upper=1.0)
+    assert result == pytest.approx(0.37, abs=1e-6)
+
+
+class TestBinarySearchEndpointAwareForwarding:
+    """`_binary_search_endpoint_aware` is a thin pass-through to
+    `opendp.prelude.binary_search`; every REAL call site in `dp_budget.py`
+    happens to pass `bounds` as a literal tuple whose element type OpenDP's
+    own inference resolves identically whether `T` is forwarded or not (see
+    the NO-OP entries for `_grouped_over_domain`'s `T=int` mutants in the
+    ledger), so a real-backend test cannot distinguish these mutants from
+    the correct wrapper. These pin the WRAPPER'S OWN forwarding contract
+    directly against a mocked `binary_search`, independent of that OpenDP
+    leniency: `bounds` and `T` (or T's absence) must reach `binary_search`
+    UNCHANGED from what the caller passed."""
+
+    def test_forwards_bounds_and_t_unchanged_when_t_is_given(self, monkeypatch) -> None:
+        """LOGIC (mutmut_1: `T is not None` -> `T is None`, flips which
+        branch runs; mutmut_4: `T=T` -> `T=None`, forwards the wrong value;
+        mutmut_7: drops the `T=T` kwarg entirely, same effect as mutmut_4)."""
+        calls: list[dict] = []
+
+        def fake_binary_search(predicate, **kwargs):
+            del predicate
+            calls.append(kwargs)
+            return "sentinel"
+
+        monkeypatch.setattr(dp_budget._dp, "binary_search", fake_binary_search)
+        result = _binary_search_endpoint_aware(lambda x: True, bounds=(1, 10), T=int)
+        assert result == "sentinel"
+        assert calls == [{"bounds": (1, 10), "T": int}]
+
+    def test_omits_t_entirely_and_forwards_bounds_unchanged_when_t_is_not_given(
+        self, monkeypatch
+    ) -> None:
+        """LOGIC (mutmut_9: `bounds=bounds` -> `bounds=None` in the
+        `T is None` branch; mutmut_11: drops the `bounds=bounds` kwarg
+        entirely, same observable effect as mutmut_9)."""
+        calls: list[dict] = []
+
+        def fake_binary_search(predicate, **kwargs):
+            del predicate
+            calls.append(kwargs)
+            return "sentinel"
+
+        monkeypatch.setattr(dp_budget._dp, "binary_search", fake_binary_search)
+        result = _binary_search_endpoint_aware(lambda x: True, bounds=(0.0, 1.0))
+        assert result == "sentinel"
+        assert calls == [{"bounds": (0.0, 1.0)}]
+
+
+class TestRealOpenDpBackendCalibrationPrecision:
+    """`_RealOpenDpBackend` calibrates each mechanism so its OWN certified
+    `.map(1)` (d_in=1, the mandated `symmetric_distance()` unit -- module
+    docstring section 3.3) equals the requested `eps_q` at the search
+    boundary. No existing real-backend test asserts this precisely (they
+    assert on the fit-wide COMPOSED total, which tolerates a miscalibrated
+    single measurement); these are direct known-answer checks against
+    `eps_q` values chosen so the correct calibration lands on an exact
+    float, so a `.map(2)` mutant (calibrating for TWO added/removed rows
+    instead of one) is caught by a full factor-of-2 error, not noise."""
+
+    def test_count_measurement_certificate_equals_the_calibration_target_epsilon(self) -> None:
+        """LOGIC (mutmut_17 in `_count_over_domain`: `.map(1) <= eps_q` ->
+        `.map(2) <= eps_q`). Calibrating against d_in=2 finds a scale twice
+        as large as needed, so the resulting measurement's real `.map(1)` is
+        `eps_q / 2`, not `eps_q` -- verified directly with OpenDP: at
+        eps_q=0.25 the correct scale is 4.0 (map(1)==0.25 exactly); the
+        mutant calibrates scale=8.0 (map(2)==0.25, map(1)==0.125)."""
+        backend = _RealOpenDpBackend()
+        eps_q = 0.25
+        measurement = backend.count_measurement(eps_q)
+        assert measurement.map(1) == pytest.approx(eps_q, rel=1e-9)
+
+    def test_numeric_measurement_certificate_equals_the_calibration_target_epsilon(self) -> None:
+        """LOGIC (mutmut_37 in `numeric_measurement`: same `.map(1)` ->
+        `.map(2)` calibration-target mutation, same factor-of-2 error)."""
+        backend = _RealOpenDpBackend()
+        eps_q = 0.4
+        measurement = backend.numeric_measurement(eps_q, (1.0, 2.0, 3.0))
+        assert measurement.map(1) == pytest.approx(eps_q, rel=1e-9)
+
+    def test_grouped_measurement_epsilon_component_equals_the_calibration_target(self) -> None:
+        """LOGIC (mutmut_26 in `_grouped_over_domain`: `.map(1)[0] <= eps_q`
+        -> `.map(2)[0] <= eps_q` in the scale-only search stage, same
+        factor-of-2 error on the epsilon half of the certified pair)."""
+        backend = _RealOpenDpBackend()
+        eps_q = 0.4
+        grouped, _total = backend.categorical_measurements(eps_q, 1e-6)
+        epsilon, _delta = grouped.map(1)
+        assert epsilon == pytest.approx(eps_q, rel=1e-9)
+
+
+def test_numeric_measurement_domain_rejects_nan_but_accepts_ordinary_floats() -> None:
+    """LOGIC (mutmut_4: `atom_domain(T=float, nan=False)` -> `nan=None`;
+    mutmut_7: `nan=False` -> `nan=True`; mutmut_6, which drops the `nan=False`
+    kwarg entirely, defaults to the SAME `nan=None` as mutmut_4). Verified
+    directly against OpenDP: `VectorDomain(AtomDomain(T=f64, nan=False))
+    .member([1.0, nan])` is `False`, while `nan=True` and the `nan=None`
+    default both give `True` -- a numeric release built over the mutated
+    domain would silently accept a NaN cell into the bin count instead of
+    refusing it."""
+    backend = _RealOpenDpBackend()
+    measurement = backend.numeric_measurement(0.4, (1.0, 2.0, 3.0))
+    assert measurement.input_domain.member([1.5, 2.0, 2.5]) is True
+    assert measurement.input_domain.member([1.5, float("nan"), 2.5]) is False
+
+
+def test_numeric_measurement_output_length_matches_edges_plus_one_with_no_overflow_bin() -> None:
+    """LOGIC, four mutants at once (module docstring section 4.4: "`bins`
+    categories need `bins - 1` interior cut points... no overflow bin"):
+    - mutmut_10 (`numeric_bins = len(interior_edges) + 1` -> `- 1`) and
+      mutmut_11 (-> `+ 2`) directly corrupt the bin count.
+    - mutmut_24 (drops the `null_category=False` kwarg, defaulting to
+      OpenDP's own `null_category=True`) and mutmut_27 (`False` -> `True`
+      explicitly) both add a catch-all overflow bin OpenDP itself confirms
+      appends one extra element (verified: `[1, 1, 1, 1]` at
+      `null_category=False`/`None` vs `[1, 1, 1, 1, 0]` at `True`).
+    A released bin count of any length other than exactly
+    `len(interior_edges) + 1` is any of these four bugs."""
+    backend = _RealOpenDpBackend()
+    interior_edges = (1.0, 2.0, 3.0)
+    measurement = backend.numeric_measurement(0.4, interior_edges)
+    released = measurement.invoke([0.5, 1.5, 2.5, 3.5])
+    assert len(released) == len(interior_edges) + 1
+
+
+_I32_MAX_FOR_TEST = 2**31 - 1  # mirrors dp_budget._I32_MAX (make_laplace_threshold's i32 arg)
+
+
+def _grouped_count_chain(scale: float, threshold: float):
+    """Independent oracle: the same `make_count_by(str) >>
+    then_laplace_threshold` shape `_grouped_over_domain` builds, constructed
+    here directly against OpenDP (not imported from `dp_budget`) so the
+    boundary values below come from OpenDP itself, not from the module under
+    test."""
+    cat_domain = _dp.vector_domain(_dp.atom_domain(T=str))
+    metric = _dp.symmetric_distance()
+    count_by = tf.make_count_by(cat_domain, metric)
+    return count_by >> meas.then_laplace_threshold(scale=scale, threshold=int(threshold))
+
+
+def test_grouped_over_domain_threshold_search_boundary_is_inclusive_of_the_lower_bound() -> None:
+    """LOGIC, two mutants at the SAME boundary (module section 4.3.2's
+    endpoint-aware search, applied to the threshold half of
+    `_grouped_over_domain`):
+    - mutmut_44: `chain(scale, t).map(1)[1] <= delta_alloc` -> `< delta_alloc`.
+    - mutmut_45: `bounds=(1, _I32_MAX)` -> `bounds=(2, _I32_MAX)`.
+
+    Set `delta_alloc` to EXACTLY the delta an independently-built oracle
+    chain certifies at `threshold=1` (this is a discrete i32 search, unlike
+    the continuous scale searches above, so an open/closed boundary is a
+    full integer step apart, not float noise -- confirmed below,
+    `delta(threshold=2)` is measurably smaller than `delta(threshold=1)`).
+    The correct search is satisfied at ITS OWN lower endpoint (threshold=1)
+    and returns it via the endpoint-aware fallback; `<` excludes that exact
+    point and `bounds=(2, ...)` never lets the search consider it, so EITHER
+    mutant instead returns threshold=2's smaller, wrong delta."""
+    eps_q = 0.5
+    scale = _dp.binary_search(
+        lambda s: _grouped_count_chain(s, _I32_MAX_FOR_TEST).map(1)[0] <= eps_q,
+        bounds=(1e-12, 1e12),
+    )
+    delta_at_threshold_one = _grouped_count_chain(scale, 1).map(1)[1]
+    delta_at_threshold_two = _grouped_count_chain(scale, 2).map(1)[1]
+    assert delta_at_threshold_two < delta_at_threshold_one  # sanity: not a degenerate boundary
+
+    backend = _RealOpenDpBackend()
+    grouped = backend._grouped_over_domain(eps_q, delta_at_threshold_one, _dp.atom_domain(T=str))
+    epsilon, delta = grouped.map(1)
+    assert epsilon == pytest.approx(eps_q)
+    assert delta == pytest.approx(delta_at_threshold_one, abs=1e-12)
