@@ -72,7 +72,7 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 | `transforms/fpe` | yes / yes | 100% (~42 equiv) | Luhn self-ref + Feistel KATs pinned | `tq/crown-jewels` |
 | `execution/_fk_keys` | yes / yes (re-graded post-fix `7e7be68`) | 100% (32 equiv) | continue/break + dtype gaps; 1 dead branch; float/Decimal route fix re-graded, 110/142 killed, all 32 survivors equivalent | `tq/crown-jewels` |
 | `quality/dp_budget` | yes / yes | 100% (18 equiv) | calibration + tolerance-masked mutants | `tq/crown-jewels` |
-| `quality/dp` | yes / DEFERRED | -- | cert-gated: 47/88 tests skip off certified profile; grade on CI cert-gate | `tq/crown-jewels` |
+| `quality/dp` | yes / partial (pure layer) | pure layer 100% (18 equiv) | 441 mutants, 124 killed; pure/fail-closed request layer graded to logic-100% (3 direct tests kill delta-except + two-bin boundary + DpError.message); OpenDP mechanism (293 mutants) cert-gated, deferred to CI cert-gate | `tq/crown-jewels` |
 | `quality/dp_provenance` | yes / yes | 100% (51 equiv) | re-graded: 309 mutants, 253 killed, 51 equiv (46 wording + 1 encode-case + 1 str-arg + 3 env-conditional version-guard); 36 logic killed by 17 new direct tests | `tq/crown-jewels` |
 
 **Result: both 100%-MANDATORY families (crypto + RI/FK) fully graded to

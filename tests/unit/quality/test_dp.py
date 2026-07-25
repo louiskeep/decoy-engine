@@ -25,6 +25,7 @@ import pytest
 from decoy_engine.quality.carriers import CarrierError, decode_flag, decode_number, decode_text
 from decoy_engine.quality.dp import (
     DpError,
+    _validate_fit_params,
 )
 from decoy_engine.quality.dp import (
     _fit_dp_snapshot_with_backend as _real_fit_dp_snapshot_with_backend,
@@ -164,6 +165,37 @@ def _mixed_df(n: int = 2000, seed: int = 3) -> pd.DataFrame:
             "state": rng.choice(["CA", "NY", "TX", "ZZ"], size=n, p=[0.5, 0.3, 0.15, 0.05]),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Pure fail-closed helpers, tested directly (no cert gate, no fit): the
+# certified-only mechanism grades on the CI cert-gate profile, but the
+# request-validation layer is public-input-only and gradeable anywhere.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_fit_params_rejects_non_numeric_delta() -> None:
+    # The delta `float()` conversion has its own except branch; the config
+    # tests only pass numeric bad values (0, 1, nan, ...), so a non-numeric
+    # delta is the input that reaches it (mirrors the epsilon "abc" case).
+    with pytest.raises(DpError) as exc:
+        _validate_fit_params(epsilon=1.0, delta="abc", numeric_bins=10)
+    assert exc.value.code == "dp_delta_invalid"
+
+
+def test_validate_fit_params_accepts_the_minimum_two_bins() -> None:
+    # numeric_bins == 2 is the smallest valid value (>= 2); it must pass
+    # validation and return None, pinning the boundary so `< 2` cannot drift
+    # to `<= 2` / `< 3` (which would reject a legitimate two-bin fit).
+    assert _validate_fit_params(epsilon=1.0, delta=1e-6, numeric_bins=2) is None
+
+
+def test_dp_error_exposes_code_and_message_attributes() -> None:
+    # Callers branch on .code and surface .message; both must be the passed
+    # values, not None.
+    err = DpError(code="dp_test", message="a human message")
+    assert err.code == "dp_test"
+    assert err.message == "a human message"
 
 
 class TestConfigValidation:
