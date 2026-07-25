@@ -329,7 +329,7 @@ class TestBucketPerturbIntegration:
             provider_config=(("bucket", "month"), ("date_format", "%Y-%m-%d")),
         )
         plan = _plan("d", seed)
-        with pytest.raises(StrategyError, match="namespace"):
+        with pytest.raises(StrategyError, match="namespace") as exc:
             PandasExecutionAdapter().run_single(
                 plan,
                 src,
@@ -337,6 +337,24 @@ class TestBucketPerturbIntegration:
                 relationship_graph=_GRAPH,
                 namespace_registry=_NS,
             )
+        # pin the machine-readable fields (match= only checks the message prose)
+        assert exc.value.code == "bucket_perturb_requires_namespace"
+        assert exc.value.strategy == "bucket_perturb"
+
+    def test_bucket_defaults_to_month_when_absent(self):
+        """An absent bucket key resolves to "month" (a valid bucket), so the fit
+        succeeds. Pins the `str(cfg.get("bucket", "month"))` default: a mutated
+        default (None, "", or a bogus label) would make the validator reject an
+        otherwise-valid config."""
+        src = pa.table({"d": ["2024-01-15", "2024-01-20"]})
+        seed = _col(
+            "bucket_perturb",
+            namespace="dates",
+            provider_config=(("date_format", "%Y-%m-%d"),),  # no bucket key
+        )
+        vals = _run(_plan("d", seed), src)
+        # month bucket: both inputs are January 2024, so both outputs stay in 2024-01
+        assert all(str(v).startswith("2024-01") for v in vals)
 
     def test_invalid_bucket_raises_strategy_error_not_silent_quarter(self):
         """D5.8 - bucket='garbage' must raise StrategyError, NOT silently return quarter output.
@@ -355,7 +373,7 @@ class TestBucketPerturbIntegration:
             provider_config=(("bucket", "weekly_typo"), ("date_format", "%Y-%m-%d")),
         )
         plan = _plan("d", seed)
-        with pytest.raises(StrategyError, match="weekly_typo"):
+        with pytest.raises(StrategyError, match="weekly_typo") as exc:
             PandasExecutionAdapter().run_single(
                 plan,
                 src,
@@ -363,6 +381,25 @@ class TestBucketPerturbIntegration:
                 relationship_graph=_GRAPH,
                 namespace_registry=_NS,
             )
+        assert exc.value.code == "bucket_perturb_invalid_config"
+        assert exc.value.strategy == "bucket_perturb"
+
+    def test_configured_date_format_is_honored_over_autodetect(self):
+        """An explicit date_format must drive parsing, not auto-detection. For a
+        day-first ambiguous date ("05-02-2024" = 5 Feb under %d-%m-%Y), auto-detect
+        picks month-first, so a mutant that drops/nulls date_format lands the value
+        in a different month. Pins that date_format is actually consulted."""
+        import datetime
+
+        src = pa.table({"d": ["05-02-2024"]})
+        seed = _col(
+            "bucket_perturb",
+            namespace="dates",
+            provider_config=(("bucket", "month"), ("date_format", "%d-%m-%Y")),
+        )
+        (out,) = _run(_plan("d", seed), src)
+        # parsed under the configured day-first format, the bucketed date is in Feb
+        assert datetime.datetime.strptime(str(out), "%d-%m-%Y").month == 2
 
     def test_valid_buckets_still_work_after_validation_wiring(self):
         """D5.9 - validate_bucket_perturb_config wiring does not break week/month/quarter."""

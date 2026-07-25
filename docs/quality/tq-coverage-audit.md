@@ -106,6 +106,7 @@ either scoped selections per module or a dedicated multi-hour background program
 | `execution/_strategies/_top_code` | 415 / 354 | 100% (61 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_truncate` | 90 / 76 | 100% (14 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_categorical` | 238 / 194 | 100% (44 equiv) | `tq/crown-jewels` |
+| `execution/_strategies/_bucket_perturb` | 56 / 54 | 100% (2 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
 `_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,
