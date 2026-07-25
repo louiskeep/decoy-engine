@@ -61,13 +61,28 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 - Anything requiring the certified DP profile is graded on the CI cert-gate,
   not the default shell (see the crown-jewel DP notes).
 
-## Coverage ledger (fill as batches land)
-| Batch | modules: authored / graded | logic-mutant score | bugs found | branch |
-|---|---|---|---|---|
-| TQ-0 pilot | 1 / 1 | `_graph` 100% | none | `tq/ri-fk-graph` |
-| crown jewels | 8 / 2 | `_hkdf` 100%, `_derive` 100%; other 6 authored, grading DEFERRED | see `tq-findings.md` | `tq/crown-jewels` |
-| A-F sweep | 0 / 0 (pending) | | | |
+## Coverage ledger
 
-Grading is the throughput bottleneck (a mutmut run > a subagent's turn). Authoring
-is fast and parallel. Next run: grade the 6 deferred crown jewels via harness-tracked
-background mutmut jobs, then sweep-author batches A-F (fast) and grade in batches.
+| Module | authored / graded | logic-mutant score | notes | branch |
+|---|---|---|---|---|
+| `relationships/_graph` (pilot) | yes / yes | 100% (27 equiv) | none | `tq/ri-fk-graph` |
+| `determinism/_hkdf` | yes / yes | 100% (7 equiv) | none | `tq/crown-jewels` |
+| `determinism/_derive` | yes / yes | 100% (3 equiv) | none | `tq/crown-jewels` |
+| `keyprovider` | yes / yes | 100% (25 equiv) | resolve_mask_key precedence gap closed | `tq/crown-jewels` |
+| `transforms/fpe` | yes / yes | 100% (~42 equiv) | Luhn self-ref + Feistel KATs pinned | `tq/crown-jewels` |
+| `execution/_fk_keys` | yes / yes | 100% (32 equiv) | continue/break + dtype gaps; 1 dead branch | `tq/crown-jewels` |
+| `quality/dp_budget` | yes / yes | 100% (18 equiv) | calibration + tolerance-masked mutants | `tq/crown-jewels` |
+| `quality/dp` | yes / DEFERRED | -- | cert-gated: 47/88 tests skip off certified profile; grade on CI cert-gate | `tq/crown-jewels` |
+| `quality/dp_provenance` | yes / DEFERRED | -- | monkeypatch-heavy suite: 87/87 survive; needs direct impl tests | `tq/crown-jewels` |
+
+**Result: both 100%-MANDATORY families (crypto + RI/FK) fully graded to
+logic-100%.** 6/8 crown jewels graded; 2 DP modules (measure-first) have committed
+oracle suites but grading deferred for documented environment/test-approach
+reasons (see the two `quality_dp*.md` ledgers). No source bugs found; findings in
+`tq-findings.md`.
+
+## Step 4 (full-codebase sweep) -- NOT started
+Batches A-F above. Harness that works: the MAIN LOOP owns each mutmut run as a
+tracked `run_in_background` bash job (survives turns), serially; a fresh agent
+does the fast classify+kill per module (no mutmut). Do NOT delegate the mutmut
+run to a subagent (it outlasts the turn and loops).
