@@ -63,6 +63,8 @@ from decoy_engine.keyprovider import (
     SecretKeyProvider,
     SeedKeyProvider,
     WeakMaskSecret,
+    _decode_secret_material,
+    _redact_ref,
     key_provider_from_ref,
     mask_key_from_provider,
     plan_has_keyed_strategy,
@@ -550,3 +552,163 @@ class TestErrorTaxonomy:
                 require_mask_key(plan, None)
         assert ei.value.code == "keyed_strategy_requires_secret"
         assert not isinstance(ei.value, (MissingMaskSecret, WeakMaskSecret))
+
+
+# --------------------------------------------------------------------------
+# TQ crown-jewels mutation-kill pass (docs/quality/mutation-ledgers/keyprovider.md).
+# The properties/taxonomy above already pin every documented invariant; the
+# tests below target LOGIC survivors from the mutmut run that no existing
+# test happened to exercise: an internal join separator, the b64decode
+# `validate` flag, the `_redact_ref` prefix check, exception chaining on the
+# two `from exc` re-raises, `key_version` threading through
+# `key_provider_from_ref`, the explicit `utf-8` file-open encoding, and
+# `resolve_mask_key`'s provider/ref precedence. Equivalent (message-prose-only
+# or no-op) survivors are left alive and ledgered, not tested here.
+# --------------------------------------------------------------------------
+
+
+def test_decode_secret_material_strips_whitespace_without_inserting_separator() -> None:
+    """`stripped = "".join(text.split())` joins on the EMPTY string. Any other
+    separator (a string-literal mutation of the join target) would splice
+    junk between whitespace-separated chunks of an otherwise-valid hex
+    secret, corrupting the decoded bytes instead of merely stripping
+    whitespace."""
+    raw_hex = os.urandom(MIN_SECRET_BYTES).hex()
+    split_point = len(raw_hex) // 2
+    with_internal_whitespace = f"{raw_hex[:split_point]}  \n\t {raw_hex[split_point:]}"
+    assert _decode_secret_material(with_internal_whitespace) == bytes.fromhex(raw_hex)
+
+
+def test_decode_secret_material_whitespace_only_is_bad_secret_ref_code() -> None:
+    """A secret string that is whitespace-only strips to empty; the empty-
+    material guard must raise with the exact `bad_secret_ref` code (not a
+    mutated code string, and not a bare `TypeError` from a dropped required
+    `code=` kwarg)."""
+    with pytest.raises(MaskSecretError) as ei:
+        _decode_secret_material("   \t\n  ")
+    assert ei.value.code == "bad_secret_ref"
+
+
+def test_decode_secret_material_rejects_invalid_base64_characters() -> None:
+    """`base64.b64decode(stripped, validate=True)` must reject any character
+    outside the base64 alphabet rather than silently discarding it
+    (`validate=False`/`None` strips the junk and decodes the remaining valid
+    characters, masking corruption in the secret material)."""
+    clean = base64.b64encode(os.urandom(MIN_SECRET_BYTES)).decode()
+    corrupted = clean[:4] + "!" + clean[4:]  # "!" is outside the base64 alphabet
+    with pytest.raises(MaskSecretError) as ei:
+        _decode_secret_material(corrupted)
+    assert ei.value.code == "bad_secret_ref"
+
+
+def test_decode_secret_material_bad_material_error_chains_original_exception() -> None:
+    """The `bad_secret_ref` raise on undecodable material must chain the
+    original `base64`/`binascii` failure (`raise ... from exc`) so an
+    operator debugging a corrupted secret sees the real root cause instead of
+    a re-raised wrapper with no history."""
+    with pytest.raises(MaskSecretError) as ei:
+        _decode_secret_material("not-hex-not-base64!!!")
+    assert ei.value.__cause__ is not None
+
+
+def test_redact_ref_shows_env_and_file_refs_verbatim() -> None:
+    """`env:`/`file:` refs carry a var name or path, never the secret itself,
+    so they are safe to show verbatim -- pins both the exact prefix strings
+    the `startswith` check matches on and that the shown value is the real
+    `ref`, not a nulled stand-in."""
+    assert _redact_ref("env:FOO") == repr("env:FOO")
+    assert _redact_ref("file:/tmp/x") == repr("file:/tmp/x")
+
+
+def test_redact_ref_redacts_anything_else_to_length_only() -> None:
+    """A ref of any other shape could be a raw secret pasted directly as the
+    ref; only its length may be shown."""
+    raw_secret_lookalike = "s3cr3t-not-a-ref"
+    redacted = _redact_ref(raw_secret_lookalike)
+    assert raw_secret_lookalike not in redacted
+    assert redacted == f"<redacted ref, {len(raw_secret_lookalike)} chars>"
+
+
+def test_resolve_ref_invalid_utf8_file_error_chains_original_exception(tmp_path) -> None:
+    """The `bad_secret_ref` raise on a non-UTF-8 secret file must likewise
+    chain the original `UnicodeDecodeError` (`raise ... from exc`)."""
+    bad_path = tmp_path / "bad-utf8.bin"
+    bad_path.write_bytes(b"\xff\xfe\x00secret")
+    with pytest.raises(MaskSecretError) as ei:
+        resolve_mask_secret_ref(f"file:{bad_path}")
+    assert ei.value.code == "bad_secret_ref"
+    assert ei.value.__cause__ is not None
+
+
+def test_resolve_ref_file_open_uses_utf8_encoding_explicitly(tmp_path, monkeypatch) -> None:
+    """The secret file must be opened with an EXPLICIT `utf-8` codec, not the
+    locale-dependent default (`encoding=None`, or the kwarg dropped
+    entirely) -- a mask secret file must decode identically regardless of
+    the host's locale. (A same-codec case variant like `"UTF-8"` is a true
+    no-op -- Python's codec lookup is case-insensitive -- so this asserts
+    case-insensitively, not on the literal string.)"""
+    secret_path = tmp_path / "secret.txt"
+    secret_path.write_text(os.urandom(MIN_SECRET_BYTES).hex())
+    captured: dict[str, object] = {}
+    real_open = open
+
+    def spy_open(*args, **kwargs):
+        captured.update(kwargs)
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+    resolve_mask_secret_ref(f"file:{secret_path}")
+    encoding = captured.get("encoding")
+    assert encoding is not None
+    assert str(encoding).lower() == "utf-8"
+
+
+def test_key_provider_from_ref_uses_the_given_key_version(monkeypatch) -> None:
+    """`key_provider_from_ref` must thread its `key_version` kwarg through to
+    the constructed `SecretKeyProvider`, not silently fall back to the
+    class's own default."""
+    name = "DECOY_TQ_KP_KEY_VERSION_REF"
+    monkeypatch.setenv(name, os.urandom(MIN_SECRET_BYTES).hex())
+    provider = key_provider_from_ref(f"env:{name}", key_version="custom-v7")
+    assert provider.key_version == "custom-v7"
+
+
+def _inert_mini_plan() -> _MiniPlan:
+    """A plan with zero columns -- inert to the keyed-strategy gate, so
+    `require_mask_key` reduces to the plain provider-or-job_seed choice these
+    `resolve_mask_key` precedence tests need to isolate."""
+    return _MiniPlan(SeedEnvelope(job_seed=b"\x00" * 8, per_table=(("t", TableSeed(per_column=())),)))
+
+
+def test_resolve_mask_key_prefers_explicit_key_provider() -> None:
+    """`resolve_mask_key` must thread the caller's `key_provider` through to
+    the gate, not silently discard it in favor of `job_seed`."""
+    plan = _inert_mini_plan()
+    provider = SecretKeyProvider(os.urandom(MIN_SECRET_BYTES))
+    result = resolve_mask_key(plan=plan, key_provider=provider)
+    assert result == provider.mask_key()
+    assert result != plan.seed_envelope.job_seed
+
+
+def test_resolve_mask_key_resolves_via_mask_secret_ref_when_no_provider(monkeypatch) -> None:
+    """With no explicit `key_provider`, a given `mask_secret_ref` must be
+    resolved to a provider and used -- not skipped, and not resolved from a
+    nulled ref."""
+    name = "DECOY_TQ_KP_RESOLVE_MASK_KEY_REF"
+    secret = os.urandom(MIN_SECRET_BYTES)
+    monkeypatch.setenv(name, secret.hex())
+    plan = _inert_mini_plan()
+    result = resolve_mask_key(plan=plan, key_provider=None, mask_secret_ref=f"env:{name}")
+    assert result == SecretKeyProvider(secret).mask_key()
+
+
+def test_resolve_mask_key_explicit_key_provider_wins_over_mask_secret_ref(monkeypatch) -> None:
+    """'A programmatic `key_provider` wins over `mask_secret_ref`' (module
+    docstring): when both are given, the explicit provider must NOT be
+    overwritten by resolving the ref."""
+    name = "DECOY_TQ_KP_PRECEDENCE_REF"
+    monkeypatch.setenv(name, os.urandom(MIN_SECRET_BYTES).hex())
+    plan = _inert_mini_plan()
+    provider = SecretKeyProvider(os.urandom(MIN_SECRET_BYTES))
+    result = resolve_mask_key(plan=plan, key_provider=provider, mask_secret_ref=f"env:{name}")
+    assert result == provider.mask_key()

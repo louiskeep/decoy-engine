@@ -50,3 +50,14 @@ ambiguity in the function's contract for arbitrary callers.
 - `dp_budget` additivity/single-cert tolerances are empirically derived over PLD
   discretization noise; confirm via mutmut they still kill a real composition-logic
   mutant rather than only noise.
+
+## Codex verdict on finding 1 (FK float/Decimal route divergence), 2026-07-25
+
+Cam asked Codex. Verdict: **REAL correctness bug** -- the RI outcome must not
+depend on execution route. Equal-valued numeric PK/FK values should map to the
+SAME FK key when the source system considers them equal, else valid children
+become false orphans. **Fix direction:** make the out-of-core route (`fk_join_key`,
+the string-token map) use the SAME canonical numeric equivalence as
+`fk_key_value()` -- normalize float/Decimal to a shared, collision-safe numeric
+token rather than type-tagging them apart. Source change to `_fk_keys.py`,
+high-stakes (RI); Cam-gated, NOT done autonomously.
