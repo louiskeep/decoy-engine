@@ -16,10 +16,11 @@ value back at its own path -> re-serialize. Malformed JSON emits a
 warning (sparse paths are valid); overlapping matches (recursive/wildcard
 selectors) are ordered deepest-first and flagged with a typed warning.
 
-A mutmut run produced **303 mutants, 188 killed + 37 timeout (62% baseline),
-78 survived**. Every survivor was classified LOGIC or EQUIVALENT per
+A mutmut run produced **303 mutants, 188 killed + 37 timeout, 78 survived**
+(baseline caught = 225/303 = 74%, counting timeouts as caught; the bare-kill
+rate is 188/303 = 62%). Every survivor was classified LOGIC or EQUIVALENT per
 `docs/quality/module-test-quality-playbook.md` ("Scope the score to LOGIC, not
-error-message wording"). **58 LOGIC survivors** were killed with **15 new tests**
+error-message wording"). **58 LOGIC survivors** were killed with **17 new tests**
 (plus two `.strategy` assertions added to existing rejection tests);
 **20 survive and are EQUIVALENT** (error-message prose, cosmetic message-suffix
 arg, a proven-identical branch, consistent internal renames, and inferred-vs-
