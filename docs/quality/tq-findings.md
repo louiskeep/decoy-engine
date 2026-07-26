@@ -71,6 +71,21 @@ Silent-wrong-output, not fail-closed. Fix belongs in the plan-compile refs check
 `_type_params_present` (add the derived_aggregate branch), NOT in this tests-only
 sweep. File as a separate product issue.
 
+### 7. dtype=object output survivors are killable on an all-null non-object column (ledger-tightening, not a bug)
+`transforms/text_mask.py`, `execution/_strategies/_nested.py` (and originally
+`_text_redact.py`, now fixed). Several ledgers classified `pd.Series(col_values,
+dtype=object) -> dtype=None`/dropped as EQUIVALENT with a "col_values is uniformly
+str-or-null so object is inferred anyway" rationale. Batch-7 dennis showed that is
+false for an ALL-NULL non-object column (e.g. all-null float64): without the
+explicit `dtype=object` pandas infers `float64`, an observable output-dtype change
+(the explicit object is a deliberate Arrow/concat-boundary contract). `_text_redact`
+was tightened (mutmut_110/113 reclassified LOGIC, killed by
+`test_all_null_float_column_output_is_object_dtype`). The equivalent
+`_text_mask`(mutmut_125/128) and `_nested`(mutmut_163/166) survivors are the same
+pattern -- redacted/masked VALUES are identical (all null), only the dtype differs;
+gated as immaterial at the time. Tightening opportunity: add the same all-null test
+to those two modules and reclassify. Not a product bug.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified

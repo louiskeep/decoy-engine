@@ -29,17 +29,24 @@ counted "survived" here may be killed by tests outside this file.
 
 ## Numbers
 
-**125 mutants: 81 killed (65% baseline), 44 survived -> 116 killed after this
-pass, 9 EQUIVALENT.** LOGIC-mutant score 100%.
+**125 mutants: 81 killed (65% baseline), 44 survived -> 118 killed after this
+pass, 7 EQUIVALENT.** LOGIC-mutant score 100%.
 
-- **35 LOGIC survivors killed** with **9 new tests** (plus a strengthened
+(Batch-7 dennis P2 correction: `mutmut_110`/`113` (`dtype=object` -> `None`/dropped)
+were first filed equivalent but are LOGIC -- an all-null FLOAT column infers
+float64 without the explicit `object`, an observable output-dtype change. Killed
+below. The sibling `_text_mask`/`_nested` ledgers carry the same now-superseded
+"uniformly str-or-null" rationale for their dtype=object survivors; see
+tq-findings.md #7.)
+
+- **37 LOGIC survivors killed** with **11 new tests** (plus a strengthened
   `.strategy` assertion on the existing version-guard test). 0 real bugs found.
-- **9 EQUIVALENT survivors** left alive (2 label_token default no-ops, 2
-  NER-guard message-prose, 1 extension-boxing no-op, 2 redundant `dtype=object`,
-  2 `_splice` symmetric-boundary no-ops). All verified behavior-preserving.
+- **7 EQUIVALENT survivors** left alive (2 label_token default no-ops, 2
+  NER-guard message-prose, 1 extension-boxing no-op, 2 `_splice`
+  symmetric-boundary no-ops). All verified behavior-preserving.
 - **0 deferred.** No mutant needs a real spaCy model to grade.
 
-## LOGIC (35): killed by new tests in this pass
+## LOGIC (37): killed by new tests in this pass
 
 All killing tests live in `tests/unit/execution/test_text_redact.py`. The NER and
 `iter_spans` forwarding tests use spies monkeypatched over the `storm.ner`
@@ -90,7 +97,17 @@ positional index is missing).
 |---|---|---|
 | `run__mutmut_109`, `112` | `pd.Series(..., index=df.index, ...)` -> `index=None` / index arg dropped -> RangeIndex misaligns a non-default index and blanks every row to NaN | `TestOutputIndexAlignment::test_output_aligned_to_non_default_index` (index `[10, 20]`) |
 
-## EQUIVALENT (9)
+### Output-Series dtype (2)
+
+| Mutants | Mutation | Killed by |
+|---|---|---|
+| `run__mutmut_110`, `113` | `pd.Series(..., dtype=object)` -> `dtype=None` / dtype arg dropped | `test_all_null_float_column_output_is_object_dtype`: an all-null FLOAT column infers `float64` without the explicit `object`, so the output dtype (a deliberate Arrow/concat-boundary contract) changes observably. Batch-7 dennis P2. |
+
+(Defense-in-depth, no new mutant: `test_empty_detectors_list_redacts_all_not_nothing`
+pins the S5c F2 anti-PHI-leak invariant -- `detectors: []` means "all detectors",
+never "redact nothing".)
+
+## EQUIVALENT (7)
 
 | Mutant | Mutation | Why equivalent |
 |---|---|---|
@@ -99,8 +116,6 @@ positional index is missing).
 | `run__mutmut_54` | NER version-guard `message=None` | Consumed only as `StrategyError.message`; the guard's `code`/`strategy` are asserted (`test_version_mismatch_raises`), so a message-only change is invisible. |
 | `run__mutmut_57` | NER version-guard `message=` kwarg dropped | `StrategyError.message` defaults to `""` (only `code`/`strategy` are required); the raise still carries the right machine fields. |
 | `run__mutmut_68` | `is_extension_array_dtype(col.dtype)` -> `is_extension_array_dtype(None)` (always False) | `None` forces the `else` (`col.copy()`) and skips `astype(object)`. But `col` is consumed only via `col.isna().to_list()` and `col.to_list()`, both dtype-agnostic, and the output is rebuilt from a plain list with an explicit `dtype=object`. Verified byte-identical across `string[pyarrow]`, `Int64`, and `category` columns (non-null values and null markers match). No input distinguishes it. Same as `_text_mask` `mutmut_83`. |
-| `run__mutmut_110` | `pd.Series(..., dtype=object)` -> `dtype=None` | Null cells keep their original marker and non-null cells are pre-coerced to str, so `col_values` is uniformly str-or-null and pandas infers `object` whether stated or not. Verified identical dtype + values on mixed string+null, all-string, and empty columns. Same as `_text_mask` `mutmut_125`. |
-| `run__mutmut_113` | `pd.Series(..., dtype=object)` -> dtype arg dropped | Same as `mutmut_110`: the explicit `object` dtype is redundant given uniformly str-or-null `col_values`. Same as `_text_mask` `mutmut_128`. |
 | `_splice__mutmut_4` | `if s.start > cursor:` -> `if s.start >= cursor:` | The added case is `s.start == cursor`, which appends `text[cursor:s.start]` = `text[cursor:cursor]` = `""`. Appending an empty string never changes the joined output. Verified on adjacent spans, a span at offset 0, and a span ending at `len(text)`. Symmetric-boundary no-op. |
 | `_splice__mutmut_9` | `if cursor < len(text):` -> `if cursor <= len(text):` | `cursor` never exceeds `len(text)` (`cursor = s.end` and spans stay in-bounds), so the added case is `cursor == len(text)`, which appends `text[cursor:]` = `text[len(text):]` = `""`. No observable difference. Symmetric-boundary no-op. |
 

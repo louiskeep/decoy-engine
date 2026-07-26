@@ -64,6 +64,24 @@ class TestCoreRedaction:
         assert "123-45-6789" not in cell
         assert cell.count("[REDACTED]") == 2
 
+    def test_all_null_float_column_output_is_object_dtype(self):
+        # The output column is typed object deliberately (the contract at the
+        # Arrow/concat boundary). An all-null FLOAT column would infer float64
+        # without the explicit dtype=object; pin object so a dtype-drop mutant
+        # fails. Redacted values are identical (all null); only the dtype differs.
+        df = pd.DataFrame({"notes": pd.Series([float("nan"), float("nan")])})
+        out, _ = TextRedactHandler().run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert out["notes"].dtype == object
+
+    def test_empty_detectors_list_redacts_all_not_nothing(self):
+        # S5c F2 anti-PHI-leak invariant: detectors=[] means "run all detectors",
+        # never "redact nothing". An empty list must still redact PII.
+        df = pd.DataFrame({"notes": ["alice@example.com SSN 123-45-6789"]})
+        out, _ = TextRedactHandler().run(df.copy(), "notes", _seed({"detectors": []}), _FakeCtx())
+        cell = out["notes"].iloc[0]
+        assert "alice@example.com" not in cell
+        assert "123-45-6789" not in cell
+
     def test_text_redact_preserves_non_pii_text_byte_for_byte(self):
         original = "Patient presented with cough. Phone (212) 555-1234. Discharged."
         df = pd.DataFrame({"notes": [original]})
