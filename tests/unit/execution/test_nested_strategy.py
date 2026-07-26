@@ -23,7 +23,11 @@ import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter, PolarsExecutionAdapter
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._strategies._nested import NestedStrategyHandler
+from decoy_engine.execution._strategies._nested import (
+    NestedStrategyHandler,
+    _has_prefix_overlap,
+    _path_segments,
+)
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -230,6 +234,8 @@ class TestRejections:
                 _FakeCtx(),
             )
         assert exc.value.code == "nested_jsonpath_parse_error"
+        # Machine `strategy` attribution is fail-closed-load-bearing, not prose.
+        assert exc.value.strategy == "nested"
 
     def test_nested_target_empty_raises(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
@@ -242,6 +248,7 @@ class TestRejections:
                 _FakeCtx(),
             )
         assert exc.value.code == "nested_target_unset"
+        assert exc.value.strategy == "nested"
 
     def test_nested_strategy_empty_raises(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
@@ -573,3 +580,301 @@ class TestNestedWhenGateFailClosed:
             "A zero-match when: gate on a nested(code_set) column must not let "
             "a missing child corpus succeed silently on the POLARS route either."
         )
+
+
+# ── mutation-hardening (TQ crown-jewels, 2026-07-26) ───────────────────
+#
+# Kills the LOGIC survivors from the mutmut run on `_nested.py`. Grouped
+# by the invariant / method each pins. See
+# docs/quality/mutation-ledgers/execution_strategies_nested.md.
+
+
+class _SpyChild:
+    """Child handler double that records the outer-column ctx stamp and
+    applies a per-value deterministic transform.
+
+    Lets us pin two `run()` invariants that a constant child (redact)
+    cannot observe: (a) the real outer column is visible to the child
+    during dispatch (ctx save/stamp/restore), and (b) each collected leaf
+    is written back at ITS OWN path (the cursor mapping), by making the
+    masked value a function of the input so a misalignment is visible.
+    """
+
+    def __init__(self) -> None:
+        self.seen_outer_column: Any = "UNSET"
+
+    def run(self, df, column, plan, ctx):
+        if ctx is None:
+            self.seen_outer_column = "CTX_NONE"
+        else:
+            self.seen_outer_column = getattr(ctx, "nested_outer_column", "MISSING")
+        vals = df[column].tolist()
+        df[column] = [f"M::{v}" for v in vals]
+        return df, []
+
+
+def _match_with_path(path_str: str) -> Any:
+    """A jsonpath_ng match double whose `full_path` stringifies to
+    `path_str`, for exercising `_path_segments` / `_has_prefix_overlap`
+    at their documented (deepest-first) contract boundary."""
+
+    class _FullPath:
+        def __str__(self) -> str:
+            return path_str
+
+    return SimpleNamespace(full_path=_FullPath())
+
+
+class TestJsonPathParseErrorFields:
+    """The parse-error raise site's machine `strategy` is fail-closed
+    attribution, not prose (kills strategy=None / XX-wrap / uppercase)."""
+
+    def test_jsonpath_parse_error_strategy_field(self):
+        df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x[", "strategy": "redact"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_jsonpath_parse_error"
+        assert exc.value.strategy == "nested"
+
+
+class TestExtensionArrayColumn:
+    """The extension-array branch (`col.astype(object)`) must run for a
+    pandas StringDtype column. Kills `col = None` (AttributeError on
+    `to_list`) and `col.astype(None)` (ValueError)."""
+
+    def test_extension_array_dtype_column_is_masked(self):
+        df = pd.DataFrame(
+            {"data": pd.Series([json.dumps({"user": {"email": "a@x.com"}})], dtype="string")}
+        )
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.user.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        assert warnings == []
+        assert json.loads(out["data"].iloc[0])["user"]["email"] == "REDACTED"
+
+
+class TestRowOrderingBranches:
+    """Each per-cell `continue` must skip only its own row, not halt the
+    scan. Kills the three `continue -> break` mutants (null cell, parse
+    error, no-match) by placing the skipped row BEFORE a maskable row."""
+
+    def test_null_cell_before_valid_row_does_not_halt(self):
+        df = pd.DataFrame({"data": [None, json.dumps({"user": {"email": "a@x.com"}})]})
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.user.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        assert pd.isna(out["data"].iloc[0])
+        assert json.loads(out["data"].iloc[1])["user"]["email"] == "REDACTED"
+
+    def test_parse_error_cell_before_valid_row_does_not_halt(self):
+        df = pd.DataFrame({"data": ["not json", json.dumps({"user": {"email": "a@x.com"}})]})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.user.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        assert out["data"].iloc[0] == "not json"
+        assert json.loads(out["data"].iloc[1])["user"]["email"] == "REDACTED"
+        assert any(w.code == "nested_cell_json_parse_error" for w in warnings)
+
+    def test_no_match_cell_before_valid_row_does_not_halt(self):
+        df = pd.DataFrame(
+            {"data": [json.dumps({"other": 1}), json.dumps({"user": {"email": "a@x.com"}})]}
+        )
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.user.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        assert json.loads(out["data"].iloc[0]) == {"other": 1}
+        assert json.loads(out["data"].iloc[1])["user"]["email"] == "REDACTED"
+
+
+class TestWarningMachineFields:
+    """Both QualityWarnings carry machine fields (`provider`, `column`,
+    and the `detail` dict keys/values) that flow into the manifest's
+    quality summary. Pin them exactly: kills provider/column None + case
+    + XX-wrap, and every `detail` key rename / value / None / dropped."""
+
+    def test_parse_error_warning_fields(self):
+        df = pd.DataFrame({"data": ["not json"]})
+        handler = NestedStrategyHandler()
+        _, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        parse_warnings = [w for w in warnings if w.code == "nested_cell_json_parse_error"]
+        assert len(parse_warnings) == 1
+        w = parse_warnings[0]
+        assert w.provider == "nested"
+        assert w.column == "data"
+        assert w.detail == {"row_pos": "0"}
+
+    def test_overlap_warning_fields(self):
+        df = pd.DataFrame({"data": [json.dumps({"user": {"name": "Alice", "email": "a@x.com"}})]})
+        handler = NestedStrategyHandler()
+        _, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$..*", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        overlaps = [w for w in warnings if w.code == "nested_jsonpath_path_overlap"]
+        assert len(overlaps) >= 1
+        w = overlaps[0]
+        assert w.provider == "nested"
+        assert w.column == "data"
+        assert set(w.detail.keys()) == {"row_pos", "target", "match_count"}
+        assert w.detail["row_pos"] == "0"
+        assert w.detail["target"] == "$..*"
+        assert w.detail["match_count"].isdigit()
+        assert int(w.detail["match_count"]) >= 1
+
+
+class TestOuterColumnCtxLifecycle:
+    """`run()` saves ctx.nested_outer_column, stamps the REAL outer column
+    for the child dispatch, then restores the prior value in `finally`.
+    Pins save (prior value / default), stamp (name + value seen by the
+    child), and restore (correct attr name + value)."""
+
+    def _redact_seed(self):
+        return _seed({"target": "$.user.email", "strategy": "redact"})
+
+    def _one_row_df(self):
+        return pd.DataFrame({"data": [json.dumps({"user": {"email": "a@x.com"}})]})
+
+    def test_outer_column_restored_to_default_when_absent(self):
+        # ctx has no nested_outer_column attr: default "" is saved and
+        # restored. Kills prior=None, getattr default None, default "XXXX",
+        # and finally restoring the wrong value/attr.
+        ctx = _FakeCtx()
+        NestedStrategyHandler().run(self._one_row_df(), "data", self._redact_seed(), ctx)
+        assert ctx.nested_outer_column == ""
+
+    def test_outer_column_restored_to_prior_value(self):
+        # A prior stamp must be restored verbatim (nested dispatch can run
+        # mid-dispatch of another node). Kills getattr(None, ...),
+        # reading/writing a wrong attr name, and prior=None.
+        ctx = _FakeCtx()
+        object.__setattr__(ctx, "nested_outer_column", "SENTINEL")
+        NestedStrategyHandler().run(self._one_row_df(), "data", self._redact_seed(), ctx)
+        assert ctx.nested_outer_column == "SENTINEL"
+
+    def test_child_sees_real_outer_column_during_dispatch(self, monkeypatch):
+        import decoy_engine.execution._strategies as strat
+
+        spy = _SpyChild()
+        monkeypatch.setitem(strat.SCALAR_HANDLERS, "spy", spy)
+        df = pd.DataFrame({"data": [json.dumps({"a": "v1"})]})
+        NestedStrategyHandler().run(
+            df, "data", _seed({"target": "$.a", "strategy": "spy"}), _FakeCtx()
+        )
+        # Kills stamp=None, wrong stamp attr name, and ctx=None passed to child.
+        assert spy.seen_outer_column == "data"
+
+
+class TestChildBatchMapping:
+    """Each collected leaf is written back at its OWN path in collection
+    order. With a per-value child transform and distinct leaf values, a
+    misaligned cursor (`+= 1` -> `= 1` / `-= 1`) surfaces as a wrong value
+    at some path."""
+
+    def test_each_leaf_maps_to_its_own_masked_value(self, monkeypatch):
+        import decoy_engine.execution._strategies as strat
+
+        monkeypatch.setitem(strat.SCALAR_HANDLERS, "spy", _SpyChild())
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps({"a": "alpha", "b": "beta"}),
+                    json.dumps({"a": "gamma"}),
+                ]
+            }
+        )
+        out, _ = NestedStrategyHandler().run(
+            df, "data", _seed({"target": "$.*", "strategy": "spy"}), _FakeCtx()
+        )
+        row0 = json.loads(out["data"].iloc[0])
+        row1 = json.loads(out["data"].iloc[1])
+        assert row0["a"] == "M::alpha"
+        assert row0["b"] == "M::beta"
+        assert row1["a"] == "M::gamma"
+
+
+class TestWritebackIndexAlignment:
+    """The rebuilt column must carry the frame's own index. `index=None`
+    / dropped index gives a 0..n-1 RangeIndex that misaligns (all-NaN)
+    against a non-default frame index."""
+
+    def test_custom_index_preserved_on_writeback(self):
+        df = pd.DataFrame(
+            {"data": [json.dumps({"a": "x"}), json.dumps({"a": "y"})]},
+            index=[10, 20],
+        )
+        out, _ = NestedStrategyHandler().run(
+            df.copy(), "data", _seed({"target": "$.a", "strategy": "redact"}), _FakeCtx()
+        )
+        assert list(out.index) == [10, 20]
+        assert pd.notna(out["data"].loc[10])
+        assert pd.notna(out["data"].loc[20])
+        assert json.loads(out["data"].loc[10])["a"] == "REDACTED"
+        assert json.loads(out["data"].loc[20])["a"] == "REDACTED"
+
+
+class TestPathSegments:
+    """`_path_segments` strips a single outer paren pair ONLY when both
+    parens are present, slicing exactly one char off each end."""
+
+    def test_unbalanced_leading_paren_is_not_stripped(self):
+        # Both-parens guard: `and` (not `or`). A leading-only paren keeps
+        # the raw segment; an `or` mutant would wrongly slice it.
+        assert _path_segments(_match_with_path("(user")) == ("(user",)
+
+    def test_balanced_parens_strip_one_char_each_end(self):
+        # `raw[1:-1]`, not `[1:-2]`: the closing paren is the only trailing
+        # char removed, so the last segment keeps its full text.
+        assert _path_segments(_match_with_path("(a.bc)")) == ("a", "bc")
+
+
+class TestHasPrefixOverlap:
+    """`_has_prefix_overlap` (deepest-first contract) flags a pair iff a
+    strictly-shorter path is a prefix of a longer one."""
+
+    def test_adjacent_prefix_pair_is_detected(self):
+        # `range(i + 1, n)`, not `i + 2`: the only overlapping pair here is
+        # adjacent, so skipping the neighbour would miss it.
+        deep = _match_with_path("a.b")
+        shallow = _match_with_path("a")
+        assert _has_prefix_overlap([deep, shallow]) is True
+
+    def test_shorter_non_prefix_is_not_flagged(self):
+        # `and`, not `or`: a shorter path that is NOT a prefix must not
+        # count merely for being shorter.
+        deep = _match_with_path("a.b")
+        other = _match_with_path("x")
+        assert _has_prefix_overlap([deep, other]) is False
+
+    def test_equal_length_identical_paths_are_not_flagged(self):
+        # Strict `<`, not `<=`: two equal-length paths (even identical) are
+        # not a strict-prefix overlap.
+        assert _has_prefix_overlap([_match_with_path("a.b"), _match_with_path("a.b")]) is False

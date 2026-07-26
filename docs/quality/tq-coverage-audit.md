@@ -113,6 +113,7 @@ either scoped selections per module or a dedicated multi-hour background program
 | `transforms/text_mask` (core) | 281 / 239 | 100% (42 equiv) | `tq/crown-jewels` |
 | `transforms/code_set` | 342 / 296 | 100% (46 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_derived` | 19 / 18 | 100% (1 equiv) | `tq/crown-jewels` |
+| `execution/_strategies/_nested` | 303 / 246+37to | 100% (20 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
 `_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,
