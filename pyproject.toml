@@ -924,7 +924,7 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/transforms/_codeset_config_checks.py"]
+only_mutate = ["src/decoy_engine/transforms/_codeset_index.py"]
 pytest_add_cli_args_test_selection = [
     "tests/unit/transforms/test_code_set.py",
     "-k",

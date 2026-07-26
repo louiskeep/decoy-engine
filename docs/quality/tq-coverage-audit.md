@@ -142,6 +142,7 @@ a different mutation tool. Flagged for Cam.
 | `transforms/joint_mask` | 196 / 168 | 100% (28 equiv) | `tq/crown-jewels` |
 | `transforms/date_shift` (live `_detect_format` only) | 18 / 11 | 100% live (7 equiv); V1 class dead (finding #11) | `tq/crown-jewels` |
 | `transforms/_codeset_config_checks` | 91 / 69 | 100% (22 equiv) | `tq/crown-jewels` |
+| `transforms/_codeset_index` | 54 / 54 | 100% (0 equiv, clean) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
 `_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,
