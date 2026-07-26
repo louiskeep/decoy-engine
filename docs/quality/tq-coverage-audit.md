@@ -100,6 +100,16 @@ integration-test kills, so any test written to kill a "survivor" still adds real
 focused coverage; note the scoped selection in each ledger). Substrates need
 either scoped selections per module or a dedicated multi-hour background program.
 
+**Substrate harness pathology (2026-07-26):** the first substrate attempted,
+`execution/_planner.py`, exposed a hard blocker: mutmut's in-process runner
+misreports genuinely-surviving mutants as ⏰ timeout on the heavy pandas/pyarrow
+substrate suites (verified: a sampled "timeout" mutant SURVIVES in ~3s under
+standalone pytest, exit 0). Raising `timeout_constant` to a 225s limit did not
+change it, so it is a runner/suite interaction, not a tuning issue -- see
+tq-findings.md #8. `_planner` is DEFERRED (not falsely scored); the Batch-A
+substrate tier needs a runner that shells out to standalone pytest per mutant, or
+a different mutation tool. Flagged for Cam.
+
 **Step-4 modules graded:**
 | Module | mutants / killed | logic score | branch |
 |---|---|---|---|

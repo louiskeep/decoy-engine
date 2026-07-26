@@ -86,6 +86,27 @@ pattern -- redacted/masked VALUES are identical (all null), only the dtype diffe
 gated as immaterial at the time. Tightening opportunity: add the same all-null test
 to those two modules and reclassify. Not a product bug.
 
+### 8. mutmut in-process runner misreports surviving mutants as timeout on substrate suites (harness limitation, not a product bug)
+`execution/_planner.py` (and the Batch-A execution substrates generally). Grading
+`_planner` with the standard focused-selection harness produced "459 mutants, 313
+killed, 146 timeout, 0 survived" -- but sampling the ⏰ mutants showed pure
+message-prose mutations (e.g. `reason = None`, a case-changed error string) that
+cannot hang. Running one such mutant standalone
+(`MUTANT_UNDER_TEST=...x__table_column_entries__mutmut_2 pytest test_execution_planner.py`)
+completes in ~3s and the mutant SURVIVES (exit 0) -- so the 146 "timeouts" are 146
+real survivors the harness is hiding, making the score false. The cause is mutmut's
+per-mutant limit `(estimated_time_of_tests + timeout_constant) * timeout_multiplier`:
+for these suites the per-test call-duration estimate is ~0, so the limit collapses,
+and mutmut's in-process runner marks the survivor a timeout. Raising
+`timeout_constant` to 15.0 (a ~225s wall / ~450s CPU per-mutant limit) did NOT change
+the verdict -- the same 5 mutants still reported ⏰ -- so it is not a limit-tuning
+issue but a runner/suite interaction. The substrate tier (biggest P0 section, Batch A)
+therefore needs a different grading path (a runner that shells out to standalone
+pytest per mutant, or an alternative mutation tool), NOT the in-process focused
+harness that grades the strategy/transform tier cleanly. Logged, not worked around;
+`_planner` and siblings are NOT falsely scored. The fast strategy/transform modules
+are unaffected (their surviving runs finish well under the default limit).
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
