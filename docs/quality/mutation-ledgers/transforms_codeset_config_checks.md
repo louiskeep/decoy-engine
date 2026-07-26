@@ -37,7 +37,16 @@ tests assert the exact `code`+`path` for each of the four refusals.
 | Mutants | Category | Why equivalent |
 |---|---|---|
 | `10`, `34`, `66`, `83` (message=None); `18-23`, `42-44`, `74-78` (message string edits) | error-message prose | the raised `PlanCompileError`'s `code`+`path` (the machine fields) are unchanged and asserted; only the human-readable message text differs. |
-| `48`, `50`, `53`, `54` | `cfg.get("corpus_source", <default>)` -> None/dropped/`"XXshippedXX"`/`"SHIPPED"` | `source` is consumed only by `not source.startswith("customer:")`; none of these defaults start with `"customer:"`, so `is_shipped_source` is True in every case -- no observable change (unkillable without a source change). |
+| `48`, `50`, `53`, `54` | `cfg.get("corpus_source", <default>)` -> None/dropped/`"XXshippedXX"`/`"SHIPPED"` | `source = str(cfg.get("corpus_source", ...))` -- the `str()` wrapper coerces the None/dropped default to `"None"` BEFORE `.startswith` (so mut 48/50 cannot raise), and `source` is consumed ONLY by `not source.startswith("customer:")`; none of these defaults start with `"customer:"`, so `is_shipped_source` is True in every case -- no observable change (apply-time routing re-reads `cfg["corpus_source"]`, not this local). Unkillable without a source-value change. |
+
+## Gate
+
+Dennis batch gate: **PASS**, 0 P0 / 0 P1. The `None` corpus_source default is
+NOT a crash (the `str()` wrapper coerces it to `"None"` before `.startswith`);
+all 22 equivalents confirmed, all 15 kills assert exact code+path. Two P2 nits
+applied: added `test_reserved_licensed_names_parametrize_covers_the_constant`
+(guards the hardcoded mirror against RESERVED_LICENSED_NAMES drift) and this
+ledger's str()-wrapper note.
 
 ## Regenerate
 

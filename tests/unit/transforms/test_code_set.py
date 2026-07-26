@@ -411,13 +411,22 @@ class TestConfigValidation:
         """A string or unquoted-numeric release id is a valid scalar pin."""
         validate_code_set_config({"code_set": "icd10", "corpus_source_version": good_version})
 
+    def test_reserved_licensed_names_parametrize_covers_the_constant(self):
+        """Guard the hardcoded parametrize list below against drift in the
+        module-level `RESERVED_LICENSED_NAMES` set (which mutmut cannot mutate):
+        adding or removing a member must fail here so the per-value coverage
+        stays complete."""
+        from decoy_engine.transforms._codeset_provenance import RESERVED_LICENSED_NAMES
+
+        assert set(RESERVED_LICENSED_NAMES) == {"cpt", "apr_drg"}
+
     @pytest.mark.parametrize("reserved_name", ["cpt", "apr_drg"])
     def test_reserved_licensed_name_error_fields(self, reserved_name):
         """Each reserved licensed corpus is refused as upload-only with the
         licensing-specific code + path -- checked BEFORE the generic not-found
-        gate. Parametrized per constant value so every member of
-        RESERVED_LICENSED_NAMES has explicit coverage (a module-level set is
-        not otherwise exercised value-by-value)."""
+        gate. Parametrized over a literal mirror of RESERVED_LICENSED_NAMES
+        (guarded by test_reserved_licensed_names_parametrize_covers_the_constant)
+        so every member has explicit value-by-value coverage."""
         with pytest.raises(PlanCompileError) as exc:
             validate_code_set_config({"code_set": reserved_name})
         assert exc.value.code == "code_set_reserved_licensed_name"
