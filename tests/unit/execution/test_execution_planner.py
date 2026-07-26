@@ -479,3 +479,236 @@ class TestObserveOnly:
         run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
         run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, explain_plan=True)
         assert adapters == ["PandasExecutionAdapter", "PandasExecutionAdapter"]
+
+
+# --------------------------------------------------------------------------
+# Fixtures for the chunked-gate delegation / reason-composition oracles
+# --------------------------------------------------------------------------
+
+
+def _date_shift_no_format_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
+    """Single mask table, chunk-safe apart from an undated date_shift column."""
+    df = pd.DataFrame({"dt": ["2020-01-01", "2020-02-02"]})
+    path = _write_csv(tmp_path, "ds", df)
+    cfg = _base_config(
+        tmp_path,
+        tables=[{"name": "ds", "columns": [{"name": "dt", "strategy": "date_shift"}]}],
+        sources={"ds": path},
+    )
+    return cfg, {"ds": pa.Table.from_pandas(df, preserve_index=False)}
+
+
+def _bucketize_null_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
+    """Single mask table whose bucketize source column carries a null."""
+    df = pd.DataFrame({"age": [10.0, None]})
+    path = _write_csv(tmp_path, "b", df)
+    cfg = _base_config(
+        tmp_path,
+        tables=[
+            {
+                "name": "b",
+                "columns": [
+                    {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}}
+                ],
+            }
+        ],
+        sources={"b": path},
+    )
+    return cfg, {"b": pa.Table.from_pandas(df, preserve_index=False)}
+
+
+def _fpe_join_group_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
+    """Single mask table with an fpe column that sets fpe_join_group."""
+    df = pd.DataFrame({"card": ["41111111", "42222222"]})
+    path = _write_csv(tmp_path, "f", df)
+    cfg = _base_config(
+        tmp_path,
+        tables=[
+            {
+                "name": "f",
+                "columns": [
+                    {
+                        "name": "card",
+                        "strategy": "fpe",
+                        "namespace": "cc",
+                        "provider_config": {"fpe_join_group": True},
+                    }
+                ],
+            }
+        ],
+        sources={"f": path},
+    )
+    return cfg, {"f": pa.Table.from_pandas(df, preserve_index=False)}
+
+
+def _two_fpe_join_group_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
+    """Two fpe join-group columns on one table (exercises the join list)."""
+    df = pd.DataFrame({"c1": ["41111111", "42222222"], "c2": ["51111111", "52222222"]})
+    path = _write_csv(tmp_path, "f", df)
+    cfg = _base_config(
+        tmp_path,
+        tables=[
+            {
+                "name": "f",
+                "columns": [
+                    {
+                        "name": "c1",
+                        "strategy": "fpe",
+                        "namespace": "cc",
+                        "provider_config": {"fpe_join_group": True},
+                    },
+                    {
+                        "name": "c2",
+                        "strategy": "fpe",
+                        "namespace": "cc",
+                        "provider_config": {"fpe_join_group": True},
+                    },
+                ],
+            }
+        ],
+        sources={"f": path},
+    )
+    return cfg, {"f": pa.Table.from_pandas(df, preserve_index=False)}
+
+
+def _two_mask_table_job(tmp_path) -> dict:
+    dfa = pd.DataFrame({"x": ["a", "b"]})
+    dfb = pd.DataFrame({"y": ["c", "d"]})
+    return _base_config(
+        tmp_path,
+        tables=[
+            {"name": "ma", "columns": [{"name": "x", "strategy": "hash", "namespace": "n"}]},
+            {"name": "mb", "columns": [{"name": "y", "strategy": "hash", "namespace": "n"}]},
+        ],
+        sources={"ma": _write_csv(tmp_path, "ma", dfa), "mb": _write_csv(tmp_path, "mb", dfb)},
+    )
+
+
+def _mask_plus_two_generate_job(tmp_path) -> dict:
+    df = pd.DataFrame({"val": ["a", "b"]})
+    return _base_config(
+        tmp_path,
+        tables=[
+            {"name": "t", "columns": [{"name": "val", "strategy": "hash", "namespace": "ns"}]},
+            {
+                "name": "g1",
+                "row_count": 3,
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+            },
+            {
+                "name": "g2",
+                "row_count": 3,
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+            },
+        ],
+        sources={"t": _write_csv(tmp_path, "t", df)},
+    )
+
+
+def _polars_native_plus_generate_job(tmp_path) -> dict:
+    df = pd.DataFrame({"val": ["a", "b"]})
+    return _base_config(
+        tmp_path,
+        tables=[
+            {"name": "t", "columns": [{"name": "val", "strategy": "hash", "namespace": "ns"}]},
+            {
+                "name": "g1",
+                "row_count": 3,
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+            },
+            {
+                "name": "g2",
+                "row_count": 3,
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+            },
+        ],
+        sources={"t": _write_csv(tmp_path, "t", df)},
+    )
+
+
+class TestChunkedGateDelegation:
+    """`_chunked_rejection` must delegate to each per-table gate with the RIGHT
+    table and wire the result in. Each job below reduces to a single chunked
+    rejection reason, so dropping the delegated gate flips the mode to chunked.
+    """
+
+    def test_undated_date_shift_keeps_job_off_chunked(self, tmp_path):
+        cfg, _ = _date_shift_no_format_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        assert plan.mode == "pandas_fallback"
+        assert "date_shift_requires_explicit_format" in plan.rejections["chunked"]
+
+    def test_bucketize_null_source_keeps_job_off_chunked(self, tmp_path):
+        cfg, sources = _bucketize_null_job(tmp_path)
+        plan = classify_job(
+            cfg,
+            **_planner_inputs(cfg, substrate="pandas"),
+            source_tables=sources,
+            auto_chunk_threshold_rows=1,
+        )
+        assert plan.mode == "pandas_fallback"
+        assert "bucketize_source_not_null_free_numeric" in plan.rejections["chunked"]
+
+    def test_fpe_join_group_keeps_job_off_chunked(self, tmp_path):
+        cfg, _ = _fpe_join_group_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        assert plan.mode == "pandas_fallback"
+        assert "fpe_join_group on column(s) card" in plan.rejections["chunked"]
+
+    def test_two_fpe_join_group_columns_comma_joined(self, tmp_path):
+        cfg, _ = _two_fpe_join_group_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        assert "fpe_join_group on column(s) c1, c2" in plan.rejections["chunked"]
+
+    def test_composite_bundle_named_on_its_table(self, tmp_path):
+        cfg, _ = _composite_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        assert plan.mode == "pandas_fallback"
+        # kind token must be the real "composite", named against 'people'.
+        assert "'people': composite" in plan.rejections["chunked"]
+
+    def test_two_mask_tables_rejected_with_count_and_names(self, tmp_path):
+        cfg = _two_mask_table_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        chunked = plan.rejections["chunked"]
+        assert "job declares 2 mask tables (ma, mb)" in chunked
+
+    def test_two_generate_tables_named_comma_joined(self, tmp_path):
+        cfg = _mask_plus_two_generate_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        assert "generate-kind table(s) g1, g2 present" in plan.rejections["chunked"]
+
+
+class TestReasonComposition:
+    """The chosen-mode `reason` is a stamped decision field: these pin its
+    composition so mutations that blank it, drop a clause, or corrupt the row
+    count are caught."""
+
+    def test_polars_native_reason_appends_generate_note(self, tmp_path):
+        cfg = _polars_native_plus_generate_job(tmp_path)
+        plan = _classify(cfg, substrate="polars")
+        assert plan.mode == "polars_native"
+        # Data anchor: the generate table names, comma-joined. Catches the
+        # join-arg / separator / `-=` mutations; the surrounding prose is left
+        # to the prose-equivalent class in the ledger.
+        assert "generate-kind table(s) g1, g2 run the" in plan.reason
+
+    def test_chunked_reason_reports_source_rows_and_base_clause(self, tmp_path):
+        cfg, sources = _scalar_chunk_safe_job(tmp_path)
+        plan = classify_job(
+            cfg,
+            **_planner_inputs(cfg, substrate="pandas"),
+            source_tables=sources,
+            auto_chunk_threshold_rows=1,
+        )
+        assert plan.mode == "chunked"
+        assert "single mask table 'customers'" in plan.reason
+        assert "source holds 2 rows" in plan.reason
+
+    def test_pandas_fallback_no_fk_has_nonempty_reason(self, tmp_path):
+        cfg, _ = _shuffle_job(tmp_path)
+        plan = _classify(cfg, substrate="pandas")
+        assert plan.mode == "pandas_fallback"
+        # Non-empty stamped reason (the `reason = None` mutation blanks it); the
+        # exact prose is left to the prose-equivalent class in the ledger.
+        assert isinstance(plan.reason, str) and plan.reason
