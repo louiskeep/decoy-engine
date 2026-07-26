@@ -136,6 +136,35 @@ class TestShuffle:
         out, _ = ShuffleStrategyHandler().run(df.copy(), "n", _direct_seed(), _Ctx())
         assert out["n"].dtype == object  # a dropped dtype=object re-infers int64
 
+    def test_datetime_column_output_type_and_permutation_pinned(self) -> None:
+        # A datetime column distinguishes to_numpy(dtype=object) from dtype=None:
+        # the explicit object boxing (values become datetime.datetime) makes the
+        # adapter emit timestamp[us], while dtype=None keeps the source
+        # timestamp[ns]. Pin the unit AND the deterministic permutation so the
+        # dtype=None mutant (which yields ns) fails here.
+        # NOTE: the ns->us narrowing is current product behavior (a separate,
+        # tracked concern); this test pins it, it does not endorse it.
+        src = pa.table(
+            {
+                "d": pa.array(
+                    pd.to_datetime(
+                        ["2024-01-01", "2024-02-02", "2024-03-03", "2024-04-04", "2024-05-05"]
+                    )
+                )
+            }
+        )
+        col = _run(
+            _plan("d", _col("shuffle", namespace="sh", deterministic=True)), src
+        ).output.column("d")
+        assert col.type == pa.timestamp("us")
+        assert [str(pd.Timestamp(v).date()) for v in col.to_pylist()] == [
+            "2024-04-04",
+            "2024-01-01",
+            "2024-02-02",
+            "2024-05-05",
+            "2024-03-03",
+        ]
+
     def test_non_default_index_preserved_and_aligned(self) -> None:
         # The output Series must carry the source index; a RangeIndex (index=None
         # or dropped) misaligns against a non-default-index frame on assignment

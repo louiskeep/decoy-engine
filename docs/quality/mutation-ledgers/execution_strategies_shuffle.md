@@ -9,10 +9,13 @@ permutations; non-deterministic mode uses an unseeded rng.
 Graded with the FOCUSED selection `tests/unit/execution/test_shuffle_categorical.py`
 (the `TestShuffle` class; ~0.3s). Conservative lower bound.
 
-**54 mutants: 50 killed, 4 survived.** Baseline was 41 killed (76%); this pass
-killed the 9 LOGIC survivors, leaving 4 equivalent. LOGIC-mutant score 100%.
+**54 mutants: 51 killed, 3 survived.** Baseline was 41 killed (76%); this pass
+killed the 10 LOGIC survivors, leaving 3 equivalent. LOGIC-mutant score 100%.
 
-## LOGIC killed this pass (4 new tests + 1 strengthened)
+(dennis batch-2 gate correction: `run__mutmut_8`, first filed equivalent, is
+actually killable on a datetime column and is now in the LOGIC table below.)
+
+## LOGIC killed this pass (5 new tests + 1 strengthened)
 
 | Mutants | Mutation | Killed by |
 |---|---|---|
@@ -21,11 +24,16 @@ killed the 9 LOGIC survivors, leaving 4 equivalent. LOGIC-mutant score 100%.
 | `derive(...)[:8]` seed slice -> `[:9]`, and the deterministic `rng` seed mutants | a different seed yields a different permutation | `test_deterministic_permutation_is_the_pinned_known_answer` (pins `abcde -> d,e,c,a,b`) |
 | output `pd.Series(out, dtype=object, index=df.index)` `dtype=` drop / `dtype=None` | Q13: without the explicit object dtype the int+null assignment re-infers float64 | `test_output_keeps_object_dtype_and_null_not_nan` (direct handler, asserts `dtype == object`) |
 | output Series `index=df.index` -> `index=None` / dropped | a RangeIndex misaligns against a non-default-index frame and blanks every row to NaN | `test_non_default_index_preserved_and_aligned` (direct handler, non-default index) |
+| `run__mutmut_8` | `source.to_numpy(dtype=object)` -> `dtype=None` | on a DATETIME column the object boxing (values -> `datetime.datetime`) makes the adapter emit `timestamp[us]`, while `dtype=None` keeps the source `timestamp[ns]` -- an observable Arrow-schema difference (int/float/str/categorical all normalize identically; only datetime distinguishes) | `test_datetime_column_output_type_and_permutation_pinned` (pins `timestamp[us]` + the permutation) |
 
-## EQUIVALENT (4)
+NOTE (pre-existing behavior, tracked separately): the `dtype=object` boxing
+narrows `timestamp[ns] -> timestamp[us]` on datetime columns. That is current
+product behavior, not introduced here; the test above pins it so `mutmut_8` is
+killed, it does not endorse the narrowing.
+
+## EQUIVALENT (3)
 | Mutant | Mutation | Why equivalent |
 |---|---|---|
-| `run__mutmut_8` | `source.to_numpy(dtype=object)` -> `dtype=None` | shuffle only PERMUTES values (never transforms them), and the output is forced to an object-dtype Series; `dtype=None` changes only the boxed scalar type (numpy vs python), which the object Series + the Arrow boundary normalize. No value, order, or dtype difference is observable. |
 | `run__mutmut_13` | `message=None` | consumed only as `StrategyError.message`; tests assert `.code`/`.strategy`. |
 | `run__mutmut_16` | `message=` kwarg dropped | `StrategyError.message` defaults to `""` (only `code`/`strategy` are required), so the raise still carries the right machine fields. |
 | `run__mutmut_34` | `encode("utf-8")` -> `encode("UTF-8")` | Python codec names are case-insensitive; byte-identical, same derived seed. |

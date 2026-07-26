@@ -107,7 +107,7 @@ either scoped selections per module or a dedicated multi-hour background program
 | `execution/_strategies/_truncate` | 90 / 76 | 100% (14 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_categorical` | 238 / 194 | 100% (44 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_bucket_perturb` | 56 / 54 | 100% (2 equiv) | `tq/crown-jewels` |
-| `execution/_strategies/_shuffle` | 54 / 50 | 100% (4 equiv) | `tq/crown-jewels` |
+| `execution/_strategies/_shuffle` | 54 / 51 | 100% (3 equiv) | `tq/crown-jewels` |
 | `transforms/windowed_date` | 76 / 75 | 100% (1 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,

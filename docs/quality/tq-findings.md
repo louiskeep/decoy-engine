@@ -46,6 +46,18 @@ make two different distribution sets serialize identically. Not reachable via
 `installed_distribution_set()` (PEP-503-canonical names only), but a latent
 ambiguity in the function's contract for arbitrary callers.
 
+## Step-4 sweep observations
+
+### 5. `_shuffle` narrows `timestamp[ns] -> timestamp[us]` on datetime columns (latent)
+`execution/_strategies/_shuffle.py`. The `to_numpy(dtype=object)` boxing (the Q13
+object-dtype fix) turns datetime values into `datetime.datetime`, so the adapter
+re-infers `timestamp[us]` for a `timestamp[ns]` source. Surfaced by the batch-2
+dennis gate while grading `_shuffle` (the `dtype=None` mutant keeps `ns`, which is
+why the mutant is killable, not equivalent). Lossy for sub-microsecond timestamps.
+Pinned as current behavior by
+`test_datetime_column_output_type_and_permutation_pinned`; not fixed here (a
+TESTS-only batch). Worth a decision: preserve source resolution, or accept us.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
