@@ -58,6 +58,19 @@ Pinned as current behavior by
 `test_datetime_column_output_type_and_permutation_pinned`; not fixed here (a
 TESTS-only batch). Worth a decision: preserve source resolution, or accept us.
 
+### 6. `derived_aggregate` forward-reference silently yields 0 instead of failing closed (real, out-of-scope)
+`transforms/derived_aggregate.py` + `config/_tables.py` + `plan/_checks_derived_aggregate.py`.
+A generate-mode `derived_aggregate` column whose `column` names a sibling NOT yet
+generated (forward reference, or an absent `column` key) is not caught: there is no
+`derived_aggregate` branch in `_type_params_present`, and `check_derived_aggregate_refs`
+short-circuits (`if source_col and ...`) when the ref is absent. It reaches
+`generate_derived_aggregate_column`, where `generated.get(config.column, [])` returns
+`[]` and the aggregate silently produces `0` for every row rather than a coded error.
+Surfaced by the batch-6 dennis gate while grading the mask/mask-fallback defaults.
+Silent-wrong-output, not fail-closed. Fix belongs in the plan-compile refs check /
+`_type_params_present` (add the derived_aggregate branch), NOT in this tests-only
+sweep. File as a separate product issue.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified

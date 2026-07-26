@@ -83,6 +83,28 @@ class TestDerivedAggregateConfig:
             DerivedAggregateConfig.from_dict({})
 
 
+class TestGenerateModeMissingKeysFailClosed:
+    """A generate-mode derived_aggregate column with a missing op/column reaches
+    generate_derived_aggregate_column at runtime (no _type_params_present branch,
+    and check_derived_aggregate_refs short-circuits on an absent column). It must
+    fail closed with the exact coded error, not fall back to a bogus default that
+    silently aggregates an empty series to 0."""
+
+    def test_missing_column_fails_closed_not_zero(self) -> None:
+        from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
+
+        with pytest.raises(PlanCompileError) as exc:
+            generate_derived_aggregate_column({"op": "sum"}, 3, {"amount": [10.0, 20.0, 30.0]})
+        assert exc.value.code == "derived_aggregate_column_missing"
+
+    def test_missing_op_fails_closed_with_missing_not_invalid(self) -> None:
+        from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
+
+        with pytest.raises(PlanCompileError) as exc:
+            generate_derived_aggregate_column({"column": "amount"}, 3, {"amount": [10.0]})
+        assert exc.value.code == "derived_aggregate_op_missing"
+
+
 class TestApplyDerivedAggregate:
     """apply_derived_aggregate computes the correct scalar per op."""
 
