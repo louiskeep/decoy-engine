@@ -106,6 +106,39 @@ class TestDerivedAdapterIntegration:
         assert out["b"][1] == 12.0
         assert out["b"][2] == 13.0
 
+    def test_row_context_is_columns_not_the_frame_index(self) -> None:
+        # The per-row loop uses itertuples(index=False): row_context must be the
+        # COLUMN values. A column literally named "Index" must keep its value; an
+        # index=True mutant would overwrite "Index" with the row number (and
+        # rename the real column), so `Index * 2` would compute on the row number.
+        out = _run(
+            {"Index": [9.0, 8.0], "b": [0.0, 0.0]},
+            [
+                ("Index", _col("passthrough")),
+                ("b", _col("derived", provider_config=(("expression", "Index * 2"),))),
+            ],
+        )
+        assert out["b"] == [18.0, 16.0]
+
+    def test_eval_error_names_the_column_and_row_index(self) -> None:
+        # apply_derived's error message names the column + row index for the
+        # operator; the handler must forward the real column= and row_index=, not
+        # None. A divide-by-zero on the second row (index 1) must surface both.
+        import pytest
+
+        # error at row 3 (index-distinctive); expression has no "3" so the row
+        # index can only appear if it is forwarded (not None).
+        with pytest.raises(Exception) as exc:  # noqa: PT011 -- assert on message content below
+            _run(
+                {"z": [5.0, 5.0, 5.0, 0.0], "c": [0.0, 0.0, 0.0, 0.0]},
+                [
+                    ("z", _col("passthrough")),
+                    ("c", _col("derived", provider_config=(("expression", "9 / z"),))),
+                ],
+            )
+        msg = str(exc.value)
+        assert "'c'" in msg and "row 3" in msg  # column name + row index forwarded
+
     def test_supports_strategy_derived(self) -> None:
         """SCALAR_HANDLERS must advertise derived as a supported strategy."""
         adapter = PandasExecutionAdapter()
