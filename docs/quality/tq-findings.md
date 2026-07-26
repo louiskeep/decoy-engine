@@ -168,6 +168,28 @@ the package on the path), or grade via the codeset_etl suite directly. Not false
 scored -- flagged as un-gradeable-in-process, same class as findings #8 (substrate
 timeout) and the broad-selection tier.
 
+### 13. Spill estimator under-counts the exact-decimal float FK token (Codex P2, 2026-07-26)
+`execution/out_of_core/_spill_estimate.py`. Finding #1's RI fix changed a float FK
+join token from `\x00FLOAT:{repr}` to `\x00DEC:{decimal_join_token(Decimal(float))}`,
+whose exact-decimal expansion is much wider (Codex measured `0.1` -> ~76-byte tuple
+token vs the old ~13; worst case is bounded by `_DECIMAL_JOIN_CONTEXT`'s prec=200, so
+~230 bytes). But `_staged_key_token_bytes` still prices a float64 key at the
+`MIN_KEY_TOKEN_BYTES = 28` floor (source itemsize 8 + framing 16, floored to 28). So
+the out-of-core DISK preflight (`enforce_ooc_disk_preflight`) can substantially
+UNDER-predict scratch usage for a fractional-float FK key column at scale; the
+table-boundary budget check may then fire only after scratch is exhausted rather than
+refusing up front. Under-prediction is the dangerous direction for a preflight (its
+whole purpose is refuse-early). Narrow trigger: out-of-core route + FLOAT-typed FK key
+(FKs are usually int/string) + fractional values + near disk limit. NOT an RI
+correctness issue -- the RI fix itself is confirmed sound. **Fix direction:** make
+`_staged_key_token_bytes` type-aware so a float/fractional-Decimal FK key column prices
+at the decimal-token worst-case bound (derive the bound from `_fk_keys`' prec constant
+so the two cannot drift), safe-direction over-count. Codex's alternative -- a compact
+shared numeric encoding in `fk_join_key` -- would fix both the token bloat and the
+sizing, but it touches the RI-critical path just fixed, so it is out of scope for a P2.
+Tracked as a dedicated follow-up branch with its own dennis + Codex gate (the OOC
+spill-estimation subsystem is delicate); NOT bundled into the TQ merge.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
