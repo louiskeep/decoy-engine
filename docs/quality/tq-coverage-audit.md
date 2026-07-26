@@ -132,7 +132,7 @@ a different mutation tool. Flagged for Cam.
 | `execution/_strategies/_bucketize` | 132 / 117 | 100% (15 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_redact` | 29 / 26 | 100% (3 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_composite` | 122 / 108 | 100% (14 equiv) | `tq/crown-jewels` |
-| `execution/_strategies/_faker` | 79 / 66 | 100% (13 equiv) | `tq/crown-jewels` |
+| `execution/_strategies/_faker` | 79 / 70 | 100% (9 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_formula` | 19 / 17 | 100% (2 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,

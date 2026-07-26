@@ -11,9 +11,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.execution import ExecutionResult, PandasExecutionAdapter
+from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._strategies._faker import FakerStrategyHandler
+from decoy_engine.generation.pool._builder import PoolBuilder
+from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -49,7 +54,7 @@ def _plan(
     *,
     deterministic: bool = True,
     namespace: str | None = "people_ns",
-    cardinality_mode: str = "reuse",
+    cardinality_mode: Any = "reuse",
     provider_config: tuple[tuple[str, Any], ...] = (("pool_size", 256),),
     pool_size: int | None = None,
     scale: float | None = None,
@@ -181,3 +186,96 @@ class TestFakerStrategy:
         out = _emails(_plan(pool_size=300, provider_config=()), src)
         assert len(out) == 4
         assert all(isinstance(v, str) and "@" in v for v in out)
+
+
+def _faker_col(
+    provider: str, *, namespace: str, provider_config: tuple[tuple[str, Any], ...]
+) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=namespace,
+        strategy="faker",
+        provider=provider,
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=provider_config,
+        coherent_with=(),
+    )
+
+
+def _warm_cache(*seeds: ColumnSeed) -> PoolCache:
+    """Pre-warm one shared PoolCache with a pool per column, mirroring what
+    chunked execution does before running any chunk."""
+    cache = PoolCache()
+    builder = PoolBuilder(_REG)
+    for cs in seeds:
+        cfg = provider_config_to_dict(cs.provider_config)
+        cache.put(
+            builder.build(
+                provider=cs.provider,
+                size=cfg.get("pool_size") or 64,
+                job_seed=_SEED,
+                locale=cfg.get("locale"),
+                config={k: v for k, v in cfg.items() if k not in ("pool_size", "locale")},
+                namespace=cs.namespace,
+            )
+        )
+    return cache
+
+
+def _ctx(cache: PoolCache) -> StrategyContext:
+    return StrategyContext(
+        registry=_REG,
+        pool_cache=cache,
+        relationship_graph=_GRAPH,
+        namespace_registry=_NS,
+        job_seed=_SEED,
+        mask_key=_SEED,
+    )
+
+
+def _run_handler(seed: ColumnSeed, cache: PoolCache) -> list[Any]:
+    df = pd.DataFrame({"A": ["x", "y", "z"]})
+    out, _ = FakerStrategyHandler().run(df, "A", seed, _ctx(cache))
+    return out["A"].tolist()
+
+
+class TestFakerWarmCacheIdentity:
+    """Chunked execution shares one pre-warmed PoolCache across faker columns of
+    a shared namespace. The handler's cache-lookup identity must fold in locale
+    and config; otherwise a column's identity byte-collides with a sibling's key
+    and fetches the WRONG pre-warmed pool (observable in chunked runs)."""
+
+    def test_locale_in_lookup_identity_prevents_sibling_pool_contamination(self) -> None:
+        # A fr_FR column and a default-locale sibling share provider/size/namespace,
+        # so a locale-blind lookup identity collides on the sibling's key. The
+        # fr_FR column must still read its own pool (French names).
+        # pool_size is pinned so the handler's resolved build/lookup size matches
+        # the pre-warmed pools (else it misses and rebuilds, hiding the collision).
+        target = _faker_col(
+            "person_first_name",
+            namespace="contact_ns",
+            provider_config=(("pool_size", 64), ("locale", "fr_FR")),
+        )
+        sibling = _faker_col(
+            "person_first_name", namespace="contact_ns", provider_config=(("pool_size", 64),)
+        )
+        reference = _run_handler(target, _warm_cache(target))
+        shared = _run_handler(target, _warm_cache(sibling, target))
+        assert shared == reference
+
+    def test_config_in_lookup_identity_prevents_sibling_pool_contamination(self) -> None:
+        # A domain-configured column and an empty-config sibling share
+        # provider/size/namespace, so a config-blind lookup identity collides.
+        # The configured column must still read its own (target-domain) pool.
+        target = _faker_col(
+            "person_email",
+            namespace="mail_ns",
+            provider_config=(("pool_size", 64), ("domain", "target.example")),
+        )
+        sibling = _faker_col(
+            "person_email", namespace="mail_ns", provider_config=(("pool_size", 64),)
+        )
+        shared = _run_handler(target, _warm_cache(sibling, target))
+        assert all(isinstance(v, str) and v.endswith("@target.example") for v in shared)

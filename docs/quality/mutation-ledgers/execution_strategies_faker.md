@@ -10,23 +10,38 @@ draws values via `PoolSampler().sample(...)`, and restores source nulls.
 
 ## Numbers
 
-**79 mutants: 48 killed (61% baseline), 31 survived -> 66 killed after this pass,
-13 EQUIVALENT.** LOGIC-mutant score 100%. 0 timeouts.
+**79 mutants: 48 killed (61% baseline), 31 survived -> 70 killed after this pass,
+9 EQUIVALENT.** LOGIC-mutant score 100%. 0 timeouts.
 
-- **18 LOGIC survivors killed** with 6 new tests. 0 product bugs.
-- **13 EQUIVALENT survivors** (9 cache-only identity args, 3 cache-behavior,
-  1 message prose). All verified behavior-preserving.
+- **22 LOGIC survivors killed** with 8 tests. 0 product bugs.
+- **9 EQUIVALENT survivors** (5 identity args that cannot collide with a real
+  key, 3 cache-behavior, 1 message prose). All verified behavior-preserving.
 
 ## The identity-vs-build distinction (drives the classification)
 
-`run_single` builds a fresh empty `PoolCache()` per call (`_pandas_adapter.py`),
-so the focused tests always hit a COLD cache. `pool = cached if isinstance(cached,
-ValuePool) else None` plus `PoolCache.get` returning `None` on any miss (including
-`get(None)`) means a wrong/None cache identity can never fetch a WRONG pool: it
-always misses, and `build(...)` runs with the CORRECT args. So `identity_for`
-arg mutations are output-equivalent, while `build(...)`/`sample(...)` arg
-mutations change the pool seed (`_derive_pool_seed` folds provider/locale/
-namespace/config_hash) or contents and are LOGIC.
+`identity_for(...)` computes the cache-lookup KEY
+`(provider, effective_locale, cfg_hash, pool_seed, size)`; `build(...)`/`sample(...)`
+args feed the pool seed (`_derive_pool_seed` folds provider/locale/namespace/
+config_hash) or contents. The build/sample args are always LOGIC (they change the
+generated pool).
+
+The identity args are subtler and split two ways under a SHARED, pre-warmed cache
+(chunked execution builds one `PoolCache` and pre-warms a pool per faker column
+before any chunk -- `_chunked.py`):
+
+- **LOGIC (locale, config):** dropping `locale`/`config` from the lookup identity
+  makes it byte-EQUAL a sibling faker column's stored key (same provider/size/
+  namespace, different locale-or-config), so the handler fetches the WRONG
+  pre-warmed pool -- observable wrong output in chunked runs. Killed by
+  `TestFakerWarmCacheIdentity` (batch-gate P1 correction: the earlier ledger
+  wrongly called these EQUIVALENT on a "a wrong identity can never fetch a wrong
+  pool" claim that is false for a warm shared cache).
+- **EQUIVALENT (identity=None, provider, size, namespace):** these cannot collide
+  with any admissible sibling's key -- `identity=None`/`provider=None`/`size=None`
+  produce a slot no real pool carries (always a miss -> rebuild correct), and the
+  `namespace`-drop collapses `pool_seed` to `'_default'`, but chunk admission
+  REQUIRES a non-None namespace for every faker column (`_chunked.py`), so no
+  admitted sibling can carry the `'_default'` form. All rebuild correctly.
 
 ## LOGIC (18): killed by new tests
 
@@ -38,14 +53,28 @@ namespace/config_hash) or contents and are LOGIC.
 | `test_namespace_selects_the_built_pool` | 48 (build `namespace=None`), 54 (drop build `namespace`) | non-deterministic mode isolates the build-side arg (same job_seed -> same draw indices, only the pool differs) |
 | `test_scale_controls_target_cardinality` | 11 (`scale=None`), 12 (invert `is not None`), 65 (sampler `scale=None`), 73 (drop sampler `scale`) | SCALE_SOURCE_CARDINALITY with `scale=0.5` collapses 4 sources to 2 distinct outputs |
 | `test_typed_pool_size_field_is_used` | 8 (`pool_size=None` in the `plan.pool_size is not None` branch) | the typed `ColumnSeed.pool_size` field must be used; mutant passes `size=None` to build -> TypeError |
+| `TestFakerWarmCacheIdentity::test_locale_in_lookup_identity_prevents_sibling_pool_contamination` | 29 (identity `locale=None`), 35 (drop identity `locale`) | a fr_FR column sharing a pre-warmed cache with a default-locale sibling must read its own (French) pool; the locale-blind identity collides with the sibling's key and fetches the wrong pool |
+| `TestFakerWarmCacheIdentity::test_config_in_lookup_identity_prevents_sibling_pool_contamination` | 30 (identity `config=None`), 36 (drop identity `config`) | a domain-configured column sharing a cache with an empty-config sibling must read its own (target-domain) pool; the config-blind identity collides with the sibling's key |
 
-## EQUIVALENT (13)
+## EQUIVALENT (9)
 
 | Mutants | Category | Why equivalent |
 |---|---|---|
-| `25`, `26`, `27`, `29`, `30`, `31`, `35`, `36`, `37` | cache-only identity args (`identity=None`, and its provider/size/locale/config/namespace -> None or dropped) | `identity_for` only computes the cache-lookup key; on the cold cache the focused tests use, a wrong/None identity misses and `build(...)` runs with the correct args, so output is byte-identical. A wrong identity cannot fetch a wrong pool (`isinstance(cached, ValuePool)` guard + miss-returns-None). |
-| `38`, `39`, `40` | cache-behavior (`cached=None`, `cached=get(None)`, `pool=None`) | all force a rebuild on the cold cache -> byte-identical output; only a warm-cache-reuse test (the cache subsystem's own contract, out of this module's scope) could distinguish them, and only as a perf regression, not a correctness one. |
+| `25`, `26`, `27` | identity args that cannot match a real key (`identity=None`, `provider=None`, `size=None`) | produce a lookup slot no admissible pool carries, so always a miss -> `build(...)` runs with correct args -> byte-identical output. |
+| `31`, `37` | identity `namespace=None` / dropped | collapses `pool_seed` to `'_default'`, but chunk admission requires a non-None namespace for every faker column, so no admitted sibling carries that form -> always a miss -> rebuild correct. |
+| `38`, `39`, `40` | cache-behavior (`cached=None`, `cached=get(None)`, `pool=None`) | all force a rebuild -> byte-identical output (a perf regression, not a correctness one); the rebuild uses the correct build args. |
 | `2` | message prose | `ValueError(None)` on the no-provider guard: `ValueError` has no machine-observable code field, and the contract (raises `ValueError` when provider is missing) is unchanged. Per the TQ error-message-wording policy, equivalent. |
+
+## Gate
+
+Dennis batch gate: **initially FAILED** (P1) -- the identity-side `locale`/`config`
+mutants were misclassified EQUIVALENT on an over-broad "a wrong identity can never
+fetch a wrong pool" claim, false for a warm SHARED cache (chunked pre-warm).
+REMEDIATED here: reclassified LOGIC and killed by `TestFakerWarmCacheIdentity`
+(a pre-warmed shared cache with a colliding sibling; verified the tests fail under
+the manually-applied locale-drop and config-drop mutants and pass on real code).
+Re-verified: 70 killed / 9 survived, the 9 being non-colliding identity args +
+cache-behavior + one message. The `_composite` sibling in the same gate PASSED.
 
 ## Regenerate
 
