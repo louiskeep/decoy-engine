@@ -20,6 +20,14 @@ byte-length truncation, namespace/seed keying, and null handling.
 |---|---|---|
 | `apply_group_key_12` | `str(raw_val).encode("utf-8")` -> `encode("UTF-8")` | Python codec names are case-insensitive and normalize to the same codec, so `"utf-8"` and `"UTF-8"` produce byte-identical output. The derived key is unchanged for every input. |
 
+## Gate
+
+Dennis batch gate (group_key + grouped_series): **PASS**, 0 P0 / 0 P1 / 0 P2.
+All equivalents verified behavior-preserving (golden-vector KAT reproduced exactly
+with per-mutant simulation; multi-column `sort_values` confirmed to ignore `kind`;
+sentinel-reset inits confirmed dead). Two out-of-scope pre-existing observations
+logged in tq-findings (#10 RangeIndex; dead `_MIN_STEP`).
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `transforms/group_key.py`, selection to

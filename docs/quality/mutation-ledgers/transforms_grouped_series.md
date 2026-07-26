@@ -50,6 +50,14 @@ by simulating each mutation.
 (max_step==10), default step==1, and per-generator default start (cumcount 0,
 monotone 1) -- none reachable by expression mutation.)
 
+## Gate
+
+Dennis batch gate (group_key + grouped_series): **PASS**, 0 P0 / 0 P1 / 0 P2.
+All equivalents verified behavior-preserving (golden-vector KAT reproduced exactly
+with per-mutant simulation; multi-column `sort_values` confirmed to ignore `kind`;
+sentinel-reset inits confirmed dead). Two out-of-scope pre-existing observations
+logged in tq-findings (#10 RangeIndex; dead `_MIN_STEP`).
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `transforms/grouped_series.py`, selection

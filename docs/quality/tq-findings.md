@@ -122,6 +122,16 @@ mutation score. The mutation score is necessary, not sufficient, for
 constant-driven code. (Remediated for `_fpe_checksum` by covering all four GTIN
 lengths + an illegal-length fail-closed case.)
 
+### 10. `apply_grouped_series` returns a fresh RangeIndex, not the source index (latent, out-of-scope)
+`transforms/grouped_series.py`. `apply_grouped_series` builds its result from a
+plain Python list into `pd.Series(result, ...)`, so the output carries a fresh
+`RangeIndex` rather than the caller's `df.index`. If a caller ever passes a
+non-default-indexed frame (filtered/reordered rows), downstream index-alignment
+could misbehave (the same class as the `_text_redact`/`_orphan` index-alignment
+oracles). Surfaced by the grouped_series batch-gate as an out-of-scope observation
+(product source unchanged in this tests-only sweep). Not reproduced as a failure
+on the current callers; flag for a decision on whether to align to `df.index`.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
