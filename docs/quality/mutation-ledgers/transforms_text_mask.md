@@ -24,11 +24,13 @@ an unreachable charset/faker fallback, or an unused argument), tabled below with
 the one-line argument for why no input distinguishes them from the original.
 
 **Post-fix mutmut re-verify: 239 killed, 42 survived** (2 mutants first filed
-equivalent were incidentally killed by the new tests -- conservative direction).
-The equivalent tables below may therefore over-list by up to 2; the batch-3
-dennis gate reconciles the exact set. Non-crypto/non-message equivalents (dispatch
-defaults, cursor-boundary guards, encoding-error handlers, charset/faker
-fallbacks) are argued from the actual code and are the gate's scrutiny targets.
+equivalent were incidentally killed by the new tests -- conservative direction, so
+the EQUIVALENT tables below over-list by 2 rows). The batch-3 dennis gate audited
+this module (SOUND): it independently reproduced every KAT and could not break any
+equivalence claim (the crypto `_span_key` handling, dispatch defaults, cursor
+boundary guards, `validate_luhn=None`, and the charset/faker fallbacks all hold).
+The 2 stale rows are a cosmetic over-list (nothing falsely claimed killed or
+equivalent); left in place rather than re-running mutmut to identify them.
 
 The crypto/FPE/faker/date paths are pinned with hard-coded real outputs (KATs)
 so any change to the key-derivation bytes, dispatch key, seed slice, or checksum

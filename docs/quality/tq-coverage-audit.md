@@ -109,7 +109,7 @@ either scoped selections per module or a dedicated multi-hour background program
 | `execution/_strategies/_bucket_perturb` | 56 / 54 | 100% (2 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_shuffle` | 54 / 51 | 100% (3 equiv) | `tq/crown-jewels` |
 | `transforms/windowed_date` | 76 / 75 | 100% (1 equiv) | `tq/crown-jewels` |
-| `execution/_strategies/_text_mask` | 128 / 112 | non-NER 100% (3 equiv; 13 NER-deferred) | `tq/crown-jewels` |
+| `execution/_strategies/_text_mask` | 128 / 123 | 100% (5 equiv) | `tq/crown-jewels` |
 | `transforms/text_mask` (core) | 281 / 239 | 100% (42 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,

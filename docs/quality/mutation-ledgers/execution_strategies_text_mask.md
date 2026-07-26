@@ -1,22 +1,24 @@
-# Mutation grading: `execution/_strategies/_text_mask.py` -- non-NER layer LOGIC-100%, NER paths deferred
+# Mutation grading: `execution/_strategies/_text_mask.py` -- LOGIC-100%
 
 TQ crown-jewels pass, graded 2026-07-26. `_text_mask.py` is a thin V2
 StrategyHandler that resolves config, applies an optional spaCy NER
 version-mismatch guard, iterates the non-null cells, and delegates each to
-`transforms.text_mask.mask_cell`. It has two layers with different gradeability:
+`transforms.text_mask.mask_cell`.
 
 - The **non-NER handler layer** (detector/per-detector/policy/token/date-bound
   resolution, the extension-dtype boxing, the per-cell loop and str-coercion,
   the `mask_cell` argument forwarding, and the output-Series assembly) reads only
-  public config and runs in any shell with no spaCy pipeline. **Graded to
-  LOGIC-100% here.**
+  public config. Graded to LOGIC-100%.
 - The **NER path** (`ner_cfg`/`ner_model`/`ner_entities` resolution, the
   `ner_model_version_mismatch` guard and its `StrategyError` fields, and the
-  per-cell `iter_ner_spans` call) is only meaningfully reachable with the spaCy
-  extra installed: off the extra, `installed_model_version` returns None so the
-  guard's raise never fires and `iter_ner_spans` never runs. Its survivors are
-  **deferred to the NER-enabled env** (mirrors `quality_dp.md`'s cert-gated
-  mechanism). Not classified equivalent; they are simply not gradeable here.
+  per-cell `iter_ner_spans` call) is also graded here: although a real spaCy
+  model is not installed, the guard's `installed_model_version` and the
+  `iter_ner_spans` call are BOUNDARIES that the existing tests monkeypatch, so the
+  handler's NER LOGIC (model/entities resolution, the version guard, the call-site
+  args) is fully mockable off-spaCy. (Batch-3 dennis P2 correction: the first pass
+  wrongly deferred these as "spaCy-gated"; they are not.) Only mutations INSIDE
+  the real `storm.ner` primitives would need spaCy, and those live in that module,
+  not here.
 
 **Grade scope: FOCUSED selection only.** This grade ran mutmut against
 `_text_mask.py` with the test selection restricted to
@@ -27,16 +29,21 @@ killed by tests outside this file.
 
 ## Numbers
 
-**128 mutants: 63 killed (49% baseline), 65 survived.** The 65 survivors split:
+**128 mutants: 63 killed (49% baseline), 65 survived -> 123 killed after this
+pass, 5 EQUIVALENT.** LOGIC-mutant score 100%.
 
-- **50 non-NER-layer survivors, all LOGIC**, killed with **12 new tests** this
-  pass (final: 112/128 killed). 0 LOGIC mutants survive in the non-NER layer.
-  (`run__mutmut_10`, the no-detectors `detector_ids = None -> ""` else-branch, was
-  missed by the list-branch test in the first pass and killed on re-verify by
-  `test_absent_detectors_forwards_none`.)
-- **3 non-NER-layer survivors, EQUIVALENT** (redundant `dtype=object`; the
-  invisible extension-boxing branch).
-- **13 NER-path survivors, DEFERRED** (uncovered off the spaCy extra).
+- **61 LOGIC survivors killed** with **18 new tests** (50 non-NER + 11 NER-path:
+  the model/entities resolution `mutmut_49/52-55/60`, the version-guard `.strategy`
+  fields `mutmut_73/80/81`, the `installed_model_version(ner_model)` arg
+  `mutmut_68`, and the `iter_ner_spans(value, ...)` text arg `mutmut_97` -- all
+  killed off-spaCy via the `iter_ner_spans`/`installed_model_version` monkeypatch
+  boundary). `run__mutmut_10` (no-detectors else-branch) was missed by the first
+  pass and killed on re-verify by `test_absent_detectors_forwards_none`.
+- **5 EQUIVALENT survivors:** 3 non-NER (`mutmut_83` invisible extension-boxing
+  branch; `mutmut_125`/`128` redundant `dtype=object`) + 2 NER-guard message prose
+  (`mutmut_74` `message=None`, `mutmut_77` `message=` kwarg drop; the guard's
+  `code`/`strategy` are asserted, so message-only variants survive).
+- **0 deferred.**
 
 ## LOGIC (49): killed by new tests in this pass
 
@@ -113,45 +120,35 @@ assertion raises KeyError.
 |---|---|---|
 | `run__mutmut_124`, `127` | `pd.Series(..., index=None)` / index arg dropped -> RangeIndex misaligns a non-default index and blanks every row to NaN | `TestOutputSeries::test_output_series_aligned_to_non_default_index` |
 
-## EQUIVALENT (3)
+## EQUIVALENT (5)
 
 | Mutant | Mutation | Why equivalent |
 |---|---|---|
+| `run__mutmut_74` | NER version-guard `message=None` | consumed only as `StrategyError.message`; the guard's `code`/`strategy` are asserted (`test_version_mismatch_raises`), so a message-only change is invisible. |
+| `run__mutmut_77` | NER version-guard `message=` kwarg dropped | `StrategyError.message` defaults to `""` (only `code`/`strategy` are required); the raise still carries the right machine fields. |
 | `run__mutmut_83` | `is_extension_array_dtype(col.dtype)` -> `is_extension_array_dtype(None)` (always False) | `None` makes the guard always take the `else` (`col.copy()`) and skip `astype(object)`. But `col` is consumed only via `col.isna().to_list()` and `col.to_list()`, both dtype-agnostic, and the output is rebuilt from a plain list with an explicit `dtype=object`. Verified byte-identical across `string`, `Int64`, and `category` extension columns (null masks, non-null python scalars, and output dtype all match). No input distinguishes it. |
 | `run__mutmut_125` | `pd.Series(..., dtype=object)` -> `dtype=None` | `mask_cell` always returns a string (the handler pre-coerces every non-null cell via the `str(value)` step, and nulls are skipped), so `col_values` is uniformly str-or-None and pandas infers `object` whether or not the dtype is stated. Confirmed on mixed string+null and empty columns. |
 | `run__mutmut_128` | `pd.Series(..., dtype=object)` -> dtype arg dropped | Same as `run__mutmut_125`: the explicit `object` dtype is redundant given a uniformly str-or-None `col_values`. |
 
-## NER path (13): deferred to the NER-enabled env
+## NER path (11 LOGIC): killed off-spaCy via the mock boundary
 
-Off the spaCy extra these survivors are UNCOVERED, not equivalent. The
-`ner_model` resolution branch runs only for a dict `ner` config; the guard's
-raise is unreachable because unpatched `installed_model_version` returns None;
-`iter_ner_spans` is imported and called only when `ner_model is not None`. Grade
-them on the NER-enabled profile (`spacy_installed()` and
-`model_installed(DEFAULT_NER_MODEL)`), where the `@needs_ner` end-to-end cells
-execute and the resolution/guard/iter path is fully exercised.
+These were wrongly deferred in the first pass. `installed_model_version` and
+`iter_ner_spans` are boundaries the tests monkeypatch, so the handler's NER LOGIC
+is fully gradeable without a real spaCy model (batch-3 dennis P2). All killed in
+`tests/unit/execution/test_text_mask_ner.py`.
 
-| Site | Mutants |
-|---|---|
-| `ner_entities` init (`= ""`) | `run__mutmut_49` |
-| dict `ner_model` resolution (`model` key: `and` / `get(None)` / `"XXmodelXX"` / `"MODEL"`) | `run__mutmut_52`, `53`, `54`, `55` |
-| entities guard (`isinstance(...) or raw_entities`) | `run__mutmut_60` |
-| version guard `installed_model_version(None)` | `run__mutmut_68` |
-| version-guard `StrategyError` fields (`strategy=None` / `message=None` / `message=` dropped / `"XXtext_maskXX"` / `"TEXT_MASK"`) | `run__mutmut_73`, `74`, `77`, `80`, `81` |
-| per-cell `iter_ner_spans(None, ...)` | `run__mutmut_97` |
+| Site | Mutants | Killed by |
+|---|---|---|
+| dict `ner_model` resolution (`and` / `get(None)` / `"XXmodelXX"` / `"MODEL"` -> forces DEFAULT) | `run__mutmut_52`, `53`, `54`, `55` | `test_ner_dict_nondefault_model_is_forwarded` (a non-default model string; the DEFAULT is only the `or` fallback) |
+| `ner_entities` init `= None -> ""` | `run__mutmut_49` | `test_ner_dict_without_entities_forwards_none` |
+| entities guard `and -> or raw_entities` | `run__mutmut_60` | `test_ner_dict_empty_entities_forwards_none` (empty list is falsy) |
+| version guard `installed_model_version(ner_model) -> (None)` | `run__mutmut_68` | `test_version_guard_checks_the_resolved_model` (only the resolved model reports drift) |
+| version-guard `StrategyError.strategy` (`None` / `"XXtext_maskXX"` / `"TEXT_MASK"`) | `run__mutmut_73`, `80`, `81` | `test_version_mismatch_raises` (strengthened: `assert exc.value.strategy == "text_mask"`) |
+| per-cell `iter_ner_spans(value, ...) -> (None, ...)` | `run__mutmut_97` | `test_ner_spans_receive_the_cell_text` |
 
-To reproduce on the NER env:
+(The 2 remaining NER-guard survivors `mutmut_74`/`77` are message prose -> EQUIVALENT table above.)
 
-```
-# with spacy + en_core_web_sm installed (ner extra)
-# pyproject [tool.mutmut]: only_mutate=["src/decoy_engine/execution/_strategies/_text_mask.py"],
-# test selection = tests/unit/execution/test_text_mask_ner.py
-rm -rf mutants && python -m mutmut run
-```
-
-Then classify + kill the reachable NER LOGIC survivors and extend this ledger.
-
-## Regenerate (non-NER layer, any shell)
+## Regenerate (any shell, no spaCy needed)
 
 Repoint `[tool.mutmut]` `only_mutate` to this module + test selection
 `tests/unit/execution/test_text_mask_ner.py`, then

@@ -126,6 +126,65 @@ class TestNerRouting:
         assert seen["model"] == "en_core_web_sm"
         assert seen["entities"] == ["person_name"]
 
+    def _capture_ner(self, monkeypatch):
+        seen: dict[str, object] = {}
+
+        def _fake(text, *, model=None, entities=None):
+            seen["text"] = text
+            seen["model"] = model
+            seen["entities"] = entities
+            return []
+
+        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans", _fake)
+        return seen
+
+    def test_ner_dict_nondefault_model_is_forwarded(self, monkeypatch) -> None:
+        # A non-default model string must reach iter_ner_spans verbatim; the
+        # DEFAULT is used only as the `or` fallback for an absent/empty model.
+        # (The default-model test above cannot see a mutant that forces DEFAULT.)
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["hi"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz"}}),
+            _FakeCtx(),
+        )
+        assert seen["model"] == "custom_model_xyz"
+
+    def test_ner_dict_without_entities_forwards_none(self, monkeypatch) -> None:
+        # No `entities` key -> ner_entities stays None (all entities), never "".
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["hi"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz"}}),
+            _FakeCtx(),
+        )
+        assert seen["entities"] is None
+
+    def test_ner_dict_empty_entities_forwards_none(self, monkeypatch) -> None:
+        # An empty entities list is falsy, so the `and raw_entities` guard leaves
+        # ner_entities as None; an `or` mutant would forward [].
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["hi"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz", "entities": []}}),
+            _FakeCtx(),
+        )
+        assert seen["entities"] is None
+
+    def test_ner_spans_receive_the_cell_text(self, monkeypatch) -> None:
+        # iter_ner_spans must be called with the cell value, not None.
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["Contact Jane Doe"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz"}}),
+            _FakeCtx(),
+        )
+        assert seen["text"] == "Contact Jane Doe"
+
 
 # ── determinism: model-version drift guard ─────────────────────────────
 
@@ -144,6 +203,28 @@ class TestNerVersionGuard:
         with pytest.raises(StrategyError) as exc:
             handler.run(
                 df.copy(), "notes", _seed({"ner": True}, ner_model_version="1.0.0"), _FakeCtx()
+            )
+        assert exc.value.code == "ner_model_version_mismatch"
+        assert exc.value.strategy == "text_mask"
+
+    def test_version_guard_checks_the_resolved_model(self, monkeypatch) -> None:
+        # installed_model_version must be called with the RESOLVED ner_model, not
+        # a hard-coded None: a mutant passing None would look up the wrong model.
+        # Here only the resolved custom model reports a drifted version.
+        import decoy_engine.storm.ner as ner_mod
+
+        monkeypatch.setattr(
+            ner_mod,
+            "installed_model_version",
+            lambda model=None: "2.0.0" if model == "custom_model_xyz" else "1.0.0",
+        )
+        df = pd.DataFrame({"notes": ["Contact Jane Doe"]})
+        with pytest.raises(StrategyError) as exc:
+            TextMaskHandler().run(
+                df.copy(),
+                "notes",
+                _seed({"ner": {"model": "custom_model_xyz"}}, ner_model_version="1.0.0"),
+                _FakeCtx(),
             )
         assert exc.value.code == "ner_model_version_mismatch"
 
