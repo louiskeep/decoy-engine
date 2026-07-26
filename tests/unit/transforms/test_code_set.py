@@ -378,6 +378,67 @@ class TestConfigValidation:
         """A correct config must pass validation without raising."""
         validate_code_set_config({"code_set": "icd10"})  # must not raise
 
+    def test_missing_code_set_name_error_fields(self):
+        """The missing-name refusal carries the machine-routable code + path
+        that callers key on to steer the error to the right UI field / CLI
+        exit, not just human-readable prose."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({})
+        assert exc.value.code == "code_set_name_missing"
+        assert exc.value.path == "provider_config.code_set"
+
+    def test_non_string_code_set_name_is_rejected(self):
+        """A non-string name (e.g. a YAML list) is refused as a missing name
+        rather than crashing the later membership tests with an unhashable
+        TypeError."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": ["icd10"]})
+        assert exc.value.code == "code_set_name_missing"
+        assert exc.value.path == "provider_config.code_set"
+
+    @pytest.mark.parametrize("bad_version", [True, False, ["2024"], {"y": 2024}])
+    def test_corpus_source_version_non_scalar_error_fields(self, bad_version):
+        """A non-scalar (or bool) version pin is refused with the version-
+        specific code + path; bool is refused despite being an int subclass so
+        a `false` pin cannot silently disable the pin."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": "icd10", "corpus_source_version": bad_version})
+        assert exc.value.code == "code_set_corpus_source_version_invalid"
+        assert exc.value.path == "provider_config.corpus_source_version"
+
+    @pytest.mark.parametrize("good_version", ["2024", 2024])
+    def test_corpus_source_version_scalar_accepted(self, good_version):
+        """A string or unquoted-numeric release id is a valid scalar pin."""
+        validate_code_set_config({"code_set": "icd10", "corpus_source_version": good_version})
+
+    @pytest.mark.parametrize("reserved_name", ["cpt", "apr_drg"])
+    def test_reserved_licensed_name_error_fields(self, reserved_name):
+        """Each reserved licensed corpus is refused as upload-only with the
+        licensing-specific code + path -- checked BEFORE the generic not-found
+        gate. Parametrized per constant value so every member of
+        RESERVED_LICENSED_NAMES has explicit coverage (a module-level set is
+        not otherwise exercised value-by-value)."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": reserved_name})
+        assert exc.value.code == "code_set_reserved_licensed_name"
+        assert exc.value.path == "provider_config.code_set"
+
+    def test_reserved_licensed_name_allowed_via_customer_source(self):
+        """A reserved name passes config validation when supplied as a customer
+        upload: the licensing refusal is scoped to shipped loads only. (Config
+        validation does not read the corpus; loading is checked elsewhere.)"""
+        validate_code_set_config(
+            {"code_set": "cpt", "corpus_source": "customer:/some/path.parquet"}
+        )
+
+    def test_unknown_shipped_corpus_error_fields(self):
+        """The not-found refusal carries its own code + path so callers can
+        distinguish it from the licensing and missing-name refusals."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": "nonexistent_corpus_xyz"})
+        assert exc.value.code == "code_set_corpus_not_found"
+        assert exc.value.path == "provider_config.code_set"
+
     def test_chapter_preserve_without_chapter_column_raises(self, tmp_path: pathlib.Path):
         """chapter_preserve with a corpus lacking 'chapter' column must raise."""
         tbl = pa.table(
