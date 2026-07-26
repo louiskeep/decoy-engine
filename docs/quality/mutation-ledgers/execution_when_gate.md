@@ -38,11 +38,11 @@ Per function:
 ## Tests
 
 New oracle file: `tests/unit/execution/test_when_gate_mutation_kills.py`
-(20 tests). Two `.strategy` assertions added to the existing error cells in
+(15 tests). Two `.strategy` assertions added to the existing error cells in
 `tests/unit/execution/test_when_predicate.py`. All green on unmutated code;
 ruff format + check clean.
 
-## LOGIC killed (74)
+## LOGIC killed (71)
 
 ### `_remap_gated_row_errors` (15)
 
@@ -110,7 +110,7 @@ monkeypatches `pd.DataFrame.eval` to raise `ImportError`, then asserts
 | `mut_32` | `code=None` | code assert |
 | `mut_33` | `strategy=None` | strategy assert |
 | `mut_38`, `39` | `code` -> `"XXnumexpr_requiredXX"` / `"NUMEXPR_REQUIRED"` | code assert (code is a machine field) |
-| `mut_35`, `36`, `37` | `code`/`strategy`/`message` kwarg removed | `TypeError` (StrategyError requires code+strategy) -> `StrategyError` not raised |
+| `mut_35`, `36` | `code`/`strategy` kwarg removed | `TypeError` (StrategyError requires code+strategy) -> `StrategyError` not raised (mut_37 `message` removed is EQUIVALENT -- message has a default) |
 
 Expression-error + not-boolean branches -- strategy attribution + required
 kwargs:
@@ -118,9 +118,7 @@ kwargs:
 | Mutants | Mutation | Killed by |
 |---|---|---|
 | `mut_43` | expr-error `strategy=None` | `test_pandas_expression_error_attributes_strategy` |
-| `mut_47` | expr-error `message` removed | same (`TypeError` -> not a `StrategyError`) |
 | `mut_57` | not-boolean `strategy=None` | `test_pandas_not_boolean_attributes_strategy` |
-| `mut_61` | not-boolean `message` removed | same |
 
 Scope clamp (the documented security posture) -- empty `local_dict` /
 `global_dict` must keep `@var` names undefined:

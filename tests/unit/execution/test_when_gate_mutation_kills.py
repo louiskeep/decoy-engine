@@ -350,3 +350,6 @@ def test_pandas_and_polars_gate_select_identical_rows():
     expected = ["a", "REDACTED", "REDACTED", "d"]
     assert pandas_out["v"].tolist() == expected
     assert polars_out["v"].to_list() == expected
+    # The internal anchor / mask columns must NOT leak onto the output schema
+    # (guards a future refactor that returns frame_with_anchor.with_columns(...)).
+    assert list(polars_out.columns) == list(frame.columns)

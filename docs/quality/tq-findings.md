@@ -209,3 +209,19 @@ the string-token map) use the SAME canonical numeric equivalence as
 `fk_key_value()` -- normalize float/Decimal to a shared, collision-safe numeric
 token rather than type-tagging them apart. Source change to `_fk_keys.py`,
 high-stakes (RI); Cam-gated, NOT done autonomously.
+
+## Substrate sweep observations
+
+### 14. `_when_gate` docstring overstates numexpr fallback behavior (doc nit, source; LOW)
+`execution/_when_gate.py:20-22` states "The numexpr backend never falls back to
+Python eval, so an undefined name raises `UndefinedVariableError` instead of
+executing." dennis's gate on the _when_gate grading batch (2026-07-26) empirically
+showed pandas `DataFrame.eval` DOES transparently fall back to the python engine
+even when `engine="numexpr"` is pinned (the code itself handles that fallback at
+lines ~109-127 with a RuntimeWarning). The security posture is UNAFFECTED: the real
+scope-walk block is the empty `local_dict`/`global_dict` clamp, not the engine
+choice (verified -- `@os.system(...)`-style attacks are blocked identically under
+both engines with the dicts clamped, which is why the `engine=` mutants mut_11/15
+are correctly EQUIVALENT). Only the docstring's rationale is inaccurate. Fix in a
+future source pass: reword to attribute the block to the dict clamp, not the engine
+pin. Tests-only sweep; not fixed here.
