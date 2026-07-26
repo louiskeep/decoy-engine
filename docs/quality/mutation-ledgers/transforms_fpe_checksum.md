@@ -78,6 +78,21 @@ the mutant passes `None` to `_permute` -> TypeError).
   raise after every scheme branch is dead code (all non-IBAN `_KNOWN_SCHEMES`
   members are handled above and IBAN raises earlier), so no input reaches it.
 
+## Gate
+
+Dennis batch gate: **initially FAILED** (P0) on a real coverage gap the mutation
+score is blind to. mutmut only mutates inside functions, NOT the module-level
+`_EXACT_LENGTHS` set (line 33 stays `frozenset({8, 12, 13, 14})` in the mutants
+copy), so it never generates the "drop a legal GTIN length" mutant -- yet the
+suite exercised GTIN only at length 14, leaving GTIN-8/12/13 and the exact-length
+guard's firing uncovered. So logic-100% held on mutmut's own mutants, but the
+scheme had a genuine blind spot. REMEDIATED: added GTIN-8/12/13/14 validity +
+round-trip coverage and an illegal-length (9-char) fail-closed test
+(`TestFpeGtin`), pinning every element of the length set and that the guard fires.
+These add real coverage without changing the mutmut counts (they kill no
+mutmut-generated mutant, because mutmut does not mutate the constant). The
+single-length schemes (npi/isbn13/ean13/vin) already had canonical-length tests.
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `transforms/_fpe_checksum.py`, selection

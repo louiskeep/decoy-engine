@@ -191,6 +191,31 @@ class TestFpeGtin:
         b = fpe_encrypt_value("98412345678908", _KEY, _DIGITS, _TWEAK, checksum="gtin")
         assert a == b
 
+    @pytest.mark.parametrize(
+        "gtin",
+        [
+            "96385074",  # GTIN-8
+            "614141000036",  # GTIN-12 (UPC-A)
+            "4006381333931",  # GTIN-13 (EAN-13)
+            "98412345678908",  # GTIN-14
+        ],
+    )
+    def test_fpe_gtin_all_legal_lengths_validate_and_round_trip(self, gtin: str) -> None:
+        # GTIN has four legal GS1 lengths (8/12/13/14); each must mask to a
+        # valid GTIN of the same length and round-trip, so every element of the
+        # scheme's exact-length set is load-bearing (not just 14).
+        out = fpe_encrypt_value(gtin, _KEY, _DIGITS, _TWEAK, checksum="gtin")
+        assert len(out) == len(gtin)
+        assert checksums.validate("gtin", out), f"FPE gtin output {out!r} failed validate"
+        assert fpe_decrypt_value(out, _KEY, _DIGITS, _TWEAK, checksum="gtin") == gtin
+
+    def test_fpe_gtin_illegal_length_fails_closed(self) -> None:
+        # A length outside the legal GTIN set must fail closed (the exact-length
+        # guard must actually fire for gtin), not permute a wrong-width body.
+        with pytest.raises(FpeChecksumError) as exc:
+            fpe_encrypt_value("123456789", _KEY, _DIGITS, _TWEAK, checksum="gtin")  # 9 chars
+        assert exc.value.scheme == "gtin"
+
 
 # ---------------------------------------------------------------------------
 # B1: IBAN - FAIL CLOSED (must raise, not emit)
