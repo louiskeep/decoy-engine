@@ -24,7 +24,7 @@ copied test tree -- exactly how mutmut's own in-process runner resolves it
 (``execute_pytest`` under ``change_cwd("mutants")``).
 
 Usage:
-    uv run --frozen --extra dev --extra lint --extra vault \
+    uv run --frozen --extra dev --extra mutation \
         python scripts/tq_mutate.py [--run] [--timeout 120] [--jobs 1]
 
     # then inspect the corrected report
@@ -33,6 +33,17 @@ Usage:
 The module + test selection are read from the CURRENT ``[tool.mutmut]`` block
 in pyproject.toml (``only_mutate`` + ``pytest_add_cli_args_test_selection``),
 never hardcoded.
+
+Correctness posture -- the failure mode this tool must NEVER exhibit is SILENT
+UNDER-GRADING (a real survivor or a harness break vanishing from the score while
+the tool exits 0). To that end it (P1-3) runs a baseline + forced-fail sanity
+check before grading and ABORTS nonzero if the harness is unsound; (P1-1) sizes
+the per-mutant wall-clock off the measured baseline and treats a genuine timeout
+as UNRESOLVED; (P2-1) re-adjudicates mutmut's "no tests" bucket against the full
+selection rather than trusting it; (P2-2) grades the same marker-filtered unit
+surface as the repo gate; and (P1-2) exits nonzero with a loud banner if ANY
+mutant is left unresolved. A clean exit 0 means every mutant reached a
+definitive killed/survived verdict.
 """
 
 from __future__ import annotations
@@ -43,6 +54,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,7 +69,44 @@ except ModuleNotFoundError:  # Python 3.10
 from mutmut.__main__ import status_by_exit_code
 
 # Statuses mutmut reports that we TRUST verbatim (see module docstring / #8).
-TRUSTED_STATUSES = frozenset({"killed", "survived", "no tests", "skipped", "caught by type check"})
+# "no tests" is deliberately EXCLUDED (TQ finding P2-1/P2-3): mutmut derives it
+# from its per-mutant coverage map, but this tool runs the FULL test selection
+# per mutant, so it does not depend on that map. A mutmut-"no tests" mutant,
+# re-run against the full selection, correctly resolves to survived (a genuine
+# adequacy gap) or killed (proving mutmut's map wrong). After this exclusion,
+# an rc-5 "nothing collected" DURING re-adjudication is a HARNESS BREAK, not a
+# neutral no-tests -- and it fails the run (see UNRESOLVED_VERDICTS).
+TRUSTED_STATUSES = frozenset({"killed", "survived", "skipped", "caught by type check"})
+
+# mutmut trusts pytest exit code 3 (internal error) as "killed" (status_by_exit_code
+# above). That is the one un-rechecked false-kill vector, so we ALSO re-adjudicate
+# any mutant whose mutmut exit code == 3 (TQ finding P3-1). Cheap to re-run.
+_MUTMUT_RECHECK_EXIT_CODES = frozenset({3})
+
+# Re-adjudicated verdicts that mean the grade is INCOMPLETE. If any mutant lands
+# here the printed score is not trustworthy and main() exits nonzero (P1-2):
+#   true-timeout -- hit the wall-clock, verdict genuinely unknown (P1-1)
+#   no-tests     -- rc-5 nothing collected during re-adjudication = harness break
+#   error        -- rc-4 usage error or any other non-{0,1,2,3,5} rc
+UNRESOLVED_VERDICTS = frozenset({"true-timeout", "no-tests", "error"})
+
+# Marker filter mirroring the repo's pyproject addopts (`-m "not benchmark and
+# not testflight and not packaging and not codspeed"`). We drop OTHER ini
+# addopts with `-o addopts=` but MUST re-add this explicitly (P2-2), otherwise
+# the tool grades a different surface (testflight/benchmark) than the unit gate.
+_MARKER_FILTER = "not benchmark and not testflight and not packaging and not codspeed"
+# The complement, used to assert the selection carries none of those markers.
+_EXCLUDED_MARKERS_EXPR = "benchmark or testflight or packaging or codspeed"
+
+# Per-mutant wall-clock timeout multiplier over the measured baseline full-selection
+# duration (P1-1). The effective timeout is max(--timeout floor, baseline * MULT).
+_BASELINE_TIMEOUT_MULT = 8
+
+# The baseline/marker PROBE runs get their own generous wall-clock, DECOUPLED from
+# the per-mutant --timeout floor: the floor is a per-mutant knob and must not be
+# able to spuriously abort the harness soundness check (e.g. a deliberately tiny
+# floor). Raised automatically if the user sets --timeout above it.
+_BASELINE_RUN_TIMEOUT = 600.0
 
 # pytest exit codes: 0 all-passed, 1 tests-failed, 2 interrupted, 3 internal
 # error, 4 usage error, 5 no-tests-collected.
@@ -87,6 +136,17 @@ class Verdict:
     returncode: int | None
     duration_s: float
     detail: str = ""
+
+
+@dataclass
+class RunResult:
+    """One pytest-subprocess run of the full selection under a given mutant key."""
+
+    returncode: int | None  # None iff the wall-clock timeout fired
+    duration_s: float
+    stdout: str
+    stderr: str
+    timed_out: bool
 
 
 def load_mutmut_config(pyproject_path: Path) -> MutmutConfig:
@@ -149,11 +209,11 @@ def build_subprocess_env(mutants_dir: Path, mutant_name: str) -> dict[str, str]:
     return env
 
 
-def readjudicate(
-    mutant: Mutant, config: MutmutConfig, mutants_dir: Path, timeout_s: float
-) -> Verdict:
-    """Run one suspect mutant in a fresh pytest subprocess and return the true verdict."""
-    cmd = [
+def _build_pytest_cmd(config: MutmutConfig, *, extra: Sequence[str] = ()) -> list[str]:
+    """The re-adjudication pytest invocation. `-o addopts=` drops the repo's ini
+    addopts, then `-m _MARKER_FILTER` re-adds JUST the marker exclusion (P2-2) so
+    the tool grades the same unit-test surface, not testflight/benchmark tests."""
+    return [
         sys.executable,
         "-m",
         "pytest",
@@ -161,17 +221,35 @@ def readjudicate(
         "--tb=no",
         "-q",
         "-o",
-        "addopts=",  # drop repo addopts (marker filters etc.); generous run
+        "addopts=",  # drop repo addopts (pull markers back in explicitly below)
+        "-m",
+        _MARKER_FILTER,
         "-p",
         "no:cacheprovider",  # don't write .pytest_cache into shared mutants/
         "-p",
         "no:randomly",
         "-p",
         "no:random-order",
+        *extra,
         *config.test_selection,
         *config.extra_cli_args,
     ]
-    env = build_subprocess_env(mutants_dir, mutant.name)
+
+
+def _run_selection(
+    config: MutmutConfig,
+    mutants_dir: Path,
+    timeout_s: float,
+    mutant_name: str,
+    *,
+    extra: Sequence[str] = (),
+) -> RunResult:
+    """Run the full test selection once under `mutant_name` (the MUTANT_UNDER_TEST
+    value: a full dotted key, "" for the original tree, or "fail" for the forced
+    fail probe). Returns a RunResult; returncode is None iff the wall-clock fired.
+    """
+    cmd = _build_pytest_cmd(config, extra=extra)
+    env = build_subprocess_env(mutants_dir, mutant_name)
     start = time.monotonic()
     try:
         proc = subprocess.run(  # noqa: S603  # cmd is built from vetted pyproject config
@@ -182,26 +260,51 @@ def readjudicate(
             text=True,
             timeout=timeout_s,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        return RunResult(
+            returncode=None,
+            duration_s=time.monotonic() - start,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+            timed_out=True,
+        )
+    return RunResult(
+        returncode=proc.returncode,
+        duration_s=time.monotonic() - start,
+        stdout=proc.stdout,
+        stderr=proc.stderr,
+        timed_out=False,
+    )
+
+
+def readjudicate(
+    mutant: Mutant, config: MutmutConfig, mutants_dir: Path, timeout_s: float
+) -> Verdict:
+    """Run one suspect mutant in a fresh pytest subprocess and return the true verdict."""
+    res = _run_selection(config, mutants_dir, timeout_s, mutant.name)
+    if res.timed_out:
+        # UNRESOLVED (P1-1): a real timeout, not a mutmut misfire. Never dropped
+        # from the denominator; it fails the run (see UNRESOLVED_VERDICTS).
         return Verdict(
             mutant=mutant,
             verdict="true-timeout",
             returncode=None,
-            duration_s=time.monotonic() - start,
-            detail=f"wall-clock > {timeout_s}s",
+            duration_s=res.duration_s,
+            detail=f"wall-clock > {timeout_s:.1f}s",
         )
-    dur = time.monotonic() - start
-    rc = proc.returncode
+    rc = res.returncode
     if rc == 0:
         verdict = "survived"
     elif rc == 5:
-        verdict = "no-tests"  # nothing collected -- harness/selection problem
+        verdict = "no-tests"  # nothing collected during re-adjudication = harness break
     elif rc in _PYTEST_KILLED_CODES:
         verdict = "killed"
     else:
         verdict = "error"  # rc 4 usage error or other; surface, don't miscount
-    detail = "" if verdict in {"survived", "killed"} else _tail(proc.stdout, proc.stderr)
-    return Verdict(mutant=mutant, verdict=verdict, returncode=rc, duration_s=dur, detail=detail)
+    detail = "" if verdict in {"survived", "killed"} else _tail(res.stdout, res.stderr)
+    return Verdict(
+        mutant=mutant, verdict=verdict, returncode=rc, duration_s=res.duration_s, detail=detail
+    )
 
 
 def _tail(stdout: str, stderr: str, n: int = 400) -> str:
@@ -214,10 +317,107 @@ def _trusted_verdict(mutant: Mutant) -> str:
     return {
         "killed": "killed",
         "survived": "survived",
-        "no tests": "no-tests",
         "skipped": "skipped",
         "caught by type check": "type-check",
     }[mutant.mutmut_status]
+
+
+def _needs_readjudication(mutant: Mutant) -> bool:
+    """A mutant is re-adjudicated if its mutmut status is not trusted (timeout /
+    suspicious / segfault / no-tests) OR its mutmut exit code is a re-check code
+    (3 == pytest internal error, which mutmut trusts as killed -- P3-1)."""
+    return (
+        mutant.mutmut_status not in TRUSTED_STATUSES
+        or mutant.mutmut_exit_code in _MUTMUT_RECHECK_EXIT_CODES
+    )
+
+
+class BaselineError(RuntimeError):
+    """Baseline sanity check failed; the grade must not be emitted (P1-3)."""
+
+
+def baseline_sanity_check(config: MutmutConfig, mutants_dir: Path, probe_timeout: float) -> float:
+    """Prove the harness is sound BEFORE grading (P1-3), mirroring mutmut's
+    run_forced_fail: (a) the original tree (MUTANT_UNDER_TEST="") passes, and
+    (b) the forced-fail probe (MUTANT_UNDER_TEST="fail") fails. Returns the
+    measured full-selection baseline duration (seconds) for timeout sizing.
+    Raises BaselineError on any failure -- callers must abort nonzero.
+    """
+    print("Baseline sanity check (P1-3) ...", flush=True)
+
+    # (a) original tree must pass.
+    original = _run_selection(config, mutants_dir, probe_timeout, "")
+    if original.timed_out:
+        raise BaselineError(
+            f"baseline (MUTANT_UNDER_TEST='') did not finish within {probe_timeout:.1f}s; "
+            "the selection is broken or hangs.\n" + _tail(original.stdout, original.stderr)
+        )
+    if original.returncode != 0:
+        raise BaselineError(
+            f"baseline (MUTANT_UNDER_TEST='') exited {original.returncode}, expected 0 "
+            "(original tree must pass before any mutant is graded). "
+            "Check test_selection / pyproject [tool.mutmut].\n"
+            + _tail(original.stdout, original.stderr)
+        )
+    baseline_seconds = original.duration_s
+    print(f"  (a) original tree passes  ({baseline_seconds:.2f}s)", flush=True)
+
+    # (b) forced-fail probe must fail (the trampoline raises on the literal "fail").
+    forced = _run_selection(config, mutants_dir, probe_timeout, "fail")
+    if forced.timed_out:
+        raise BaselineError(
+            f"forced-fail probe (MUTANT_UNDER_TEST='fail') did not finish within "
+            f"{probe_timeout:.1f}s (expected a fast failure)."
+        )
+    if forced.returncode == 0:
+        raise BaselineError(
+            "forced-fail probe (MUTANT_UNDER_TEST='fail') exited 0, expected nonzero. "
+            "The tests never call the mutated functions, so NO mutant could be killed "
+            "-- grading would be meaningless.\n" + _tail(forced.stdout, forced.stderr)
+        )
+    print(f"  (b) forced-fail probe fails (rc={forced.returncode})", flush=True)
+    return baseline_seconds
+
+
+def warn_if_excluded_markers_collected(
+    config: MutmutConfig, mutants_dir: Path, probe_timeout: float
+) -> int:
+    """Warn loudly (P2-2) if the selection collects any test carrying an excluded
+    marker (benchmark/testflight/packaging/codspeed). Returns the collected count.
+    Runs against the original tree with --collect-only under the COMPLEMENT marker
+    expression; rc-5 (nothing collected) is the healthy case.
+    """
+    res = _run_selection(
+        config,
+        mutants_dir,
+        probe_timeout,
+        "",
+        extra=("--collect-only", "--override-ini=addopts=", "-m", _EXCLUDED_MARKERS_EXPR),
+    )
+    # Our _build_pytest_cmd already passes `-m _MARKER_FILTER`; the later `-m` in
+    # `extra` wins (pytest uses the last -m), so this run selects EXCLUDED markers.
+    if res.timed_out:
+        print("  WARNING: excluded-marker probe timed out; could not verify surface.", flush=True)
+        return -1
+    if res.returncode == 5:
+        return 0  # nothing collected -- the selection carries no excluded markers
+    if res.returncode == 0:
+        tail = _tail(res.stdout, res.stderr, n=600)
+        print(
+            "\n  !! WARNING (P2-2): the test selection collects tests carrying an "
+            "excluded marker\n"
+            f"     ({_EXCLUDED_MARKERS_EXPR}). The grade may cover a different surface "
+            "than the unit gate.\n"
+            f"     collect-only tail:\n{tail}\n",
+            flush=True,
+        )
+        return 1
+    # Any other rc: report but don't block (informational probe).
+    print(
+        f"  note: excluded-marker probe exited {res.returncode} (informational).",
+        flush=True,
+    )
+    return 0
 
 
 def main() -> int:
@@ -246,7 +446,8 @@ def main() -> int:
         "--timeout",
         type=float,
         default=120.0,
-        help="per-mutant wall-clock timeout for re-adjudication (default: 120s)",
+        help="per-mutant wall-clock timeout FLOOR (seconds). The effective timeout is "
+        f"max(this, measured_baseline * {_BASELINE_TIMEOUT_MULT}) (default floor: 120s)",
     )
     parser.add_argument(
         "--jobs",
@@ -274,12 +475,38 @@ def main() -> int:
     meta_paths = meta_paths_for(config, mutants_dir)
     mutants = load_mutants(meta_paths)
 
-    suspect = [m for m in mutants if m.mutmut_status not in TRUSTED_STATUSES]
-    trusted = [m for m in mutants if m.mutmut_status in TRUSTED_STATUSES]
+    # Probe runs (baseline + marker check) use a generous timeout decoupled from
+    # the per-mutant floor, so a deliberately tiny --timeout cannot abort them.
+    floor_timeout = args.timeout
+    probe_timeout = max(floor_timeout, _BASELINE_RUN_TIMEOUT)
+
+    # P1-3: prove the harness is sound before grading anything. Aborts nonzero.
+    try:
+        baseline_seconds = baseline_sanity_check(config, mutants_dir, probe_timeout)
+    except BaselineError as exc:
+        print("\n===== BASELINE SANITY CHECK FAILED =====", flush=True)
+        print(str(exc), flush=True)
+        print("ABORTING: no score emitted (the grading harness is not sound).", flush=True)
+        return 2
+
+    # P1-1: size the per-mutant wall-clock off the measured baseline, floored by --timeout.
+    per_mutant_timeout = max(floor_timeout, baseline_seconds * _BASELINE_TIMEOUT_MULT)
+    print(
+        f"  per-mutant timeout = max(floor {floor_timeout:.1f}s, "
+        f"baseline {baseline_seconds:.2f}s x {_BASELINE_TIMEOUT_MULT}) "
+        f"= {per_mutant_timeout:.1f}s",
+        flush=True,
+    )
+
+    # P2-2: the selection must not pull in testflight/benchmark/packaging/codspeed tests.
+    warn_if_excluded_markers_collected(config, mutants_dir, probe_timeout)
+
+    suspect = [m for m in mutants if _needs_readjudication(m)]
+    trusted = [m for m in mutants if not _needs_readjudication(m)]
 
     print(
         f"{len(mutants)} mutants: {len(trusted)} trusted, "
-        f"{len(suspect)} suspect (re-adjudicating with timeout={args.timeout}s, "
+        f"{len(suspect)} suspect (re-adjudicating with timeout={per_mutant_timeout:.1f}s, "
         f"jobs={args.jobs})",
         flush=True,
     )
@@ -296,7 +523,7 @@ def main() -> int:
     ]
 
     def _do(m: Mutant) -> Verdict:
-        return readjudicate(m, config, mutants_dir, args.timeout)
+        return readjudicate(m, config, mutants_dir, per_mutant_timeout)
 
     if args.jobs > 1:
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -316,7 +543,33 @@ def main() -> int:
     report_path.write_text(json.dumps(report, indent=2))
 
     _print_tally(report, report_path)
+
+    # P1-2: refuse to present a clean score if any mutant is unresolved. A clean
+    # run (exit 0) means every mutant reached a definitive killed/survived.
+    unresolved = [v for v in verdicts if v.verdict in UNRESOLVED_VERDICTS]
+    if unresolved:
+        _print_unresolved_banner(unresolved)
+        return 1
     return 0
+
+
+def _print_unresolved_banner(unresolved: list[Verdict]) -> None:
+    print("\n" + "=" * 44, flush=True)
+    print("!!  SCORE NOT TRUSTWORTHY  (P1-2)  !!", flush=True)
+    print("=" * 44, flush=True)
+    print(
+        f"{len(unresolved)} mutant(s) did not reach a definitive killed/survived "
+        "verdict.\nThese are true-timeouts or harness breaks, NOT neutral results; "
+        "the\ngrade is incomplete. Resolve each before trusting the mutation score:",
+        flush=True,
+    )
+    for v in unresolved:
+        print(
+            f"  [{v.verdict:<12}] rc={v.returncode} {v.duration_s:5.1f}s  {v.mutant.name}",
+            flush=True,
+        )
+        if v.detail:
+            print(f"      {v.detail.splitlines()[-1][:200]}", flush=True)
 
 
 def _print_readjudication(v: Verdict) -> None:
@@ -344,6 +597,15 @@ def build_report(config: MutmutConfig, mutants: list[Mutant], verdicts: list[Ver
     logic_total = killed + survived
     logic_score = (killed / logic_total) if logic_total else None
 
+    # COVERAGE-INCLUSIVE score (P2-3): also charges the score for every mutant
+    # left UNRESOLVED (true-timeout + rc-5 no-tests harness break + error).
+    # With "no tests" now re-adjudicated, a genuine adequacy gap already lands in
+    # `survived` (inside logic_total), so the two scores converge on a clean run;
+    # the inclusive figure still exposes any residual unresolved gap to a reviewer.
+    unresolved_total = true_timeout + no_tests + errors
+    inclusive_total = logic_total + unresolved_total
+    inclusive_score = (killed / inclusive_total) if inclusive_total else None
+
     mutmut_counts: dict[str, int] = {}
     for m in mutants:
         mutmut_counts[m.mutmut_status] = mutmut_counts.get(m.mutmut_status, 0) + 1
@@ -364,6 +626,9 @@ def build_report(config: MutmutConfig, mutants: list[Mutant], verdicts: list[Ver
             "errors": errors,
             "logic_total": logic_total,
             "logic_mutation_score": logic_score,
+            "unresolved_total": unresolved_total,
+            "inclusive_total": inclusive_total,
+            "inclusive_mutation_score": inclusive_score,
         },
         "readjudicated": [
             {
@@ -376,7 +641,7 @@ def build_report(config: MutmutConfig, mutants: list[Mutant], verdicts: list[Ver
                 "detail": v.detail,
             }
             for v in verdicts
-            if v.mutant.mutmut_status not in TRUSTED_STATUSES
+            if _needs_readjudication(v.mutant)
         ],
     }
 
@@ -399,6 +664,12 @@ def _print_tally(report: dict, report_path: Path) -> None:
     score = c["logic_mutation_score"]
     score_str = f"{score * 100:.2f}%" if score is not None else "n/a"
     print(f"LOGIC score:       {score_str}  ({c['killed']}/{c['logic_total']})")
+    inc = c["inclusive_mutation_score"]
+    inc_str = f"{inc * 100:.2f}%" if inc is not None else "n/a"
+    print(
+        f"INCLUSIVE score:   {inc_str}  ({c['killed']}/{c['inclusive_total']})"
+        f"  [+{c['unresolved_total']} unresolved]"
+    )
     print(f"report written:    {report_path}")
 
 
