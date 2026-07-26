@@ -35,6 +35,12 @@ test selection restricted to `tests/unit/execution/test_hash_bucketize.py`.
 | `run__mutmut_7` | `message=` kwarg removed | Same default; the raise still carries the asserted `code`/`strategy`. |
 | `run__mutmut_32` | `hash_array(..., derive_func=derive)` kwarg removed | `hash_array`'s signature already defaults `derive_func=derive` (the same module-level function), so dropping the explicit pass-through is byte-identical. |
 
+## Gate
+
+Dennis batch gate (_hash + _bucketize): **PASS**, 0 P0 / 0 P1 / 0 P2. All
+EQUIVALENT classifications verified behavior-preserving against source; all kills
+confirmed genuine.
+
 ## Regenerate (any shell)
 
 Repoint `[tool.mutmut]` `only_mutate` to

@@ -45,6 +45,12 @@ All in `tests/unit/execution/test_hash_bucketize.py::TestBucketizeSurvivors`.
 | `run_31`, `32` | format default `"XXlowerXX"` / `"LOWER"` | when format absent both collapse back to `"lower"` (via reset or `.lower()`); identical output. |
 | `run_104`, `112`, `113` | `RowError.reason` None / string variants | `reason` is diagnostic prose (docstring: human-readable); `trigger="format_error"` is the asserted machine field. |
 
+## Gate
+
+Dennis batch gate (_hash + _bucketize): **PASS**, 0 P0 / 0 P1 / 0 P2. All
+EQUIVALENT classifications verified behavior-preserving against source; all kills
+confirmed genuine.
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `_bucketize.py`, selection to
