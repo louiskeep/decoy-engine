@@ -346,6 +346,34 @@ class TestFormula:
         assert float(out[1]) == 4.0
         assert out[2] is None
 
+    def test_missing_formula_config_passes_through_unchanged(self) -> None:
+        # No 'formula' field: the empty default is a passthrough, not a bogus
+        # non-empty expression that would eval and raise.
+        src = pa.table({"n": [10, 20, 30]})
+        seed = _col("formula", provider_config=())
+        out = _run(_plan("n", seed), src).output.column("n").to_pylist()
+        assert [float(x) for x in out] == [10.0, 20.0, 30.0]
+
+    def test_random_formula_is_seeded_by_column_name(self) -> None:
+        # The per-formula RNG seed folds in the column name, so the same random
+        # expression on two differently-named columns yields different output.
+        expr = (("formula", "value + randint(0, 1000000)"),)
+        out_x = (
+            _run(
+                _plan("colx", _col("formula", provider_config=expr)), pa.table({"colx": [0, 0, 0]})
+            )
+            .output.column("colx")
+            .to_pylist()
+        )
+        out_y = (
+            _run(
+                _plan("coly", _col("formula", provider_config=expr)), pa.table({"coly": [0, 0, 0]})
+            )
+            .output.column("coly")
+            .to_pylist()
+        )
+        assert out_x != out_y
+
 
 class TestGroupAnchorSnapshotMisalignedFailsClosed:
     """Dennis R2 LOW-1 backstop: if a snapshot ever fails to row-align with the
