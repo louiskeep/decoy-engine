@@ -134,14 +134,18 @@ def test_extract_domain_separation_by_ikm(ikm1: bytes, ikm2: bytes, salt: bytes)
 
 
 @given(prk=_nonempty_bytes, info1=_bytes, info2=_bytes, length=_wide_length)
-def test_expand_domain_separation_by_info(prk: bytes, info1: bytes, info2: bytes, length: int) -> None:
+def test_expand_domain_separation_by_info(
+    prk: bytes, info1: bytes, info2: bytes, length: int
+) -> None:
     """A different `info`, all else equal, must not collide on the OKM."""
     assume(info1 != info2)
     assert hkdf_expand(prk, info1, length) != hkdf_expand(prk, info2, length)
 
 
 @given(ikm=_bytes, salt=_nonempty_bytes, info1=_bytes, info2=_bytes, length=_wide_length)
-def test_sha256_domain_separation_by_info(ikm: bytes, salt: bytes, info1: bytes, info2: bytes, length: int) -> None:
+def test_sha256_domain_separation_by_info(
+    ikm: bytes, salt: bytes, info1: bytes, info2: bytes, length: int
+) -> None:
     """End-to-end: changing `info` alone must yield a different derived key
     (no collision across domains)."""
     assume(info1 != info2)
@@ -149,7 +153,9 @@ def test_sha256_domain_separation_by_info(ikm: bytes, salt: bytes, info1: bytes,
 
 
 @given(ikm=_bytes, salt1=_nonempty_bytes, salt2=_nonempty_bytes, info=_bytes, length=_wide_length)
-def test_sha256_domain_separation_by_salt(ikm: bytes, salt1: bytes, salt2: bytes, info: bytes, length: int) -> None:
+def test_sha256_domain_separation_by_salt(
+    ikm: bytes, salt1: bytes, salt2: bytes, info: bytes, length: int
+) -> None:
     """End-to-end: changing `salt` alone must yield a different derived
     key."""
     assume(salt1 != salt2)
@@ -157,7 +163,9 @@ def test_sha256_domain_separation_by_salt(ikm: bytes, salt1: bytes, salt2: bytes
 
 
 @given(ikm1=_bytes, ikm2=_bytes, salt=_nonempty_bytes, info=_bytes, length=_wide_length)
-def test_sha256_domain_separation_by_ikm(ikm1: bytes, ikm2: bytes, salt: bytes, info: bytes, length: int) -> None:
+def test_sha256_domain_separation_by_ikm(
+    ikm1: bytes, ikm2: bytes, salt: bytes, info: bytes, length: int
+) -> None:
     """End-to-end: changing the input key material alone must yield a
     different derived key."""
     assume(ikm1 != ikm2)
@@ -203,7 +211,9 @@ def test_expand_rejects_length_over_max(prk: bytes, info: bytes, length: int) ->
 
 
 @given(prk=_bytes, info=_bytes, l1=_length, l2=_length)
-def test_expand_output_is_prefix_of_longer_expansion(prk: bytes, info: bytes, l1: int, l2: int) -> None:
+def test_expand_output_is_prefix_of_longer_expansion(
+    prk: bytes, info: bytes, l1: int, l2: int
+) -> None:
     """RFC 5869 section 2.3: each `T(i)` block depends only on `(prk, info,
     i)`, never on the caller's requested length, so the shorter of two
     expansions from the same `(prk, info)` is always a byte-for-byte prefix
@@ -217,7 +227,9 @@ def test_expand_output_is_prefix_of_longer_expansion(prk: bytes, info: bytes, l1
 
 
 @given(ikm=_bytes, salt=_nonempty_bytes, info=_bytes, length=_length)
-def test_sha256_equals_manual_extract_then_expand(ikm: bytes, salt: bytes, info: bytes, length: int) -> None:
+def test_sha256_equals_manual_extract_then_expand(
+    ikm: bytes, salt: bytes, info: bytes, length: int
+) -> None:
     """`hkdf_sha256`'s own docstring: "Equivalent to `hkdf_expand(hkdf_
     extract(salt, ikm), info, length)`". The one-shot path and the explicit
     two-step path must never diverge."""

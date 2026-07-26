@@ -677,7 +677,9 @@ def _inert_mini_plan() -> _MiniPlan:
     """A plan with zero columns -- inert to the keyed-strategy gate, so
     `require_mask_key` reduces to the plain provider-or-job_seed choice these
     `resolve_mask_key` precedence tests need to isolate."""
-    return _MiniPlan(SeedEnvelope(job_seed=b"\x00" * 8, per_table=(("t", TableSeed(per_column=())),)))
+    return _MiniPlan(
+        SeedEnvelope(job_seed=b"\x00" * 8, per_table=(("t", TableSeed(per_column=())),))
+    )
 
 
 def test_resolve_mask_key_prefers_explicit_key_provider() -> None:

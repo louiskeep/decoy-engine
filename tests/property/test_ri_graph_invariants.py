@@ -230,7 +230,9 @@ def test_composite_parent_collapses_to_one_node() -> None:
             namespace="ns",
         ),
     )
-    lookup = {("orders", ("region", "order_no"), "lines", ("region", "order_no")): OrphanPolicy.FAIL}
+    lookup = {
+        ("orders", ("region", "order_no"), "lines", ("region", "order_no")): OrphanPolicy.FAIL
+    }
     graph = _build(rels, lookup)
     assert ("orders", ("region", "order_no")) in graph.ordering
     assert _index(graph.ordering, ("orders", ("region", "order_no"))) < _index(
@@ -331,7 +333,10 @@ def test_missing_policy_field_is_rejected() -> None:
     rels = (Relationship("p", ("id",), "c", ("pid",), namespace="ns"),)
     config = {
         "relationships": [
-            {"parent": {"table": "p", "columns": ["id"]}, "children": [{"table": "c", "columns": ["pid"]}]}
+            {
+                "parent": {"table": "p", "columns": ["id"]},
+                "children": [{"table": "c", "columns": ["pid"]}],
+            }
         ]
     }
     with pytest.raises(PlanCompileError) as ei:
@@ -415,7 +420,11 @@ def test_build_raises_on_lookup_key_missing() -> None:
         {"relationships": ["not-a-dict"]},
         {"relationships": [{"parent": "not-a-dict", "orphan_policy": "preserve"}]},
         {"relationships": [{"parent": {"columns": ["id"]}, "orphan_policy": "preserve"}]},
-        {"relationships": [{"parent": {"table": "p", "columns": "not-a-list"}, "orphan_policy": "preserve"}]},
+        {
+            "relationships": [
+                {"parent": {"table": "p", "columns": "not-a-list"}, "orphan_policy": "preserve"}
+            ]
+        },
         {
             "relationships": [
                 {
