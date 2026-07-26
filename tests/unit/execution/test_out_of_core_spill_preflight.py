@@ -867,12 +867,43 @@ class TestFloatFkTokenSizing:
     which dwarfs the ~28-byte int-key floor. int/string keys are unaffected."""
 
     def test_float_key_priced_at_float_bound_not_int_floor(self) -> None:
-        # A float64/float32 key takes the wide float bound, well above the
-        # 28-byte int floor a fixed-width numeric key would otherwise get.
-        for dtype in ("float64", "float32"):
+        # A float key takes the wide float bound, well above the 28-byte int
+        # floor a fixed-width numeric key would otherwise get. Covers numpy,
+        # pandas-nullable, and pyarrow float spellings (dennis P2): the pricing,
+        # not just the detection, must apply to all of them.
+        for dtype in ("float64", "float32", "Float64", "double[pyarrow]"):
             got = spill_mod._staged_key_token_bytes(8.0, dtype)
             assert got == float(spill_mod._FLOAT_FK_TOKEN_MAX_BYTES)
             assert got > float(spill_mod.MIN_KEY_TOKEN_BYTES)
+
+    def test_float_dtype_detection_covers_all_float_spellings(self) -> None:
+        # The bound must apply to EVERY float label that could reach the
+        # estimator, not an exact set -- under-counting is the dangerous
+        # direction (dennis P2). Numpy, pandas-nullable, and pyarrow floats
+        # are all detected.
+        from decoy_engine.execution._mem_estimate import _FIXED_WIDTH_DTYPE_BYTES
+
+        for label in (
+            "float64",
+            "float32",
+            "float16",
+            "Float64",
+            "Float32",
+            "float",
+            "double",
+            "double[pyarrow]",
+            "float[pyarrow]",
+        ):
+            assert spill_mod._is_float_fk_dtype(label), label
+        # Coupling lock (dennis P3): every float label the fixed-width cost
+        # table knows about is detected, so a float dtype added there later
+        # cannot silently slip back to the int floor.
+        for label in _FIXED_WIDTH_DTYPE_BYTES:
+            if "float" in label.lower():
+                assert spill_mod._is_float_fk_dtype(label), label
+        # Non-floats are NOT detected (no false positive -> no over-count creep).
+        for label in ("int64", "int32", "object", "string", "bool", "datetime64[ns]"):
+            assert not spill_mod._is_float_fk_dtype(label), label
 
     def test_float_bound_covers_real_worst_case_tokens(self) -> None:
         # The estimator's per-key float bound (token text + framing) must not be

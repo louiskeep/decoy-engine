@@ -232,10 +232,29 @@ MIN_KEY_TOKEN_BYTES = 28
 # test_out_of_core_spill_preflight.py. An int64/int32 key cannot reach this
 # width (<=19 digits -> the 28-byte floor already covers it), so only float
 # dtypes take this bound.
-_FLOAT_FK_DTYPES = frozenset({"float64", "float32"})
 _FLOAT_FK_TOKEN_MAX_BYTES: int = (
     len("\x00INT:") + len(str(int(sys.float_info.max))) + 1 + FK_TOKEN_FRAMING_BYTES
 )
+
+
+def _is_float_fk_dtype(dtype: str) -> bool:
+    """Whether a key column's dtype label is a float, so its staged join token
+    takes the wide `_FLOAT_FK_TOKEN_MAX_BYTES` bound (finding #13).
+
+    A SUBSTRING match on "float"/"double" (case-insensitive), not an exact set:
+    it must catch every float spelling that could reach here now or later --
+    numpy `float64`/`float32`/`float16`, pandas nullable `Float64`/`Float32`,
+    and pyarrow `float`/`double`/`double[pyarrow]` -- because UNDER-counting is
+    the dangerous direction for a disk preflight (finding #13 was exactly that).
+    No non-float dtype label contains either substring, so there is no false
+    positive; over-counting a float is the safe direction anyway. Today the
+    routing mem-gate (`ColumnSizeSpec`) fails closed on non-numpy float labels
+    before a live OOC run, so only float64/float32 actually reach this -- the
+    broad match is a belt-and-suspenders guard against a future reader that
+    emits nullable/arrow floats (dennis gate P2)."""
+    lowered = dtype.lower()
+    return "float" in lowered or "double" in lowered
+
 
 # The `__decoy_row_nr` int64 column staged alongside the key columns
 # (`_relation.py::_staging_schema`), one per table's staged key set.
@@ -357,7 +376,7 @@ def _staged_key_token_bytes(masked_width: float, dtype: str) -> float:
     decimal / folded-int expansion, finding #13), so it takes the dedicated
     `_FLOAT_FK_TOKEN_MAX_BYTES` bound instead."""
     base = max(masked_width + FK_TOKEN_FRAMING_BYTES, float(MIN_KEY_TOKEN_BYTES))
-    if dtype in _FLOAT_FK_DTYPES:
+    if _is_float_fk_dtype(dtype):
         return max(base, float(_FLOAT_FK_TOKEN_MAX_BYTES))
     return base
 
