@@ -113,6 +113,15 @@ class TestApplyDerivedAggregate:
     def test_max(self) -> None:
         assert self._apply("max", [3.0, 1.0, 2.0]) == 3.0
 
+    def test_min_excludes_nulls(self) -> None:
+        # min uses skipna=True (SQL null-exclusion); a skipna=False mutant would
+        # return NaN once any null is present.
+        assert self._apply("min", [3.0, None, 1.0, 2.0]) == 1.0
+
+    def test_max_excludes_nulls(self) -> None:
+        # max uses skipna=True; a skipna=False mutant would return NaN.
+        assert self._apply("max", [3.0, None, 1.0, 2.0]) == 3.0
+
     def test_count(self) -> None:
         assert self._apply("count", [1.0, None, 3.0]) == 2
 
