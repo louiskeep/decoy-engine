@@ -815,9 +815,7 @@ dependencies = [
 dev = [
     { name = "hypothesis" },
     { name = "moto", extra = ["s3"] },
-    { name = "mutmut" },
     { name = "pytest" },
-    { name = "pytest-cov" },
 ]
 docs = [
     { name = "furo" },
@@ -842,6 +840,10 @@ mimesis = [
 ml = [
     { name = "lightgbm" },
     { name = "scikit-learn" },
+]
+mutation = [
+    { name = "mutmut" },
+    { name = "pytest-cov" },
 ]
 ner = [
     { name = "spacy" },
@@ -873,7 +875,7 @@ requires-dist = [
     { name = "linkify-it-py", marker = "extra == 'docs'", specifier = ">=2" },
     { name = "mimesis", marker = "extra == 'mimesis'", specifier = ">=19.0,<20" },
     { name = "moto", extras = ["s3"], marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "mutmut", marker = "extra == 'mutation'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'lint'", specifier = "==2.3.0" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=2,<5" },
     { name = "numexpr", specifier = ">=2.8" },
@@ -887,7 +889,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-codspeed", marker = "extra == 'perf'", specifier = ">=3.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "pytest-cov", marker = "extra == 'mutation'", specifier = ">=5.0" },
     { name = "python-stdnum", specifier = ">=2.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'lint'", specifier = "==0.15.22" },
@@ -899,7 +901,7 @@ requires-dist = [
     { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = ">=0.5" },
     { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=0.9" },
 ]
-provides-extras = ["dev", "lint", "mimesis", "ner", "vault", "docs", "gcs", "sftp", "geo", "ml", "perf"]
+provides-extras = ["dev", "mutation", "lint", "mimesis", "ner", "vault", "docs", "gcs", "sftp", "geo", "ml", "perf"]
 
 [[package]]
 name = "deprecated"

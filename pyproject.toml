@@ -169,9 +169,15 @@ dev = [
     # remediation 2026-06-12) is part of the default test run; without
     # this pin CI fails at collection with ModuleNotFoundError.
     "hypothesis>=6.0",
-    # Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
-    # grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
-    # whether tests catch planted bugs (the objective "adequately tested" bar).
+]
+# Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
+# grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
+# whether tests catch planted bugs (the objective "adequately tested" bar).
+# Kept OUT of `dev` on purpose: the certified DP profile syncs
+# `dev+lint+vault` and its 77-dist fingerprint (dp_provenance, 895b9a20) must
+# stay exact, so mutmut/pytest-cov and their transitive deps (libcst, textual,
+# coverage, ...) live in this separate extra that the cert gate never installs.
+mutation = [
     "pytest-cov>=5.0",
     "mutmut>=3.0",
 ]
