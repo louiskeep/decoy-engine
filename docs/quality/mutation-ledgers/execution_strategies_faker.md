@@ -43,7 +43,7 @@ before any chunk -- `_chunked.py`):
   REQUIRES a non-None namespace for every faker column (`_chunked.py`), so no
   admitted sibling can carry the `'_default'` form. All rebuild correctly.
 
-## LOGIC (18): killed by new tests
+## LOGIC (22): killed by new tests
 
 | Test | Kills | Pins |
 |---|---|---|
