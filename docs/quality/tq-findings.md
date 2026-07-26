@@ -212,6 +212,29 @@ high-stakes (RI); Cam-gated, NOT done autonomously.
 
 ## Substrate sweep observations
 
+### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining)
+The runtime governor `execution/_governor.py` and its siblings run their real work
+in SPAWNED CHILD PROCESSES (supervisor-kills-child architecture), and their tests
+(`test_governor.py`: 65 monkeypatch/mock refs) stub the spawn + RSS monitor. So
+mutmut's in-process trampoline mutants in these modules are never executed by the
+tests -- the child imports the UNMUTATED installed package. `tq_mutate.py`'s
+baseline sanity check (dennis P1-3) correctly ABORTED grading `_governor` with "the
+tests never call the mutated functions" rather than emitting a false score (the
+guard working as designed). Triage of the substrate tier by subprocess/isolated
+reference count:
+- **Gradeable in-process (pure logic, 0 subprocess refs):** `_planner`, `_sequential`,
+  `_chunked`, `_chunked_fk`, `_pandas_adapter`, `capacity`, `_technique_class`,
+  `_distribution_behavior`, `_mem_estimate_schema`. These are the sweep's in-process
+  targets.
+- **UN-gradeable in-process (subprocess / isolated-run heavy):** `_isolated_run` (72),
+  `_governor` (59), `_mem_telemetry` (19), `_probe` (17), `_isolated_worker` (8),
+  `_probe_scale` (5), `_pipeline_routing_signals` (3), `_governor_monitor` (3),
+  `_mem_estimate` (2). These need a different method (mutation testing that runs the
+  child with the mutated tree, or accept they are behavior-tested not mutation-graded)
+  -- same deferred class as findings #8/#12. Flagged for a Cam decision on approach.
+
+
+
 ### 14. `_when_gate` docstring overstates numexpr fallback behavior (doc nit, source; LOW)
 `execution/_when_gate.py:20-22` states "The numexpr backend never falls back to
 Python eval, so an undefined name raises `UndefinedVariableError` instead of
