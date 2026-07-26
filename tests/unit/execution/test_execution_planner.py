@@ -692,6 +692,10 @@ class TestReasonComposition:
         # join-arg / separator / `-=` mutations; the surrounding prose is left
         # to the prose-equivalent class in the ledger.
         assert "generate-kind table(s) g1, g2 run the" in plan.reason
+        # Composition symmetry (dennis gate): the base clause must survive the
+        # append, so a `reason += ...` -> `reason = ...` mutation (mut_35) that
+        # DROPS the base clause is caught, not silently equivalent.
+        assert "all mask work is scalar" in plan.reason
 
     def test_chunked_reason_reports_source_rows_and_base_clause(self, tmp_path):
         cfg, sources = _scalar_chunk_safe_job(tmp_path)

@@ -20,9 +20,14 @@ the code and data around it are pinned.
 
 ## Numbers
 
-**261 LOGIC survivors addressed: 188 killed by new oracles, 73 EQUIVALENT.** No
-survivor left un-triaged. 0 real product bugs found. Re-grade is run by the main
-loop.
+**261 LOGIC survivors addressed: 190 killed by new oracles, 71 EQUIVALENT.** No
+survivor left un-triaged. 0 real product bugs found. Independently re-graded via
+`scripts/tq_mutate.py`: 388/459 killed = **84.53% LOGIC**, 0 unresolved, above the
+75% substrate bar. dennis gate reconciliation: `_runtime_source_rejections` mut_48
+was mis-listed as a surviving-equivalent but is actually KILLED (moved to KILLED
+below); and `classify_job` mut_35 (`reason += -> =`) was reclassified from
+EQUIVALENT to KILLED after the polars composition test was made symmetric (it now
+asserts the base clause survives the append, so dropping it is caught).
 
 Per function:
 
@@ -32,11 +37,11 @@ Per function:
 | `_table_column_entries` | 16 | 16 | 0 |
 | `_fpe_join_group_columns` | 41 | 41 | 0 |
 | `_whole_column_state_rejections` | 48 | 38 | 10 |
-| `_runtime_source_rejections` | 64 | 50 | 14 |
+| `_runtime_source_rejections` | 64 | 51 | 13 |
 | `_polars_native_rejection` | 14 | 6 | 8 |
 | `_chunked_rejection` | 34 | 15 | 19 |
-| `classify_job` | 30 | 8 | 22 |
-| **Total** | **261** | **188** | **73** |
+| `classify_job` | 30 | 9 | 21 |
+| **Total** | **261** | **190** | **71** |
 
 ## Tests
 
@@ -90,9 +95,11 @@ config whose column list contains a non-dict entry kills the dict-guard
   `date_format` lookup so a pinned-format column is wrongly flagged
   (`.get(None)`, `provider_config` key/`or {}` breaks, `and {}`).
 
-### `_runtime_source_rejections` (50 of 64)
+### `_runtime_source_rejections` (51 of 64)
 
-Direct oracles over Arrow tables (`auto_chunk_threshold_rows` set per case):
+Direct oracles over Arrow tables (`auto_chunk_threshold_rows` set per case).
+mut_48 is among the killed (re-grade truth; it was mis-listed as equivalent in an
+earlier draft):
 
 - Extra frames: `{t, o1, o2}` kills `extra = None`, the reason-`None`, the
   `join(None)`, and the `'XX, XX'` separator (asserts `o1, o2`).
@@ -143,11 +150,12 @@ rejection reason, so dropping the delegated gate flips the mode to `chunked`:
   boundary `> 1` -> `> 2`, `mut_15` separator). Two generate tables assert
   `g1, g2 present` (`mut_8` separator).
 
-### `classify_job` (8 of 30)
+### `classify_job` (9 of 30)
 
 - Polars-native + generate tables: `generate-kind table(s) g1, g2 run the`
   kills `mut_36` (`reason -=` -> TypeError), `mut_37` (`join(None)`), `mut_38`
-  (separator).
+  (separator). The symmetric `assert "all mask work is scalar" in plan.reason`
+  (dennis gate) also kills `mut_35` (`reason +=` -> `=` drops the base clause).
 - Chunked with loaded sources: `single mask table 'customers'` and
   `source holds 2 rows` kill `mut_78` (`+=` -> `=` drops the mask-table name),
   `mut_76` (`rows = None`), `mut_82` (`reason=None` -> TypeError on the substring
@@ -167,7 +175,7 @@ equivalence class.
 | Function | Mutants | Note |
 |---|---|---|
 | `_whole_column_state_rejections` | 41, 42, 43, 44, 49, 50, 51, 52, 53, 54 | when/date reason prose |
-| `_runtime_source_rejections` | 9, 10, 24, 25, 47, 48, 72, 73, 74, 75, 76, 77 | extra/size/dtype/bucketize reason prose |
+| `_runtime_source_rejections` | 9, 10, 24, 25, 47, 72, 73, 74, 75, 76, 77 | extra/size/dtype/bucketize reason prose |
 | `_polars_native_rejection` | 6, 8, 9, 14, 15, 18 | no-mask/substrate/fk reason prose (18 lowercases "FK", code `fk_resolution` intact) |
 | `_chunked_rejection` | 4, 5, 9, 10, 20, 21, 22, 23, 28, 29, 31, 32, 61, 62, 63, 64, 65 | no-mask/generate/substrate/relationships/fpe reason prose |
 | `classify_job` | 32, 33, 34, 39, 40, 70, 71, 72, 73, 74, 98, 99, 101, 102, 103, 104, 105, 106, 114, 115 | chosen-mode reason prose (all branches) |
@@ -193,7 +201,6 @@ equivalence class.
 | `mut_21` | `_runtime_source_rejections` | `lazy_source_rejection(...) or ""` -> `or "XXXX"`; `lazy_source_rejection` always returns a NON-empty string for a LazySource (its only truthy path), so the `or` right operand is dead code and never taken |
 | `mut_52` | `_chunked_rejection` | `', '.join(non_scalar)` separator; `non_scalar` is a SET of work-node kinds, and only `"composite"` is reachable for a non-relationship single-table job (composite_fk_group needs FK edges, which short-circuit earlier), so the set never holds 2+ elements and the separator is never rendered |
 | `mut_45` | `classify_job` | `ExecutionPlan(mode="polars_native", rejections={}, ...)` -> drops `rejections={}`; the field defaults to `dict()` via `field(default_factory=dict)`, so the plan is identical |
-| `mut_35` | `classify_job` | `reason += (...)` -> `reason = (...)` on the generate-tables aside; it drops only the base prose clause (which carries no table/column data token) while `mode`, `rejections`, and the generate-table names are unchanged. Info-loss is cosmetic, not a behavior change on any machine field |
 
 ## Candidate findings
 
