@@ -471,6 +471,38 @@ class TestMaskRowSelection:
             out = (result.iloc[i]["zip"], result.iloc[i]["city"], result.iloc[i]["state"])
             assert out == (expected["zip"], expected["city"], expected["state"])
 
+    def test_keyed_selection_golden_output_is_pinned(self):
+        """Lock the frozen DE-02 keyed surface by a HARDCODED golden, not a value
+        recomputed from the constants. A silent change to `_KEYED_ROW_SOURCE` (the
+        domain-separation label) or `_DEFAULT_NAMESPACE` would alter every masked
+        output and break cross-version determinism; this literal expected value
+        catches that where a self-derived oracle cannot."""
+        keys = [f"K{i}" for i in range(6)]
+        df = pd.DataFrame(
+            {"patient_id": keys, "zip": ["0"] * 6, "city": ["x"] * 6, "state": ["X"] * 6}
+        )
+        config = JointMaskConfig.from_dict(_make_config())
+        result = apply_joint_mask(df, config, mode="mask", job_seed=_JOB_SEED)
+        out = [
+            (result.iloc[i]["zip"], result.iloc[i]["city"], result.iloc[i]["state"])
+            for i in range(6)
+        ]
+        assert out == [
+            ("30302", "Atlanta", "GA"),
+            ("92104", "San Diego", "CA"),
+            ("85004", "Phoenix", "AZ"),
+            ("98103", "Seattle", "WA"),
+            ("77002", "Houston", "TX"),
+            ("77003", "Houston", "TX"),
+        ]
+
+    def test_unsupported_mode_fails_closed(self):
+        """An unrecognized mode must fail closed (ValueError), not silently emit."""
+        df = pd.DataFrame({"patient_id": ["K0"], "zip": ["0"], "city": ["x"], "state": ["X"]})
+        config = JointMaskConfig.from_dict(_make_config())
+        with pytest.raises(ValueError):
+            apply_joint_mask(df, config, mode="bogus", job_seed=_JOB_SEED)
+
     def test_missing_key_column_falls_back_per_row(self):
         """When the key_by column is absent, every row must fall back to a seeded
         random reference row; the output row count and validity are preserved."""

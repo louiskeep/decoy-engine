@@ -55,6 +55,24 @@ TypeError); `test_float_key_values_are_treated_as_present` (`np.isnan(None)`);
 | `apply_joint_mask_26` | `raise ValueError(None)` (unsupported mode) | still raises `ValueError` with the same type/contract; only the message text changes. |
 | `_pick_rows_mask_24`, `_pick_rows_gen_16` | `rng.integers(0, row_count)` -> `rng.integers(row_count)` | numpy treats the single arg as `high` with `low=0`, the identical `[0, row_count)` range; byte-identical RNG output (verified). |
 
+## Gate
+
+Dennis batch gate: **PASS**, 0 blocker / 0 high. All 28 equivalents verified
+(validation message-prose with code+path asserted; ValueError(None) message-only;
+the two `integers(0,n)`->`integers(n)` numpy no-ops reproduced byte-identical);
+the security kills (DE-02 derived key vs public salt 6/6, namespace 6/6, row-0
+exclusion, id-constant) all confirmed genuine. Two follow-ups applied:
+- P2 (MEDIUM): the DE-02 keyed constants (`_KEYED_ROW_SOURCE`,
+  `_DEFAULT_NAMESPACE`) were only locked by a self-referential test (it imported
+  the constants and recomputed its expected value). Added
+  `test_keyed_selection_golden_output_is_pinned` -- a HARDCODED golden (the actual
+  zip/city/state tuples for a fixed job_seed) so a silent change to the frozen
+  keyed surface fails a test. (mutmut is blind to these module-level constants;
+  finding #9 class.)
+- P1 (LOW): added `test_unsupported_mode_fails_closed` for a direct invalid-mode
+  ValueError (was only transitively covered).
+Both are additive coverage; the mutmut count is unchanged (168 killed / 28 equiv).
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `transforms/joint_mask.py`, selection to
