@@ -307,6 +307,14 @@ nitpick_ignore_regex = [
     # arise from show-inheritance when a public class mixes in a private
     # helper that lives in an autoapi-ignored module.
     (r"py:.*", r".*\._[A-Za-z][A-Za-z0-9_]*"),
+    # A PUBLIC name reached through a private MODULE component anywhere in the
+    # path (e.g. `...execution.out_of_core._capacity_eval.CapacityEstimate`):
+    # the class is public and re-exported (`decoy_engine.CapacityEstimate`),
+    # but its DEFINITION module is autoapi-ignored, so the fully-qualified
+    # xref autoapi records from a public signature's return-type hint has no
+    # documented page. The last-component rule above misses this because the
+    # last component here is public.
+    (r"py:.*", r".*\._[A-Za-z][A-Za-z0-9_]*\..+"),
     (r"py:.*", r"decoy_engine\.internal\..*"),
     (r"py:.*", r"decoy_engine\.graph\.ops\._.*"),
 ]

@@ -438,7 +438,13 @@ def enforce_ooc_memory_preflight(
     )
     estimate = evaluate_capacity(inputs, budget_bytes)
     if estimate.verdict is CapacityVerdict.INSUFFICIENT:
-        raise ExecutionError(code=estimate.code, message=estimate.message)
+        # An INSUFFICIENT estimate always names its refusal code; the `or`
+        # fallback is a defensive type-narrowing (code is str | None) that
+        # never actually fires, so mypy sees a str without a banned `assert`.
+        raise ExecutionError(
+            code=estimate.code or "out_of_core_insufficient_memory",
+            message=estimate.message,
+        )
     if estimate.warned:
         _logger.warning(estimate.message)
     # NB: in the fits-but-no-warn case this now returns the real
