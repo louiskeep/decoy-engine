@@ -92,6 +92,21 @@ documented branch-1 precedence limitation -- a `parent_map` hit wins over an
 | `make_remap mut_12`, `14`, `17`, `18` | parent-missing `ExecutionError` message None/removed/prose | `.message` prose; the `code` is asserted. |
 | `make_remap mut_23`, `25` | unsupported-strategy `message` None/removed | same. |
 
+## Gate
+
+Dennis batch gate: **PASS (APPROVE)**, 0 P0 / 0 P1. All 17 equivalents verified
+behavior-preserving against source (the `zip(strict=)` claim confirmed: both
+operands are appended in lockstep at `_orphan.py:140-141` with no intervening
+branch/continue/raise, so lengths are invariably equal); all 52 kills confirmed
+genuine. Two optional P2 defense-in-depth items left open (non-blocking):
+- P2-1: `test_builds_one_row_error_per_cascaded_row` could also assert
+  `errors[0].reason.startswith(...)` (reason serializes to the quarantine JSONL,
+  though it is not machine-consumed -- so `cascade mut_4/9-13` stay EQUIVALENT).
+- P2-2: no direct oracle pins the documented cascade-under-FAIL invariant
+  (`_orphan.py:128-136`: a cascaded key under `OrphanPolicy.FAIL` is quarantined,
+  not raised); correct by construction and no mutant survived on it, but a
+  one-line test would guard it against a future refactor.
+
 ## Regenerate (any shell)
 
 Repoint `[tool.mutmut]` `only_mutate` to

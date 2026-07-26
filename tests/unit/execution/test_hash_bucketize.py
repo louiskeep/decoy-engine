@@ -11,6 +11,7 @@ import pytest
 
 from decoy_engine.determinism import derive
 from decoy_engine.execution import ExecutionError, ExecutionResult, PandasExecutionAdapter
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._hash import HashStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -84,6 +85,39 @@ class TestHash:
         with pytest.raises(ExecutionError) as exc:
             _run(_plan("id", _col("hash", namespace=None)), src)
         assert exc.value.code == "hash_requires_namespace"
+
+
+class TestHashHandlerContract:
+    """Direct-handler oracles pinning the machine-observable contract:
+    the namespace-guard error identity and the truncate boundary."""
+
+    def test_missing_namespace_error_carries_strategy_and_code(self) -> None:
+        # The StrategyError machine fields (code + strategy) are the contract
+        # the adapter routes on; the message is prose.
+        df = pd.DataFrame({"id": ["alice"]})
+        seed = _col("hash", namespace=None)
+        with pytest.raises(StrategyError) as exc:
+            HashStrategyHandler().run(df, "id", seed, _FakeCtx())
+        assert exc.value.code == "hash_requires_namespace"
+        assert exc.value.strategy == "hash"
+
+    def test_truncate_zero_is_ignored_not_applied(self) -> None:
+        # truncate is opt-in on a positive int; 0 (and any non-positive) means
+        # "no truncation", never "truncate to empty".
+        df = pd.DataFrame({"id": ["alice"]})
+        seed = _col("hash", namespace="ids", provider_config=(("truncate", 0),))
+        out, _ = HashStrategyHandler().run(df, "id", seed, _FakeCtx())
+        expected = derive(_SEED, "ids", _canonicalize_source("alice")).hex()
+        assert out["id"].iloc[0] == expected
+        assert len(out["id"].iloc[0]) > 1
+
+    def test_truncate_one_truncates_to_one_char(self) -> None:
+        df = pd.DataFrame({"id": ["alice"]})
+        seed = _col("hash", namespace="ids", provider_config=(("truncate", 1),))
+        out, _ = HashStrategyHandler().run(df, "id", seed, _FakeCtx())
+        expected = derive(_SEED, "ids", _canonicalize_source("alice")).hex()[:1]
+        assert out["id"].iloc[0] == expected
+        assert len(out["id"].iloc[0]) == 1
 
 
 class TestBucketize:
