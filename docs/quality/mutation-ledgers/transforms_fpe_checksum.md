@@ -91,7 +91,9 @@ round-trip coverage and an illegal-length (9-char) fail-closed test
 (`TestFpeGtin`), pinning every element of the length set and that the guard fires.
 These add real coverage without changing the mutmut counts (they kill no
 mutmut-generated mutant, because mutmut does not mutate the constant). The
-single-length schemes (npi/isbn13/ean13/vin) already had canonical-length tests.
+single-length schemes (npi/isbn13/vin) already had illegal-length tests; a
+follow-up gate P2 added the matching `ean13` illegal-length fail-closed test so
+every scheme's length set is pinned in both directions.
 
 ## Regenerate
 

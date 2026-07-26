@@ -37,6 +37,13 @@ via the strategy adapter plus direct `FormulaStrategy.apply` tests).
 | `3`, `5` | `rule.get("formula", None)` / dropped | `None` is falsy exactly like the `""` default, so `if not expr` still passes through -- identical behavior for an absent formula. |
 | `10`, `11`, `12`, `13`, `14`, `15`, `16`, `17`, `18` | warning-message f-string (message `None`, and `rule.get(...)` key/default variants INSIDE the `logger.warning` string) | these only alter the human-readable warning text emitted when the formula is absent; the return value (`column.copy()`) is unchanged and the log string is never machine-consumed. |
 
+## Gate
+
+Dennis batch gate: **PASS**, 0 P0 / 0 P1. All 11 equivalents verified
+behavior-preserving (None-default passthrough + warning-only prose, confirmed the
+warning-path col lookup is separate from the seed's col lookup); the 9 kills
+reproduced (seed KAT, passthrough, unnamed-default).
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `transforms/formula.py`, selection to

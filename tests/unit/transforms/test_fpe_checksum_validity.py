@@ -179,6 +179,14 @@ class TestFpeEan13:
         b = fpe_encrypt_value("4006381333931", _KEY, _DIGITS, _TWEAK, checksum="ean13")
         assert a == b
 
+    def test_fpe_ean13_illegal_length_fails_closed(self) -> None:
+        # ean13 has one legal length (13); anything else must fail closed. Pins
+        # the exact-length set against a widen-mutation (mutmut is blind to the
+        # module-level _EXACT_LENGTHS constant; see tq-findings #9).
+        with pytest.raises(FpeChecksumError) as exc:
+            fpe_encrypt_value("12345678901234", _KEY, _DIGITS, _TWEAK, checksum="ean13")  # 14
+        assert exc.value.scheme == "ean13"
+
 
 class TestFpeGtin:
     def test_fpe_gtin14_output_validates(self) -> None:
