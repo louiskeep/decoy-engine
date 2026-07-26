@@ -22,6 +22,7 @@ import datetime
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -30,6 +31,12 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from decoy_engine.transforms.bucket_perturb import (
+    _bucket_start_and_size,
+    _perturb_date,
+    apply_bucket_perturb,
+    validate_bucket_perturb_config,
+)
 
 _REG = get_default_registry()
 _GRAPH = RelationshipGraph(edges=(), ordering=())
@@ -329,7 +336,7 @@ class TestBucketPerturbIntegration:
             provider_config=(("bucket", "month"), ("date_format", "%Y-%m-%d")),
         )
         plan = _plan("d", seed)
-        with pytest.raises(StrategyError, match="namespace"):
+        with pytest.raises(StrategyError, match="namespace") as exc:
             PandasExecutionAdapter().run_single(
                 plan,
                 src,
@@ -337,6 +344,24 @@ class TestBucketPerturbIntegration:
                 relationship_graph=_GRAPH,
                 namespace_registry=_NS,
             )
+        # pin the machine-readable fields (match= only checks the message prose)
+        assert exc.value.code == "bucket_perturb_requires_namespace"
+        assert exc.value.strategy == "bucket_perturb"
+
+    def test_bucket_defaults_to_month_when_absent(self):
+        """An absent bucket key resolves to "month" (a valid bucket), so the fit
+        succeeds. Pins the `str(cfg.get("bucket", "month"))` default: a mutated
+        default (None, "", or a bogus label) would make the validator reject an
+        otherwise-valid config."""
+        src = pa.table({"d": ["2024-01-15", "2024-01-20"]})
+        seed = _col(
+            "bucket_perturb",
+            namespace="dates",
+            provider_config=(("date_format", "%Y-%m-%d"),),  # no bucket key
+        )
+        vals = _run(_plan("d", seed), src)
+        # month bucket: both inputs are January 2024, so both outputs stay in 2024-01
+        assert all(str(v).startswith("2024-01") for v in vals)
 
     def test_invalid_bucket_raises_strategy_error_not_silent_quarter(self):
         """D5.8 - bucket='garbage' must raise StrategyError, NOT silently return quarter output.
@@ -355,7 +380,7 @@ class TestBucketPerturbIntegration:
             provider_config=(("bucket", "weekly_typo"), ("date_format", "%Y-%m-%d")),
         )
         plan = _plan("d", seed)
-        with pytest.raises(StrategyError, match="weekly_typo"):
+        with pytest.raises(StrategyError, match="weekly_typo") as exc:
             PandasExecutionAdapter().run_single(
                 plan,
                 src,
@@ -363,6 +388,25 @@ class TestBucketPerturbIntegration:
                 relationship_graph=_GRAPH,
                 namespace_registry=_NS,
             )
+        assert exc.value.code == "bucket_perturb_invalid_config"
+        assert exc.value.strategy == "bucket_perturb"
+
+    def test_configured_date_format_is_honored_over_autodetect(self):
+        """An explicit date_format must drive parsing, not auto-detection. For a
+        day-first ambiguous date ("05-02-2024" = 5 Feb under %d-%m-%Y), auto-detect
+        picks month-first, so a mutant that drops/nulls date_format lands the value
+        in a different month. Pins that date_format is actually consulted."""
+        import datetime
+
+        src = pa.table({"d": ["05-02-2024"]})
+        seed = _col(
+            "bucket_perturb",
+            namespace="dates",
+            provider_config=(("bucket", "month"), ("date_format", "%d-%m-%Y")),
+        )
+        (out,) = _run(_plan("d", seed), src)
+        # parsed under the configured day-first format, the bucketed date is in Feb
+        assert datetime.datetime.strptime(str(out), "%d-%m-%Y").month == 2
 
     def test_valid_buckets_still_work_after_validation_wiring(self):
         """D5.9 - validate_bucket_perturb_config wiring does not break week/month/quarter."""
@@ -377,3 +421,122 @@ class TestBucketPerturbIntegration:
             assert len(out) == 1
             assert out[0] is not None
             datetime.date.fromisoformat(str(out[0]))
+
+
+# ── TQ mutation-kill layer: direct core-function KATs ─────────────────────────
+# These drive transforms/bucket_perturb.py directly (bypassing the handler) so
+# the bucket arithmetic, offset derivation, format handling, and passthrough
+# branches are pinned to specific input-date -> output-date answers.
+
+
+class TestBucketStartAndSizeCore:
+    """`_bucket_start_and_size` quarter arithmetic (KAT: date -> exact window)."""
+
+    def test_quarter_start_is_first_day_of_the_quarters_first_month(self):
+        """Each quarter snaps to (year, {1,4,7,10}, day=1). Apr/Jul/Oct expose a
+        wrong `// 4` divisor (they land in the prior quarter) and Jan/Apr expose a
+        start day mutated off 1."""
+        expected = {
+            datetime.date(2024, 2, 10): datetime.date(2024, 1, 1),  # Q1
+            datetime.date(2024, 4, 15): datetime.date(2024, 4, 1),  # Q2: // 4 -> Jan
+            datetime.date(2024, 7, 15): datetime.date(2024, 7, 1),  # Q3: // 4 -> Apr
+            datetime.date(2024, 10, 15): datetime.date(2024, 10, 1),  # Q4: // 4 -> Jul
+        }
+        for d, want_start in expected.items():
+            start, _ = _bucket_start_and_size(d, "quarter")
+            assert start == want_start, f"{d} -> {start}, want {want_start}"
+
+    def test_quarter_size_is_the_exact_day_count(self):
+        """Q1 2024 (leap) spans Jan 1..Mar 31 = 91 days; off-by-one size mutants
+        (`+ 1` -> `- 1` / `+ 2`) would report 89 / 92."""
+        _, size = _bucket_start_and_size(datetime.date(2024, 1, 15), "quarter")
+        assert size == 91
+
+    def test_month_size_matches_calendar(self):
+        """Leap February resolves to 29 days."""
+        _, size = _bucket_start_and_size(datetime.date(2024, 2, 15), "month")
+        assert size == 29
+
+    def test_unrecognized_bucket_raises_valueerror(self):
+        """The defense-in-depth fallthrough raises ValueError naming the bucket.
+        A `sorted(None)` mutant would raise TypeError instead; a nulled message
+        would drop the offending value from the text."""
+        with pytest.raises(ValueError, match="unrecognized bucket 'garbage'"):
+            _bucket_start_and_size(datetime.date(2024, 1, 1), "garbage")
+
+
+class TestPerturbDateOffsetKnownAnswer:
+    """`_perturb_date` offset uses digest[:8]; a pinned answer catches slice drift."""
+
+    def test_perturb_date_is_the_pinned_known_answer(self):
+        """Fixed seed+namespace+value map to a fixed in-bucket date. Widening the
+        digest slice (`[:8]` -> `[:9]`) changes the offset and thus the output."""
+        assert _perturb_date(
+            datetime.date(2024, 6, 15), "month", _SEED, "dates", "2024-06-15"
+        ) == datetime.date(2024, 6, 9)
+        assert _perturb_date(
+            datetime.date(2024, 6, 15), "quarter", _SEED, "dates", "2024-06-15"
+        ) == datetime.date(2024, 6, 3)
+
+
+class TestApplyBucketPerturbCore:
+    """`apply_bucket_perturb` format handling, parse-failure, and null branches."""
+
+    def test_valid_value_is_bucketed_to_its_known_answer(self):
+        """A parseable value must be snapped into its bucket, not passed through.
+        Pins the exact output so a nulled `fmt`, an inverted `fmt is None` guard,
+        or an `&`->`|` parse-mask flip (all of which pass the value through
+        unchanged) are caught."""
+        out = apply_bucket_perturb(pd.Series(["2024-06-15"]), "month", _SEED, "dates", "%Y-%m-%d")
+        assert list(out) == ["2024-06-09"]
+
+    def test_extension_array_dtype_input_is_processed(self):
+        """An extension-dtype (pandas `string`) column is materialized and bucketed;
+        nulling the series or `astype(None)` in that branch would crash."""
+        out = apply_bucket_perturb(
+            pd.Series(["2024-06-15"], dtype="string"), "month", _SEED, "dates", "%Y-%m-%d"
+        )
+        assert list(out) == ["2024-06-09"]
+
+    def test_autodetect_used_when_date_format_is_none(self):
+        """With date_format=None the format is detected from the data; passing None
+        into detection instead of the series would crash."""
+        out = apply_bucket_perturb(pd.Series(["2024-06-15"]), "month", _SEED, "dates", None)
+        assert list(out) == ["2024-06-09"]
+
+    def test_unparseable_value_passes_through_unchanged(self):
+        """An unparseable cell is preserved verbatim while its neighbours are
+        bucketed. Pins `errors="coerce"` (else the parse raises) and the `~null_mask`
+        term (else the NaT cell is processed, not skipped)."""
+        out = apply_bucket_perturb(
+            pd.Series(["2024-06-15", "not-a-date", "2024-08-20"]),
+            "month",
+            _SEED,
+            "dates",
+            "%Y-%m-%d",
+        )
+        assert list(out) == ["2024-06-09", "not-a-date", "2024-08-14"]
+
+    def test_value_after_a_null_is_still_bucketed(self):
+        """A null cell is skipped with `continue`, not `break`; the value after it
+        must still be processed."""
+        out = apply_bucket_perturb(
+            pd.Series(["2024-06-15", None, "2024-08-20"]),
+            "month",
+            _SEED,
+            "dates",
+            "%Y-%m-%d",
+        )
+        assert out.iloc[0] == "2024-06-09"
+        assert out.iloc[1] is None
+        assert out.iloc[2] == "2024-08-14"
+
+
+class TestValidateConfigCore:
+    """`validate_bucket_perturb_config` guard on a missing bucket."""
+
+    def test_missing_bucket_raises_valueerror(self):
+        """A falsy/absent bucket is rejected with a ValueError naming the field.
+        A `sorted(None)` mutant raises TypeError; a nulled message drops the text."""
+        with pytest.raises(ValueError, match="'bucket' is required"):
+            validate_bucket_perturb_config({})

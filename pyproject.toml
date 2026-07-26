@@ -170,6 +170,17 @@ dev = [
     # this pin CI fails at collection with ModuleNotFoundError.
     "hypothesis>=6.0",
 ]
+# Test-Quality Program (TQ-0, 2026-07-25): coverage measurement + mutation
+# grading. pytest-cov feeds the TQ-3 diff-coverage ratchet; mutmut grades
+# whether tests catch planted bugs (the objective "adequately tested" bar).
+# Kept OUT of `dev` on purpose: the certified DP profile syncs
+# `dev+lint+vault` and its 77-dist fingerprint (dp_provenance, 895b9a20) must
+# stay exact, so mutmut/pytest-cov and their transitive deps (libcst, textual,
+# coverage, ...) live in this separate extra that the cert gate never installs.
+mutation = [
+    "pytest-cov>=5.0",
+    "mutmut>=3.0",
+]
 # Linters are exact-pinned, not floored. ruff and mypy both ship new
 # rules / error categories in minor releases that turn previously-green
 # code red with no code change. CI (.github/workflows/ci.yml) installs
@@ -911,3 +922,23 @@ skip_covered = false
 # `pytest --cov` produces useful output for V2.0-A's per-module unit-test
 # work. A floor lands once V2.0-C closes and the test surface stabilizes.
 fail_under = 0
+
+[tool.mutmut]
+# source_paths controls both what gets mutated AND what mutmut copies into
+# mutants/ for the in-process test run (mutmut 3.x quirk: scoping this to a
+# single file starves the copy, breaking imports of sibling package modules
+# the covering tests' conftest transitively needs). Keep source_paths at the
+# package root and use only_mutate to restrict actual mutation to the target.
+source_paths = ["src/decoy_engine"]
+only_mutate = ["src/decoy_engine/transforms/_codeset_index.py"]
+pytest_add_cli_args_test_selection = [
+    "tests/unit/transforms/test_code_set.py",
+    "-k",
+    "not docs_strategies_md",
+]
+# NOTE: the execution SUBSTRATES (e.g. _planner.py) cannot be graded with this
+# harness -- mutmut's in-process runner reports genuinely-surviving mutants as
+# ⏰ timeout on their heavy pandas/pyarrow suites, and raising timeout_constant
+# to 15.0 (a 225s per-mutant limit) did NOT change that, while a standalone
+# `pytest` of the same activated mutant survives in ~3s. See tq-findings.md #8.
+# debug = true  # flip on to see the raw pytest invocation/output when diagnosing.

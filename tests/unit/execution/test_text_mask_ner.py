@@ -126,6 +126,65 @@ class TestNerRouting:
         assert seen["model"] == "en_core_web_sm"
         assert seen["entities"] == ["person_name"]
 
+    def _capture_ner(self, monkeypatch):
+        seen: dict[str, object] = {}
+
+        def _fake(text, *, model=None, entities=None):
+            seen["text"] = text
+            seen["model"] = model
+            seen["entities"] = entities
+            return []
+
+        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans", _fake)
+        return seen
+
+    def test_ner_dict_nondefault_model_is_forwarded(self, monkeypatch) -> None:
+        # A non-default model string must reach iter_ner_spans verbatim; the
+        # DEFAULT is used only as the `or` fallback for an absent/empty model.
+        # (The default-model test above cannot see a mutant that forces DEFAULT.)
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["hi"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz"}}),
+            _FakeCtx(),
+        )
+        assert seen["model"] == "custom_model_xyz"
+
+    def test_ner_dict_without_entities_forwards_none(self, monkeypatch) -> None:
+        # No `entities` key -> ner_entities stays None (all entities), never "".
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["hi"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz"}}),
+            _FakeCtx(),
+        )
+        assert seen["entities"] is None
+
+    def test_ner_dict_empty_entities_forwards_none(self, monkeypatch) -> None:
+        # An empty entities list is falsy, so the `and raw_entities` guard leaves
+        # ner_entities as None; an `or` mutant would forward [].
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["hi"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz", "entities": []}}),
+            _FakeCtx(),
+        )
+        assert seen["entities"] is None
+
+    def test_ner_spans_receive_the_cell_text(self, monkeypatch) -> None:
+        # iter_ner_spans must be called with the cell value, not None.
+        seen = self._capture_ner(monkeypatch)
+        TextMaskHandler().run(
+            pd.DataFrame({"notes": ["Contact Jane Doe"]}),
+            "notes",
+            _seed({"ner": {"model": "custom_model_xyz"}}),
+            _FakeCtx(),
+        )
+        assert seen["text"] == "Contact Jane Doe"
+
 
 # ── determinism: model-version drift guard ─────────────────────────────
 
@@ -144,6 +203,28 @@ class TestNerVersionGuard:
         with pytest.raises(StrategyError) as exc:
             handler.run(
                 df.copy(), "notes", _seed({"ner": True}, ner_model_version="1.0.0"), _FakeCtx()
+            )
+        assert exc.value.code == "ner_model_version_mismatch"
+        assert exc.value.strategy == "text_mask"
+
+    def test_version_guard_checks_the_resolved_model(self, monkeypatch) -> None:
+        # installed_model_version must be called with the RESOLVED ner_model, not
+        # a hard-coded None: a mutant passing None would look up the wrong model.
+        # Here only the resolved custom model reports a drifted version.
+        import decoy_engine.storm.ner as ner_mod
+
+        monkeypatch.setattr(
+            ner_mod,
+            "installed_model_version",
+            lambda model=None: "2.0.0" if model == "custom_model_xyz" else "1.0.0",
+        )
+        df = pd.DataFrame({"notes": ["Contact Jane Doe"]})
+        with pytest.raises(StrategyError) as exc:
+            TextMaskHandler().run(
+                df.copy(),
+                "notes",
+                _seed({"ner": {"model": "custom_model_xyz"}}, ner_model_version="1.0.0"),
+                _FakeCtx(),
             )
         assert exc.value.code == "ner_model_version_mismatch"
 
@@ -318,3 +399,116 @@ class TestTextMaskNerModelVersionStamp:
         stamped = per_column["notes"].ner_model_version
         assert stamped is not None
         assert stamped == installed_model_version(DEFAULT_NER_MODEL)
+
+
+# ── TQ crown-jewels: mutation hardening of the non-NER handler layer ────
+#
+# Grades the non-NER layer of `_text_mask.py` (config resolution, cell
+# iteration, output-Series assembly). Every test drives the handler with NO
+# `ner` config, so no spaCy pipeline is needed. The NER resolution/guard/iter
+# path is deferred to the NER-enabled env; see
+# docs/quality/mutation-ledgers/execution_strategies_text_mask.md.
+
+
+class _CaptureMask:
+    """Spy for the module-level `mask_cell`; records forwarded args/kwargs."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple, dict]] = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return "<masked>"
+
+
+def _run_capture(monkeypatch, provider_config: dict, values: list) -> _CaptureMask:
+    spy = _CaptureMask()
+    monkeypatch.setattr("decoy_engine.execution._strategies._text_mask.mask_cell", spy)
+    df = pd.DataFrame({"notes": values})
+    TextMaskHandler().run(df, "notes", _seed(provider_config), _FakeCtx())
+    return spy
+
+
+class TestArgForwarding:
+    """Config -> `mask_cell` keyword forwarding. Asserting a forwarded kwarg
+    kills both the value mutants (wrong key/default/case) and the kwarg-drop
+    mutants: a dropped kwarg is absent from `**kwargs`, so the assertion raises
+    KeyError."""
+
+    def test_forwards_detector_list(self, monkeypatch) -> None:
+        # detectors=["email"] must reach detector_ids verbatim, not None / [""] /
+        # ["None"] from a broken resolution nor a dropped kwarg.
+        spy = _run_capture(monkeypatch, {"detectors": ["email"]}, ["hello"])
+        assert spy.calls[0][1]["detector_ids"] == ["email"]
+
+    def test_absent_detectors_forwards_none(self, monkeypatch) -> None:
+        # No `detectors` config -> detector_ids resolves to None (run all built-in
+        # detectors), never "" from a broken else branch. The list-branch test
+        # above does not exercise this path.
+        spy = _run_capture(monkeypatch, {}, ["hello"])
+        assert spy.calls[0][1]["detector_ids"] is None
+
+    def test_forwards_per_detector_strategy_map(self, monkeypatch) -> None:
+        spy = _run_capture(monkeypatch, {"per_detector_strategy": {"email": "redact"}}, ["hello"])
+        assert spy.calls[0][1]["strategy_map"] == {"email": "redact"}
+
+    def test_forwards_default_unmatched_policy(self, monkeypatch) -> None:
+        # Absent config must default the policy to exactly "redact".
+        spy = _run_capture(monkeypatch, {}, ["hello"])
+        assert spy.calls[0][1]["unmatched_span_policy"] == "redact"
+
+    def test_forwards_default_token(self, monkeypatch) -> None:
+        spy = _run_capture(monkeypatch, {}, ["hello"])
+        assert spy.calls[0][1]["token"] == "[REDACTED]"
+
+    def test_forwards_custom_token(self, monkeypatch) -> None:
+        # A configured token must win; a mutant reading the wrong key would fall
+        # back to the default instead.
+        spy = _run_capture(monkeypatch, {"token": "CUSTOM_TOK"}, ["hello"])
+        assert spy.calls[0][1]["token"] == "CUSTOM_TOK"
+
+    def test_forwards_date_bounds_as_cfg(self, monkeypatch) -> None:
+        # min_days/max_days pass through as the cfg extra dict; a mutated key or
+        # a None extra dict would drop or corrupt them.
+        spy = _run_capture(monkeypatch, {"min_days": -10, "max_days": 20}, ["hello"])
+        assert spy.calls[0][1]["cfg"] == {"min_days": -10, "max_days": 20}
+
+    def test_extra_spans_none_without_ner(self, monkeypatch) -> None:
+        # No `ner` config -> extra_spans forwarded as None, never "".
+        spy = _run_capture(monkeypatch, {}, ["hello"])
+        assert spy.calls[0][1]["extra_spans"] is None
+
+
+class TestCellIteration:
+    def test_coerces_non_str_cell_to_str(self, monkeypatch) -> None:
+        # A non-string cell must reach mask_cell as str(value) ("123"), not the
+        # raw int, None, or the literal "None".
+        spy = _run_capture(monkeypatch, {}, [123])
+        assert spy.calls[0][0][0] == "123"
+
+    def test_null_cell_is_skipped_and_later_cells_still_masked(self) -> None:
+        # A leading null must `continue`, not `break`: the SSN one row later must
+        # still be masked.
+        df = pd.DataFrame({"notes": [None, "ssn 123-45-6789"]})
+        out, _ = TextMaskHandler().run(df, "notes", _seed({}), _FakeCtx())
+        assert pd.isna(out["notes"].iloc[0])
+        assert "123-45-6789" not in out["notes"].iloc[1]
+
+    def test_extension_dtype_column_masks_without_error(self) -> None:
+        # An extension-array column (pandas "string") must be boxed to object so
+        # isna()/to_list() and the per-cell mask run; col=None or astype(None)
+        # would raise here.
+        df = pd.DataFrame({"notes": pd.array(["ssn 123-45-6789", None], dtype="string")})
+        out, _ = TextMaskHandler().run(df, "notes", _seed({}), _FakeCtx())
+        assert "123-45-6789" not in out["notes"].iloc[0]
+        assert pd.isna(out["notes"].iloc[1])
+
+
+class TestOutputSeries:
+    def test_output_series_aligned_to_non_default_index(self) -> None:
+        # The output Series must carry df.index; a RangeIndex (index=None or the
+        # arg dropped) misaligns against a non-default index and blanks to NaN.
+        df = pd.DataFrame({"notes": ["ssn 123-45-6789", "plain"]}, index=[10, 20])
+        out, _ = TextMaskHandler().run(df, "notes", _seed({}), _FakeCtx())
+        assert not out["notes"].isna().any()
+        assert "123-45-6789" not in out["notes"].loc[10]

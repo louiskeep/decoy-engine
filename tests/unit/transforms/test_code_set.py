@@ -221,6 +221,34 @@ class TestSoleMemberBucket:
         with pytest.raises(PlanCompileError, match="sole"):
             apply_code_set("Z99", cfg, mode="mask", job_seed=_JOB_SEED)
 
+    def test_empty_value_fails_closed_even_if_a_chapter_is_named_xxxx(self, tmp_path: pathlib.Path):
+        # Chapter-fallback else branch (code_set.py:453): an empty input value has
+        # no derivable chapter, so `value[0] if value else ""` yields "", which is
+        # never a bucket key -> fail closed. A mutant using a NON-empty literal
+        # ("XXXX") instead of "" would collide with a corpus whose chapter IS
+        # "XXXX" and MASK the empty value instead of raising -- a fail-closed ->
+        # produce-output regression. (mutmut_31/32, the None/value[1] variants,
+        # stay equivalent: "" and None are never bucket keys.)
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02"], type=pa.string()),
+                "chapter": pa.array(["XXXX", "XXXX"], type=pa.string()),
+                "description": pa.array(["a", "b"], type=pa.string()),
+            }
+        )
+        path = tmp_path / "xxxx_chapter.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "xxxx_chapter",
+                "chapter_preserve": True,
+                "corpus_source": f"customer:{path}",
+            }
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_chapter_absent"
+
 
 # ── CS.5: corpus_source customer path ────────────────────────────────────────
 
@@ -349,6 +377,76 @@ class TestConfigValidation:
     def test_valid_icd10_config_does_not_raise(self):
         """A correct config must pass validation without raising."""
         validate_code_set_config({"code_set": "icd10"})  # must not raise
+
+    def test_missing_code_set_name_error_fields(self):
+        """The missing-name refusal carries the machine-routable code + path
+        that callers key on to steer the error to the right UI field / CLI
+        exit, not just human-readable prose."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({})
+        assert exc.value.code == "code_set_name_missing"
+        assert exc.value.path == "provider_config.code_set"
+
+    def test_non_string_code_set_name_is_rejected(self):
+        """A non-string name (e.g. a YAML list) is refused as a missing name
+        rather than crashing the later membership tests with an unhashable
+        TypeError."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": ["icd10"]})
+        assert exc.value.code == "code_set_name_missing"
+        assert exc.value.path == "provider_config.code_set"
+
+    @pytest.mark.parametrize("bad_version", [True, False, ["2024"], {"y": 2024}])
+    def test_corpus_source_version_non_scalar_error_fields(self, bad_version):
+        """A non-scalar (or bool) version pin is refused with the version-
+        specific code + path; bool is refused despite being an int subclass so
+        a `false` pin cannot silently disable the pin."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": "icd10", "corpus_source_version": bad_version})
+        assert exc.value.code == "code_set_corpus_source_version_invalid"
+        assert exc.value.path == "provider_config.corpus_source_version"
+
+    @pytest.mark.parametrize("good_version", ["2024", 2024])
+    def test_corpus_source_version_scalar_accepted(self, good_version):
+        """A string or unquoted-numeric release id is a valid scalar pin."""
+        validate_code_set_config({"code_set": "icd10", "corpus_source_version": good_version})
+
+    def test_reserved_licensed_names_parametrize_covers_the_constant(self):
+        """Guard the hardcoded parametrize list below against drift in the
+        module-level `RESERVED_LICENSED_NAMES` set (which mutmut cannot mutate):
+        adding or removing a member must fail here so the per-value coverage
+        stays complete."""
+        from decoy_engine.transforms._codeset_provenance import RESERVED_LICENSED_NAMES
+
+        assert set(RESERVED_LICENSED_NAMES) == {"cpt", "apr_drg"}
+
+    @pytest.mark.parametrize("reserved_name", ["cpt", "apr_drg"])
+    def test_reserved_licensed_name_error_fields(self, reserved_name):
+        """Each reserved licensed corpus is refused as upload-only with the
+        licensing-specific code + path -- checked BEFORE the generic not-found
+        gate. Parametrized over a literal mirror of RESERVED_LICENSED_NAMES
+        (guarded by test_reserved_licensed_names_parametrize_covers_the_constant)
+        so every member has explicit value-by-value coverage."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": reserved_name})
+        assert exc.value.code == "code_set_reserved_licensed_name"
+        assert exc.value.path == "provider_config.code_set"
+
+    def test_reserved_licensed_name_allowed_via_customer_source(self):
+        """A reserved name passes config validation when supplied as a customer
+        upload: the licensing refusal is scoped to shipped loads only. (Config
+        validation does not read the corpus; loading is checked elsewhere.)"""
+        validate_code_set_config(
+            {"code_set": "cpt", "corpus_source": "customer:/some/path.parquet"}
+        )
+
+    def test_unknown_shipped_corpus_error_fields(self):
+        """The not-found refusal carries its own code + path so callers can
+        distinguish it from the licensing and missing-name refusals."""
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": "nonexistent_corpus_xyz"})
+        assert exc.value.code == "code_set_corpus_not_found"
+        assert exc.value.path == "provider_config.code_set"
 
     def test_chapter_preserve_without_chapter_column_raises(self, tmp_path: pathlib.Path):
         """chapter_preserve with a corpus lacking 'chapter' column must raise."""
@@ -2039,3 +2137,335 @@ def _run_or_error(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except PlanCompileError as exc:
         return f"<raised:{exc.code}>"
+
+
+# ── TQ crown-jewels: mutation-survivor kills (2026-07-26) ─────────────────────
+#
+# Oracle tests targeting the 108 surviving mutants of a focused mutmut run on
+# transforms/code_set.py. Invariants pinned here come from the module docstring
+# (mask determinism + domain exclusion, gen namespace-binding, chapter_preserve
+# fail-closed guards, corpus resolution) and are graded per
+# docs/quality/module-test-quality-playbook.md. See
+# docs/quality/mutation-ledgers/transforms_code_set.md for the full ledger.
+
+
+def _write_corpus(
+    path: pathlib.Path,
+    codes: list[str],
+    *,
+    chapters: list[str] | None = None,
+    provenance: dict[bytes, bytes] | None = None,
+) -> None:
+    """Write a customer corpus Parquet, optionally with a chapter column and a
+    provenance stamp, for the survivor-kill fixtures below."""
+    cols: dict[str, pa.Array] = {"code": pa.array(codes, type=pa.string())}
+    if chapters is not None:
+        cols["chapter"] = pa.array(chapters, type=pa.string())
+    tbl = pa.table(cols, metadata=provenance)
+    pq.write_table(tbl, str(path))
+
+
+_COMPLETE_CUSTOMER_PROV: dict[bytes, bytes] = {
+    b"decoy_corpus": b"pinned",
+    b"source": b"Internal registry",
+    b"source_version": b"2024",
+    b"effective_date": b"2024-01-01",
+    b"license": b"Proprietary",
+}
+
+
+class TestApplyDefaultsAndDispatch:
+    """apply_code_set parameter defaults and the mask/gen dispatch surface."""
+
+    def test_mode_defaults_to_mask(self):
+        """Omitting mode= must mask (not raise unsupported-mode): the default is
+        'mask'. Kills the mode-default string mutants."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        out = apply_code_set("I21.9", cfg, job_seed=_JOB_SEED)
+        assert out != "I21.9"
+        with_explicit = apply_code_set("I21.9", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out == with_explicit
+
+    def test_row_index_defaults_to_zero(self):
+        """Omitting row_index in gen mode must equal row_index=0. Kills the
+        row_index-default mutant (0 -> 1)."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        seed = b"\x07" * 8
+        ns = "col.ns"
+        default = apply_code_set("", cfg, mode="gen", job_seed=seed, namespace=ns)
+        explicit0 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=0, namespace=ns)
+        explicit1 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=1, namespace=ns)
+        assert default == explicit0
+        # Guard: row_index 0 and 1 genuinely differ, so the check above discriminates.
+        assert explicit0 != explicit1
+
+    def test_mask_namespace_is_threaded_into_key_derivation(self):
+        """The namespace binds the mask key (derive(..., namespace, ...)): a
+        distinct namespace yields a distinct replacement. Kills the mask
+        namespace=None dispatch mutants (apply + _pick_mask)."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        with_ns = apply_code_set("I21.9", cfg, mode="mask", job_seed=_JOB_SEED, namespace="col.a")
+        without_ns = apply_code_set("I21.9", cfg, mode="mask", job_seed=_JOB_SEED, namespace=None)
+        assert with_ns != without_ns
+
+    def test_gen_without_namespace_fails_closed(self):
+        """gen mode with namespace=None raises code_set_gen_requires_namespace at
+        path 'namespace'. Kills the non-chapter gen-namespace guard mutants
+        (code/path values, dropped kwargs -> TypeError)."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("x", cfg, mode="gen", job_seed=_JOB_SEED, namespace=None)
+        assert exc.value.code == "code_set_gen_requires_namespace"
+        assert exc.value.path == "namespace"
+
+    def test_unsupported_mode_raises_value_error(self):
+        """An unknown mode is a ValueError (not a PlanCompileError)."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        with pytest.raises(ValueError):
+            apply_code_set("x", cfg, mode="bogus", job_seed=_JOB_SEED)
+
+
+class TestDescribeLoadedCorpusEvidence:
+    """describe_loaded_corpus dict keys and no-provenance fallback values."""
+
+    def test_shipped_reports_all_provenance_values(self):
+        """Every evidence key is present with the shipped corpus's real values.
+        Kills the dict-KEY mutations for source/license."""
+        from decoy_engine.transforms.code_set import describe_loaded_corpus
+
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        summary = describe_loaded_corpus(cfg)
+        assert summary["source"]  # non-empty
+        assert summary["source_version"] == "FY2024"
+        assert summary["effective_date"] == "2023-10-01"
+        assert summary["license"]  # non-empty
+        assert summary["is_seed"] is True
+
+    def test_no_provenance_customer_fallback_values(self, tmp_path: pathlib.Path):
+        """A customer corpus with no provenance surfaces the empty-string /
+        False fallbacks under the exact evidence keys. Kills the fallback-value
+        mutants (source/source_version/effective_date/license -> 'XXXX',
+        is_seed -> True) and every dict-KEY mutant (a renamed key KeyErrors
+        here)."""
+        from decoy_engine.transforms.code_set import describe_loaded_corpus
+
+        path = tmp_path / "no_prov.parquet"
+        _write_corpus(path, ["N01", "N02", "N03"])
+        cfg = CodeSetConfig.from_dict({"code_set": "np", "corpus_source": f"customer:{path}"})
+        summary = describe_loaded_corpus(cfg)
+        assert summary["source"] == ""
+        assert summary["source_version"] == ""
+        assert summary["effective_date"] == ""
+        assert summary["license"] == ""
+        assert summary["is_seed"] is False
+        assert summary["row_count"] == 3
+
+
+class TestGetChapterFallback:
+    """_get_chapter unknown-code first-character fallback."""
+
+    def test_unknown_code_uses_first_character(self):
+        """An unknown code's chapter is its FIRST character (code[0]), not the
+        second. Kills the code[0] -> code[1] mutant (a code whose first two
+        characters differ is required to see it)."""
+        from decoy_engine.transforms.code_set import _get_chapter
+
+        assert _get_chapter("XY99", {"AA": "A"}) == "X"
+
+    def test_empty_code_and_known_code(self):
+        """Empty code -> None; a known code maps via the index."""
+        from decoy_engine.transforms.code_set import _get_chapter
+
+        assert _get_chapter("", {"AA": "A"}) is None
+        assert _get_chapter("AA", {"AA": "Z"}) == "Z"
+
+
+class TestChapterPreserveGuards:
+    """chapter_preserve fail-closed guards: machine fields (code/path) and the
+    control flow that selects each guard."""
+
+    def test_missing_chapter_column_code_and_path(self, tmp_path: pathlib.Path):
+        """A corpus with no 'chapter' column fails as code_set_chapter_column_missing
+        at path provider_config.chapter_preserve. Kills the guard's or->and
+        control-flow mutant (which would misroute to chapter_absent) and its
+        code/path value mutants."""
+        path = tmp_path / "no_chapter.parquet"
+        _write_corpus(path, ["A01", "A02"])
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "nc", "chapter_preserve": True, "corpus_source": f"customer:{path}"}
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("A01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_chapter_column_missing"
+        assert exc.value.path == "provider_config.chapter_preserve"
+
+    def test_single_row_chapter_corpus_is_plan_error_not_indexerror(self, tmp_path: pathlib.Path):
+        """A single-row corpus with a chapter column must fail closed as a typed
+        PlanCompileError (sole-member bucket), never an IndexError. Kills the
+        rows[0] -> rows[1] mutant (which IndexErrors on a one-row corpus)."""
+        path = tmp_path / "one_row.parquet"
+        _write_corpus(path, ["Q01"], chapters=["Q"])
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "one", "chapter_preserve": True, "corpus_source": f"customer:{path}"}
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("Q01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_sole_member_bucket"
+
+    def test_chapter_from_index_not_first_character(self, tmp_path: pathlib.Path):
+        """The input's chapter comes from the corpus index, not the code's first
+        character: with a chapter ('CARDIO') unrelated to the code prefix, the
+        replacement is drawn from that chapter. Kills the input_chapter
+        derivation mutants (None / _get_chapter arg-nulling / is-None flip that
+        collapse to value[0])."""
+        path = tmp_path / "named_chapter.parquet"
+        _write_corpus(path, ["A01", "A02"], chapters=["CARDIO", "CARDIO"])
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "nch", "chapter_preserve": True, "corpus_source": f"customer:{path}"}
+        )
+        out = apply_code_set("A01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out == "A02"
+
+    def test_chapter_absent_path(self, tmp_path: pathlib.Path):
+        """An input whose chapter is not in the corpus fails as
+        code_set_chapter_absent at path provider_config.chapter_preserve. Kills
+        the chapter_absent path-field mutants."""
+        path = tmp_path / "two_chapters.parquet"
+        _write_corpus(path, ["A01", "A02", "B01", "B02"], chapters=["A", "A", "B", "B"])
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "tc", "chapter_preserve": True, "corpus_source": f"customer:{path}"}
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("Z99", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_chapter_absent"
+        assert exc.value.path == "provider_config.chapter_preserve"
+
+    def test_sole_member_bucket_code_and_path(self, tmp_path: pathlib.Path):
+        """A chapter with a single code fails as code_set_sole_member_bucket at
+        path provider_config.chapter_preserve. Kills the sole-member path-field
+        mutants."""
+        path = tmp_path / "sole.parquet"
+        _write_corpus(path, ["Z99", "A01", "A02"], chapters=["Z", "A", "A"])
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "sm", "chapter_preserve": True, "corpus_source": f"customer:{path}"}
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("Z99", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_sole_member_bucket"
+        assert exc.value.path == "provider_config.chapter_preserve"
+
+    def test_chapter_preserve_mask_namespace_threaded(self):
+        """chapter_preserve mask also binds the namespace into the key: a
+        distinct namespace yields a distinct same-chapter replacement. Kills the
+        chapter_preserve mask namespace=None dispatch mutant."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10", "chapter_preserve": True})
+        with_ns = apply_code_set("I21.9", cfg, mode="mask", job_seed=_JOB_SEED, namespace="col.a")
+        without_ns = apply_code_set("I21.9", cfg, mode="mask", job_seed=_JOB_SEED, namespace=None)
+        assert with_ns != without_ns
+        assert with_ns.startswith("I")
+
+    def test_chapter_preserve_gen_without_namespace_fails_closed(self, tmp_path: pathlib.Path):
+        """chapter_preserve gen mode with namespace=None (chapter present, bucket
+        non-trivial) raises code_set_gen_requires_namespace at path 'namespace'.
+        Kills the chapter_preserve gen-namespace guard mutants (code/path values,
+        dropped kwargs -> TypeError)."""
+        path = tmp_path / "two_per_chapter.parquet"
+        _write_corpus(path, ["A01", "A02"], chapters=["A", "A"])
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "tpc", "chapter_preserve": True, "corpus_source": f"customer:{path}"}
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("A01", cfg, mode="gen", job_seed=_JOB_SEED, namespace=None)
+        assert exc.value.code == "code_set_gen_requires_namespace"
+        assert exc.value.path == "namespace"
+
+
+class TestPickMaskSingleRow:
+    """_pick_mask single-row-corpus fail-closed guard."""
+
+    def test_single_row_corpus_code_and_path(self, tmp_path: pathlib.Path):
+        """A one-code corpus whose only code equals the input fails as
+        code_set_single_row_corpus at path provider_config.code_set. Kills the
+        guard's path-field mutants."""
+        path = tmp_path / "single.parquet"
+        _write_corpus(path, ["ONLY1"])
+        cfg = CodeSetConfig.from_dict({"code_set": "s1", "corpus_source": f"customer:{path}"})
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("ONLY1", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_single_row_corpus"
+        assert exc.value.path == "provider_config.code_set"
+
+
+class TestCorpusResolution:
+    """resolve_corpus_record: it must load the CUSTOMER corpus (not misfire to a
+    shipped lookup) and run the version pin."""
+
+    def test_customer_record_resolves_without_provenance(self, tmp_path: pathlib.Path):
+        """A customer corpus (no provenance) resolves to a record with its rows.
+        Kills the override_path->None mutant (which would misroute to a shipped
+        lookup and raise not_found) and the is_shipped-inversion mutant (which
+        would fail a no-provenance customer corpus closed)."""
+        from decoy_engine.transforms.code_set import resolve_corpus_record
+
+        path = tmp_path / "cust.parquet"
+        _write_corpus(path, ["C01", "C02", "C03"])
+        cfg = CodeSetConfig.from_dict({"code_set": "cust", "corpus_source": f"customer:{path}"})
+        record = resolve_corpus_record(cfg)
+        assert {r["code"] for r in record.rows} == {"C01", "C02", "C03"}
+
+    def test_version_pin_mismatch_fails_closed(self, tmp_path: pathlib.Path):
+        """resolve_corpus_record threads config.corpus_source_version into the
+        pin check: a mismatch fails closed. Kills the expected_source_version
+        ->None / dropped mutants (which would skip the check)."""
+        from decoy_engine.transforms.code_set import resolve_corpus_record
+
+        path = tmp_path / "pinned.parquet"
+        _write_corpus(path, ["P01", "P02"], provenance=_COMPLETE_CUSTOMER_PROV)
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "pinned",
+                "corpus_source": f"customer:{path}",
+                "corpus_source_version": "9999",
+            }
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            resolve_corpus_record(cfg)
+        assert exc.value.code == "code_set_corpus_version_mismatch"
+
+
+class TestPrivateRowIndexDefaults:
+    """Private-helper row_index defaults (reached only by direct call: the public
+    path always threads row_index explicitly)."""
+
+    def test_pick_gen_row_index_defaults_to_zero(self):
+        """_pick_gen's row_index defaults to 0. Kills its default mutant."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+        from decoy_engine.transforms.code_set import _pick_gen
+
+        rows = _get_corpus_record("icd10", None, is_shipped=True).rows
+        seed = b"\x09" * 8
+        default = _pick_gen(rows, job_seed=seed, namespace="ns")
+        explicit0 = _pick_gen(rows, job_seed=seed, namespace="ns", row_index=0)
+        explicit1 = _pick_gen(rows, job_seed=seed, namespace="ns", row_index=1)
+        assert default == explicit0
+        assert explicit0 != explicit1
+
+    def test_apply_chapter_preserve_row_index_defaults_to_zero(self, tmp_path: pathlib.Path):
+        """_apply_chapter_preserve's row_index defaults to 0. Kills its default
+        mutant (a chapter with >=3 candidates makes row_index observable)."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+        from decoy_engine.transforms.code_set import _apply_chapter_preserve
+
+        path = tmp_path / "big_chapter.parquet"
+        _write_corpus(path, ["A01", "A02", "A03", "A04"], chapters=["A"] * 4)
+        record = _get_corpus_record("bc", path, is_shipped=False)
+        seed = b"\x0a" * 8
+        default = _apply_chapter_preserve("A01", record, mode="gen", job_seed=seed, namespace="ns")
+        explicit0 = _apply_chapter_preserve(
+            "A01", record, mode="gen", job_seed=seed, namespace="ns", row_index=0
+        )
+        explicit1 = _apply_chapter_preserve(
+            "A01", record, mode="gen", job_seed=seed, namespace="ns", row_index=1
+        )
+        assert default == explicit0
+        assert explicit0 != explicit1

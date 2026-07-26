@@ -643,3 +643,35 @@ class TestDerivedGeneratePath:
         tripled_vals = tbl.column("tripled").to_pylist()
         assert all(d == b * 2 for b, d in zip(base_vals, doubled_vals, strict=True))
         assert all(t == b * 3 for b, t in zip(base_vals, tripled_vals, strict=True))
+
+
+class TestDerivedNullAndBoundsInternals:
+    """Direct oracles for the `_is_null` predicate and `_apply_bounds` int/float
+    type preservation (the branches a value-level integration test does not
+    isolate)."""
+
+    def test_is_null_on_a_plain_float_is_false_not_error(self) -> None:
+        # _is_null must NaN-check the value itself; a non-NaN float is simply
+        # not null (a mutant that checks isnan(None) would raise on any float).
+        from decoy_engine.transforms.derived import _is_null
+
+        assert _is_null(1.5) is False
+        assert _is_null(float("nan")) is True
+        assert _is_null(None) is True
+
+    def test_apply_bounds_preserves_int_type(self) -> None:
+        # An int value whose clipped result is whole must stay int.
+        from decoy_engine.transforms.derived import _apply_bounds
+
+        out = _apply_bounds(5, {"min": 0})
+        assert out == 5
+        assert isinstance(out, int)
+
+    def test_apply_bounds_keeps_float_value_as_float(self) -> None:
+        # A float value must stay float even when its result is a whole number
+        # (int-preservation is gated on the ORIGINAL value being int).
+        from decoy_engine.transforms.derived import _apply_bounds
+
+        out = _apply_bounds(5.0, {"min": 0})
+        assert out == 5.0
+        assert isinstance(out, float)

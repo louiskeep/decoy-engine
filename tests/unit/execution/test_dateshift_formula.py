@@ -346,6 +346,79 @@ class TestFormula:
         assert float(out[1]) == 4.0
         assert out[2] is None
 
+    def test_missing_formula_config_passes_through_unchanged(self) -> None:
+        # No 'formula' field: the empty default is a passthrough, not a bogus
+        # non-empty expression that would eval and raise.
+        src = pa.table({"n": [10, 20, 30]})
+        seed = _col("formula", provider_config=())
+        out = _run(_plan("n", seed), src).output.column("n").to_pylist()
+        assert [float(x) for x in out] == [10.0, 20.0, 30.0]
+
+    def test_random_formula_is_seeded_by_column_name(self) -> None:
+        # The per-formula RNG seed folds in the column name, so the same random
+        # expression on two differently-named columns yields different output.
+        expr = (("formula", "value + randint(0, 1000000)"),)
+        out_x = (
+            _run(
+                _plan("colx", _col("formula", provider_config=expr)), pa.table({"colx": [0, 0, 0]})
+            )
+            .output.column("colx")
+            .to_pylist()
+        )
+        out_y = (
+            _run(
+                _plan("coly", _col("formula", provider_config=expr)), pa.table({"coly": [0, 0, 0]})
+            )
+            .output.column("coly")
+            .to_pylist()
+        )
+        assert out_x != out_y
+
+
+class TestFormulaTransformDirect:
+    """Direct `FormulaStrategy.apply` contract (the standalone V1 transform):
+    the per-formula RNG seed derivation and the rule-key defaults."""
+
+    def test_random_output_is_deterministic_and_seed_pinned(self) -> None:
+        # The seed is sha256(col|formula)[:16] base 16; this KAT pins the exact
+        # derivation so a changed hex slice, base, or a nulled seed (which would
+        # make the RNG non-deterministic) all change the output.
+        import pandas as pd
+
+        from decoy_engine.transforms.formula import FormulaStrategy
+
+        rule = {"formula": "value + randint(1, 1000000)", "column": "amt"}
+        out1 = FormulaStrategy().apply(pd.Series([0, 0, 0, 0]), rule).tolist()
+        out2 = FormulaStrategy().apply(pd.Series([0, 0, 0, 0]), rule).tolist()
+        assert out1 == out2  # deterministic
+        assert out1 == [656672, 216344, 662965, 32663]  # seed-derivation KAT
+
+    def test_missing_formula_key_passes_through(self) -> None:
+        # A rule with no 'formula' key leaves the column unchanged (the default
+        # is the empty passthrough, never a bogus expression that would raise).
+        import pandas as pd
+
+        from decoy_engine.transforms.formula import FormulaStrategy
+
+        out = FormulaStrategy().apply(pd.Series([7, 8, 9]), {"column": "c"}).tolist()
+        assert out == [7, 8, 9]
+
+    def test_missing_column_key_defaults_to_unnamed_seed(self) -> None:
+        # An absent 'column' key must default the seed's name component to
+        # "unnamed", so output matches an explicit column="unnamed".
+        import pandas as pd
+
+        from decoy_engine.transforms.formula import FormulaStrategy
+
+        expr = "value + randint(1, 1000000)"
+        default = FormulaStrategy().apply(pd.Series([0, 0, 0]), {"formula": expr}).tolist()
+        explicit = (
+            FormulaStrategy()
+            .apply(pd.Series([0, 0, 0]), {"formula": expr, "column": "unnamed"})
+            .tolist()
+        )
+        assert default == explicit
+
 
 class TestGroupAnchorSnapshotMisalignedFailsClosed:
     """Dennis R2 LOW-1 backstop: if a snapshot ever fails to row-align with the

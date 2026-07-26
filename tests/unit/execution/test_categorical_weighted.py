@@ -275,3 +275,197 @@ class TestNullPreservation:
         assert out["col"].iloc[0] in ("X", "Y")
         assert pd.isna(out["col"].iloc[1])
         assert out["col"].iloc[2] in ("X", "Y")
+
+    def test_nulls_pass_through_in_deterministic_uniform(self):
+        """Uniform (no-weights) deterministic path preserves a null in
+        the MIDDLE and keeps processing the tail. A `continue -> break`
+        mutation truncates the loop and desyncs the output length."""
+        df = pd.DataFrame({"col": ["a", None, "c"]})
+        handler = CategoricalStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "col",
+            _seed({"categories": ["X", "Y"]}, deterministic=True),
+            _Ctx(),
+        )
+        assert len(out) == 3
+        assert out["col"].iloc[0] in ("X", "Y")
+        assert pd.isna(out["col"].iloc[1])
+        assert out["col"].iloc[2] in ("X", "Y")
+
+
+# ── _build_cdf raise-site machine fields ──────────────────────────
+#
+# str(StrategyError) embeds code, strategy AND message, so the existing
+# match= assertions cannot distinguish a mutated code/strategy from the
+# original when the mutation keeps the matched substring (an XX-wrap of
+# the code still contains it). Pin the exact .code and .strategy so
+# every code=/strategy= field mutation on each raise site is killed.
+
+
+class TestCdfErrorFields:
+    def test_nonpositive_error_fields(self):
+        with pytest.raises(StrategyError) as exc:
+            _build_cdf([0.0, 0.0, 0.0])
+        assert exc.value.code == "categorical_weights_nonpositive"
+        assert exc.value.strategy == "categorical"
+
+    def test_negative_error_fields(self):
+        with pytest.raises(StrategyError) as exc:
+            _build_cdf([1.0, -0.5, 1.0])
+        assert exc.value.code == "categorical_weights_negative"
+        assert exc.value.strategy == "categorical"
+
+    def test_below_resolution_error_fields(self):
+        with pytest.raises(StrategyError) as exc:
+            _build_cdf([1.0, 1e-20, 1.0])
+        assert exc.value.code == "categorical_weight_below_resolution"
+        assert exc.value.strategy == "categorical"
+
+    def test_first_weight_below_resolution_raises(self):
+        """A zero-width slot on the FIRST category must fail closed.
+        Pins the `prev_threshold = 0` initializer: a None or 1 seed lets
+        an index-0 weight that rounds to threshold 0 slip past the guard."""
+        with pytest.raises(StrategyError) as exc:
+            _build_cdf([1e-20, 1.0])
+        assert exc.value.code == "categorical_weight_below_resolution"
+        assert exc.value.strategy == "categorical"
+
+
+# ── run() config-validation raise-site machine fields ─────────────
+
+
+class TestRunConfigErrorFields:
+    def test_not_list_categories_raises(self):
+        """A plain-string `categories` (no from_profile) fails closed
+        instead of iterating characters. Also pins the guard chain: any
+        mutation that skips the guard lets the string through silently."""
+        df = pd.DataFrame({"col": ["v1", "v2", "v3"]})
+        handler = CategoricalStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed({"categories": "abc"}, deterministic=True),
+                _Ctx(),
+            )
+        assert exc.value.code == "categorical_categories_not_list"
+        assert exc.value.strategy == "categorical"
+
+    def test_from_profile_bypasses_not_list_guard(self):
+        """from_profile=True signals the shape is compiler-managed, so a
+        non-list `categories` must NOT trip the not-list guard."""
+        df = pd.DataFrame({"col": ["v1", "v2", "v3"]})
+        handler = CategoricalStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "col",
+            _seed({"categories": "abc", "from_profile": True}, deterministic=True),
+            _Ctx(),
+        )
+        # No StrategyError raised; the string became a char pool.
+        assert all(v in set("abc") for v in out["col"].tolist())
+
+    def test_absent_categories_raises_requires(self):
+        """No categories key at all -> fail closed. Pins the empty-list
+        default on `cfg.get("categories", [])`: dropping it (or None)
+        makes `list(None)` raise TypeError instead of the coded error."""
+        df = pd.DataFrame({"col": ["a"]})
+        handler = CategoricalStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(df.copy(), "col", _seed({}), _Ctx())
+        assert exc.value.code == "categorical_requires_categories"
+        assert exc.value.strategy == "categorical"
+
+    def test_weights_shape_error_fields(self):
+        df = pd.DataFrame({"col": ["a"]})
+        handler = CategoricalStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed(
+                    {"categories": ["X", "Y", "Z"], "weights": [0.5, 0.5]},
+                    deterministic=True,
+                ),
+                _Ctx(),
+            )
+        assert exc.value.code == "categorical_weights_shape"
+        assert exc.value.strategy == "categorical"
+
+    def test_requires_namespace_error_fields(self):
+        df = pd.DataFrame({"col": ["a"]})
+        handler = CategoricalStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed({"categories": ["X", "Y"]}, deterministic=True, namespace=None),
+                _Ctx(),
+            )
+        assert exc.value.code == "categorical_requires_namespace"
+        assert exc.value.strategy == "categorical"
+
+    def test_non_deterministic_nonpositive_error_fields(self):
+        df = pd.DataFrame({"col": ["a"]})
+        handler = CategoricalStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed(
+                    {"categories": ["X", "Y"], "weights": [0.0, 0.0]},
+                    deterministic=False,
+                ),
+                _Ctx(),
+            )
+        assert exc.value.code == "categorical_weights_nonpositive"
+        assert exc.value.strategy == "categorical"
+
+
+# ── Non-deterministic picks (unseeded rng) ────────────────────────
+
+
+class TestNonDeterministicUniform:
+    def test_uniform_picks_are_valid_indices(self):
+        """Non-deterministic uniform path: picks must be a full-length
+        array of valid category indices covering the whole pool. Pins the
+        `rng.integers(0, len(categories), n)` argument set (a None/dropped
+        arg or a shifted low/high yields a scalar, an out-of-range index,
+        or a raise)."""
+        n = 500
+        df = pd.DataFrame({"col": [f"v{i}" for i in range(n)]})
+        handler = CategoricalStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "col",
+            _seed({"categories": ["X", "Y"]}, deterministic=False),
+            _Ctx(),
+        )
+        picks = out["col"].tolist()
+        assert len(picks) == n
+        assert set(picks) == {"X", "Y"}  # both indices reached, none out of range
+
+
+class TestNonDeterministicWeightedNormalization:
+    def test_unnormalized_weights_normalized_by_total(self):
+        """Non-deterministic weighted path divides by the total so the
+        probability vector sums to 1. Un-normalized weights (total != 1)
+        make a `w * total` mutation produce probabilities summing to
+        total**2, which numpy rejects; the correct `w / total` skews the
+        picks toward the heavy category."""
+        n = 2000
+        df = pd.DataFrame({"col": [f"v{i}" for i in range(n)]})
+        handler = CategoricalStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "col",
+            _seed(
+                {"categories": ["X", "Y"], "weights": [9.0, 1.0]},
+                deterministic=False,
+            ),
+            _Ctx(),
+        )
+        counts = Counter(out["col"].tolist())
+        x_frac = counts.get("X", 0) / n
+        assert 0.85 < x_frac < 0.95, f"X frac out of band: {x_frac:.3f}"

@@ -30,6 +30,44 @@ def _seed() -> ColumnSeed:
     )
 
 
+def _seed_no_redact_with() -> ColumnSeed:
+    return ColumnSeed(
+        namespace=None,
+        strategy="redact",
+        provider=None,
+        backend_type="decoy_native",
+        backend_version="1",
+        cardinality_mode="bijective",
+        deterministic=False,
+        provider_config=(),
+    )
+
+
+def test_default_redact_with_is_the_default_constant() -> None:
+    # With no `redact_with` config, every non-null value becomes the default
+    # constant "REDACTED" (never None, which would blank the column).
+    df = pd.DataFrame({"col": pd.Series(["a", "b", None], dtype=object)})
+    out_df, warnings = RedactHandler().run(df, "col", _seed_no_redact_with(), ctx=None)
+    observed = out_df["col"].tolist()
+    assert observed[0] == "REDACTED"
+    assert observed[1] == "REDACTED"
+    assert pd.isna(observed[2])
+    assert warnings == []
+
+
+def test_extension_dtype_that_forces_fallback_is_dropped_to_object() -> None:
+    # A mixed-type Categorical is an extension dtype AND makes the kernel's
+    # pa.array() raise, so it hits the fallback branch that must astype(object)
+    # before .where() can write the string cleanly.
+    df = pd.DataFrame({"col": pd.Series(pd.Categorical(["a", 5, None]))})
+    out_df, warnings = RedactHandler().run(df, "col", _seed(), ctx=None)
+    observed = out_df["col"].tolist()
+    assert observed[0] == "X"
+    assert observed[1] == "X"
+    assert pd.isna(observed[2])
+    assert warnings == []
+
+
 @pytest.mark.parametrize(
     ("label", "make_series"),
     [

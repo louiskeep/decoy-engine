@@ -11,6 +11,8 @@ import pytest
 
 from decoy_engine.determinism import derive
 from decoy_engine.execution import ExecutionError, ExecutionResult, PandasExecutionAdapter
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._bucketize import BucketizeStrategyHandler
 from decoy_engine.execution._strategies._hash import HashStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -84,6 +86,39 @@ class TestHash:
         with pytest.raises(ExecutionError) as exc:
             _run(_plan("id", _col("hash", namespace=None)), src)
         assert exc.value.code == "hash_requires_namespace"
+
+
+class TestHashHandlerContract:
+    """Direct-handler oracles pinning the machine-observable contract:
+    the namespace-guard error identity and the truncate boundary."""
+
+    def test_missing_namespace_error_carries_strategy_and_code(self) -> None:
+        # The StrategyError machine fields (code + strategy) are the contract
+        # the adapter routes on; the message is prose.
+        df = pd.DataFrame({"id": ["alice"]})
+        seed = _col("hash", namespace=None)
+        with pytest.raises(StrategyError) as exc:
+            HashStrategyHandler().run(df, "id", seed, _FakeCtx())
+        assert exc.value.code == "hash_requires_namespace"
+        assert exc.value.strategy == "hash"
+
+    def test_truncate_zero_is_ignored_not_applied(self) -> None:
+        # truncate is opt-in on a positive int; 0 (and any non-positive) means
+        # "no truncation", never "truncate to empty".
+        df = pd.DataFrame({"id": ["alice"]})
+        seed = _col("hash", namespace="ids", provider_config=(("truncate", 0),))
+        out, _ = HashStrategyHandler().run(df, "id", seed, _FakeCtx())
+        expected = derive(_SEED, "ids", _canonicalize_source("alice")).hex()
+        assert out["id"].iloc[0] == expected
+        assert len(out["id"].iloc[0]) > 1
+
+    def test_truncate_one_truncates_to_one_char(self) -> None:
+        df = pd.DataFrame({"id": ["alice"]})
+        seed = _col("hash", namespace="ids", provider_config=(("truncate", 1),))
+        out, _ = HashStrategyHandler().run(df, "id", seed, _FakeCtx())
+        expected = derive(_SEED, "ids", _canonicalize_source("alice")).hex()[:1]
+        assert out["id"].iloc[0] == expected
+        assert len(out["id"].iloc[0]) == 1
 
 
 class TestBucketize:
@@ -181,3 +216,107 @@ class TestMixedObjectColumnRegression:
         assert pd.isna(out["col"].iloc[1])
         assert out["col"].iloc[0] == "he"
         assert out["col"].iloc[2] == "99"
+
+
+def _bucketize_ctx() -> SimpleNamespace:
+    # Fresh per-call row_errors sink so direct handler runs never share state.
+    return SimpleNamespace(job_seed=_SEED, mask_key=_SEED, row_errors=[])
+
+
+class TestBucketizeSurvivors:
+    """Direct-handler oracles pinning bucketize boundary math, format
+    selection, the fail-closed contract, and the per-row error channel.
+    These are the machine-observable outputs (bucket strings, error code +
+    strategy, RowError machine fields), never message prose."""
+
+    def test_unresolvable_width_error_carries_code_and_strategy(self) -> None:
+        # The StrategyError machine fields (code + strategy) are the fail-closed
+        # contract the adapter routes on; the message is prose.
+        df = pd.DataFrame({"age": [23]})
+        seed = _col("bucketize", provider_config=(("width", 0),))
+        with pytest.raises(StrategyError) as exc:
+            BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert exc.value.code == "bucketize_width_unresolvable"
+        assert exc.value.strategy == "bucketize"
+
+    def test_bool_width_fails_closed(self) -> None:
+        # bool is an int subclass but is never a valid width; it must fail
+        # closed, not silently resolve to 1 and bucketize by that.
+        df = pd.DataFrame({"age": [23]})
+        seed = _col("bucketize", provider_config=(("width", True),))
+        with pytest.raises(StrategyError) as exc:
+            BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert exc.value.code == "bucketize_width_unresolvable"
+
+    def test_width_one_is_resolvable(self) -> None:
+        # width==1 is a valid positive width (identity bucketing), not the
+        # unresolvable/non-positive boundary.
+        df = pd.DataFrame({"age": [23]})
+        seed = _col("bucketize", provider_config=(("width", 1),))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].tolist() == ["23"]
+
+    def test_unknown_format_falls_back_to_lower(self) -> None:
+        # An unrecognized format resolves to "lower" output, never to the
+        # midpoint (else) branch.
+        df = pd.DataFrame({"age": [23]})
+        seed = _col("bucketize", provider_config=(("width", 10), ("format", "bogus")))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].tolist() == ["20"]
+
+    def test_float_width_lower_keeps_fractional(self) -> None:
+        # A float width is not an integer width: the lower edge stays a float
+        # ("5.0"), it is not coerced to a nullable-int bucket ("5").
+        df = pd.DataFrame({"age": [6]})
+        seed = _col("bucketize", provider_config=(("width", 2.5),))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].tolist() == ["5.0"]
+
+    def test_float_width_range_upper_edge(self) -> None:
+        # Float-width range uses the exclusive upper edge (lower + width), not
+        # lower - width and not a dropped/None edge.
+        df = pd.DataFrame({"age": [6]})
+        seed = _col("bucketize", provider_config=(("width", 2.5), ("format", "range")))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].tolist() == ["5.0-7.5"]
+
+    def test_midpoint_even_int_width(self) -> None:
+        # Even integer width: midpoint is lower + width/2 rendered as a whole
+        # number ("25"), not lower - width/2, width*2, a float, or a crash.
+        df = pd.DataFrame({"age": [23]})
+        seed = _col("bucketize", provider_config=(("width", 10), ("format", "midpoint")))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].tolist() == ["25"]
+
+    def test_midpoint_odd_int_width_keeps_fractional(self) -> None:
+        # Odd integer width: midpoint has a half and must stay fractional
+        # ("12.5"), not be truncated to a whole number.
+        df = pd.DataFrame({"age": [12]})
+        seed = _col("bucketize", provider_config=(("width", 5), ("format", "midpoint")))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].tolist() == ["12.5"]
+
+    def test_midpoint_preserves_null(self) -> None:
+        # Nullable-int midpoint carries source nulls through; the null cell must
+        # not force a non-nullable cast that would reject the NaN.
+        df = pd.DataFrame({"age": [23, None]})
+        seed = _col("bucketize", provider_config=(("width", 10), ("format", "midpoint")))
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, _bucketize_ctx())
+        assert out["age"].iloc[0] == "25"
+        assert pd.isna(out["age"].iloc[1])
+
+    def test_non_numeric_cell_records_row_error_and_keeps_original(self) -> None:
+        # A non-null, non-coercible cell is a per-row format error: recorded on
+        # ctx.row_errors with its machine fields, output keeps the ORIGINAL
+        # value (quarantine carries originals), and null/numeric rows record no
+        # error.
+        df = pd.DataFrame({"age": ["10", "abc"]})
+        seed = _col("bucketize", provider_config=(("width", 10),))
+        ctx = _bucketize_ctx()
+        out, _ = BucketizeStrategyHandler().run(df, "age", seed, ctx)
+        assert out["age"].tolist() == ["10", "abc"]
+        assert len(ctx.row_errors) == 1
+        err = ctx.row_errors[0]
+        assert err.column == "age"
+        assert err.row_index == 1
+        assert err.trigger == "format_error"

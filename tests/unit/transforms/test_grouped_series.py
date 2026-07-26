@@ -141,6 +141,30 @@ class TestGroupedSeriesCumcount:
         # Row 3 is B row 2 -> group B, pos 1
         assert list(result) == [0, 0, 1, 1]
 
+    def test_single_row_produces_one_element(self) -> None:
+        """A one-row frame yields a one-element series, not an empty one.
+
+        Guards the n==0 early-return from swallowing the smallest non-empty input.
+        """
+        result = self._apply(["A"], [1], start=0)
+        assert list(result) == [0]
+        assert len(result) == 1
+
+    def test_empty_input_has_integer_dtype(self) -> None:
+        """Empty input yields a zero-length integer Series (not object/float)."""
+        import pandas as pd
+
+        from decoy_engine.transforms.grouped_series import (
+            GroupedSeriesConfig,
+            apply_grouped_series,
+        )
+
+        df = pd.DataFrame({"grp": [], "ord": []})
+        cfg = GroupedSeriesConfig.from_dict({"group_by": "grp", "order_by": "ord"})
+        result = apply_grouped_series(cfg, df, seed=b"\x00" * 8, namespace="grouped_series/e")
+        assert len(result) == 0
+        assert pd.api.types.is_integer_dtype(result.dtype)
+
 
 class TestGroupedSeriesMonotoneWalk:
     """monotone_walk generator produces non-decreasing values within each group."""
@@ -546,3 +570,134 @@ class TestGroupedSeriesGeneratePath:
             assert sorted(vals) == list(range(len(vals))), (
                 f"Group {g!r} cumcount not consecutive: {vals}"
             )
+
+
+class TestGroupedSeriesMonotoneWalkValues:
+    """Exact-value coverage for the monotone_walk step sampling and per-group seeding."""
+
+    @staticmethod
+    def _walk(group_vals, order_vals, *, seed, namespace, start, step=1, max_step=10):
+        import pandas as pd
+
+        from decoy_engine.transforms.grouped_series import (
+            GroupedSeriesConfig,
+            apply_grouped_series,
+        )
+
+        df = pd.DataFrame({"grp": group_vals, "ord": order_vals})
+        cfg = GroupedSeriesConfig.from_dict(
+            {
+                "group_by": "grp",
+                "order_by": "ord",
+                "generator": "monotone_walk",
+                "start": start,
+                "step": step,
+                "max_step": max_step,
+            }
+        )
+        return list(apply_grouped_series(cfg, df, seed=seed, namespace=namespace))
+
+    def test_golden_vector_pins_step_stream(self) -> None:
+        """A fixed seed pins the exact step stream (PCG64 is version-stable).
+
+        Locks the RNG seed slice width, the integers(low, high) bounds, and the
+        per-group label used for seeding. Any drift in those changes these values.
+        """
+        result = self._walk(
+            ["A", "A", "A", "B", "B", "B"],
+            [0, 1, 2, 0, 1, 2],
+            seed=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+            namespace="grouped_series/gold",
+            start=1,
+        )
+        assert result == [1, 4, 5, 1, 5, 14]
+
+    def test_step_equals_max_step_is_exact_arithmetic(self) -> None:
+        """step == max_step forces integers(k, k+1) == k, giving a pure arithmetic run.
+
+        A low bound collapsed to 0 breaks the constant step; a high bound of
+        max_step-1 makes numpy reject the empty range.
+        """
+        n = 12
+        start, k = 3, 5
+        result = self._walk(
+            ["A"] * n,
+            list(range(n)),
+            seed=b"\x09" * 8,
+            namespace="grouped_series/arith",
+            start=start,
+            step=k,
+            max_step=k,
+        )
+        assert result == list(range(start, start + k * n, k))
+
+    def test_distinct_group_labels_seed_independently(self) -> None:
+        """Two equal-length groups draw independent step streams from their labels.
+
+        Collapsing every group to one shared label would make both streams identical.
+        """
+        result = self._walk(
+            ["A"] * 6 + ["B"] * 6,
+            list(range(6)) * 2,
+            seed=b"\x07" * 8,
+            namespace="grouped_series/z",
+            start=0,
+        )
+        assert result[:6] != result[6:]
+
+    def test_surrogate_group_label_does_not_crash(self) -> None:
+        """A lone-surrogate group label must encode without raising, and stay deterministic.
+
+        Non-strict utf-8 handling is what keeps a non-encodable label from aborting the run.
+        """
+        args = dict(seed=b"\x02" * 8, namespace="grouped_series/s", start=0)
+        first = self._walk(["\ud800", "\ud800"], [0, 1], **args)
+        second = self._walk(["\ud800", "\ud800"], [0, 1], **args)
+        assert first == second
+        assert len(first) == 2
+
+    def test_null_group_key_still_walks(self) -> None:
+        """A group whose key is None still resets and advances (no dead first group).
+
+        The reset sentinel must never equal a real key; if it were None, a leading
+        None-keyed group would skip its reset, leaving the RNG uninitialised and the
+        values pinned flat at start.
+        """
+        result = self._walk(
+            [None, None, None, None],
+            [0, 1, 2, 3],
+            seed=b"\x11" * 8,
+            namespace="grouped_series/n",
+            start=10,
+        )
+        assert result[0] == 10
+        assert all(result[i] > result[i - 1] for i in range(1, len(result)))
+
+
+class TestGroupedSeriesDefaults:
+    """Default values that drive output but are not reached by expression mutation."""
+
+    def test_default_max_step_is_ten(self) -> None:
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig
+
+        cfg = GroupedSeriesConfig.from_dict(
+            {"group_by": "grp", "order_by": "ord", "generator": "monotone_walk"}
+        )
+        assert cfg.max_step == 10
+
+    def test_default_step_is_one(self) -> None:
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig
+
+        cfg = GroupedSeriesConfig.from_dict({"group_by": "grp", "order_by": "ord"})
+        assert cfg.step == 1
+
+    def test_default_start_differs_by_generator(self) -> None:
+        """cumcount defaults start to 0; monotone_walk defaults it to 1."""
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig
+
+        cumcount = GroupedSeriesConfig.from_dict({"group_by": "grp", "order_by": "ord"})
+        walk = GroupedSeriesConfig.from_dict(
+            {"group_by": "grp", "order_by": "ord", "generator": "monotone_walk"}
+        )
+        assert cumcount.start == 0
+        assert walk.start == 1
