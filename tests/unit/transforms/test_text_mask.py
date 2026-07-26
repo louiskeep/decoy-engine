@@ -21,7 +21,14 @@ import pytest
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
 from decoy_engine.transforms.text_mask import (
+    _DEFAULT_TOKEN,
     DETECTOR_DEFAULTS,
+    _detect_date_format,
+    _mask_date_shift,
+    _mask_faker,
+    _mask_fpe,
+    _mask_span,
+    _span_key,
     mask_cell,
 )
 
@@ -713,3 +720,252 @@ class TestFakerDispatch:
         assert isinstance(result1, str) and result1.strip(), (
             f"faker output must be a non-empty string; got {result1!r}"
         )
+
+
+# ── TQ crown-jewels mutation-kill pass (2026-07-26) ───────────────────────────
+# Oracle + known-answer tests that kill the LOGIC survivors from the mutmut run
+# on transforms/text_mask.py. Crypto/FPE/faker/date-shift paths are pinned with
+# hard-coded real outputs so seed, parameter, and dispatch-key mutants die.
+# Docstring invariants (§ "Cross-cell keyed determinism", § "Overlap resolution",
+# § "Unmatched-span interpretation") are the source for each assertion.
+# Ledger: docs/quality/mutation-ledgers/transforms_text_mask.md
+
+
+class TestSpanKeyHmac:
+    """`_span_key` is HMAC-SHA256(mask_key, matched_text) (RFC 2104, module docstring).
+
+    KATs pin the exact digest so any change to the key-derivation bytes (dropped
+    message, changed encoding error-handler) changes the result and dies.
+    """
+
+    # Real HMAC-SHA256(b"\xab"*32, "123-45-6789".encode("utf-8", errors="replace")).
+    _KAT_SSN = "6696204014bc01a16168a0e786c70620416f46ff72142d5f8ebdb6075db466fd"
+    # Real digest for a lone surrogate: only encode(errors="replace") produces it;
+    # a strict encoder (or a bogus handler name) raises instead of returning it.
+    _KAT_SURROGATE = "a64bbf452f2b074be41b0fadd0023300ad666f298b71c5c6de78a7a960bfa2d4"
+
+    def test_span_key_known_answer(self) -> None:
+        assert _span_key(_SEED, "123-45-6789").hex() == self._KAT_SSN
+
+    def test_span_key_hashes_the_message_not_empty(self) -> None:
+        """Digest must depend on matched_text (kills msg=None -> HMAC-of-empty)."""
+        empty = _span_key(_SEED, "").hex()
+        assert _span_key(_SEED, "123-45-6789").hex() != empty
+
+    def test_span_key_replace_encodes_lone_surrogate(self) -> None:
+        """errors='replace' must survive an un-encodable char (raw-value isolation)."""
+        assert _span_key(_SEED, "\ud800").hex() == self._KAT_SURROGATE
+
+    def test_span_key_is_key_sensitive(self) -> None:
+        assert _span_key(b"\x01" * 32, "x") != _span_key(b"\x02" * 32, "x")
+
+    def test_span_key_is_text_sensitive(self) -> None:
+        assert _span_key(_SEED, "a") != _span_key(_SEED, "b")
+
+
+class TestMaskFpeDispatch:
+    """`_mask_fpe` routes charset + checksum per detector via `_FPE_CONFIG`.
+
+    KATs pin the FPE output so a wrong config key, wrong charset default, wrong
+    checksum scheme, or a flipped validate_luhn changes the ciphertext and dies.
+    """
+
+    def test_pan_uses_luhn_checksum(self) -> None:
+        """pan -> ("digits","luhn"); dropping/nulling the checksum changes output."""
+        pan = "4111111111111111"
+        assert _mask_fpe(pan, _span_key(_SEED, pan), "pan") == "4885959915148828"
+
+    def test_ssn_has_no_checksum(self) -> None:
+        """ssn -> ("digits",None); validate_luhn stays False (flipping it re-shapes)."""
+        ssn = "123-45-6789"
+        assert _mask_fpe(ssn, _span_key(_SEED, ssn), "ssn") == "904-52-1741"
+
+    def test_unknown_detector_uses_digits_default(self) -> None:
+        """A detector absent from _FPE_CONFIG falls back to ("digits", None) and
+        still FPE-encrypts (kills default-key/charset mutants that break the fallback)."""
+        val = "12345678"
+        assert _mask_fpe(val, _span_key(_SEED, val), "unknown_det_xyz") == "67241497"
+
+    def test_fpe_failure_returns_configured_token(self) -> None:
+        """All-separator input fails closed to the caller's token, not _DEFAULT_TOKEN."""
+        assert _mask_fpe("--", _span_key(_SEED, "--"), "ssn", "[X]") == "[X]"
+
+    def test_fpe_failure_defaults_to_redacted_token(self) -> None:
+        assert _mask_fpe("--", _span_key(_SEED, "--"), "ssn") == _DEFAULT_TOKEN
+
+
+class TestMaskFakerDispatch:
+    """`_mask_faker` seeds a Faker from span_key[:4] and routes by `_FAKER_METHOD`.
+
+    KATs pin the synthetic value so a wrong method, wrong seed slice, or a
+    swallowed method result changes the name and dies.
+    """
+
+    def test_first_name_method_routing(self) -> None:
+        assert _mask_faker("John", _span_key(_SEED, "John"), "first_name") == "Joy"
+
+    def test_person_name_method_routing(self) -> None:
+        assert (
+            _mask_faker("John Doe", _span_key(_SEED, "John Doe"), "person_name") == "Kenneth Thomas"
+        )
+
+    def test_location_maps_to_city(self) -> None:
+        assert _mask_faker("Boston", _span_key(_SEED, "Boston"), "location") == "New Connieville"
+
+    def test_unknown_detector_falls_back_to_name(self) -> None:
+        """Unknown detector -> "name" default; returns a real name, never raises."""
+        out = _mask_faker("x", _span_key(_SEED, "x"), "unknown_det")
+        assert isinstance(out, str) and out.strip()
+
+    def test_faker_seed_uses_first_four_bytes(self) -> None:
+        """Same span_key -> same synthetic value (seed = span_key[:4])."""
+        key = _span_key(_SEED, "John Doe")
+        assert _mask_faker("a", key, "person_name") == _mask_faker("b", key, "person_name")
+
+
+class TestDetectDateFormat:
+    """`_detect_date_format` scans every entry in `_COMMON_FORMATS`, not just the first."""
+
+    def test_matches_non_first_format(self) -> None:
+        """A format that is NOT first in the list must still be found (kills break-on-fail)."""
+        assert _detect_date_format("01/15/1990") == "%m/%d/%Y"
+
+    def test_matches_first_format(self) -> None:
+        assert _detect_date_format("1990-01-15") == "%Y-%m-%d"
+
+    def test_unrecognised_returns_none(self) -> None:
+        assert _detect_date_format("not a date") is None
+
+
+class TestMaskDateShift:
+    """`_mask_date_shift` shifts by min_days + (span_key[:8] % range_size) days.
+
+    KAT parameters chosen so every arithmetic/boundary/seed mutant lands on a
+    different date than the pinned answer.
+    """
+
+    def test_shift_known_answer(self) -> None:
+        d = "2001-09-11"
+        assert _mask_date_shift(d, _span_key(_SEED, d), -365, 365) == "2001-02-22"
+
+    def test_unparseable_date_passes_through(self) -> None:
+        assert _mask_date_shift("nope", _span_key(_SEED, "nope"), -365, 365) == "nope"
+
+    def test_format_is_preserved(self) -> None:
+        from datetime import datetime
+
+        d = "01/15/1990"
+        out = _mask_date_shift(d, _span_key(_SEED, d), 1, 30)
+        datetime.strptime(out, "%m/%d/%Y")  # raises if the format was not preserved
+
+
+class TestMaskSpanDispatch:
+    """`_mask_span` dispatches one span to its strategy and wires the token/params.
+
+    Pins the per-strategy output and the token/date-param plumbing so dispatch-key,
+    dropped-argument, and default-value mutants die.
+    """
+
+    def test_fpe_strategy_ssn(self) -> None:
+        sp = Span("ssn", 0, 11, "123-45-6789")
+        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "904-52-1741"
+
+    def test_fpe_strategy_pan_passes_detector_id(self) -> None:
+        """detector_id must reach _mask_fpe (drives tweak + checksum): pan -> luhn."""
+        sp = Span("pan", 0, 16, "4111111111111111")
+        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "4885959915148828"
+
+    def test_faker_strategy_uses_detector_id(self) -> None:
+        sp = Span("first_name", 0, 4, "John")
+        assert _mask_span(sp, _SEED, "faker", {}) == "Joy"
+
+    def test_passthrough_strategy_returns_matched_text(self) -> None:
+        sp = Span("ssn", 0, 11, "123-45-6789")
+        assert _mask_span(sp, _SEED, "passthrough", {}) == "123-45-6789"
+
+    def test_redact_strategy_uses_configured_token(self) -> None:
+        sp = Span("ssn", 0, 11, "123-45-6789")
+        assert _mask_span(sp, _SEED, "redact", {"token": "[X]"}) == "[X]"
+
+    def test_redact_strategy_defaults_token(self) -> None:
+        sp = Span("ssn", 0, 11, "123-45-6789")
+        assert _mask_span(sp, _SEED, "redact", {}) == _DEFAULT_TOKEN
+
+    def test_unknown_strategy_falls_back_to_redact(self) -> None:
+        sp = Span("ssn", 0, 11, "123-45-6789")
+        assert _mask_span(sp, _SEED, "no_such_strategy", {"token": "[X]"}) == "[X]"
+
+    def test_fpe_failure_uses_span_token(self) -> None:
+        """FPE fail-closed carries the cfg token through _mask_span's token wiring."""
+        sp = Span("ssn", 0, 2, "--")
+        assert _mask_span(sp, _SEED, "fpe", {"token": "[X]"}) == "[X]"
+
+    def test_fpe_failure_defaults_token_when_absent(self) -> None:
+        """cfg without a token -> _DEFAULT_TOKEN (kills token-default -> None mutants)."""
+        sp = Span("ssn", 0, 2, "--")
+        assert _mask_span(sp, _SEED, "fpe", {}) == _DEFAULT_TOKEN
+
+    def test_date_shift_uses_cfg_bounds(self) -> None:
+        sp = Span("iso_date", 0, 10, "1990-01-15")
+        assert _mask_span(sp, _SEED, "date_shift", {"min_days": 1, "max_days": 30}) == "1990-01-25"
+
+    def test_date_shift_defaults_when_bounds_absent(self) -> None:
+        """No min/max in cfg -> defaults -365/365 (kills int(None) and shifted defaults)."""
+        sp = Span("iso_date", 0, 10, "1990-01-15")
+        assert _mask_span(sp, _SEED, "date_shift", {}) == "1989-01-30"
+
+
+class TestMaskCellReassembly:
+    """`mask_cell` reassembles matched spans + unmatched segments in order.
+
+    Pins the exact reassembled string (kills the join-separator, iter_spans
+    argument, token-plumbing, and non-string-guard mutants).
+    """
+
+    def test_multi_span_reassembly_known_answer(self) -> None:
+        text = "Patient alice@example.com, SSN 123-45-6789."
+        out = mask_cell(
+            text, _SEED, detector_ids=["ssn", "email"], unmatched_span_policy="passthrough"
+        )
+        assert out == "Patient [REDACTED], SSN 904-52-1741."
+
+    def test_no_junk_separator_between_parts(self) -> None:
+        out = mask_cell(
+            "SSN 123-45-6789 end", _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough"
+        )
+        assert "XXXX" not in out
+
+    def test_truthy_non_string_returns_unchanged(self) -> None:
+        """A non-empty non-str (int) returns unchanged (kills the `or`->`and` guard)."""
+        assert mask_cell(123, _SEED) == 123
+
+    def test_detector_ids_restrict_detection(self) -> None:
+        """detector_ids must be forwarded to iter_spans; email is not masked here."""
+        text = "SSN 123-45-6789 email alice@example.com"
+        out = mask_cell(text, _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough")
+        assert "alice@example.com" in out
+        assert "123-45-6789" not in out
+
+    def test_custom_token_reaches_span_masking(self) -> None:
+        """token= must be threaded into extra_cfg and used by the redact strategy."""
+        out = mask_cell(
+            "SSN 123-45-6789 end.",
+            _SEED,
+            detector_ids=["ssn"],
+            strategy_map={"ssn": "redact"},
+            token="[X]",
+            unmatched_span_policy="passthrough",
+        )
+        assert "[X]" in out
+        assert "[REDACTED]" not in out
+
+    def test_cross_cell_same_pii_same_mask(self) -> None:
+        """Same SSN in two cells -> identical masked span (span key is context-free)."""
+        a = mask_cell(
+            "A 123-45-6789 z", _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough"
+        )
+        b = mask_cell(
+            "B 123-45-6789 y", _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough"
+        )
+        assert "904-52-1741" in a
+        assert "904-52-1741" in b
