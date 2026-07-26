@@ -15,9 +15,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+import decoy_engine.execution._strategies._text_redact as txr_mod
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.storm.detectors import Span
 from decoy_engine.storm.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
 
 # TX-1 (2026-07-20): gates the real-model smoke test below on spaCy + the
@@ -234,6 +236,8 @@ class TestF14bNerVersionGuard:
         with pytest.raises(StrategyError) as exc:
             handler.run(df.copy(), "notes", _ner_seed("1.0.0"), _FakeCtx())
         assert exc.value.code == "ner_model_version_mismatch"
+        # `.strategy` is a machine field consumers branch on, so pin it too.
+        assert exc.value.strategy == "text_redact"
 
     def test_version_match_does_not_fire_guard(self, monkeypatch):
         # Same installed version as stamped -> guard passes; stub iter_ner_spans
@@ -259,6 +263,194 @@ class TestF14bNerVersionGuard:
         handler = TextRedactHandler()
         out, _ = handler.run(df.copy(), "notes", _ner_seed(None), _FakeCtx())
         assert "alice@example.com" not in out["notes"].iloc[0]
+
+
+# ── TQ crown-jewels: loop control, coercion, index, NER forwarding ────
+
+
+def _seed_v(provider_config: dict, ner_model_version: str | None = None) -> ColumnSeed:
+    # Like _seed but also stamps ner_model_version (for the version guard).
+    return ColumnSeed(
+        namespace=None,
+        strategy="text_redact",
+        provider=None,
+        backend_type="decoy_native",
+        backend_version="1",
+        cardinality_mode="bijective",
+        deterministic=False,
+        provider_config=tuple(sorted(provider_config.items())),
+        ner_model_version=ner_model_version,
+    )
+
+
+class TestLoopControl:
+    """The per-cell loop must not terminate early: a `continue` flipped to a
+    `break` on either the null-skip or the no-match branch would leave every
+    later cell unredacted (silent PHI leak)."""
+
+    def test_null_cell_does_not_truncate_later_cells(self):
+        # A leading null must be skipped, not break the loop -- the later PII
+        # cell still has to be redacted.
+        df = pd.DataFrame({"notes": [None, "SSN 123-45-6789 on file"]})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert pd.isna(out["notes"].iloc[0])
+        assert "123-45-6789" not in out["notes"].iloc[1]
+
+    def test_no_match_cell_does_not_truncate_later_cells(self):
+        # A no-match cell passes through, but the loop must continue to the
+        # later PII cell rather than break.
+        df = pd.DataFrame({"notes": ["just prose", "alice@example.com"]})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert out["notes"].iloc[0] == "just prose"
+        assert "alice@example.com" not in out["notes"].iloc[1]
+
+
+class TestNonStringCoercion:
+    def test_non_string_non_null_cell_coerced_to_str(self):
+        # A non-null, non-str cell must be str()-coerced before scanning;
+        # dropping/inverting the coercion leaves the raw int (or None/"None").
+        df = pd.DataFrame({"notes": [42]})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert out["notes"].iloc[0] == "42"
+
+
+class TestOutputIndexAlignment:
+    def test_output_aligned_to_non_default_index(self):
+        # The rebuilt Series must carry the frame's own index; a RangeIndex
+        # (index=None / index-arg dropped) misaligns on assignment and blanks
+        # every row to NaN.
+        df = pd.DataFrame({"notes": ["alice@example.com", "bob@example.com"]}, index=[10, 20])
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert out["notes"].loc[10] == "[REDACTED]"
+        assert out["notes"].loc[20] == "[REDACTED]"
+
+
+class TestExtraSpansForwarding:
+    def test_extra_spans_none_without_ner(self, monkeypatch):
+        # With no NER config, `extra` stays None and must be forwarded as
+        # extra_spans=None (a "" init is invisible in output but wrong).
+        captured: dict = {}
+
+        def spans_spy(*args, **kwargs):
+            captured["extra_spans"] = kwargs.get("extra_spans")
+            return []
+
+        monkeypatch.setattr(txr_mod, "iter_spans", spans_spy)
+        df = pd.DataFrame({"notes": ["hello world"]})
+        handler = TextRedactHandler()
+        handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert captured["extra_spans"] is None
+
+
+class TestNerConfigResolution:
+    """Dict NER config (`ner: {model, entities}`) must resolve and forward the
+    exact model + entities to iter_ner_spans. iter_ner_spans is a monkeypatch
+    boundary, so this is fully gradeable off-spaCy (see F14b class)."""
+
+    def _run_with_ner_spy(self, monkeypatch, ner_cfg):
+        import decoy_engine.storm.ner as ner_mod
+
+        captured: dict = {}
+
+        def ner_spy(*args, **kwargs):
+            captured["called"] = True
+            captured["text"] = args[0] if args else None
+            captured["model"] = kwargs.get("model")
+            captured["entities"] = kwargs.get("entities")
+            return []
+
+        monkeypatch.setattr(ner_mod, "iter_ner_spans", ner_spy)
+        df = pd.DataFrame({"notes": ["Alice went home"]})
+        handler = TextRedactHandler()
+        handler.run(df.copy(), "notes", _seed_v({"ner": ner_cfg}), _FakeCtx())
+        return captured
+
+    def test_ner_dict_model_and_entities_forwarded(self, monkeypatch):
+        captured = self._run_with_ner_spy(
+            monkeypatch,
+            {"model": "custom_test_model", "entities": ["person_name", "location"]},
+        )
+        assert captured.get("called") is True
+        assert captured["model"] == "custom_test_model"
+        assert captured["entities"] == ["person_name", "location"]
+
+    def test_ner_dict_without_entities_forwards_none(self, monkeypatch):
+        captured = self._run_with_ner_spy(monkeypatch, {"model": "custom_test_model"})
+        assert captured["model"] == "custom_test_model"
+        assert captured["entities"] is None
+
+    def test_ner_dict_empty_entities_forwards_none(self, monkeypatch):
+        # An empty entities list means "all mapped entities", i.e. forward None
+        # -- not an empty selection.
+        captured = self._run_with_ner_spy(
+            monkeypatch, {"model": "custom_test_model", "entities": []}
+        )
+        assert captured["entities"] is None
+
+
+class TestNerCallSiteForwarding:
+    """NER span result and the iter_spans call-site args: the per-cell text,
+    the resolved model/entities, and the NER spans injected as extra_spans must
+    all reach their call sites. Killed off-spaCy via the mock boundary."""
+
+    def test_ner_result_and_call_args_forwarded(self, monkeypatch):
+        import decoy_engine.storm.ner as ner_mod
+
+        expected_span = Span("person_name", 0, 5, "Alice")
+        captured: dict = {}
+
+        def ner_spy(*args, **kwargs):
+            captured["ner_text"] = args[0] if args else None
+            captured["ner_model"] = kwargs.get("model")
+            captured["ner_entities"] = kwargs.get("entities")
+            return [expected_span]
+
+        def spans_spy(*args, **kwargs):
+            captured["extra_spans"] = kwargs.get("extra_spans")
+            return []
+
+        monkeypatch.setattr(ner_mod, "iter_ner_spans", ner_spy)
+        monkeypatch.setattr(txr_mod, "iter_spans", spans_spy)
+        df = pd.DataFrame({"notes": ["Alice went home"]})
+        handler = TextRedactHandler()
+        handler.run(
+            df.copy(),
+            "notes",
+            _seed_v({"ner": {"model": "custom_test_model", "entities": ["person_name"]}}),
+            _FakeCtx(),
+        )
+        # iter_ner_spans call-site args.
+        assert captured["ner_text"] == "Alice went home"
+        assert captured["ner_model"] == "custom_test_model"
+        assert captured["ner_entities"] == ["person_name"]
+        # The NER spans must flow into iter_spans' overlap resolution.
+        assert captured["extra_spans"] == [expected_span]
+
+    def test_version_guard_checks_the_resolved_model(self, monkeypatch):
+        # The version lookup must query the RESOLVED model, not None: only the
+        # resolved model reports the drifting version that fires the guard.
+        import decoy_engine.storm.ner as ner_mod
+
+        monkeypatch.setattr(
+            ner_mod,
+            "installed_model_version",
+            lambda model=None: "2.0.0" if model == "custom_test_model" else None,
+        )
+        monkeypatch.setattr(ner_mod, "iter_ner_spans", lambda *a, **k: [])
+        df = pd.DataFrame({"notes": ["Alice went home"]})
+        handler = TextRedactHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "notes",
+                _seed_v({"ner": {"model": "custom_test_model"}}, ner_model_version="1.0.0"),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "ner_model_version_mismatch"
 
 
 # ── TX-1: end-to-end smoke test on the real model ────────────────────

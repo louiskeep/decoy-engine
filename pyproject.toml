@@ -924,8 +924,8 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/transforms/derived_aggregate.py"]
+only_mutate = ["src/decoy_engine/execution/_strategies/_text_redact.py"]
 pytest_add_cli_args_test_selection = [
-    "tests/unit/transforms/test_derived_aggregate.py",
+    "tests/unit/execution/test_text_redact.py",
 ]
 # debug = true  # flip on to see the raw pytest invocation/output when diagnosing.
