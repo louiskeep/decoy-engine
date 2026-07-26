@@ -135,6 +135,7 @@ a different mutation tool. Flagged for Cam.
 | `execution/_strategies/_faker` | 79 / 70 | 100% (9 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_formula` | 19 / 17 | 100% (2 equiv) | `tq/crown-jewels` |
 | `transforms/_fpe_checksum` | 193 / 153 | 100% (40 equiv) | `tq/crown-jewels` |
+| `transforms/formula` | 51 / 40 | 100% (11 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
 `_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,
