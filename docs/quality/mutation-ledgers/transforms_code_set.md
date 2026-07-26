@@ -4,9 +4,11 @@
 `transforms/code_set.py` with the test selection restricted to
 `tests/unit/transforms/test_code_set.py`, run as
 `-k "not docs_strategies_md"`. `test_docs_strategies_md_lists_every_registry_corpus`
-is excluded from the selection: it reads `docs/strategies.md` by a CWD-relative
-path and is a docs drift guard, not a `code_set` logic test, so it neither
-exercises nor grades this module's behavior. Integration and pipeline suites
+is excluded from the selection: it is a docs-drift guard over `CODESET_REGISTRY`
++ a repo doc that kills no `code_set.py` mutant, so it adds nothing to the grade.
+(It is NOT path-broken -- it resolves the doc via `Path(__file__).parents[3]`,
+CWD-independently -- it simply does not exercise this module's logic.) Integration
+and pipeline suites
 that also drive the `code_set` strategy (and the out-of-core `CodeSetHandler`
 twin) were NOT in the selection, so the survivor count is a conservative lower
 bound: some mutants counted "survived" here may be killed by tests outside this
@@ -19,16 +21,19 @@ customer file). Mask mode picks a replacement by HMAC-SHA256 of the input
 via `derive_index` keyed on the column namespace; `chapter_preserve` restricts
 the candidate set to the input's chapter and fails closed on a missing chapter
 column, an absent chapter, or a sole-member bucket. A mutmut run produced
-**342 mutants, 234 killed (68% baseline), 108 survived**. Every survivor was
-classified LOGIC or EQUIVALENT per
-`docs/quality/module-test-quality-playbook.md` ("Scope the score to LOGIC, not
+**342 mutants, 234 killed (68% baseline), 108 survived -> 296 killed, 46
+EQUIVALENT after this pass.** Every survivor was classified LOGIC or EQUIVALENT
+per `docs/quality/module-test-quality-playbook.md` ("Scope the score to LOGIC, not
 error-message wording"; crypto-adjacent selection is held to the stricter
-"changes the picked code for any input => LOGIC" bar). **61 LOGIC survivors**
-were killed with **20 new tests** in `tests/unit/transforms/test_code_set.py`;
-the remaining **47 are EQUIVALENT** (error/log message prose, message=None,
+"changes the picked code for any input => LOGIC" bar). **62 LOGIC survivors**
+were killed with **21 new tests** in `tests/unit/transforms/test_code_set.py`;
+the remaining **46 are EQUIVALENT** (error/log message prose, message=None,
 proven-identical control flow, defaults that land in the same branch, dead
 defensive branches, and message-only args), tabled below with the one-line
 argument for why no input distinguishes each from the original.
+
+(Batch-4 dennis P1 correction: `_apply_chapter_preserve__mutmut_33` was first
+filed equivalent but is LOGIC -- killed below. `mutmut_31`/`32` remain equivalent.)
 
 The mask and gen picks are pinned end-to-end: `apply_code_set` KATs exercise the
 HMAC/`derive_index` selection plus the chapter logic, and namespace-sensitivity
@@ -45,7 +50,7 @@ Survivor spread by function (raw / LOGIC-killed / EQUIVALENT):
 
 | Function | Survived | LOGIC killed | EQUIVALENT |
 |---|---|---|---|
-| `_apply_chapter_preserve` | 54 | 29 | 25 |
+| `_apply_chapter_preserve` | 54 | 30 | 24 |
 | `apply_code_set` | 23 | 13 | 10 |
 | `describe_loaded_corpus` | 9 | 9 | 0 |
 | `_pick_mask` | 8 | 4 | 4 |
@@ -54,9 +59,9 @@ Survivor spread by function (raw / LOGIC-killed / EQUIVALENT):
 | `_resolve_corpus_path` | 3 | 0 | 3 |
 | `_pick_gen` | 1 | 1 | 0 |
 | `_get_chapter` | 1 | 1 | 0 |
-| **Total** | **108** | **61** | **47** |
+| **Total** | **108** | **62** | **46** |
 
-## LOGIC (61): killed by new tests in this pass
+## LOGIC (62): killed by new tests in this pass
 
 All killing tests live in `tests/unit/transforms/test_code_set.py`.
 
@@ -93,7 +98,7 @@ All killing tests live in `tests/unit/transforms/test_code_set.py`.
 | `__mutmut_56`, `57`, `62`, `63`, `64`, `65` | gen-namespace guard `code`/`path` -> None / `XX..XX` / case | `test_gen_without_namespace_fails_closed` |
 | `__mutmut_59`, `60`, `61` | gen-namespace guard `code`/`path`/`message` kwarg dropped -> TypeError | same |
 
-### `_apply_chapter_preserve` (29)
+### `_apply_chapter_preserve` (30)
 
 | Mutants | Mutation | Killed by |
 |---|---|---|
@@ -102,6 +107,7 @@ All killing tests live in `tests/unit/transforms/test_code_set.py`.
 | `__mutmut_9`, `10`, `15`, `16`, `17`, `18` | `code_set_chapter_column_missing` `code`/`path` -> None / `XX..XX` / case | same |
 | `__mutmut_8` | chapter-presence check `rows[0]` -> `rows[1]` -- IndexErrors on a one-row corpus | `test_single_row_chapter_corpus_is_plan_error_not_indexerror` |
 | `__mutmut_25`, `26`, `27`, `30` | input-chapter derivation collapses the index lookup to `value[0]` (`= None` / `_get_chapter(None, ...)` / `_get_chapter(value, None)` / `is None` -> `is not None`) | `test_chapter_from_index_not_first_character` |
+| `__mutmut_33` | empty-input fallback `value[0] if value else ""` -> `else "XXXX"` -- a non-empty literal collides with a corpus whose chapter IS `"XXXX"`, masking an empty value instead of failing closed (fail-closed -> produce-output). Batch-4 dennis P1. | `TestSoleMemberBucket::test_empty_value_fails_closed_even_if_a_chapter_is_named_xxxx` |
 | `__mutmut_42`, `49`, `50` | `code_set_chapter_absent` `path` -> None / `XX..XX` / case | `test_chapter_absent_path` |
 | `__mutmut_67`, `74`, `75` | `code_set_sole_member_bucket` `path` -> None / `XX..XX` / case | `test_sole_member_bucket_code_and_path` |
 | `__mutmut_84` | `_pick_from_seq(..., namespace=None)` -- chapter mask key ignores the namespace | `test_chapter_preserve_mask_namespace_threaded` |
@@ -121,7 +127,7 @@ All killing tests live in `tests/unit/transforms/test_code_set.py`.
 |---|---|---|
 | `__mutmut_1` | `row_index` default `0` -> `1` | `TestPrivateRowIndexDefaults::test_pick_gen_row_index_defaults_to_zero` |
 
-## EQUIVALENT (47)
+## EQUIVALENT (46)
 
 ### Error / log message prose (31)
 
@@ -149,13 +155,13 @@ survive by design.
 | `apply_code_set__mutmut_20` | `_check_source_version_pin(None, ...)` -- `name` -> None | `name` reaches only the mismatch error's message; `code`/`path` are literals set inside the callee |
 | `apply_code_set__mutmut_21` | `_check_source_version_pin(..., None, ...)` -- `path` -> None | `path` here drives only the message's `" at {path}"` fragment, not the error's `path` field |
 
-### Proven-identical control flow (6)
+### Proven-identical control flow (5)
 
 | Mutant | Mutation | Why equivalent |
 |---|---|---|
 | `_resolve_corpus_path__mutmut_2` | `source == "shipped" or not source` -> `and` | the `"shipped"` fast-path and the unknown-source fallthrough both `return (config.code_set, None)`, so the tuple is identical for every source value |
 | `_resolve_corpus_path__mutmut_4`, `5` | compared literal `"shipped"` -> `"XXshippedXX"` / `"SHIPPED"` | same: a source that no longer matches `"shipped"` falls through to the identical `(config.code_set, None)` return |
-| `_apply_chapter_preserve__mutmut_31`, `32`, `33` | empty-input fallback `value[0] if value else ""` -> `None` / `value[1]` / else `"XXXX"` | this branch is reachable only when the input is empty (a non-empty unknown code returns `code[0]`, not None), so `value` is falsy and every variant yields a chapter absent from every bucket; control still raises `chapter_absent`, only the interpolated message differs |
+| `_apply_chapter_preserve__mutmut_31`, `32` | empty-input fallback `value[0] if value else ""` -> `None` / `value[1]` | reached only when the fallback runs on an empty `value` (falsy), so both `None` and `value[1]`-on-`""` yield a key that is never a bucket key: `""`/`None` chapters are rejected at load (`_codeset_loader.py:366-378`), so control still raises `chapter_absent`. (`mutmut_33`, the `else "XXXX"` variant, is NOT equivalent -- a non-empty literal CAN be a real chapter key -- and is in the LOGIC table.) |
 
 ### Default lands in the same branch (2)
 

@@ -221,6 +221,34 @@ class TestSoleMemberBucket:
         with pytest.raises(PlanCompileError, match="sole"):
             apply_code_set("Z99", cfg, mode="mask", job_seed=_JOB_SEED)
 
+    def test_empty_value_fails_closed_even_if_a_chapter_is_named_xxxx(self, tmp_path: pathlib.Path):
+        # Chapter-fallback else branch (code_set.py:453): an empty input value has
+        # no derivable chapter, so `value[0] if value else ""` yields "", which is
+        # never a bucket key -> fail closed. A mutant using a NON-empty literal
+        # ("XXXX") instead of "" would collide with a corpus whose chapter IS
+        # "XXXX" and MASK the empty value instead of raising -- a fail-closed ->
+        # produce-output regression. (mutmut_31/32, the None/value[1] variants,
+        # stay equivalent: "" and None are never bucket keys.)
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02"], type=pa.string()),
+                "chapter": pa.array(["XXXX", "XXXX"], type=pa.string()),
+                "description": pa.array(["a", "b"], type=pa.string()),
+            }
+        )
+        path = tmp_path / "xxxx_chapter.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "xxxx_chapter",
+                "chapter_preserve": True,
+                "corpus_source": f"customer:{path}",
+            }
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc.value.code == "code_set_chapter_absent"
+
 
 # ── CS.5: corpus_source customer path ────────────────────────────────────────
 
