@@ -128,7 +128,7 @@ class TestDerivedAdapterIntegration:
 
         # error at row 3 (index-distinctive); expression has no "3" so the row
         # index can only appear if it is forwarded (not None).
-        with pytest.raises(Exception) as exc:  # noqa: PT011 -- assert on message content below
+        with pytest.raises(Exception) as exc:
             _run(
                 {"z": [5.0, 5.0, 5.0, 0.0], "c": [0.0, 0.0, 0.0, 0.0]},
                 [
