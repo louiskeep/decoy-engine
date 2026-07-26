@@ -924,8 +924,13 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/execution/_strategies/_text_redact.py"]
+only_mutate = ["src/decoy_engine/execution/_strategies/_orphan.py"]
 pytest_add_cli_args_test_selection = [
-    "tests/unit/execution/test_text_redact.py",
+    "tests/unit/execution/test_orphan_fk.py",
 ]
+# NOTE: the execution SUBSTRATES (e.g. _planner.py) cannot be graded with this
+# harness -- mutmut's in-process runner reports genuinely-surviving mutants as
+# ⏰ timeout on their heavy pandas/pyarrow suites, and raising timeout_constant
+# to 15.0 (a 225s per-mutant limit) did NOT change that, while a standalone
+# `pytest` of the same activated mutant survives in ~3s. See tq-findings.md #8.
 # debug = true  # flip on to see the raw pytest invocation/output when diagnosing.

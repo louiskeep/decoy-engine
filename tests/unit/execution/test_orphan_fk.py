@@ -16,6 +16,12 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
+from decoy_engine.execution._strategies._orphan import (
+    cascade_row_errors,
+    gather_errored_parent_keys,
+    make_remap_fn,
+    resolve_fk_keys,
+)
 from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -375,3 +381,211 @@ class TestR17CompositeAsFkParent:
         with pytest.raises(ExecutionError) as exc:
             _run_r17(_r17_plan(), sources, _r17_graph(OrphanPolicy.FAIL))
         assert exc.value.code == "orphan_fk_violation"
+
+
+# --------------------------------------------------------------------------
+# Direct unit coverage of the resolver helpers. The adapter tests above never
+# reach the S2 EXCLUDE-then-CASCADE path (no row-errored parents) nor the
+# REMAP-failure branches, so the referential-integrity invariants for those
+# paths are pinned here against their machine-observable outputs.
+# --------------------------------------------------------------------------
+
+
+def _edge(
+    policy: OrphanPolicy,
+    *,
+    parent_columns: tuple[str, ...] = ("customer_id",),
+    child_columns: tuple[str, ...] = ("customer_id",),
+    namespace: str = "cust",
+) -> RelationshipEdge:
+    return RelationshipEdge(
+        parent_table="customers",
+        parent_columns=parent_columns,
+        child_table="orders",
+        child_columns=child_columns,
+        namespace=namespace,
+        orphan_policy=policy,
+    )
+
+
+def _resolve(
+    child_keys: list[Any],
+    parent_map: dict[Any, Any],
+    edge: RelationshipEdge,
+    *,
+    remap_fn: Any = None,
+    errored: dict[Any, str] | None = None,
+) -> Any:
+    if remap_fn is None:
+        remap_fn = list  # identity remap; only the REMAP policy consults it
+    return resolve_fk_keys(
+        child_keys, parent_map, edge, remap_fn=remap_fn, errored_parent_keys=errored
+    )
+
+
+class TestCascadePrecedence:
+    def test_errored_parent_key_cascades_to_none_with_trigger(self) -> None:
+        # A key present only as an excluded (row-errored) parent key is a
+        # cascade: masked value is None (never the raw key) and the row is
+        # recorded as (index, trigger) for a downstream RowError.
+        masked, warnings, cascade = _resolve(
+            [("k1",)], {}, _edge(OrphanPolicy.PRESERVE), errored={("k1",): "format_error"}
+        )
+        assert masked[0] is None
+        assert cascade == [(0, "format_error")]
+        assert warnings == []
+
+    def test_cascade_does_not_halt_later_rows(self) -> None:
+        # A cascaded row must not stop processing of the rows after it: a
+        # genuine orphan on a later row still gets the orphan policy applied.
+        masked, _warnings, cascade = _resolve(
+            [("k1",), ("orphan",)],
+            {},
+            _edge(OrphanPolicy.PRESERVE),
+            errored={("k1",): "format_error"},
+        )
+        assert cascade == [(0, "format_error")]
+        assert masked[1] == ("orphan",)
+
+    def test_parent_map_hit_takes_precedence_over_errored_key(self) -> None:
+        # Precedence (1): a parent_map hit resolves normally even when the same
+        # key also appears in errored_parent_keys; it does not cascade.
+        masked, _warnings, cascade = _resolve(
+            [("k1",)],
+            {("k1",): ("masked1",)},
+            _edge(OrphanPolicy.PRESERVE),
+            errored={("k1",): "format_error"},
+        )
+        assert masked[0] == ("masked1",)
+        assert cascade == []
+
+
+class TestRemapFailClosed:
+    def test_short_remap_result_fails_closed(self) -> None:
+        # The REMAP zip is strict: a remap_fn that returns fewer values than
+        # orphans must fail loudly rather than silently drop an orphan remap.
+        with pytest.raises(ValueError):
+            _resolve([("o1",)], {}, _edge(OrphanPolicy.REMAP), remap_fn=lambda keys: [])
+
+
+class TestWarnEventShape:
+    def test_warn_emits_single_aggregated_warning(self) -> None:
+        masked, warnings, cascade = _resolve([("o1",), ("o2",)], {}, _edge(OrphanPolicy.WARN))
+        assert len(warnings) == 1
+        w = warnings[0]
+        assert w.code == "orphan_fk"
+        assert w.provider == "cust"
+        assert w.column == "customer_id"
+        assert w.detail == {
+            "parent_table": "customers",
+            "parent_columns": ["customer_id"],
+            "child_table": "orders",
+            "child_columns": ["customer_id"],
+            "orphan_rows": 2,
+        }
+        assert masked == [("o1",), ("o2",)]
+        assert cascade == []
+
+    def test_warn_column_joins_composite_child_columns(self) -> None:
+        edge = _edge(
+            OrphanPolicy.WARN,
+            parent_columns=("member_id", "plan_id"),
+            child_columns=("member_id", "plan_id"),
+            namespace="enr",
+        )
+        _masked, warnings, _cascade = _resolve([("m9", "p9")], {}, edge)
+        assert warnings[0].column == "member_id,plan_id"
+        assert warnings[0].detail["child_columns"] == ["member_id", "plan_id"]
+        assert warnings[0].detail["parent_columns"] == ["member_id", "plan_id"]
+
+
+class TestGatherErroredParentKeys:
+    def test_none_cache_returns_empty_dict(self) -> None:
+        result = gather_errored_parent_keys((_edge(OrphanPolicy.PRESERVE),), None)
+        assert result == {}
+        assert isinstance(result, dict)
+
+    def test_collects_keys_with_their_triggers(self) -> None:
+        cache = {("customers", ("customer_id",)): {("c1",): "format_error"}}
+        result = gather_errored_parent_keys((_edge(OrphanPolicy.PRESERVE),), cache)
+        assert result == {("c1",): "format_error"}
+
+    def test_absent_cache_key_contributes_nothing(self) -> None:
+        # An edge whose parent node has no errored keys must resolve to an
+        # empty contribution, not blow up on a missing cache entry.
+        cache = {("other", ("x",)): {("z",): "mask_error"}}
+        result = gather_errored_parent_keys((_edge(OrphanPolicy.PRESERVE),), cache)
+        assert result == {}
+
+    def test_first_hit_wins_across_edges(self) -> None:
+        cache = {
+            ("customers", ("customer_id",)): {("c1",): "format_error"},
+            ("customers2", ("customer_id",)): {("c1",): "mask_error"},
+        }
+        edges = (
+            _edge(OrphanPolicy.PRESERVE),
+            RelationshipEdge(
+                parent_table="customers2",
+                parent_columns=("customer_id",),
+                child_table="orders",
+                child_columns=("customer_id",),
+                namespace="cust",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        )
+        result = gather_errored_parent_keys(edges, cache)
+        assert result == {("c1",): "format_error"}
+
+
+class TestCascadeRowErrors:
+    def test_builds_one_row_error_per_cascaded_row(self) -> None:
+        errors = cascade_row_errors([(3, "format_error"), (7, "mask_error")], "customer_id")
+        assert len(errors) == 2
+        assert [(e.column, e.row_index, e.trigger) for e in errors] == [
+            ("customer_id", 3, "format_error"),
+            ("customer_id", 7, "mask_error"),
+        ]
+
+
+class _RecordingHandler:
+    """Minimal StrategyHandler stand-in that records the table in force when
+    it runs and returns a deterministically-masked column."""
+
+    def __init__(self) -> None:
+        self.seen_tables: list[Any] = []
+
+    def run(self, df: Any, col: str, plan_slice: Any, ctx: Any) -> Any:
+        self.seen_tables.append(ctx.current_table)
+        df[col] = ["m_" + str(v) for v in df[col]]
+        return df, None
+
+
+class TestMakeRemapFn:
+    def test_missing_parent_node_fails_closed(self) -> None:
+        remap = make_remap_fn(
+            _edge(OrphanPolicy.REMAP), {}, SimpleNamespace(current_table=None), {}
+        )
+        with pytest.raises(ExecutionError) as exc:
+            remap([("c9",)])
+        assert exc.value.code == "orphan_remap_parent_missing"
+
+    def test_missing_handler_fails_closed(self) -> None:
+        node = SimpleNamespace(plan_slice=_hash_col("cust"), strategy="nope")
+        node_by_key = {("customers", ("customer_id",)): node}
+        remap = make_remap_fn(
+            _edge(OrphanPolicy.REMAP), node_by_key, SimpleNamespace(current_table=None), {}
+        )
+        with pytest.raises(ExecutionError) as exc:
+            remap([("c9",)])
+        assert exc.value.code == "unsupported_strategy"
+
+    def test_parent_table_is_set_during_run_then_restored(self) -> None:
+        node = SimpleNamespace(plan_slice=_hash_col("cust"), strategy="rec")
+        node_by_key = {("customers", ("customer_id",)): node}
+        handler = _RecordingHandler()
+        ctx = SimpleNamespace(current_table="orders")  # child dispatch in flight
+        remap = make_remap_fn(_edge(OrphanPolicy.REMAP), node_by_key, ctx, {"rec": handler})
+        result = remap([("c9",)])
+        assert result == [("m_c9",)]
+        assert handler.seen_tables == ["customers"]  # remapped via the PARENT table
+        assert ctx.current_table == "orders"  # prior table restored afterward
