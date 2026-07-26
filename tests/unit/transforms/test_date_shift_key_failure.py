@@ -182,3 +182,62 @@ class TestQaInternalF9ValidateRuleRangeBounds:
 
         strategy = DateShiftStrategy(seed=42, derive_key=None)
         strategy.validate_rule({"column": "dob"})
+
+
+class TestDetectFormat:
+    """Direct oracles for the live `_detect_format` helper (reused by the
+    engine-v2 date_shift handler, bucket_perturb, and the out-of-core path).
+    The V1 `DateShiftStrategy` class in this module is superseded/dead (see
+    tq-findings #11), so only this helper is graded."""
+
+    def test_detect_iso_format(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.transforms.date_shift import _detect_format
+
+        # A column all of one format must be detected as that format (a broken
+        # accept/append would return None instead).
+        assert _detect_format(pd.Series(["2020-01-15", "2021-06-30"])) == "%Y-%m-%d"
+
+    def test_detect_non_first_candidate_format(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.transforms.date_shift import _detect_format
+
+        # The first candidate (%Y-%m-%d) fails on these; detection must skip it
+        # and keep scanning, not accept-on-fail or bail out at the first miss.
+        assert _detect_format(pd.Series(["01/15/2020", "06/30/2021"])) == "%m/%d/%Y"
+
+    def test_ambiguous_column_warns(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.transforms.date_shift import _detect_format
+
+        # Dates that parse under more than one format must emit the ambiguity
+        # warning (the threshold is "> 1 candidate").
+        with pytest.warns(UserWarning, match="multiple formats"):
+            _detect_format(pd.Series(["01/02/2020", "03/04/2021"]))
+
+    def test_unambiguous_column_does_not_warn(self) -> None:
+        import warnings
+
+        import pandas as pd
+
+        from decoy_engine.transforms.date_shift import _detect_format
+
+        # A single-candidate column must NOT warn (guards the ">1" threshold
+        # against a ">=1" drift that would warn on every column).
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert _detect_format(pd.Series(["2020-01-15", "2021-06-30"])) == "%Y-%m-%d"
+
+    def test_sample_cap_limits_detection_to_200_rows(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.transforms.date_shift import _detect_format
+
+        # The sample is capped at 200 rows (F9); a format that holds for the
+        # first 200 rows is detected even if a later row would break it. Pins
+        # both the cap value and that the cap is applied (head(200), not all).
+        values = ["2020-01-15"] * 200 + ["not-a-date"]
+        assert _detect_format(pd.Series(values)) == "%Y-%m-%d"

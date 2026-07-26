@@ -924,10 +924,10 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/transforms/joint_mask.py"]
+only_mutate = ["src/decoy_engine/transforms/date_shift.py"]
 pytest_add_cli_args_test_selection = [
-    "tests/unit/transforms/test_joint_mask.py",
-    "tests/unit/transforms/test_joint_mask_sp08b.py",
+    "tests/unit/transforms/test_date_shift_key_failure.py",
+    "tests/unit/execution/test_dateshift_formula.py",
 ]
 # NOTE: the execution SUBSTRATES (e.g. _planner.py) cannot be graded with this
 # harness -- mutmut's in-process runner reports genuinely-surviving mutants as

@@ -132,6 +132,24 @@ oracles). Surfaced by the grouped_series batch-gate as an out-of-scope observati
 (product source unchanged in this tests-only sweep). Not reproduced as a failure
 on the current callers; flag for a decision on whether to align to `df.index`.
 
+### 11. `transforms/date_shift.DateShiftStrategy` (V1 class) is dead/superseded legacy code (cleanup candidate)
+`transforms/date_shift.py`. The active engine-v2 S9 date_shift is
+`execution/_strategies/_date_shift.DateShiftStrategyHandler` (registered in the
+strategy registry). The V1 `DateShiftStrategy` class in `transforms/date_shift.py`
+(its `apply`, `_column_key`, `__init__`, `validate_rule`) and the helpers
+`_parse_date`, `_shift_for_value_md5`, `_shift_for_value_keyed` are NOT
+instantiated or called anywhere in `src/` -- the class appears only in its own
+definition and a docstring mention (`fpe.py`). The ONLY live export reused by the
+engine-v2 path is `_detect_format` (imported by `_date_shift.py`,
+`bucket_perturb.py`, and referenced by out-of-core `_mask_group_c.py`). So ~150
+LOC of that module is dead legacy code. Surfaced by the date_shift mutation grade
+(a focused selection produced 121 survivors, ~90 of them inside the dead V1
+class). Implication for the TQ sweep: grade only the live `_detect_format`; do NOT
+author tests for the dead class (that would lock in code slated for removal).
+Flag for a decision: delete the V1 `DateShiftStrategy` class + its dead helpers
+(a source change, out of this tests-only sweep), or confirm a caller I have not
+found. Until then, the module's mutation grade is scoped to `_detect_format`.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
