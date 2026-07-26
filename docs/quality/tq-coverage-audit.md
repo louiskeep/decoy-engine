@@ -143,6 +143,24 @@ a different mutation tool. Flagged for Cam.
 | `transforms/date_shift` (live `_detect_format` only) | 18 / 11 | 100% live (7 equiv); V1 class dead (finding #11) | `tq/crown-jewels` |
 | `transforms/_codeset_config_checks` | 91 / 69 | 100% (22 equiv) | `tq/crown-jewels` |
 | `transforms/_codeset_index` | 54 / 54 | 100% (0 equiv, clean) | `tq/crown-jewels` |
+| `transforms/_codeset_provenance` | deferred | un-gradeable in-process (codeset_etl-covered, finding #12) | -- |
+| `transforms/_codeset_loader` | deferred | un-gradeable in-process (codeset_etl-covered, finding #12) | -- |
+
+**FOCUSED-SELECTION SWEEP COMPLETE (2026-07-26).** Every module gradeable via the
+proven in-process focused-selection harness has been graded to logic-100% and
+dennis-gated: the 8 crown jewels (crypto + RI/FK + DP), the per-column strategy
+tier, and the transforms tier. The REMAINDER all need a DIFFERENT approach and is
+flagged for Cam:
+- **codeset_etl-package modules** (`_codeset_provenance`, `_codeset_loader`):
+  covered only by `tests/unit/codeset_etl/*`, which import the separate
+  `codeset_etl` package mutmut does not copy into `mutants/` (finding #12). Grade
+  with `codeset_etl` on the path.
+- **execution substrates** (`_planner`-class, Batch A): mutmut in-process runner
+  misreports survivors as timeout on the heavy pandas/pyarrow suites (finding #8);
+  needs a runner that shells out to standalone pytest per mutant.
+- **`plan/` modules**: multi-test-file covered; need a broad selection.
+- **env-gated** (`geo_generalize` H3 extra; `quality/dp` OpenDP mechanism cert
+  profile): grade on the CI cert-gate.
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
 `_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,

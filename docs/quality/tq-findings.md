@@ -150,6 +150,24 @@ Flag for a decision: delete the V1 `DateShiftStrategy` class + its dead helpers
 (a source change, out of this tests-only sweep), or confirm a caller I have not
 found. Until then, the module's mutation grade is scoped to `_detect_format`.
 
+### 12. `codeset_etl`-package-covered modules are un-gradeable via the in-process mutmut harness (harness limitation)
+`transforms/_codeset_provenance.py`, `transforms/_codeset_loader.py`. These
+modules' mutable logic is exercised by `tests/unit/codeset_etl/*` -- but those
+tests `import codeset_etl`, a SEPARATE top-level package that mutmut does NOT copy
+into the `mutants/` tree (mutmut only copies `source_paths = src/decoy_engine`).
+So under the in-process harness those tests fail to import (`ModuleNotFoundError:
+codeset_etl`) and must be dropped from the selection; with only the
+`decoy_engine` code_set tests, mutmut reports "could not find any test for any
+mutant" (the `code_set` transform suite touches only the provenance dataclasses'
+construction + the `RESERVED_LICENSED_NAMES` constant, not the provenance/loader
+logic). `_codeset_config_checks` and `_codeset_index` WERE gradeable (they are on
+the `code_set` masking path that test_code_set.py drives); provenance/loader are
+on the ETL WRITE path that only codeset_etl covers. Defer both to a grading run
+that makes `codeset_etl` importable (add it to `source_paths` or run mutmut with
+the package on the path), or grade via the codeset_etl suite directly. Not falsely
+scored -- flagged as un-gradeable-in-process, same class as findings #8 (substrate
+timeout) and the broad-selection tier.
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
