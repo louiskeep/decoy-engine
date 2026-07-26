@@ -11,12 +11,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import ExecutionError, ExecutionResult, PandasExecutionAdapter
+from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine.execution._runner import WorkNode
+from decoy_engine.execution._strategies._composite import CompositeHandler
 from decoy_engine.generation.composite import load_locality_table
-from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+from decoy_engine.generation.pool._cache import PoolCache
+from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceBinding, NamespaceRegistry
@@ -26,7 +31,11 @@ _GRAPH = RelationshipGraph(edges=(), ordering=())
 _SEED = (0xABCDEF).to_bytes(8, "big")
 
 
-def _col(provider: str, coherent_with: tuple[str, ...]) -> ColumnSeed:
+def _col(
+    provider: str,
+    coherent_with: tuple[str, ...],
+    provider_config: tuple[tuple[str, Any], ...] = (),
+) -> ColumnSeed:
     return ColumnSeed(
         namespace=None,
         strategy="<composite>",
@@ -35,9 +44,16 @@ def _col(provider: str, coherent_with: tuple[str, ...]) -> ColumnSeed:
         backend_version="v",
         cardinality_mode="reuse",
         deterministic=True,
-        provider_config=(),
+        provider_config=provider_config,
         coherent_with=coherent_with,
     )
+
+
+def _group_per_column(
+    provider: str, cols: tuple[str, ...], pc: tuple[tuple[str, Any], ...] = ()
+) -> tuple[tuple[str, ColumnSeed], ...]:
+    """A per_column tuple binding every column in `cols` to one composite provider."""
+    return tuple((c, _col(provider, tuple(x for x in cols if x != c), pc)) for c in cols)
 
 
 def _ns_registry(table: str, columns: tuple[str, ...], namespace: str) -> NamespaceRegistry:
@@ -122,3 +138,211 @@ class TestCompositeOutputColumnMissing:
         with pytest.raises(ExecutionError) as exc:
             _run(plan, src, ns)
         assert exc.value.code == "composite_output_column_missing"
+
+
+def _ctx(ns_registry: NamespaceRegistry) -> StrategyContext:
+    return StrategyContext(
+        registry=_REG,
+        pool_cache=PoolCache(),
+        relationship_graph=_GRAPH,
+        namespace_registry=ns_registry,
+        job_seed=_SEED,
+    )
+
+
+class TestCompositeGuardCodes:
+    """Machine-readable error codes for the handler's fail-closed guards."""
+
+    def test_unresolved_namespace_code(self) -> None:
+        # No namespace binding for the group: the handler must fail closed rather
+        # than derive off a missing namespace.
+        cols = ("a", "b")
+        node = WorkNode(
+            table="t",
+            columns=cols,
+            kind="composite",
+            strategy="<composite>",
+            provider="composite_name_email",
+            plan_slice=_col("composite_name_email", ("b",)),
+        )
+        with pytest.raises(ExecutionError) as exc:
+            CompositeHandler().run(
+                pd.DataFrame({"a": ["x"], "b": ["y"]}), node, _ctx(NamespaceRegistry(bindings=()))
+            )
+        assert exc.value.code == "composite_namespace_unresolved"
+
+    def test_non_columnseed_plan_slice_code(self) -> None:
+        # A composite node must carry a ColumnSeed slice; a GroupSeed is rejected.
+        cols = ("a", "b")
+        node = WorkNode(
+            table="t",
+            columns=cols,
+            kind="composite",
+            strategy="<composite>",
+            provider="composite_name_email",
+            plan_slice=GroupSeed(namespace="ns", coherent_columns=cols),
+        )
+        with pytest.raises(ExecutionError) as exc:
+            CompositeHandler().run(
+                pd.DataFrame({"a": ["x"], "b": ["y"]}), node, _ctx(_ns_registry("t", cols, "ns"))
+            )
+        assert exc.value.code == "unsupported_strategy"
+
+    def test_unknown_provider_code(self) -> None:
+        # A provider name the handler does not route is a wiring error.
+        cols = ("a", "b")
+        node = WorkNode(
+            table="t",
+            columns=cols,
+            kind="composite",
+            strategy="<composite>",
+            provider="composite_bogus",
+            plan_slice=_col("composite_bogus", ("b",)),
+        )
+        with pytest.raises(ExecutionError) as exc:
+            CompositeHandler().run(
+                pd.DataFrame({"a": ["x"], "b": ["y"]}), node, _ctx(_ns_registry("t", cols, "ns"))
+            )
+        assert exc.value.code == "unsupported_strategy"
+
+    def test_custom_bundle_not_list_code(self) -> None:
+        # composite_custom's bundle declaration must be a list; a scalar is rejected.
+        cols = ("a", "b")
+        node = WorkNode(
+            table="t",
+            columns=cols,
+            kind="composite",
+            strategy="<composite>",
+            provider="composite_custom",
+            plan_slice=_col("composite_custom", ("b",), (("bundle", "notalist"),)),
+        )
+        with pytest.raises(ExecutionError) as exc:
+            CompositeHandler().run(
+                pd.DataFrame({"a": ["x"], "b": ["y"]}), node, _ctx(_ns_registry("t", cols, "ns"))
+            )
+        assert exc.value.code == "composite_custom_bundle_shape"
+
+
+class TestCompositePersonRouting:
+    def test_person_email_coherent_and_dob_present(self) -> None:
+        # composite_person routing: the email local-part echoes the masked name,
+        # which no other composite would produce for this column set.
+        cols = ("dob", "email", "first_name", "last_name")
+        per_column = _group_per_column("composite_person", cols)
+        plan = _plan("people", per_column)
+        ns = _ns_registry("people", cols, "p_ns")
+        src = pa.table(
+            {
+                "dob": ["1", "2"],
+                "email": ["a@b.com", "c@d.com"],
+                "first_name": ["X", "Y"],
+                "last_name": ["P", "Q"],
+            }
+        )
+        out = _run(plan, src, ns).output.to_pydict()
+        for i in range(2):
+            first = str(out["first_name"][i]).lower()
+            last = str(out["last_name"][i]).lower()
+            assert str(out["email"][i]).startswith(f"{first}.{last}@")
+            assert out["dob"][i] is not None
+
+
+class TestCompositeAddressRouting:
+    def test_city_state_zip_triple_in_locality(self) -> None:
+        # composite_address routing: the (city, state, zip) it writes is a real
+        # locality triple and it also fills street_address.
+        table_set = set(load_locality_table())
+        cols = ("city", "state", "street_address", "zip")
+        per_column = _group_per_column("composite_address", cols)
+        plan = _plan("locations", per_column)
+        ns = _ns_registry("locations", cols, "a_ns")
+        src = pa.table(
+            {
+                "city": ["Old", "Town"],
+                "state": ["AA", "BB"],
+                "street_address": ["1 A", "2 B"],
+                "zip": ["00000", "11111"],
+            }
+        )
+        out = _run(plan, src, ns).output.to_pydict()
+        triples = list(zip(out["city"], out["state"], out["zip"], strict=True))
+        assert all(t in table_set for t in triples)
+        assert all(street for street in out["street_address"])
+
+
+class TestCompositeProviderRouting:
+    def test_provider_bundle_written_and_reproducible(self) -> None:
+        # composite_provider routing: all three declared columns get non-empty,
+        # run-stable values (a mis-route would raise output_column_missing).
+        cols = ("npi", "practice_address", "provider_name")
+        per_column = _group_per_column("composite_provider", cols)
+        plan = _plan("providers", per_column)
+        ns = _ns_registry("providers", cols, "pr_ns")
+        src = pa.table(
+            {"npi": ["1", "2"], "practice_address": ["a", "b"], "provider_name": ["c", "d"]}
+        )
+        out1 = _run(plan, src, ns).output.to_pydict()
+        out2 = _run(plan, src, ns).output.to_pydict()
+        assert out1 == out2
+        assert all(out1["npi"])
+        assert all(out1["provider_name"])
+        assert all(out1["practice_address"])
+
+
+class TestCompositeCustomRouting:
+    def test_custom_bundle_produces_declared_columns(self) -> None:
+        # composite_custom routing: the declared slot columns are written from the
+        # bundle's per-slot providers, run-stable.
+        bundle = [
+            {"column": "a", "provider": "person_first_name"},
+            {"column": "b", "provider": "person_last_name"},
+        ]
+        cols = ("a", "b")
+        pc = (("bundle", bundle),)
+        per_column = _group_per_column("composite_custom", cols, pc)
+        plan = _plan("t", per_column)
+        ns = _ns_registry("t", cols, "c_ns")
+        src = pa.table({"a": ["x", "y"], "b": ["p", "q"]})
+        out1 = _run(plan, src, ns).output.to_pydict()
+        out2 = _run(plan, src, ns).output.to_pydict()
+        assert out1 == out2
+        assert all(out1["a"])
+        assert all(out1["b"])
+
+
+class TestCompositeSourceKeying:
+    def test_output_depends_on_first_sorted_column(self) -> None:
+        # Deterministic mode keys the bundle on the first sorted column (email);
+        # holding the other columns fixed and varying only email must change the
+        # output, which pins both the source-column index and the deterministic
+        # (source-keyed, not pooled) path.
+        plan, ns = _name_email_setup()
+        base = {"first_name": ["Fa", "Fb"], "last_name": ["La", "Lb"]}
+        src_a = pa.table({**base, "email": ["a@b.com", "c@d.com"]})
+        src_b = pa.table({**base, "email": ["e@f.com", "g@h.com"]})
+        out_a = _run(plan, src_a, ns).output.to_pydict()
+        out_b = _run(plan, src_b, ns).output.to_pydict()
+        assert out_a != out_b
+
+
+class TestCompositeProviderConfigFlow:
+    def test_email_format_from_provider_config(self) -> None:
+        # provider_config flows into the generator via ProviderSpec.extra; an
+        # email_format override changes the join character between first and last.
+        cols = ("email", "first_name", "last_name")
+        pc = (("email_format", "{first}_{last}@{domain}"),)
+        per_column = (
+            ("first_name", _col("composite_name_email", ("last_name", "email"), pc)),
+            ("last_name", _col("composite_name_email", ("first_name", "email"), pc)),
+            ("email", _col("composite_name_email", ("first_name", "last_name"), pc)),
+        )
+        plan = _plan("people", per_column)
+        ns = _ns_registry("people", cols, "ne_ns")
+        src = pa.table(
+            {"first_name": ["X", "Y"], "last_name": ["P", "Q"], "email": ["a@b.com", "c@d.com"]}
+        )
+        out = _run(plan, src, ns).output.to_pydict()
+        for i in range(2):
+            first = str(out["first_name"][i]).lower()
+            last = str(out["last_name"][i]).lower()
+            assert str(out["email"][i]).startswith(f"{first}_{last}@")
