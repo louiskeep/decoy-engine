@@ -131,7 +131,7 @@ a different mutation tool. Flagged for Cam.
 | `execution/_strategies/_hash` | 34 / 31 | 100% (3 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_bucketize` | 132 / 117 | 100% (15 equiv) | `tq/crown-jewels` |
 | `execution/_strategies/_redact` | 29 / 26 | 100% (3 equiv) | `tq/crown-jewels` |
-| `execution/_strategies/_composite` | 122 / 98 | 100% (24 equiv) | `tq/crown-jewels` |
+| `execution/_strategies/_composite` | 122 / 108 | 100% (14 equiv) | `tq/crown-jewels` |
 
 Remaining strategy modules with clean-ish focused tests (next up): `_bucketize`,
 `_composite`, `_nested`, `_categorical`, `_shuffle`, `_truncate`, `_text_mask`,

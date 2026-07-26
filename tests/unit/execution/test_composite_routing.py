@@ -310,6 +310,137 @@ class TestCompositeCustomRouting:
         assert all(out1["b"])
 
 
+class _StubAdapter:
+    """A BackendAdapter that generates one constant sentinel, reusing the real
+    capability matrix so the pool path accepts it as a drop-in sub-provider."""
+
+    backend_type = "test_stub"
+    backend_version = "stub-1"
+
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def generate(self, provider: str, *, spec: Any, source_value: Any = None) -> str:
+        return self._value
+
+    def generate_batch(self, provider: str, *, spec: Any, count: int) -> list[str]:
+        return [self._value] * count
+
+    def capability_matrix(self, provider: str) -> Any:
+        return get_default_registry().get_capabilities(provider)
+
+
+def _ctx_with(registry: Any, ns_registry: NamespaceRegistry) -> StrategyContext:
+    return StrategyContext(
+        registry=registry,
+        pool_cache=PoolCache(),
+        relationship_graph=_GRAPH,
+        namespace_registry=ns_registry,
+        job_seed=_SEED,
+    )
+
+
+class TestCompositeHonorsCustomRegistry:
+    """Each route consumes `ctx.registry` (a public per-pipeline knob via
+    `run_pipeline(registry=...)` -> ProviderRegistry.override). Overriding a
+    sub-provider with a sentinel adapter must surface in the composite output;
+    a `registry=None` regression at a factory call site would silently fall
+    back to the default registry and ignore the override."""
+
+    @pytest.mark.parametrize(
+        ("provider", "cols", "src_cols", "sub_provider", "out_col", "pc"),
+        [
+            (
+                "composite_name_email",
+                ("email", "first_name", "last_name"),
+                {
+                    "first_name": ["X", "Y"],
+                    "last_name": ["P", "Q"],
+                    "email": ["a@b.com", "c@d.com"],
+                },
+                "person_first_name",
+                "first_name",
+                (),
+            ),
+            (
+                "composite_person",
+                ("dob", "email", "first_name", "last_name"),
+                {
+                    "dob": ["1", "2"],
+                    "email": ["a@b.com", "c@d.com"],
+                    "first_name": ["X", "Y"],
+                    "last_name": ["P", "Q"],
+                },
+                "person_first_name",
+                "first_name",
+                (),
+            ),
+            (
+                "composite_address",
+                ("city", "state", "street_address", "zip"),
+                {
+                    "city": ["Old", "Town"],
+                    "state": ["AA", "BB"],
+                    "street_address": ["1 A", "2 B"],
+                    "zip": ["00000", "11111"],
+                },
+                "address_street",
+                "street_address",
+                (),
+            ),
+            (
+                "composite_provider",
+                ("npi", "practice_address", "provider_name"),
+                {"npi": ["1", "2"], "practice_address": ["a", "b"], "provider_name": ["c", "d"]},
+                "person_name",
+                "provider_name",
+                (),
+            ),
+            (
+                "composite_custom",
+                ("a", "b"),
+                {"a": ["x", "y"], "b": ["p", "q"]},
+                "person_first_name",
+                "a",
+                (
+                    (
+                        "bundle",
+                        [
+                            {"column": "a", "provider": "person_first_name"},
+                            {"column": "b", "provider": "person_last_name"},
+                        ],
+                    ),
+                ),
+            ),
+        ],
+    )
+    def test_route_output_reflects_registry_override(
+        self,
+        provider: str,
+        cols: tuple[str, ...],
+        src_cols: dict[str, list[str]],
+        sub_provider: str,
+        out_col: str,
+        pc: tuple[tuple[str, Any], ...],
+    ) -> None:
+        node = WorkNode(
+            table="t",
+            columns=cols,
+            kind="composite",
+            strategy="<composite>",
+            provider=provider,
+            plan_slice=_col(provider, tuple(c for c in cols if c != out_col), pc),
+        )
+        ns = _ns_registry("t", cols, "reg_ns")
+        stub = _StubAdapter("ZZZ")
+        registry = get_default_registry().override(
+            sub_provider, stub, stub.capability_matrix(sub_provider)
+        )
+        df = pd.DataFrame(src_cols)
+        out, _ = CompositeHandler().run(df, node, _ctx_with(registry, ns))
+        assert out[out_col].tolist() == ["ZZZ"] * len(df)
+
+
 class TestCompositeSourceKeying:
     def test_output_depends_on_first_sorted_column(self) -> None:
         # Deterministic mode keys the bundle on the first sorted column (email);
