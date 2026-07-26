@@ -20,7 +20,7 @@ import pytest
 
 import decoy_engine.checksums as checksums
 from decoy_engine.errors import FpeChecksumError
-from decoy_engine.transforms.fpe import fpe_encrypt_value
+from decoy_engine.transforms.fpe import fpe_decrypt_value, fpe_encrypt_value
 
 _KEY = bytes(range(32))
 _TWEAK = b"test_col"
@@ -104,6 +104,16 @@ class TestFpeVin:
         a = fpe_encrypt_value(self._VIN, _KEY, _VIN_ALPHA, _TWEAK, checksum="vin")
         b = fpe_encrypt_value(self._VIN, _KEY, _VIN_ALPHA, _TWEAK, checksum="vin")
         assert a == b
+
+    def test_fpe_vin_narrow_charset_falls_back_to_digits(self) -> None:
+        # When the caller's charset filters to fewer than two VIN-alphabet
+        # characters the body permutation falls back to the digit subset so it
+        # can still proceed. A degenerate all-'0' value with a single-char
+        # charset exercises that fallback; a null fallback charset would break
+        # the permutation instead of producing a valid VIN.
+        out = fpe_encrypt_value("0" * 17, _KEY, "0", _TWEAK, checksum="vin")
+        assert len(out) == 17
+        assert checksums.validate("vin", out)
 
 
 # ---------------------------------------------------------------------------
@@ -451,3 +461,135 @@ class TestFpeChecksumCharsetIncompatible:
         from decoy_engine.plan._checks import check_fpe_checksum_scheme
 
         check_fpe_checksum_scheme(self._cfg("luhn", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+
+
+# ---------------------------------------------------------------------------
+# Round-trip: decrypt inverts encrypt for a checksum-valid source
+# ---------------------------------------------------------------------------
+
+
+class TestFpeChecksumRoundTrip:
+    """A checksum-valid source must survive encrypt then decrypt byte-exactly.
+
+    Validity alone (output passes the scheme validator) is weaker than the real
+    contract: the check digit is recomputed from whatever body the permutation
+    produced, so a body permuted in the WRONG direction still validates. Only
+    the round-trip pins direction -- if the forward flag stops reaching
+    ``_permute`` (both directions collapse to one), decrypt no longer inverts
+    encrypt and the source is not recovered. It also catches a corrupted
+    permutation alphabet, which validates by construction but is not invertible.
+    """
+
+    def test_luhn_roundtrip(self) -> None:
+        src = "4532015112830366"
+        enc = fpe_encrypt_value(src, _KEY, _DIGITS, _TWEAK, checksum="luhn")
+        assert fpe_decrypt_value(enc, _KEY, _DIGITS, _TWEAK, checksum="luhn") == src
+
+    def test_ean13_roundtrip(self) -> None:
+        src = "4006381333931"
+        enc = fpe_encrypt_value(src, _KEY, _DIGITS, _TWEAK, checksum="ean13")
+        assert fpe_decrypt_value(enc, _KEY, _DIGITS, _TWEAK, checksum="ean13") == src
+
+    def test_gtin_roundtrip(self) -> None:
+        src = "98412345678908"
+        enc = fpe_encrypt_value(src, _KEY, _DIGITS, _TWEAK, checksum="gtin")
+        assert fpe_decrypt_value(enc, _KEY, _DIGITS, _TWEAK, checksum="gtin") == src
+
+    def test_npi_roundtrip(self) -> None:
+        src = "1234567893"
+        enc = fpe_encrypt_value(src, _KEY, _DIGITS, _TWEAK, checksum="npi")
+        assert fpe_decrypt_value(enc, _KEY, _DIGITS, _TWEAK, checksum="npi") == src
+
+    def test_isbn13_roundtrip(self) -> None:
+        src = "9783161484100"
+        enc = fpe_encrypt_value(src, _KEY, _DIGITS, _TWEAK, checksum="isbn13")
+        assert fpe_decrypt_value(enc, _KEY, _DIGITS, _TWEAK, checksum="isbn13") == src
+
+    def test_vin_roundtrip(self) -> None:
+        src = "1HGCM82633A004352"
+        enc = fpe_encrypt_value(src, _KEY, _VIN_ALPHA, _TWEAK, checksum="vin")
+        assert fpe_decrypt_value(enc, _KEY, _VIN_ALPHA, _TWEAK, checksum="vin") == src
+
+
+# ---------------------------------------------------------------------------
+# Typed-error machine fields: scheme + code (not message prose)
+# ---------------------------------------------------------------------------
+
+
+class TestFpeChecksumErrorFields:
+    """Every fail-closed raise must carry the machine-routable fields a caller
+    keys on -- the ``scheme`` that failed and the stable ``code`` -- not just a
+    human message. UI/manifest consumers route on these without parsing text.
+    """
+
+    _CODE = "fpe.checksum_unsupported"
+
+    def test_unknown_scheme_error_fields(self) -> None:
+        with pytest.raises(FpeChecksumError) as exc:
+            fpe_encrypt_value("12345", _KEY, _DIGITS, _TWEAK, checksum="bogus")
+        assert exc.value.scheme == "bogus"
+        assert exc.value.code == self._CODE
+
+    def test_iban_error_fields(self) -> None:
+        with pytest.raises(FpeChecksumError) as exc:
+            fpe_encrypt_value(
+                "GB82WEST12345698765432",
+                _KEY,
+                "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                _TWEAK,
+                checksum="iban",
+            )
+        assert exc.value.scheme == "iban"
+        assert exc.value.code == self._CODE
+
+    def test_exact_length_error_fields(self) -> None:
+        # NPI has one exact length (10); a 3-char value violates it.
+        with pytest.raises(FpeChecksumError) as exc:
+            fpe_encrypt_value("123", _KEY, _DIGITS, _TWEAK, checksum="npi")
+        assert exc.value.scheme == "npi"
+        assert exc.value.code == self._CODE
+
+    def test_min_length_error_fields(self) -> None:
+        # Luhn is length-agnostic beyond a floor of 2 (body + check digit);
+        # a single character trips the minimum-length raise.
+        with pytest.raises(FpeChecksumError) as exc:
+            fpe_encrypt_value("5", _KEY, _DIGITS, _TWEAK, checksum="luhn")
+        assert exc.value.scheme == "luhn"
+        assert exc.value.code == self._CODE
+
+
+# ---------------------------------------------------------------------------
+# Length-guard boundaries: exactly which lengths raise vs pass
+# ---------------------------------------------------------------------------
+
+
+class TestFpeChecksumLengthBoundary:
+    """The fail-closed length guard is a boundary, not a one-sided floor.
+
+    A value one below the minimum must raise; a value exactly at the minimum
+    must pass. Widening the comparison (``<`` to ``<=``) would reject the
+    shortest legal value, and dropping the guard entirely would let a
+    below-minimum value slip through to a silent self-permutation.
+    """
+
+    def test_luhn_length_two_passes(self) -> None:
+        # Exactly at the floor (1 body char + 1 check digit): must NOT raise.
+        out = fpe_encrypt_value("18", _KEY, _DIGITS, _TWEAK, checksum="luhn")
+        assert len(out) == 2
+        assert checksums.validate("luhn", out)
+
+    def test_vin_two_char_charset_used_verbatim(self) -> None:
+        """A caller charset yielding exactly two VIN-legal characters is used as
+        the permutation alphabet as-is -- it must not be treated as too small
+        and collapsed to the digit fallback.
+
+        The fallback fires only below two usable characters; at exactly two the
+        two-symbol alphabet drives the permutation, which is observable as a
+        different (still VIN-valid) output than the ten-digit fallback would
+        produce. The output is pinned under the fixed test key/tweak.
+        """
+        # 17-char source whose 16 non-check chars are all within charset "01".
+        src = "00000000011111111"
+        out = fpe_encrypt_value(src, _KEY, "01", _TWEAK, checksum="vin")
+        assert checksums.validate("vin", out)
+        assert out == "11001011X10011010"
