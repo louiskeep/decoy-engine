@@ -107,6 +107,21 @@ harness that grades the strategy/transform tier cleanly. Logged, not worked arou
 `_planner` and siblings are NOT falsely scored. The fast strategy/transform modules
 are unaffected (their surviving runs finish well under the default limit).
 
+### 9. mutmut does not mutate module-level constants -- constant-driven logic needs explicit per-value tests (methodology)
+Surfaced by the `transforms/_fpe_checksum.py` batch-gate (2026-07-26). mutmut only
+generates mutants INSIDE functions; a module-level constant like
+`_EXACT_LENGTHS["gtin"] = frozenset({8, 12, 13, 14})` is copied verbatim into the
+mutants tree and never mutated. So a suite can reach "LOGIC-100%" on mutmut's own
+mutants while leaving a real blind spot: here GTIN was tested only at length 14,
+so nothing pinned that 8/12/13 are legal or that the exact-length guard fires --
+a dropped length would silently reject a valid GTIN with no failing test, and
+mutmut would never flag it. Lesson for the sweep: for any module whose behavior is
+driven by a module-level table/set/dict of constants (length sets, scheme maps,
+threshold tables), add explicit tests that exercise EACH value, independent of the
+mutation score. The mutation score is necessary, not sufficient, for
+constant-driven code. (Remediated for `_fpe_checksum` by covering all four GTIN
+lengths + an illegal-length fail-closed case.)
+
 ## Notes for grading (Phase B)
 - `quality/dp.py` and parts of `quality/dp_provenance.py` have `dp_certified`-gated
   tests that SKIP off the certified 77-dist profile, so mutmut in an uncertified
