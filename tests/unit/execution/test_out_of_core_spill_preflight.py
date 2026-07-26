@@ -38,6 +38,7 @@ Coverage:
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,6 +49,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._fk_keys import fk_join_key
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution.out_of_core import _budget as budget_mod
 from decoy_engine.execution.out_of_core import _spill_estimate as spill_mod
@@ -363,8 +365,8 @@ class TestStarFactEdgeMultiplicity:
         # parent_relations: each dim's id relation, scaled by edge fan-in (3).
         tok = spill_mod._staged_key_token_bytes
         rownr = float(spill_mod.ROW_NR_BYTES)
-        base = (rownr + 3 * tok(8.0)) * rows + 3 * (rownr * rows)
-        parent_relations = 3 * (tok(8.0) * rows)
+        base = (rownr + 3 * tok(8.0, "int64")) * rows + 3 * (rownr * rows)
+        parent_relations = 3 * (tok(8.0, "int64") * rows)
         expected_spill = int((base + parent_relations * 3) * SPILL_OVERHEAD)
         assert pred3.spill_bytes == expected_spill
 
@@ -856,3 +858,84 @@ class TestDefaultTempRoot:
         import tempfile
 
         assert default_ooc_temp_root() == Path(tempfile.gettempdir())
+
+
+class TestFloatFkTokenSizing:
+    """Finding #13: the spill estimator must not under-count a FLOAT FK key's
+    staged join token. The RI fix (2026-07-25) renders a fractional float as its
+    exact decimal expansion and a whole-valued float as a folded int, either of
+    which dwarfs the ~28-byte int-key floor. int/string keys are unaffected."""
+
+    def test_float_key_priced_at_float_bound_not_int_floor(self) -> None:
+        # A float64/float32 key takes the wide float bound, well above the
+        # 28-byte int floor a fixed-width numeric key would otherwise get.
+        for dtype in ("float64", "float32"):
+            got = spill_mod._staged_key_token_bytes(8.0, dtype)
+            assert got == float(spill_mod._FLOAT_FK_TOKEN_MAX_BYTES)
+            assert got > float(spill_mod.MIN_KEY_TOKEN_BYTES)
+
+    def test_float_bound_covers_real_worst_case_tokens(self) -> None:
+        # The estimator's per-key float bound (token text + framing) must not be
+        # below any real staged token fk_join_key mints for a double -- the
+        # no-under-count invariant, and a drift guard on the tokenizer. Covers
+        # the folded-int extremes (near-max magnitude, both signs), a subnormal,
+        # and fractional values (the DEC branch).
+        import math
+
+        extremes = [
+            sys.float_info.max,
+            -sys.float_info.max,
+            5e-324,  # smallest positive subnormal
+            -5e-324,
+            1e308,
+            0.1,
+            math.pi,
+            1e-10,
+            123456789.0,
+        ]
+        bound = spill_mod._staged_key_token_bytes(8.0, "float64")
+        for v in extremes:
+            real_staged = len(fk_join_key(v).encode()) + spill_mod.FK_TOKEN_FRAMING_BYTES
+            assert bound >= real_staged, f"{v!r}: bound {bound} < real {real_staged}"
+
+    def test_non_float_key_sizing_unchanged(self) -> None:
+        # int keys keep the 28-byte floor; string keys keep width + framing.
+        assert spill_mod._staged_key_token_bytes(8.0, "int64") == float(
+            spill_mod.MIN_KEY_TOKEN_BYTES
+        )
+        assert spill_mod._staged_key_token_bytes(8.0, "int32") == float(
+            spill_mod.MIN_KEY_TOKEN_BYTES
+        )
+        assert spill_mod._staged_key_token_bytes(100.0, "object") == 100.0 + float(
+            spill_mod.FK_TOKEN_FRAMING_BYTES
+        )
+
+    def _one_edge_profile(self, dtype: str, rows: int) -> tuple[Profile, RelationshipGraph, dict]:
+        parent = TableProfile(
+            name="p",
+            row_count=rows,
+            columns=(_col("id", dtype, rows=rows),),
+        )
+        child = TableProfile(
+            name="c",
+            row_count=rows,
+            columns=(_col("pid", dtype, rows=rows, is_fk=True, fk_target=("p", "id")),),
+        )
+        graph = RelationshipGraph(edges=(_edge("p", "id", "c", "pid"),), ordering=())
+        return _profile((parent, child)), graph, _all_mask("p", "c")
+
+    def test_float_fk_spill_exceeds_equal_width_int_fk(self) -> None:
+        # End-to-end on the public API: a float64 FK key (same 8-byte source
+        # width as int64) must predict a strictly LARGER spill footprint,
+        # because its staged token is wider. Before finding #13's fix both
+        # priced at the 28-byte floor and these were EQUAL.
+        rows = 5_000_000
+        fp_f, g_f, kinds = self._one_edge_profile("float64", rows)
+        fp_i, g_i, _ = self._one_edge_profile("int64", rows)
+        float_pred = predict_ooc_disk_bytes(
+            fp_f, graph=g_f, table_kinds=kinds, config={}, include_output=False
+        )
+        int_pred = predict_ooc_disk_bytes(
+            fp_i, graph=g_i, table_kinds=kinds, config={}, include_output=False
+        )
+        assert float_pred.spill_bytes > int_pred.spill_bytes

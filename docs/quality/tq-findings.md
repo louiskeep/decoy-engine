@@ -168,7 +168,23 @@ the package on the path), or grade via the codeset_etl suite directly. Not false
 scored -- flagged as un-gradeable-in-process, same class as findings #8 (substrate
 timeout) and the broad-selection tier.
 
-### 13. Spill estimator under-counts the exact-decimal float FK token (Codex P2, 2026-07-26)
+### 13. Spill estimator under-counts the exact-decimal float FK token (Codex P2, 2026-07-26) -- RESOLVED
+**Resolution (branch `tq/fix-13-spill-float-fk-token`):** `_staged_key_token_bytes`
+is now float-dtype-aware. A `float64`/`float32` FK key column takes a dedicated
+`_FLOAT_FK_TOKEN_MAX_BYTES` bound instead of the 28-byte int floor. The bound is
+derived from `sys.float_info.max` (not a magic literal): a whole-valued float folds
+to int and renders as `\x00INT:<up to 309 digits>` (~314 bytes), which dominates the
+fractional `\x00DEC:` case (~222, prec-clamped). A drift-guard test builds real tokens
+via `fk_join_key` over extreme doubles (near-max both signs, subnormal, fractional)
+and asserts the bound covers each; an end-to-end test proves a float FK key now
+predicts a strictly larger spill than an equal-width int key (fail-before: they were
+equal). int/string key sizing is unchanged. Confined to `_spill_estimate.py` (no
+`_fk_keys` behavior change -> no RI-path risk). Also folded in dennis LOW-1: a
+one-sentence note to the `_fk_keys` injectivity comment that decimal256's 76-digit
+ceiling closes the float-vs-Decimal cross-type collision direction.
+
+Original report:
+
 `execution/out_of_core/_spill_estimate.py`. Finding #1's RI fix changed a float FK
 join token from `\x00FLOAT:{repr}` to `\x00DEC:{decimal_join_token(Decimal(float))}`,
 whose exact-decimal expansion is much wider (Codex measured `0.1` -> ~76-byte tuple

@@ -141,7 +141,10 @@ def fk_key_value(value: object) -> object:
 # ~17 significant decimal digits, far inside 200, so their rounded tokens stay
 # distinct; and an equal float/Decimal pair has a short exact expansion that
 # never rounds. So a float can round here without ever colliding with a
-# different key -- rounding only trims digits both members already share.
+# different key -- rounding only trims digits both members already share. The
+# cross-type direction is closed too: a rounded subnormal-float token carries
+# ~200 significant digits, while Arrow's decimal256 caps a Decimal key at 76,
+# so a rounded float and a crafted Decimal cannot match on digit count alone.
 _DECIMAL_JOIN_CONTEXT: Final = decimal.Context(prec=200)
 
 
