@@ -51,6 +51,16 @@ and `_parse_date` / `_shift_for_value_md5` / `_shift_for_value_keyed`. Not grade
 the V1 class is superseded by the engine-v2 handler and not instantiated anywhere.
 Flagged for removal (tq-findings #11), not for test authoring.
 
+## Gate
+
+Dennis batch gate: **PASS**, 0 blocker / 0 high / 0 medium. The dead-code claim
+was INDEPENDENTLY CONFIRMED across all of `src/`: no `DateShiftStrategy(`
+instantiation, no live caller of `_parse_date`/`_shift_for_value_md5`/
+`_shift_for_value_keyed`, and the `_parse_date` in `expressions/_lark_parser.py`
+is a distinct function. Active date_shift = `DateShiftStrategyHandler` (V2). The 11
+`_detect_format` kills and 7 equivalents all verified (the `match="multiple
+formats"` 28-killed / 27-30-31-survived split confirmed correct).
+
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `transforms/date_shift.py`, selection to

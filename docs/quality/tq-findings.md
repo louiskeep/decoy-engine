@@ -143,8 +143,8 @@ definition and a docstring mention (`fpe.py`). The ONLY live export reused by th
 engine-v2 path is `_detect_format` (imported by `_date_shift.py`,
 `bucket_perturb.py`, and referenced by out-of-core `_mask_group_c.py`). So ~150
 LOC of that module is dead legacy code. Surfaced by the date_shift mutation grade
-(a focused selection produced 121 survivors, ~90 of them inside the dead V1
-class). Implication for the TQ sweep: grade only the live `_detect_format`; do NOT
+(the focused-selection grade produced 110 survivors + 38 no-tests; 141 of
+those are inside the dead V1 class/helpers, only 7 in the live `_detect_format`). Implication for the TQ sweep: grade only the live `_detect_format`; do NOT
 author tests for the dead class (that would lock in code slated for removal).
 Flag for a decision: delete the V1 `DateShiftStrategy` class + its dead helpers
 (a source change, out of this tests-only sweep), or confirm a caller I have not
