@@ -226,7 +226,18 @@ prose. Flag for a decision: confirm the branch is genuinely dead and remove it (
 source change, out of this tests-only sweep), or identify a reachable path the sweep
 did not construct. Same class as finding #11 (date_shift dead V1 class). Not a
 product bug (the guard is conservative); a dead-code cleanup / reachability
-confirmation.
+confirmation. dennis (2026-07-27 gate) INDEPENDENTLY PROVED the unreachability:
+two constructed reachability wedges (a sourceless mask parent; a generate-table
+FK parent) both get gated by `out_of_core_admission` -> `parent_seed_missing`
+first, and the structural invariant `plan.seed_envelope.per_table` is built
+strictly from `profile.tables` (`plan/_seed_envelope.py:79`, which profiles only
+`config['sources']`), so the raise-guard condition (graph parent absent from
+`profile.tables`) is identical to the admission-reject condition -- the branch is
+dead by construction, not just untested. Related (dennis LOW, pre-existing, NOT a
+reachability path): `config/_pipeline.py` docstring says mask tables need named
+`sources` entries, but the validator only enforces `sources` non-empty, so a
+sourceless mask parent validates (then admission-gates). A separate doc-fix
+candidate.
 
 
 ### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked) -- RESOLVED (2026-07-27)
