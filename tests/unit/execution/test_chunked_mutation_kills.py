@@ -26,6 +26,7 @@ import pyarrow as pa
 import pytest
 
 import decoy_engine.generation.pool as poolmod
+import decoy_engine.release as release
 from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import run_pipeline
@@ -38,9 +39,11 @@ from decoy_engine.execution._chunked import (
 )
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.generation.pool import PoolCache
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
+from decoy_engine.keyprovider import KeyedStrategyRequiresSecret
 from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
@@ -571,6 +574,57 @@ class TestWarmFakerPools:
         _warm_faker_pools(plan, table="accounts", registry=registry, pool_cache=cache)
         assert build_calls == []
 
+    # A faker column whose provider_config carries a key BEYOND pool_size/locale
+    # (`domain`, a valid Faker email kwarg): build_config is NON-empty, so the
+    # pool identity depends on it. The empty-build_config _FAKER_COL cannot expose
+    # the identity_for config argument (config=None and config={} hash the same).
+    _FAKER_COL_NONEMPTY_BUILD_CONFIG = {
+        "name": "c",
+        "strategy": "faker",
+        "provider": "person_email",
+        "deterministic": True,
+        "namespace": "n",
+        "cardinality_mode": "reuse",
+        "provider_config": {"pool_size": 8, "locale": "en_US", "domain": "example.org"},
+    }
+
+    def test_warm_dedup_identity_includes_full_build_config(self, tmp_path, monkeypatch) -> None:
+        """With a NON-empty build_config, the pre-warm dedup identity must be
+        computed from the full build_config so an already-cached pool is found and
+        not rebuilt. Kills the `identity_for(config=None)` and dropped-config
+        mutations: they hash an empty config, so the dedup lookup misses the
+        canonical pool and rebuilds it. (The empty-build_config warmer tests
+        cannot catch this -- config None and {} produce the same config hash.)"""
+        plan, tbl, registry, ns_registry = self._plan_and_env(
+            tmp_path,
+            [self._FAKER_COL_NONEMPTY_BUILD_CONFIG],
+            {"c": [f"p{i}@x.com" for i in range(12)]},
+        )
+        cache = PoolCache()
+        # Populate the cache via a real adapter run (handler builds under the
+        # canonical identity, which includes the `domain` build_config).
+        adapter = PandasExecutionAdapter()
+        adapter.run(
+            plan,
+            {"accounts": tbl},
+            registry=registry,
+            pool_cache=cache,
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=ns_registry,
+        )
+        assert cache.stats().entries == 1
+
+        build_calls: list[int] = []
+        original_build = poolmod.PoolBuilder.build
+
+        def counting_build(self, *args, **kwargs):
+            build_calls.append(1)
+            return original_build(self, *args, **kwargs)
+
+        monkeypatch.setattr(poolmod.PoolBuilder, "build", counting_build)
+        _warm_faker_pools(plan, table="accounts", registry=registry, pool_cache=cache)
+        assert build_calls == []
+
 
 # ==========================================================================
 # run_mask_pipeline_chunked -- the mask-secret gate must be resolved and
@@ -669,3 +723,139 @@ class TestRunMaskKeyedGate:
             "accounts"
         ]
         assert keyed_out.to_pylist() != seeded_out.to_pylist()
+
+
+# ==========================================================================
+# run_mask_pipeline_chunked -- the per-chunk setup args (empty/first-chunk
+# profile, the projection policy, and the FK-passthrough reject) must be
+# threaded to the adapter.run() call and the guard with the right values.
+# ==========================================================================
+
+
+def _passthrough_fk_config() -> dict:
+    """Minimal customers(id) -> orders(customer_id) passthrough-FK, REMAP orphan
+    policy -- the shape MEDIUM #4 admits onto the chunked route (mirrors
+    test_de10_chunked_fk_passthrough._passthrough_fk_config)."""
+    return {
+        "global_settings": {"seed": 7},
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [{"name": "id", "strategy": "passthrough", "dtype": "int64"}],
+            },
+            {
+                "name": "orders",
+                "columns": [{"name": "customer_id", "strategy": "passthrough", "dtype": "int64"}],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "customers", "columns": ["id"]},
+                "children": [{"table": "orders", "columns": ["customer_id"]}],
+                "orphan_policy": "remap",
+            }
+        ],
+    }
+
+
+class TestRunMaskChunkedCallSites:
+    def test_lossy_passthrough_reject_names_the_table(self) -> None:
+        """A lossy (null-bearing, > 2**53) passthrough FK column fails closed with
+        the offending TABLE named in the message. Kills
+        reject_lossy_chunked_fk_passthrough(table=None) (the message would read
+        'Column None.customer_id ...'); the declared-dtype twin already asserts the
+        table name, so this closes the same gap for the passthrough guard."""
+        config = _passthrough_fk_config()
+        chunk = pa.table({"customer_id": pa.array([1, None, 9007199254740993], type=pa.int64())})
+        with pytest.raises(ExecutionError) as exc:
+            list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_EV))
+        assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+        assert "orders" in exc.value.message
+
+    def test_polars_nonnative_table_still_applies_fk_passthrough_guard(self) -> None:
+        """On a POLARS adapter whose table carries a non-native strategy
+        (`top_code`), the chunk falls back to the pandas oracle's unprotected
+        ingestion, so the lossy-passthrough FK guard MUST still fire. Kills
+        `chunked_adapter_touches_pandas_ingestion(adapter, config, None)` (mut_88):
+        with `table=None` the polars native-check matches no table, sees an empty
+        strategy set, wrongly reports the adapter never touches pandas, and the
+        guard is skipped -- the null-bearing big-int passthrough FK then rounds
+        silently instead of failing closed. `table` is load-bearing only on this
+        polars branch (the pandas adapter returns True before reading it), which is
+        why the pandas-route reject tests above cannot reach this mutant."""
+        pytest.importorskip("polars")
+        from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
+
+        config = _passthrough_fk_config()
+        # A non-native (top_code) column on `orders` forces the polars adapter to
+        # the pandas oracle for this table, so the pandas-ingestion guard applies.
+        config["tables"][1]["columns"].append(
+            {"name": "age", "strategy": "top_code", "provider_config": {"preset": "hipaa_age"}}
+        )
+        chunk = pa.table(
+            {
+                "customer_id": pa.array([1, None, 9007199254740993], type=pa.int64()),
+                "age": pa.array([40, 55, 92], type=pa.int64()),
+            }
+        )
+        with pytest.raises(ExecutionError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    [chunk],
+                    table="orders",
+                    engine_version=_EV,
+                    adapter=PolarsExecutionAdapter(),
+                )
+            )
+        assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+
+    def test_unconfigured_error_policy_threaded_to_each_chunk(self, tmp_path) -> None:
+        """An explicit `error` policy plus a chunk column the config never declares:
+        the resolved projection policy must reach the per-chunk adapter.run so the
+        undeclared column fails closed. Kills projection_policy=None,
+        resolve_unconfigured_column_policy(None), and the adapter.run
+        unconfigured_column_policy nulled/dropped mutations -- each drops the error
+        policy to the pre-GA warn default, so the raw column passes through
+        silently instead of raising."""
+        cfg = _validated(
+            {
+                "version": 1,
+                "global_settings": {"seed": 42, "unconfigured_column_policy": "error"},
+                "sources": {
+                    "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
+                },
+                "tables": [
+                    {
+                        "name": "accounts",
+                        "columns": [{"name": "email", "strategy": "hash", "namespace": "e"}],
+                    }
+                ],
+                "targets": {
+                    "accounts": {
+                        "type": "file",
+                        "format": "csv",
+                        "path": str(tmp_path / "out.csv"),
+                    }
+                },
+            }
+        )
+        chunk = pa.table(
+            {"email": pa.array(["a@x.com", "b@x.com"]), "note": pa.array(["n1", "n2"])}
+        )
+        with pytest.raises(ExecutionError) as exc:
+            list(run_mask_pipeline_chunked(cfg, [chunk], table="accounts", engine_version=_EV))
+        assert exc.value.code == "undeclared_output_columns"
+
+    def test_empty_input_gate_profiles_the_real_table(self, tmp_path, monkeypatch) -> None:
+        """The zero-chunk fail-closed gate must profile the REAL table so a keyed
+        job's keyed strategy stays visible to require_mask_key. Kills
+        empty_input_profile(table=None): a None-named profile table drops the
+        config's keyed column from the seed envelope, so the GA gate no longer sees
+        a keyed surface and silently returns an empty stream instead of demanding a
+        secret. (Pre-GA the gate accepts job_seed, so GA is where the profile's
+        table name is load-bearing.)"""
+        monkeypatch.setattr(release, "RELEASE_PHASE", "ga")
+        cfg = _config(tmp_path, [{"name": "email", "strategy": "hash", "namespace": "e"}])
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            list(run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_EV))
