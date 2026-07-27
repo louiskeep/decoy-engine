@@ -1,4 +1,4 @@
-# Mutation grading: `execution/capacity.py` -- substrate bar 75%
+# Mutation grading: `execution/capacity.py` -- substrate bar 79.94%
 
 TQ substrate sweep (branch `tq/substrate-sweep`), FULL-TRIAGE grade by
 `scripts/tq_mutate.py` with default survived-bucket re-adjudication (finding #16
@@ -10,14 +10,17 @@ out-of-core-FK memory capacity gate (`decoy preflight` / `decoy run`). It derive
 the routing inputs by calling the same engine primitives `run_pipeline` uses,
 asks `decide_execution_route` twice (a row-count-only decision, then a worst-case
 byte-estimate probe), and defers the final FIT/INSUFFICIENT/UNKNOWN/NOT_APPLICABLE
-verdict to the shared `evaluate_capacity`. Not crypto/RI, so the bar is **75% of
-LOGIC mutants**.
+verdict to the shared `evaluate_capacity`. Not crypto/RI, so the bar is the
+measure-first substrate bar max(baseline 64.94 + 15, 75) = **79.94% of LOGIC
+mutants** (the +15 over baseline clears the 75% floor).
 
 ## Numbers
 
-**TRUE score: 285/328 = 86.89% LOGIC (tool-native, 0 unresolved), above the 75%
-bar (measured max(baseline 64.94 + 15, 75) = 79.94%). 43 survivors, ALL proven
-equivalent -- 0 residual.**
+**TRUE score: 285/328 = 86.89% LOGIC (tool-native, 0 unresolved), above the
+measure-first bar max(baseline 64.94 + 15, 75) = 79.94%. 43 survivors, ALL proven
+equivalent -- 0 residual (no message-prose survivors: the one prose mutant, 33, is
+KILLED; the 43 are fall-through defaults, inert guards, and dead-branch
+unreachability).**
 
 Re-grading with the fixed tool (survived re-adjudication) reproduced the prior
 281/328 = 85.67% exactly: capacity had NO false-survived (unlike `_chunked`, its

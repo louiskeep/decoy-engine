@@ -13,9 +13,19 @@ mutants**.
 
 ## Numbers
 
-**Killed 369/417 = 88.49% LOGIC (tool-native, 0 unresolved). 48 survivors: 45
-proven equivalent + 3 precisely-characterized residual (see below).** Above the
-75% bar (measured max(55.40 + 15, 75) = 75%).
+**Killed 369/417 = 88.49% LOGIC (tool-native, 0 unresolved). 48 survivors: 29
+proven equivalent + 16 accepted non-contract survivors (8 timing + 8 message
+prose, see Taxonomy) + 3 precisely-characterized residual (see below).** Above the
+75% bar (measured max(55.40 + 15, 75) = 75%). This module is NOT 0-residual: 3
+mutants (131/137/141) are killable-but-deferred and documented as such.
+
+TAXONOMY (Codex batch gate, honest labeling). Of the 45 non-residual survivors, 16
+are killable but the sweep deliberately does not kill them (accepted non-contract),
+NOT proven equivalent: the 8 timing mutants (102/145/147/149/230/231/232/234 --
+`boundary_conversion_ms` arithmetic, killable via a controlled `time.perf_counter`
+clock, see finding #18) and the 8 message-prose mutants (guardrail 28/30/31,
+`relationship_cycle` 51-55). The other 29 ARE proven equivalent (cache-eviction
+timing, invariant-conditioned no-ops, redundant sorts).
 
 Graded at **`--jobs 1`** (deterministic). This selection carries a WALL-CLOCK
 assertion (`test_result_reports_conversion_and_timings` pins
@@ -62,11 +72,14 @@ post-commit publish failure does not abort), group-anchor pre-mask snapshots
 chain + a diamond, and the packaged `ExecutionResult` fields (row_errors,
 quality_metrics, timings, boundary_conversion_ms `>0` and `<1000ms`).
 
-## EQUIVALENT survivors (45) -- proven
+## Non-residual survivors (45): 29 proven equivalent + 16 accepted non-contract
 
-Each verified to survive the full 7-file selection standalone (rc 0).
+Each verified to survive the full 7-file selection standalone (rc 0). The first two
+groups (27) + the two redundant sorts in the last group (2) = 29 PROVEN EQUIVALENT
+(no test can kill them). The TIMING group (8) and the two prose bullets minus the
+redundant sorts (8) = 16 ACCEPTED NON-CONTRACT (killable, deliberately not killed).
 
-- **Memory / cache-eviction only (17)** -- survive a full `.equals` byte-parity
+- **Memory / cache-eviction only (17)** -- proven equivalent. -- survive a full `.equals` byte-parity
   across the FK chain AND a diamond; they change only WHEN in-memory caches free,
   never output or errors: `run_sequential` 68, 69, 70 (remaining-consumer setup),
   268-277, 279 (source-snapshot / parent-map / group-anchor eviction blocks), 281,
@@ -81,16 +94,20 @@ Each verified to survive the full 7-file selection standalone (rc 0).
   col-absent branch is compile-unreachable), 164, 166 (`.get(table, None/())`
   default only for a zero-work table, none exist), 226, 228 (`preserve_index`
   None vs False -- a default RangeIndex stores only as metadata, values identical).
-- **Telemetry, wall-clock non-deterministic (8):** `run_sequential` 102, 145, 147,
-  149, 230, 231, 232, 234 -- `boundary_conversion_ms` perturbations inside the
-  sub-/few-ms noise band with no deterministic assertion; the ABSOLUTE-clock leaks
-  (`+t0`/`+t1`, mut 148/233) DID escape the band and are killed.
-- **Message prose (3+7 = 10):** `run_sequential` 28, 30, 31 (the no-output_path
-  guardrail's explanatory sentence -- a plain `ValueError`, so the type is the
-  machine field and the identifying key `output_path` is asserted; the prose is
-  equivalent); `table_topo_order` 51-55 (the `relationship_cycle` message prose,
-  code pinned), plus 35, 37 (the children-sort `key`, redundant -- the ready-queue
-  re-sorts by position every iteration so child insertion order never surfaces).
+- **Telemetry timing, ACCEPTED NON-CONTRACT (8):** `run_sequential` 102, 145, 147,
+  149, 230, 231, 232, 234 -- `boundary_conversion_ms` arithmetic perturbations. The
+  test suite's wall-clock assertion does not pin them, but a controlled
+  `time.perf_counter` clock WOULD kill them (finding #18); they are deliberately
+  left as accepted non-contract (telemetry, no product contract), NOT equivalent.
+  The ABSOLUTE-clock leaks (`+t0`/`+t1`, mut 148/233) DID escape and are killed.
+- **Message prose, ACCEPTED NON-CONTRACT (8) + redundant sort, EQUIVALENT (2):**
+  `run_sequential` 28, 30, 31 (the no-output_path guardrail's explanatory sentence
+  -- a plain `ValueError`, so the type is the machine field and the identifying key
+  `output_path` is asserted; the prose is left as accepted non-contract, killable
+  via full-message-equality); `table_topo_order` 51-55 (the `relationship_cycle`
+  message prose, code pinned, accepted non-contract). The two EQUIVALENT here are
+  35, 37 (the children-sort `key`, redundant -- the ready-queue re-sorts by
+  position every iteration so child insertion order never surfaces).
 
 ## Residual (3) -- precisely characterized, killable, deferred
 

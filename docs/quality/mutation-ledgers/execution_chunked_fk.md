@@ -19,40 +19,49 @@ is in `_fk_keys`, graded to logic-100% in the crown jewels).
 
 The RI-critical key identity lives in `_fk_keys` (100%, done); this module is the
 route ADMISSION/GUARD layer. Measure-first substrate bar = max(baseline 62.98 +
-15, 75) = **77.98%**. The headline result is stronger than that inclusive figure:
-**0 residual -- 100% of KILLABLE mutants are killed.** The large equivalent count
-is intrinsic: `gate_fk_child_edges` raises 12 distinct coded rejects, each with a
-multi-line explanatory MESSAGE, and free-text message prose carries no machine
-contract (sweep policy: prose is equivalent when the code / path / offending names
-are pinned separately). Flagged for a Cam decision: if the FK-guard layer should
-be held to the crypto/RI 100%-INCLUSIVE standard (pinning the reject prose too),
-that is a deliberate stricter choice; this grade follows the sweep's standing
-prose-equivalent policy, consistent with all prior modules and this module's own
-`reject_lossy` tests.
+15, 75) = **77.98%**; the grade clears it at 79.20% inclusive.
+
+TAXONOMY (Codex batch gate, honest labeling). The 109 survivors split into TWO
+kinds, NOT one "equivalent" bucket:
+- **4 PROVEN EQUIVALENT** (no test can kill them): `_dtype_family` 36/37 (the
+  `"string"` prefix is redundant with `"str"`, so no input matches via it alone);
+  `reject_lossy` 17 (`skip_nulls=True` is pyarrow's `min_max` default) and 24
+  (`or`->`and` where min/max are both-None or both-non-None together).
+- **105 ACCEPTED NON-CONTRACT SURVIVORS** (a test COULD kill them, but the sweep
+  deliberately does not): the message-PROSE mutants across the 12 coded rejects
+  (gate 93 + reject_lossy 12). A full-message-equality assertion would kill each,
+  but that is the brittle anti-pattern the sweep avoids (any legitimate message
+  reword breaks it); the code / path / offending names ARE pinned, so the machine
+  contract is covered. NOTE `PlanCompileError.message` is a public field callers
+  may inspect, so this is a contract-SCOPING policy decision, not a claim that the
+  prose is semantically inert.
+
+So this module is NOT "0 residual / 100% killable" -- that earlier framing was an
+overclaim. It is 79.20% inclusive, with 105 accepted-non-contract survivors + 4
+proven equivalents. Flagged for a Cam decision: hold the FK-guard layer to the
+stricter standard (pin the 12 reject messages verbatim, killing the 105), or
+accept them as non-contract survivors (current).
 
 ## Numbers
 
 **Killed 415/524 = 79.20% LOGIC inclusive (tool-native, 0 unresolved). 109
-survivors, ALL proven equivalent -- 0 residual. Excluding the 109 equivalents,
-415/415 = 100% of killable mutants killed UNDER THE SWEEP'S PROSE-EQUIVALENT
-POLICY** (the equivalents are dominated by 105 message-prose mutants that a
-full-message-equality test COULD kill; the policy treats prose as equivalent
-because it carries no machine contract -- see Bar/framing). Above the 77.98%
-measure-first bar.
+survivors: 4 proven equivalent + 105 accepted non-contract survivors (message
+prose, killable only via brittle full-message-equality -- see Taxonomy).** Above
+the 77.98% measure-first bar.
 
 Baseline (3 existing FK test files only): 330/524 = 62.98%, 194 survived -- the
 selection under-covered `gate_fk_child_edges`'s reject branches and `_dtype_family`'s
 per-family branches. The full triage added two kill files
 (`test_chunked_fk_helper_kills.py`, `test_chunked_fk_gate_kills.py`) and adjudicated
-all 194: **85 additional kills**, 109 proven equivalent.
+all 194: **85 additional kills**, 4 proven equivalent, 105 accepted non-contract.
 
-| Function | Killed by the sweep | Equivalent survivors |
-|---|---|---|
-| `gate_fk_child_edges` | 32 (code/path/name/separator + control-flow + dict-default) | 93 (message prose) |
-| `_dtype_family` | ~38 (every family branch + return) | 2 (`"string"` redundant prefix) |
-| `reject_lossy_chunked_fk_passthrough` | ~8 (boundary + control-flow + name) | 14 (message prose + skip_nulls-default + or/and) |
-| `fk_passthrough_columns_for_table` | 5 | 0 |
-| `_col_index_from_config` | 2 | 0 |
+| Function | Killed by the sweep | Proven equiv | Accepted non-contract (prose) |
+|---|---|---|---|
+| `gate_fk_child_edges` | 32 (code/path/name/separator + control-flow + dict-default) | 0 | 93 |
+| `_dtype_family` | ~38 (every family branch + return) | 2 (`"string"` redundant prefix) | 0 |
+| `reject_lossy_chunked_fk_passthrough` | ~8 (boundary + control-flow + name) | 2 (skip_nulls-default + or/and) | 12 |
+| `fk_passthrough_columns_for_table` | 5 | 0 | 0 |
+| `_col_index_from_config` | 2 | 0 | 0 |
 
 ## Kills
 

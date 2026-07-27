@@ -15,11 +15,25 @@ layer. Not crypto/RI proper, so the bar is **75% of LOGIC mutants**.
 
 ## Numbers
 
-**Killed 462/498 = 92.77% LOGIC (tool-native, 0 unresolved). 36 survivors, ALL
-proven equivalent -- 0 residual.** Above the 75% bar (measured max(57.63 + 15,
-75) = 75%). (The two run_single key_provider mutants 21/28 were closed after the
-dennis gate -- a keyed single-table `run_single` test now kills them; no residual
-remains.)
+**Killed 462/498 = 92.77% LOGIC (tool-native, 0 unresolved). 36 survivors: 20
+proven equivalent + 16 accepted non-contract survivors (see Taxonomy).** Above the
+75% bar (measured max(57.63 + 15, 75) = 75%). (The two run_single key_provider
+mutants 21/28 were closed after the dennis gate -- a keyed single-table
+`run_single` test now kills them.)
+
+TAXONOMY (Codex batch gate, honest labeling). Not all 36 survivors are "proven
+equivalent" -- 16 are killable but the sweep deliberately does not kill them:
+- **6 TIMING** (`run` 40, 42, 150, 151, 152, 154): boundary_conversion_ms
+  arithmetic mutants (`*1000`->`/1000`, `+=`->`=`). Earlier framing called these
+  "equivalent inside the timing noise band"; that is WRONG -- a controlled clock
+  (monkeypatch `time.perf_counter` to a deterministic sequence) kills them. They
+  are accepted non-contract survivors (telemetry, no product-visible contract),
+  not equivalents. See finding #18.
+- **10 MESSAGE PROSE** (`_dispatch_mask_node` 63/65/68/69/74/76/82/84 coded-raise
+  prose; `run_single` 11/12 guard prose): killable via full-message-equality, left
+  as accepted non-contract (the code / path / identifying data ARE pinned).
+The remaining 20 ARE proven equivalent (unreachable defaults, invariant-conditioned
+guards, byte-identical plumbing) -- no test can kill them.
 
 Baseline (5 existing execution/keyprovider files): 287/498 = 57.63%, 211 survived.
 NOTE: mutmut's in-process run reported 210 of the 498 as ⏰ TIMEOUT (finding #8 --

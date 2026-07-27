@@ -3,8 +3,9 @@
 TQ substrate sweep (branch `tq/substrate-sweep`), graded by `scripts/tq_mutate.py`
 with default survived-bucket re-adjudication (finding #16 RESOLVED + gated by
 dennis and Codex). This is the FULL-TRIAGE grade: every one of the module's
-surviving mutants is individually adjudicated -- killed or proven equivalent --
-with ZERO residual. `_chunked.py` is the chunked mask-execution route.
+surviving mutants is individually adjudicated -- killed, proven equivalent, or
+accepted non-contract (killable but deliberately not killed) -- with no
+killable-and-undocumented residual. `_chunked.py` is the chunked mask-execution route.
 `run_mask_pipeline_chunked` masks ONE table chunk-by-chunk for out-of-memory
 inputs; the contract is byte parity with the full-frame `run_pipeline` path.
 `check_chunked_compatibility` is the compile-time admission gate;
@@ -24,13 +25,23 @@ error (`chunked_schema_mismatch`) with its column and conflicting-type names, th
 aggregated timing values, the FK-passthrough / declared-dtype fail-closed codes,
 the projection-policy and per-chunk `adapter.run` plumbing, and the pool-cache
 state the warmer's contract specifies. Free-text explanatory prose inside a
-message is left EQUIVALENT when the code and data around it are pinned.
+message is left as an ACCEPTED NON-CONTRACT survivor when the code and data around
+it are pinned -- a full-message-equality test COULD kill it, but the sweep does not
+(prose carries no machine contract; the code / path / names ARE asserted).
 
 ## Numbers
 
 **TRUE score: 426/488 = 87.30% LOGIC (tool-native, `scripts/tq_mutate.py`, 0
-unresolved), above the 77.91% bar. 62 survivors, ALL proven equivalent -- 0
-residual.**
+unresolved), above the 77.91% bar. 62 survivors: 23 proven equivalent + 39
+accepted non-contract survivors (message prose, killable only via brittle
+full-message-equality -- see Taxonomy). No killable-and-undocumented residual.**
+
+TAXONOMY (Codex batch gate, honest labeling). The 62 survivors are NOT all "proven
+equivalent": 39 are the message-PROSE class (22 in `_conditional_admission_failures`,
+10 in `check_chunked_compatibility`, 7 in `concat_masked_chunks`) -- a
+full-message-equality assertion COULD kill each, so they are ACCEPTED NON-CONTRACT,
+not equivalent. The other 23 (default-only name reads + genuine no-ops/unreachable)
+ARE proven equivalent (no test can kill them).
 
 Grade history (all on `_chunked.py`, 488 mutants):
 - mutmut in-process raw (original 3-file selection): 306/488 = 62.70% -- false-LOW
@@ -105,16 +116,18 @@ selection kills, with existing coverage: passthrough guard mut 73, 75, 85, 86, 8
   `None` and `{}` hash identically. This same fixture also killed **mut_26**, which
   was only equivalent under the empty build_config.)
 
-## EQUIVALENT survivors (62) -- proven, by class
+## Non-residual survivors (62): 23 proven equivalent + 39 accepted non-contract
 
-All 62 are genuine equivalents. The reasoning below holds by construction; each
-was confirmed surviving the full (expanded) selection under standalone
-re-adjudication.
+The reasoning below holds by construction; each was confirmed surviving the full
+(expanded) selection under standalone re-adjudication. The message-prose class (39)
+is ACCEPTED NON-CONTRACT (killable via full-message-equality, deliberately not); the
+name-reads + no-ops/unreachable classes (23) are PROVEN EQUIVALENT (unkillable).
 
-### Message-prose class (code + data pinned independently)
+### Message-prose class (39) -- ACCEPTED NON-CONTRACT (code + data pinned independently)
 Wrapping a message literal in `XX...XX` or upper-casing it changes only
 explanatory text; the verdict code, error `.path`, and column/table NAMES are
-asserted separately. Includes: `_conditional_admission_failures` 16-19, 25, 40-47,
+asserted separately. A full-message-equality test could kill these; the sweep
+leaves them as accepted non-contract (prose carries no machine contract). Includes: `_conditional_admission_failures` 16-19, 25, 40-47,
 55, 57, 58, 66, 68-71, 77 (22 -- deterministic/pool_size/cardinality/from_profile
 prose, and XX-wraps whose keyword survives in an adjacent fragment);
 `check_chunked_compatibility` 44-47, 107, 113, 122-125 (generate-message prose,
@@ -123,12 +136,12 @@ fixed prose); `concat_masked_chunks` 11, 12, 34-38 (column-names /
 type-mismatch trailing-sentence prose, incl. mut_12's uppercased trailing
 sentence).
 
-### Default-only name reads (name key present in every asserted case)
+### Default-only name reads (3) -- PROVEN EQUIVALENT (name key present in every asserted case)
 `check_chunked_compatibility` 19, 21, 24: `get("name", None|"?"|...)` differs from
 the original only when the `name` key is ABSENT, and every asserted path carries a
 real name.
 
-### Genuine no-ops / unreachable (run_mask_pipeline_chunked + warm)
+### Genuine no-ops / unreachable (20) -- PROVEN EQUIVALENT (run_mask_pipeline_chunked + warm)
 - `run_mask_pipeline_chunked` 29 (`decoy_engine_version=None` to compile_plan --
   version not in masked-value derivation), 30/34/35 (`no_profile` None/dropped/False
   -- profile supplied so not re-derived), 49 (up-front `require_mask_key` result

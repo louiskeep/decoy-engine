@@ -249,15 +249,23 @@ under 6 concurrent pytest workers the wall-clock-derived conversion timing is
 perturbed enough that the `> 0` assertion did not fail deterministically. This
 EXTENDS Codex's `--jobs>1` MEDIUM (which was about cwd-write races): the cwd-write
 tripwire does NOT catch a TIMING-sensitive selection, because nothing is written --
-the non-determinism is in the measured value itself. Operational rule: grade any
-selection containing a wall-clock / timing assertion at `--jobs 1` (the OFFICIAL
-`_sequential` grade was re-run at jobs=1; the reproducible number is 369/417 with
-mut_146 killed, vs the jobs=6 flake of 368/417). The deterministic
-(byte/code/count) selections of the other substrate modules are unaffected -- only
-`_sequential` carries a timing assertion. Tool follow-up option: have the tool
-detect a timing-sensitive selection (e.g. re-run a survived-bucket mutant N times
-and flag instability) or simply document jobs=1 for timing selections; for now the
-operational rule + this note suffice.
+the non-determinism is in the measured value itself. Operational MITIGATION (not a
+determinism proof -- Codex batch gate): grade a selection containing a wall-clock /
+timing assertion at `--jobs 1`. jobs=1 removes the concurrent-worker contention
+that flipped mut_146; it does NOT make a real-clock assertion deterministic in
+general (GC pauses, scheduler jitter still perturb it). The `_sequential` grade was
+re-run at jobs=1 (reproducible 369/417 with mut_146 killed vs the jobs=6 flake of
+368/417) and re-confirmed by 5x standalone re-runs. CORRECTION (Codex): the other
+modules' selections are NOT all timing-free -- `_pandas_adapter` also carries a
+BOUNDED `0 < boundary_conversion_ms < 1000` assertion (its epoch-leak kills 41/153
+have a ~1e6x margin so jobs=6 cannot flip them, verified at jobs=1). The ROBUST fix
+for a TIMING-ARITHMETIC mutant (`*1000`->`/1000`, `+=`->`=`, `*1001`) is a
+CONTROLLED clock (monkeypatch `time.perf_counter`), not jobs=1: such a test asserts
+the exact `boundary_conversion_ms` and kills the mutant deterministically. Those
+mutants are therefore KILLABLE, not "equivalent" -- see the ledger relabel to
+"accepted non-contract survivors" (the sweep leaves them as accepted survivors
+rather than maintain a controlled-clock harness tightly coupled to the exact
+perf_counter call sequence; a decision, not an equivalence claim).
 
 
 ### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked) -- RESOLVED (2026-07-27)
