@@ -94,9 +94,10 @@ Each verified to survive the full 7-file selection standalone (rc 0).
 
 ## Residual (3) -- precisely characterized, killable, deferred
 
-`run_sequential` 131, 137, 141: the lossless-int-typing UNION at load
-(`group_anchor_cols | top_code_cols` -- mut 131 drops the union, 137/141 nul the
-`.get(table)` key). A no-op for string / plain columns (the frame loads
+`run_sequential` 131, 137, 141: the lossless-int-typing column set at load
+(`group_anchor_cols | top_code_cols`) -- mut 131 flips `|` -> `&`
+(union -> intersection, dropping the top_code contribution), 137/141 null the
+`.get(table)` key to `.get(None)`. A no-op for string / plain columns (the frame loads
 byte-identically, which is why the string-anchor group_by test cannot reach
 them). KILLABLE only with a null-bearing int64 group-anchor / top-code column
 carrying a value >= 2**53, where dropping it from lossless typing lets pandas
