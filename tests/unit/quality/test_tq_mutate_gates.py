@@ -16,8 +16,20 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+
+# `scripts/tq_mutate.py` imports `mutmut` at module load, and mutmut is a dev-only
+# extra not installed in the no-extras CI gates (regression/ml/packaging). Skip the
+# whole module there rather than error out collection for the entire suite -- same
+# idiom as tests/packaging/test_wheel_ships_pack.py's `importorskip("build")`.
+pytest.importorskip("mutmut", reason="mutmut extra not installed (local/TQ runs only)")
+
 import tq_mutate
-from tq_mutate import BaselineError, MutmutConfig, RunResult, baseline_sanity_check
+from tq_mutate import (
+    BaselineError,
+    MutmutConfig,
+    RunResult,
+    baseline_sanity_check,
+)
 
 
 def _result(returncode: int) -> RunResult:
