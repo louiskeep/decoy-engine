@@ -100,7 +100,9 @@ redundant sorts (8) = 16 ACCEPTED NON-CONTRACT (killable, deliberately not kille
   149, 230, 231, 232, 234 -- `boundary_conversion_ms` arithmetic perturbations. The
   test suite's wall-clock assertion does not pin them, but a controlled
   `time.perf_counter` clock WOULD kill them (finding #18); they are deliberately
-  left as accepted non-contract (telemetry, no product contract), NOT equivalent.
+  left as accepted non-contract, NOT equivalent -- `boundary_conversion_ms` is a
+  public `ExecutionResult` field, but its exact timing ARITHMETIC is scoped OUT of
+  the TQ contract (a scope decision, same as the pandas-adapter ledger).
   The ABSOLUTE-clock leaks (`+t0`/`+t1`, mut 148/233) DID escape and are killed.
 - **Message prose, ACCEPTED NON-CONTRACT (8) + redundant sort, EQUIVALENT (2):**
   `run_sequential` 28, 30, 31 (the no-output_path guardrail's explanatory sentence
