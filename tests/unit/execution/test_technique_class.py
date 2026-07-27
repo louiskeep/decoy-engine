@@ -43,17 +43,33 @@ class TestTechniqueClassRegistry:
     @pytest.mark.parametrize(
         "strategy,expected",
         [
+            # Full taxonomy pinned per-value (TQ finding #9: mutmut does not mutate
+            # the module-level TECHNIQUE_CLASS_BY_STRATEGY constant, so every
+            # strategy->class mapping is pinned here as a hardcoded golden, not
+            # recomputed from the constant). All 23 entries covered.
             ("passthrough", "passthrough"),
             ("redact", "anonymisation"),
             ("truncate", "anonymisation"),
             ("bucketize", "anonymisation"),
+            ("bucket_perturb", "anonymisation"),
             ("shuffle", "anonymisation"),
+            ("code_set", "anonymisation"),
+            ("geo_generalize", "anonymisation"),
+            ("joint_mask", "anonymisation"),
+            ("text_redact", "anonymisation"),
+            ("top_code", "anonymisation"),
             ("hash", "pseudonymisation"),
             ("fpe", "pseudonymisation"),
             ("date_shift", "pseudonymisation"),
             ("formula", "pseudonymisation"),
+            ("derived", "pseudonymisation"),
+            ("derived_aggregate", "pseudonymisation"),
+            ("group_key", "pseudonymisation"),
+            ("text_mask", "pseudonymisation"),
+            ("windowed_date", "pseudonymisation"),
             ("faker", "synthetic"),
             ("categorical", "synthetic"),
+            ("grouped_series", "synthetic"),
         ],
     )
     def test_classification_matches_industry_taxonomy(self, strategy, expected):
@@ -61,6 +77,45 @@ class TestTechniqueClassRegistry:
         _technique_class.py. A change here is a contract-level change
         that should be reviewed by the PO + Dennis."""
         assert technique_class_for(strategy) == expected
+
+    def test_taxonomy_match_parametrize_covers_the_whole_taxonomy(self):
+        """Drift guard: the per-value golden above must pin EVERY taxonomy entry.
+        If a strategy is added to TECHNIQUE_CLASS_BY_STRATEGY without a golden
+        row, its class assignment goes unverified (mutmut cannot mutate the
+        constant, finding #9), so this fails until the golden is extended. The
+        pinned set below is a hardcoded mirror of the parametrize strategies."""
+        from decoy_engine.execution._technique_class import TECHNIQUE_CLASS_BY_STRATEGY
+
+        pinned = {
+            "passthrough",
+            "redact",
+            "truncate",
+            "bucketize",
+            "bucket_perturb",
+            "shuffle",
+            "code_set",
+            "geo_generalize",
+            "joint_mask",
+            "text_redact",
+            "top_code",
+            "hash",
+            "fpe",
+            "date_shift",
+            "formula",
+            "derived",
+            "derived_aggregate",
+            "group_key",
+            "text_mask",
+            "windowed_date",
+            "faker",
+            "categorical",
+            "grouped_series",
+        }
+        assert pinned == set(TECHNIQUE_CLASS_BY_STRATEGY), (
+            "test_classification_matches_industry_taxonomy must pin every strategy "
+            f"in the taxonomy; missing={set(TECHNIQUE_CLASS_BY_STRATEGY) - pinned}, "
+            f"stale={pinned - set(TECHNIQUE_CLASS_BY_STRATEGY)}"
+        )
 
     def test_unknown_strategy_returns_none(self):
         """Forwards compat: a strategy name we don't know about returns
