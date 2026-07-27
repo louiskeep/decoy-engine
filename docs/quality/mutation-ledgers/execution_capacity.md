@@ -1,6 +1,6 @@
 # Mutation grading: `execution/capacity.py` -- substrate bar 75%
 
-TQ substrate sweep (branch `tq/substrate-sweep`), DRAFT pending re-grade.
+TQ substrate sweep (branch `tq/substrate-sweep`), re-graded and finalized.
 `capacity.py` exposes one public function, `estimate_job_capacity`: the
 estimate-only entrypoint for the out-of-core-FK memory capacity gate (`decoy
 preflight` / `decoy run`). It derives the routing inputs by calling the same
@@ -25,8 +25,9 @@ each kwarg is load-bearing in at least one of them.
 -- clears the measured bar (max(baseline 64.94 + 15, 75) = 79.94%).** Baseline was
 213 killed / 115 survived (64.94%). This sweep's new oracles killed 68 of the 115
 survivors (16 per-field/verdict oracles + 6 full-`CapacityEstimate` golden shapes),
-leaving **47 survivors** at 85.67%. 0 product bugs (nulling any load-bearing kwarg
-degrades the verdict in the safe direction, never a false FIT).
+leaving **47 survivors** at 85.67%. 0 product bugs -- this is the fail-closed-DIRECTION
+argument (nulling any load-bearing kwarg only ever degrades the verdict toward
+UNKNOWN/NOT_APPLICABLE, never fabricates a false FIT), not a per-survivor verification.
 
 | Function | Total mutants | Killed | Survived |
 |---|---|---|---|
@@ -55,8 +56,15 @@ Equivalence classes (proven by construction, from the focused-kill analysis):
 - **`full_frame_fits_estimate=None`** (call 2): read as `is True`, so `None` and the
   real `False` behave identically (the distinct `False->True` flip IS killed).
 - **reject-branch kwargs on call 2** (`out_of_core_reject_code`,
-  `largest_table_rows(_exact)`): unreachable on the byte-probe call (it only runs
-  for out-of-core-compatible jobs, which never hit that reject); killed on call 1.
+  `largest_table_rows(_exact)`): the byte-probe reject branch IS reachable on call 2
+  (e.g. an ooc-compatible-but-not-sequential-eligible validators job:
+  `_sequential_eligible` is False on `validators_present` while admission ignores
+  validators, so call 2 falls into the byte-branch reject). Equivalent anyway because
+  `estimate_job_capacity` SWALLOWS every call-2 reject to `byte_route=None`
+  (capacity.py:374-382), so `out_of_core_reject_code`'s message never surfaces, and
+  `largest_table_rows(_exact)` are not read in the byte-estimate branch at all. Killed
+  on call 1 by the reject shape. (If the swallow behavior ever changed to surface the
+  byte reject, `out_of_core_reject_code` on call 2 would become killable.)
 
 ## Tests
 
@@ -152,12 +160,13 @@ compatible (the validators+compatible shape).
 | `full_frame_fits_estimate` (call 2, `=None` form) | The only read is `if full_frame_fits_estimate is True`; `None` and the real `False` both fail that test identically and fall to the same bounded-route logic -> the job is still promoted to out_of_core -> UNKNOWN unchanged. (The `False -> True` FLIP form is a DISTINCT mutant and IS killed by the UNKNOWN shape.) |
 
 Note on the call-2 reject-branch-only kwargs (`out_of_core_reject_code`,
-`largest_table_rows`, `largest_table_rows_exact`): these feed the byte branch's
-reject-before-read message, which is UNREACHABLE on call 2 (the probe is entered
-only for out-of-core-COMPATIBLE jobs, which the byte branch routes to
-out_of_core, never to the reject). If the grader lists surviving mutants for
-them on call 2, they are equivalent for that reason; they are killed on call 1
-by the reject shape.
+`largest_table_rows`, `largest_table_rows_exact`): the byte branch's
+reject-before-read IS reachable on call 2 (an ooc-compatible job that is NOT
+sequential-eligible -- e.g. validators present -- falls through to the byte-branch
+reject). They are equivalent anyway because `estimate_job_capacity` swallows every
+call-2 reject to `byte_route=None` (capacity.py:374-382) so the reject-code message
+is discarded, and `largest_table_rows(_exact)` are not read in the byte-estimate
+branch. Killed on call 1 by the reject shape.
 
 ## Candidate findings
 
