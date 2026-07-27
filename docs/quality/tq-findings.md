@@ -212,6 +212,35 @@ high-stakes (RI); Cam-gated, NOT done autonomously.
 
 ## Substrate sweep observations
 
+### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked)
+`scripts/tq_mutate.py` re-adjudicates only mutmut's SUSPECT buckets
+(timeout/suspicious/segfault/no-tests) and TRUSTS "survived" (exit 0), on dennis's
+reasoning that a mutmut exit-0 means a covering test ran and passed. That
+assumption has a hole: mutmut runs, per mutant, only the tests its coverage map
+(`tests_by_mangled_function_name`) associates with that mutant. When a newly-added
+test file's coverage is not associated (observed on `execution/_chunked.py`: the
+whole new file's kills were not credited), mutmut runs the OLD tests against the
+mutant, they pass, and it reports "survived" -- a FALSE survived. tq_mutate then
+trusts it. Result: `_chunked` was reported 306/488 = 62.70% LOGIC, but a standalone
+re-adjudication of its 182 survived-bucket mutants (full selection, one fresh
+pytest each) found **92 of them actually killed** by the new tests -> TRUE score
+**399/488 = 81.76%** (above the 77.91% bar). Proven decisively: the new tests kill
+e.g. `aggregate_chunk_timings__mutmut_8` (`elapsed[key]=0.0`->`1.0`) STANDALONE
+(exit 1) while mutmut's run left it survived. **Implications:** (a) every module's
+tq_mutate-reported score is a LOWER BOUND (true >= reported); modules 1-6 all clear
+their bars on the reported (lower) numbers, so their pass/fail is unaffected, but
+some ledgered "survivors" there may be false-survived (killed by their own tests,
+uncredited). (b) Large fixture-heavy modules are the ones that trip mutmut's
+coverage association. **Fix (tool follow-up, Cam-gated):** add a
+`--readjudicate-survived` mode to tq_mutate that runs the full selection standalone
+against the survived bucket too (exactly the manual step done for _chunked), making
+the grade independent of mutmut's coverage-selection. Until then, large modules
+need manual survived-bucket re-adjudication (as done here). This is the finding-#8
+class (mutmut in-process runner unreliable), opposite direction (false-low here,
+false-high there).
+
+
+
 ### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining)
 The runtime governor `execution/_governor.py` and its siblings run their real work
 in SPAWNED CHILD PROCESSES (supervisor-kills-child architecture), and their tests
