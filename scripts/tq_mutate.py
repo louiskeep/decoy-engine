@@ -9,11 +9,22 @@ survived, so the reported mutation score is false. Raising ``timeout_constant``
 does not fix it -- it is a runner/suite interaction, not a tuning issue.
 
 Key insight that makes this tool simple: mutmut's KILLED verdicts are
-trustworthy (a killed mutant genuinely failed a test). Only the timeout /
-suspicious / segfault verdicts are suspect. So this is a POST-PROCESSOR: it
-reads the verdicts mutmut already persisted, then RE-ADJUDICATES only the
-suspect buckets by running each mutant in a fresh ``pytest`` SUBPROCESS with a
-generous wall-clock timeout, and corrects the tally.
+trustworthy but its SURVIVED verdicts are not. A kill is MONOTONIC -- if any
+test in mutmut's per-mutant selection fails, the mutant is genuinely dead, and
+running MORE tests cannot revive it. A "survived", though, only means none of
+the tests mutmut CHOSE to run (its coverage-map subset,
+``tests_by_mangled_function_name``) killed it; the FULL selection may contain a
+killing test mutmut never ran. That is exactly tq-findings.md #16: on a large
+fixture-heavy module mutmut's coverage map failed to associate a newly-added
+test file, so genuine kills were reported survived and the score came out
+false-LOW. So this is a POST-PROCESSOR that RE-ADJUDICATES every
+non-trustworthy verdict -- the timeout / suspicious / segfault / no-tests
+buckets AND (by default) the survived bucket -- by running each such mutant
+against the FULL selection in a fresh ``pytest`` SUBPROCESS with a generous
+wall-clock timeout, and corrects the tally. Only mutmut's killed verdicts are
+trusted verbatim. ``--trust-survived`` opts the survived bucket back out of
+re-adjudication (faster, but sound only when you have confirmed mutmut's
+coverage map credits every test in the selection).
 
 The one empirically-nailed part is making the subprocess import the MUTATED
 source from ``mutants/`` rather than the editable install. decoy_engine is
@@ -68,7 +79,7 @@ except ModuleNotFoundError:  # Python 3.10
 # tool cannot drift from the runner it is correcting. Side-effect-free import.
 from mutmut.__main__ import status_by_exit_code
 
-# Statuses mutmut reports that we TRUST verbatim (see module docstring / #8).
+# Statuses mutmut reports that this tool can TRUST verbatim (see module docstring).
 # "no tests" is deliberately EXCLUDED (TQ finding P2-1/P2-3): mutmut derives it
 # from its per-mutant coverage map, but this tool runs the FULL test selection
 # per mutant, so it does not depend on that map. A mutmut-"no tests" mutant,
@@ -76,6 +87,13 @@ from mutmut.__main__ import status_by_exit_code
 # adequacy gap) or killed (proving mutmut's map wrong). After this exclusion,
 # an rc-5 "nothing collected" DURING re-adjudication is a HARNESS BREAK, not a
 # neutral no-tests -- and it fails the run (see UNRESOLVED_VERDICTS).
+#
+# "survived" IS in this set (so _trusted_verdict can map it) but is treated as
+# trustworthy ONLY under --trust-survived: by default _needs_readjudication
+# re-runs the survived bucket against the full selection (tq-findings.md #16),
+# because mutmut's survived is not monotonic -- unlike killed, it can be a
+# coverage-selection false-survived. The ONLY unconditionally-trusted verdict
+# is "killed" (a failing test cannot be un-failed by running more tests).
 TRUSTED_STATUSES = frozenset({"killed", "survived", "skipped", "caught by type check"})
 
 # mutmut trusts pytest exit code 3 (internal error) as "killed" (status_by_exit_code
@@ -322,14 +340,22 @@ def _trusted_verdict(mutant: Mutant) -> str:
     }[mutant.mutmut_status]
 
 
-def _needs_readjudication(mutant: Mutant) -> bool:
-    """A mutant is re-adjudicated if its mutmut status is not trusted (timeout /
-    suspicious / segfault / no-tests) OR its mutmut exit code is a re-check code
-    (3 == pytest internal error, which mutmut trusts as killed -- P3-1)."""
-    return (
-        mutant.mutmut_status not in TRUSTED_STATUSES
-        or mutant.mutmut_exit_code in _MUTMUT_RECHECK_EXIT_CODES
-    )
+def _needs_readjudication(mutant: Mutant, *, trust_survived: bool) -> bool:
+    """A mutant is re-adjudicated if ANY of:
+    - its mutmut status is not trusted (timeout / suspicious / segfault /
+      no-tests), OR
+    - its mutmut exit code is a re-check code (3 == pytest internal error,
+      which mutmut trusts as killed -- P3-1), OR
+    - it mutmut-"survived" AND survived re-adjudication is on (the default,
+      i.e. NOT --trust-survived; tq-findings.md #16). mutmut's survived is not
+      monotonic -- it only means mutmut's coverage-selected subset did not kill
+      the mutant, so the full selection may still kill it. --trust-survived
+      skips this, trusting mutmut's survived verbatim (faster, less sound)."""
+    if mutant.mutmut_exit_code in _MUTMUT_RECHECK_EXIT_CODES:
+        return True
+    if mutant.mutmut_status not in TRUSTED_STATUSES:
+        return True
+    return not trust_survived and mutant.mutmut_status == "survived"
 
 
 class BaselineError(RuntimeError):
@@ -456,6 +482,14 @@ def main() -> int:
         help="parallel re-adjudication subprocesses (default: 1, deterministic)",
     )
     parser.add_argument(
+        "--trust-survived",
+        action="store_true",
+        help="trust mutmut's 'survived' verbatim instead of re-adjudicating it "
+        "against the full selection. Faster, but re-introduces the finding #16 "
+        "false-LOW risk (a survived that mutmut's coverage map mis-selected). "
+        "Default: OFF -- the survived bucket IS re-adjudicated.",
+    )
+    parser.add_argument(
         "--report",
         type=Path,
         default=None,
@@ -501,13 +535,19 @@ def main() -> int:
     # P2-2: the selection must not pull in testflight/benchmark/packaging/codspeed tests.
     warn_if_excluded_markers_collected(config, mutants_dir, probe_timeout)
 
-    suspect = [m for m in mutants if _needs_readjudication(m)]
-    trusted = [m for m in mutants if not _needs_readjudication(m)]
+    trust_survived = args.trust_survived
+    suspect = [m for m in mutants if _needs_readjudication(m, trust_survived=trust_survived)]
+    trusted = [m for m in mutants if not _needs_readjudication(m, trust_survived=trust_survived)]
 
+    survived_note = (
+        "TRUSTING mutmut survived (--trust-survived; finding #16 risk ACCEPTED)"
+        if trust_survived
+        else "re-adjudicating survived bucket too (finding #16 fix; default)"
+    )
     print(
         f"{len(mutants)} mutants: {len(trusted)} trusted, "
         f"{len(suspect)} suspect (re-adjudicating with timeout={per_mutant_timeout:.1f}s, "
-        f"jobs={args.jobs})",
+        f"jobs={args.jobs}); {survived_note}",
         flush=True,
     )
 
@@ -538,7 +578,7 @@ def main() -> int:
             verdicts.append(v)
             _print_readjudication(v)
 
-    report = build_report(config, mutants, verdicts)
+    report = build_report(config, mutants, verdicts, trust_survived=trust_survived)
     report_path = args.report or (mutants_dir / "tq_mutate_report.json")
     report_path.write_text(json.dumps(report, indent=2))
 
@@ -580,7 +620,13 @@ def _print_readjudication(v: Verdict) -> None:
     )
 
 
-def build_report(config: MutmutConfig, mutants: list[Mutant], verdicts: list[Verdict]) -> dict:
+def build_report(
+    config: MutmutConfig,
+    mutants: list[Mutant],
+    verdicts: list[Verdict],
+    *,
+    trust_survived: bool,
+) -> dict:
     counts: dict[str, int] = {}
     for v in verdicts:
         counts[v.verdict] = counts.get(v.verdict, 0) + 1
@@ -614,6 +660,9 @@ def build_report(config: MutmutConfig, mutants: list[Mutant], verdicts: list[Ver
         "module": config.only_mutate,
         "test_selection": config.test_selection,
         "total_mutants": len(mutants),
+        # False (the default) == the survived bucket was re-adjudicated against
+        # the full selection (finding #16); True == mutmut's survived trusted.
+        "survived_trusted_verbatim": trust_survived,
         "mutmut_raw_counts": mutmut_counts,
         "corrected_counts": counts,
         "corrected": {
@@ -641,7 +690,7 @@ def build_report(config: MutmutConfig, mutants: list[Mutant], verdicts: list[Ver
                 "detail": v.detail,
             }
             for v in verdicts
-            if _needs_readjudication(v.mutant)
+            if _needs_readjudication(v.mutant, trust_survived=trust_survived)
         ],
     }
 

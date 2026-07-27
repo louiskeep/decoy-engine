@@ -212,7 +212,26 @@ high-stakes (RI); Cam-gated, NOT done autonomously.
 
 ## Substrate sweep observations
 
-### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked)
+### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked) -- RESOLVED (2026-07-27)
+
+**RESOLVED.** `scripts/tq_mutate.py` now RE-ADJUDICATES the survived bucket by
+default (each survived mutant re-run against the FULL selection in a fresh pytest
+subprocess, exactly like the existing suspect buckets); `--trust-survived` opts
+back out. The correctness argument: a mutmut KILL is monotonic (a failing test
+cannot be un-failed by running more tests), so killed stays trusted verbatim; a
+mutmut SURVIVED is NOT monotonic (it only means mutmut's coverage-selected subset
+did not kill it, and the full selection may contain a killing test mutmut never
+ran), so it must be re-adjudicated. Trusting survived was itself a SILENT
+UNDER-GRADE vector -- the exact failure mode the tool's charter says it must never
+exhibit -- so the fix is default-ON. **Validated end-to-end on `_chunked`:** the
+fixed tool, reusing the same on-disk mutmut run, auto-reported 398/488 = 81.56%
+LOGIC with 0 unresolved and ZERO manual steps (mutmut's raw was 306/488 = 62.70%);
+it re-classified the 92 false-survived mutants automatically. The reproducible 398
+supersedes the hand-counted 399 the prior manual re-adjudication estimated (the
+tool exists precisely to remove that off-by-N hand count). Original finding
+retained below for the record.
+
+
 `scripts/tq_mutate.py` re-adjudicates only mutmut's SUSPECT buckets
 (timeout/suspicious/segfault/no-tests) and TRUSTS "survived" (exit 0), on dennis's
 reasoning that a mutmut exit-0 means a covering test ran and passed. That

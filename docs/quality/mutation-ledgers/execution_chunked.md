@@ -1,7 +1,9 @@
 # Mutation grading: `execution/_chunked.py` -- substrate bar 77.91%
 
-TQ substrate sweep (branch `tq/substrate-sweep`), re-graded via standalone
-survived-bucket re-adjudication (see Numbers + tq-findings #16).
+TQ substrate sweep (branch `tq/substrate-sweep`), graded by `scripts/tq_mutate.py`
+with default survived-bucket re-adjudication (finding #16 RESOLVED: the tool now
+re-runs every mutmut-"survived" mutant against the full selection, so this score
+is tool-native and reproducible, no manual step).
 `_chunked.py` is the chunked mask-execution route. `run_mask_pipeline_chunked`
 masks ONE table chunk-by-chunk for out-of-memory inputs; the contract is byte
 parity with the full-frame `run_pipeline` path (every admitted strategy is
@@ -28,21 +30,21 @@ are pinned.
 
 ## Numbers
 
-**TRUE score: 399/488 = 81.76% LOGIC, above the 77.91% bar.** IMPORTANT (tq-findings
-#16): mutmut's in-process run REPORTED only 306/488 = 62.70%, because its
-coverage-based per-mutant test selection did not associate this sweep's new test
-file -- it ran the OLD tests against the new-test-covered mutants, they passed, and
-mutmut reported them "survived" (false-survived). A standalone re-adjudication of
-all 182 survived-bucket mutants (full selection, one fresh pytest each) found **92
-actually killed / 90 still surviving** -> true 399/488 = 81.76%. So the new oracles
-DO their job (confirmed e.g. `aggregate_chunk_timings__mutmut_8` killed standalone
-while mutmut left it survived); the tool's trust of mutmut's "survived" undercounted
-them. The per-function killed/equivalent breakdown below is the authoring estimate
-(~93 killed), which the empirical re-adjudication (92) confirms within one. The 90
-true survivors = the EQUIVALENT class (message prose / genuine unreachables) + the
-residual killable-needing-fixtures set; NOT individually re-triaged post-re-adjudication
-(an above-bar residual, honest, same class as capacity). The main loop re-grades and
-reconciles exact counts.
+**TRUE score: 398/488 = 81.56% LOGIC, above the 77.91% bar** (tool-native, `scripts/tq_mutate.py`,
+0 unresolved). IMPORTANT (tq-findings #16, now RESOLVED): mutmut's in-process run
+REPORTED only 306/488 = 62.70%, because its coverage-based per-mutant test selection
+did not associate this sweep's new test file -- it ran the OLD tests against the
+new-test-covered mutants, they passed, and mutmut reported them "survived"
+(false-survived). The fixed tool re-adjudicates the survived bucket against the full
+selection by default: it found **92 of the 182 survived-bucket mutants actually
+killed / 90 still surviving** -> 306 + 92 = 398 killed, 398/488 = 81.56%. So the new
+oracles DO their job (confirmed e.g. `aggregate_chunk_timings__mutmut_8` killed on
+re-adjudication while mutmut left it survived); mutmut's trust of "survived"
+undercounted them. The tool-native 398 supersedes the earlier hand-counted 399
+estimate. The 90 true survivors break down below into the EQUIVALENT class (57,
+message prose / genuine unreachables) plus a residual killable-needing-fixtures set
+(the Residual section). Full per-mutant triage of that residual (kill or prove each)
+is tracked as a follow-up on this branch.
 
 Per function:
 
