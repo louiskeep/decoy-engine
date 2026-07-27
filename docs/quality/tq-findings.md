@@ -228,7 +228,17 @@ fixed tool, reusing the same on-disk mutmut run, auto-reported 398/488 = 81.56%
 LOGIC with 0 unresolved and ZERO manual steps (mutmut's raw was 306/488 = 62.70%);
 it re-classified the 92 false-survived mutants automatically. The reproducible 398
 supersedes the hand-counted 399 the prior manual re-adjudication estimated (the
-tool exists precisely to remove that off-by-N hand count). Original finding
+tool exists precisely to remove that off-by-N hand count).
+
+Gate (both reviewers, 2026-07-27): **dennis APPROVE** -- independently reproduced
+the monotonicity argument (killed monotonic, survived not) and confirmed the
+numbers/code. **Codex** then surfaced a HIGH the first gate under-rated: pytest
+rc 2/3 (interrupted / internal error) were counted as "killed", so a genuine
+survivor whose rerun hit a transient harness error would be a SILENT false KILL
+(the over-grade mirror of #16). Fixed (89bba19): rc 2/3/4 now resolve to
+UNRESOLVED (banner + nonzero exit), only rc 1 is a kill. Also hardened the
+--jobs>1 cwd-race guard (auto-downgrade + honest "not a proof" disclosure). The
+validated 398/488 is unchanged (all 182 reruns were rc 0/1). Original finding
 retained below for the record.
 
 
