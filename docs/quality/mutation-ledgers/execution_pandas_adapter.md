@@ -40,17 +40,17 @@ NOTE: mutmut's in-process run reported 210 of the 498 as ⏰ TIMEOUT (finding #8
 the in-process runner mis-marks survivors as timeout on this heavy pandas suite);
 `tq_mutate` re-adjudicated all 210 against the full selection, 0 left unresolved.
 The full triage then adjudicated all 211 survivors across three kill files:
-**175 additional kills**, 36 proven equivalent, 0 residual.
+**175 additional kills**, 20 proven equivalent, 16 accepted non-contract, 0 residual.
 
-| Function | Killed by the sweep | Equivalent | Residual |
-|---|---|---|---|
-| `run` | 36 | 11 | 0 |
-| `_dispatch_mask_node` | 31 | 9 | 0 |
-| `_resolve_fk_node` | 51 | 2 | 0 |
-| `_parent_map` | 25 | 4 | 0 |
-| `run_sequential` (wrapper) | 20 | 2 | 0 |
-| `run_single` | 8 | 5 | 0 |
-| `__init__` / `_fk_key_value` / `get_default_executor` | 4 | 3 | 0 |
+| Function | Killed by the sweep | Proven equiv | Accepted non-contract | Residual |
+|---|---|---|---|---|
+| `run` | 36 | 5 | 6 (timing) | 0 |
+| `_dispatch_mask_node` | 31 | 1 | 8 (prose) | 0 |
+| `_resolve_fk_node` | 51 | 2 | 0 | 0 |
+| `_parent_map` | 25 | 4 | 0 | 0 |
+| `run_sequential` (wrapper) | 20 | 2 | 0 | 0 |
+| `run_single` | 8 | 3 | 2 (prose) | 0 |
+| `__init__` / `_fk_key_value` / `get_default_executor` | 4 | 3 | 0 | 0 |
 
 ## Kills
 
@@ -90,33 +90,38 @@ forwards the real value (not the null sentinel); `get_default_executor` returns 
 real adapter (not None); `run_single`'s multi-table guard raises the coded error
 with the identifying `table=` data.
 
-## EQUIVALENT survivors (38) -- proven
+## Non-residual survivors (36): 20 proven equivalent + 16 accepted non-contract
 
-Each verified to survive the full 8-file selection standalone (rc 0).
+Each verified to survive the full 8-file selection standalone (rc 0). The 6 timing
+and 10 prose mutants tagged ACCEPTED NON-CONTRACT are killable (controlled clock /
+full-message-equality) but deliberately not killed; the rest are PROVEN EQUIVALENT.
 
-- **Cache / unreachable-default (FK, 6):** `_parent_map` 7, 8 (parent-not-in-frames
-  returns `{}` either way), 14, 16 (snapshot default unreachable -- every parent
-  key column is snapshotted first); `_resolve_fk_node` 16, 52 (`>= 1` on a single
-  edge/column -- identical map / null-mask). (`_parent_map` 2, 3, 53 -- the cache
-  hit/write mutants -- the FK kill file leaves them surviving, but the BROADER
-  8-file selection kills them, so they are counted killed, not equivalent.)
-- **Message prose + inert separator (dispatch, 9):** `_dispatch_mask_node` 63, 65,
-  68, 69, 74, 76, 82, 84 (coded-raise message prose, code asserted separately), 92
-  (a `","` separator on a scalar single-column node, never applied).
-- **Telemetry noise-band + route-inert (run, 11):** `run` 40, 42, 150, 151, 152, 154
-  (boundary_conversion_ms magnitude perturbations inside the timing noise band, no
-  non-flaky observable -- finding #18; confirmed at jobs=1), 35 (top_code int/float ingestion identical,
-  caps bounded < 2**53), 44 (`and`->`or` guard, INVARIANT-conditioned equivalent:
-  the anchor col always exists in its own frame so the guard is invariantly True),
-  52 (`relationship_graph=None` not read on this path -- invariant-conditioned),
-  146, 148 (`preserve_index` None vs False on a RangeIndex frame -- benign
-  index metadata only, data/columns/types identical).
-- **Wrapper + init plumbing (10):** `run_sequential` 5, 16 (`pool_cache=None` ->
-  delegate builds a fresh PoolCache, byte-identical); `run_single` 11, 12 (guard
-  message prose), 18, 20, 25 (`pool_cache=None` / `namespace_registry=None` forward
-  -- `run` rebuilds / composite-only, byte-identical); `__init__` 1 (no-op), 2
-  (`self._fpe_chunk_count` is write-only, never read); `get_default_executor` 1
-  (`substrate=None` still returns a valid adapter, only the cache key differs).
+- **Cache / unreachable-default (FK, 6) -- PROVEN EQUIVALENT:** `_parent_map` 7, 8
+  (parent-not-in-frames returns `{}` either way), 14, 16 (snapshot default
+  unreachable -- every parent key column is snapshotted first); `_resolve_fk_node`
+  16, 52 (`>= 1` on a single edge/column -- identical map / null-mask). (`_parent_map`
+  2, 3, 53 -- the cache hit/write mutants -- the FK kill file leaves them surviving,
+  but the BROADER 8-file selection kills them, so they are counted killed.)
+- **Dispatch coded-raise prose (8) -- ACCEPTED NON-CONTRACT + inert separator (1) --
+  PROVEN EQUIVALENT:** `_dispatch_mask_node` 63, 65, 68, 69, 74, 76, 82, 84 (message
+  prose, killable via full-message-equality, code asserted separately); mut 92 (a
+  `","` separator on a scalar single-column node, never applied -- equivalent).
+- **run timing (6) -- ACCEPTED NON-CONTRACT + route-inert (5) -- PROVEN EQUIVALENT:**
+  `run` 40, 42, 150, 151, 152, 154 (boundary_conversion_ms arithmetic -- killable via
+  a controlled `perf_counter` clock, finding #18; deliberately left as accepted
+  non-contract telemetry, NOT equivalent); the PROVEN-EQUIVALENT 5 are 35 (top_code
+  int/float ingestion identical, caps bounded < 2**53), 44 (`and`->`or` guard,
+  INVARIANT-conditioned: the anchor col always exists in its own frame), 52
+  (`relationship_graph=None` not read on this path), 146, 148 (`preserve_index` None
+  vs False on a RangeIndex frame -- benign index metadata only).
+- **Wrapper + init plumbing (10): run_single prose (2) -- ACCEPTED NON-CONTRACT + 8
+  PROVEN EQUIVALENT:** `run_single` 11, 12 (guard message prose -- killable, accepted
+  non-contract); PROVEN EQUIVALENT: `run_sequential` 5, 16 (`pool_cache=None` ->
+  delegate builds a fresh PoolCache, byte-identical), `run_single` 18, 20, 25
+  (`pool_cache=None` / `namespace_registry=None` forward -- `run` rebuilds /
+  composite-only, byte-identical), `__init__` 1 (no-op), 2 (`self._fpe_chunk_count`
+  write-only, never read), `get_default_executor` 1 (`substrate=None` still returns a
+  valid adapter, only the cache key differs).
 
 ## Residual: none
 

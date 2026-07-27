@@ -52,24 +52,26 @@ Grade history (all on `_chunked.py`, 488 mutants):
   `test_de10_chunked_fk_declared_dtype.py`) -- real coverage of
   `run_mask_pipeline_chunked`'s FK guards that the original sweep selection simply
   omitted -- plus five targeted kill tests were added to
-  `test_chunked_mutation_kills.py`. Result: **426/488 = 87.30%, 62 equivalent, 0
-  residual.**
+  `test_chunked_mutation_kills.py`. Result: **426/488 = 87.30%, 23 proven
+  equivalent + 39 accepted non-contract, 0 residual.**
 
 The 90 survivors under the original selection (56 documented-equivalent + 31
 residual-killable + 3 that the hand count had mislabeled) are now fully resolved:
 **28 additional kills** (18 from the DE-10 selection expansion + 10 from the new
 tests, incl. `warm_26` which was only equivalent under an empty build_config), and
-the remaining **62 proven equivalent**.
+the remaining **62 survivors: 23 proven equivalent + 39 accepted non-contract**
+(the accepted-non-contract 39 are the message-prose class -- killable via
+full-message-equality, deliberately not killed; see Taxonomy).
 
-| Function | Total mutants | Killed | Equivalent (survivors) |
-|---|---|---|---|
-| `_conditional_admission_failures` | -- | -- | 22 |
-| `_warm_faker_pools` | -- | -- | 7 |
-| `aggregate_chunk_timings` | -- | -- | 0 |
-| `check_chunked_compatibility` | -- | -- | 13 |
-| `concat_masked_chunks` | -- | -- | 7 |
-| `run_mask_pipeline_chunked` | -- | -- | 13 |
-| **Total** | **488** | **426** | **62** |
+| Function | Total mutants | Killed | Proven equiv | Accepted non-contract |
+|---|---|---|---|---|
+| `_conditional_admission_failures` | -- | -- | 0 | 22 (prose) |
+| `_warm_faker_pools` | -- | -- | 7 | 0 |
+| `aggregate_chunk_timings` | -- | -- | 0 | 0 |
+| `check_chunked_compatibility` | -- | -- | 3 | 10 (prose) |
+| `concat_masked_chunks` | -- | -- | 0 | 7 (prose) |
+| `run_mask_pipeline_chunked` | -- | -- | 13 | 0 |
+| **Total** | **488** | **426** | **23** | **39** |
 
 ## Kills added by the full triage (28)
 

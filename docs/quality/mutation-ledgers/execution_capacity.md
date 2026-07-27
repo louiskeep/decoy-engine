@@ -2,9 +2,14 @@
 
 TQ substrate sweep (branch `tq/substrate-sweep`), FULL-TRIAGE grade by
 `scripts/tq_mutate.py` with default survived-bucket re-adjudication (finding #16
-RESOLVED). Every surviving mutant is now individually adjudicated -- killed or
-proven equivalent -- with ZERO residual (replaces the earlier "47 survivors not
-individually verified" honest-residual note). `capacity.py` exposes one public
+RESOLVED). Every surviving mutant is now individually adjudicated -- and this
+module is the one case where the three-bucket taxonomy (proven equivalent /
+accepted non-contract / residual -- defined in the `_chunked_fk` ledger) collapses
+to a single bucket: all 43 survivors are PROVEN EQUIVALENT, with ZERO accepted
+non-contract and ZERO residual (the one message-prose mutant, 33, was KILLED, and
+`capacity.py` has no `boundary_conversion_ms` telemetry, so no timing survivors
+exist). This replaces the earlier "47 survivors not individually verified"
+honest-residual note. `capacity.py` exposes one public
 function, `estimate_job_capacity`: the estimate-only entrypoint for the
 out-of-core-FK memory capacity gate (`decoy preflight` / `decoy run`). It derives
 the routing inputs by calling the same engine primitives `run_pipeline` uses,
@@ -29,9 +34,9 @@ triage then individually adjudicated all 47 survivors: **4 additional kills** (v
 4 new tests) and **43 proven equivalent**, each verified to survive the full
 selection standalone (rc 0).
 
-| Function | Total mutants | Killed | Equivalent (survivors) |
-|---|---|---|---|
-| `estimate_job_capacity` (+ helpers) | 328 | 285 | 43 |
+| Function | Total mutants | Killed | Proven equiv | Accepted non-contract |
+|---|---|---|---|---|
+| `estimate_job_capacity` (+ helpers) | 328 | 285 | 43 | 0 |
 
 ## Kills added by the full triage (4)
 

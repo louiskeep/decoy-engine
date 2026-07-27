@@ -38,14 +38,14 @@ dies standalone and under the full single-threaded selection; the jobs=1 grade i
 Baseline (5 existing integration/unit files): 231/417 = 55.40%, 186 survived --
 the dedicated coverage under-pins `run_sequential`'s quarantine / key-error /
 sink / snapshot branches and `table_topo_order`'s Kahn logic. Full triage added
-two kill files and adjudicated all 186 survivors: **138 additional kills**, 45
-equivalent, 3 residual.
+two kill files and adjudicated all 186 survivors: **138 additional kills**, 29
+proven equivalent, 16 accepted non-contract, 3 residual.
 
-| Function | Killed by the sweep | Equivalent | Residual |
-|---|---|---|---|
-| `run_sequential` | 120 | 38 | 3 |
-| `table_topo_order` | 14 | 7 | 0 |
-| `_has_transactional_write_contract` | 4 | 0 | 0 |
+| Function | Killed by the sweep | Proven equiv | Accepted non-contract | Residual |
+|---|---|---|---|---|
+| `run_sequential` | 120 | 27 | 11 (8 timing + 3 prose) | 3 |
+| `table_topo_order` | 14 | 2 | 5 (prose) | 0 |
+| `_has_transactional_write_contract` | 4 | 0 | 0 | 0 |
 
 ## Kills
 

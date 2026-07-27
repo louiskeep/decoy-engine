@@ -2,8 +2,15 @@
 
 TQ substrate sweep (branch `tq/substrate-sweep`), FULL-TRIAGE grade by
 `scripts/tq_mutate.py` with default survived-bucket re-adjudication (finding #16
-RESOLVED). Every surviving mutant is individually adjudicated -- killed or proven
-equivalent -- with ZERO residual. `_chunked_fk.py` is the chunked-route FK safety
+RESOLVED). Every surviving mutant is individually adjudicated into one of THREE
+buckets (definitions used across every ledger): PROVEN EQUIVALENT (no test can kill
+it -- unreachable/invariant/byte-identical); ACCEPTED NON-CONTRACT (a test COULD
+kill it, but only by pinning something the sweep does not treat as a machine
+contract -- free-text message prose, or telemetry timing arithmetic -- so it is
+deliberately left, a scoping decision); and RESIDUAL (killable AND touching a real
+machine contract, deferred only because the kill fixture is expensive -- these are
+tracked as owed work, e.g. `_sequential` 131/137/141). This module has 415 killed +
+4 proven equivalent + 105 accepted non-contract + 0 residual. `_chunked_fk.py` is the chunked-route FK safety
 layer: `gate_fk_child_edges` is the COMPILE-TIME admission gate that fails closed
 (`PlanCompileError` with a coded reject) on any FK child edge not safe to run
 chunk-by-chunk (conditions (a)-(f): chunk-safe strategies, declared keys,
@@ -36,11 +43,15 @@ kinds, NOT one "equivalent" bucket:
   may inspect, so this is a contract-SCOPING policy decision, not a claim that the
   prose is semantically inert.
 
-So this module is NOT "0 residual / 100% killable" -- that earlier framing was an
-overclaim. It is 79.20% inclusive, with 105 accepted-non-contract survivors + 4
-proven equivalents. Flagged for a Cam decision: hold the FK-guard layer to the
-stricter standard (pin the 12 reject messages verbatim, killing the 105), or
-accept them as non-contract survivors (current).
+So this module is NOT "100% killable / all-survivors-proven-equivalent" -- that
+earlier framing was an overclaim. It IS 0-residual under the three-bucket
+definition above (no killable-contract-touching deferred work), but only because
+the 105 message-prose survivors are classed ACCEPTED NON-CONTRACT, not killed: it
+is 79.20% inclusive, with 105 accepted-non-contract survivors + 4 proven
+equivalents. Flagged for a Cam decision: hold the FK-guard layer to the stricter
+standard (pin the 12 reject messages verbatim, killing the 105 -- which would
+promote them from non-contract to contract), or accept them as non-contract
+survivors (current).
 
 ## Numbers
 
