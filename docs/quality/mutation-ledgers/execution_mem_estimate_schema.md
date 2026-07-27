@@ -25,6 +25,13 @@ tables, so they missed two mutation classes:
 - `continue` -> `break` in the generate adapter's numeric branch (1 mutant): a
   single-column table can't observe an early loop exit.
 
+  (Note, re dennis gate: the module has TWO `continue`->`break` mutants -- the
+  generate numeric branch `:181` AND the profile fixed-width branch `:78`. Only
+  the generate one survived baseline and is killed by this sweep. The profile one
+  was ALREADY killed at baseline -- empirically confirmed by a clean pre-sweep
+  re-grade: baseline is 108/120, and its 12 survivors contain no profile-branch
+  continue mutant. So this sweep killed 10, not 11; baseline is 90%, not 89.17%.)
+
 Killed by two multi-column, multi-branch oracles in
 `tests/unit/execution/test_mem_estimate.py` (`TestMemSchemaNamePreservation`):
 `test_from_profile_preserves_all_names_across_every_branch` (id/email/city/notes
