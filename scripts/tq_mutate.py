@@ -428,11 +428,19 @@ def baseline_sanity_check(config: MutmutConfig, mutants_dir: Path, probe_timeout
             f"forced-fail probe (MUTANT_UNDER_TEST='fail') did not finish within "
             f"{probe_timeout:.1f}s (expected a fast failure)."
         )
-    if forced.returncode == 0:
+    # Require rc == 1 specifically: a genuine TEST FAILURE (Codex batch gate),
+    # not merely "nonzero". rc 0 means the tests never call the mutated functions
+    # (nothing could be killed); rc 2/3/4/5 are HARNESS failures (interrupt /
+    # internal error / usage / no-tests) that do NOT prove a test can fail on a
+    # mutant -- accepting them would bless a harness that cannot actually kill.
+    # This mirrors the re-adjudication rule (_PYTEST_KILLED_CODES == {1}).
+    if forced.returncode != 1:
         raise BaselineError(
-            "forced-fail probe (MUTANT_UNDER_TEST='fail') exited 0, expected nonzero. "
-            "The tests never call the mutated functions, so NO mutant could be killed "
-            "-- grading would be meaningless.\n" + _tail(forced.stdout, forced.stderr)
+            f"forced-fail probe (MUTANT_UNDER_TEST='fail') exited {forced.returncode}, "
+            "expected exactly 1 (a genuine test failure). rc 0 = the tests never call "
+            "the mutated functions (no mutant could be killed); rc 2/3/4/5 = a harness "
+            "failure, not a test failure -- grading would be meaningless either way.\n"
+            + _tail(forced.stdout, forced.stderr)
         )
     print(f"  (b) forced-fail probe fails (rc={forced.returncode})", flush=True)
     return baseline_seconds
@@ -536,8 +544,20 @@ def main() -> int:
     if args.run:
         print("Running `mutmut run` ...", flush=True)
         rc = subprocess.call(["mutmut", "run"])  # noqa: S607  # fixed console-script invocation
-        # mutmut exits nonzero when survivors exist; that is expected, not fatal.
-        print(f"mutmut run exit code {rc} (nonzero == survivors, expected)")
+        # mutmut 3.6 returns 0 on a COMPLETED run regardless of survivors, so a
+        # NONZERO rc means the run itself FAILED (Codex batch gate). Aborting is
+        # mandatory: otherwise, if a same-target `.meta` from a prior run exists,
+        # grading would silently proceed against a STALE mutant set. (A prior
+        # comment wrongly treated nonzero as "expected survivors".)
+        if rc != 0:
+            print(
+                f"\n===== `mutmut run` FAILED (exit {rc}) =====\n"
+                "ABORTING: the mutant set was not (re)generated cleanly, so any "
+                "on-disk .meta is STALE. Fix the mutmut run before grading.",
+                flush=True,
+            )
+            return 2
+        print(f"mutmut run completed (exit {rc}).")
 
     mutants_dir = args.mutants_dir
     meta_paths = meta_paths_for(config, mutants_dir)
