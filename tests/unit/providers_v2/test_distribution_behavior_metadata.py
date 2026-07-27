@@ -26,22 +26,75 @@ class TestPerStrategyLabel:
     @pytest.mark.parametrize(
         "strategy,expected",
         [
+            # Full _STATIC_BEHAVIOR map pinned per-value (TQ finding #9: mutmut does
+            # not mutate the module-level constant, so every strategy->label mapping
+            # is pinned here as a hardcoded golden). All 23 statically-resolved
+            # strategies covered; `categorical` is resolved dynamically (see
+            # TestCategoricalDynamicResolution) and returns before the static lookup.
             ("passthrough", "preserves_all"),
             ("shuffle", "preserves_all"),
             ("hash", "preserves_cardinality_only"),
             ("fpe", "preserves_cardinality_only"),
+            ("group_key", "preserves_cardinality_only"),
             ("faker", "destroys_frequency"),
+            ("grouped_series", "destroys_frequency"),
             ("bucketize", "coarsens"),
+            ("bucket_perturb", "coarsens"),
+            ("code_set", "coarsens"),
+            ("derived_aggregate", "coarsens"),
+            ("geo_generalize", "coarsens"),
+            ("joint_mask", "coarsens"),
+            ("top_code", "coarsens"),
             ("truncate", "coarsens"),
             ("redact", "collapses"),
             ("text_redact", "collapses"),
             ("date_shift", "varies_shape"),
+            ("windowed_date", "varies_shape"),
             ("formula", "mixed"),
+            ("derived", "mixed"),
+            ("text_mask", "mixed"),
             ("nested", "inherits"),
         ],
     )
     def test_static_strategy_labels(self, strategy, expected):
         assert distribution_behavior_for(strategy) == expected
+
+    def test_static_parametrize_covers_the_whole_static_map(self):
+        """Drift guard (finding #9): the per-value golden above must pin every
+        statically-resolved entry of _STATIC_BEHAVIOR. `categorical` is excluded
+        because the function resolves it dynamically before the static lookup."""
+        from decoy_engine.execution._distribution_behavior import _STATIC_BEHAVIOR
+
+        pinned = {
+            "passthrough",
+            "shuffle",
+            "hash",
+            "fpe",
+            "group_key",
+            "faker",
+            "grouped_series",
+            "bucketize",
+            "bucket_perturb",
+            "code_set",
+            "derived_aggregate",
+            "geo_generalize",
+            "joint_mask",
+            "top_code",
+            "truncate",
+            "redact",
+            "text_redact",
+            "date_shift",
+            "windowed_date",
+            "formula",
+            "derived",
+            "text_mask",
+            "nested",
+        }
+        assert pinned == set(_STATIC_BEHAVIOR) - {"categorical"}, (
+            "test_static_strategy_labels must pin every static entry; "
+            f"missing={set(_STATIC_BEHAVIOR) - {'categorical'} - pinned}, "
+            f"stale={pinned - set(_STATIC_BEHAVIOR)}"
+        )
 
 
 class TestCategoricalDynamicResolution:
@@ -78,6 +131,21 @@ class TestCategoricalDynamicResolution:
         the badge to preserves_all."""
         cfg = (("from_profile", 0),)
         assert distribution_behavior_for("categorical", cfg) == "destroys_frequency"
+
+    def test_categorical_from_profile_bool_false_destroys_frequency(self):
+        """from_profile=False (the bool, not int 0) must NOT flip to
+        preserves_all. Pins the `from_profile is True` check against a
+        `from_profile is False` mutation (which would wrongly promote the
+        explicit-off case)."""
+        cfg = (("from_profile", False),)
+        assert distribution_behavior_for("categorical", cfg) == "destroys_frequency"
+
+    def test_categorical_single_weight_still_preserves_all(self):
+        """A one-element weights list IS source-weighted -> preserves_all.
+        Pins the `len(weights) > 0` boundary against a `> 1` mutation that
+        would drop the single-weight case to destroys_frequency."""
+        cfg = (("weights", [5]),)
+        assert distribution_behavior_for("categorical", cfg) == "preserves_all"
 
 
 class TestUnknownStrategy:
