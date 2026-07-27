@@ -239,6 +239,26 @@ reachability path): `config/_pipeline.py` docstring says mask tables need named
 sourceless mask parent validates (then admission-gates). A separate doc-fix
 candidate.
 
+### 18. tq_mutate `--jobs>1` can FALSE-SURVIVE a mutant when a kill test asserts a WALL-CLOCK value (concurrency, tool)
+Surfaced by the `_sequential` grade (2026-07-27). `run_sequential` mut_146
+(`conversion_ms += elapsed` -> `-=`) is a genuine KILL:
+`test_result_reports_conversion_and_timings` asserts `boundary_conversion_ms > 0`,
+and the sign-flip makes it negative. It dies standalone AND under the full 7-file
+selection run single-threaded. But the `--jobs 6` re-grade reported it SURVIVED:
+under 6 concurrent pytest workers the wall-clock-derived conversion timing is
+perturbed enough that the `> 0` assertion did not fail deterministically. This
+EXTENDS Codex's `--jobs>1` MEDIUM (which was about cwd-write races): the cwd-write
+tripwire does NOT catch a TIMING-sensitive selection, because nothing is written --
+the non-determinism is in the measured value itself. Operational rule: grade any
+selection containing a wall-clock / timing assertion at `--jobs 1` (the OFFICIAL
+`_sequential` grade was re-run at jobs=1; the reproducible number is 369/417 with
+mut_146 killed, vs the jobs=6 flake of 368/417). The deterministic
+(byte/code/count) selections of the other substrate modules are unaffected -- only
+`_sequential` carries a timing assertion. Tool follow-up option: have the tool
+detect a timing-sensitive selection (e.g. re-run a survived-bucket mutant N times
+and flag instability) or simply document jobs=1 for timing selections; for now the
+operational rule + this note suffice.
+
 
 ### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked) -- RESOLVED (2026-07-27)
 
