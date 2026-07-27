@@ -675,3 +675,49 @@ class TestUnpriceablePropagation:
 
         with pytest.raises(ValueError, match="unpriceable_columns"):
             PeakEstimate(estimated_bytes=None, unpriceable_columns=())
+
+
+class TestMemSchemaNamePreservation:
+    """TQ substrate sweep: the adapters must copy every source column/table
+    NAME onto the built spec and emit ALL columns. Pre-sweep tests asserted
+    only widths/unpriceable on single-column tables, so `name=<x>` -> None
+    and `continue` -> `break` mutations survived."""
+
+    def test_from_profile_preserves_all_names_across_every_branch(self) -> None:
+        profile_table = TableProfile(
+            name="orders",
+            row_count=50,
+            columns=(
+                _col_profile("id", dtype="int64"),  # fixed-width branch
+                _col_profile("email", dtype="object"),  # declared-width branch
+                _col_profile("city", dtype="object"),  # sample-width branch
+                _col_profile("notes", dtype="object"),  # unpriceable branch
+            ),
+        )
+        spec = table_size_spec_from_profile(
+            profile_table,
+            declared_widths={"email": 30.0},
+            sample={"city": pa.array(["nyc", "sf"])},
+        )
+        # TableSizeSpec name + every ColumnSizeSpec name copied from source.
+        assert spec.name == "orders"
+        assert [c.name for c in spec.columns] == ["id", "email", "city", "notes"]
+
+    def test_from_generate_table_preserves_names_and_emits_all_columns(self) -> None:
+        # Numeric column FIRST so it hits the `continue`; a `break` mutation
+        # would drop the two columns after it (count -> 1), and any `name=None`
+        # mutation would blank a name.
+        table = TableConfig(
+            name="events",
+            row_count=100,
+            generate_columns=[
+                GenerateColumnConfig(name="seq", type="sequence", start=0),  # numeric+continue
+                GenerateColumnConfig(name="email", type="faker", faker_type="email"),  # width
+                GenerateColumnConfig(
+                    name="bio", type="statistical", snapshot_file="s.json"
+                ),  # unpriceable
+            ],
+        )
+        spec = table_size_spec_from_generate_table(table)
+        assert spec.name == "events"
+        assert [c.name for c in spec.columns] == ["seq", "email", "bio"]
