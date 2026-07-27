@@ -111,7 +111,7 @@ leaked column survives the `& passthrough_columns` intersection), the list-order
 `continue`->`break` guards, and the `next(..., None)` default (a FK edge naming a
 table absent from `config.tables` returns `set()`, not a `StopIteration`).
 
-## EQUIVALENT survivors (109) -- proven
+## Non-residual survivors (109): 4 proven equivalent + 105 accepted non-contract
 
 - **`gate_fk_child_edges` message prose (93):** XX-wrap / re-case of the free-text
   explanatory sentences in each of the 12 coded rejects (`chunked_fk_orphan_policy_not_remap`

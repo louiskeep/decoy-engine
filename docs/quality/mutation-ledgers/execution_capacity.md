@@ -50,7 +50,7 @@ selection standalone (rc 0).
 (mut_88 and mut_139, initially flagged as kill candidates, proved equivalent -- see
 below. The kills 33 and 116 were found beyond the initial candidate set.)
 
-## EQUIVALENT survivors (43) -- proven, by class
+## Non-residual survivors (43): 43 proven equivalent + 0 accepted non-contract, by class
 
 Each was verified to survive the full selection standalone (MUTANT_UNDER_TEST set,
 both capacity test files, rc 0).
