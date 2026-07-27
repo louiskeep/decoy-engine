@@ -15,16 +15,18 @@ layer. Not crypto/RI proper, so the bar is **75% of LOGIC mutants**.
 
 ## Numbers
 
-**Killed 460/498 = 92.37% LOGIC (tool-native, 0 unresolved). 38 survivors: 36
-proven equivalent + 2 precisely-characterized residual.** Above the 75% bar
-(measured max(57.63 + 15, 75) = 75%).
+**Killed 462/498 = 92.77% LOGIC (tool-native, 0 unresolved). 36 survivors, ALL
+proven equivalent -- 0 residual.** Above the 75% bar (measured max(57.63 + 15,
+75) = 75%). (The two run_single key_provider mutants 21/28 were closed after the
+dennis gate -- a keyed single-table `run_single` test now kills them; no residual
+remains.)
 
 Baseline (5 existing execution/keyprovider files): 287/498 = 57.63%, 211 survived.
 NOTE: mutmut's in-process run reported 210 of the 498 as ⏰ TIMEOUT (finding #8 --
 the in-process runner mis-marks survivors as timeout on this heavy pandas suite);
 `tq_mutate` re-adjudicated all 210 against the full selection, 0 left unresolved.
 The full triage then adjudicated all 211 survivors across three kill files:
-**173 additional kills**, 36 proven equivalent, 2 residual.
+**175 additional kills**, 36 proven equivalent, 0 residual.
 
 | Function | Killed by the sweep | Equivalent | Residual |
 |---|---|---|---|
@@ -33,7 +35,7 @@ The full triage then adjudicated all 211 survivors across three kill files:
 | `_resolve_fk_node` | 51 | 2 | 0 |
 | `_parent_map` | 25 | 4 | 0 |
 | `run_sequential` (wrapper) | 20 | 2 | 0 |
-| `run_single` | 6 | 5 | 2 |
+| `run_single` | 8 | 5 | 0 |
 | `__init__` / `_fk_key_value` / `get_default_executor` | 4 | 3 | 0 |
 
 ## Kills
@@ -51,7 +53,7 @@ key, a >2**53 int FK key survives exact beside a null (the lossless-int path), a
 an all-null resolved FK preserves the source uint width. The null-parent-key and
 errored-key loops use `continue` not `break` (a `break` orphans every later row).
 
-### Execution + dispatch -- `test_pandas_adapter_exec_kills.py` (`run` 37 + `_dispatch_mask_node` 31 + `run_sequential` 20)
+### Execution + dispatch -- `test_pandas_adapter_exec_kills.py` (`run` 36 + `_dispatch_mask_node` 31 + `run_sequential` 20)
 `run`: lossless-int FK typing (a big int64 key beside a null rounds when the
 FK-safe set is emptied), group-anchor pre-mask snapshots (date_shift group_by
 fails closed on an empty snapshot), the full-frame key-error cascade + drain
@@ -90,9 +92,10 @@ Each verified to survive the full 8-file selection standalone (rc 0).
 - **Telemetry noise-band + route-inert (run, 11):** `run` 40, 42, 150, 151, 152, 154
   (boundary_conversion_ms magnitude perturbations inside the timing noise band, no
   non-flaky observable -- finding #18; confirmed at jobs=1), 35 (top_code int/float ingestion identical,
-  caps bounded < 2**53), 44 (`and`->`or` guard invariantly True -- the anchor col
-  always exists in its own frame), 52 (`relationship_graph=None` not read on this
-  path), 146, 148 (`preserve_index` None vs False on a RangeIndex frame -- benign
+  caps bounded < 2**53), 44 (`and`->`or` guard, INVARIANT-conditioned equivalent:
+  the anchor col always exists in its own frame so the guard is invariantly True),
+  52 (`relationship_graph=None` not read on this path -- invariant-conditioned),
+  146, 148 (`preserve_index` None vs False on a RangeIndex frame -- benign
   index metadata only, data/columns/types identical).
 - **Wrapper + init plumbing (10):** `run_sequential` 5, 16 (`pool_cache=None` ->
   delegate builds a fresh PoolCache, byte-identical); `run_single` 11, 12 (guard
@@ -101,20 +104,24 @@ Each verified to survive the full 8-file selection standalone (rc 0).
   (`self._fpe_chunk_count` is write-only, never read); `get_default_executor` 1
   (`substrate=None` still returns a valid adapter, only the cache key differs).
 
-## Residual (2) -- precisely characterized, killable, deferred
+## Residual: none
 
-`run_single` 21, 28: the `key_provider` forward to `run` (`=None` / dropped kwarg).
-`run_single` is a thin wrapper; the existing keyprovider tests exercise `run`'s
-key_provider directly but not through `run_single`. KILLABLE with a keyed
-single-table `run_single` call (a keyed column masks off `job_seed` without the
-provider, so the output diverges). Deferred as a low-value thin-wrapper forward (2
-of 498, above bar); the exec cluster proves the SAME key_provider threading on
-`run` and `run_sequential`. Recipe recorded; flagged for a decision.
+`run_single` 21/28 (the `key_provider` forward to `run`) were initially deferred,
+then CLOSED after the dennis gate flagged them as the mask-key derivation path on
+a public method: `test_key_provider_forwarded_to_run` runs a keyed single-table
+`run_single(table="parent", key_provider=...)` and asserts the output diverges
+from the job_seed fallback. 0 residual.
 
 ## Candidate findings
 
-None. No mutation exposed a wrong FK resolution, a leaked errored key, a wrong
-orphan verdict, a wrong dispatch route, or a full-frame byte divergence.
+No product bug -- no mutation exposed a wrong FK resolution, a leaked errored key,
+a wrong orphan verdict, a wrong dispatch route, or a full-frame byte divergence.
+One doc nit (dennis LOW, pre-existing, source): `_parent_map`'s docstring
+(`_pandas_adapter.py:573-576`) still describes a "parent column never masked (no
+snapshot) maps identity" path, but `run()` now snapshots every parent column
+unconditionally (`:246-251`), so that path cannot occur -- which is exactly why
+mut_14/16 (the snapshot `.get` default) are equivalent-by-unreachability. Reword in
+a future source pass (out of this tests-only sweep).
 
 ## Regenerate
 

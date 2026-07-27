@@ -18,8 +18,11 @@ from decoy_engine.execution._pandas_adapter import (
     _reset_default_executor_for_tests,
     get_default_executor,
 )
+from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.perf_fixtures.fk_relational import build_fk_relational
+
+_SECRET = SecretKeyProvider(b"a-strong-32B+-managed-secret-value!!", key_version="v1")
 
 
 class TestAdapterInit:
@@ -78,3 +81,22 @@ class TestRunSingleTableGuard:
         # identifying data in the message (kills a nulled message); the prose
         # itself is left equivalent (house style, code pinned above).
         assert "table=" in exc.value.message
+
+    def test_key_provider_forwarded_to_run(self) -> None:
+        # run_single forwards `key_provider` to `run`; a keyed column masks off
+        # the managed secret WITH it and off job_seed WITHOUT it, so the outputs
+        # differ. Kills the key_provider=None (mut_21) and dropped-kwarg (mut_28)
+        # mutants -- the mask-key derivation path on this public method.
+        adapter = PandasExecutionAdapter()
+        fx = build_fk_relational(rows=120, width=1, orphan_frac=0.0)
+        graph = fx.graph(OrphanPolicy.PRESERVE)
+        source = fx.sources["parent"]
+        common = {
+            "registry": fx.registry,
+            "relationship_graph": graph,
+            "namespace_registry": fx.namespace_registry,
+            "table": "parent",
+        }
+        unkeyed = adapter.run_single(fx.plan, source, **common)
+        keyed = adapter.run_single(fx.plan, source, key_provider=_SECRET, **common)
+        assert not keyed.outputs["parent"].equals(unkeyed.outputs["parent"])
