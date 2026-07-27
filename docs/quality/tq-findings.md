@@ -212,6 +212,23 @@ high-stakes (RI); Cam-gated, NOT done autonomously.
 
 ## Substrate sweep observations
 
+### 17. `estimate_job_capacity` parent-rows-unresolved raise appears to be dead code (cleanup candidate)
+`execution/capacity.py`. Surfaced by the capacity FULL-triage (2026-07-27): the
+`raise ExecutionError(code=_PARENT_ROWS_UNRESOLVED_CODE, ...)` branch (the "outgoing
+FK edge but no declared source" error, ~lines 211-217) has 7 mutants that all
+survive because the branch is UNREACHABLE under current admission. The branch fires
+only when a graph parent is missing from the profile WHILE the route is already
+`out_of_core` -- but a missing parent source is caught earlier by
+`out_of_core_admission`, which returns `(False, 'out_of_core_parent_seed_missing')`,
+so a job with a missing parent never routes `out_of_core` and never reaches this
+raise. So its code/message mutants (211-217) are equivalent by unreachability, not by
+prose. Flag for a decision: confirm the branch is genuinely dead and remove it (a
+source change, out of this tests-only sweep), or identify a reachable path the sweep
+did not construct. Same class as finding #11 (date_shift dead V1 class). Not a
+product bug (the guard is conservative); a dead-code cleanup / reachability
+confirmation.
+
+
 ### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked) -- RESOLVED (2026-07-27)
 
 **RESOLVED.** `scripts/tq_mutate.py` now RE-ADJUDICATES the survived bucket by

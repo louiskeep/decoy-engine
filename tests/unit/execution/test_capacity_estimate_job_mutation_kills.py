@@ -774,3 +774,253 @@ class TestRouteKwargFullStructKills:
             floor_bytes=0,
             cap_bytes=None,
         )
+
+
+# --------------------------------------------------------------------------
+# extra fixture builders for the branch-level kills below
+# --------------------------------------------------------------------------
+def _two_csv_build_parents_config(tmp_path: Path, *, mid_rows: int = 2000) -> dict[str, Any]:
+    """`aaa <- bbb <- ccc`, with BOTH build-phase parents (`aaa`, `bbb`) on CSV
+    sources so BOTH land in `unresolved_parent_tables` (a CSV row count is a
+    byte-size estimate, never exact). Table names are deliberately non-substring
+    of each other so an assertion that both appear in the UNKNOWN message cannot
+    be satisfied by one alone (`parent` is a substring of `grandparent`, which
+    would have masked the `break` skip). `ccc` is Parquet -- only the two build
+    parents need to be unresolved."""
+    aaa = pa.table(
+        {
+            "aid": pa.array([f"a{i}" for i in range(40)], type=pa.string()),
+            "anote": pa.array([f"an{i}" for i in range(40)], type=pa.string()),
+        }
+    )
+    bbb = pa.table(
+        {
+            "bid": pa.array([f"b{i}" for i in range(mid_rows)], type=pa.string()),
+            "a_ref": pa.array([f"a{i % 40}" for i in range(mid_rows)], type=pa.string()),
+        }
+    )
+    ccc = pa.table(
+        {
+            "cid": pa.array([f"c{i}" for i in range(40)], type=pa.string()),
+            "b_ref": pa.array([f"b{i % mid_rows}" for i in range(40)], type=pa.string()),
+        }
+    )
+    return {
+        "version": 1,
+        "global_settings": {"job_name": "two-csv-parents", "seed": 7},
+        "sources": {
+            "aaa": {"type": "file", "path": _write_csv(tmp_path, aaa, "aaa"), "format": "csv"},
+            "bbb": {"type": "file", "path": _write_csv(tmp_path, bbb, "bbb"), "format": "csv"},
+            "ccc": {
+                "type": "file",
+                "path": _write_parquet(tmp_path, ccc, "ccc"),
+                "format": "parquet",
+            },
+        },
+        "targets": {
+            n: {"type": "file", "path": str(tmp_path / f"{n}.out.parquet"), "format": "parquet"}
+            for n in ("aaa", "bbb", "ccc")
+        },
+        "tables": [
+            {
+                "name": "aaa",
+                "columns": [_hash_col("aid", "ans"), {"name": "anote", "strategy": "redact"}],
+            },
+            {"name": "bbb", "columns": [_hash_col("bid", "bns"), _hash_col("a_ref", "ans")]},
+            {"name": "ccc", "columns": [_hash_col("cid", "cns"), _hash_col("b_ref", "bns")]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "aaa", "columns": ["aid"]},
+                "children": [{"table": "bbb", "columns": ["a_ref"]}],
+                "orphan_policy": "preserve",
+                "namespace": "ans",
+            },
+            {
+                "parent": {"table": "bbb", "columns": ["bid"]},
+                "children": [{"table": "ccc", "columns": ["b_ref"]}],
+                "orphan_policy": "preserve",
+                "namespace": "bns",
+            },
+        ],
+    }
+
+
+def _star_plus_grandchild_config(tmp_path: Path, *, fan_in: int) -> dict[str, Any]:
+    """A `fan_in`-way star into `child`, PLUS `child` itself parents one
+    `grandchild` (so `child` has both `fan_in` incoming edges AND a build/
+    outgoing edge). This is the ONLY shape where `_max_concurrent_ooc_instances`
+    diverges on the sink flag for the widest table: sink=False makes `child`'s
+    peak `incoming + build = fan_in + 1`, sink=True makes it
+    `max(incoming, build) = fan_in`. At `fan_in=67` on a 64 MiB budget, the
+    sink=False peak (68) makes `resolve_ooc_memory_limit` raise
+    `out_of_core_fanin_exceeds_budget` (68 co-live 1 MB caps exceed the budget),
+    while the sink=True peak (67) does not (67 * 1_000_000 <= 64 MiB) -- so the
+    hardcoded `sink=False` is observable as a RAISE that a `sink=True` mutation
+    silences."""
+    sources: dict[str, Any] = {}
+    tables: list[dict[str, Any]] = []
+    rels: list[dict[str, Any]] = []
+    child_cols: dict[str, Any] = {"cid": pa.array([f"c{i}" for i in range(40)], type=pa.string())}
+    child_tbl_cols: list[dict[str, Any]] = [_hash_col("cid", "cns")]
+    for k in range(fan_in):
+        pn = f"par{k}"
+        pt = pa.table(
+            {
+                "id": pa.array([f"p{i}" for i in range(40)], type=pa.string()),
+                "note": pa.array([f"s{i}" for i in range(40)], type=pa.string()),
+            }
+        )
+        sources[pn] = {
+            "type": "file",
+            "path": _write_parquet(tmp_path, pt, pn),
+            "format": "parquet",
+        }
+        tables.append(
+            {
+                "name": pn,
+                "columns": [_hash_col("id", f"ns{k}"), {"name": "note", "strategy": "redact"}],
+            }
+        )
+        child_cols[f"fk{k}"] = pa.array([f"p{i % 40}" for i in range(40)], type=pa.string())
+        child_tbl_cols.append(_hash_col(f"fk{k}", f"ns{k}"))
+        rels.append(
+            {
+                "parent": {"table": pn, "columns": ["id"]},
+                "children": [{"table": "child", "columns": [f"fk{k}"]}],
+                "orphan_policy": "preserve",
+                "namespace": f"ns{k}",
+            }
+        )
+    sources["child"] = {
+        "type": "file",
+        "path": _write_parquet(tmp_path, pa.table(child_cols), "child"),
+        "format": "parquet",
+    }
+    tables.append({"name": "child", "columns": child_tbl_cols})
+    # child's OWN outgoing edge: `grandchild` references `child.cid`, so `child`
+    # is now a build table (build=1) as well as a 67-way fan-in target.
+    gc = pa.table(
+        {
+            "gcid": pa.array([f"gc{i}" for i in range(40)], type=pa.string()),
+            "c_ref": pa.array([f"c{i % 40}" for i in range(40)], type=pa.string()),
+        }
+    )
+    sources["grandchild"] = {
+        "type": "file",
+        "path": _write_parquet(tmp_path, gc, "grandchild"),
+        "format": "parquet",
+    }
+    tables.append(
+        {
+            "name": "grandchild",
+            "columns": [_hash_col("gcid", "gcns"), _hash_col("c_ref", "cns")],
+        }
+    )
+    rels.append(
+        {
+            "parent": {"table": "child", "columns": ["cid"]},
+            "children": [{"table": "grandchild", "columns": ["c_ref"]}],
+            "orphan_policy": "preserve",
+            "namespace": "cns",
+        }
+    )
+    return {
+        "version": 1,
+        "global_settings": {"job_name": "star-grandchild", "seed": 7},
+        "sources": sources,
+        "targets": {
+            n: {"type": "file", "path": str(tmp_path / f"{n}.out.parquet"), "format": "parquet"}
+            for n in sources
+        },
+        "tables": tables,
+        "relationships": rels,
+    }
+
+
+# --------------------------------------------------------------------------
+# parent-rows loop: `continue` (not `break`) so EVERY unresolved parent is
+# collected, not just the first (mut_220 `continue`->`break`).
+# --------------------------------------------------------------------------
+class TestParentRowsLoopContinues:
+    def test_all_unresolved_parents_named_not_just_first(
+        self, tmp_path: Path, low_threshold
+    ) -> None:
+        # Two CSV build-phase parents (`aaa`, `bbb`): the loop must `continue`
+        # past the first unresolved one so BOTH end up in
+        # `unresolved_parent_tables` and the UNKNOWN message names both. A
+        # `break` (mut_220) stops after whichever the set yields first, so only
+        # one name survives -- and the two names are non-substring, so "both
+        # present" cannot be met by a single leftover.
+        config = _two_csv_build_parents_config(tmp_path)
+        est = estimate_job_capacity(config, tmp_path, budget_bytes=64 * _GIB)
+        assert est.verdict is CapacityVerdict.UNKNOWN
+        assert est.route == "out_of_core"
+        assert "aaa" in est.message
+        assert "bbb" in est.message
+
+
+# --------------------------------------------------------------------------
+# max_concurrent sink flag: `_max_concurrent_ooc_instances(graph, sink=False)`
+# sizes the fan-in guard divisor; sink=True (mut_229) under-counts the widest
+# table's build-phase liveness by one, silencing a real fan-in refusal.
+# --------------------------------------------------------------------------
+class TestMaxConcurrentSinkFalse:
+    def test_sink_false_fanin_guard_fires(self, tmp_path: Path, low_threshold) -> None:
+        # child has 67 incoming edges + 1 build edge. sink=False -> peak 68 ->
+        # resolve_ooc_memory_limit raises out_of_core_fanin_exceeds_budget (with
+        # an explicit budget the raise propagates). sink=True (mut_229) -> peak
+        # 67 -> no raise, the job is priced to a verdict instead of refused, so
+        # pytest.raises sees no exception and the test fails on the mutant.
+        config = _star_plus_grandchild_config(tmp_path, fan_in=67)
+        with pytest.raises(ExecutionError) as ei:
+            estimate_job_capacity(config, tmp_path, budget_bytes=64 * _MIB)
+        assert ei.value.code == "out_of_core_fanin_exceeds_budget"
+
+
+# --------------------------------------------------------------------------
+# call-1 largest_table_rows_exact: an ESTIMATED (CSV) largest mask table that
+# is full-frame-bound and over the reject threshold gets the DISTINCT
+# `..._estimated` reject code. Dropping the kwarg on call 1 (mut_116) lets it
+# default to True, which routes through the non-estimated reject instead.
+# --------------------------------------------------------------------------
+class TestCsvEstimatedRejectCode:
+    def test_csv_full_frame_reject_uses_estimated_code(self, tmp_path: Path, low_threshold) -> None:
+        # CSV sources (estimated counts) + faker (out-of-core-INCOMPATIBLE) +
+        # validators (not sequential-eligible) => full-frame-bound and, over the
+        # lowered reject threshold, rejected-before-read. Because the largest
+        # mask table's count is a CSV estimate (largest_table_rows_exact=False),
+        # the engine raises the DISTINCT fk_full_frame_oom_risk_rejected_estimated
+        # code, whose message says "CSV size estimate". Dropping
+        # largest_table_rows_exact on call 1 (mut_116) defaults it to True, so
+        # the non-estimated code fires and "CSV size estimate" disappears.
+        config = _ooc_config(
+            tmp_path, parent_fmt="csv", child_fmt="csv", tables=_parent_child_tables(200)
+        )
+        config["tables"][0]["columns"] = [
+            _hash_col("id", "ns"),
+            {"name": "note", "strategy": "faker", "provider": "person_email"},
+        ]
+        config["validators"] = [{"type": "row_count", "table": "parent"}]
+        est = estimate_job_capacity(config, tmp_path, budget_bytes=64 * _GIB)
+        assert est.verdict is CapacityVerdict.NOT_APPLICABLE
+        assert est.route == "rejected_before_read"
+        assert "CSV size estimate" in est.message
+
+
+# --------------------------------------------------------------------------
+# corrupt-source message: the reader exception's TYPE name is interpolated via
+# `type(exc).__name__`. mut_33 replaces `exc` with `None`, so every source-read
+# failure reports the useless "NoneType" instead of the real reader class.
+# --------------------------------------------------------------------------
+class TestCorruptSourceTypeName:
+    def test_reader_exception_type_name_is_real(self, tmp_path: Path) -> None:
+        config = _ooc_config(tmp_path)
+        (tmp_path / "child.parquet").write_bytes(b"NOT_A_PARQUET_FILE_corrupt")
+        with pytest.raises(ExecutionError) as ei:
+            estimate_job_capacity(config, tmp_path)
+        assert ei.value.code == "capacity_source_unprofilable"
+        # The real pyarrow reader class name is interpolated into the message;
+        # mut_33 (`type(None).__name__`) would report "NoneType" instead.
+        assert "ArrowInvalid" in ei.value.message
+        assert "NoneType" not in ei.value.message

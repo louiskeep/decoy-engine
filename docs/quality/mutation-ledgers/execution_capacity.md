@@ -1,185 +1,112 @@
 # Mutation grading: `execution/capacity.py` -- substrate bar 75%
 
-TQ substrate sweep (branch `tq/substrate-sweep`), re-graded and finalized.
-`capacity.py` exposes one public function, `estimate_job_capacity`: the
-estimate-only entrypoint for the out-of-core-FK memory capacity gate (`decoy
-preflight` / `decoy run`). It derives the routing inputs by calling the same
-engine primitives `run_pipeline` uses, asks `decide_execution_route` twice (a
-row-count-only decision, then a worst-case byte-estimate probe), and defers the
-final FIT/INSUFFICIENT/UNKNOWN/NOT_APPLICABLE verdict to the shared
-`evaluate_capacity`. This is a substrate module (a route/capacity gate), not
-crypto/RI, so the bar is **75% of LOGIC mutants**, not 100%.
-
-This round addresses the surviving mutation class that nulls (or otherwise
-mutates) one argument VALUE in the long kwarg list forwarded to each of the two
-`decide_execution_route` calls. Nulling a load-bearing kwarg re-routes the job,
-which changes the FULL returned `CapacityEstimate`. The reliable oracle is a
-full-struct golden: assert every field of the returned struct
-(`verdict`/`code`/`needed_bytes`/`available_bytes`/`route`/`message`/`warned`/
-`binding_table`/`floor_bytes`/`cap_bytes`) for a set of job shapes chosen so
-each kwarg is load-bearing in at least one of them.
+TQ substrate sweep (branch `tq/substrate-sweep`), FULL-TRIAGE grade by
+`scripts/tq_mutate.py` with default survived-bucket re-adjudication (finding #16
+RESOLVED). Every surviving mutant is now individually adjudicated -- killed or
+proven equivalent -- with ZERO residual (replaces the earlier "47 survivors not
+individually verified" honest-residual note). `capacity.py` exposes one public
+function, `estimate_job_capacity`: the estimate-only entrypoint for the
+out-of-core-FK memory capacity gate (`decoy preflight` / `decoy run`). It derives
+the routing inputs by calling the same engine primitives `run_pipeline` uses,
+asks `decide_execution_route` twice (a row-count-only decision, then a worst-case
+byte-estimate probe), and defers the final FIT/INSUFFICIENT/UNKNOWN/NOT_APPLICABLE
+verdict to the shared `evaluate_capacity`. Not crypto/RI, so the bar is **75% of
+LOGIC mutants**.
 
 ## Numbers
 
-**Re-graded (`scripts/tq_mutate.py`): 281/328 killed = 85.67% LOGIC, 0 unresolved
--- clears the measured bar (max(baseline 64.94 + 15, 75) = 79.94%).** Baseline was
-213 killed / 115 survived (64.94%). This sweep's new oracles killed 68 of the 115
-survivors (16 per-field/verdict oracles + 6 full-`CapacityEstimate` golden shapes),
-leaving **47 survivors** at 85.67%. 0 product bugs -- this is the fail-closed-DIRECTION
-argument (nulling any load-bearing kwarg only ever degrades the verdict toward
-UNKNOWN/NOT_APPLICABLE, never fabricates a false FIT), not a per-survivor verification.
+**TRUE score: 285/328 = 86.89% LOGIC (tool-native, 0 unresolved), above the 75%
+bar (measured max(baseline 64.94 + 15, 75) = 79.94%). 43 survivors, ALL proven
+equivalent -- 0 residual.**
 
-| Function | Total mutants | Killed | Survived |
+Re-grading with the fixed tool (survived re-adjudication) reproduced the prior
+281/328 = 85.67% exactly: capacity had NO false-survived (unlike `_chunked`, its
+full-struct oracles were properly credited by mutmut's coverage map). The full
+triage then individually adjudicated all 47 survivors: **4 additional kills** (via
+4 new tests) and **43 proven equivalent**, each verified to survive the full
+selection standalone (rc 0).
+
+| Function | Total mutants | Killed | Equivalent (survivors) |
 |---|---|---|---|
-| `estimate_job_capacity` (+ helpers) | 328 | 281 | 47 |
+| `estimate_job_capacity` (+ helpers) | 328 | 285 | 43 |
 
-### The 47 residual survivors (HONEST scope note)
-Unlike `_when_gate` and `_planner` (every survivor individually triaged), the 47
-here are NOT each individually verified -- `estimate_job_capacity` threads ~two
-dozen kwargs into two `decide_execution_route` calls, and exhaustively pinning
-every kwarg's effect across the full routing decision tree is disproportionate
-effort for a module already comfortably above its bar. The residual is dominated
-by the equivalence CLASSES identified below (whose reasoning holds by
-construction), plus route-kwarg `=None` mutants whose effect the tested job shapes
-do not distinguish (plausibly equivalent -- the kwarg does not change the verdict
-for reachable shapes -- but not each proven). A future pass can squeeze further by
-adding job-shape goldens. This is an above-bar residual, deliberately not claimed
-as all-equivalent.
+## Kills added by the full triage (4)
 
-Equivalence classes (proven by construction, from the focused-kill analysis):
-- **`execution_mode`** (both call sites): `"auto"` is the fall-through default read
-  only by `== "..."` checks, so `None` / `"XXautoXX"` route identically.
-- **`use_probe_routing`** (both call sites): inert -- read only as
-  `use_probe_routing and probe_recovers_full_frame is True`, and
-  `estimate_job_capacity` never passes `probe_recovers_full_frame` (defaults None),
-  so the guard is always False regardless.
-- **`full_frame_fits_estimate=None`** (call 2): read as `is True`, so `None` and the
-  real `False` behave identically (the distinct `False->True` flip IS killed).
-- **reject-branch kwargs on call 2** (`out_of_core_reject_code`,
-  `largest_table_rows(_exact)`): the byte-probe reject branch IS reachable on call 2
-  (e.g. an ooc-compatible-but-not-sequential-eligible validators job:
-  `_sequential_eligible` is False on `validators_present` while admission ignores
-  validators, so call 2 falls into the byte-branch reject). Equivalent anyway because
-  `estimate_job_capacity` SWALLOWS every call-2 reject to `byte_route=None`
-  (capacity.py:374-382), so `out_of_core_reject_code`'s message never surfaces, and
-  `largest_table_rows(_exact)` are not read in the byte-estimate branch at all. Killed
-  on call 1 by the reject shape. (If the swallow behavior ever changed to surface the
-  byte reject, `out_of_core_reject_code` on call 2 would become killable.)
+| mut | mutation | killed by (machine field) |
+|---|---|---|
+| 33 | `type(exc).__name__` -> `type(None).__name__` in the corrupt-source message | `TestCorruptSourceTypeName::test_reader_exception_type_name_is_real` -- a truncated CSV asserts the REAL reader exception type name (`ArrowInvalid`) is in the message and `NoneType` is not; the mutant emits `NoneType`. |
+| 116 | call-1 drops `largest_table_rows_exact=` (-> callee default `True`) | `TestCsvEstimatedRejectCode::test_csv_full_frame_reject_uses_estimated_code` -- a CSV + faker + validators full-frame-reject job: the real inexact CSV size raises the `..._estimated` reject code; the mutant's default `exact=True` takes the non-estimated path, so the pinned code/message diverges. |
+| 220 | `continue` -> `break` in the parent-rows-unresolved loop | `TestParentRowsLoopContinues::test_all_unresolved_parents_named_not_just_first` -- two non-substring CSV build parents; the real loop names BOTH in the UNKNOWN message, `break` names only the first. |
+| 229 | `_max_concurrent_ooc_instances(graph, sink=False)` -> `sink=True` | `TestMaxConcurrentSinkFalse::test_sink_false_fanin_guard_fires` -- a star fan-in of 67 where `child` is also a build table: `sink=False` prices peak concurrency 68 and `resolve_ooc_memory_limit` raises `out_of_core_fanin_exceeds_budget`; `sink=True` prices 67 and does not raise. |
 
-## Tests
+(mut_88 and mut_139, initially flagged as kill candidates, proved equivalent -- see
+below. The kills 33 and 116 were found beyond the initial candidate set.)
 
-Six full-struct oracles added to
-`tests/unit/execution/test_capacity_estimate_job_mutation_kills.py`
-(class `TestRouteKwargFullStructKills`), each asserting the ENTIRE returned
-`CapacityEstimate` via `est == CapacityEstimate(...)` against hardcoded golden
-literals read off the real (unmutated) code. Two new config builders
-(`_generate_plus_mask_config`, `_reject_code_config`) join the existing
-`_ooc_config` helper. All 36 tests in the two capacity files green on unmutated
-code; ruff format + check clean.
+## EQUIVALENT survivors (43) -- proven, by class
 
-Explicit budgets pin `available_bytes` / `cap_bytes` deterministically instead
-of depending on the host's detected RAM, so the goldens are portable.
+Each was verified to survive the full selection standalone (MUTANT_UNDER_TEST set,
+both capacity test files, rc 0).
 
-The shapes and the call-site kwargs each makes load-bearing:
-
-| Shape (test) | Route / verdict | Row-count call (1) kwargs killed | Byte-probe call (2) kwargs killed |
-|---|---|---|---|
-| FIT out_of_core (low_threshold, 64 GiB) | out_of_core / FIT | has_mask_table, out_of_core_compatible, largest_table_rows, resolved_substrate, graph, fidelity_report, vault_writer | -- |
-| INSUFFICIENT out_of_core (low_threshold, 1 MiB, 300k) | out_of_core / INSUFFICIENT | (reinforces above; pins INSUFFICIENT code/needed/floor/cap) | -- |
-| UNKNOWN probe-promoted (no low_threshold, 64 GiB) | out_of_core / UNKNOWN | -- | has_mask_table, out_of_core_compatible, resolved_substrate, use_byte_estimate_routing, full_frame_fits_estimate, graph |
-| generate+mask (no low_threshold) | full_frame / NOT_APPLICABLE | has_generate_table | -- |
-| validators + ooc-compatible (no low_threshold) | full_frame / NOT_APPLICABLE | use_byte_estimate_routing (flip -> reject) | validators |
-| reject-before-read (low_threshold, faker+validators) | rejected_before_read / NOT_APPLICABLE | validators, out_of_core_reject_code, largest_table_rows_exact, largest_table_rows | -- |
-
-## New-oracle kill shapes (what the added tests pin)
-
-### Row-count-only call (call 1)
-
-- **has_mask_table / out_of_core_compatible / largest_table_rows**: nulled, each
-  drops `out_of_core_ready` to False, so the FIT/INSUFFICIENT out_of_core job
-  falls to `sequential` -> NOT_APPLICABLE. The full-struct FIT and INSUFFICIENT
-  goldens (route `out_of_core`) diverge.
-- **resolved_substrate**: nulled, `None != "pandas"` makes the job
-  sequential-INeligible (`non_pandas_substrate_requested`), so it leaves the
-  out_of_core route. FIT golden diverges.
-- **graph**: nulled, `_has_cross_table_fk_cycle(None)` raises `AttributeError`
-  (no `.edges`); the FIT shape expects a struct, so the mutant errors -> killed.
-- **has_generate_table**: nulled, a generate+mask job looks pure-mask and
-  reroutes off `full_frame` (to `sequential` here). The generate+mask golden
-  (route `full_frame`, NOT_APPLICABLE) diverges.
-- **validators**: nulled, the faker+validators job becomes sequential-eligible
-  and no longer hits the reject-before-read branch. The reject golden (route
-  `rejected_before_read`) diverges.
-- **out_of_core_reject_code**: nulled, the reject message renders the
-  `or 'not a pure-mask FK recipe'` fallback instead of the real
-  `out_of_core_faker_pool_unsupported`; the pinned reject message diverges.
-- **largest_table_rows_exact**: nulled (falsy), the reject branch takes the
-  ESTIMATED path (`fk_full_frame_oom_risk_rejected_estimated`) with different
-  wording; the pinned reject message diverges.
-- **fidelity_report / vault_writer**: a truthy/non-None flip makes the FIT job
-  sequential-INeligible -> route change; the FIT golden diverges. (These are
-  killed by the FIT shape, not equivalent -- the flip is observable even though
-  a hypothetical exact `=None` on a value already falsy/None would not be.)
-- **use_byte_estimate_routing (flip)**: turned ON for the validators+compatible
-  shape, call 1 enters the byte-estimate branch and rejects-before-read instead
-  of returning `full_frame`; that golden (route `full_frame`) diverges.
-
-### Byte-estimate probe call (call 2)
-
-Reached only for an out-of-core-COMPATIBLE job whose row-count route is below
-threshold (the UNKNOWN probe-promotion shape) or that is full-frame-bound but
-compatible (the validators+compatible shape).
-
-- **use_byte_estimate_routing**: nulled/off, the probe stops taking the byte
-  branch, so a below-threshold job is not promoted to out_of_core; the UNKNOWN
-  golden (route `out_of_core`) collapses to NOT_APPLICABLE `sequential`.
-- **has_mask_table / out_of_core_compatible**: nulled, the byte branch's scope
-  guard (`... and has_mask_table`) or its bounded-route test
-  (`eligible and not cyclic and out_of_core_compatible`) fails, so the job is
-  not promoted; the UNKNOWN golden diverges.
-- **resolved_substrate**: nulled, the probe's `_sequential_eligible` fails,
-  the byte branch reject-raises, the raise is swallowed to `byte_route=None`,
-  and the job is not promoted; the UNKNOWN golden diverges.
-- **full_frame_fits_estimate (flip to True)**: the probe returns `full_frame`
-  instead of a bounded route, so the job is not promoted to out_of_core; the
-  UNKNOWN golden diverges.
-- **validators**: nulled, the validators+compatible job becomes eligible, the
-  probe promotes it to out_of_core, and the verdict flips NOT_APPLICABLE ->
-  UNKNOWN (verified empirically); that golden diverges.
-- **graph**: nulled, the second `_has_cross_table_fk_cycle(None)` raises inside
-  the probe; the UNKNOWN shape errors -> killed.
-
-## Sample proven-equivalent survivors (see equivalence classes above for the full rationale)
-
-| Kwarg (call site) | Why equivalent |
-|---|---|
-| `execution_mode` (call 1) | `"auto"` is the FALL-THROUGH default: the three `if execution_mode == "full_frame"/"out_of_core"/"sequential"` checks are the only reads, so any value that is not one of those three (a `None`, or the `"XXautoXX"` string-wrap) routes through the identical auto logic. The machine fields are asserted independently and do not change. |
-| `execution_mode` (call 2) | Same fall-through reason, at the probe call. |
-| `use_probe_routing` (call 1) | INERT: the only read is `if use_probe_routing and probe_recovers_full_frame is True`, and `estimate_job_capacity` never supplies `probe_recovers_full_frame` (it defaults `None`), so `None is True` is always False and the whole condition is False regardless of the flag. Additionally, on call 1 the byte branch is off entirely. |
-| `use_probe_routing` (call 2) | Same inert reason: `probe_recovers_full_frame` is never passed, so the recovery condition can never fire whatever this flag is. |
-| `full_frame_fits_estimate` (call 2, `=None` form) | The only read is `if full_frame_fits_estimate is True`; `None` and the real `False` both fail that test identically and fall to the same bounded-route logic -> the job is still promoted to out_of_core -> UNKNOWN unchanged. (The `False -> True` FLIP form is a DISTINCT mutant and IS killed by the UNKNOWN shape.) |
-
-Note on the call-2 reject-branch-only kwargs (`out_of_core_reject_code`,
-`largest_table_rows`, `largest_table_rows_exact`): the byte branch's
-reject-before-read IS reachable on call 2 (an ooc-compatible job that is NOT
-sequential-eligible -- e.g. validators present -- falls through to the byte-branch
-reject). They are equivalent anyway because `estimate_job_capacity` swallows every
-call-2 reject to `byte_route=None` (capacity.py:374-382) so the reject-code message
-is discarded, and `largest_table_rows(_exact)` are not read in the byte-estimate
-branch. Killed on call 1 by the reject shape.
+- **execution_mode fall-through** (95, 124, 125, 152, 183, 184): `"auto"` is the
+  fall-through default -- only `== "full_frame"/"out_of_core"/"sequential"` reads
+  it, so `None` / `"XXautoXX"` / `"AUTO"` all route identically.
+- **use_probe_routing inert** (103, 118, 129, 161, 177, 189): read only as
+  `use_probe_routing and probe_recovers_full_frame is True`, and this function
+  never passes `probe_recovers_full_frame` (defaults None), so the guard is always
+  False for ANY value incl. `True`. 118/177 drop the kwarg (callee default `True`),
+  still inert.
+- **use_byte_estimate_routing** (102 call-1 `=None`; 175 call-2 dropped): 102's
+  `None` is falsy == the passed `False`; 175 dropped -> callee default `True` == the
+  passed `True`.
+- **fidelity_report `=None`** (94, 151): read as `if fidelity_report:`; `None`
+  falsy == `False`.
+- **full_frame_fits_estimate** (160 `=None`; 176 dropped): `decide_execution_route`
+  reads it as `is True`, so `None` (and the dropped-default) behave identically to
+  the passed `False` (its own rule that an unconfirmed estimate == "does not fit").
+- **has_generate_table `=None` (call 2)** (148): call 2 runs only under
+  `not has_generate_table` (always False there), so `None` behaves identically.
+- **resolved_substrate dropped** (112 call 1, 170 call 2): callee default is
+  `"pandas"` == the passed value.
+- **call-2 reject-branch kwargs** (156, 157, 158, 172, 173, 174): call 2 requires
+  `out_of_core_compatible`, so byte-mode routing returns `out_of_core` before these
+  are read, and any call-2 reject is swallowed to `byte_route=None`. Verified against
+  the existing probe / validators full-struct goldens.
+- **seed** (20 `job_seed=None`, 24 `seed=None`, 26 dropped): the seed changes only
+  the profile SAMPLE, not the row-count / route the capacity verdict uses.
+- **engine_version** (53 `decoy_engine_version=None`): not read by routing / capacity.
+- **size-signal default** (88 `(None, True)` -> `(None, False)`): only reached when
+  `size_signal is None`, which means no mask table, so `largest_table_rows=None` and
+  `largest_table_rows_exact` is never read (every size gate guards on
+  `largest_table_rows is not None`).
+- **ooc_route_uncertain** (139 `False` -> `None`): read only as
+  `if ooc_route_uncertain and ...`; `None` and `False` are both falsy, and it is set
+  to `True` on the promotion path regardless.
+- **byte_route sentinel** (191 `None` -> `""`): compared only `== "out_of_core"`;
+  both sentinels differ from it, and it is assigned only in the swallowed-reject branch.
+- **sink `=None`** (226, 243): every read is `1 if sink else ...` / `if sink`; `None`
+  falsy == the intended `False`.
+- **parent-rows-unresolved branch, code/message** (211, 212, 213, 214, 215, 216, 217):
+  equivalent by UNREACHABILITY -- this raise-branch needs a graph parent missing from
+  the profile WHILE the route is already `out_of_core`, but a missing parent source
+  makes `out_of_core_admission` return `(False, 'out_of_core_parent_seed_missing')`,
+  so such a job never routes `out_of_core` and never reaches this branch. Dead code
+  under the reachable input space (see tq-findings #17); its mutants are unkillable.
 
 ## Candidate findings
 
-None. Every kwarg carries the routing input its docstring specifies. Nulling any
-load-bearing one degrades the verdict conservatively (a false FIT never appears;
-the worst outcome is an over-cautious UNKNOWN or a NOT_APPLICABLE), consistent
-with the module's fail-closed / never-report-fine-on-a-refused-job contract.
+**#17 (dead branch):** the parent-rows-unresolved `raise` in `estimate_job_capacity`
+(the `_PARENT_ROWS_UNRESOLVED_CODE` branch) appears unreachable under the current
+admission logic -- a missing parent source is caught earlier by `out_of_core_admission`
+(`out_of_core_parent_seed_missing`), so the route is never `out_of_core` when this
+branch's guard holds. Logged in tq-findings.md for a decision: confirm dead and remove,
+or confirm a reachable path the sweep did not find. No product bug otherwise: every
+kwarg carries its documented routing input, and nulling any load-bearing one degrades
+the verdict conservatively (never a false FIT).
 
 ## Regenerate
 
-Repoint `[tool.mutmut]` `only_mutate` to
-`src/decoy_engine/execution/capacity.py` and the test selection to
-`tests/unit/execution/test_capacity_estimate_job_mutation_kills.py` and
-`tests/unit/execution/test_capacity_estimate_job.py`, then
-`rm -rf mutants && python -m mutmut run`. `source_paths` stays at the package
-root.
+Repoint `[tool.mutmut]` `only_mutate` to `src/decoy_engine/execution/capacity.py`
+and the test selection to `tests/unit/execution/test_capacity_estimate_job_mutation_kills.py`
+and `tests/unit/execution/test_capacity_estimate_job.py`, then
+`rm -rf mutants && python scripts/tq_mutate.py --run` (survived re-adjudication on
+by default). `source_paths` stays at the package root.
