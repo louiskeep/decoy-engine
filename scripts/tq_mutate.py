@@ -330,6 +330,16 @@ def _tail(stdout: str, stderr: str, n: int = 400) -> str:
     return blob[-n:].strip()
 
 
+def _snapshot_cwd_files(root: Path) -> set[str]:
+    """Relative paths of every file under `root` -- a cheap before/after diff
+    to detect tests that write FIXED-NAME files into the shared cwd=mutants/
+    (the --jobs>1 race hazard: concurrent workers would clobber each other's
+    fixed-name file, flipping a verdict). pytest `tmp_path` writes land in the
+    OS temp dir, not here, so a clean tmp_path-based selection leaves this set
+    unchanged and parallelism stays safe."""
+    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
+
+
 def _trusted_verdict(mutant: Mutant) -> str:
     # Map mutmut's trusted status onto our verdict vocabulary.
     return {
@@ -448,8 +458,9 @@ def warn_if_excluded_markers_collected(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Re-adjudicate mutmut's suspect (timeout/suspicious/segfault) "
-        "verdicts with fresh-subprocess pytest runs and correct the tally."
+        description="Re-adjudicate mutmut's non-trustworthy verdicts (timeout / "
+        "suspicious / segfault / no-tests, and BY DEFAULT the survived bucket) with "
+        "fresh-subprocess pytest runs against the full selection, and correct the tally."
     )
     parser.add_argument(
         "--pyproject",
@@ -509,6 +520,14 @@ def main() -> int:
     meta_paths = meta_paths_for(config, mutants_dir)
     mutants = load_mutants(meta_paths)
 
+    # Concurrency guard (dennis MEDIUM): --jobs>1 runs share cwd=mutants/, so a
+    # test that writes a FIXED-NAME file into cwd (not via pytest tmp_path) could
+    # be raced across workers -> a false kill/survival. Snapshot the tree now;
+    # after the single-threaded baseline probes we diff it, and if the selection
+    # wrote stray files into cwd we DOWNGRADE to jobs=1 (a correct serial grade
+    # beats a possibly-raced parallel one). tmp_path-based selections are unaffected.
+    cwd_files_before = _snapshot_cwd_files(mutants_dir)
+
     # Probe runs (baseline + marker check) use a generous timeout decoupled from
     # the per-mutant floor, so a deliberately tiny --timeout cannot abort them.
     floor_timeout = args.timeout
@@ -535,6 +554,29 @@ def main() -> int:
     # P2-2: the selection must not pull in testflight/benchmark/packaging/codspeed tests.
     warn_if_excluded_markers_collected(config, mutants_dir, probe_timeout)
 
+    # Concurrency guard cont'd: the baseline probes just ran the original tree
+    # single-threaded. If they left stray fixed-name files in cwd, jobs>1 would
+    # race on them -- downgrade to jobs=1 (correct beats fast). Ignore .pyc and
+    # this tool's own report artifact.
+    jobs = args.jobs
+    if jobs > 1:
+        stray = {
+            f
+            for f in (_snapshot_cwd_files(mutants_dir) - cwd_files_before)
+            if not f.endswith(".pyc") and "tq_mutate_report" not in f
+        }
+        if stray:
+            sample = ", ".join(sorted(stray)[:5])
+            print(
+                "\n  !! WARNING (dennis MEDIUM): the baseline run wrote fixed-name "
+                f"file(s) into the shared cwd=mutants/ ({len(stray)}: {sample} ...).\n"
+                "     Concurrent workers would race on these, so DOWNGRADING to jobs=1 "
+                "for a race-free grade. Route the selection's writes through pytest "
+                "tmp_path to re-enable parallelism.\n",
+                flush=True,
+            )
+            jobs = 1
+
     trust_survived = args.trust_survived
     suspect = [m for m in mutants if _needs_readjudication(m, trust_survived=trust_survived)]
     trusted = [m for m in mutants if not _needs_readjudication(m, trust_survived=trust_survived)]
@@ -547,7 +589,7 @@ def main() -> int:
     print(
         f"{len(mutants)} mutants: {len(trusted)} trusted, "
         f"{len(suspect)} suspect (re-adjudicating with timeout={per_mutant_timeout:.1f}s, "
-        f"jobs={args.jobs}); {survived_note}",
+        f"jobs={jobs}); {survived_note}",
         flush=True,
     )
 
@@ -565,8 +607,8 @@ def main() -> int:
     def _do(m: Mutant) -> Verdict:
         return readjudicate(m, config, mutants_dir, per_mutant_timeout)
 
-    if args.jobs > 1:
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+    if jobs > 1:
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
             futures = {pool.submit(_do, m): m for m in suspect}
             for fut in as_completed(futures):
                 v = fut.result()
