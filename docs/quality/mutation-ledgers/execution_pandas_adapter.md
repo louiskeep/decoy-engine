@@ -27,8 +27,11 @@ equivalent" -- 16 are killable but the sweep deliberately does not kill them:
   arithmetic mutants (`*1000`->`/1000`, `+=`->`=`). Earlier framing called these
   "equivalent inside the timing noise band"; that is WRONG -- a controlled clock
   (monkeypatch `time.perf_counter` to a deterministic sequence) kills them. They
-  are accepted non-contract survivors (telemetry, no product-visible contract),
-  not equivalents. See finding #18.
+  are accepted non-contract survivors, not equivalents. `boundary_conversion_ms`
+  IS a public, unit-bearing `ExecutionResult` field (`execution/_adapter.py:60`);
+  what is scoped OUT of the TQ contract is its exact timing ARITHMETIC (the same
+  kind of explicit scope decision as the `PlanCompileError.message` prose
+  disclosure), not the field's existence. See finding #18.
 - **10 MESSAGE PROSE** (`_dispatch_mask_node` 63/65/68/69/74/76/82/84 coded-raise
   prose; `run_single` 11/12 guard prose): killable via full-message-equality, left
   as accepted non-contract (the code / path / identifying data ARE pinned).
@@ -75,7 +78,8 @@ attribution, REMAP `node_by_key`, the packaged `ExecutionResult` (row_errors,
 quality_metrics corpora block, timings), an absent-table node skipped with
 `continue` not `break`, and the boundary-conversion telemetry via a BOUNDED
 `0 < ms < 1000` assert (catches the perf_counter-epoch leak; pure-magnitude
-perturbations are equivalent -- finding #18). `_dispatch_mask_node`: the current
+perturbations are accepted non-contract -- killable via a controlled clock, left
+by scope decision, finding #18). `_dispatch_mask_node`: the current
 table stamped before dispatch, the FK-resolve/composite/scalar timing label +
 column + separator, the node_by_key + key-error-cache threading, and the
 `composite_fk_group_no_edge` / `unsupported_strategy` coded raises. `run_sequential`

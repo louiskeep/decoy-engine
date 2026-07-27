@@ -27,7 +27,9 @@ clock, see finding #18) and the 8 message-prose mutants (guardrail 28/30/31,
 `relationship_cycle` 51-55). The other 29 ARE proven equivalent (cache-eviction
 timing, invariant-conditioned no-ops, redundant sorts).
 
-Graded at **`--jobs 1`** (deterministic). This selection carries a WALL-CLOCK
+Graded at **`--jobs 1`** (a MITIGATION, not a determinism guarantee -- jobs=1
+removes concurrent-worker contention but a real-clock assertion is still exposed to
+scheduler / GC jitter; see finding #18). This selection carries a WALL-CLOCK
 assertion (`test_result_reports_conversion_and_timings` pins
 `boundary_conversion_ms > 0`), so a `--jobs 6` run flakes: it false-survived
 `run_sequential` mut_146 (`conversion_ms += -> -=`, a genuine kill -- the sign flip

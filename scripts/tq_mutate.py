@@ -521,7 +521,9 @@ def main() -> int:
         "--jobs",
         type=int,
         default=1,
-        help="parallel re-adjudication subprocesses (default: 1, deterministic)",
+        help="parallel re-adjudication subprocesses (default: 1; jobs=1 avoids "
+        "concurrent-worker contention but is a mitigation, not a determinism "
+        "guarantee for real-clock timing assertions -- see tq-findings #18)",
     )
     parser.add_argument(
         "--trust-survived",
