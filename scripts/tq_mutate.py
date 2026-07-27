@@ -21,10 +21,12 @@ false-LOW. So this is a POST-PROCESSOR that RE-ADJUDICATES every
 non-trustworthy verdict -- the timeout / suspicious / segfault / no-tests
 buckets AND (by default) the survived bucket -- by running each such mutant
 against the FULL selection in a fresh ``pytest`` SUBPROCESS with a generous
-wall-clock timeout, and corrects the tally. Only mutmut's killed verdicts are
-trusted verbatim. ``--trust-survived`` opts the survived bucket back out of
-re-adjudication (faster, but sound only when you have confirmed mutmut's
-coverage map credits every test in the selection).
+wall-clock timeout, and corrects the tally. Of the verdict-bearing buckets only
+mutmut's killed is trusted verbatim (the inert skipped / caught-by-type-check
+statuses are also passed through since they are not survival claims).
+``--trust-survived`` opts the survived bucket back out of re-adjudication
+(faster, but sound only when you have confirmed mutmut's coverage map credits
+every test in the selection).
 
 The one empirically-nailed part is making the subprocess import the MUTATED
 source from ``mutants/`` rather than the editable install. decoy_engine is
@@ -128,7 +130,18 @@ _BASELINE_RUN_TIMEOUT = 600.0
 
 # pytest exit codes: 0 all-passed, 1 tests-failed, 2 interrupted, 3 internal
 # error, 4 usage error, 5 no-tests-collected.
-_PYTEST_KILLED_CODES = frozenset({1, 2, 3})
+#
+# A re-adjudication "kill" must mean a TEST genuinely failed on the mutant, so
+# ONLY rc 1 counts as killed (Codex gate HIGH, 2026-07-27). rc 2 (interrupted)
+# and rc 3 (pytest internal error) are HARNESS failures, not test failures: a
+# transient one on a genuine survivor would otherwise be recorded as a silent
+# false KILL (over-grade), the mirror of the finding #16 under-grade. They now
+# fall to "error" (UNRESOLVED) -> the P1-2 banner fires and the run exits
+# nonzero, so the operator investigates instead of trusting an over-grade. This
+# also covers mutmut's own rc-3 re-check (_MUTMUT_RECHECK_EXIT_CODES): a mutant
+# mutmut trusted as killed via rc 3, re-run to rc 3 here, now surfaces as
+# unresolved rather than being re-blessed as killed.
+_PYTEST_KILLED_CODES = frozenset({1})
 
 
 @dataclass
@@ -315,10 +328,13 @@ def readjudicate(
         verdict = "survived"
     elif rc == 5:
         verdict = "no-tests"  # nothing collected during re-adjudication = harness break
-    elif rc in _PYTEST_KILLED_CODES:
+    elif rc in _PYTEST_KILLED_CODES:  # {1} only -- a genuine test failure
         verdict = "killed"
     else:
-        verdict = "error"  # rc 4 usage error or other; surface, don't miscount
+        # rc 2 (interrupted) / rc 3 (internal error) / rc 4 (usage) / any other:
+        # a HARNESS failure, not a test failure. UNRESOLVED, never a silent kill
+        # (Codex gate HIGH) -- surface it so the operator investigates.
+        verdict = "error"
     detail = "" if verdict in {"survived", "killed"} else _tail(res.stdout, res.stderr)
     return Verdict(
         mutant=mutant, verdict=verdict, returncode=rc, duration_s=res.duration_s, detail=detail
@@ -331,12 +347,19 @@ def _tail(stdout: str, stderr: str, n: int = 400) -> str:
 
 
 def _snapshot_cwd_files(root: Path) -> set[str]:
-    """Relative paths of every file under `root` -- a cheap before/after diff
-    to detect tests that write FIXED-NAME files into the shared cwd=mutants/
-    (the --jobs>1 race hazard: concurrent workers would clobber each other's
-    fixed-name file, flipping a verdict). pytest `tmp_path` writes land in the
-    OS temp dir, not here, so a clean tmp_path-based selection leaves this set
-    unchanged and parallelism stays safe."""
+    """Relative paths of every file under `root`, for a cheap before/after diff
+    that detects tests writing NEW fixed-name files into the shared cwd=mutants/
+    (a --jobs>1 race hazard: concurrent workers clobber each other's file).
+
+    Best-effort TRIPWIRE, not a proof (Codex gate MEDIUM). By design it only
+    catches NEW persistent files; it does NOT catch a test that OVERWRITES an
+    existing tree file, one that creates-and-deletes a fixed-name file within a
+    single run, or writes outside cwd (``../``, /tmp, a socket, a db). So a
+    clean diff does not GUARANTEE jobs>1 is race-free -- only jobs=1 is provably
+    race-free (no concurrency). jobs>1 is a speed option sound for HERMETIC
+    (pytest-tmp_path-only) selections; this tripwire flips the common
+    stray-write case to jobs=1 automatically, and the run also prints that
+    caveat so the operator does not read a clean tripwire as a soundness proof."""
     return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
 
 
@@ -576,6 +599,15 @@ def main() -> int:
                 flush=True,
             )
             jobs = 1
+        else:
+            # Honest disclosure (Codex MEDIUM): a clean tripwire is not a proof.
+            print(
+                f"  note: running jobs={jobs}. The cwd-write tripwire is clean but "
+                "NOT a proof of race-freedom (it misses overwrites / transient / "
+                "out-of-cwd writes). Only jobs=1 is provably race-free; jobs>1 is "
+                "sound only for hermetic (tmp_path-only) selections.",
+                flush=True,
+            )
 
     trust_survived = args.trust_survived
     suspect = [m for m in mutants if _needs_readjudication(m, trust_survived=trust_survived)]
