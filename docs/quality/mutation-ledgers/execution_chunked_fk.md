@@ -34,7 +34,11 @@ prose-equivalent policy, consistent with all prior modules and this module's own
 
 **Killed 415/524 = 79.20% LOGIC inclusive (tool-native, 0 unresolved). 109
 survivors, ALL proven equivalent -- 0 residual. Excluding the 109 equivalents,
-415/415 = 100% of killable mutants killed.** Above the 77.98% measure-first bar.
+415/415 = 100% of killable mutants killed UNDER THE SWEEP'S PROSE-EQUIVALENT
+POLICY** (the equivalents are dominated by 105 message-prose mutants that a
+full-message-equality test COULD kill; the policy treats prose as equivalent
+because it carries no machine contract -- see Bar/framing). Above the 77.98%
+measure-first bar.
 
 Baseline (3 existing FK test files only): 330/524 = 62.98%, 194 survived -- the
 selection under-covered `gate_fk_child_edges`'s reject branches and `_dtype_family`'s
