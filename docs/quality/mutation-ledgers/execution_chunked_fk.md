@@ -48,10 +48,24 @@ earlier framing was an overclaim. It IS 0-residual under the three-bucket
 definition above (no killable-contract-touching deferred work), but only because
 the 105 message-prose survivors are classed ACCEPTED NON-CONTRACT, not killed: it
 is 79.20% inclusive, with 105 accepted-non-contract survivors + 4 proven
-equivalents. Flagged for a Cam decision: hold the FK-guard layer to the stricter
-standard (pin the 12 reject messages verbatim, killing the 105 -- which would
-promote them from non-contract to contract), or accept them as non-contract
-survivors (current).
+equivalents.
+
+DECISION (RESOLVED 2026-07-28, Cam): accept the substrate-tier prose-equivalent
+policy for this FK-GUARD layer; do NOT pin the 12 reject messages verbatim. The
+100%-inclusive bar (pin the message prose too) is reserved for the RI/crypto
+IDENTITY surface, which is `_fk_keys` (graded logic-100%); this module is the route
+ADMISSION/GUARD, one tier out. Three reasons: (1) the machine contract of every
+reject -- the `.code`, the `.path`, and the offending table/column/strategy NAMES
+carried as data -- IS pinned, so a wrong verdict, wrong code, or wrong offending
+name is caught; only the free-text explanatory sentence is unpinned. (2) A
+full-message-equality assertion is the brittle anti-pattern the sweep avoids across
+all 30+ graded modules -- any legitimate reword of a human-facing message would
+break it, coupling the test suite to copy, not behavior. (3) Consistency: every
+prior module (incl. this module's own `reject_lossy` tests) treats reject prose as
+accepted non-contract; holding this one module to a stricter standard would be an
+inconsistent, higher-maintenance bar for no behavioral coverage gain. `PlanCompileError.message`
+remains a public field; this is a deliberate contract-SCOPING decision (exact prose
+is out of the TQ contract), not a claim the prose is semantically inert.
 
 ## Numbers
 
