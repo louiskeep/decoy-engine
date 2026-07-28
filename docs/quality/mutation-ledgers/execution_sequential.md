@@ -13,11 +13,25 @@ mutants**.
 
 ## Numbers
 
-**Killed 369/417 = 88.49% LOGIC (tool-native, 0 unresolved). 48 survivors: 29
+**Killed 372/417 = 89.21% LOGIC (tool re-grade reported 373; conservatively
+adjusted to 372, -1 for the flaky timing kill -- see GRADE-RUN NOTE; 0 unresolved).
+45 survivors: 29
 proven equivalent + 16 accepted non-contract survivors (8 timing + 8 message
-prose, see Taxonomy) + 3 precisely-characterized residual (see below).** Above the
-75% bar (measured max(55.40 + 15, 75) = 75%). This module is NOT 0-residual: 3
-mutants (131/137/141) are killable-but-deferred and documented as such.
+prose, see Taxonomy) + 0 residual.** Above the 75% bar (measured max(55.40 + 15,
+75) = 75%). **RESIDUAL RESOLVED 2026-07-28:** the 3 formerly-deferred mutants
+(131/137/141) are now KILLED by `test_sequential_lossless_residual_kills.py` (an
+exact >= 2**53 float-precision fixture -- see "Residual: resolved" below), so this
+module IS now 0-residual.
+
+GRADE-RUN NOTE (honest count): the re-grade tool run reported 373/417 this session,
+one above the 372 attributable here. The extra is timing mutant 231 (a
+`boundary_conversion_ms` arithmetic mutant), which mutmut's in-process runner
+flakily caught via the wall-clock assertion THIS run -- standalone it survives, and
+the new residual-kill tests do NOT kill it. Per finding #18 that is a
+non-deterministic timing catch, not a stable kill, so the stable count keeps 231 an
+ACCEPTED NON-CONTRACT timing survivor and reports 372, not 373. (Killing 231
+stably would need a controlled `perf_counter` clock, the deliberately-declined
+approach.)
 
 TAXONOMY (Codex batch gate, honest labeling). Of the 45 non-residual survivors, 16
 are killable but the sweep deliberately does not kill them (accepted non-contract),
@@ -35,17 +49,18 @@ assertion (`test_result_reports_conversion_and_timings` pins
 `run_sequential` mut_146 (`conversion_ms += -> -=`, a genuine kill -- the sign flip
 makes the timing negative) under concurrent-worker timing perturbation. mut_146
 dies standalone and under the full single-threaded selection; the jobs=1 grade is
-369/417, the jobs=6 flake was 368/417. See tq-findings #18.
+372/417 (369 before the residual kills landed); the earlier jobs=6 flake dropped
+mut_146 for a 368 read. See tq-findings #18.
 
 Baseline (5 existing integration/unit files): 231/417 = 55.40%, 186 survived --
 the dedicated coverage under-pins `run_sequential`'s quarantine / key-error /
 sink / snapshot branches and `table_topo_order`'s Kahn logic. Full triage added
-two kill files and adjudicated all 186 survivors: **138 additional kills**, 29
-proven equivalent, 16 accepted non-contract, 3 residual.
+three kill files and adjudicated all 186 survivors: **141 additional kills**, 29
+proven equivalent, 16 accepted non-contract, 0 residual.
 
 | Function | Killed by the sweep | Proven equiv | Accepted non-contract | Residual |
 |---|---|---|---|---|
-| `run_sequential` | 120 | 27 | 11 (8 timing + 3 prose) | 3 |
+| `run_sequential` | 123 | 27 | 11 (8 timing + 3 prose) | 0 |
 | `table_topo_order` | 14 | 2 | 5 (prose) | 0 |
 | `_has_transactional_write_contract` | 4 | 0 | 0 | 0 |
 
@@ -76,7 +91,7 @@ quality_metrics, timings, boundary_conversion_ms `>0` and `<1000ms`).
 
 ## Non-residual survivors (45): 29 proven equivalent + 16 accepted non-contract
 
-Each verified to survive the full 7-file selection standalone (rc 0). The first two
+Each verified to survive the full 8-file selection standalone (rc 0). The first two
 groups (27) + the two redundant sorts in the last group (2) = 29 PROVEN EQUIVALENT
 (no test can kill them). The TIMING group (8) and the two prose bullets minus the
 redundant sorts (8) = 16 ACCEPTED NON-CONTRACT (killable, deliberately not killed).
@@ -113,22 +128,31 @@ redundant sorts (8) = 16 ACCEPTED NON-CONTRACT (killable, deliberately not kille
   35, 37 (the children-sort `key`, redundant -- the ready-queue re-sorts by
   position every iteration so child insertion order never surfaces).
 
-## Residual (3) -- precisely characterized, killable, deferred
+## Residual: resolved (2026-07-28) -- 131/137/141 now KILLED
 
-`run_sequential` 131, 137, 141: the lossless-int-typing column set at load
-(`group_anchor_cols | top_code_cols`) -- mut 131 flips `|` -> `&`
-(union -> intersection, dropping the top_code contribution), 137/141 null the
-`.get(table)` key to `.get(None)`. A no-op for string / plain columns (the frame loads
-byte-identically, which is why the string-anchor group_by test cannot reach
-them). KILLABLE only with a null-bearing int64 group-anchor / top-code column
-carrying a value >= 2**53, where dropping it from lossless typing lets pandas
-widen it to float64 -- collapsing two entities whose keys differ only beyond
-float64 precision onto one date-shift offset (group_by) or rounding the rendered
-integer (top_code). Deferred, not attempted: the kill hinges on exact float64
-integer-rounding at 2**53, an intricate and fragile fixture for 3 of 417 mutants.
-The recipe is recorded here; flagged for a decision (build the >=2**53 lossless
-fixture, or accept as a documented above-bar residual). Not a product bug -- the
-lossless typing IS applied for these columns in the real code.
+`run_sequential` 131, 137, 141 targeted the lossless-int-typing column set at load
+(`fk_columns | group_anchor_cols.get(table) | top_code_cols.get(table)`) -- mut 131
+flips the second `|` -> `&` (union -> intersection, dropping the top_code
+contribution), 137/141 null the `.get(table)` key to `.get(None)` (dropping the
+group-anchor / top_code column). Each drops a column from lossless typing, so a
+null-bearing int64 column widens to float64, which cannot represent every integer
+past 2**53 exactly and rounds the non-representable ones (e.g. 2**53 + 1 -> 2**53).
+
+Previously deferred as an intricate fixture; now KILLED by
+`test_sequential_lossless_residual_kills.py` (2 tests through `run_sequential`):
+- **top_code (kills 131 + 141):** a null-bearing int64 `top_code` column carrying
+  an in-range `-(2**53 + 1)` renders its EXACT decimal string; under the mutant the
+  widened float rounds it to `-(2**53)` and a different integer is emitted.
+- **date_shift group_by (kills 137):** a null-bearing int64 `group_by` anchor with
+  two ids differing only beyond float64 precision (`2**53` vs `2**53 + 1`); under
+  the mutant they collapse to one double and `_canonicalize_source` fails closed on
+  the float (S5 ban), so the distinct-shift outcome cannot be produced.
+
+Discrimination proven by manual per-mutant simulation (drop each contribution ->
+the matching test fails) and confirmed by the mutmut re-grade (all 3 absent from
+the survivor set; module 372/417 stable after the -1 flaky-231 adjustment, 0
+residual). Never a product bug --
+lossless typing IS applied for these columns in the real code; the tests lock it.
 
 ## Candidate findings
 
@@ -139,9 +163,10 @@ byte divergence.
 ## Regenerate
 
 Repoint `[tool.mutmut]` `only_mutate` to `src/decoy_engine/execution/_sequential.py`
-and the test selection to the SEVEN files: `test_sequential_eviction.py`,
+and the test selection to the EIGHT files: `test_sequential_eviction.py`,
 `test_transactional_sink.py`, `test_de10_fk_lossless_typing.py`,
 `test_de03_output_projection.py`, `test_quarantine_row_errors.py` (the last under
-`tests/unit/`), `test_sequential_helper_kills.py`, and
-`test_sequential_run_kills.py`; then `rm -rf mutants && python scripts/tq_mutate.py
---run`. `source_paths` stays at the package root.
+`tests/unit/`), `test_sequential_helper_kills.py`, `test_sequential_run_kills.py`,
+and `test_sequential_lossless_residual_kills.py`; then `rm -rf mutants && python
+scripts/tq_mutate.py --run --jobs 1` (jobs=1 -- the selection carries a wall-clock
+assertion, finding #18). `source_paths` stays at the package root.
