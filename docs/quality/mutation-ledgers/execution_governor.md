@@ -39,10 +39,14 @@ branch) was flakily marked KILLED by mutmut's in-process runner in one grade pas
 so it was absent from the baseline survivor list and never triaged. It is a REAL
 LOGIC survivor (`test_governor.py` does not kill it standalone, rc 0). `tq_mutate`
 TRUSTS mutmut's "killed" as monotonic (finding #16 only re-adjudicates SURVIVED), so
-a flaky false-KILL slips through the baseline. The AUTHORITATIVE re-grade caught it
-(110 showed survived under full re-adjudication); a targeted test now kills it. The
-lesson: the final re-grade, not the baseline pass, is authoritative -- and mutmut's
-in-process runner can false-KILL as well as false-survive.
+a flaky false-KILL silently inflates the score and drops a real survivor from the
+triage list. A re-grade HAPPENED to surface 110 as survived (a second pass), and a
+targeted test now kills it -- but this is an UNRESOLVED reliability gap, not a
+safeguard: re-running is only evidence, and an unrelated flaky rc-1 during any single
+pass can re-introduce the same silent over-grade. A real fix would re-adjudicate (or
+sample) the KILLED bucket, or run each grade N times and flag kill/survive
+instability. Until then, treat killed-bucket counts as an upper bound and always
+re-grade after adding kills. See tq-findings #15 (sub-finding) and #8.
 
 | Function | Survivors triaged | Killed | Proven equiv | Accepted non-contract |
 |---|---|---|---|---|
@@ -114,7 +118,8 @@ is pinned; the explanatory sentence is not). Each verified to survive standalone
 
 No product bug. One METHODOLOGY finding (flagged above, owed to tq-findings): mutmut's
 in-process runner can flakily FALSE-KILL a genuine survivor (mut 110), which
-`tq_mutate` trusts; the authoritative re-grade is the reliable check.
+`tq_mutate` trusts un-re-adjudicated -- an UNRESOLVED reliability gap (re-grading is
+evidence, not a guarantee; a real fix samples the killed bucket or runs N times).
 
 ## Regenerate
 
