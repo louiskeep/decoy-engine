@@ -11,11 +11,12 @@ Target: `execution/_sequential.py`'s per-table load column set
 
 This set names every column that MUST ingest losslessly as a nullable Int64
 rather than through the bare `to_pandas()` that widens a null-bearing int64
-column to float64. float64 has a 53-bit mantissa, so it cannot represent an
-integer with magnitude > 2**53 exactly: 2**53 + 1 rounds to 2**53 (ties-to-even,
-2**53 is even). The residual mutants each drop one contribution from that set,
-so a null-bearing int64 group-anchor / top-code column widens and its > 2**53
-value is silently rounded. The mechanism only surfaces with such a column, which
+column to float64. float64 has a 53-bit mantissa, so it cannot represent EVERY
+integer with magnitude > 2**53 exactly: the odd ones round (2**53 + 1 rounds to
+2**53, ties-to-even, 2**53 is even), while even ones like 2**53 + 2 stay exact.
+The residual mutants each drop one contribution from that set, so a null-bearing
+int64 group-anchor / top-code column widens and a non-representable > 2**53 value
+is silently rounded (the fixtures below use exactly such a value). The mechanism only surfaces with such a column, which
 is why the string-anchor group_by test and the plain top_code tests (both drive
 non-sequential routes or string/small-int columns) leave these three alive.
 

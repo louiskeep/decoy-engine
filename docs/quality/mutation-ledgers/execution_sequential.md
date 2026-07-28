@@ -13,7 +13,9 @@ mutants**.
 
 ## Numbers
 
-**Killed 372/417 = 89.21% LOGIC (tool-native, 0 unresolved). 45 survivors: 29
+**Killed 372/417 = 89.21% LOGIC (tool re-grade reported 373; conservatively
+adjusted to 372, -1 for the flaky timing kill -- see GRADE-RUN NOTE; 0 unresolved).
+45 survivors: 29
 proven equivalent + 16 accepted non-contract survivors (8 timing + 8 message
 prose, see Taxonomy) + 0 residual.** Above the 75% bar (measured max(55.40 + 15,
 75) = 75%). **RESIDUAL RESOLVED 2026-07-28:** the 3 formerly-deferred mutants
@@ -89,7 +91,7 @@ quality_metrics, timings, boundary_conversion_ms `>0` and `<1000ms`).
 
 ## Non-residual survivors (45): 29 proven equivalent + 16 accepted non-contract
 
-Each verified to survive the full 7-file selection standalone (rc 0). The first two
+Each verified to survive the full 8-file selection standalone (rc 0). The first two
 groups (27) + the two redundant sorts in the last group (2) = 29 PROVEN EQUIVALENT
 (no test can kill them). The TIMING group (8) and the two prose bullets minus the
 redundant sorts (8) = 16 ACCEPTED NON-CONTRACT (killable, deliberately not killed).
@@ -133,7 +135,8 @@ redundant sorts (8) = 16 ACCEPTED NON-CONTRACT (killable, deliberately not kille
 flips the second `|` -> `&` (union -> intersection, dropping the top_code
 contribution), 137/141 null the `.get(table)` key to `.get(None)` (dropping the
 group-anchor / top_code column). Each drops a column from lossless typing, so a
-null-bearing int64 column widens to float64 and rounds any value >= 2**53.
+null-bearing int64 column widens to float64, which cannot represent every integer
+past 2**53 exactly and rounds the non-representable ones (e.g. 2**53 + 1 -> 2**53).
 
 Previously deferred as an intricate fixture; now KILLED by
 `test_sequential_lossless_residual_kills.py` (2 tests through `run_sequential`):
@@ -146,8 +149,9 @@ Previously deferred as an intricate fixture; now KILLED by
   the float (S5 ban), so the distinct-shift outcome cannot be produced.
 
 Discrimination proven by manual per-mutant simulation (drop each contribution ->
-the matching test fails) and confirmed by the authoritative mutmut re-grade (all 3
-absent from the survivor set; module 372/417, 0 residual). Never a product bug --
+the matching test fails) and confirmed by the mutmut re-grade (all 3 absent from
+the survivor set; module 372/417 stable after the -1 flaky-231 adjustment, 0
+residual). Never a product bug --
 lossless typing IS applied for these columns in the real code; the tests lock it.
 
 ## Candidate findings
