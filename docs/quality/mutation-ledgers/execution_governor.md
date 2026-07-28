@@ -26,8 +26,9 @@ BAR NOTE (honest): the measure-first target is max(72.95 + 15, 75) = 87.95%, and
 85.52% inclusive score falls BELOW it. This is the same situation as `_chunked_fk`:
 53/366 = 14.5% of all mutants are UNKILLABLE (18 unreachable/invariant + 35
 reachable-branch message prose), which caps the achievable inclusive score below the
-+15 heuristic. Every killable (LOGIC) mutant IS killed; the shortfall is entirely the
-validation/diagnostic message-prose fraction, not a coverage gap. Per Cam's
++15 heuristic. Every killable (LOGIC) mutant IS killed; the shortfall is the 53
+unkillable survivors (35 validation/diagnostic message-prose + 18 unreachable /
+invariant-equivalent), not a coverage gap. Per Cam's
 honest-taxonomy policy, full triage (kill all killable, honestly classify the rest)
 is the DoD; the +15 target assumes killable headroom this diagnostic-heavy module
 does not have.

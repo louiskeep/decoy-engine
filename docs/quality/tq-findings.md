@@ -394,27 +394,39 @@ premise is wrong on two counts:
 GRADED with the existing tool, no de-mock, no runner (branch `tq/isolated-substrate-grade`):
 `_mem_estimate` 90.76%, `_probe_scale` 100%, `_mem_telemetry` 88.05%,
 `_pipeline_routing_signals` 98.36% (pure; gated dennis+Codex MERGE-READY);
-`_governor` 85.52%, `_probe` 82.47% (parent-resident). The two parent-resident
-modules land below the +15 target because they are validation/diagnostic-heavy
-(14.5% / 17.5% message-prose + unreachable), same honest situation as `_chunked_fk`;
-100% of KILLABLE mutants are killed.
+`_governor` 85.52%, `_probe` 82.47% (parent-resident). `_probe` CLEARS its 77.95%
+bar; `_governor` lands below its 87.95% target because it is validation/diagnostic-heavy
+(53/366 = 14.5% unkillable: 18 unreachable/invariant-equivalent + 35 message-prose),
+same honest situation as `_chunked_fk`; 100% of KILLABLE mutants are killed.
 
-DEFERRED to pre-release (Cam 2026-07-28, stop TQ at diminishing returns): the TRUE
-spawn-boundary modules `_isolated_run` (the only real `Popen`) + `_isolated_worker`
-(the child entrypoint) -- these DO need the real-subprocess integration tests in the
-mutmut selection so the child code executes mutated; plus `_governor_monitor`
-(driver-side thread + `os.kill`, not a spawn -- a mocking gap not a boundary), and
-the `codeset_etl` (#12) / `plan/` / env-gated (geo H3, DP cert) tiers. Revisit during
+DEFERRED to pre-release (Cam 2026-07-28, stop TQ at diminishing returns). NOTE the
+parent-vs-child split (correcting a residual conflation): `_isolated_run` is the only
+real `Popen`, but its DRIVER logic (spawn setup, exit-code classification around the
+`Popen`) runs in the PARENT and is gradeable in-process like `_governor` -- it is
+deferred for diminishing returns, not because it needs child execution. Only
+`_isolated_worker`'s CHILD-RESIDENT paths (the code that runs inside the spawned
+interpreter after the payload load) would need the real-subprocess integration tests
+in the mutmut selection; its non-child logic already has direct in-process tests
+(`test_isolated_worker_streaming.py`). Also deferred: `_governor_monitor` (driver-side
+thread + `os.kill`, not a spawn -- a mocking gap, not a boundary), and the
+`codeset_etl` (#12) / `plan/` / env-gated (geo H3, DP cert) tiers. Revisit during
 pre-release hardening.
 
-SUB-FINDING (methodology, owed its own number when convenient): mutmut's in-process
-runner can FLAKILY FALSE-KILL a genuine survivor (`_governor` mut 110, `on_trip` in
-the genuine-crash branch, was marked killed in one baseline pass but survives
-`test_governor.py` standalone). `tq_mutate` trusts "killed" as monotonic (finding #16
-only re-adjudicates SURVIVED), so a flaky false-kill escapes the baseline survivor
-list; the AUTHORITATIVE re-grade catches it. Lesson: the final re-grade, not the
-baseline pass, is authoritative, and always re-verify agent-authored kills against a
-fresh mutmut run.
+SUB-FINDING (methodology, UNRESOLVED reliability gap -- owed its own number): mutmut's
+in-process runner can FLAKILY FALSE-KILL a genuine survivor (`_governor` mut 110,
+`on_trip` in the genuine-crash branch, was marked killed in one grade pass but
+survives `test_governor.py` standalone -- confirmed rc 0). `tq_mutate` trusts mutmut's
+"killed" verdict WITHOUT re-adjudication (finding #16 only re-adjudicates SURVIVED,
+on the monotonicity assumption that a kill cannot be revived -- which a FLAKY kill
+violates), so a false-KILL silently inflates the score and drops a real survivor from
+the triage list. This is NOT fully closed: re-running the grade is useful EVIDENCE
+(a second pass surfaced 110 as survived, and we killed it), but it is not a
+safeguard -- an unrelated flaky test producing rc 1 during any single pass can
+re-introduce the same silent over-grade. A real fix would re-adjudicate the KILLED
+bucket too (at least sample it), or run each grade N times and flag kill/survive
+instability. Until then: treat killed-bucket counts as an upper bound, and always
+re-grade after adding kills (it caught 110). Related to finding #8 (mutmut in-process
+runner unreliability).
 
 
 
