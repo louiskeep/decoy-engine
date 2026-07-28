@@ -2,7 +2,8 @@
 
 TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`) by
 `scripts/tq_mutate.py`. This module was on finding #15's "un-gradeable subprocess
-substrate" list but is in fact PURE and in-process (zero subprocess references):
+substrate" list but has NO DIRECT subprocess call or import in its own code and
+grades in-process (the mutations execute in the parent):
 plain-Python byte arithmetic over the normalized `TableSizeSpec` / `ColumnSizeSpec`
 dataclasses, so every mutant is gradeable in-process with the existing tool -- no
 standalone-per-mutant runner is needed. This is the first module graded under the

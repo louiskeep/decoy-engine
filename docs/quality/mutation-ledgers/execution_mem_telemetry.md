@@ -2,8 +2,9 @@
 
 TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`) by
 `scripts/tq_mutate.py`. Like `_mem_estimate` / `_probe_scale`, this module was on
-finding #15's "un-gradeable subprocess substrate" list but is PURE and in-process
-(zero subprocess references): a peak-RSS calibration model (a k-constant fit that
+finding #15's "un-gradeable subprocess substrate" list but has NO DIRECT subprocess
+call or import in its own code and grades in-process (the mutations execute in the
+parent): a peak-RSS calibration model (a k-constant fit that
 must never under-shoot the observed peak) plus the telemetry-record builders and a
 schema fingerprint. Every mutant grades in-process with the existing tool -- no
 standalone-per-mutant runner. Public API includes `recalibrate_k`,

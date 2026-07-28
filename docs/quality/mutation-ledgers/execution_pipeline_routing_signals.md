@@ -2,11 +2,14 @@
 
 TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`) by
 `scripts/tq_mutate.py`. Like the other three pure substrates, this module was on
-finding #15's "un-gradeable subprocess substrate" list but is PURE and in-process
-(zero subprocess references): it computes the routing signals + largest-mask-table
-row counts a pipeline uses to pick full-frame / out-of-core / sequential, and
-threads arguments to the routing collaborators. Every mutant grades in-process with
-the existing tool. Not crypto/RI, so the bar is the measure-first substrate bar
+finding #15's "un-gradeable subprocess substrate" list but has NO DIRECT subprocess
+call or import in its own code and grades in-process: it computes the routing
+signals + largest-mask-table row counts a pipeline uses to pick full-frame /
+out-of-core / sequential, and threads arguments to the routing collaborators. It
+DOES call collaborators that can spawn at runtime (`probe_peak_bytes`, whose default
+runner is `_probe.run_pipeline_isolated`), but the mutations under grade execute in
+the PARENT process and the selected tests replace those collaborators in-process, so
+every mutant grades in-process with the existing tool. Not crypto/RI, so the bar is the measure-first substrate bar
 max(baseline 66.45 + 15, 75) = **81.45%**; the re-grade clears it at 98.36%.
 
 SLOW-SUITE NOTE: this module's baseline coverage comes from two integration suites

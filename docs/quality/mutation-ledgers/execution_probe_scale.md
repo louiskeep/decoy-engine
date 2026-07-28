@@ -2,11 +2,12 @@
 
 TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`) by
 `scripts/tq_mutate.py`. Like `_mem_estimate`, this module was on finding #15's
-"un-gradeable subprocess substrate" list but is PURE and in-process (zero
-subprocess references): it computes the down-scaled config / sources / row_counts a
+"un-gradeable subprocess substrate" list but has NO DIRECT subprocess call or
+import in its own code and grades in-process (the mutations execute in the parent):
+it computes the down-scaled config / sources / row_counts a
 memory probe runs against, all plain-Python dict/table transforms. Every mutant is
 gradeable in-process with the existing tool. Public API: `scale_row_count`,
-`downscale_config`, `downscale_job` (returns a `DownscaledJob` with `config`,
+`downscale_config`, `downscale_job` (returns a `ScaledJob` with `config`,
 `sources`, `row_counts`). Not crypto/RI, so the bar is the measure-first substrate
 bar; the re-grade is authoritative.
 

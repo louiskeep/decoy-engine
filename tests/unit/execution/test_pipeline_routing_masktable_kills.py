@@ -11,7 +11,7 @@ tuple. These are fast direct-unit tests -- they build tiny attribute-only stubs
 and call the trampoline-exported functions directly, never the ~42s integration
 harness.
 
-Ledger: docs/quality/mutation-ledgers/execution_pipeline_routing_masktable.md.
+Ledger: docs/quality/mutation-ledgers/execution_pipeline_routing_signals.md.
 """
 
 from __future__ import annotations
