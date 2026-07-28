@@ -209,3 +209,156 @@ the string-token map) use the SAME canonical numeric equivalence as
 `fk_key_value()` -- normalize float/Decimal to a shared, collision-safe numeric
 token rather than type-tagging them apart. Source change to `_fk_keys.py`,
 high-stakes (RI); Cam-gated, NOT done autonomously.
+
+## Substrate sweep observations
+
+### 17. `estimate_job_capacity` parent-rows-unresolved raise appears to be dead code (cleanup candidate)
+`execution/capacity.py`. Surfaced by the capacity FULL-triage (2026-07-27): the
+`raise ExecutionError(code=_PARENT_ROWS_UNRESOLVED_CODE, ...)` branch (the "outgoing
+FK edge but no declared source" error, ~lines 211-217) has 7 mutants that all
+survive because the branch is UNREACHABLE under current admission. The branch fires
+only when a graph parent is missing from the profile WHILE the route is already
+`out_of_core` -- but a missing parent source is caught earlier by
+`out_of_core_admission`, which returns `(False, 'out_of_core_parent_seed_missing')`,
+so a job with a missing parent never routes `out_of_core` and never reaches this
+raise. So its code/message mutants (211-217) are equivalent by unreachability, not by
+prose. Flag for a decision: confirm the branch is genuinely dead and remove it (a
+source change, out of this tests-only sweep), or identify a reachable path the sweep
+did not construct. Same class as finding #11 (date_shift dead V1 class). Not a
+product bug (the guard is conservative); a dead-code cleanup / reachability
+confirmation. dennis (2026-07-27 gate) INDEPENDENTLY PROVED the unreachability:
+two constructed reachability wedges (a sourceless mask parent; a generate-table
+FK parent) both get gated by `out_of_core_admission` -> `parent_seed_missing`
+first, and the structural invariant `plan.seed_envelope.per_table` is built
+strictly from `profile.tables` (`plan/_seed_envelope.py:79`, which profiles only
+`config['sources']`), so the raise-guard condition (graph parent absent from
+`profile.tables`) is identical to the admission-reject condition -- the branch is
+dead by construction, not just untested. Related (dennis LOW, pre-existing, NOT a
+reachability path): `config/_pipeline.py` docstring says mask tables need named
+`sources` entries, but the validator only enforces `sources` non-empty, so a
+sourceless mask parent validates (then admission-gates). A separate doc-fix
+candidate.
+
+### 18. tq_mutate `--jobs>1` can FALSE-SURVIVE a mutant when a kill test asserts a WALL-CLOCK value (concurrency, tool)
+Surfaced by the `_sequential` grade (2026-07-27). `run_sequential` mut_146
+(`conversion_ms += elapsed` -> `-=`) is a genuine KILL:
+`test_result_reports_conversion_and_timings` asserts `boundary_conversion_ms > 0`,
+and the sign-flip makes it negative. It dies standalone AND under the full 7-file
+selection run single-threaded. But the `--jobs 6` re-grade reported it SURVIVED:
+under 6 concurrent pytest workers the wall-clock-derived conversion timing is
+perturbed enough that the `> 0` assertion did not fail deterministically. This
+EXTENDS Codex's `--jobs>1` MEDIUM (which was about cwd-write races): the cwd-write
+tripwire does NOT catch a TIMING-sensitive selection, because nothing is written --
+the non-determinism is in the measured value itself. Operational MITIGATION (not a
+determinism proof -- Codex batch gate): grade a selection containing a wall-clock /
+timing assertion at `--jobs 1`. jobs=1 removes the concurrent-worker contention
+that flipped mut_146; it does NOT make a real-clock assertion deterministic in
+general (GC pauses, scheduler jitter still perturb it). The `_sequential` grade was
+re-run at jobs=1 (reproducible 369/417 with mut_146 killed vs the jobs=6 flake of
+368/417) and re-confirmed by 5x standalone re-runs. CORRECTION (Codex): the other
+modules' selections are NOT all timing-free -- `_pandas_adapter` also carries a
+BOUNDED `0 < boundary_conversion_ms < 1000` assertion (its epoch-leak kills 41/153
+have a ~1e6x margin so jobs=6 cannot flip them, verified at jobs=1). The ROBUST fix
+for a TIMING-ARITHMETIC mutant (`*1000`->`/1000`, `+=`->`=`, `*1001`) is a
+CONTROLLED clock (monkeypatch `time.perf_counter`), not jobs=1: such a test asserts
+the exact `boundary_conversion_ms` and kills the mutant deterministically. Those
+mutants are therefore KILLABLE, not "equivalent" -- see the ledger relabel to
+"accepted non-contract survivors" (the sweep leaves them as accepted survivors
+rather than maintain a controlled-clock harness tightly coupled to the exact
+perf_counter call sequence; a decision, not an equivalence claim).
+
+
+### 16. tq_mutate TRUSTS mutmut's "survived", but mutmut's coverage-based per-mutant test selection can drop newly-added tests -> false-survived -> false-LOW score (tool gap, confirmed on _chunked) -- RESOLVED (2026-07-27)
+
+**RESOLVED.** `scripts/tq_mutate.py` now RE-ADJUDICATES the survived bucket by
+default (each survived mutant re-run against the FULL selection in a fresh pytest
+subprocess, exactly like the existing suspect buckets); `--trust-survived` opts
+back out. The correctness argument: a mutmut KILL is monotonic (a failing test
+cannot be un-failed by running more tests), so killed stays trusted verbatim; a
+mutmut SURVIVED is NOT monotonic (it only means mutmut's coverage-selected subset
+did not kill it, and the full selection may contain a killing test mutmut never
+ran), so it must be re-adjudicated. Trusting survived was itself a SILENT
+UNDER-GRADE vector -- the exact failure mode the tool's charter says it must never
+exhibit -- so the fix is default-ON. **Validated end-to-end on `_chunked`:** the
+fixed tool, reusing the same on-disk mutmut run, auto-reported 398/488 = 81.56%
+LOGIC with 0 unresolved and ZERO manual steps (mutmut's raw was 306/488 = 62.70%);
+it re-classified the 92 false-survived mutants automatically. The reproducible 398
+supersedes the hand-counted 399 the prior manual re-adjudication estimated (the
+tool exists precisely to remove that off-by-N hand count).
+
+Gate (both reviewers, 2026-07-27): **dennis APPROVE** -- independently reproduced
+the monotonicity argument (killed monotonic, survived not) and confirmed the
+numbers/code. **Codex** then surfaced a HIGH the first gate under-rated: pytest
+rc 2/3 (interrupted / internal error) were counted as "killed", so a genuine
+survivor whose rerun hit a transient harness error would be a SILENT false KILL
+(the over-grade mirror of #16). Fixed (89bba19): rc 2/3/4 now resolve to
+UNRESOLVED (banner + nonzero exit), only rc 1 is a kill. Also hardened the
+--jobs>1 cwd-race guard (auto-downgrade + honest "not a proof" disclosure). The
+validated 398/488 is unchanged (all 182 reruns were rc 0/1). Original finding
+retained below for the record.
+
+
+`scripts/tq_mutate.py` re-adjudicates only mutmut's SUSPECT buckets
+(timeout/suspicious/segfault/no-tests) and TRUSTS "survived" (exit 0), on dennis's
+reasoning that a mutmut exit-0 means a covering test ran and passed. That
+assumption has a hole: mutmut runs, per mutant, only the tests its coverage map
+(`tests_by_mangled_function_name`) associates with that mutant. When a newly-added
+test file's coverage is not associated (observed on `execution/_chunked.py`: the
+whole new file's kills were not credited), mutmut runs the OLD tests against the
+mutant, they pass, and it reports "survived" -- a FALSE survived. tq_mutate then
+trusts it. Result: `_chunked` was reported 306/488 = 62.70% LOGIC, but a standalone
+re-adjudication of its 182 survived-bucket mutants (full selection, one fresh
+pytest each) found **92 of them actually killed** by the new tests -> TRUE score
+**399/488 = 81.76%** (above the 77.91% bar). Proven decisively: the new tests kill
+e.g. `aggregate_chunk_timings__mutmut_8` (`elapsed[key]=0.0`->`1.0`) STANDALONE
+(exit 1) while mutmut's run left it survived. **Implications:** (a) every module's
+tq_mutate-reported score is a LOWER BOUND (true >= reported); modules 1-6 all clear
+their bars on the reported (lower) numbers, so their pass/fail is unaffected, but
+some ledgered "survivors" there may be false-survived (killed by their own tests,
+uncredited). (b) Large fixture-heavy modules are the ones that trip mutmut's
+coverage association. **Fix (tool follow-up, Cam-gated):** add a
+`--readjudicate-survived` mode to tq_mutate that runs the full selection standalone
+against the survived bucket too (exactly the manual step done for _chunked), making
+the grade independent of mutmut's coverage-selection. Until then, large modules
+need manual survived-bucket re-adjudication (as done here). This is the finding-#8
+class (mutmut in-process runner unreliable), opposite direction (false-low here,
+false-high there).
+
+
+
+### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining)
+The runtime governor `execution/_governor.py` and its siblings run their real work
+in SPAWNED CHILD PROCESSES (supervisor-kills-child architecture), and their tests
+(`test_governor.py`: 65 monkeypatch/mock refs) stub the spawn + RSS monitor. So
+mutmut's in-process trampoline mutants in these modules are never executed by the
+tests -- the child imports the UNMUTATED installed package. `tq_mutate.py`'s
+baseline sanity check (dennis P1-3) correctly ABORTED grading `_governor` with "the
+tests never call the mutated functions" rather than emitting a false score (the
+guard working as designed). Triage of the substrate tier by subprocess/isolated
+reference count:
+- **Gradeable in-process (pure logic, 0 subprocess refs):** `_planner`, `_sequential`,
+  `_chunked`, `_chunked_fk`, `_pandas_adapter`, `capacity`, `_technique_class`,
+  `_distribution_behavior`, `_mem_estimate_schema`. These are the sweep's in-process
+  targets.
+- **UN-gradeable in-process (subprocess / isolated-run heavy):** `_isolated_run` (72),
+  `_governor` (59), `_mem_telemetry` (19), `_probe` (17), `_isolated_worker` (8),
+  `_probe_scale` (5), `_pipeline_routing_signals` (3), `_governor_monitor` (3),
+  `_mem_estimate` (2). These need a different method (mutation testing that runs the
+  child with the mutated tree, or accept they are behavior-tested not mutation-graded)
+  -- same deferred class as findings #8/#12. Flagged for a Cam decision on approach.
+
+
+
+### 14. `_when_gate` docstring overstates numexpr fallback behavior (doc nit, source; LOW)
+`execution/_when_gate.py:20-22` states "The numexpr backend never falls back to
+Python eval, so an undefined name raises `UndefinedVariableError` instead of
+executing." dennis's gate on the _when_gate grading batch (2026-07-26) empirically
+showed pandas `DataFrame.eval` DOES transparently fall back to the python engine
+even when `engine="numexpr"` is pinned (the code itself handles that fallback at
+lines ~109-127 with a RuntimeWarning). The security posture is UNAFFECTED: the real
+scope-walk block is the empty `local_dict`/`global_dict` clamp, not the engine
+choice (verified -- `@os.system(...)`-style attacks are blocked identically under
+both engines with the dicts clamped, which is why the `engine=` mutants mut_11/15
+are correctly EQUIVALENT). Only the docstring's rationale is inaccurate. Fix in a
+future source pass: reword to attribute the block to the dict clamp, not the engine
+pin. Tests-only sweep; not fixed here.

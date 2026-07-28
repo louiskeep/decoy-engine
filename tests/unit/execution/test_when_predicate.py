@@ -148,6 +148,7 @@ class TestErrorHandling:
                 _FakeCtx(),
             )
         assert exc.value.code == "when_expression_error"
+        assert exc.value.strategy == "redact"
 
     def test_when_non_bool_series_raises_when_expression_not_boolean(self):
         df = pd.DataFrame({"v": ["a", "b"], "n": [1, 2]})
@@ -160,6 +161,7 @@ class TestErrorHandling:
                 _FakeCtx(),
             )
         assert exc.value.code == "when_expression_not_boolean"
+        assert exc.value.strategy == "redact"
 
     def test_when_gate_accepts_nullable_boolean_mask(self):
         """QA-3 F4 (2026-05-31): pandas' nullable BooleanDtype produces
