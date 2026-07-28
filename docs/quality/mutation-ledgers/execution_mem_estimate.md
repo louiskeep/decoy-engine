@@ -17,8 +17,9 @@ the measure-first substrate bar; the re-grade is authoritative.
 
 Baseline (existing tests: `test_mem_estimate.py` + `test_byte_estimate_routing.py`
 + `test_mem_calibration.py`): 100/119 = 84.03% LOGIC, 0 unresolved, 19 survivors.
-Full triage of the 19 adds **8 kills** (8 tests in a new
-`tests/unit/execution/test_mem_estimate_kills.py`) and adjudicates the remaining
+Full triage of the 19 adds **8 kills** (7 tests in a new
+`tests/unit/execution/test_mem_estimate_kills.py`; `fits` mut 10 and 13 share one
+test) and adjudicates the remaining
 **11 as PROVEN EQUIVALENT** (0 accepted non-contract, 0 residual). Re-grade with the
 kill file in the selection: **108/119 = 90.76% LOGIC (tool-native, 0 unresolved)**;
 the 8 LOGIC targets are all absent from the survivor set. 108/108 = 100% of the
