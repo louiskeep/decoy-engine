@@ -85,8 +85,10 @@ in schema breadth):
       `relations/<parent>` parent-key relations at once, and those are the
       (typically small) dimension/parent tables sized by the PARENT's rows.
     - staged_key_token_bytes = masked_width + FK_TOKEN_FRAMING_BYTES, floored
-      at MIN_KEY_TOKEN_BYTES (covers the ~28-byte int-key token). ROW_NR_BYTES
-      (8) is added once per table with staged keys.
+      at MIN_KEY_TOKEN_BYTES (covers the ~28-byte int-key token); a FLOAT-dtype
+      key instead takes the wider _FLOAT_FK_TOKEN_MAX_BYTES bound (finding #13,
+      its decimal/folded-int token dwarfs the int floor). ROW_NR_BYTES (8) is
+      added once per table with staged keys.
     - max_per_table_edge_count: the busiest table's incoming+outgoing edge
       count, from `max_per_table_edge_count` -- the same edge-fan-in
       `_pipeline_route_exec._max_concurrent_ooc_instances` reasons about for
@@ -147,6 +149,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
@@ -215,6 +218,43 @@ _DEFAULT_REDACT_WITH = "REDACTED"
 # for a narrow numeric key whose value width alone would under-count the token.
 FK_TOKEN_FRAMING_BYTES = 16
 MIN_KEY_TOKEN_BYTES = 28
+
+# Float FK keys mint a MUCH wider join token than the int-key floor covers, so
+# they need their own bound (finding #13). The RI fix (2026-07-25) routes a
+# fractional float through its exact decimal expansion
+# (`\x00DEC:<=200 sig digits>`, ~222 bytes), while `fk_key_value` folds a
+# whole-valued float to int -- and a float can be whole-valued right up to
+# ~1.8e308, which `fk_join_key` then renders as `\x00INT:<309-digit integer>`
+# (~314 bytes). The int-branch expansion of a large-magnitude float dominates,
+# so bound on it: `\x00INT:` prefix + the widest float integer expansion + a
+# sign + tuple framing. Derived from `sys.float_info.max` (not a magic literal)
+# so it tracks the platform's float width; a real-token drift guard lives in
+# test_out_of_core_spill_preflight.py. An int64/int32 key cannot reach this
+# width (<=19 digits -> the 28-byte floor already covers it), so only float
+# dtypes take this bound.
+_FLOAT_FK_TOKEN_MAX_BYTES: int = (
+    len("\x00INT:") + len(str(int(sys.float_info.max))) + 1 + FK_TOKEN_FRAMING_BYTES
+)
+
+
+def _is_float_fk_dtype(dtype: str) -> bool:
+    """Whether a key column's dtype label is a float, so its staged join token
+    takes the wide `_FLOAT_FK_TOKEN_MAX_BYTES` bound (finding #13).
+
+    A SUBSTRING match on "float"/"double" (case-insensitive), not an exact set:
+    it must catch every float spelling that could reach here now or later --
+    numpy `float64`/`float32`/`float16`, pandas nullable `Float64`/`Float32`,
+    and pyarrow `float`/`double`/`double[pyarrow]` -- because UNDER-counting is
+    the dangerous direction for a disk preflight (finding #13 was exactly that).
+    No non-float dtype label contains either substring, so there is no false
+    positive; over-counting a float is the safe direction anyway. Today the
+    routing mem-gate (`ColumnSizeSpec`) fails closed on non-numpy float labels
+    before a live OOC run, so only float64/float32 actually reach this -- the
+    broad match is a belt-and-suspenders guard against a future reader that
+    emits nullable/arrow floats (dennis gate P2)."""
+    lowered = dtype.lower()
+    return "float" in lowered or "double" in lowered
+
 
 # The `__decoy_row_nr` int64 column staged alongside the key columns
 # (`_relation.py::_staging_schema`), one per table's staged key set.
@@ -327,11 +367,18 @@ def _masked_disk_width_bytes(col: ColumnProfile, col_cfg: dict[str, Any] | None)
     return max(source, _strategy_output_width_bytes(strategy, params))
 
 
-def _staged_key_token_bytes(masked_width: float) -> float:
+def _staged_key_token_bytes(masked_width: float, dtype: str) -> float:
     """On-disk width of one staged FK join token for a key of `masked_width`
     -- the masked value plus `fk_join_key` framing, floored at the int-key
-    token size so a narrow numeric key does not under-count."""
-    return max(masked_width + FK_TOKEN_FRAMING_BYTES, float(MIN_KEY_TOKEN_BYTES))
+    token size so a narrow numeric key does not under-count.
+
+    A FLOAT-dtype key mints a far wider token than that floor covers (its exact
+    decimal / folded-int expansion, finding #13), so it takes the dedicated
+    `_FLOAT_FK_TOKEN_MAX_BYTES` bound instead."""
+    base = max(masked_width + FK_TOKEN_FRAMING_BYTES, float(MIN_KEY_TOKEN_BYTES))
+    if _is_float_fk_dtype(dtype):
+        return max(base, float(_FLOAT_FK_TOKEN_MAX_BYTES))
+    return base
 
 
 def max_per_table_edge_count(graph: RelationshipGraph) -> int:
@@ -439,9 +486,11 @@ def predict_ooc_disk_bytes(
         parent_cols = [c for c in table.columns if (table.name, c.name) in parent_side]
         if not child_cols and not parent_cols:
             continue
-        child_tokens = sum(_staged_key_token_bytes(masked_width(table.name, c)) for c in child_cols)
+        child_tokens = sum(
+            _staged_key_token_bytes(masked_width(table.name, c), c.dtype) for c in child_cols
+        )
         parent_tokens = sum(
-            _staged_key_token_bytes(masked_width(table.name, c)) for c in parent_cols
+            _staged_key_token_bytes(masked_width(table.name, c), c.dtype) for c in parent_cols
         )
         spill_base += (float(ROW_NR_BYTES) + child_tokens) * table.row_count
         spill_parent_relations += parent_tokens * table.row_count

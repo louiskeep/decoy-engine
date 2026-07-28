@@ -47,6 +47,19 @@ ALLOWLIST: dict[str, int] = {
     # mirroring the `_spill_estimate.py` split this module's own docstring
     # already documents as precedent, when the next budget change lands.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
+    # finding #13 (2026-07-27): crossed the 600 cap (600 -> 623) pricing a
+    # float/fractional-decimal FK key spill token at its real decimal width. The
+    # RI fix (finding #1) widened the float FK join token from a compact repr to
+    # the exact-decimal expansion of Decimal(float), so `_staged_key_token_bytes`
+    # must price a float64 key at the `_FLOAT_FK_TOKEN_MAX_BYTES` bound instead of
+    # the MIN_KEY_TOKEN_BYTES floor, else the OOC disk preflight under-predicts
+    # scratch (the dangerous refuse-early direction). The added constant +
+    # `_is_float_fk_dtype` + the token branch tipped it over. Decompose the disk-
+    # WIDTH helpers (`_source_disk_width_bytes`/`_provider_config_and_strategy`/
+    # `_strategy_output_width_bytes`/`_masked_disk_width_bytes`/
+    # `_staged_key_token_bytes`) into a `_spill_widths.py` sibling when the next
+    # spill-sizing change lands (the module docstring already flags this split).
+    "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
     # DPS Scope B (2026-07-22): crossed the 600 cap (was 600 exactly in the
     # parked branch, guide section 4.8) to thread the pinned-Plan
     # generation contract through the existing per-generator dispatch:

@@ -168,7 +168,35 @@ the package on the path), or grade via the codeset_etl suite directly. Not false
 scored -- flagged as un-gradeable-in-process, same class as findings #8 (substrate
 timeout) and the broad-selection tier.
 
-### 13. Spill estimator under-counts the exact-decimal float FK token (Codex P2, 2026-07-26)
+### 13. Spill estimator under-counts the exact-decimal float FK token (Codex P2, 2026-07-26) -- RESOLVED
+**Resolution (branch `tq/fix-13-spill-float-fk-token`):** `_staged_key_token_bytes`
+is now float-dtype-aware. A `float64`/`float32` FK key column takes a dedicated
+`_FLOAT_FK_TOKEN_MAX_BYTES` bound instead of the 28-byte int floor. The bound is
+derived from `sys.float_info.max` (not a magic literal): a whole-valued float folds
+to int and renders as `\x00INT:<up to 309 digits>` (~314 bytes), which dominates the
+fractional `\x00DEC:` case (~222, prec-clamped). A drift-guard test builds real tokens
+via `fk_join_key` over extreme doubles (near-max both signs, subnormal, fractional)
+and asserts the bound covers each; an end-to-end test proves a float FK key now
+predicts a strictly larger spill than an equal-width int key (fail-before: they were
+equal). int/string key sizing is unchanged. Confined to `_spill_estimate.py` (no
+`_fk_keys` behavior change -> no RI-path risk).
+
+dennis gate (2026-07-26): APPROVE, 0 P0/P1. Remediated its P2 + P3 in the same
+branch: float detection is now a `"float"/"double"` substring match (`_is_float_fk_
+dtype`), not an exact `{"float64","float32"}` set, so a future reader emitting a
+pandas-nullable `Float64` or pyarrow `double[pyarrow]` float key cannot silently
+ceiling to 272 bytes and under-count (the dangerous direction); a coupling-lock test
+asserts every float label in `_FIXED_WIDTH_DTYPE_BYTES` is detected. dennis LOW-1
+(the `_fk_keys` comment about decimal256's 76-digit ceiling closing the float-vs-
+Decimal direction) was REVERTED, not kept: dennis P3 showed it overstates -- an
+object-column Decimal is not Arrow-typed and can carry up to 200 sig digits under the
+prec=200 join context -- so the sentence is dropped and `_fk_keys` is left untouched
+by this branch. That cross-type collision question stays open as an informational
+note (extremely remote: needs two distinct keys sharing a >200-sig-digit rounded
+token); not a spill-sizing concern.
+
+Original report:
+
 `execution/out_of_core/_spill_estimate.py`. Finding #1's RI fix changed a float FK
 join token from `\x00FLOAT:{repr}` to `\x00DEC:{decimal_join_token(Decimal(float))}`,
 whose exact-decimal expansion is much wider (Codex measured `0.1` -> ~76-byte tuple
