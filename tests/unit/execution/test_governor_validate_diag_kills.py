@@ -29,13 +29,13 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine.execution import _governor
-from decoy_engine.execution._governor import GovernorTripRecord
+from decoy_engine.execution._governor import GovernorRoute, GovernorTripRecord
 
 _MB = 1024 * 1024
 
 # A valid baseline call-tuple for `_validate_call`; each test perturbs exactly
 # one argument so the verdict under test is unambiguous.
-_VALID_LADDER = ("full_frame",)
+_VALID_LADDER: tuple[GovernorRoute, ...] = ("full_frame",)
 _VALID_BUDGET = 100 * _MB
 _VALID_FRACTION = 0.93
 _VALID_INTERVAL = 1.5
@@ -61,7 +61,8 @@ class TestValidateCallVerdictKills:
         # reject a 1-byte budget. 1 is the smallest valid positive int and must
         # pass validation (return None, no raise).
         assert (
-            _governor._validate_call(_VALID_LADDER, 1, _VALID_FRACTION, _VALID_INTERVAL, {}) is None
+            _governor._validate_call(_VALID_LADDER, 1, _VALID_FRACTION, _VALID_INTERVAL, {})  # type: ignore[func-returns-value]
+            is None
         )
 
     def test_bool_hard_threshold_fraction_is_rejected(self):

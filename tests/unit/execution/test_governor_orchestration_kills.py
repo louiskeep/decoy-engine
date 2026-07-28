@@ -128,7 +128,7 @@ class TestIsRouteIneligibleError:
         # `None` and the dropped-arg form). The `()` fallback must keep an
         # unmapped route a clean `False`; a `None` default makes `any(... for
         # marker in None)` raise TypeError instead.
-        assert _is_route_ineligible_error("bogus_route", "some error text") is False
+        assert _is_route_ineligible_error("bogus_route", "some error text") is False  # type: ignore[arg-type]
 
 
 # ==========================================================================
@@ -227,7 +227,7 @@ class TestGateAndKnobValidation:
         # #2 (name->None), #6 ("XX..XX"), #7 (upper): the require_bool name
         # arg. A non-bool value must be rejected naming THIS knob exactly.
         with pytest.raises(ExecutionError) as exc:
-            run_job_with_governor(_CFG, _SRC, budget_bytes=_BUDGET, use_runtime_governor="yes")
+            run_job_with_governor(_CFG, _SRC, budget_bytes=_BUDGET, use_runtime_governor="yes")  # type: ignore[arg-type]
         assert "use_runtime_governor must be a bool" in str(exc.value)
 
 
