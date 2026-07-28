@@ -354,7 +354,7 @@ false-high there).
 
 
 
-### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining)
+### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining) -- LARGELY A MISCLASSIFICATION, RESOLVED (2026-07-28)
 The runtime governor `execution/_governor.py` and its siblings run their real work
 in SPAWNED CHILD PROCESSES (supervisor-kills-child architecture), and their tests
 (`test_governor.py`: 65 monkeypatch/mock refs) stub the spawn + RSS monitor. So
@@ -374,6 +374,47 @@ reference count:
   `_mem_estimate` (2). These need a different method (mutation testing that runs the
   child with the mutated tree, or accept they are behavior-tested not mutation-graded)
   -- same deferred class as findings #8/#12. Flagged for a Cam decision on approach.
+
+**LARGELY A MISCLASSIFICATION -- RESOLVED (2026-07-28).** A FRAME investigation
+(Explore over the real spawn mechanism) found the "un-gradeable" bucket above was
+built from a raw grep REF-COUNT, not from actual spawn boundaries, and the core
+premise is wrong on two counts:
+1. **The env plumbing already propagates mutants into children.** `_isolated_run`
+   spawns with `env={**os.environ, **CAPPED_ENV}`, so a parent-set `MUTANT_UNDER_TEST`
+   + `PYTHONPATH=mutants/src` are inherited and the child imports the MUTATED tree
+   (no PEP 660 finder, prepend wins). `tq_mutate` already sets this. A
+   standalone-per-mutant runner is NOT needed for the plumbing.
+2. **Most of the "un-gradeable" modules are pure or parent-resident.** `_mem_estimate`,
+   `_probe_scale`, `_mem_telemetry`, `_pipeline_routing_signals` are PURE (zero
+   subprocess CALLS; the ref-count hits are docstring prose). `_governor` / `_probe`
+   run their decision logic in the PARENT; the tests mock only the spawn, so the
+   logic IS exercised and the baseline guard does NOT abort (contradicting the claim
+   above -- verified empirically: `_governor` forced-fail rc 1, grades fine).
+
+GRADED with the existing tool, no de-mock, no runner (branch `tq/isolated-substrate-grade`):
+`_mem_estimate` 90.76%, `_probe_scale` 100%, `_mem_telemetry` 88.05%,
+`_pipeline_routing_signals` 98.36% (pure; gated dennis+Codex MERGE-READY);
+`_governor` 85.52%, `_probe` 82.47% (parent-resident). The two parent-resident
+modules land below the +15 target because they are validation/diagnostic-heavy
+(14.5% / 17.5% message-prose + unreachable), same honest situation as `_chunked_fk`;
+100% of KILLABLE mutants are killed.
+
+DEFERRED to pre-release (Cam 2026-07-28, stop TQ at diminishing returns): the TRUE
+spawn-boundary modules `_isolated_run` (the only real `Popen`) + `_isolated_worker`
+(the child entrypoint) -- these DO need the real-subprocess integration tests in the
+mutmut selection so the child code executes mutated; plus `_governor_monitor`
+(driver-side thread + `os.kill`, not a spawn -- a mocking gap not a boundary), and
+the `codeset_etl` (#12) / `plan/` / env-gated (geo H3, DP cert) tiers. Revisit during
+pre-release hardening.
+
+SUB-FINDING (methodology, owed its own number when convenient): mutmut's in-process
+runner can FLAKILY FALSE-KILL a genuine survivor (`_governor` mut 110, `on_trip` in
+the genuine-crash branch, was marked killed in one baseline pass but survives
+`test_governor.py` standalone). `tq_mutate` trusts "killed" as monotonic (finding #16
+only re-adjudicates SURVIVED), so a flaky false-kill escapes the baseline survivor
+list; the AUTHORITATIVE re-grade catches it. Lesson: the final re-grade, not the
+baseline pass, is authoritative, and always re-verify agent-authored kills against a
+fresh mutmut run.
 
 
 
