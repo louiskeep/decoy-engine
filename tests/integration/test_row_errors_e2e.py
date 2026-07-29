@@ -70,6 +70,188 @@ def _date_shift_config(
     return cfg
 
 
+def _nested_config(
+    src_path: str, target_path: str, *, quarantine: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    cfg: dict[str, Any] = {
+        "version": 1,
+        "global_settings": {"job_name": "test3-nested-row-errors", "seed": 42},
+        "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
+        "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {
+                        "name": "payload",
+                        "strategy": "nested",
+                        "provider_config": {"target": "$.contact.phone", "strategy": "redact"},
+                    }
+                ],
+            }
+        ],
+        "relationships": [],
+    }
+    if quarantine is not None:
+        cfg["quarantine"] = quarantine
+    return cfg
+
+
+class TestNestedFailLoud:
+    """TEST-3 finding 1: a malformed-JSON cell under `nested` must fail closed
+    through the same run_pipeline row-error gate every other producer uses -- its
+    cleartext must never reach the main output. Pre-fix it passed through with
+    only an advisory warning."""
+
+    _ROWS = [
+        json.dumps({"contact": {"phone": "555-0100"}}),
+        '{"contact": {"phone": "555-0200-LEAK"',  # truncated JSON; raw text holds the PII
+        json.dumps({"contact": {"phone": "555-0300"}}),
+    ]
+
+    def test_no_quarantine_raises_row_errors_failed(self, tmp_path: Path) -> None:
+        src = pa.table({"payload": pa.array(self._ROWS, type=pa.string())})
+        src_path = _write_source(tmp_path, src)
+        config = _nested_config(src_path, str(tmp_path / "t.out.parquet"))
+        sources = {"t": pq.read_table(src_path)}
+
+        with pytest.raises(RowErrorsFailedError) as exc_info:
+            run_pipeline(config, sources, engine_version="0.1.0")
+
+        assert len(exc_info.value.records) == 1
+        rec = exc_info.value.records[0]
+        assert rec.trigger == "format_error"
+        assert rec.table == "t"
+        assert rec.column == "payload"
+        assert "555-0200-LEAK" not in str(exc_info.value)  # no cell value in the message
+        # (run_pipeline returns outputs in-memory and does not write target files,
+        # so a "no output file" assertion would be vacuous; the raise above is the
+        # publication-safety proof -- the caller never gets an output table.)
+
+    def test_quarantine_removes_malformed_row_cleartext_absent(self, tmp_path: Path) -> None:
+        src = pa.table({"payload": pa.array(self._ROWS, type=pa.string())})
+        src_path = _write_source(tmp_path, src)
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _nested_config(
+            src_path,
+            str(tmp_path / "t.out.parquet"),
+            quarantine={"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        )
+        sources = {"t": pq.read_table(src_path)}
+
+        result = run_pipeline(config, sources, engine_version="0.1.0")
+
+        assert result.outputs["t"].num_rows == 2  # the malformed row is dropped
+        out_cells = result.outputs["t"].column("payload").to_pylist()
+        # THE LEAK TEST: the malformed cleartext is absent from the main output.
+        assert all("555-0200-LEAK" not in c for c in out_cells)
+        # The well-formed rows were still masked.
+        for c in out_cells:
+            assert json.loads(c)["contact"]["phone"] == "REDACTED"
+        assert result.quality_metrics["quarantine"]["counts_by_trigger"] == {"format_error": 1}
+
+    def test_child_row_error_quarantines_correct_outer_row(self, tmp_path: Path) -> None:
+        # TEST-3 P1-1: nested runs the child strategy on FLATTENED leaves, so a
+        # child RowError must be remapped from leaf position back to the outer row.
+        # A leading no-match row shifts leaf positions relative to outer rows;
+        # without the remap, quarantine drops the wrong row and the bad row's
+        # cleartext leaks. Reproduced as a real leak before the fix.
+        rows = [
+            json.dumps({"other": 1}),  # no target match -> contributes no leaf (shifts positions)
+            json.dumps({"v": "LEAKVAL"}),  # bad leaf -> bucketize format_error
+            json.dumps({"v": 30}),  # good leaf
+        ]
+        src = pa.table({"payload": pa.array(rows, type=pa.string())})
+        src_path = _write_source(tmp_path, src)
+        qpath = str(tmp_path / "q.jsonl")
+        cfg = {
+            "version": 1,
+            "global_settings": {"job_name": "p1-remap", "seed": 42},
+            "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
+            "targets": {
+                "t": {"type": "file", "path": str(tmp_path / "o.parquet"), "format": "parquet"}
+            },
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "payload",
+                            "strategy": "nested",
+                            "provider_config": {
+                                "target": "$.v",
+                                "strategy": "bucketize",
+                                "strategy_config": {"width": 10},
+                            },
+                        }
+                    ],
+                }
+            ],
+            "relationships": [],
+            "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        }
+        result = run_pipeline(cfg, {"t": pq.read_table(src_path)}, engine_version="0.1.0")
+        out = result.outputs["t"].column("payload").to_pylist()
+        # The BAD row (LEAKVAL, outer row 1) is the one quarantined; its cleartext
+        # is absent from main output, and the clean no-match row 0 survives.
+        assert all("LEAKVAL" not in c for c in out)
+        assert any('"other": 1' in c for c in out)  # clean row 0 was NOT the one dropped
+        assert result.quality_metrics["quarantine"]["counts_by_trigger"] == {"format_error": 1}
+
+    def test_child_row_error_under_when_gate_remaps_to_full_table_row(self, tmp_path: Path) -> None:
+        # TEST-3 P1-1 composed with the when-gate remap (dennis MEDIUM). A nested
+        # child error is remapped leaf -> subset position (nested), then subset ->
+        # full-table position (run_with_when_gate). A leading UNMATCHED gated row
+        # shifts the leaf positions within the gated subset, so both remaps must
+        # compose or the wrong full-table row is quarantined and the bad row leaks.
+        payloads = [
+            json.dumps({"v": 1}),  # row 0, keep=0: gated out, untouched
+            json.dumps({"other": 9}),  # row 1, keep=1: no target match (shifts leaves)
+            json.dumps({"v": "BADLEAK"}),  # row 2, keep=1: bad leaf -> format_error
+            json.dumps({"v": 30}),  # row 3, keep=1: good leaf
+        ]
+        src = pa.table({"payload": pa.array(payloads, type=pa.string()), "keep": [0, 1, 1, 1]})
+        src_path = _write_source(tmp_path, src)
+        qpath = str(tmp_path / "q.jsonl")
+        cfg = {
+            "version": 1,
+            "global_settings": {"job_name": "p1-when", "seed": 42},
+            "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
+            "targets": {
+                "t": {"type": "file", "path": str(tmp_path / "o.parquet"), "format": "parquet"}
+            },
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "payload",
+                            "strategy": "nested",
+                            "when": "keep == 1",
+                            "provider_config": {
+                                "target": "$.v",
+                                "strategy": "bucketize",
+                                "strategy_config": {"width": 10},
+                            },
+                        },
+                        {"name": "keep", "strategy": "passthrough"},
+                    ],
+                }
+            ],
+            "relationships": [],
+            "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        }
+        result = run_pipeline(cfg, {"t": pq.read_table(src_path)}, engine_version="0.1.0")
+        out = result.outputs["t"].column("payload").to_pylist()
+        # Full-table row 2 (BADLEAK) is the one that must be quarantined.
+        assert all("BADLEAK" not in c for c in out)
+        assert result.outputs["t"].num_rows == 3
+        assert any('"other": 9' in c for c in out)  # innocent gated no-match row kept
+        records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
+        assert len(records) == 1
+        assert "BADLEAK" in records[0]["payload"]  # the RIGHT (full-table) row captured
+
+
 class TestBucketizeFailLoud:
     def test_no_quarantine_raises_row_errors_failed(self, tmp_path: Path) -> None:
         src = pa.table(

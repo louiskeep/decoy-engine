@@ -20,6 +20,7 @@ import pandas as pd
 from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._strategies._bucketize import BucketizeStrategyHandler
 from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
+from decoy_engine.execution._strategies._nested import NestedStrategyHandler
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -124,4 +125,76 @@ class TestDateShiftRowErrors:
         seed = _col("date_shift", namespace="ns1")
         ctx = _ctx()
         DateShiftStrategyHandler().run(df, "dob", seed, ctx)
+        assert ctx.row_errors == []
+
+
+def _nested_seed(cfg: dict[str, Any]) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=None,
+        strategy="nested",
+        provider=None,
+        backend_type="decoy_native",
+        backend_version="1",
+        cardinality_mode="reuse",
+        deterministic=False,
+        provider_config=tuple(sorted(cfg.items())),
+    )
+
+
+class TestNestedRowErrors:
+    """TEST-3 finding 1 (fail-closed audit): a malformed-JSON cell under `nested`
+    used to reach the main output with its cleartext intact, guarded only by an
+    advisory QualityWarning that never reached the quarantine gate. It now records
+    a `RowError` (trigger "format_error") like every sibling cell-parsing strategy,
+    so a malformed cell is quarantined or fails the job -- never emitted raw. The
+    original value stays in the frame (trap T4); the pipeline layer removes it."""
+
+    def test_malformed_json_cell_records_format_error(self) -> None:
+        # The middle cell is truncated JSON (missing closing brace) whose raw text
+        # still carries the target PII -- exactly the leak this guard prevents.
+        df = pd.DataFrame(
+            {
+                "payload": [
+                    '{"email": "a@b.com"}',
+                    '{"email": "leak@evil.com"',
+                    '{"email": "c@d.com"}',
+                ]
+            }
+        )
+        seed = _nested_seed({"target": "$.email", "strategy": "redact"})
+        ctx = _ctx()
+        out_df, _ = NestedStrategyHandler().run(df, "payload", seed, ctx)
+        assert len(ctx.row_errors) == 1
+        err = ctx.row_errors[0]
+        assert err.column == "payload"
+        assert err.row_index == 1
+        assert err.trigger == "format_error"
+        assert "leak@evil.com" not in err.reason  # trap T3: no cell value in reason
+        # T4 through the writeback path: rows 0/2 are masked (so `df[column]` is
+        # reassigned), yet the malformed row 1 survives byte-for-byte unchanged.
+        assert out_df["payload"].iloc[1] == '{"email": "leak@evil.com"'
+
+    def test_malformed_cell_left_in_frame_not_rewritten(self) -> None:
+        # T4: the strategy must not null/rewrite the bad cell; the pipeline layer
+        # (row error -> quarantine/fail) keeps it out of the main output.
+        df = pd.DataFrame({"payload": ['{"email": "x@y.com"']})
+        seed = _nested_seed({"target": "$.email", "strategy": "redact"})
+        ctx = _ctx()
+        out_df, _ = NestedStrategyHandler().run(df, "payload", seed, ctx)
+        assert out_df["payload"].iloc[0] == '{"email": "x@y.com"'
+        assert len(ctx.row_errors) == 1
+
+    def test_valid_json_masked_no_row_error(self) -> None:
+        df = pd.DataFrame({"payload": ['{"email": "a@b.com"}']})
+        seed = _nested_seed({"target": "$.email", "strategy": "redact"})
+        ctx = _ctx()
+        out_df, _ = NestedStrategyHandler().run(df, "payload", seed, ctx)
+        assert ctx.row_errors == []
+        assert "a@b.com" not in out_df["payload"].iloc[0]  # leaf was redacted
+
+    def test_source_null_cell_no_row_error(self) -> None:
+        df = pd.DataFrame({"payload": ['{"email": "a@b.com"}', None]})
+        seed = _nested_seed({"target": "$.email", "strategy": "redact"})
+        ctx = _ctx()
+        NestedStrategyHandler().run(df, "payload", seed, ctx)
         assert ctx.row_errors == []

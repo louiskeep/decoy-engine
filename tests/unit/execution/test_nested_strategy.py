@@ -54,7 +54,10 @@ def _seed(provider_config: dict) -> ColumnSeed:
 
 
 class _FakeCtx:
-    pass
+    def __init__(self) -> None:
+        # Real StrategyContext carries a `row_errors` list; the malformed-cell
+        # fail-closed path appends to it, so the stand-in needs one too.
+        self.row_errors: list = []
 
 
 # ── happy paths ───────────────────────────────────────────────────────
@@ -140,31 +143,64 @@ class TestHappyPaths:
 
 
 class TestPassthroughCases:
-    def test_nested_cell_not_json_passthrough_with_warning(self):
+    def test_nested_cell_not_json_records_row_error_and_warning(self):
+        # A malformed-JSON cell fails closed: the original stays in the frame
+        # (T4, the pipeline layer removes it), a format_error RowError is recorded
+        # so it never reaches the main output unmasked, and the advisory
+        # QualityWarning still surfaces in the Storm report. Pre-fix this emitted
+        # only the warning and let the cleartext through (TEST-3 finding 1).
         df = pd.DataFrame({"data": ["not json at all"]})
         handler = NestedStrategyHandler()
+        ctx = _FakeCtx()
         out, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.email", "strategy": "redact"}),
+            ctx,
+        )
+        assert out["data"].iloc[0] == "not json at all"
+        codes = [w.code for w in warnings]
+        assert "nested_cell_json_parse_error" in codes
+        assert len(ctx.row_errors) == 1
+        assert ctx.row_errors[0].trigger == "format_error"
+        assert ctx.row_errors[0].column == "data"
+
+    def test_nested_target_matching_nothing_fails_closed(self):
+        # TEST-3 P1-2: a target that matches NOTHING across the whole column is a
+        # misconfiguration (a typoed / wrong path), not a valid no-op. Failing
+        # closed prevents the whole column of cleartext from passing through
+        # unmasked. Pre-fix this returned the column unchanged with no error.
+        df = pd.DataFrame({"data": [json.dumps({"x": 1, "y": 2})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError, match="nested_target_matched_nothing"):
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.nonexistent", "strategy": "redact"}),
+                _FakeCtx(),
+            )
+
+    def test_nested_sparse_path_some_cells_match_is_valid(self):
+        # A genuine sparse path (SOME cells carry the target, some do not) stays
+        # valid: matching cells are masked, non-matching cells pass unchanged, no
+        # error. Only the ALL-zero-match case (above) fails closed.
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps({"email": "a@x.com"}),  # matches -> masked
+                    json.dumps({"other": "keep"}),  # no match -> unchanged
+                ]
+            }
+        )
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
             df.copy(),
             "data",
             _seed({"target": "$.email", "strategy": "redact"}),
             _FakeCtx(),
         )
-        assert out["data"].iloc[0] == "not json at all"
-        codes = [w.code for w in warnings]
-        assert "nested_cell_json_parse_error" in codes
-
-    def test_nested_target_path_missing_in_cell_passthrough_no_error(self):
-        df = pd.DataFrame({"data": [json.dumps({"x": 1, "y": 2})]})
-        handler = NestedStrategyHandler()
-        out, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.nonexistent", "strategy": "redact"}),
-            _FakeCtx(),
-        )
-        # Sparse paths are valid: no match -> no change, no warning.
-        assert json.loads(out["data"].iloc[0]) == {"x": 1, "y": 2}
-        assert all(w.code != "nested_jsonpath_parse_error" for w in warnings)
+        assert "a@x.com" not in out["data"].iloc[0]  # matched leaf was redacted
+        assert json.loads(out["data"].iloc[1]) == {"other": "keep"}  # sparse passthrough
 
     def test_nested_null_cell_stays_null(self):
         df = pd.DataFrame(
