@@ -101,7 +101,9 @@ class TestDownscaleJobRowCountsGate:
             "row_count": 777,
             "columns": [{"name": "email", "strategy": "faker"}],
         }
-        job = downscale_job({"version": 1, "tables": [mask_with_rowcount]}, None, 0.01, floor_rows=0)
+        job = downscale_job(
+            {"version": 1, "tables": [mask_with_rowcount]}, None, 0.01, floor_rows=0
+        )
         assert job.row_counts == {}
 
     def test_mask_table_does_not_abort_the_row_counts_loop(self) -> None:
