@@ -19,6 +19,7 @@ engine location with DECOY_ENGINE_SRC if running from outside the repo.
 
 from __future__ import annotations
 
+import json
 import multiprocessing as mp
 import os
 import sys
@@ -144,39 +145,81 @@ def _worker(source_col: str, spec: dict[str, Any], q: mp.Queue[float]) -> None:
     q.put(_strategy_ms(run()))
 
 
-def _profile_one(source_col: str, spec: dict[str, Any], timeout_s: float = 90.0) -> float | None:
-    """Spawn a worker for one strategy; return its ms, or None on timeout."""
+_TIMEOUT_S = float(os.environ.get("DECOY_THROUGHPUT_TIMEOUT", "300"))
+
+
+def _profile_one(source_col: str, spec: dict[str, Any]) -> float | None:
+    """Spawn a worker for one strategy; return its ms, or None on timeout.
+    Drain the queue BEFORE joining a live worker: mp.Queue.empty() is
+    unreliable, and a terminate() while a result sits unread in the pipe can
+    wedge the parent at exit. So read with a short get() timeout and fall
+    back to None."""
+    import queue as _queue
+
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     p = ctx.Process(target=_worker, args=(source_col, spec, q))
     p.start()
-    p.join(timeout_s)
+    p.join(_TIMEOUT_S)
     if p.is_alive():
         p.terminate()
         p.join()
         return None
-    return q.get() if not q.empty() else None
+    try:
+        return q.get(timeout=5)
+    except _queue.Empty:
+        return None
+
+
+def _host_facts() -> dict[str, Any]:
+    facts: dict[str, Any] = {"rows": ROWS, "nproc": os.cpu_count()}
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemTotal"):
+                    facts["mem_total_mb"] = int(line.split()[1]) // 1024
+                    break
+    except OSError:
+        pass
+    return facts
 
 
 def main() -> None:
     print(f"per-strategy throughput @ {ROWS:,} rows, single masked column, single thread")
     print(f"{'strategy':<14}{'strategy ms':>12}{'rows/sec':>14}", flush=True)
     results: dict[str, float] = {}
+    rows: list[dict[str, Any]] = []
     for label, source_col, spec in _STRATEGIES:
         ms = _profile_one(source_col, spec)
         if ms is None:
             print(f"{label:<14}{'TIMEOUT':>12}{'':>14}", flush=True)
+            rows.append({"strategy": label, "strategy_ms": None, "rows_per_s": None})
             continue
         rows_per_s = ROWS / (ms / 1000.0) if ms > 0 else float("inf")
         results[label] = rows_per_s
+        rows.append(
+            {"strategy": label, "strategy_ms": round(ms, 2), "rows_per_s": round(rows_per_s)}
+        )
         print(f"{label:<14}{ms:>12.1f}{rows_per_s:>14,.0f}", flush=True)
 
+    mult = None
     if "hash" in results and "fpe" in results and results["fpe"] > 0:
         mult = results["hash"] / results["fpe"]
         print(
             f"\nfpe is ~{mult:.1f}x slower than hash "
             f"(hash {results['hash']:,.0f} r/s vs fpe {results['fpe']:,.0f} r/s)"
         )
+
+    json_path = os.environ.get("DECOY_THROUGHPUT_JSON")
+    if json_path:
+        payload = {
+            "host": _host_facts(),
+            "strategies": rows,
+            "fpe_vs_hash_multiple": round(mult, 2) if mult else None,
+        }
+        with open(json_path, "w") as fh:
+            json.dump(payload, fh, indent=2)
+        print(f"\nwrote {json_path}", flush=True)
 
 
 if __name__ == "__main__":
