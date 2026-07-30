@@ -365,6 +365,7 @@ markers = [
     "ml: STORM field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
     "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 77-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
+    "flaky: manually quarantined intermittently-failing test. Excluded from the blocking regression gate (ci.yml runs `-m \"... and not flaky\"`) so it does not gate merges, and still runs in a separate non-blocking job. A stopgap that an engineer applies the moment a test is seen to flake; the standing fix is a deterministic rewrite or deletion within the SLA (docs/quality/flaky-test-quarantine.md), not permanent residence here. Complements Mergify's automatic JUnit-based detection (pending the app install, CAM-STEPS.md §2).",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────

@@ -113,11 +113,16 @@ jobs:
         # this job does not install; excluding the marker keeps that missing
         # optional dependency from ever being a fixture-not-found failure
         # here. The dedicated codspeed workflow is its unambiguous owner.
+        # `not flaky`: a manually-quarantined intermittently-failing test
+        # (docs/quality/flaky-test-quarantine.md) must not gate merges. It is
+        # not deleted -- the flaky-quarantine job below still runs it
+        # non-blocking so it stays visible until fixed. No test carries the
+        # marker today, so this is a no-op until the first quarantine.
         # --junitxml: written for Mergify's merge-queue / flaky-test
         # detection (see the upload step below); this job's own pass/fail
         # is still the pytest exit code, unaffected by the flag.
         run: >
-          pytest tests -m "not benchmark and not packaging and not codspeed"
+          pytest tests -m "not benchmark and not packaging and not codspeed and not flaky"
           --tb=short --junitxml=junit-results.xml
 
       # Mergify consumes this artifact for merge-queue flaky-test detection
@@ -162,6 +167,27 @@ jobs:
         run: pip install -e ".[dev,ml]"
       - name: ML gate (golden retrain + provenance + privacy + classify)
         run: pytest -m ml --tb=short
+
+  # flaky-quarantine: runs the manually-quarantined `flaky` tests that
+  # regression-gate excludes (`... and not flaky`), so a quarantined test keeps
+  # RUNNING and stays visible instead of silently disappearing -- it just does
+  # not gate merges. Non-blocking (continue-on-error) by design: a flake here is
+  # expected and must not fail the workflow. exit 5 (no tests collected) is the
+  # normal state until the first quarantine and is treated as success. See
+  # docs/quality/flaky-test-quarantine.md for the quarantine + de-quarantine SLA.
+  flaky-quarantine:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install engine + dev extras
+        run: pip install -e ".[dev]"
+      - name: Run quarantined flaky tests (non-blocking)
+        run: pytest tests -m "flaky and not benchmark and not packaging and not codspeed" --tb=short || [ $? -eq 5 ]
 
   # packaging-gate: builds an actual wheel and asserts it ships the default ML
   # model pack + py.typed (DE-07). A clean wheel used to package only
