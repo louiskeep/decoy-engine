@@ -129,8 +129,9 @@ def _worker(source_col: str, spec: dict[str, Any], q: mp.Queue[float]) -> None:
     """Run ONE strategy in its own process and put the strategy-pass ms on the
     queue. Each strategy gets a fresh interpreter: a single long-lived process
     that calls run_pipeline many times in a loop wedges nondeterministically
-    (observed 2026-07-30 -- suspected per-call resource that is not released;
-    tracked separately), so the profiler isolates every strategy in its own
+    (observed 2026-07-30, not yet root-caused; see
+    docs/backlog/run-pipeline-repeated-call-wedge.md), so the profiler isolates
+    every strategy in its own
     process. One warmup run (primes lazy imports) then one timed run."""
     data = _gen_one(source_col)
     table = pa.table({source_col: pa.array(data)})
