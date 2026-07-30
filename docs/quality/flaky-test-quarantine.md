@@ -17,6 +17,15 @@ adds a deterministic `_claim_next_job`-level assertion that proves the same
 behavior with no sleep. Reach for quarantine only when the fix is not immediate
 and the flake is blocking others now.
 
+## Never quarantine a safety-critical test
+
+Tests that guard crypto, referential integrity, PII handling, or any
+fail-closed privacy path are **ineligible** for quarantine. Decoy's whole
+promise is that these hold, so dropping one from the blocking gate for even a
+day is a real coverage hole in exactly the place a regression would do the most
+harm. If such a test flakes, fix it immediately or revert the change that made
+it flake. Do not mark it `flaky`.
+
 ## How to quarantine
 
 1. Mark the test `@pytest.mark.flaky` (registered in `pyproject.toml`).
@@ -40,10 +49,11 @@ behind a green-but-skipped check.
 
 ## How this fits the rest of the suite
 
-- **Marker segregation (already in place).** Timing-heavy `benchmark` / `perf` /
-  `codspeed` tests already run outside the blocking gate by marker, so most
-  timing-sensitive code never gated merges in the first place. `flaky` is for a
-  test that slips through those and proves intermittent in the gating suite.
+- **Marker segregation (already in place).** The `benchmark` and `codspeed`
+  microbenchmarks run outside the blocking gate by marker. (`perf` baselines,
+  despite the name, DO run in the gate.) So the heaviest timing tests already do
+  not gate merges. `flaky` is for a test that runs in the gating suite and
+  proves intermittent there.
 - **Mergify auto-detection (pending app install).** `.mergify.yml` +
   `CAM-STEPS.md` §2 wire Mergify's JUnit-based flaky-test detection; the gate
   already uploads `junit-results.xml` for it. Once the Mergify app is installed,
