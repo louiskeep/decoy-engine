@@ -1,9 +1,11 @@
-"""TEST-2 (§TEST Axis A): per-strategy throughput profile.
+"""TEST-2 (§TEST Axis A) throughput + TEST-9 (Axis, efficiency) memory profile.
 
-Answers the plan's Axis-A question -- what is the single-thread rows/sec of
-each masking strategy, and how much slower is fpe than hash? -- with an
-apples-to-apples run: the SAME row count and a single masked column per
-strategy, timed at the pure masking loop (not IO or plan compile).
+Answers two per-strategy questions with one apples-to-apples run (same row
+count, one masked column per strategy): the single-thread rows/sec of each
+masking strategy (throughput, timed at the pure masking loop, not IO or plan
+compile), and its incremental peak-RSS working set per row (a relative
+allocation-hotspot indicator, sampled via psutil on a separate run so the
+sampler does not perturb the timing).
 
 Distinct from `tests/perf/test_job_performance_gates.py`, which benchmarks
 each strategy at a DIFFERENT row/column count as a regression tripwire and so
@@ -125,36 +127,71 @@ def _strategy_ms(result: ExecutionResult) -> float:
     return sum(t.elapsed_ms for t in result.timings)
 
 
-def _worker(source_col: str, spec: dict[str, Any], q: mp.Queue[float]) -> None:
-    """Run ONE strategy in its own process and put the strategy-pass ms on the
-    queue. Each strategy gets a fresh interpreter: a single long-lived process
-    that calls run_pipeline many times in a loop wedges nondeterministically
+def _worker(source_col: str, spec: dict[str, Any], q: mp.Queue[dict[str, float]]) -> None:
+    """Run ONE strategy in its own process and put {strategy_ms, peak_rss_delta_kib}
+    on the queue. Each strategy gets a fresh interpreter: a single long-lived
+    process that calls run_pipeline many times in a loop wedges nondeterministically
     (observed 2026-07-30, not yet root-caused; see
     docs/backlog/run-pipeline-repeated-call-wedge.md), so the profiler isolates
-    every strategy in its own
-    process. One warmup run (primes lazy imports) then one timed run."""
+    every strategy in its own process.
+
+    Timing and memory are read from SEPARATE runs: a psutil RSS sampler perturbs
+    wall-clock, so the timed run stays clean and a third run is sampled for peak
+    RSS. RSS (not tracemalloc) because the masking working set is dominated by
+    pyarrow/pandas C buffers that tracemalloc, which only sees the Python heap,
+    would miss. The baseline is taken AFTER warmup so pool/import memory is
+    already resident and the delta isolates the per-N-rows masking working set."""
+    import threading
+
+    import psutil
+
     data = _gen_one(source_col)
     table = pa.table({source_col: pa.array(data)})
     pq.write_table(table, _SRC_PATH)  # placeholder the schema accepts; sources= is authoritative
     cfg = _config(source_col, spec)
     sources = {"t": table}
+    proc = psutil.Process()
 
     def run() -> ExecutionResult:
         return run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False)
 
-    run()  # warmup, uncounted
-    q.put(_strategy_ms(run()))
+    run()  # warmup, uncounted (primes lazy imports + any pool cache)
+    ms = _strategy_ms(run())  # clean timed run, unsampled
+
+    # Memory run: sample RSS in a sidecar thread; report the peak delta over a
+    # gc-stabilized baseline. This is the INCREMENTAL working set of one masking
+    # pass (imports/pools already resident), so it is a relative allocation-
+    # hotspot indicator across strategies, not a precise absolute footprint.
+    import gc
+
+    gc.collect()
+    baseline_rss = proc.memory_info().rss
+    peak = {"rss": baseline_rss}
+    stop = threading.Event()
+
+    def _sample() -> None:
+        while not stop.is_set():
+            peak["rss"] = max(peak["rss"], proc.memory_info().rss)
+            stop.wait(0.005)
+
+    sampler = threading.Thread(target=_sample, daemon=True)
+    sampler.start()
+    run()
+    stop.set()
+    sampler.join()
+    peak_delta_kib = max(0.0, (peak["rss"] - baseline_rss) / 1024.0)
+    q.put({"strategy_ms": ms, "peak_rss_delta_kib": peak_delta_kib})
 
 
 _TIMEOUT_S = float(os.environ.get("DECOY_THROUGHPUT_TIMEOUT", "300"))
 
 
-def _profile_one(source_col: str, spec: dict[str, Any]) -> float | None:
-    """Spawn a worker for one strategy; return its ms, or None on timeout.
-    Drain the queue BEFORE joining a live worker: mp.Queue.empty() is
-    unreliable, and a terminate() while a result sits unread in the pipe can
-    wedge the parent at exit. So read with a short get() timeout and fall
-    back to None."""
+def _profile_one(source_col: str, spec: dict[str, Any]) -> dict[str, float] | None:
+    """Spawn a worker for one strategy; return {strategy_ms, peak_rss_delta_kib},
+    or None on timeout. Drain the queue BEFORE joining a live worker: mp.Queue
+    .empty() is unreliable, and a terminate() while a result sits unread in the
+    pipe can wedge the parent at exit. So read with a short get() timeout and
+    fall back to None."""
     import queue as _queue
 
     ctx = mp.get_context("spawn")
@@ -186,22 +223,45 @@ def _host_facts() -> dict[str, Any]:
 
 
 def main() -> None:
-    print(f"per-strategy throughput @ {ROWS:,} rows, single masked column, single thread")
-    print(f"{'strategy':<14}{'strategy ms':>12}{'rows/sec':>14}", flush=True)
+    print(f"per-strategy throughput + memory @ {ROWS:,} rows, single masked column, single thread")
+    print(
+        f"{'strategy':<14}{'strategy ms':>12}{'rows/sec':>14}{'peak MiB':>11}{'bytes/row':>11}",
+        flush=True,
+    )
     results: dict[str, float] = {}
     rows: list[dict[str, Any]] = []
     for label, source_col, spec in _STRATEGIES:
-        ms = _profile_one(source_col, spec)
-        if ms is None:
-            print(f"{label:<14}{'TIMEOUT':>12}{'':>14}", flush=True)
-            rows.append({"strategy": label, "strategy_ms": None, "rows_per_s": None})
+        res = _profile_one(source_col, spec)
+        if res is None:
+            print(f"{label:<14}{'TIMEOUT':>12}{'':>14}{'':>11}{'':>11}", flush=True)
+            rows.append(
+                {
+                    "strategy": label,
+                    "strategy_ms": None,
+                    "rows_per_s": None,
+                    "peak_rss_delta_mib": None,
+                    "bytes_per_row": None,
+                }
+            )
             continue
+        ms = res["strategy_ms"]
+        peak_mib = res["peak_rss_delta_kib"] / 1024.0
+        bytes_per_row = res["peak_rss_delta_kib"] * 1024.0 / ROWS if ROWS else 0.0
         rows_per_s = ROWS / (ms / 1000.0) if ms > 0 else float("inf")
         results[label] = rows_per_s
         rows.append(
-            {"strategy": label, "strategy_ms": round(ms, 2), "rows_per_s": round(rows_per_s)}
+            {
+                "strategy": label,
+                "strategy_ms": round(ms, 2),
+                "rows_per_s": round(rows_per_s),
+                "peak_rss_delta_mib": round(peak_mib, 1),
+                "bytes_per_row": round(bytes_per_row, 1),
+            }
         )
-        print(f"{label:<14}{ms:>12.1f}{rows_per_s:>14,.0f}", flush=True)
+        print(
+            f"{label:<14}{ms:>12.1f}{rows_per_s:>14,.0f}{peak_mib:>11.1f}{bytes_per_row:>11.1f}",
+            flush=True,
+        )
 
     mult = None
     if "hash" in results and "fpe" in results and results["fpe"] > 0:
