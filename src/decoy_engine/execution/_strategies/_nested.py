@@ -64,6 +64,35 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
 
+def _writeback_would_corrupt(full_path: Any, root: Any) -> bool:
+    """True if `full_path.update(root, value)` would misplace the write.
+
+    jsonpath-ng coerces an array selector (`[*]`, `[i]`, a slice) applied to a
+    dict into a synthetic singleton list, so the match's `full_path` ends in an
+    `Index` even though the real parent container is the dict. `.update()` then
+    writes an integer key onto the dict instead of replacing the object, leaving
+    the original value in place (a cleartext leak). The signature is a
+    segment-vs-parent-type mismatch: an `Index` whose parent is not a list, or a
+    `Fields` whose parent is not a dict. Reliable writes (Fields->dict,
+    Index->list) and root/`this` targets (handled by capturing the update
+    return) are not flagged.
+    """
+    if isinstance(full_path, jsonpath_ng.Child):
+        parent_path, last = full_path.left, full_path.right
+        found = parent_path.find(root)
+        if not found:
+            return True  # parent unresolvable -> cannot verify the write, fail closed
+        parent_val = found[0].value
+    else:
+        last = full_path
+        parent_val = root
+    if isinstance(last, jsonpath_ng.Index):
+        return not isinstance(parent_val, list)
+    if isinstance(last, jsonpath_ng.Fields):
+        return not isinstance(parent_val, dict)
+    return False
+
+
 class NestedStrategyHandler:
     """JSONPath-targeted child-strategy wrapper."""
 
@@ -447,6 +476,29 @@ class NestedStrategyHandler:
             for m in matches:
                 new_value = new_leaf_values[cursor]
                 cursor += 1
+                # Fail closed if jsonpath_ng would misapply this writeback. When
+                # an array selector (`[*]`, `[i]`, a slice) targets a dict,
+                # jsonpath_ng coerces the dict into a synthetic singleton list, so
+                # `full_path` becomes an Index that `.update()` writes as a NEW
+                # integer key on the dict instead of replacing the object -- the
+                # original cleartext survives (Codex 2026-07-31 BLOCKER: `$[*]` on
+                # `{"ssn": ...}` added key "0" and republished the SSN). The
+                # segment-vs-parent-type mismatch is the coercion signature; a
+                # reliable write must not leak, so reject the whole run.
+                if _writeback_would_corrupt(m.full_path, parsed):
+                    raise StrategyError(
+                        code="nested_target_unwritable_container",
+                        strategy="nested",
+                        message=(
+                            f"nested target resolved to a match whose masked value "
+                            f"cannot be written back reliably for column {column!r} "
+                            f"(an array/index selector applied to a JSON object; "
+                            f"jsonpath-ng coerces it and the write would not replace "
+                            f"the object). Failing closed to avoid leaking the source "
+                            f"value. Use an object-appropriate target (e.g. `$.*` or a "
+                            f"field path) instead of an array selector on an object."
+                        ),
+                    )
                 # Capture the return value. For a field/index path jsonpath_ng
                 # mutates `parsed` in place and returns it, but for a ROOT target
                 # (`$`, or the backtick-`this` selector) the root has no parent to

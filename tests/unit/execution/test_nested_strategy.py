@@ -728,6 +728,52 @@ class TestRootTargetWriteback:
         assert "123-45-6789" not in out["data"].iloc[0]
 
 
+class TestArraySelectorOnObjectFailsClosed:
+    """An array selector (`[*]`, `[i]`, a slice) applied to a JSON OBJECT makes
+    jsonpath-ng coerce the dict into a synthetic singleton list, so the writeback
+    would add an integer key instead of replacing the object and republish the
+    source cleartext (Codex 2026-07-31 second BLOCKER). These must fail closed,
+    not leak. Object-appropriate targets (`$.*`, field paths) and array selectors
+    on real lists still mask."""
+
+    @pytest.mark.parametrize(
+        "target",
+        ["$[*]", "$[0:1]", "$.wrapper[*]", "$.wrapper[:]"],
+    )
+    def test_array_selector_on_object_raises(self, target):
+        cell = (
+            '{"ssn": "SSN-123-45-6789"}'
+            if target.startswith("$[")
+            else '{"wrapper": {"ssn": "SSN-123-45-6789"}}'
+        )
+        df = pd.DataFrame({"data": [cell]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError, match="nested_target_unwritable_container"):
+            handler.run(
+                df.copy(), "data", _seed({"target": target, "strategy": "redact"}), _FakeCtx()
+            )
+        # The raw SSN must not have been emitted anywhere (fail closed before write).
+        assert "123-45-6789" in cell  # sanity: the source did contain it
+
+    def test_array_wildcard_on_real_list_still_masks(self):
+        df = pd.DataFrame({"data": ['[{"ssn": "SSN-123-45-6789"}]']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "$[*]", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert "123-45-6789" not in out["data"].iloc[0]
+
+    def test_object_wildcard_dotstar_still_masks(self):
+        df = pd.DataFrame({"data": ['{"ssn": "SSN-123-45-6789"}']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "$.*", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert json.loads(out["data"].iloc[0])["ssn"] == "REDACTED"
+
+
 class TestRowOrderingBranches:
     """Each per-cell `continue` must skip only its own row, not halt the
     scan. Kills the three `continue -> break` mutants (null cell, parse
