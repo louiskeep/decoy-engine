@@ -447,7 +447,16 @@ class NestedStrategyHandler:
             for m in matches:
                 new_value = new_leaf_values[cursor]
                 cursor += 1
-                m.full_path.update(parsed, new_value)
+                # Capture the return value. For a field/index path jsonpath_ng
+                # mutates `parsed` in place and returns it, but for a ROOT target
+                # (`$`, or the backtick-`this` selector) the root has no parent to
+                # write into, so `Root.update()` returns the replacement WITHOUT
+                # mutating `parsed`. Discarding it re-serialized the original
+                # cleartext -- a masked-root cell (e.g. target `$` + redact) would
+                # publish raw PII with no error or warning. Reassigning `parsed`
+                # applies the mask for the root case and is a no-op-equivalent for
+                # in-place field writes (same object returned).
+                parsed = m.full_path.update(parsed, new_value)
             col_values[pos] = json.dumps(parsed)
 
         df[column] = pd.Series(col_values, index=df.index, dtype=object)

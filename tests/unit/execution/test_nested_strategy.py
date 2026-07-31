@@ -699,6 +699,35 @@ class TestExtensionArrayColumn:
         assert json.loads(out["data"].iloc[0])["user"]["email"] == "REDACTED"
 
 
+class TestRootTargetWriteback:
+    """A root / whole-document target (`$` or the backtick-`this` selector) must
+    write the masked value back, not leak the original cell. jsonpath_ng's
+    Root.update() returns the replacement instead of mutating in place, so a
+    writeback that discards the return re-serializes the raw PII (Codex 2026-07-31
+    BLOCKER: `"SSN-123-45-6789"` with target `$` + redact published the SSN with
+    no error or warning)."""
+
+    def test_root_dollar_target_masks_whole_cell(self):
+        df = pd.DataFrame({"data": ['"SSN-123-45-6789"']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "$", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert out["data"].iloc[0] == '"REDACTED"'
+        assert "123-45-6789" not in out["data"].iloc[0]
+
+    def test_backtick_this_root_target_masks_whole_cell(self):
+        df = pd.DataFrame({"data": ['"SSN-123-45-6789"']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "`this`", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert out["data"].iloc[0] == '"REDACTED"'
+        assert "123-45-6789" not in out["data"].iloc[0]
+
+
 class TestRowOrderingBranches:
     """Each per-cell `continue` must skip only its own row, not halt the
     scan. Kills the three `continue -> break` mutants (null cell, parse
