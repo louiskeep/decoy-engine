@@ -54,7 +54,10 @@ def _seed(provider_config: dict) -> ColumnSeed:
 
 
 class _FakeCtx:
-    pass
+    def __init__(self) -> None:
+        # Real StrategyContext carries a `row_errors` list; the malformed-cell
+        # fail-closed path appends to it, so the stand-in needs one too.
+        self.row_errors: list = []
 
 
 # ── happy paths ───────────────────────────────────────────────────────
@@ -140,31 +143,64 @@ class TestHappyPaths:
 
 
 class TestPassthroughCases:
-    def test_nested_cell_not_json_passthrough_with_warning(self):
+    def test_nested_cell_not_json_records_row_error_and_warning(self):
+        # A malformed-JSON cell fails closed: the original stays in the frame
+        # (T4, the pipeline layer removes it), a format_error RowError is recorded
+        # so it never reaches the main output unmasked, and the advisory
+        # QualityWarning still surfaces in the Storm report. Pre-fix this emitted
+        # only the warning and let the cleartext through (TEST-3 finding 1).
         df = pd.DataFrame({"data": ["not json at all"]})
         handler = NestedStrategyHandler()
+        ctx = _FakeCtx()
         out, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.email", "strategy": "redact"}),
+            ctx,
+        )
+        assert out["data"].iloc[0] == "not json at all"
+        codes = [w.code for w in warnings]
+        assert "nested_cell_json_parse_error" in codes
+        assert len(ctx.row_errors) == 1
+        assert ctx.row_errors[0].trigger == "format_error"
+        assert ctx.row_errors[0].column == "data"
+
+    def test_nested_target_matching_nothing_fails_closed(self):
+        # TEST-3 P1-2: a target that matches NOTHING across the whole column is a
+        # misconfiguration (a typoed / wrong path), not a valid no-op. Failing
+        # closed prevents the whole column of cleartext from passing through
+        # unmasked. Pre-fix this returned the column unchanged with no error.
+        df = pd.DataFrame({"data": [json.dumps({"x": 1, "y": 2})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError, match="nested_target_matched_nothing"):
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.nonexistent", "strategy": "redact"}),
+                _FakeCtx(),
+            )
+
+    def test_nested_sparse_path_some_cells_match_is_valid(self):
+        # A genuine sparse path (SOME cells carry the target, some do not) stays
+        # valid: matching cells are masked, non-matching cells pass unchanged, no
+        # error. Only the ALL-zero-match case (above) fails closed.
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps({"email": "a@x.com"}),  # matches -> masked
+                    json.dumps({"other": "keep"}),  # no match -> unchanged
+                ]
+            }
+        )
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
             df.copy(),
             "data",
             _seed({"target": "$.email", "strategy": "redact"}),
             _FakeCtx(),
         )
-        assert out["data"].iloc[0] == "not json at all"
-        codes = [w.code for w in warnings]
-        assert "nested_cell_json_parse_error" in codes
-
-    def test_nested_target_path_missing_in_cell_passthrough_no_error(self):
-        df = pd.DataFrame({"data": [json.dumps({"x": 1, "y": 2})]})
-        handler = NestedStrategyHandler()
-        out, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.nonexistent", "strategy": "redact"}),
-            _FakeCtx(),
-        )
-        # Sparse paths are valid: no match -> no change, no warning.
-        assert json.loads(out["data"].iloc[0]) == {"x": 1, "y": 2}
-        assert all(w.code != "nested_jsonpath_parse_error" for w in warnings)
+        assert "a@x.com" not in out["data"].iloc[0]  # matched leaf was redacted
+        assert json.loads(out["data"].iloc[1]) == {"other": "keep"}  # sparse passthrough
 
     def test_nested_null_cell_stays_null(self):
         df = pd.DataFrame(
@@ -661,6 +697,81 @@ class TestExtensionArrayColumn:
         )
         assert warnings == []
         assert json.loads(out["data"].iloc[0])["user"]["email"] == "REDACTED"
+
+
+class TestRootTargetWriteback:
+    """A root / whole-document target (`$` or the backtick-`this` selector) must
+    write the masked value back, not leak the original cell. jsonpath_ng's
+    Root.update() returns the replacement instead of mutating in place, so a
+    writeback that discards the return re-serializes the raw PII (Codex 2026-07-31
+    BLOCKER: `"SSN-123-45-6789"` with target `$` + redact published the SSN with
+    no error or warning)."""
+
+    def test_root_dollar_target_masks_whole_cell(self):
+        df = pd.DataFrame({"data": ['"SSN-123-45-6789"']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "$", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert out["data"].iloc[0] == '"REDACTED"'
+        assert "123-45-6789" not in out["data"].iloc[0]
+
+    def test_backtick_this_root_target_masks_whole_cell(self):
+        df = pd.DataFrame({"data": ['"SSN-123-45-6789"']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "`this`", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert out["data"].iloc[0] == '"REDACTED"'
+        assert "123-45-6789" not in out["data"].iloc[0]
+
+
+class TestArraySelectorOnObjectFailsClosed:
+    """An array selector (`[*]`, `[i]`, a slice) applied to a JSON OBJECT makes
+    jsonpath-ng coerce the dict into a synthetic singleton list, so the writeback
+    would add an integer key instead of replacing the object and republish the
+    source cleartext (Codex 2026-07-31 second BLOCKER). These must fail closed,
+    not leak. Object-appropriate targets (`$.*`, field paths) and array selectors
+    on real lists still mask."""
+
+    @pytest.mark.parametrize(
+        "target",
+        ["$[*]", "$[0:1]", "$.wrapper[*]", "$.wrapper[:]"],
+    )
+    def test_array_selector_on_object_raises(self, target):
+        cell = (
+            '{"ssn": "SSN-123-45-6789"}'
+            if target.startswith("$[")
+            else '{"wrapper": {"ssn": "SSN-123-45-6789"}}'
+        )
+        df = pd.DataFrame({"data": [cell]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError, match="nested_target_unwritable_container"):
+            handler.run(
+                df.copy(), "data", _seed({"target": target, "strategy": "redact"}), _FakeCtx()
+            )
+        # The raw SSN must not have been emitted anywhere (fail closed before write).
+        assert "123-45-6789" in cell  # sanity: the source did contain it
+
+    def test_array_wildcard_on_real_list_still_masks(self):
+        df = pd.DataFrame({"data": ['[{"ssn": "SSN-123-45-6789"}]']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "$[*]", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert "123-45-6789" not in out["data"].iloc[0]
+
+    def test_object_wildcard_dotstar_still_masks(self):
+        df = pd.DataFrame({"data": ['{"ssn": "SSN-123-45-6789"}']})
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(), "data", _seed({"target": "$.*", "strategy": "redact"}), _FakeCtx()
+        )
+        assert warnings == []
+        assert json.loads(out["data"].iloc[0])["ssn"] == "REDACTED"
 
 
 class TestRowOrderingBranches:

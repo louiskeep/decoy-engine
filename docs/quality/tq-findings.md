@@ -354,7 +354,7 @@ false-high there).
 
 
 
-### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining)
+### 15. Subprocess/isolated-execution substrates are un-gradeable by the in-process harness (methodology; scope-refining) -- LARGELY A MISCLASSIFICATION, RESOLVED (2026-07-28)
 The runtime governor `execution/_governor.py` and its siblings run their real work
 in SPAWNED CHILD PROCESSES (supervisor-kills-child architecture), and their tests
 (`test_governor.py`: 65 monkeypatch/mock refs) stub the spawn + RSS monitor. So
@@ -374,6 +374,59 @@ reference count:
   `_mem_estimate` (2). These need a different method (mutation testing that runs the
   child with the mutated tree, or accept they are behavior-tested not mutation-graded)
   -- same deferred class as findings #8/#12. Flagged for a Cam decision on approach.
+
+**LARGELY A MISCLASSIFICATION -- RESOLVED (2026-07-28).** A FRAME investigation
+(Explore over the real spawn mechanism) found the "un-gradeable" bucket above was
+built from a raw grep REF-COUNT, not from actual spawn boundaries, and the core
+premise is wrong on two counts:
+1. **The env plumbing already propagates mutants into children.** `_isolated_run`
+   spawns with `env={**os.environ, **CAPPED_ENV}`, so a parent-set `MUTANT_UNDER_TEST`
+   + `PYTHONPATH=mutants/src` are inherited and the child imports the MUTATED tree
+   (no PEP 660 finder, prepend wins). `tq_mutate` already sets this. A
+   standalone-per-mutant runner is NOT needed for the plumbing.
+2. **Most of the "un-gradeable" modules are pure or parent-resident.** `_mem_estimate`,
+   `_probe_scale`, `_mem_telemetry`, `_pipeline_routing_signals` are PURE (zero
+   subprocess CALLS; the ref-count hits are docstring prose). `_governor` / `_probe`
+   run their decision logic in the PARENT; the tests mock only the spawn, so the
+   logic IS exercised and the baseline guard does NOT abort (contradicting the claim
+   above -- verified empirically: `_governor` forced-fail rc 1, grades fine).
+
+GRADED with the existing tool, no de-mock, no runner (branch `tq/isolated-substrate-grade`):
+`_mem_estimate` 90.76%, `_probe_scale` 100%, `_mem_telemetry` 88.05%,
+`_pipeline_routing_signals` 98.36% (pure; gated dennis+Codex MERGE-READY);
+`_governor` 85.52%, `_probe` 82.47% (parent-resident). `_probe` CLEARS its 77.95%
+bar; `_governor` lands below its 87.95% target because it is validation/diagnostic-heavy
+(53/366 = 14.5% unkillable: 18 unreachable/invariant-equivalent + 35 message-prose),
+same honest situation as `_chunked_fk`; 100% of KILLABLE mutants are killed.
+
+DEFERRED to pre-release (Cam 2026-07-28, stop TQ at diminishing returns). NOTE the
+parent-vs-child split (correcting a residual conflation): `_isolated_run` is the only
+real `Popen`, but its DRIVER logic (spawn setup, exit-code classification around the
+`Popen`) runs in the PARENT and is gradeable in-process like `_governor` -- it is
+deferred for diminishing returns, not because it needs child execution. Only
+`_isolated_worker`'s CHILD-RESIDENT paths (the code that runs inside the spawned
+interpreter after the payload load) would need the real-subprocess integration tests
+in the mutmut selection; its non-child logic already has direct in-process tests
+(`test_isolated_worker_streaming.py`). Also deferred: `_governor_monitor` (driver-side
+thread + `os.kill`, not a spawn -- a mocking gap, not a boundary), and the
+`codeset_etl` (#12) / `plan/` / env-gated (geo H3, DP cert) tiers. Revisit during
+pre-release hardening.
+
+SUB-FINDING (methodology, UNRESOLVED reliability gap -- owed its own number): mutmut's
+in-process runner can FLAKILY FALSE-KILL a genuine survivor (`_governor` mut 110,
+`on_trip` in the genuine-crash branch, was marked killed in one grade pass but
+survives `test_governor.py` standalone -- confirmed rc 0). `tq_mutate` trusts mutmut's
+"killed" verdict WITHOUT re-adjudication (finding #16 only re-adjudicates SURVIVED,
+on the monotonicity assumption that a kill cannot be revived -- which a FLAKY kill
+violates), so a false-KILL silently inflates the score and drops a real survivor from
+the triage list. This is NOT fully closed: re-running the grade is useful EVIDENCE
+(a second pass surfaced 110 as survived, and we killed it), but it is not a
+safeguard -- an unrelated flaky test producing rc 1 during any single pass can
+re-introduce the same silent over-grade. A real fix would re-adjudicate the KILLED
+bucket too (at least sample it), or run each grade N times and flag kill/survive
+instability. Until then: treat killed-bucket counts as an upper bound, and always
+re-grade after adding kills (it caught 110). Related to finding #8 (mutmut in-process
+runner unreliability).
 
 
 

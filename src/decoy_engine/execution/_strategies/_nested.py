@@ -11,10 +11,19 @@ Wraps a child strategy. For each cell:
   6. Re-serialize the cell.
 
 Single-pass collection + batch delegation preserves the child
-strategy's vectorized behavior. JSON-malformed cells emit a
-QualityWarning and pass through unchanged. Cells with no match for
-the target path are left as-is (no warning -- a sparse path is a
-valid use case).
+strategy's vectorized behavior. Fail-closed behavior (TEST-3): a
+JSON-malformed cell records a `RowError(format_error)` (plus an
+advisory QualityWarning) so it is quarantined or fails the job rather
+than passing its cleartext through; a child strategy's own RowErrors
+are remapped from the flattened-leaf position back to the outer row;
+and a target that matches nothing across the whole column raises
+`nested_target_matched_nothing` (a wholly-unmatched target is a
+misconfiguration, not a silent passthrough). A genuine sparse path
+(SOME cells match, some do not) stays valid: unmatched cells are left
+as-is. Under a `when:` gate the all-zero-match check applies to the
+GATED SUBSET, so gating to a partition whose rows never carry the
+target raises (fail-closed by design); if that partition legitimately
+lacks the field, target a path that matches or narrow the gate.
 
 Round-trip note (QA-3 F8, 2026-05-31): the cell is parsed via
 `json.loads` and re-serialized via `json.dumps`. JSON serialization
@@ -49,9 +58,39 @@ import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
+
+
+def _writeback_would_corrupt(full_path: Any, root: Any) -> bool:
+    """True if `full_path.update(root, value)` would misplace the write.
+
+    jsonpath-ng coerces an array selector (`[*]`, `[i]`, a slice) applied to a
+    dict into a synthetic singleton list, so the match's `full_path` ends in an
+    `Index` even though the real parent container is the dict. `.update()` then
+    writes an integer key onto the dict instead of replacing the object, leaving
+    the original value in place (a cleartext leak). The signature is a
+    segment-vs-parent-type mismatch: an `Index` whose parent is not a list, or a
+    `Fields` whose parent is not a dict. Reliable writes (Fields->dict,
+    Index->list) and root/`this` targets (handled by capturing the update
+    return) are not flagged.
+    """
+    if isinstance(full_path, jsonpath_ng.Child):
+        parent_path, last = full_path.left, full_path.right
+        found = parent_path.find(root)
+        if not found:
+            return True  # parent unresolvable -> cannot verify the write, fail closed
+        parent_val = found[0].value
+    else:
+        last = full_path
+        parent_val = root
+    if isinstance(last, jsonpath_ng.Index):
+        return not isinstance(parent_val, list)
+    if isinstance(last, jsonpath_ng.Fields):
+        return not isinstance(parent_val, dict)
+    return False
 
 
 class NestedStrategyHandler:
@@ -255,6 +294,17 @@ class NestedStrategyHandler:
 
         warnings: list[QualityWarning] = []
         leaf_values: list[Any] = []
+        # Outer row position each collected leaf came from, parallel to
+        # `leaf_values`. Lets child-produced RowErrors (which the child records
+        # against the flattened-leaf position) be remapped back to the real outer
+        # row after the child runs. Without it, quarantine drops the wrong outer
+        # row and the real bad row leaks (TEST-3 P1-1).
+        leaf_outer_pos: list[int] = []
+        # True once a non-null cell parses as valid JSON. Distinguishes an all-null
+        # or all-malformed column (nothing to match, handled elsewhere) from a
+        # valid column where the target matched NOTHING -- a misconfiguration that
+        # must fail closed rather than pass every cell through raw (TEST-3 P1-2).
+        saw_parseable = False
         # Per-position: (parsed_object, list[jsonpath_match]). Position
         # is the row's 0-indexed offset in the column, not its label.
         per_position_state: dict[int, tuple[Any, list]] = {}
@@ -265,6 +315,23 @@ class NestedStrategyHandler:
             try:
                 parsed = json.loads(cell) if isinstance(cell, str) else cell
             except Exception:
+                # A malformed-JSON cell cannot be masked, so it must fail closed
+                # like every sibling cell-parsing strategy (bucketize / top_code /
+                # code_set): record a RowError so the row is quarantined or the job
+                # fails loud, never emitted with its cleartext intact. The advisory
+                # QualityWarning alone did NOT reach the quarantine gate -- a
+                # malformed cell (a truncated export, a trailing comma) whose raw
+                # text still carried the target PII passed straight through to the
+                # main output unmasked (TEST-3 finding 1). `reason` never embeds the
+                # cell value (trap T3).
+                ctx.row_errors.append(
+                    RowError(
+                        column=column,
+                        row_index=pos,
+                        trigger="format_error",
+                        reason="cell is not valid JSON under nested masking",
+                    )
+                )
                 warnings.append(
                     QualityWarning(
                         code="nested_cell_json_parse_error",
@@ -274,6 +341,7 @@ class NestedStrategyHandler:
                     )
                 )
                 continue
+            saw_parseable = True
             matches = jsonpath_expr.find(parsed)
             if not matches:
                 continue
@@ -307,8 +375,30 @@ class NestedStrategyHandler:
             per_position_state[pos] = (parsed, ordered_matches)
             for m in ordered_matches:
                 leaf_values.append(m.value)
+                leaf_outer_pos.append(pos)
 
         if not leaf_values:
+            # A valid non-null cell existed but the target matched NOTHING in the
+            # whole column. That is a misconfiguration (a typoed / wrong path, e.g.
+            # `$.patientName` for `$.patient_name`), not a sparse-path no-op:
+            # silently returning the column would emit every cell's cleartext
+            # unmasked (TEST-3 P1-2). Fail closed. Per-cell sparse no-match (where
+            # SOME cell matched) never reaches here -- `leaf_values` is non-empty.
+            # An all-null or all-malformed column (saw_parseable False) is handled
+            # by the null passthrough / the malformed-cell RowError above.
+            if saw_parseable:
+                raise StrategyError(
+                    code="nested_target_matched_nothing",
+                    strategy="nested",
+                    message=(
+                        f"nested target {target_path!r} matched no value in any "
+                        f"non-null cell of column {column!r}. A target that matches "
+                        "nothing across the whole column is treated as a "
+                        "misconfiguration (a typoed or wrong path) rather than a "
+                        "silent passthrough, which would emit every cell unmasked. "
+                        "Verify the target path."
+                    ),
+                )
             return df, warnings
 
         # Run the child handler on the collected leaves in one batch.
@@ -328,10 +418,52 @@ class NestedStrategyHandler:
         # that predate this field and do not define it.
         prior_outer_column = getattr(ctx, "nested_outer_column", "")
         object.__setattr__(ctx, "nested_outer_column", column)
+        # `getattr` (like `nested_outer_column` above) tolerates a minimal ctx
+        # double -- the perf/preview harness's `_FakeCtx` has no `row_errors`. Such
+        # a ctx cannot collect child errors, so there is nothing to remap; a real
+        # StrategyContext always carries the list, so the fail-closed remap runs.
+        ctx_row_errors = getattr(ctx, "row_errors", None)
+        n_err_before = len(ctx_row_errors) if ctx_row_errors is not None else 0
         try:
             temp_df, child_warnings = child_handler.run(temp_df, temp_col, child_seed, ctx)
         finally:
             object.__setattr__(ctx, "nested_outer_column", prior_outer_column)
+        # Remap any RowError the child recorded from the flattened-leaf position
+        # back to the real (outer row, outer column). The child ran on the
+        # synthetic `_nested_leaves` column, so it recorded row_index = leaf
+        # position and column = "_nested_leaves"; leaving those unmapped makes
+        # quarantine drop the WRONG outer row and leak the real one (TEST-3 P1-1).
+        # trigger/reason are preserved; the child appends in leaf order, so
+        # `leaf_outer_pos[row_index]` is its outer row.
+        if ctx_row_errors is not None:
+            child_errs = ctx_row_errors[n_err_before:]
+            if child_errs:
+                del ctx_row_errors[n_err_before:]
+                for e in child_errs:
+                    if not 0 <= e.row_index < len(leaf_outer_pos):
+                        # A child recorded a RowError at a leaf position outside the
+                        # collected-leaf range. No registered child does this, but in a
+                        # leak-prevention path an unattributable error must fail the job
+                        # rather than guess an outer row and risk quarantining the wrong
+                        # one (dennis LOW-2 / Codex P2).
+                        raise StrategyError(
+                            code="nested_child_row_error_unmappable",
+                            strategy="nested",
+                            message=(
+                                f"nested child recorded a RowError at leaf position "
+                                f"{e.row_index}, outside the collected-leaf range "
+                                f"[0, {len(leaf_outer_pos)}) for column {column!r}; it "
+                                "cannot be mapped to an outer row. Failing closed."
+                            ),
+                        )
+                    ctx_row_errors.append(
+                        RowError(
+                            column=column,
+                            row_index=leaf_outer_pos[e.row_index],
+                            trigger=e.trigger,
+                            reason=e.reason,
+                        )
+                    )
         warnings.extend(child_warnings)
         new_leaf_values = temp_df[temp_col].tolist()
 
@@ -344,7 +476,39 @@ class NestedStrategyHandler:
             for m in matches:
                 new_value = new_leaf_values[cursor]
                 cursor += 1
-                m.full_path.update(parsed, new_value)
+                # Fail closed if jsonpath_ng would misapply this writeback. When
+                # an array selector (`[*]`, `[i]`, a slice) targets a dict,
+                # jsonpath_ng coerces the dict into a synthetic singleton list, so
+                # `full_path` becomes an Index that `.update()` writes as a NEW
+                # integer key on the dict instead of replacing the object -- the
+                # original cleartext survives (Codex 2026-07-31 BLOCKER: `$[*]` on
+                # `{"ssn": ...}` added key "0" and republished the SSN). The
+                # segment-vs-parent-type mismatch is the coercion signature; a
+                # reliable write must not leak, so reject the whole run.
+                if _writeback_would_corrupt(m.full_path, parsed):
+                    raise StrategyError(
+                        code="nested_target_unwritable_container",
+                        strategy="nested",
+                        message=(
+                            f"nested target resolved to a match whose masked value "
+                            f"cannot be written back reliably for column {column!r} "
+                            f"(an array/index selector applied to a JSON object; "
+                            f"jsonpath-ng coerces it and the write would not replace "
+                            f"the object). Failing closed to avoid leaking the source "
+                            f"value. Use an object-appropriate target (e.g. `$.*` or a "
+                            f"field path) instead of an array selector on an object."
+                        ),
+                    )
+                # Capture the return value. For a field/index path jsonpath_ng
+                # mutates `parsed` in place and returns it, but for a ROOT target
+                # (`$`, or the backtick-`this` selector) the root has no parent to
+                # write into, so `Root.update()` returns the replacement WITHOUT
+                # mutating `parsed`. Discarding it re-serialized the original
+                # cleartext -- a masked-root cell (e.g. target `$` + redact) would
+                # publish raw PII with no error or warning. Reassigning `parsed`
+                # applies the mask for the root case and is a no-op-equivalent for
+                # in-place field writes (same object returned).
+                parsed = m.full_path.update(parsed, new_value)
             col_values[pos] = json.dumps(parsed)
 
         df[column] = pd.Series(col_values, index=df.index, dtype=object)
