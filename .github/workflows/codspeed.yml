@@ -66,7 +66,7 @@ jobs:
       # is the one place it is selected explicitly, same pattern as
       # ml-gate's `pytest -m ml` in ci.yml.
       - name: Run CodSpeed benchmarks
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v5
         with:
           # v4 requires an explicit mode (v3 defaulted to instrumentation).
           # `simulation` is the CPU-instruction measurement (runner-independent,
