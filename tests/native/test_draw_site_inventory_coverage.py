@@ -236,6 +236,10 @@ _ALLOWLIST = frozenset(
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",
+        # Task 0.4 crypto contract: reference kernels call derive/fpe_encrypt_value
+        # to reproduce shipped KEYED derivation, which is deterministic, not an RNG
+        # output draw. Not a new draw site.
+        "execution/native/_crypto_ext.py",
     }
 )
 
