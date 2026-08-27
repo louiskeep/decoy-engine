@@ -237,6 +237,24 @@ class MaskKeyDerivationError(DecoyError):
         super().__init__(message)
 
 
+class MaskKeyRequiredError(DecoyError):
+    """A keyed-mask kernel was asked to run with no mask key at all.
+
+    Distinct from ``MaskKeyDerivationError`` (a present master key whose
+    per-column derivation failed): here the ``mask_key`` argument itself is
+    ``None`` or empty, so there is no key material to derive from. The keyed
+    crypto kernels fail closed on this BEFORE producing any output rather than
+    emit unkeyed or default-keyed ciphertext that would silently not protect
+    the data. Maps to code ``mask.key_required``; carries the originating
+    kernel name on ``.kernel`` for the operator message."""
+
+    code: str = "mask.key_required"
+
+    def __init__(self, message: str, *, kernel: str | None = None) -> None:
+        self.kernel = kernel
+        super().__init__(message)
+
+
 class FpeChecksumError(DecoyError):
     """FPE checksum mode cannot produce a valid-by-construction value for the
     requested scheme, or the scheme name is unknown.
@@ -398,6 +416,7 @@ __all__ = [
     "LicenseError",
     "LicenseExpiredError",
     "MaskKeyDerivationError",
+    "MaskKeyRequiredError",
     "PKDuplicatesError",
     "PipelineValidationError",
     "RowErrorsFailedError",
