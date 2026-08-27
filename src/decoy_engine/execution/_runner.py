@@ -28,6 +28,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._types import ColumnSeed, GroupSeed
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.native._requirements import NodeRequirements
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
@@ -46,6 +47,11 @@ class WorkNode:
     strategy: str
     provider: str | None  # None for scalar transforms (hash/redact/...); see ColumnSeed
     plan_slice: ColumnSeed | GroupSeed
+    # Native planning boundary (Task 0.2b): the resolved native execution
+    # requirements for this node, attached inertly at native-plan compile time.
+    # None on every existing execution path (build_work_list never sets it), so
+    # this is pure addition: no route reads it, and byte output is unchanged.
+    requirements: NodeRequirements | None = None
 
     @property
     def key(self) -> _NodeKey:
