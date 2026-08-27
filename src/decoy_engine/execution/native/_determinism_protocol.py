@@ -151,6 +151,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+truncate",
         provider_version=_V6,
         notes="The HMAC digest IS the output; no RNG object. Joinability-preserving.",
+        mirror_call_sites=("execution/polars/_strategies/_hash.py:53",),
     ),
     DrawSite(
         draw_site_id="mask.categorical_deterministic",
@@ -211,7 +212,10 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+alphabet/format",
         provider_version=_V6,
         notes="Keyed bijection, home-rolled HMAC-SHA256 Feistel (NOT NIST FF1). Reversible.",
-        mirror_call_sites=("execution/out_of_core/_mask_group_b.py:132",),
+        mirror_call_sites=(
+            "execution/_strategies/_fpe.py:135",
+            "execution/out_of_core/_mask_group_b.py:132",
+        ),
     ),
     DrawSite(
         draw_site_id="mask.date_shift",
@@ -675,7 +679,86 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         notes=(
             "The Faker pool builder the spec calls out. Pool identity is a pure function "
             "of (job_seed, provider, locale, config, namespace), so a cached and a rebuilt "
-            "pool of the same identity are value-identical (partition-safe)."
+            "pool of the same identity are value-identical (partition-safe). The physical "
+            "seed_instance is in the Faker adapter (providers_v2/_faker_adapter.py:224: "
+            'fake.seed_instance(int.from_bytes(spec.seed, "big"))); the Mimesis adapter '
+            "seeds a fresh Generic(locale, seed=int.from_bytes(spec.seed)) per batch "
+            "(providers_v2/mimesis/_adapter.py:167)."
+        ),
+        mirror_call_sites=(
+            "providers_v2/_faker_adapter.py:224",
+            "providers_v2/mimesis/_adapter.py:167",
+        ),
+    ),
+    # -- Providers_v2: synthetic-identifier adapters -------------------------
+    DrawSite(
+        draw_site_id="gen.identifier_deterministic",
+        family="source_keyed_hmac",
+        call_site="providers_v2/identifiers/_ssn.py:159",
+        entropy_root="mask_key",
+        seed_derivation=(
+            "derive_value(seed=spec.seed, namespace=spec.namespace, source=canonical, "
+            "domain=SsnDomain(rng_config=spec.extra))  where derive_value(seed, ns, src, "
+            "domain) = domain.from_bytes(derive(seed, ns, src))"
+        ),
+        api_operation="determinism.derive_value -> domain.from_bytes(HMAC-SHA256 digest)",
+        call_shape="derive_value(...) per non-null source row; poolable=False",
+        consumes_variable_draws=False,
+        identity="source_value",
+        null_draw_behavior="deterministic mode only when source_value is present; null passes to the unseeded path",
+        partitionable=True,
+        config_fingerprint_source="namespace_registry(namespace)+domain(rng_config=spec.extra)",
+        provider_version=_V6,
+        notes=(
+            "The 9 synthetic-identifier adapters (ssn, npi, ein, iban, pan, icd10, mrn, "
+            "ndc, cusip) share this shape. derive_value is a THIRD keyed primitive beside "
+            "derive/derive_index: a thin domain-typed wrapper over derive "
+            "(determinism/_derive.py:342). poolable=False, so these are NOT subsumed by "
+            "gen.pool_deterministic: each is a genuinely separate per-row source-keyed "
+            "site. spec.seed carries mask_key on the masking side and job_seed on pure "
+            "generation; both are valid derive IKM lengths. Mirrors list the other 8 "
+            "adapters' derive_value call."
+        ),
+        mirror_call_sites=(
+            "providers_v2/identifiers/_npi.py:131",
+            "providers_v2/identifiers/_ein.py:200",
+            "providers_v2/identifiers/_iban.py:244",
+            "providers_v2/identifiers/_pan.py:133",
+            "providers_v2/identifiers/_icd10.py:127",
+            "providers_v2/identifiers/_mrn.py:131",
+            "providers_v2/identifiers/_ndc.py:139",
+            "providers_v2/identifiers/_cusip.py:190",
+        ),
+    ),
+    DrawSite(
+        draw_site_id="gen.identifier_nondeterministic",
+        family="numpy_pcg64",
+        call_site="providers_v2/identifiers/_ssn.py:165",
+        entropy_root="none",
+        seed_derivation="np.random.default_rng()  # unseeded, S4 random-by-default contract",
+        api_operation="numpy.random.default_rng() then the provider's generate_random(rng=...)",
+        call_shape="per row in generate(); per batch in generate_batch()",
+        consumes_variable_draws=True,
+        identity="none",
+        null_draw_behavior="non-deterministic path draws fresh values; not reproducible",
+        partitionable=False,
+        config_fingerprint_source="none(non-deterministic)",
+        provider_version="numpy NEP-19 PCG64",
+        notes=(
+            "Every identifier adapter has two unseeded default_rng() draws: one in "
+            "generate() (per row) and one in generate_batch() (per batch), across all 9 "
+            "adapters. Non-deterministic by contract (output differs run to run)."
+        ),
+        mirror_call_sites=(
+            "providers_v2/identifiers/_ssn.py:178",
+            "providers_v2/identifiers/_npi.py:137",
+            "providers_v2/identifiers/_ein.py:206",
+            "providers_v2/identifiers/_iban.py:250",
+            "providers_v2/identifiers/_pan.py:139",
+            "providers_v2/identifiers/_icd10.py:133",
+            "providers_v2/identifiers/_mrn.py:137",
+            "providers_v2/identifiers/_ndc.py:145",
+            "providers_v2/identifiers/_cusip.py:196",
         ),
     ),
     # -- The seed-derivation substrate ---------------------------------------
@@ -756,6 +839,25 @@ GEN_KIND_TO_SITE: dict[str, str] = {
     "windowed_date": "mask.windowed_date",
 }
 
+# Synthetic-identifier providers (providers_v2). Cross-checked against the LIVE
+# ProviderRegistry: the test enumerates every registered provider whose adapter
+# is one of the identifier adapter classes and asserts the set equals these
+# keys, so a new identifier adapter (a new derive_value / default_rng draw) fails
+# until catalogued. Each has a deterministic (source_keyed_hmac) draw and a
+# non-deterministic (unseeded default_rng) draw; the map points at the
+# deterministic site, and gen.identifier_nondeterministic covers the other.
+PROVIDER_IDENTIFIER_SITES: dict[str, str] = {
+    "synthetic_ssn": "gen.identifier_deterministic",
+    "synthetic_npi": "gen.identifier_deterministic",
+    "synthetic_ein": "gen.identifier_deterministic",
+    "synthetic_iban": "gen.identifier_deterministic",
+    "synthetic_pan": "gen.identifier_deterministic",
+    "synthetic_icd10": "gen.identifier_deterministic",
+    "synthetic_mrn": "gen.identifier_deterministic",
+    "synthetic_ndc": "gen.identifier_deterministic",
+    "synthetic_cusip": "gen.identifier_deterministic",
+}
+
 # The mask.formula site (its own random.Random over the mask side).
 _MASK_FORMULA = DrawSite(
     draw_site_id="mask.formula",
@@ -801,6 +903,7 @@ __all__ = [
     "GEN_KIND_TO_SITE",
     "IDENTITIES",
     "MASK_STRATEGY_TO_SITE",
+    "PROVIDER_IDENTIFIER_SITES",
     "DrawSite",
     "draw_site_by_id",
 ]

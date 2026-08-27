@@ -23,7 +23,32 @@ from decoy_engine.execution.native._determinism_protocol import (
     GEN_KIND_TO_SITE,
     IDENTITIES,
     MASK_STRATEGY_TO_SITE,
+    PROVIDER_IDENTIFIER_SITES,
     DrawSite,
+)
+from decoy_engine.providers_v2._registry import get_default_registry
+from decoy_engine.providers_v2.identifiers import (
+    CusipAdapter,
+    EinAdapter,
+    IbanAdapter,
+    Icd10Adapter,
+    MrnAdapter,
+    NdcAdapter,
+    NpiAdapter,
+    PanAdapter,
+    SsnAdapter,
+)
+
+_IDENTIFIER_ADAPTERS = (
+    SsnAdapter,
+    NpiAdapter,
+    EinAdapter,
+    IbanAdapter,
+    PanAdapter,
+    Icd10Adapter,
+    MrnAdapter,
+    NdcAdapter,
+    CusipAdapter,
 )
 
 REQUIRED_FAMILIES = {
@@ -123,11 +148,30 @@ def test_every_map_target_resolves_to_a_site_or_the_no_draw_sentinel() -> None:
     for mapping, label in (
         (MASK_STRATEGY_TO_SITE, "mask"),
         (GEN_KIND_TO_SITE, "gen"),
+        (PROVIDER_IDENTIFIER_SITES, "provider"),
     ):
         for name, target in mapping.items():
             if target == DETERMINISTIC_NO_DRAW:
                 continue
             assert target in _ALL_IDS, f"{label} {name!r} maps to unknown draw_site_id {target!r}"
+
+
+def test_provider_identifier_map_covers_live_registry_exactly() -> None:
+    # Enumerate every registered provider whose adapter is a synthetic-identifier
+    # adapter (each carries the derive_value + unseeded default_rng draws). A new
+    # identifier adapter registered without a catalog entry fails here.
+    reg = get_default_registry()
+    live_identifier_providers = {
+        name
+        for name in reg.known_providers()
+        if isinstance(reg.get_adapter(name), _IDENTIFIER_ADAPTERS)
+    }
+    mapped = set(PROVIDER_IDENTIFIER_SITES)
+    missing = live_identifier_providers - mapped
+    extra = mapped - live_identifier_providers
+    assert not missing, f"identifier providers not catalogued: {sorted(missing)}"
+    assert not extra, f"PROVIDER_IDENTIFIER_SITES names not registered: {sorted(extra)}"
+    assert live_identifier_providers, "expected identifier providers in the default registry"
 
 
 # --------------------------------------------------------------------------
@@ -138,7 +182,8 @@ def test_every_map_target_resolves_to_a_site_or_the_no_draw_sentinel() -> None:
 # --------------------------------------------------------------------------
 _PKG_DIR = Path(decoy_engine.__file__).resolve().parent
 
-# Directories where a draw produces masked or generated OUTPUT.
+# Directories where a draw produces masked or generated OUTPUT. providers_v2
+# is included so a new provider adapter with a new RNG draw is seen here.
 _SCAN_ROOTS = (
     "execution",
     "generation",
@@ -146,23 +191,45 @@ _SCAN_ROOTS = (
     "transforms",
     "kernel",
     "reference_tables",
+    "providers_v2",
 )
 
-# Call-level tokens that indicate an actual randomness draw (not a docstring
-# mention of a concept). Kept deliberately narrow to the concrete call shapes
-# the inventory records.
+# Call-level tokens that indicate an actual randomness draw. Includes the three
+# keyed primitives (derive / derive_index / derive_value), the numpy and Python
+# RNG constructors, Faker.seed_instance, the whole-column numpy ops, and the
+# Mimesis Generic() seeded constructor. Prose is stripped before matching (see
+# _strip_prose) so a docstring mention of `derive(...)` does not count.
 _DRAW_TOKEN = re.compile(
     r"np\.random\.default_rng\(|np\.random\.RandomState\(|random\.Random\(|"
-    r"\.seed_instance\(|\.permutation\(|\.shuffle\(|\.choices\(|derive_index\("
+    r"\.seed_instance\(|\.permutation\(|\.shuffle\(|\.choices\(|"
+    r"derive_index\(|derive_value\(|\bderive\(|Generic\("
 )
+
+_TRIPLE_QUOTED = re.compile(r"(\"\"\".*?\"\"\"|'''.*?''')", re.DOTALL)
+
+
+def _strip_prose(text: str) -> str:
+    """Remove triple-quoted blocks and line comments so the scan matches code.
+
+    Bare `derive(` also appears in docstrings and comments describing the keyed
+    primitive; stripping prose keeps the scan matching real call sites, not
+    documentation. Single-line string literals are intentionally left in (a
+    handful are handled by the allowlist), since removing them reliably needs a
+    real tokenizer.
+    """
+    without_docstrings = _TRIPLE_QUOTED.sub("", text)
+    return "\n".join(re.sub(r"#.*$", "", line) for line in without_docstrings.splitlines())
+
 
 # RNG-token-bearing files that are NOT masked/generated-output draw sites:
 # execution orchestration that only threads seeds, chunk-profiling that draws a
-# fixed Random(0) over sampling, and this inventory module itself (whose data
-# literals quote the very call shapes the scan looks for).
+# fixed Random(0) over sampling, a diagnostic message string that quotes
+# `derive(...)`, and this inventory module itself (whose data literals quote the
+# very call shapes the scan looks for).
 _ALLOWLIST = frozenset(
     {
         "execution/_chunked.py",
+        "execution/_chunked_fk.py",  # a log-message string quotes "derive(seed, ns, value)"
         "execution/_chunked_profile.py",
         "execution/_pipeline.py",
         "execution/native/_determinism_protocol.py",
@@ -186,7 +253,7 @@ def _scan_rng_files() -> set[str]:
             continue
         for path in base.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
-            if _DRAW_TOKEN.search(text):
+            if _DRAW_TOKEN.search(_strip_prose(text)):
                 found.add(path.relative_to(_PKG_DIR).as_posix())
     return found
 
@@ -209,6 +276,7 @@ def test_scan_actually_matched_the_known_output_files() -> None:
         "execution/_strategies/_shuffle.py",
         "generation/statistical/_sample.py",
         "generation/synthesize.py",
+        "providers_v2/identifiers/_ssn.py",
     ):
         assert expected in scanned, f"static scan missed {expected}"
 

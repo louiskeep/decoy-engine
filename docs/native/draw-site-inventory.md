@@ -44,15 +44,28 @@ partitionable.
 
 ## Summary
 
-- 28 catalogued draw sites (plus 25 mirror call sites: V1/V2 engines,
-  pandas/polars substrates, and the out-of-core batched path).
-- 18 partitionable, 10 not.
-- Family breakdown: `source_keyed_hmac` 11, `numpy_pcg64` 7, `faker_seed_instance`
+- 30 catalogued draw sites (plus 46 mirror call sites: V1/V2 engines,
+  pandas/polars substrates, the out-of-core batched path, the delegation
+  handlers, and the 9 identifier provider adapters).
+- 19 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 12, `numpy_pcg64` 8, `faker_seed_instance`
   3, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - 1 site flagged uncertain: `mask.windowed_date` (per-row seed keys on the
   enumerate index, so partitionability depends on the native executor pinning a
   global row number; see that section).
+
+### Three keyed primitives
+
+Every `source_keyed_hmac` site derives from one of three primitives in
+`decoy_engine.determinism._derive`, all built on the same HKDF-SHA256 +
+HMAC-SHA256 envelope:
+
+- `derive(seed, namespace, source)`: the 32-byte digest (used raw or hex).
+- `derive_index(seed, namespace, source, *, pool_size)`: the digest reduced to
+  an index in `[0, pool_size)`.
+- `derive_value(seed, namespace, source, *, domain)`: `domain.from_bytes(derive(...))`,
+  a domain-typed wrapper the `providers_v2` identifier adapters use.
 
 The determinism envelope for every keyed site is HKDF-SHA256 (RFC 5869) extract
 plus HMAC-SHA256 (RFC 2104) with `SEED_PROTOCOL_VERSION = 6` mixed into the HMAC
@@ -76,7 +89,7 @@ both named honestly in the catalog's `entropy_root` field.
 
 ---
 
-## Family: source_keyed_hmac (11 sites)
+## Family: source_keyed_hmac (12 sites)
 
 The HMAC/HKDF digest IS the pseudo-randomness. There is no RNG object and no
 stream position. Every site keys on the source value (or, for `code_set` in
@@ -152,9 +165,24 @@ selects with `np.random.default_rng` off `job_seed` and is not partitionable.
 The bundle path (`_sampler.py:355`) and the pool adapter
 (`generation/pool/_pool_adapter.py:156`) share the same per-row derive.
 
+### gen.identifier_deterministic
+`providers_v2/identifiers/_ssn.py:159`. The 9 synthetic-identifier adapters
+(`ssn`, `npi`, `ein`, `iban`, `pan`, `icd10`, `mrn`, `ndc`, `cusip`) share this
+shape:
+`derive_value(seed=spec.seed, namespace=spec.namespace, source=canonical, domain=SsnDomain(rng_config=spec.extra))`,
+where `derive_value(seed, ns, src, domain) = domain.from_bytes(derive(seed, ns, src))`.
+Per-row source-keyed, so partitionable. These adapters are `poolable=False`
+(`generate_batch` raises in deterministic mode), so they are NOT subsumed by
+`gen.pool_deterministic`: each is a genuinely separate per-row site. `spec.seed`
+carries `mask_key` on the masking side and `job_seed` on pure generation, both
+valid `derive` IKM lengths. Wired into output via the provider registry
+(`generation/pool/_builder.py` for the non-deterministic build path,
+`composite/_provider.py` imports `NpiDomain`). Mirrors: the other 8 adapters'
+`derive_value` call.
+
 ---
 
-## Family: numpy_pcg64 (7 sites)
+## Family: numpy_pcg64 (8 sites)
 
 Draws from a `numpy.random.Generator` (`default_rng`, PCG64). Most are
 whole-column vector draws and are therefore NOT partitionable. The exception is
@@ -205,6 +233,13 @@ Numeric, categorical, and datetime samplers all draw whole-column vectors
 `np.random.default_rng(int.from_bytes(seed, "big"))` then
 `integers(0, pool.size, size=n)` or `permutation(...)[:k]`. Seeded but
 stream-positional across the whole output, so NOT partitionable.
+
+### gen.identifier_nondeterministic
+`providers_v2/identifiers/_ssn.py:165`. Every identifier adapter has two unseeded
+`np.random.default_rng()` draws: one in `generate()` (per row) and one in
+`generate_batch()` (per batch), across all 9 adapters. Non-deterministic by the
+S4 random-by-default contract: output differs run to run, so NOT partitionable.
+Mirrors: the second `generate_batch` draw and the other 8 adapters.
 
 ### gen.composite_build_pool
 `generation/composite/_provider.py:116`.
@@ -293,7 +328,11 @@ span reseeds from its own span key.
 (`_derive_pool_seed`, `_builder.py:57`), threaded as `ProviderSpec.seed` into
 `adapter.generate_batch`. Build-time draw. Partitionable in the sense that pool
 identity is a pure function of `(job_seed, provider, locale, config, namespace)`,
-so a cached pool and a rebuilt pool of the same identity are value-identical.
+so a cached pool and a rebuilt pool of the same identity are value-identical. The
+physical seed happens in the provider adapter: `providers_v2/_faker_adapter.py:224`
+(`fake.seed_instance(int.from_bytes(spec.seed, "big"))`) and, for the Mimesis
+adapter, a fresh `Generic(locale, seed=int.from_bytes(spec.seed))` per batch
+(`providers_v2/mimesis/_adapter.py:167`). Both are catalogued as mirrors here.
 
 ---
 
@@ -352,6 +391,32 @@ so the exclusion is deliberate, not an oversight:
   `internal/faker_setup.py`, `internal/crypto.py`, `expressions/_safe_eval.py`
   (the eval-scope factory; the actual formula draws are catalogued at the
   formula sites).
+- Orchestration and estimation that only thread seeds or quote a call shape in a
+  string: `execution/_chunked.py`, `execution/_chunked_fk.py` (a diagnostic
+  message string quotes `derive(...)`), `execution/_pipeline.py`,
+  `execution/out_of_core/_spill_estimate.py`, and the `providers_v2` base
+  adapter / package `__init__` / errors modules (which document the three keyed
+  primitives in prose but hold no draw). Every provider draw that produces output
+  (`SSN`, `NPI`, `EIN`, `IBAN`, `PAN`, `ICD-10`, `MRN`, `NDC`, `CUSIP`) IS
+  catalogued above; nothing in `providers_v2` that emits a value is excluded.
+
+## How the coverage test enforces completeness
+
+`tests/native/test_draw_site_inventory_coverage.py`:
+
+- Cross-checks the coverage maps against three LIVE registries: masking against
+  `execution._strategies.SCALAR_HANDLERS`, generation against
+  `config._tables.GENERATE_TYPES`, and the synthetic-identifier providers against
+  the `providers_v2` `ProviderRegistry` (every registered provider whose adapter
+  is an identifier adapter class must be in `PROVIDER_IDENTIFIER_SITES`). A new
+  strategy, generation kind, or identifier provider fails until catalogued.
+- Runs a static scan over seven output-producing roots, now including
+  `providers_v2`, matching the three keyed primitives (`derive`, `derive_index`,
+  `derive_value`) plus the numpy/Python RNG constructors, `seed_instance`, the
+  whole-column numpy ops, and the Mimesis `Generic(` seeded constructor. Prose
+  (docstrings and comments) is stripped first so only real call sites count. Any
+  matched file must be a catalogued `call_site`/mirror or one of five allowlisted
+  non-output files, so a new RNG-bearing source file fails until catalogued.
 
 ## References
 
