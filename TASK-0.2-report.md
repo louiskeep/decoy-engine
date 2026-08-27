@@ -44,13 +44,20 @@ Design note on name overlap: where a name spans mask and generation (e.g.
 `faker`, `categorical`, `formula`), `capabilities_for` returns the MASK-context
 (re-identification-relevant) entry; the three generation-only kinds
 (`sequence`, `reference`, `statistical`) get dedicated entries. `draw_family` /
-`key_source` come from the primary context's site. The generation-vs-mask
-specifics that DO diverge are resolved at the node level in `requirements_for`
-via `node.kind`, which is the intended split.
+`key_source` come from the primary context's site. IMPLEMENTED vs DEFERRED: a
+per-context split (a generate-kind node keyed distinctly from its same-named
+mask strategy) is NOT implemented. `build_work_list` produces only the mask node
+kinds, so `requirements_for` never sees a generation node today; the split is
+deferred to the phase that streams generation, and `_resolve_strategy_name`
+carries a comment saying so rather than a dead branch.
 
 ## How each field was sourced from the REAL strategy surface
 
-Nothing is a hand-copied list; every field traces to code:
+No field is a hand-copied strategy list. Every real strategy's fields trace to
+code as below. The one exception, stated plainly: the two node-kind PLACEHOLDER
+rows (`<composite>` / `<group>`) are hand-authored, because a composite bundle
+has no single draw site or handler to read; they exist so `capabilities_for` is
+total over the work-node kinds.
 
 - `draw_family` + `key_source` are read from the Task 0.1 inventory
   (`MASK_STRATEGY_TO_SITE` / `GEN_KIND_TO_SITE` -> `DrawSite.family` /
@@ -132,12 +139,41 @@ node is expressed by its `python_only` fallback policy.
 `native_route_eligibility(config, *, table) -> NativeEligibility` is the public
 query the platform's `classify_streaming_eligibility` calls instead of a copied
 strategy set. It is config-only (its signature carries no profile, so it does
-NOT recompile): it reads each mask column's strategy, resolves `capabilities_for`,
-and accepts only when every column is static-type + row-local + not global. Each
-miss is a coded rejection (`output_type_indeterminate:...`,
-`requires_global_execution:...`, `unclassified_strategy:...`,
-`generation_not_native_route:...`). A `formula` column rejects with
-`output_type_indeterminate`; a hash-only table accepts.
+NOT recompile) but PROVIDER-AWARE: it resolves each mask column's (strategy,
+provider) through the shared `_column_strategy_key` helper and accepts only when
+the resolved capabilities are static-type + row-local + not global. Each miss is
+a coded rejection (`output_type_indeterminate:...`,
+`requires_global_execution:...`, `composite_provider_multi_column:...`,
+`unclassified_strategy:...`, `generation_not_native_route:...`). A `formula`
+column rejects with `output_type_indeterminate`; a hash-only table accepts.
+
+### Review remediation: provider-registry-aware eligibility (IMPORTANT fix)
+
+The first cut of `native_route_eligibility` read only `col["strategy"]`, so a
+faker column backed by a COMPOSITE provider
+(`{"strategy":"faker","provider":"composite_name_email"}`) was classified
+accepted, while `compile_native_plan` correctly saw `WorkNode.kind ==
+"composite"` and excluded it: the two public APIs disagreed on one input. Root
+cause: the coverage never walked the live ProviderRegistry (same class of hole
+as Task 0.1's providers_v2 gap).
+
+Root-cause fix (shared rule, not a patch): `_provider_is_composite` /
+`_column_strategy_key` apply the EXACT predicate `build_work_list` uses to set
+`node.kind == "composite"` (a registry-bound provider whose capability
+`backend_type == "composite"`). `native_route_eligibility` resolves through it,
+so a composite-provider column now excludes with
+`composite_provider_multi_column:...`, matching the WorkNode path by
+construction. New coverage walks the LIVE registry: for every registered
+provider (34), a faker column is accepted iff that provider is not composite,
+and an end-to-end test compiles a real `composite_name_email` config and asserts
+`native_route_eligibility.accepted == (all nodes native)` for both the composite
+and the hash case.
+
+Why this was not exploitable against the Phase 1 admitted set: faker always
+carries a non-empty `quality_obligations` (`pool_quality`), so the Phase 1
+predicate excludes it regardless. The bug mattered only for
+`native_route_eligibility` as a STANDALONE native-route signal a later phase
+would trust, which is now correct.
 
 ## How the coverage tests gate a new strategy
 
@@ -150,7 +186,9 @@ miss is a coded rejection (`output_type_indeterminate:...`,
   draw-site classification, fails.
 - `native_route_eligibility` is driven over the live mask registry as a drift
   sentinel: every strategy either accepts or yields a non-empty coded rejection,
-  never raises.
+  never raises. It is ALSO driven over the live ProviderRegistry (all 34
+  providers), asserting it agrees with `compile_native_plan` on composite
+  fan-out, so a new composite provider cannot silently diverge the two APIs.
 
 ## Strategies flagged uncertain (2)
 
@@ -166,9 +204,24 @@ miss is a coded rejection (`output_type_indeterminate:...`,
 
 ## Verification
 
-- `pytest tests/native/` -> 53 passed (12 from Task 0.1 + 18 + 12 + 11).
-- `pytest tests/unit/plan tests/native` -> 350 passed, 10 skipped.
-- `pytest tests/unit/execution/test_runner.py tests/unit/execution/test_composite_routing.py`
-  -> 29 passed (proves the inert `WorkNode.requirements` field is byte-neutral).
+- `pytest tests/native/` -> 57 passed (12 from Task 0.1 + 18 caps + 12 req + 15
+  plan, the plan set now including the provider-registry agreement tests).
+- `pytest tests/native tests/unit/execution/test_runner.py
+  tests/unit/execution/test_composite_routing.py` -> 86 passed (the runner +
+  composite-routing tests prove the inert `WorkNode.requirements` field is
+  byte-neutral).
 - `ruff check` + `ruff format --check` + `mypy` clean on all new/changed files.
 - No em-dashes or en-dashes.
+
+## Review remediation summary (this round)
+
+- IMPORTANT: `native_route_eligibility` is now provider-registry-aware and
+  agrees with `compile_native_plan` by construction (shared composite predicate);
+  new registry-walk + compile-agreement coverage added.
+- MINOR 1: report corrected: the `<composite>`/`<group>` rows are stated as
+  hand-authored (not inventory-derived), and the generation node-kind split is
+  stated as deferred, not implemented.
+- MINOR 2: `_resolve_strategy_name` carries a comment that generation-context
+  resolution is deferred (no dead branch); `_fallback_policy` carries a comment
+  that `required_prepasses` is intentionally not consulted until the
+  prepass-consuming phase.

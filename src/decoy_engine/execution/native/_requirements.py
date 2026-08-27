@@ -76,7 +76,15 @@ class NodeRequirements:
 
 def _resolve_strategy_name(node: Any) -> str:
     """The capabilities key for a node: its resolved strategy, or the kind
-    placeholder for composite / FK-group nodes."""
+    placeholder for composite / FK-group nodes.
+
+    build_work_list produces only the mask node kinds ("scalar", "composite",
+    "composite_fk_group"); generate-table synthesis runs on a separate path and
+    never reaches this function today. A generation-context resolution (a
+    generate-kind node keyed distinctly from its same-named mask strategy) is
+    therefore DEFERRED to the phase that streams generation, rather than left as
+    a dead branch here.
+    """
     if node.kind == "composite":
         return "<composite>"
     if node.kind == "composite_fk_group":
@@ -160,6 +168,11 @@ def _diagnostic_reducers(caps: StrategyCapabilities) -> tuple[str, ...]:
 
 
 def _fallback_policy(caps: StrategyCapabilities) -> FallbackPolicy:
+    # `required_prepasses` is intentionally NOT consulted here: a prepass (a
+    # date-format detect, a global row number) does not disqualify a node from
+    # the native route, it is native work a later phase schedules. So a
+    # format-less date_shift is still "native" with a format_detect prepass. The
+    # phase that consumes prepasses owns any policy that reads them.
     native_ready = (
         caps.output_type_is_static
         and caps.is_row_local

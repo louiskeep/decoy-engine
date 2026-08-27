@@ -17,8 +17,10 @@ Sourcing (never a hand-copied constant set):
 
 - ``draw_family`` and ``key_source`` are read from the Task 0.1 draw-site
   inventory (``_determinism_protocol.MASK_STRATEGY_TO_SITE`` /
-  ``GEN_KIND_TO_SITE`` -> ``DrawSite``), so a reclassified draw site flows
-  through here automatically.
+  ``GEN_KIND_TO_SITE`` -> ``DrawSite``) for every real strategy, so a
+  reclassified draw site flows through here automatically. The two node-kind
+  placeholders (``<composite>`` / ``<group>``) are the exception: they are
+  hand-authored, because a composite bundle has no single draw site to read.
 - ``row_error_modes`` / ``warning_codes`` / ``quality_obligations`` are the
   strategy handlers' ACTUAL diagnostic surface (the ``RowError`` triggers each
   handler appends to ``StrategyContext.row_errors`` and the ``QualityWarning``

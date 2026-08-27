@@ -159,20 +159,52 @@ def _resolved_strategy(node: WorkNode) -> str:
     return node.strategy
 
 
+def _provider_is_composite(provider: str | None, registry: Any) -> bool:
+    """Whether a column's provider fans out to a multi-column composite node.
+
+    This is the EXACT predicate ``build_work_list`` uses to set
+    ``WorkNode.kind == "composite"`` (``_runner.py``: a registry-bound provider
+    whose capability ``backend_type == "composite"``). ``native_route_eligibility``
+    and ``compile_native_plan`` share it so the two public APIs cannot disagree
+    on whether a column resolves to a composite node.
+    """
+    return (
+        bool(provider)
+        and registry.has(provider)
+        and (registry.get_capabilities(provider).backend_type == "composite")
+    )
+
+
+def _column_strategy_key(strategy: str, provider: str | None, registry: Any) -> str:
+    """The capabilities key a config column resolves to.
+
+    Mirrors ``build_work_list``: a composite provider fans out to a
+    ``<composite>`` node regardless of the column's declared strategy string;
+    every other column keys on its scalar strategy.
+    """
+    if _provider_is_composite(provider, registry):
+        return "<composite>"
+    return strategy
+
+
 def native_route_eligibility(config: dict[str, Any], *, table: str) -> NativeEligibility:
     """Report whether ``table`` in ``config`` can run on the native route.
 
-    Config-only (no profile, no recompile): each mask column's strategy resolves
-    to ``StrategyCapabilities`` and is native-eligible when its output type is
-    static, it is row-local, and it needs no whole-column pass or durable global
-    row number. Generation columns are not on the native mask route yet. Every
-    miss is a coded rejection.
+    Config-only (no profile, no recompile), but PROVIDER-AWARE: each mask
+    column's (strategy, provider) resolves through ``_column_strategy_key`` to
+    the same capabilities key ``compile_native_plan`` derives from
+    ``WorkNode.kind``, so a composite-provider column is excluded here exactly as
+    the WorkNode path excludes it. A column is native-eligible when its resolved
+    output type is static, it is row-local, and it needs no whole-column pass or
+    durable global row number. Generation columns are not on the native mask
+    route yet. Every miss is a coded rejection.
     """
     table_cfg = _find_table(config, table)
     if table_cfg is None:
         # A table absent from the config has no node to reject.
         return NativeEligibility(accepted=True, rejections=())
 
+    registry = get_default_registry()
     rejections: list[str] = []
 
     if table_cfg.get("generate_columns"):
@@ -184,21 +216,26 @@ def native_route_eligibility(config: dict[str, Any], *, table: str) -> NativeEli
         if not strategy:
             rejections.append(f"missing_strategy:{name}")
             continue
-        try:
-            caps = capabilities_for(strategy)
-        except KeyError:
-            rejections.append(f"unclassified_strategy:{name}:{strategy}")
+        provider = col.get("provider")
+        resolved = _column_strategy_key(strategy, provider, registry)
+        if resolved == "<composite>":
+            # Matches the WorkNode path: a composite provider fans out to a
+            # multi-column node with an indeterminate per-column output type.
+            rejections.append(f"composite_provider_multi_column:{name}:{provider}")
             continue
-        reason = _native_rejection(name, strategy, caps, col)
+        try:
+            caps = capabilities_for(resolved)
+        except KeyError:
+            rejections.append(f"unclassified_strategy:{name}:{resolved}")
+            continue
+        reason = _native_rejection(name, resolved, caps)
         if reason is not None:
             rejections.append(reason)
 
     return NativeEligibility(accepted=not rejections, rejections=tuple(rejections))
 
 
-def _native_rejection(
-    name: str, strategy: str, caps: StrategyCapabilities, col: dict[str, Any]
-) -> str | None:
+def _native_rejection(name: str, strategy: str, caps: StrategyCapabilities) -> str | None:
     """The coded reason ``name`` cannot run natively, or None when it can."""
     if not caps.output_type_is_static:
         return f"output_type_indeterminate:{name}:{strategy}"
