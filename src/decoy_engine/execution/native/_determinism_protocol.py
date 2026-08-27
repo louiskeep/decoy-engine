@@ -895,6 +895,19 @@ def draw_site_by_id(draw_site_id: str) -> DrawSite:
     raise KeyError(draw_site_id)
 
 
+# Per-draw-site determinism providers (Task 0.3) live in a sibling module to
+# keep this catalogue file focused on data. They are re-exported here so the
+# protocol's public surface is one import. The import is at the bottom because
+# the providers import DRAW_SITES / DrawSite / draw_site_by_id from this module;
+# by this point those names are defined, so the cycle resolves cleanly.
+from decoy_engine.execution.native._draw_site_providers import (  # noqa: E402
+    DrawSiteProtocolError,
+    DrawSiteProvider,
+    all_providers,
+    provider_for,
+    unit_float_from_bits53,
+)
+
 __all__ = [
     "DETERMINISTIC_NO_DRAW",
     "DRAW_SITES",
@@ -905,5 +918,10 @@ __all__ = [
     "MASK_STRATEGY_TO_SITE",
     "PROVIDER_IDENTIFIER_SITES",
     "DrawSite",
+    "DrawSiteProtocolError",
+    "DrawSiteProvider",
+    "all_providers",
     "draw_site_by_id",
+    "provider_for",
+    "unit_float_from_bits53",
 ]

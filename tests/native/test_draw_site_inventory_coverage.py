@@ -233,6 +233,9 @@ _ALLOWLIST = frozenset(
         "execution/_chunked_profile.py",
         "execution/_pipeline.py",
         "execution/native/_determinism_protocol.py",
+        # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
+        # hot path (one provider per DRAW_SITES entry). Not a new output site.
+        "execution/native/_draw_site_providers.py",
     }
 )
 

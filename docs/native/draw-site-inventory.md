@@ -418,10 +418,77 @@ so the exclusion is deliberate, not an oversight:
   matched file must be a catalogued `call_site`/mirror or one of five allowlisted
   non-output files, so a new RNG-bearing source file fails until catalogued.
 
+## Protocol freeze (Task 0.3)
+
+Task 0.3 builds one `DrawSiteProvider` per catalogued site
+(`execution/native/_draw_site_providers.py`, re-exported from
+`_determinism_protocol.py`) and proves via an exact goldens gate
+(`tests/native/test_determinism_goldens.py`) that each provider reproduces the
+sequence the current engine draws at that site. The gate routes the REAL
+shipped functions (`ShuffleStrategyHandler`, `hash_array`, `_apply_monotone_walk`,
+`apply_windowed_date`, `_categorical`, `_reference`, `_apply_null_probability`,
+`_faker`, `sample_column`) and the keyed primitives (`derive` / `derive_index` /
+`derive_value`) through the providers on fixed seeds; 19 seed-reproducible sites
+route as exact golden vectors and all reproduce byte-for-byte. The remaining
+sites are proven at the seed-derivation level in
+`tests/native/test_determinism_protocol.py`: whole-column and per-group global
+sites (`mask.shuffle`, `mask.grouped_series_monotone_walk`, `gen.categorical`,
+`gen.reference`, `gen.null_probability`, `gen.distribution_snapshot`,
+`gen.pool_nondeterministic`, `gen.composite_build_pool`, `mask.formula`) refuse a
+partitioned request with `site_not_partitionable`; the two unseeded
+non-deterministic sites (`mask.categorical_nondeterministic`,
+`gen.identifier_nondeterministic`) refuse reproduction with
+`site_not_reproducible`. With the gate green, the protocol is FROZEN: each
+site's `provider_version` below is locked, and any change to a seed derivation,
+call shape, or version is a `SEED_PROTOCOL_VERSION`-class event.
+
+The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
+FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
+construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
+
+Registry: exactly one provider per catalogued `draw_site_id` (30 sites; 19
+partitionable, 11 not). An import-time invariant fails if the registry drifts
+from `DRAW_SITES`.
+
+| draw_site_id                      | family              | partitionable | provider_version |
+| --------------------------------- | ------------------- | ------------- | --------------------------------------------------------------- |
+| gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v6 (GenDeriveContext); Faker seed_instance |
+| gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v6 (pool_seed via derive); Faker/provider adapter |
+| mask.text_mask_faker              | faker_seed_instance | yes           | Faker (seed_instance detaches a per-instance random.Random) |
+| gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v6 |
+| gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
+| gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v6 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
+| gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v6 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
+| mask.categorical_nondeterministic | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
+| mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
+| mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v6; numpy NEP-19 PCG64 |
+| mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
+| gen.formula_per_row               | per_row_reseed      | yes           | seed_protocol_v6 (GenDeriveContext); CPython MT + Faker |
+| gen.statistical_per_row           | per_row_reseed      | yes           | CPython Mersenne Twister (no numpy; bit-stable inverse-CDF) |
+| gen.categorical                   | python_mt19937      | no            | seed_protocol_v6 (GenDeriveContext); CPython Mersenne Twister |
+| gen.reference                     | python_mt19937      | no            | seed_protocol_v6 (GenDeriveContext); CPython Mersenne Twister |
+| mask.formula                      | python_mt19937      | no            | CPython Mersenne Twister |
+| gen.identifier_deterministic      | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.bucket_perturb               | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.categorical_deterministic    | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v6 |
+
 ## References
 
 - RFC 5869 (HKDF-SHA256), RFC 2104 (HMAC-SHA256): the keyed-derivation envelope.
 - NumPy NEP-19 (`numpy.random.default_rng`): the seed-stability contract for the
   `numpy_pcg64` sites.
+- CPython `random.Random` (Mersenne Twister MT19937): the seed-stability contract
+  for the `python_mt19937` / `per_row_reseed` sites.
 - `SEED_PROTOCOL_VERSION` (`determinism/_derive.py`): the single compatibility
   knob mixed into every keyed HMAC input; currently 6.
