@@ -14,7 +14,7 @@ Crypto model (reproduced from the shipped engine, rolled nothing new):
   HMAC-SHA256 (per-source value); see `determinism/_derive.py`. Nulls (None or
   NaN) pass through as None.
 
-- FPE (the `fpe` strategy, `execution/_strategies/_fpe.py`, SEED_PROTOCOL v5):
+- FPE (the `fpe` strategy, `execution/_strategies/_fpe.py`, SEED_PROTOCOL v6):
   ONE Feistel key per `(mask_key, namespace)` = ``derive(mask_key, namespace,
   FPE_KEY_LABEL)`` with ``FPE_KEY_LABEL = b"fpe-key/v1"``. The per-column tweak
   is the column name UTF-8 (or the `fpe_join_group` name when set, so grouped
