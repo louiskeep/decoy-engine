@@ -80,9 +80,14 @@ Exactly one, by default (`DEFAULT_ALLOWED_PHYSICAL_DIFFS`):
   enumerated but not oracle-run. Each case is labeled with its backend and its
   Task 0.5 `classify_provider` class.
 - The plan's note of "26 providers" is stale; the live registry has 34. This is
-  exactly why the task forbids hardcoding a count. Two completeness tests assert
-  the covered set EQUALS the live set, so a newly added strategy or provider
-  turns the suite red until it is added to the matrix.
+  exactly why the task forbids hardcoding a count. Because the matrix generator
+  iterates the live registry directly, a newly added strategy or provider cannot
+  be silently omitted: it auto-appears as an xfail native-parity case. The two
+  completeness tests (`covered EQUALS live`) are therefore tautological with
+  respect to additions and stay green when a newcomer is added; they act as a
+  generator-regression guard that fires only if a future refactor makes the
+  generator drop a registry member. The anti-omission property holds via live
+  generation, not via a red suite.
 
 Variants present across the matrix: null (passthrough/redact/hash/date_shift/
 categorical/text_redact/faker), dtype (hash int64, bucketize int64), and
