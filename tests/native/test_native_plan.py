@@ -14,6 +14,7 @@ import pyarrow as pa
 from decoy_engine.config._tables import GENERATE_TYPES
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
+from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._plan import (
     NativeEligibility,
     NativeExecutionPlan,
@@ -21,7 +22,7 @@ from decoy_engine.execution.native._plan import (
     native_route_eligibility,
 )
 from decoy_engine.execution.native._requirements import NodeRequirements
-from decoy_engine.profile import ColumnProfile, Profile, TableProfile
+from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile
 from decoy_engine.providers_v2 import get_default_registry
 
 
@@ -234,3 +235,142 @@ def test_eligibility_and_compile_native_plan_agree_on_hash() -> None:
     plan_all_native = all(node.fallback_policy == "native" for node in plan.nodes)
     assert plan_all_native is True
     assert native_route_eligibility(cfg, table="t").accepted is plan_all_native
+
+
+# ---------------------------------------------------------------------------
+# FK-composite-group agreement (round-2 remediation). The composite_fk_group
+# node kind is driven by profile.relationships (a multi-column parent key), not
+# by any column string, so native_route_eligibility is structurally blind to it
+# WITHOUT the profile. Threading the profile closes the gap; both APIs then
+# classify the <group> node through the same shared capabilities.
+# ---------------------------------------------------------------------------
+
+
+def _fk_col(name: str, **flags: object) -> ColumnProfile:
+    return ColumnProfile(
+        name=name,
+        dtype="object",
+        row_count=5,
+        null_count=0,
+        distinct_count=5,
+        sampled=False,
+        is_candidate_key_sampled=bool(flags.get("ck")),
+        declared_pk=bool(flags.get("pk")),
+        is_fk=bool(flags.get("fk")),
+        fk_target=flags.get("target"),  # type: ignore[arg-type]
+        pii_class=None,
+    )
+
+
+def _composite_fk_profile() -> Profile:
+    enrollments = TableProfile(
+        name="enrollments",
+        row_count=5,
+        columns=(
+            _fk_col("member_id", pk=True, ck=True),
+            _fk_col("plan_id", pk=True, ck=True),
+            _fk_col("effective_date", pk=True, ck=True),
+        ),
+    )
+    claims = TableProfile(
+        name="claims",
+        row_count=20,
+        columns=(
+            _fk_col("claim_id", pk=True, ck=True),
+            _fk_col("member_id", fk=True, target=("enrollments", "member_id")),
+            _fk_col("plan_id", fk=True, target=("enrollments", "plan_id")),
+            _fk_col("effective_date", fk=True, target=("enrollments", "effective_date")),
+        ),
+    )
+    return Profile(
+        schema_version=1,
+        tables=(enrollments, claims),
+        relationships=(
+            Relationship(
+                parent_table="enrollments",
+                parent_columns=("member_id", "plan_id", "effective_date"),
+                child_table="claims",
+                child_columns=("member_id", "plan_id", "effective_date"),
+                namespace="enr",
+            ),
+        ),
+        profiled_at=datetime(2026, 8, 27, 0, 0, 0),
+        decoy_engine_version="0.1.0",
+    )
+
+
+def _composite_fk_config() -> dict:
+    return {
+        "global_settings": {"seed": 42},
+        "tables": [
+            {
+                "name": "enrollments",
+                "columns": [{"name": "member_id", "strategy": "hash", "namespace": "enr"}],
+            },
+            {
+                "name": "claims",
+                "columns": [{"name": "claim_id", "strategy": "hash", "namespace": "c"}],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {
+                    "table": "enrollments",
+                    "columns": ["member_id", "plan_id", "effective_date"],
+                },
+                "children": [
+                    {"table": "claims", "columns": ["member_id", "plan_id", "effective_date"]}
+                ],
+                "orphan_policy": "fail",
+                "namespace": "enr",
+            }
+        ],
+        "namespaces": {"enr": {"declared_by": ["enrollments.member_id", "claims.member_id"]}},
+    }
+
+
+def test_compile_native_plan_emits_composite_fk_group_node() -> None:
+    plan = compile_native_plan(
+        _composite_fk_config(), _composite_fk_profile(), engine_version="0.1.0"
+    )
+    kinds = {node.kind for node in plan.nodes}
+    assert "composite_fk_group" in kinds
+
+
+def test_eligibility_with_profile_agrees_on_fk_group() -> None:
+    # The end-to-end agreement the round-2 finding demanded: compile the plan
+    # (which emits a composite_fk_group node) and assert native_route_eligibility,
+    # given the profile, reaches the SAME accept/reject verdict for the child
+    # table as the compiled plan's all-native verdict.
+    cfg = _composite_fk_config()
+    profile = _composite_fk_profile()
+    plan = compile_native_plan(cfg, profile, engine_version="0.1.0")
+    plan_all_native = all(node.fallback_policy == "native" for node in plan.nodes)
+    result = native_route_eligibility(cfg, table="claims", profile=profile)
+    assert result.accepted is plan_all_native
+
+
+def test_fk_group_capabilities_are_native_ready_today() -> None:
+    # Locks the current invariant AND the by-construction agreement: the <group>
+    # placeholder resolves native-ready, so both APIs accept the FK-group node.
+    # If these capabilities ever change to non-native, native_route_eligibility
+    # (which routes <group> through the same capabilities_for + _native_rejection)
+    # rejects in lockstep with compile_native_plan; this test then flips to
+    # asserting rejection, never silent disagreement.
+    c = capabilities_for("<group>")
+    native_ready = (
+        c.output_type_is_static
+        and c.is_row_local
+        and not c.is_global
+        and not c.needs_global_row_identity
+    )
+    assert native_ready is True
+
+
+def test_eligibility_without_profile_does_not_evaluate_fk_groups() -> None:
+    # Documents the boundary: omitting the profile leaves FK-group nodes
+    # unevaluated. Benign here because the child table's <group> node is
+    # native-ready, so the config-only verdict (which sees only the scalar
+    # claim_id column) still matches. The full-agreement path passes the profile.
+    cfg = _composite_fk_config()
+    assert native_route_eligibility(cfg, table="claims").accepted is True

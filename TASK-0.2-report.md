@@ -136,18 +136,20 @@ names). `output_schema_for(table)` merges the per-node schemas, returning None
 if any node in the table is indeterminate. The parity-oracle route for a held
 node is expressed by its `python_only` fallback policy.
 
-`native_route_eligibility(config, *, table) -> NativeEligibility` is the public
-query the platform's `classify_streaming_eligibility` calls instead of a copied
-strategy set. It is config-only (its signature carries no profile, so it does
-NOT recompile) but PROVIDER-AWARE: it resolves each mask column's (strategy,
-provider) through the shared `_column_strategy_key` helper and accepts only when
-the resolved capabilities are static-type + row-local + not global. Each miss is
-a coded rejection (`output_type_indeterminate:...`,
+`native_route_eligibility(config, *, table, profile=None) -> NativeEligibility`
+is the public query the platform's `classify_streaming_eligibility` calls
+instead of a copied strategy set. It agrees with `compile_native_plan` on EVERY
+node kind by construction, because it classifies each node through the SAME
+shared predicates the WorkNode path uses: scalar / provider-composite columns
+via `_column_strategy_key` (config-only, backed by `provider_is_composite`), and
+FK-composite-group nodes via `composite_fk_relationships(profile)`. A node is
+native-eligible when its resolved capabilities are static-type + row-local + not
+global. Each miss is a coded rejection (`output_type_indeterminate:...`,
 `requires_global_execution:...`, `composite_provider_multi_column:...`,
 `unclassified_strategy:...`, `generation_not_native_route:...`). A `formula`
 column rejects with `output_type_indeterminate`; a hash-only table accepts.
 
-### Review remediation: provider-registry-aware eligibility (IMPORTANT fix)
+### Review remediation round 1: provider-registry-aware eligibility (IMPORTANT)
 
 The first cut of `native_route_eligibility` read only `col["strategy"]`, so a
 faker column backed by a COMPOSITE provider
@@ -157,23 +159,49 @@ accepted, while `compile_native_plan` correctly saw `WorkNode.kind ==
 cause: the coverage never walked the live ProviderRegistry (same class of hole
 as Task 0.1's providers_v2 gap).
 
-Root-cause fix (shared rule, not a patch): `_provider_is_composite` /
-`_column_strategy_key` apply the EXACT predicate `build_work_list` uses to set
-`node.kind == "composite"` (a registry-bound provider whose capability
-`backend_type == "composite"`). `native_route_eligibility` resolves through it,
-so a composite-provider column now excludes with
-`composite_provider_multi_column:...`, matching the WorkNode path by
-construction. New coverage walks the LIVE registry: for every registered
-provider (34), a faker column is accepted iff that provider is not composite,
-and an end-to-end test compiles a real `composite_name_email` config and asserts
-`native_route_eligibility.accepted == (all nodes native)` for both the composite
-and the hash case.
+Root-cause fix (shared rule, not a patch): `provider_is_composite` (now the ONE
+canonical helper, extracted to `_runner.py` and called by BOTH `build_work_list`
+and `_plan.py`, removing the truth-table-identical duplication) applies the
+predicate `build_work_list` uses to set `node.kind == "composite"`.
+`native_route_eligibility` resolves through it, so a composite-provider column
+now excludes with `composite_provider_multi_column:...`, matching the WorkNode
+path by construction. Coverage walks the LIVE registry (all 34 providers): a
+faker column is accepted iff its provider is not composite, plus an end-to-end
+`composite_name_email` compile-vs-eligibility agreement test.
 
-Why this was not exploitable against the Phase 1 admitted set: faker always
-carries a non-empty `quality_obligations` (`pool_quality`), so the Phase 1
-predicate excludes it regardless. The bug mattered only for
-`native_route_eligibility` as a STANDALONE native-route signal a later phase
-would trust, which is now correct.
+Why not exploitable against the Phase 1 admitted set: faker always carries a
+non-empty `quality_obligations` (`pool_quality`), so the Phase 1 predicate
+excludes it regardless. The bug mattered only for `native_route_eligibility` as
+a STANDALONE native-route signal a later phase would trust.
+
+### Review remediation round 2: FK-composite-group eligibility (IMPORTANT)
+
+The other half of the same class of hole. `WorkNode.kind ==
+"composite_fk_group"` is driven by `profile.relationships` (a composite FK, a
+multi-column parent key, collapses its child columns into one `<group>` node),
+NOT by any column string. The config-only `native_route_eligibility` took no
+profile and could not evaluate FK-group nodes at all: structurally blind, benign
+only because `<group>`'s placeholder capabilities happen to resolve native-ready
+so both APIs currently accept.
+
+Complete fix (profile threaded, not documented-blind): `native_route_eligibility`
+now accepts an optional `profile` and, when given, evaluates each FK-group node
+for the table through `capabilities_for("<group>")` and the same
+`_native_rejection` logic `compile_native_plan` applies to the
+`composite_fk_group` node. The FK-group predicate is factored to ONE place,
+`composite_fk_relationships(profile)` in `plan/_seed_envelope.py`, which the seed
+envelope itself now calls too (execution imports from plan; the reverse would
+break layering, so the predicate lives in the plan layer). The two verdicts
+match by construction: if `<group>`'s capabilities ever change to non-native,
+both APIs reject in lockstep. New tests: `compile_native_plan` emits a
+`composite_fk_group` node for a real composite-FK config, and
+`native_route_eligibility(..., profile=profile)` reaches the same accept verdict
+as the compiled plan's all-native check.
+
+IMPLEMENTED vs DEFERRED boundary: passing `profile` gives full agreement on all
+node kinds. Omitting it leaves FK-group nodes unevaluated (the column loop still
+runs), which is safe only when the table has no composite FK. A test documents
+this boundary explicitly.
 
 ## How the coverage tests gate a new strategy
 
@@ -188,7 +216,9 @@ would trust, which is now correct.
   sentinel: every strategy either accepts or yields a non-empty coded rejection,
   never raises. It is ALSO driven over the live ProviderRegistry (all 34
   providers), asserting it agrees with `compile_native_plan` on composite
-  fan-out, so a new composite provider cannot silently diverge the two APIs.
+  fan-out, so a new composite provider cannot silently diverge the two APIs. A
+  further test compiles a real composite-FK config and asserts the two APIs
+  agree on the `composite_fk_group` node once the profile is threaded.
 
 ## Strategies flagged uncertain (2)
 
@@ -204,17 +234,21 @@ would trust, which is now correct.
 
 ## Verification
 
-- `pytest tests/native/` -> 57 passed (12 from Task 0.1 + 18 caps + 12 req + 15
-  plan, the plan set now including the provider-registry agreement tests).
+- `pytest tests/native/` -> 61 passed (12 from Task 0.1 + 18 caps + 12 req + 19
+  plan, the plan set including the provider-registry AND FK-composite-group
+  agreement tests).
 - `pytest tests/native tests/unit/execution/test_runner.py
-  tests/unit/execution/test_composite_routing.py` -> 86 passed (the runner +
+  tests/unit/execution/test_composite_routing.py` -> 90 passed (the runner +
   composite-routing tests prove the inert `WorkNode.requirements` field is
-  byte-neutral).
+  byte-neutral and the `provider_is_composite` extraction did not move
+  behavior); `pytest tests/unit/plan -k "seed or compile or composite"` -> 164
+  passed (the `composite_fk_relationships` extraction is behavior-neutral).
 - `ruff check` + `ruff format --check` + `mypy` clean on all new/changed files.
 - No em-dashes or en-dashes.
 
-## Review remediation summary (this round)
+## Review remediation summary
 
+Round 1:
 - IMPORTANT: `native_route_eligibility` is now provider-registry-aware and
   agrees with `compile_native_plan` by construction (shared composite predicate);
   new registry-walk + compile-agreement coverage added.
@@ -225,3 +259,14 @@ would trust, which is now correct.
   resolution is deferred (no dead branch); `_fallback_policy` carries a comment
   that `required_prepasses` is intentionally not consulted until the
   prepass-consuming phase.
+
+Round 2:
+- IMPORTANT: closed the FK-composite-group half of the same finding.
+  `native_route_eligibility` takes an optional `profile` and evaluates
+  `composite_fk_group` nodes through the shared
+  `composite_fk_relationships(profile)` predicate + `capabilities_for("<group>")`,
+  agreeing with `compile_native_plan` by construction on all node kinds. Both
+  shared predicates now live in one place each (`provider_is_composite` in
+  `_runner.py`, `composite_fk_relationships` in `plan/_seed_envelope.py`) and are
+  called by both the compile path and the eligibility path, removing the
+  duplication the reviewer flagged. New FK-group agreement + boundary tests.

@@ -25,7 +25,11 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.execution._runner import WorkNode, build_work_list
+from decoy_engine.execution._runner import (
+    WorkNode,
+    build_work_list,
+    provider_is_composite,
+)
 from decoy_engine.execution.native._capabilities import (
     StrategyCapabilities,
     capabilities_for,
@@ -35,6 +39,7 @@ from decoy_engine.execution.native._requirements import (
     requirements_for,
 )
 from decoy_engine.plan import compile_plan
+from decoy_engine.plan._seed_envelope import composite_fk_relationships
 from decoy_engine.providers_v2 import get_default_registry
 
 
@@ -159,80 +164,103 @@ def _resolved_strategy(node: WorkNode) -> str:
     return node.strategy
 
 
-def _provider_is_composite(provider: str | None, registry: Any) -> bool:
-    """Whether a column's provider fans out to a multi-column composite node.
-
-    This is the EXACT predicate ``build_work_list`` uses to set
-    ``WorkNode.kind == "composite"`` (``_runner.py``: a registry-bound provider
-    whose capability ``backend_type == "composite"``). ``native_route_eligibility``
-    and ``compile_native_plan`` share it so the two public APIs cannot disagree
-    on whether a column resolves to a composite node.
-    """
-    return (
-        bool(provider)
-        and registry.has(provider)
-        and (registry.get_capabilities(provider).backend_type == "composite")
-    )
-
-
 def _column_strategy_key(strategy: str, provider: str | None, registry: Any) -> str:
     """The capabilities key a config column resolves to.
 
-    Mirrors ``build_work_list``: a composite provider fans out to a
-    ``<composite>`` node regardless of the column's declared strategy string;
-    every other column keys on its scalar strategy.
+    Mirrors ``build_work_list`` via the shared ``provider_is_composite``
+    predicate: a composite provider fans out to a ``<composite>`` node regardless
+    of the column's declared strategy string; every other column keys on its
+    scalar strategy.
     """
-    if _provider_is_composite(provider, registry):
+    if provider_is_composite(provider, registry):
         return "<composite>"
     return strategy
 
 
-def native_route_eligibility(config: dict[str, Any], *, table: str) -> NativeEligibility:
+def native_route_eligibility(
+    config: dict[str, Any], *, table: str, profile: Any | None = None
+) -> NativeEligibility:
     """Report whether ``table`` in ``config`` can run on the native route.
 
-    Config-only (no profile, no recompile), but PROVIDER-AWARE: each mask
-    column's (strategy, provider) resolves through ``_column_strategy_key`` to
-    the same capabilities key ``compile_native_plan`` derives from
-    ``WorkNode.kind``, so a composite-provider column is excluded here exactly as
-    the WorkNode path excludes it. A column is native-eligible when its resolved
-    output type is static, it is row-local, and it needs no whole-column pass or
-    durable global row number. Generation columns are not on the native mask
-    route yet. Every miss is a coded rejection.
+    Agrees with ``compile_native_plan`` on EVERY node kind by construction,
+    because it classifies each node through the same shared predicates the
+    WorkNode path uses:
+
+    - scalar / provider-composite columns: ``_column_strategy_key`` (config-only,
+      via ``provider_is_composite``), so a composite-provider column is excluded
+      exactly as the WorkNode path excludes it.
+    - FK-composite-group nodes: driven by ``profile.relationships`` (a composite
+      FK collapses its child columns into one ``<group>`` node), NOT by any
+      column string. That predicate is invisible without the profile, so
+      evaluating it requires ``profile``. Pass it for full agreement; omit it and
+      FK-group nodes are not evaluated (safe only when the table has no composite
+      FK, which the caller must know).
+
+    A node is native-eligible when its resolved capabilities are static-type,
+    row-local, and need no whole-column pass or durable global row number.
+    Generation columns are not on the native mask route yet. Every miss is a
+    coded rejection.
     """
     table_cfg = _find_table(config, table)
-    if table_cfg is None:
-        # A table absent from the config has no node to reject.
+    if table_cfg is None and profile is None:
+        # No table config and no profile: nothing to classify.
         return NativeEligibility(accepted=True, rejections=())
 
     registry = get_default_registry()
     rejections: list[str] = []
 
-    if table_cfg.get("generate_columns"):
-        rejections.append("generation_not_native_route:generate_columns")
+    if table_cfg is not None:
+        if table_cfg.get("generate_columns"):
+            rejections.append("generation_not_native_route:generate_columns")
+        for col in table_cfg.get("columns", ()):
+            reason = _column_rejection(col, registry)
+            if reason is not None:
+                rejections.append(reason)
 
-    for col in table_cfg.get("columns", ()):
-        name = col.get("name", "?")
-        strategy = col.get("strategy")
-        if not strategy:
-            rejections.append(f"missing_strategy:{name}")
-            continue
-        provider = col.get("provider")
-        resolved = _column_strategy_key(strategy, provider, registry)
-        if resolved == "<composite>":
-            # Matches the WorkNode path: a composite provider fans out to a
-            # multi-column node with an indeterminate per-column output type.
-            rejections.append(f"composite_provider_multi_column:{name}:{provider}")
-            continue
-        try:
-            caps = capabilities_for(resolved)
-        except KeyError:
-            rejections.append(f"unclassified_strategy:{name}:{resolved}")
-            continue
-        reason = _native_rejection(name, resolved, caps)
-        if reason is not None:
-            rejections.append(reason)
+    if profile is not None:
+        rejections.extend(_fk_group_rejections(profile, table))
 
     return NativeEligibility(accepted=not rejections, rejections=tuple(rejections))
+
+
+def _column_rejection(col: dict[str, Any], registry: Any) -> str | None:
+    """The coded reason a single config column cannot run natively, or None."""
+    name = col.get("name", "?")
+    strategy = col.get("strategy")
+    if not strategy:
+        return f"missing_strategy:{name}"
+    provider = col.get("provider")
+    resolved = _column_strategy_key(strategy, provider, registry)
+    if resolved == "<composite>":
+        # Matches the WorkNode path: a composite provider fans out to a
+        # multi-column node with an indeterminate per-column output type.
+        return f"composite_provider_multi_column:{name}:{provider}"
+    try:
+        caps = capabilities_for(resolved)
+    except KeyError:
+        return f"unclassified_strategy:{name}:{resolved}"
+    return _native_rejection(name, resolved, caps)
+
+
+def _fk_group_rejections(profile: Any, table: str) -> list[str]:
+    """Coded rejections for the FK-composite-group nodes on ``table``.
+
+    Evaluated through ``capabilities_for("<group>")`` and the same
+    ``_native_rejection`` logic ``compile_native_plan`` applies to the
+    ``composite_fk_group`` node, so the two verdicts match by construction. If
+    ``<group>``'s capabilities ever change to non-native, both APIs reject
+    together.
+    """
+    rejections: list[str] = []
+    caps = capabilities_for("<group>")
+    for rel in composite_fk_relationships(profile):
+        if rel.child_table != table:
+            continue
+        canonical_key = "__".join(sorted(rel.child_columns))
+        reason = _native_rejection(canonical_key, "<group>", caps)
+        if reason is not None:
+            rejections.append(reason)
+    return rejections
 
 
 def _native_rejection(name: str, strategy: str, caps: StrategyCapabilities) -> str | None:

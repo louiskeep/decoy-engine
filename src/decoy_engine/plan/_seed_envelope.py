@@ -21,7 +21,20 @@ from decoy_engine.plan._types import (
     SeedEnvelope,
     TableSeed,
 )
-from decoy_engine.profile._types import Profile
+from decoy_engine.profile._types import Profile, Relationship
+
+
+def composite_fk_relationships(profile: Profile) -> list[Relationship]:
+    """Relationships whose FK is composite (a multi-column parent key).
+
+    The single source of the composite-FK-group predicate: a composite FK
+    collapses its child columns into one ``GroupSeed`` on the child table's
+    ``per_group`` (so ``build_work_list`` emits a ``composite_fk_group`` node
+    for it, not per-column scalar nodes). The native planning boundary reads
+    this same helper so ``native_route_eligibility`` and ``compile_native_plan``
+    classify FK-group nodes identically, instead of re-inlining the rule.
+    """
+    return [rel for rel in profile.relationships if len(rel.parent_columns) > 1]
 
 
 def _build_seed_envelope(
@@ -71,7 +84,7 @@ def _build_seed_envelope(
                 config_tables[t_entry["name"]] = t_entry
 
     composite_child_cols: dict[str, set[str]] = {}
-    composite_rels = [rel for rel in profile.relationships if len(rel.parent_columns) > 1]
+    composite_rels = composite_fk_relationships(profile)
     for rel in composite_rels:
         composite_child_cols.setdefault(rel.child_table, set()).update(rel.child_columns)
 
