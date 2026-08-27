@@ -2,13 +2,24 @@
 
 This routes the REAL shipped engine draw at each catalogued site through that
 site's provider and asserts the provider reproduces the shipped output EXACTLY.
-It does not compare against a re-implemented reference: it imports the actual
-masking / generation / transform functions the existing seeded golden suites
-exercise (``_categorical`` / ``_faker`` / ``_apply_null_probability`` /
-``_reference`` in ``synthesize.py``; ``sample_column``; ``_apply_monotone_walk``;
-``apply_windowed_date``; ``ShuffleStrategyHandler``; ``hash_array``) and the
-keyed primitives (``derive`` / ``derive_index`` / ``derive_value``), runs them on
-fixed seeds, and drives the provider on the same identity.
+It NEVER compares a provider against a second copy of the same formula: every
+test invokes the actual shipped transform / handler / primitive and drives the
+provider on the same identity. The functions routed:
+
+- generation: ``_categorical`` / ``_faker`` / ``_apply_null_probability`` /
+  ``_reference`` (``synthesize.py``), ``sample_column`` (statistical).
+- masking transforms/handlers: ``ShuffleStrategyHandler``, ``hash_array``,
+  ``apply_group_key``, ``apply_bucket_perturb``, ``DateShiftStrategyHandler``,
+  ``CategoricalStrategyHandler`` (uniform + weighted), ``_pick_from_seq``
+  (code_set mask mode), ``ReferenceTable.keyed_row`` (joint_mask),
+  ``PoolSampler.sample`` (pool_deterministic + mask.faker), ``SsnAdapter``
+  (identifier), ``_apply_monotone_walk``, ``apply_windowed_date``.
+- mask.fpe is keyed-material: the provider emits the per-column Feistel KEY, and
+  the ciphertext is reproduced by driving that key through the SHIPPED
+  ``fpe_encrypt_value`` and matching the real ``FpeStrategyHandler`` output.
+
+18 sites reproduce the shipped OUTPUT byte-for-byte; mask.fpe reproduces the
+keyed material (Feistel arithmetic is transform semantics, deferred to Task 0.4).
 
 If any site fails to reproduce, that is a real finding: the fix is to correct
 the provider to match SHIPPED behavior (and the inventory entry), never to
@@ -20,14 +31,28 @@ The count of routed vectors is asserted so the gate cannot silently shrink.
 from __future__ import annotations
 
 import random
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
-from decoy_engine.determinism import IdentityDomain, derive, derive_index, derive_value
+from decoy_engine.determinism import derive
+from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine.execution._strategies._categorical import (
+    _WEIGHTED_CDF_RES,
+    CategoricalStrategyHandler,
+    _build_cdf,
+)
+from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
+from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
 from decoy_engine.execution.native._determinism_protocol import provider_for
+from decoy_engine.generation.pool import ValuePool
+from decoy_engine.generation.pool._cache import PoolCache
+from decoy_engine.generation.pool._canonicalize import _canonicalize_source
+from decoy_engine.generation.pool._cardinality import CardinalityMode
+from decoy_engine.generation.pool._sampler import PoolSampler
 from decoy_engine.generation.statistical._sample import (
     _cumulative,
     _is_integer_dtype,
@@ -46,7 +71,18 @@ from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 from decoy_engine.kernel._scalar import hash_array
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.providers_v2 import get_default_registry
+from decoy_engine.providers_v2._adapter import ProviderSpec
+from decoy_engine.providers_v2.identifiers._ssn import SsnAdapter, SsnDomain
+from decoy_engine.reference_tables import ReferenceTable
+from decoy_engine.relationships._graph import RelationshipGraph
+from decoy_engine.relationships._namespace import NamespaceRegistry
+from decoy_engine.transforms.bucket_perturb import _bucket_start_and_size, apply_bucket_perturb
+from decoy_engine.transforms.code_set import _pick_from_seq
+from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
+from decoy_engine.transforms.group_key import GroupKeyConfig, apply_group_key
 from decoy_engine.transforms.grouped_series import GroupedSeriesConfig, _apply_monotone_walk
+from decoy_engine.transforms.joint_mask import _KEYED_ROW_SOURCE
 from decoy_engine.transforms.windowed_date import (
     _DATE_FMT,
     WindowedDateConfig,
@@ -76,6 +112,32 @@ class _Ctx:
 
     job_seed = _MASK_KEY
     mask_key = _MASK_KEY
+
+
+def _full_ctx() -> StrategyContext:
+    """A real StrategyContext (mask_key defaults to job_seed = _MASK_KEY) for the
+    handlers that read more than mask_key (date_shift, categorical, fpe)."""
+    return StrategyContext(
+        registry=get_default_registry(),
+        pool_cache=PoolCache(),
+        relationship_graph=RelationshipGraph(edges=(), ordering=()),
+        namespace_registry=NamespaceRegistry(bindings=()),
+        job_seed=_MASK_KEY,
+    )
+
+
+def _mask_col(strategy: str, namespace: str, provider_config: tuple) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=namespace,
+        strategy=strategy,
+        provider=strategy,
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=provider_config,
+        coherent_with=(),
+    )
 
 
 def _shuffle_plan(namespace: str) -> ColumnSeed:
@@ -217,8 +279,6 @@ class TestCategoricalGolden:
 
 class TestReferenceGolden:
     def test_provider_reproduces_shipped_reference(self) -> None:
-        import pyarrow as pa
-
         col = {
             "name": "fk",
             "type": "reference",
@@ -309,48 +369,241 @@ class TestStatisticalPerRowGolden:
 
 
 # ---------------------------------------------------------------------------
-# source_keyed_hmac sites whose draw IS the keyed primitive: the provider
-# reproduces the exact call the shipped transform makes. Each is one vector.
+# source_keyed_hmac sites: route the REAL shipped transform / primitive and
+# assert the provider reproduces its output (or, for fpe, its keyed material
+# proven through the shipped Feistel). NO derive-vs-derive tautologies.
 # ---------------------------------------------------------------------------
 
 
-class TestSourceKeyedPrimitiveGoldens:
-    def test_derive_sites(self) -> None:
-        source = b"payload"
-        ns = "col/x"
-        for site_id in (
-            "mask.fpe",
-            "mask.date_shift",
-            "mask.bucket_perturb",
-            "mask.group_key",
-            "mask.joint_mask_keyed_row",
-        ):
-            assert provider_for(site_id).draw(_MASK_KEY, ns, source) == derive(
-                _MASK_KEY, ns, source
-            )
-            _record(site_id)
+class TestGroupKeyGolden:
+    def test_provider_reproduces_shipped_group_key(self) -> None:
+        ns = "group_key/household"
+        df = pd.DataFrame({"household": ["H1", "H2", "H1", "H3", "H2"]})
+        config = GroupKeyConfig(group_by="household", length=16, prefix="HH-")
+        shipped = apply_group_key(config, df, _MASK_KEY, ns)
 
-    def test_derive_index_sites(self) -> None:
-        source = b"CA"
-        ns = "col/state"
-        for site_id in (
-            "mask.categorical_deterministic",
-            "mask.code_set",
-            "gen.pool_deterministic",
-            "mask.faker",
-        ):
-            got = provider_for(site_id).draw(_MASK_KEY, ns, source, pool_size=64)
-            assert got == derive_index(_MASK_KEY, ns, source, pool_size=64)
-            _record(site_id)
+        p = provider_for("mask.group_key")
+        n_bytes = config.length // 2
+        reproduced = [
+            config.prefix + p.draw(_MASK_KEY, ns, str(v).encode("utf-8"))[:n_bytes].hex()
+            for v in df["household"]
+        ]
+        assert reproduced == shipped
+        _record("mask.group_key")
 
-    def test_derive_value_site(self) -> None:
-        source = b"123456789"
-        ns = "col/ssn"
-        got = provider_for("gen.identifier_deterministic").draw(
-            _MASK_KEY, ns, source, domain=IdentityDomain()
+
+class TestBucketPerturbGolden:
+    def test_provider_reproduces_shipped_bucket_perturb(self) -> None:
+        ns = "bucket/dob"
+        dates = ["2020-03-15", "2019-07-01", "2021-11-30", "2018-01-05"]
+        series = pd.Series(dates)
+        shipped = apply_bucket_perturb(series, "month", _MASK_KEY, ns, "%Y-%m-%d").tolist()
+
+        p = provider_for("mask.bucket_perturb")
+        reproduced = []
+        for value_str in dates:
+            date = datetime.strptime(value_str, "%Y-%m-%d").date()
+            bucket_start, bucket_size = _bucket_start_and_size(date, "month")
+            digest = p.draw(_MASK_KEY, ns, _canonicalize_source(value_str))
+            offset = int.from_bytes(digest[:8], "big") % bucket_size
+            reproduced.append((bucket_start + timedelta(days=offset)).strftime("%Y-%m-%d"))
+        assert reproduced == shipped
+        _record("mask.bucket_perturb")
+
+
+class TestDateShiftGolden:
+    def test_provider_reproduces_shipped_date_shift(self) -> None:
+        ns = "date_shift/visit"
+        dates = ["2020-01-10", "2021-06-20", "2019-12-31", "2022-02-28"]
+        df = pd.DataFrame({"visit": dates})
+        plan = _mask_col(
+            "date_shift",
+            ns,
+            (("date_format", "%Y-%m-%d"), ("max_days", 45), ("min_days", -45)),
         )
-        assert got == derive_value(_MASK_KEY, ns, source, domain=IdentityDomain())
+        out_df, _ = DateShiftStrategyHandler().run(df.copy(), "visit", plan, _full_ctx())
+        shipped = out_df["visit"].tolist()
+
+        p = provider_for("mask.date_shift")
+        min_days, max_days = -45, 45
+        range_size = max_days - min_days + 1
+        reproduced = []
+        for value_str in dates:
+            digest = p.draw(_MASK_KEY, ns, _canonicalize_source(value_str))
+            shift = min_days + (int.from_bytes(digest[:8], "big") % range_size)
+            reproduced.append(
+                (pd.Timestamp(value_str) + timedelta(days=shift)).strftime("%Y-%m-%d")
+            )
+        assert reproduced == shipped
+        _record("mask.date_shift")
+
+
+class TestCategoricalDeterministicGolden:
+    def test_provider_reproduces_shipped_uniform_categorical(self) -> None:
+        ns = "cat/state"
+        cats = ["CA", "NY", "TX", "WA", "OR"]
+        values = ["a", "b", "c", None, "a", "z"]
+        df = pd.DataFrame({"state": values})
+        plan = _mask_col("categorical", ns, (("categories", cats),))
+        out_df, _ = CategoricalStrategyHandler().run(df.copy(), "state", plan, _full_ctx())
+        shipped = out_df["state"].tolist()
+
+        p = provider_for("mask.categorical_deterministic")
+        reproduced = [
+            None
+            if v is None
+            else cats[p.draw(_MASK_KEY, ns, _canonicalize_source(v), pool_size=len(cats))]
+            for v in values
+        ]
+        assert reproduced == shipped
+        _record("mask.categorical_deterministic")
+
+    def test_provider_reproduces_shipped_weighted_categorical(self) -> None:
+        import bisect
+
+        ns = "cat/tier"
+        cats = ["free", "pro", "team"]
+        weights = [0.6, 0.3, 0.1]
+        values = ["u1", "u2", "u3", "u4", "u5"]
+        df = pd.DataFrame({"tier": values})
+        plan = _mask_col("categorical", ns, (("categories", cats), ("weights", weights)))
+        out_df, _ = CategoricalStrategyHandler().run(df.copy(), "tier", plan, _full_ctx())
+        shipped = out_df["tier"].tolist()
+
+        p = provider_for("mask.categorical_deterministic")
+        cdf = _build_cdf(weights)
+        reproduced = []
+        for v in values:
+            bucket = p.draw(_MASK_KEY, ns, _canonicalize_source(v), pool_size=_WEIGHTED_CDF_RES)
+            cat_idx = min(bisect.bisect_right(cdf, bucket), len(cats) - 1)
+            reproduced.append(cats[cat_idx])
+        assert reproduced == shipped
+
+
+class TestCodeSetGolden:
+    def test_provider_reproduces_shipped_pick_from_seq(self) -> None:
+        ns = "code_set/icd10"
+        seq = [{"code": f"E{i:02d}.{j}"} for i in range(5) for j in range(4)]
+        candidate_count = len(seq)
+        p = provider_for("mask.code_set")
+        for key_value in ("E11.9", "I10", "J45.909", "Z00.00"):
+            shipped = _pick_from_seq(
+                key_value, seq, None, candidate_count, mask_key=_MASK_KEY, namespace=ns
+            )
+            idx = p.select_index(_MASK_KEY, ns, key_value, candidate_count)
+            reproduced = str(seq[p.resolve_hole(idx, None)]["code"])
+            assert reproduced == shipped
+        _record("mask.code_set")
+
+
+class TestJointMaskGolden:
+    def test_provider_reproduces_shipped_keyed_row(self) -> None:
+        ns = "joint_mask/address"
+        table = ReferenceTable(
+            pa.table(
+                {
+                    "id": list(range(1, 21)),
+                    "city": [f"City{i}" for i in range(1, 21)],
+                }
+            ),
+            "addresses",
+        )
+        # Independent (real-shipped) hmac_key, fed to the real keyed_row.
+        hmac_key = derive(_MASK_KEY, ns, _KEYED_ROW_SOURCE)
+        p = provider_for("mask.joint_mask_keyed_row")
+        for key_value in ("masked-1", "masked-2", "masked-abc", "masked-xyz"):
+            shipped_row = table.keyed_row(key_value, hmac_key=hmac_key)
+            idx = p.row_index(_MASK_KEY, ns, key_value, table.row_count)
+            assert table.row(idx) == shipped_row
+        _record("mask.joint_mask_keyed_row")
+
+
+class TestPoolDeterministicGolden:
+    def test_providers_reproduce_shipped_pool_sampler(self) -> None:
+        ns = "pool/city"
+        pool = ValuePool(
+            values=np.array([f"V{i}" for i in range(32)], dtype=object),
+            provider="faker",
+            locale=None,
+            config_hash="abc",
+            seed=b"\x00" * 8,
+            size=32,
+            build_time_ms=1.0,
+            backend_type="faker",
+            backend_version="25.4.0",
+            distinct_count=32,
+        )
+        values = ["a", "b", None, "c", "a", "d"]
+        source = pd.Series(values)
+        shipped = (
+            PoolSampler()
+            .sample(
+                pool,
+                len(values),
+                mode=CardinalityMode.REUSE,
+                seed=_MASK_KEY,
+                source=source,
+                namespace=ns,
+                deterministic=True,
+            )
+            .tolist()
+        )
+
+        # gen.pool_deterministic and mask.faker both drive this per-row derive_index.
+        for site_id in ("gen.pool_deterministic", "mask.faker"):
+            p = provider_for(site_id)
+            reproduced = []
+            for v in values:
+                if v is None:
+                    reproduced.append(pd.NA)
+                    continue
+                idx = p.draw(_MASK_KEY, ns, _canonicalize_source(v), pool_size=pool.size)
+                reproduced.append(pool.values[idx])
+            assert [x for x in reproduced if x is not pd.NA] == [
+                x for x in shipped if x is not pd.NA
+            ]
+            # Null positions align too.
+            assert [x is pd.NA for x in reproduced] == [pd.isna(x) for x in shipped]
+            _record(site_id)
+
+
+class TestIdentifierDeterministicGolden:
+    def test_provider_reproduces_shipped_ssn_adapter(self) -> None:
+        ns = "identifier/ssn"
+        spec = ProviderSpec(locale=None, deterministic=True, namespace=ns, seed=_MASK_KEY, extra={})
+        p = provider_for("gen.identifier_deterministic")
+        for source in (b"123456789", b"987654321", b"555443333"):
+            shipped = SsnAdapter().generate("synthetic_ssn", spec=spec, source_value=source)
+            reproduced = p.draw(_MASK_KEY, ns, source, domain=SsnDomain(rng_config={}))
+            assert reproduced == shipped
         _record("gen.identifier_deterministic")
+
+
+class TestFpeKeyGolden:
+    def test_provider_key_reproduces_shipped_ciphertext(self) -> None:
+        # mask.fpe is keyed-material: the provider emits the per-column Feistel
+        # KEY; the ciphertext is reproduced by driving that key through the
+        # SHIPPED fpe_encrypt_value, and must equal the real handler's output.
+        ns = "fpe/acct"
+        col = "acct"
+        values = ["12345", "67890", None, "24680"]
+        df = pd.DataFrame({col: values})
+        plan = _mask_col("fpe", ns, (("charset", "digits"),))
+        out_df, _ = FpeStrategyHandler(chunk_count=1).run(df.copy(), col, plan, _full_ctx())
+        shipped = out_df[col].tolist()
+
+        p = provider_for("mask.fpe")
+        key = p.column_key(_MASK_KEY, ns)
+        charset = "".join(dict.fromkeys(_CHARSETS.get("digits", "digits")))
+        tweak = col.encode("utf-8", errors="replace")
+        reproduced = [
+            None if v is None else fpe_encrypt_value(str(v), key, charset, tweak, True, False, None)
+            for v in values
+        ]
+        # Null marker (None vs nan) is a pandas detail; compare non-null cells.
+        assert [r for r in reproduced if r is not None] == [s for s in shipped if not pd.isna(s)]
+        assert [r is None for r in reproduced] == [pd.isna(s) for s in shipped]
+        _record("mask.fpe")
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +638,12 @@ class TestGoldenGateCoverage:
             "gen.identifier_deterministic",
         }
         assert set(_ROUTED) == expected_sites
-        # 19 distinct sites, each routed exactly once.
+        # 19 distinct sites, each routed exactly once through the REAL shipped
+        # code. 18 reproduce the shipped OUTPUT byte-for-byte; mask.fpe is
+        # keyed-material (the provider emits the Feistel key, and the ciphertext
+        # is reproduced via the shipped fpe_encrypt_value driven by that key).
+        _keyed_material_only = {"mask.fpe"}
+        _reproduces_output = expected_sites - _keyed_material_only
+        assert len(_reproduces_output) == 18
         assert len(_ROUTED) == 19
         assert sorted(_ROUTED) == sorted(expected_sites)

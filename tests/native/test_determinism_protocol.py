@@ -29,6 +29,11 @@ from decoy_engine.execution.native._determinism_protocol import (
     unit_float_from_bits53,
 )
 from decoy_engine.execution.native._draw_site_providers import (
+    _CODE_SET_KEYED_SALT,
+    _FPE_KEY_LABEL,
+    _JOINT_MASK_KEYED_ROW_SOURCE,
+    _hmac_hex,
+    _hole_resolve,
     _span_key,
 )
 from decoy_engine.generators.derivation import GenDeriveContext
@@ -220,9 +225,9 @@ class TestMaskFormulaEmulation:
 
 
 class TestSourceKeyedEmulation:
-    def test_derive_sites_reproduce_digest(self) -> None:
+    def test_single_derive_sites_reproduce_digest(self) -> None:
         source = b"alice@example.com"
-        for site_id in ("mask.hash", "mask.fpe", "mask.date_shift", "mask.group_key"):
+        for site_id in ("mask.hash", "mask.date_shift", "mask.bucket_perturb", "mask.group_key"):
             got = provider_for(site_id).draw(_MASK_KEY, _NS, source)
             assert got == derive(_MASK_KEY, _NS, source)
 
@@ -238,6 +243,60 @@ class TestSourceKeyedEmulation:
             _MASK_KEY, _NS, source, domain=IdentityDomain()
         )
         assert got == derive_value(_MASK_KEY, _NS, source, domain=IdentityDomain())
+
+
+class TestCompoundSourceKeyedEmulation:
+    def test_fpe_column_key_uses_fixed_label_source(self) -> None:
+        # The Feistel key is per-COLUMN (source = the fixed FPE_KEY_LABEL), NOT
+        # a per-value derive. This is the bug the review caught.
+        p = provider_for("mask.fpe")
+        assert p.column_key(_MASK_KEY, _NS) == derive(_MASK_KEY, _NS, _FPE_KEY_LABEL)
+        # Two columns in the same namespace share the key (tweak, not key, varies).
+        assert p.column_key(_MASK_KEY, _NS) == p.column_key(_MASK_KEY, _NS)
+
+    def test_code_set_is_two_step_keyed_selection(self) -> None:
+        p = provider_for("mask.code_set")
+        key_value, candidate_count = "E11.9", 40
+        hmac_key = derive(_MASK_KEY, _NS or "code_set", _CODE_SET_KEYED_SALT)
+        expected = int(_hmac_hex(hmac_key, key_value)[:8], 16) % candidate_count
+        assert p.select_index(_MASK_KEY, _NS, key_value, candidate_count) == expected
+        # namespace None falls back to the "code_set" label, per shipped code.
+        assert p.hmac_key(_MASK_KEY, None) == derive(_MASK_KEY, "code_set", _CODE_SET_KEYED_SALT)
+
+    def test_joint_mask_is_two_step_keyed_row_index(self) -> None:
+        p = provider_for("mask.joint_mask_keyed_row")
+        key_value, row_count = "masked-pk-7", 128
+        hmac_key = derive(_MASK_KEY, _NS, _JOINT_MASK_KEYED_ROW_SOURCE)
+        expected = int(_hmac_hex(hmac_key, key_value)[:8], 16) % row_count
+        assert p.row_index(_MASK_KEY, _NS, key_value, row_count) == expected
+
+
+class TestShippedSymbolDrift:
+    """The compound providers inline three shipped constants and two shipped
+    utilities; these pins fail loudly if the shipped source ever changes."""
+
+    def test_constants_match_shipped(self) -> None:
+        from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
+        from decoy_engine.transforms.code_set import _KEYED_SALT
+        from decoy_engine.transforms.joint_mask import _KEYED_ROW_SOURCE
+
+        assert _FPE_KEY_LABEL == FPE_KEY_LABEL
+        assert _CODE_SET_KEYED_SALT == _KEYED_SALT
+        assert _JOINT_MASK_KEYED_ROW_SOURCE == _KEYED_ROW_SOURCE
+
+    def test_hmac_hex_matches_shipped(self) -> None:
+        from decoy_engine.internal.crypto import hmac_hex
+
+        for value in ("abc", "E11.9", "masked-pk-7", 12345):
+            assert _hmac_hex(_MASK_KEY, value) == hmac_hex(_MASK_KEY, value)
+        assert _hmac_hex(_MASK_KEY, None) is None and hmac_hex(_MASK_KEY, None) is None
+
+    def test_hole_resolve_matches_shipped(self) -> None:
+        from decoy_engine.transforms._codeset_index import hole_resolve
+
+        for idx in range(8):
+            for position in (None, 0, 1, 3, 7):
+                assert _hole_resolve(idx, position) == hole_resolve(idx, position)
 
 
 class TestTextMaskEmulation:

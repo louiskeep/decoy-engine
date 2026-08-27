@@ -404,6 +404,23 @@ ALLOWLIST: dict[str, int] = {
     # all (`quality.dp.fit_dp_snapshot` fits directly from the source
     # frame) -- bringing the module back to 589 lines, under the 600 cap,
     # so it is no longer allowlisted here. Do not re-add it without cause.
+    #
+    # Native program Task 0.1 (2026-08-27): the machine-checkable RNG draw-site
+    # inventory. This is a DATA module: 30 `DrawSite` dataclass literals, one per
+    # catalogued randomness draw, each carrying its exact seed derivation, call
+    # shape, and null rule verbatim from the code (that verbatim fidelity is the
+    # whole contract, so the entries cannot be abbreviated). Not orchestration.
+    # Decomposition target: split `DRAW_SITES` into `_draw_sites_mask.py` /
+    # `_draw_sites_gen.py` data siblings re-exported here if it grows further.
+    "src/decoy_engine/execution/native/_determinism_protocol.py": 927,
+    # Native program Task 0.3 (2026-08-27): one determinism PROVIDER per
+    # catalogued draw site (the registry that reproduces each shipped draw off
+    # the hot path). One small class per draw mechanism plus the per-site
+    # registry; the size is the 30-site fan-out, not tangled control flow.
+    # Decomposition target: split the provider families (numpy / python_mt /
+    # faker / source_keyed) into sibling modules re-exported through the
+    # registry when the next draw-site batch lands.
+    "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
 }
 
 

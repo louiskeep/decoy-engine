@@ -423,14 +423,37 @@ so the exclusion is deliberate, not an oversight:
 Task 0.3 builds one `DrawSiteProvider` per catalogued site
 (`execution/native/_draw_site_providers.py`, re-exported from
 `_determinism_protocol.py`) and proves via an exact goldens gate
-(`tests/native/test_determinism_goldens.py`) that each provider reproduces the
-sequence the current engine draws at that site. The gate routes the REAL
-shipped functions (`ShuffleStrategyHandler`, `hash_array`, `_apply_monotone_walk`,
-`apply_windowed_date`, `_categorical`, `_reference`, `_apply_null_probability`,
-`_faker`, `sample_column`) and the keyed primitives (`derive` / `derive_index` /
-`derive_value`) through the providers on fixed seeds; 19 seed-reproducible sites
-route as exact golden vectors and all reproduce byte-for-byte. The remaining
-sites are proven at the seed-derivation level in
+(`tests/native/test_determinism_goldens.py`) that each provider reproduces what
+the current engine draws at that site. Every gate test invokes the REAL shipped
+transform / handler / primitive (never a second copy of the same formula) and
+drives the provider on the same identity. 19 draw sites route through the
+shipped code:
+
+- 18 reproduce the shipped OUTPUT byte-for-byte: `mask.shuffle`
+  (`ShuffleStrategyHandler`), `mask.hash` (`hash_array`), `mask.group_key`
+  (`apply_group_key`), `mask.bucket_perturb` (`apply_bucket_perturb`),
+  `mask.date_shift` (`DateShiftStrategyHandler`), `mask.categorical_deterministic`
+  (`CategoricalStrategyHandler`, uniform + weighted), `mask.code_set`
+  (`_pick_from_seq`, mask mode), `mask.joint_mask_keyed_row`
+  (`ReferenceTable.keyed_row`), `gen.pool_deterministic` + `mask.faker`
+  (`PoolSampler.sample`), `gen.identifier_deterministic` (`SsnAdapter`),
+  `mask.grouped_series_monotone_walk` (`_apply_monotone_walk`), `mask.windowed_date`
+  (`apply_windowed_date`), `gen.categorical` / `gen.reference` /
+  `gen.null_probability` / `gen.faker_per_row` (`synthesize.py`),
+  `gen.statistical_per_row` (`sample_column`).
+- 1 is keyed-material: `mask.fpe`. The provider emits the per-column Feistel KEY
+  (`derive(mask_key, namespace, FPE_KEY_LABEL)`); the ciphertext is reproduced by
+  driving that key through the shipped `fpe_encrypt_value` and matching the real
+  `FpeStrategyHandler` output. The Feistel arithmetic is transform semantics,
+  deferred to Task 0.4's pure-Python reference.
+
+The compound source-keyed sites (`mask.fpe` key, `mask.code_set` and
+`mask.joint_mask_keyed_row` two-step keyed selection) have dedicated providers
+that reproduce the shipped derivation exactly, including the correct key source
+(a fixed `FPE_KEY_LABEL`, an intermediate `_KEYED_SALT` / `_KEYED_ROW_SOURCE`
+`derive` step, and the `hmac_hex` modular selection). Drift tests pin the three
+inlined byte-constants and the inlined `hmac_hex` / `hole_resolve` to the shipped
+symbols. The remaining sites are proven at the seed-derivation level in
 `tests/native/test_determinism_protocol.py`: whole-column and per-group global
 sites (`mask.shuffle`, `mask.grouped_series_monotone_walk`, `gen.categorical`,
 `gen.reference`, `gen.null_probability`, `gen.distribution_snapshot`,

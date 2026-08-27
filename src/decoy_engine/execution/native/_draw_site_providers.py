@@ -277,6 +277,132 @@ class TextMaskDateShiftProvider(DrawSiteProvider):
 
 
 # ---------------------------------------------------------------------------
+# source_keyed_hmac COMPOUND sites: the draw is a two-step keyed derivation
+# (a derive() key, then an HMAC-hex modular selection) or a fixed-label column
+# key. A single derive() call cannot express these, so each is its own provider
+# that reproduces the EXACT keyed material the shipped transform computes. The
+# downstream arithmetic (Feistel rounds for fpe; hole-resolve for code_set) is
+# transform semantics, not randomness, and stays with the transform / Task 0.4.
+#
+# The three byte-constants below are cited from the shipped modules; a drift
+# test (test_determinism_protocol.py) asserts each equals the shipped symbol.
+# hmac_hex / hole_resolve are reimplemented inline (they are three-line pure
+# utilities) rather than imported, to keep this frozen protocol module free of
+# a heavy transforms-package import cycle; drift tests pin both to the shipped
+# implementations byte-for-byte.
+# ---------------------------------------------------------------------------
+
+# execution/_strategies/_fpe.py:56 (FPE_KEY_LABEL).
+_FPE_KEY_LABEL = b"fpe-key/v1"
+# transforms/code_set.py:132 (_KEYED_SALT).
+_CODE_SET_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
+# transforms/joint_mask.py:64 (_KEYED_ROW_SOURCE).
+_JOINT_MASK_KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
+
+
+def _hmac_hex(key: bytes, value: Any) -> str | None:
+    """HMAC-SHA256(key, str(value)) hex. Mirrors ``internal/crypto.py:hmac_hex``."""
+    if value is None:
+        return None
+    return hmac.new(key, str(value).encode("utf-8", errors="replace"), hashlib.sha256).hexdigest()
+
+
+def _hole_resolve(idx: int, position: int | None) -> int:
+    """Map an index into ``seq`` minus the hole at ``position`` back to ``seq``.
+
+    Mirrors ``transforms/_codeset_index.py:hole_resolve`` exactly.
+    """
+    if position is None or idx < position:
+        return idx
+    return idx + 1
+
+
+class FpeKeyProvider(DrawSiteProvider):
+    """``mask.fpe``: the per-column Feistel KEY (arithmetic deferred to Task 0.4).
+
+    Shipped FPE derives ONE key per ``(mask_key, namespace)`` as
+    ``derive(mask_key, namespace, FPE_KEY_LABEL)`` (a fixed label, NOT a per-value
+    source), then applies an 8-round HMAC-SHA256 Feistel permutation with the
+    column name as the tweak (``execution/_strategies/_fpe.py:135``). This
+    provider reproduces the KEY only; the Feistel arithmetic is the transform's
+    (and Task 0.4's pure-Python reference). The key is source-independent, so
+    partitionable.
+    """
+
+    draw_site_id = "mask.fpe"
+
+    def column_key(self, mask_key: bytes, namespace: str) -> bytes:
+        return derive(mask_key, namespace, _FPE_KEY_LABEL)
+
+    def partitioned_draw(self, mask_key: bytes, namespace: str) -> bytes:
+        self.assert_partitionable()
+        return self.column_key(mask_key, namespace)
+
+
+class CodeSetKeyedSelectProvider(DrawSiteProvider):
+    """``mask.code_set`` (mask mode): two-step keyed selection index.
+
+    Shipped mask-mode selection (``transforms/code_set.py:_pick_from_seq``):
+    ``hmac_key = derive(mask_key, namespace or "code_set", _KEYED_SALT)``, then
+    ``idx = int(hmac_hex(hmac_key, key_value)[:8], 16) % candidate_count``, then
+    ``seq[hole_resolve(idx, position)]``. Keyed on the masked key value, so
+    partitionable. (Gen mode is a separate ``derive_index(job_seed, ...)`` path;
+    the strategy's primary draw is the mask-mode selection reproduced here.)
+    """
+
+    draw_site_id = "mask.code_set"
+
+    def hmac_key(self, mask_key: bytes, namespace: str | None) -> bytes:
+        return derive(mask_key, namespace or "code_set", _CODE_SET_KEYED_SALT)
+
+    def select_index(
+        self, mask_key: bytes, namespace: str | None, key_value: str, candidate_count: int
+    ) -> int:
+        hex_digest = _hmac_hex(self.hmac_key(mask_key, namespace), key_value)
+        if hex_digest is None:
+            raise ValueError("hmac_hex returned None for a non-None key_value")
+        return int(hex_digest[:8], 16) % candidate_count
+
+    def resolve_hole(self, idx: int, position: int | None) -> int:
+        return _hole_resolve(idx, position)
+
+    def partitioned_draw(
+        self, mask_key: bytes, namespace: str | None, key_value: str, candidate_count: int
+    ) -> int:
+        self.assert_partitionable()
+        return self.select_index(mask_key, namespace, key_value, candidate_count)
+
+
+class JointMaskKeyedRowProvider(DrawSiteProvider):
+    """``mask.joint_mask_keyed_row``: two-step keyed reference-row index.
+
+    Shipped selection (``reference_tables/_types.py:keyed_row`` via
+    ``transforms/joint_mask.py``): ``hmac_key = derive(mask_key, namespace,
+    _KEYED_ROW_SOURCE)``, then ``index = int(hmac_hex(hmac_key, key_value)[:8], 16)
+    % row_count`` into the id-sorted table. Keyed on the masked key value, so
+    partitionable (deterministic WITHIN a table version only; the index shifts if
+    ``row_count`` changes).
+    """
+
+    draw_site_id = "mask.joint_mask_keyed_row"
+
+    def hmac_key(self, mask_key: bytes, namespace: str) -> bytes:
+        return derive(mask_key, namespace, _JOINT_MASK_KEYED_ROW_SOURCE)
+
+    def row_index(self, mask_key: bytes, namespace: str, key_value: str, row_count: int) -> int:
+        hex_digest = _hmac_hex(self.hmac_key(mask_key, namespace), key_value)
+        if hex_digest is None:
+            raise ValueError("hmac_hex returned None for a non-None key_value")
+        return int(hex_digest[:8], 16) % row_count
+
+    def partitioned_draw(
+        self, mask_key: bytes, namespace: str, key_value: str, row_count: int
+    ) -> int:
+        self.assert_partitionable()
+        return self.row_index(mask_key, namespace, key_value, row_count)
+
+
+# ---------------------------------------------------------------------------
 # numpy_pcg64 whole-column streams: NON-partitionable (stream-positional).
 # ---------------------------------------------------------------------------
 
@@ -731,16 +857,15 @@ class UnseededProvider(DrawSiteProvider):
 # The registry: exactly one provider instance per catalogued draw_site_id.
 # ---------------------------------------------------------------------------
 
-# Which keyed primitive each source_keyed_hmac site draws through.
+# Which keyed primitive each SINGLE-primitive source_keyed_hmac site draws
+# through. The compound sites (fpe key, code_set / joint_mask two-step keyed
+# selection) have their own dedicated providers above, not this generic map.
 _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "mask.hash": "derive",
-    "mask.fpe": "derive",
     "mask.date_shift": "derive",
     "mask.bucket_perturb": "derive",
     "mask.group_key": "derive",
-    "mask.joint_mask_keyed_row": "derive",
     "mask.categorical_deterministic": "derive_index",
-    "mask.code_set": "derive_index",
     "gen.pool_deterministic": "derive_index",
     "mask.faker": "derive_index",
     "gen.identifier_deterministic": "derive_value",
@@ -765,6 +890,9 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     TextMaskDateShiftProvider,
     FakerPoolBuildProvider,
     GenDeriveContextProvider,
+    FpeKeyProvider,
+    CodeSetKeyedSelectProvider,
+    JointMaskKeyedRowProvider,
 )
 
 # Unseeded, non-deterministic-by-contract sites.
@@ -828,6 +956,7 @@ if _CATALOGUED_IDS != _REGISTERED_IDS:
 
 __all__ = [
     "CategoricalChoicesProvider",
+    "CodeSetKeyedSelectProvider",
     "CompositeBuildPoolProvider",
     "DistributionSnapshotProvider",
     "DrawSiteProtocolError",
@@ -835,8 +964,10 @@ __all__ = [
     "FakerPerRowProvider",
     "FakerPoolBuildProvider",
     "FormulaPerRowProvider",
+    "FpeKeyProvider",
     "GenDeriveContextProvider",
     "GroupedSeriesWalkProvider",
+    "JointMaskKeyedRowProvider",
     "MaskFormulaProvider",
     "NullProbabilityProvider",
     "PoolNonDeterministicProvider",
