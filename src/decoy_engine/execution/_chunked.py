@@ -275,6 +275,7 @@ def run_mask_pipeline_chunked(
     vault_writer: Any = None,
     chunk_result_sink: list[Any] | None = None,
     key_provider: Any = None,
+    base_row_offset: int = 0,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -301,6 +302,11 @@ def run_mask_pipeline_chunked(
     figures) can aggregate it without this iterator changing its yielded
     type. The auto-chunk route in `run_pipeline` uses it to keep
     warnings and timings from being dropped on routed jobs.
+
+    `base_row_offset` seeds a running row-position counter that advances
+    by each chunk's row count; it is inert here (the Phase 1 admitted set
+    is diagnostics-free) and exists so a later phase can globalize
+    per-chunk diagnostic indices from a caller-supplied starting position.
 
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
@@ -396,6 +402,9 @@ def run_mask_pipeline_chunked(
     )
 
     def _masked() -> Iterator[pa.Table]:
+        # Foundation-only counter (no later-phase globalizer consumes it yet):
+        # tracked here so the plumbing exists before it is needed.
+        row_offset = base_row_offset
         for chunk in _chain_first(first, chunk_iter):
             if guard_passthrough_fk_columns:
                 reject_lossy_chunked_fk_passthrough(
@@ -437,6 +446,7 @@ def run_mask_pipeline_chunked(
                 from decoy_engine.errors import RowErrorsFailedError
 
                 raise RowErrorsFailedError(result.row_errors)
+            row_offset = _advance_row_offset(row_offset, chunk)
             masked = result.outputs[table]
             if vault_writer is not None:
                 from decoy_engine.vault import collect_vault_entries
@@ -622,3 +632,12 @@ def aggregate_chunk_timings(chunk_results: list[Any]) -> tuple[Any, ...]:
 def _chain_first(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:
     yield first
     yield from rest
+
+
+def _advance_row_offset(offset: int, chunk: pa.Table) -> int:
+    """Advance the running row-position counter past one chunk.
+
+    Its own function, not inlined arithmetic, so a later phase's
+    diagnostic-index globalizer has one call site to extend.
+    """
+    return offset + chunk.num_rows
