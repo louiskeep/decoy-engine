@@ -692,3 +692,58 @@ class TestSignalNameGuard:
 
         assert _signal_name(None) is None
         assert _signal_name(0) is None
+
+
+# --------------------------------------------------------------------------
+# Re-entry guard: an isolated child's `run_pipeline` can re-enter the routing
+# layer (probe/governor), which calls `run_pipeline_isolated` again. With no
+# "already isolated" guard, each level spawns another child -- a self-
+# multiplying subprocess chain that saturated the host and had to be killed by
+# hand (engine-efficiency streaming qualification, 2026-08-28). The marker set
+# on every spawned child lets `run_pipeline_isolated` detect re-entry and run
+# in-process instead of spawning a grandchild.
+# --------------------------------------------------------------------------
+
+_REENTRY_ENV = "DECOY_INSIDE_ISOLATED_WORKER"
+
+
+class TestIsolationReentryGuard:
+    def test_reentry_marker_forces_in_process_instead_of_spawning(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(_REENTRY_ENV, "1")
+
+        def _no_spawn(*args, **kwargs):
+            raise AssertionError(
+                "run_pipeline_isolated spawned a subprocess from inside an "
+                "isolated worker -- the self-multiplying grandchild runaway"
+            )
+
+        monkeypatch.setattr("decoy_engine.execution._isolated_run.subprocess.Popen", _no_spawn)
+
+        cfg = _mask_config(tmp_path, n_cols=1)
+        sources = _mask_sources(tmp_path, n_rows=10, n_cols=1)
+        result = run_pipeline_isolated(cfg, sources, engine_version=_ENGINE_VERSION, isolate=True)
+
+        assert result.outcome == "completed"
+        assert result.isolated is False
+        assert result.outputs is not None
+        assert result.outputs["customers"].num_rows == 10
+
+    def test_spawned_child_env_carries_the_reentry_marker(self, tmp_path, monkeypatch):
+        import decoy_engine.execution._isolated_run as iso
+
+        captured: dict[str, dict[str, str] | None] = {}
+        real_popen = iso.subprocess.Popen
+
+        def _spy_popen(cmd, *args, env=None, **kwargs):
+            captured["env"] = env
+            return real_popen(cmd, *args, env=env, **kwargs)
+
+        monkeypatch.setattr(iso.subprocess, "Popen", _spy_popen)
+
+        cfg = _mask_config(tmp_path, n_cols=1)
+        sources = _mask_sources(tmp_path, n_rows=10, n_cols=1)
+        result = run_pipeline_isolated(cfg, sources, engine_version=_ENGINE_VERSION, isolate=True)
+
+        assert result.isolated is True
+        assert captured["env"] is not None
+        assert captured["env"].get(_REENTRY_ENV) == "1"

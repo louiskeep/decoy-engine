@@ -87,6 +87,7 @@ from decoy_engine.execution._isolated_commit import (
 from decoy_engine.execution._isolated_commit import signal_name as _signal_name
 from decoy_engine.execution._isolated_common import (
     CAPPED_ENV,
+    ISOLATED_WORKER_ENV,
     RESULT_FILENAME,
     RLIMIT_KINDS,
     IsolatedRunOutcome,
@@ -191,14 +192,31 @@ def run_pipeline_isolated(
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
 
-    if not isolate:
-        _logger.warning(
-            "run_pipeline_isolated(isolate=False): running in-process -- "
-            "no governor, no per-job peak, no fresh-execve HWM isolation "
-            '(spec §12 ruling 2, "option c"). peak_rss_mb below is this '
-            "process's own contaminated high-water mark, not a clean "
-            "per-job sample; do not feed it into telemetry recalibration."
-        )
+    # Re-entry guard: a child this primitive spawns carries ISOLATED_WORKER_ENV
+    # (see `_spawn_and_classify`). If `run_pipeline`'s routing layer inside that
+    # child re-enters here (probe/governor), spawning again would start a self-
+    # multiplying subprocess chain that saturates the host. Degrade to in-process
+    # instead -- the re-entrant probe then reports a non-isolated measurement and
+    # routing falls back to the in-process estimator, so the chain stops at
+    # depth 1 (marker's docstring in `_isolated_common` has the full account).
+    already_isolated = isolate and os.environ.get(ISOLATED_WORKER_ENV) == "1"
+    if not isolate or already_isolated:
+        if already_isolated:
+            _logger.warning(
+                "run_pipeline_isolated(isolate=True) re-entered from inside an "
+                "isolated worker (%s set): running in-process to prevent a self-"
+                "multiplying subprocess chain. peak_rss_mb below is this process's "
+                "own contaminated high-water mark, not a clean per-job sample.",
+                ISOLATED_WORKER_ENV,
+            )
+        else:
+            _logger.warning(
+                "run_pipeline_isolated(isolate=False): running in-process -- "
+                "no governor, no per-job peak, no fresh-execve HWM isolation "
+                '(spec §12 ruling 2, "option c"). peak_rss_mb below is this '
+                "process's own contaminated high-water mark, not a clean "
+                "per-job sample; do not feed it into telemetry recalibration."
+            )
         output_dir_path = Path(output_dir) if output_dir is not None else None
         return _run_in_process(config, sources, run_pipeline_kwargs, output_dir_path)
 
@@ -391,7 +409,11 @@ def _spawn_and_classify(
     # _CAPPED_ENV must land BEFORE the child interpreter starts: glibc reads
     # MALLOC_ARENA_MAX at startup and pyarrow reads ARROW_DEFAULT_MEMORY_POOL
     # at import, so `env=` at spawn time is the only place this can work.
-    env = {**os.environ, **CAPPED_ENV}
+    # ISOLATED_WORKER_ENV marks the child as "inside an isolated worker" so a
+    # re-entrant `run_pipeline_isolated` call (probe/governor routing inside
+    # the child's `run_pipeline`) runs in-process instead of spawning a
+    # grandchild -- see that marker's docstring for the runaway it prevents.
+    env = {**os.environ, **CAPPED_ENV, ISOLATED_WORKER_ENV: "1"}
     proc = subprocess.Popen(  # noqa: S603
         cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 __all__ = [
+    "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
     "RLIMIT_KINDS",
     "IsolatedRunOutcome",
@@ -48,6 +49,18 @@ __all__ = [
     "is_memory_failure",
     "peak_rss_mb",
 ]
+
+# Set in the environment of every child `run_pipeline_isolated` spawns. A
+# worker's `run_pipeline` can re-enter the routing layer (probe/governor),
+# which calls `run_pipeline_isolated` again -- with no "already isolated"
+# signal, each level spawns another child, a self-multiplying subprocess
+# chain that saturated the host and had to be killed by hand (engine-
+# efficiency streaming qualification, 2026-08-28). `run_pipeline_isolated`
+# reads this marker and runs in-process instead of spawning when it is
+# already inside an isolated worker, which breaks the chain at depth 1 (the
+# re-entrant probe then reports a non-isolated measurement and routing falls
+# back to the in-process estimator, never a grandchild).
+ISOLATED_WORKER_ENV = "DECOY_INSIDE_ISOLATED_WORKER"
 
 # The envelope transport contract (dennis review HIGH-1): a known FILE in
 # work_root, never the last line of stdout. Any extra child stdout (atexit
