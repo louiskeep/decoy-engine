@@ -151,16 +151,30 @@ class TestBaseRowOffsetInert:
 
 
 class TestFailClosedUnchangedWithOffset:
-    def test_row_error_still_raises_with_base_row_offset_present(self, tmp_path) -> None:
+    def test_row_error_still_raises_with_base_row_offset_present(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """Reuses the shared config builder from the parity suite rather
         than duplicating a fail-closed fixture; base_row_offset must not
         touch the row-error path (defense in depth against a future
-        globalizer swallowing it)."""
+        globalizer swallowing it). Spies on the advance step to pin the
+        raise-before-advance ordering: a rejected chunk must raise before
+        the counter moves, so a later globalizer never attributes positions
+        to a chunk that failed closed."""
         cfg = _config(
             tmp_path,
             [{"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}}],
         )
         chunk = pa.table({"age": pa.array(["23", "not-a-number"], type=pa.string())})
+
+        advance_calls: list[int] = []
+        real_advance = _chunked._advance_row_offset
+
+        def _spy(offset: int, chunk: pa.Table) -> int:
+            advance_calls.append(offset)
+            return real_advance(offset, chunk)
+
+        monkeypatch.setattr(_chunked, "_advance_row_offset", _spy)
 
         with pytest.raises(RowErrorsFailedError) as exc_info:
             list(
@@ -173,3 +187,7 @@ class TestFailClosedUnchangedWithOffset:
                 )
             )
         assert exc_info.value.records[0].trigger == "format_error"
+        # The rejected chunk never advances the counter: the row-error gate
+        # raises before _advance_row_offset runs. If that order ever flips,
+        # advance_calls becomes [50] and this test fails.
+        assert advance_calls == []
