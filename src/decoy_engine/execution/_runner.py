@@ -28,6 +28,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._types import ColumnSeed, GroupSeed
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.native._requirements import NodeRequirements
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
@@ -46,10 +47,30 @@ class WorkNode:
     strategy: str
     provider: str | None  # None for scalar transforms (hash/redact/...); see ColumnSeed
     plan_slice: ColumnSeed | GroupSeed
+    # Native planning boundary (Task 0.2b): the resolved native execution
+    # requirements for this node, attached inertly at native-plan compile time.
+    # None on every existing execution path (build_work_list never sets it), so
+    # this is pure addition: no route reads it, and byte output is unchanged.
+    requirements: NodeRequirements | None = None
 
     @property
     def key(self) -> _NodeKey:
         return (self.table, self.columns)
+
+
+def provider_is_composite(provider: str | None, registry: ProviderRegistry) -> bool:
+    """Whether a column's provider fans out to a multi-column composite node.
+
+    The single source of the provider-composite predicate: a registry-bound
+    provider whose capability ``backend_type == "composite"``. ``build_work_list``
+    uses it to set ``WorkNode.kind == "composite"``, and the native planning
+    boundary reads the same helper so ``native_route_eligibility`` and
+    ``compile_native_plan`` never disagree on whether a column is composite.
+    Null-guarded before ``registry.has``, which expects a provider string.
+    """
+    if not provider or not registry.has(provider):
+        return False
+    return registry.get_capabilities(provider).backend_type == "composite"
 
 
 def build_work_list(plan: Plan, registry: ProviderRegistry) -> list[WorkNode]:
@@ -58,22 +79,13 @@ def build_work_list(plan: Plan, registry: ProviderRegistry) -> list[WorkNode]:
     Covers single-table no-FK jobs (which `plan.ordering` does not). Composite
     output columns collapse into one bundle node keyed on the sorted union of
     (column + its coherent_with); a composite is recognized by
-    `registry.get_capabilities(provider).backend_type == "composite"`.
+    `provider_is_composite` (registry `backend_type == "composite"`).
     """
     work: list[WorkNode] = []
     for table, table_seed in plan.seed_envelope.per_table:
         composite_groups: dict[_NodeKey, list[ColumnSeed]] = {}
         for col_name, col_seed in table_seed.per_column:
-            # Scalar transform strategies (hash/redact/truncate/passthrough/...) carry
-            # NO provider (None) and read their settings from provider_config; only
-            # registry-bound providers can be composites, so guard the capability lookup
-            # (null-guard before registry.has, which expects a provider string).
-            caps = (
-                registry.get_capabilities(col_seed.provider)
-                if col_seed.provider and registry.has(col_seed.provider)
-                else None
-            )
-            if caps is not None and caps.backend_type == "composite":
+            if provider_is_composite(col_seed.provider, registry):
                 group_cols = tuple(sorted({col_name, *col_seed.coherent_with}))
                 composite_groups.setdefault((table, group_cols), []).append(col_seed)
             else:
