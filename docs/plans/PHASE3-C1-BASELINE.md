@@ -319,3 +319,93 @@ column. This is a sanity check on the threshold formula, not on the oracle
 non-negative margin, a failure here would mean the threshold was computed
 against the wrong tier or column, not that the oracle exceeded its own
 bar.
+
+## Measured results (Step 5) + oracle self-check (Step 6)
+
+Pinned oracle (`substrate="pandas"`, `execution_mode="full_frame"`,
+`auto_chunk=False`), fixed seed 20260830, fixed 32-byte mask key. RSS is
+external `VmHWM`, staged via fresh-process prefix runs (each stage's delta is
+the difference of consecutive prefix high-water marks). Raw:
+`/tmp/c1_final_parity.json`, `/tmp/c1_final_memory.json`.
+
+### Parity tier (10,000 rows, 5 reps + 1 warmup)
+
+- Wall: median 2.944 s, IQR 0.015 s.
+- Throughput: hash 87,501 rows/s/col; faker (selection) 15,031 rows/s/col.
+- Staged peak RSS (KB/1000 = MB): input_load 117.9, +pool_build 80.0,
+  +selection 5.6, +publication 20.2; total 223.7 MB.
+
+### Memory tier (3,000,000 rows, 3 reps + 1 warmup)
+
+- Wall: median 398.79 s, IQR 15.21 s.
+- Throughput: hash 81,330 rows/s/col; faker (selection) 91,565 rows/s/col.
+- Staged peak RSS (KB/1000 = MB): input_load 689.9, +pool_build 82.5,
+  +selection 1,313.7, +publication 3,668.4; total 5,754.5 MB (5.75 GiB),
+  peak observed across reps ~5.75 GiB (well under the 6.8 GiB harness abort
+  and 8 GiB policy ceilings; matches the ~5.2 GiB calibration projection plus
+  run variance).
+
+The staged attribution is the evidence for the plan's corrected rationale:
+the oracle's memory is NOT the pool build (a flat +82 MB at both tiers, the
+pool is bounded), it is the full-frame residency plus the whole-column
+sampler temporaries. At 3M rows the selection stage alone adds +1.31 GiB
+(the sampler's `source.tolist()` / output list / sampled Series) and
+publication adds +3.67 GiB (the full masked output held before write). Both
+scale with row count; that scaling is exactly what the Task 3.1 native route
+removes by streaming in 50,000-row chunks.
+
+### pool_quality (both tiers)
+
+The synthetic source generator caps distinct source values per faker column
+(1,000 FIRST, 1,200 LAST, 360 MAIDEN) independent of row count, so the
+collision and pool-duplicate rates are IDENTICAL at both tiers. The per-tier
+threshold mechanism still applies; it just happens the two tiers coincide
+here.
+
+| Column | distinct_sources | collision_rate | pool_duplicate_rate | non_deterministic_sources |
+|---|---|---|---|---|
+| FIRST | 1,000 | 0.6430 | 0.9338 | 0 |
+| LAST | 1,200 | 0.5617 | 0.9013 | 0 |
+| MAIDEN | 360 | 0.2944 | 0.9017 | 0 |
+
+The rates are high because these providers have a small output vocabulary
+(`person_first_name` yields ~662 distinct values in a 10,000-slot pool, so
+distinct sources necessarily share fake names). This is inherent to masking a
+high-cardinality column with a low-cardinality fake vocabulary, not a defect:
+`pool_quality` gates the native route at the oracle's OWN rate plus a margin,
+so the native route must REPRODUCE this behavior, not achieve low collisions.
+`non_deterministic_sources` is 0 for every column at both tiers: the
+deterministic sampler never maps one source value to two outputs.
+
+### Frozen per-tier thresholds (oracle rate + m, m = 0.02)
+
+Same at both tiers (rates coincide, above). Task 3.6 checks Task 3.1's native
+route against these:
+
+| Column | collision_rate <= | pool_duplicate_rate <= |
+|---|---|---|
+| FIRST | 0.6630 | 0.9538 |
+| LAST | 0.5817 | 0.9213 |
+| MAIDEN | 0.3144 | 0.9217 |
+
+UNIQUE-feasibility is N/A (reuse-only C1 scope) for every column, recorded
+explicitly.
+
+### Step 6: oracle self-check (PASS)
+
+The pinned oracle passes its own per-tier `pool_quality` threshold at every
+tier and every faker column, by construction: each threshold is the oracle's
+observed rate plus a non-negative margin, so `observed <= observed + 0.02`
+holds trivially. The measurement QC (`non_deterministic_sources == 0`) also
+passes for all three columns at both tiers, confirming the deterministic
+selection is single-valued per source. No threshold was computed against the
+wrong tier or column.
+
+### JC-3 baseline anchor (for Task 3.6)
+
+The native route's wall non-regression bound is `<= 1.25x` the oracle median:
+`<= 3.68 s` at the parity tier, `<= 498.5 s` at the memory tier. Its absolute
+peak-RSS ceiling is 8,192 MB HARD, and its flatness bound is native memory-tier
+peak `<= 1.5x` its parity-tier peak. The oracle's own 25.7x RSS growth
+(223.7 MB -> 5,754.5 MB across the 300x row increase) is the baseline the
+native route must flatten.
