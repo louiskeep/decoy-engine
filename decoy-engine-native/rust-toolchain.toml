@@ -1,0 +1,5 @@
+# Pinned stable toolchain for reproducible companion builds (build hosts and
+# CI runners only; the core decoy-engine package needs no Rust at all).
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

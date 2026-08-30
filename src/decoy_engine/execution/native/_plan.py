@@ -9,13 +9,27 @@ fallback policy. This module produces that object and attaches the resolved
 requirements to each ``WorkNode`` inertly (nothing routes on them in Phase 0).
 
 ``native_route_eligibility`` is the public compatibility query the platform's
-``classify_streaming_eligibility`` consults instead of hard-coding a strategy
-set. It is config-only (it is handed a config and a table name, not a profile),
-so it reads ``StrategyCapabilities`` per column rather than recompiling: a
+streaming-eligibility path is intended to consult instead of hard-coding a
+strategy set. It is not yet wired into production routing (the platform's
+``classify_streaming_eligibility`` currently routes on chunked-compatibility;
+adopting this query is Task 2.7's integration). It reads
+``StrategyCapabilities`` per column rather than recompiling: a
 strategy is native-eligible when its output type is static AND it is row-local
 AND it needs no whole-column pass or durable global row number. Every miss is a
 coded rejection, so the platform gets machine-readable reasons and the set can
 never silently drift from the live strategy registry.
+
+The capability check alone is strategy-only: it says nothing about whether
+THIS column's resolved config or input type is one the native kernel can
+actually run. A `hash` column over a float or a tz-naive timestamp, an
+invalid `truncate` length/keep/mask_char, or a non-string `redact_with`
+would all pass the capability check and then fail mid-execution instead of
+rerouting to the oracle at preflight. `profile` is optional for the
+capability-only classification (composite/FK-aware, config-only); passing
+it additionally unlocks the input-type check for `hash` (it needs the
+source schema to resolve a column's Arrow type). Omitting it defers that
+one check rather than guessing -- documented on `hash_config_rejection`
+in `_requirements.py`.
 """
 
 from __future__ import annotations
@@ -36,7 +50,11 @@ from decoy_engine.execution.native._capabilities import (
 )
 from decoy_engine.execution.native._requirements import (
     NodeRequirements,
+    hash_config_rejection,
+    native_kernel_rejection,
+    redact_config_rejection,
     requirements_for,
+    truncate_config_rejection,
 )
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._seed_envelope import composite_fk_relationships
@@ -213,7 +231,7 @@ def native_route_eligibility(
         if table_cfg.get("generate_columns"):
             rejections.append("generation_not_native_route:generate_columns")
         for col in table_cfg.get("columns", ()):
-            reason = _column_rejection(col, registry)
+            reason = _column_rejection(col, registry, table=table, profile=profile)
             if reason is not None:
                 rejections.append(reason)
 
@@ -223,8 +241,28 @@ def native_route_eligibility(
     return NativeEligibility(accepted=not rejections, rejections=tuple(rejections))
 
 
-def _column_rejection(col: dict[str, Any], registry: Any) -> str | None:
-    """The coded reason a single config column cannot run natively, or None."""
+def _column_rejection(
+    col: dict[str, Any], registry: Any, *, table: str, profile: Any | None
+) -> str | None:
+    """The coded reason a single config column cannot run natively, or None.
+
+    Alongside the capability gate, a strategy must have an actual compiled
+    native kernel (`native_kernel_rejection`): row-local, static-typed
+    capabilities describe many strategies (fpe, date_shift, bucketize among
+    them) that have no kernel built yet, and admitting those here would let
+    Task 2.7's dispatch reach a strategy it has nothing to run. The
+    capability check runs first so a column failing both gates gets the
+    more specific capability reason (e.g. `output_type_indeterminate`) over
+    the blanket `no_native_kernel`; a column that passes capabilities but
+    still lacks a kernel gets `no_native_kernel`. After both gates pass, the
+    admitted set gets one more, strategy-specific check: a `hash` column's
+    resolved input type, a `truncate` column's length/keep/mask_char shape,
+    a `redact` column's `redact_with` type. These all run through the same
+    functions `requirements_for` (`_requirements.py`) calls to compute a
+    compiled node's `fallback_policy`, so this config-only query and the
+    compiler reach the same verdict on every column without forking the
+    rules.
+    """
     name = col.get("name", "?")
     strategy = col.get("strategy")
     if not strategy:
@@ -239,7 +277,35 @@ def _column_rejection(col: dict[str, Any], registry: Any) -> str | None:
         caps = capabilities_for(resolved)
     except KeyError:
         return f"unclassified_strategy:{name}:{resolved}"
-    return _native_rejection(name, resolved, caps)
+    reason = _native_rejection(name, resolved, caps)
+    if reason is not None:
+        return reason
+    kernel_reason = native_kernel_rejection(name, resolved)
+    if kernel_reason is not None:
+        return kernel_reason
+    return _config_rejection(name, resolved, col, table=table, profile=profile)
+
+
+def _config_rejection(
+    name: str, strategy: str, col: dict[str, Any], *, table: str, profile: Any | None
+) -> str | None:
+    """The coded reason `name`'s resolved CONFIG or INPUT type is one the
+    native kernel for `strategy` cannot honor, or None. Only the admitted
+    set's four strategies get a gate here; every other strategy that passed
+    the capability check above is unaffected (narrowing, never widening)."""
+    if strategy == "hash":
+        return hash_config_rejection(name, table, profile)
+    if strategy == "truncate":
+        provider_config = col.get("provider_config")
+        return truncate_config_rejection(
+            name, provider_config if isinstance(provider_config, dict) else {}
+        )
+    if strategy == "redact":
+        provider_config = col.get("provider_config")
+        return redact_config_rejection(
+            name, provider_config if isinstance(provider_config, dict) else {}
+        )
+    return None
 
 
 def _fk_group_rejections(profile: Any, table: str) -> list[str]:

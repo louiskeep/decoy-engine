@@ -43,13 +43,13 @@ References:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias
 
 import pyarrow as pa
 
-from decoy_engine.determinism import derive
+from decoy_engine.determinism import DeterminismError, derive
 from decoy_engine.errors import (
     DecoyError,
     FpeChecksumError,
@@ -57,6 +57,7 @@ from decoy_engine.errors import (
     MaskKeyRequiredError,
 )
 from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL, FpeStrategyHandler
+from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
@@ -114,8 +115,10 @@ class CryptoExtensionUnavailableError(DecoyError):
     """The compiled crypto extension is missing or ABI-incompatible.
 
     Raised BEFORE any staging or output (the fail-before-output contract) so a
-    job never runs half-native. In Phase 0 the extension is not built, so
-    `load_compiled_crypto_kernel` always raises this."""
+    job never runs half-native. `load_compiled_crypto_kernel` raises this when the
+    optional companion is absent, fails to import, reports a mismatched ABI tag, has
+    a missing/non-callable/raising `derive_batch`, or fails its load-time
+    known-answer self-test."""
 
     code: str = "crypto_ext.unavailable"
 
@@ -524,17 +527,160 @@ def reference_fpe() -> FpeKernel:
     return _ReferenceFpe()
 
 
-def load_compiled_crypto_kernel() -> Any:
-    """Load the compiled crypto extension, or fail before any output.
+# The ABI tag this core build expects from the compiled companion, pinned to the
+# `ABI_VERSION` constant `decoy-engine-native/src/lib.rs` exports as `abi_version()`.
+# A mismatch (a companion built against a different core revision) is treated the
+# same as an absent companion: `load_compiled_crypto_kernel` raises
+# CryptoExtensionUnavailableError rather than run a binary whose framing this core
+# did not pin. Whether to fall back to the reference kernel is the caller's
+# preflight decision, not this loader's.
+_EXPECTED_ABI_VERSION = "decoy-native-abi-1"
 
-    Phase 0 does not ship the compiled extension, so this always raises
-    `CryptoExtensionUnavailableError`. Phase 2 replaces the body with the real
-    load + ABI-version check; the fail-before-output contract is unchanged."""
-    raise CryptoExtensionUnavailableError(
-        "the compiled crypto extension is not built in Phase 0; it is specified by "
-        "CRYPTO_EXT_ABI and built in Phase 2. Use the pure-Python reference kernels "
-        "(reference_keyed_derivation / reference_fpe) until then."
-    )
+
+def _translate_compiled_kernel_error(exc: ValueError) -> Exception:
+    """Map one of the compiled kernel's coded `ValueError`s onto the exact exception
+    type `_ReferenceKeyedDerivation.derive_batch` raises for the same input, so a
+    caller catching the reference's types behaves identically against the compiled
+    kernel (the CRYPTO_EXT_ABI drop-in contract). `mask_key_required` never reaches
+    here: `_CompiledKeyedDerivationKernel.derive_batch` checks that up front via
+    `_require_mask_key`, matching the reference's own unconditional pre-loop guard."""
+    code, _, detail = str(exc).partition(": ")
+    if code in ("seed_wrong_length", "namespace_empty"):
+        return DeterminismError(code=code, message=detail)
+    if code == "mixed_object_not_native":
+        # The reference's canonicalizer raises GenerationError for every
+        # unadmitted-type source value (float_canonicalization_unsupported,
+        # timezone_naive_datetime, an unhandled object type, ...); the compiled
+        # kernel folds all of these into one coded rejection at the array's Arrow
+        # type, so the exception TYPE is what a caller can rely on matching, not a
+        # specific one of the reference's finer-grained codes.
+        return GenerationError(code="native_type_not_admitted", message=detail)
+    # An unrecognized code means the compiled kernel raised something this wrapper
+    # was not built to translate; surface it as-is rather than guess at a mapping.
+    return exc
+
+
+class _CompiledKeyedDerivationKernel:
+    """Thin wrapper around the compiled `decoy_engine_native._kernel.derive_batch`,
+    satisfying the `KeyedDerivationKernel` Protocol and behaving as a drop-in for
+    `_ReferenceKeyedDerivation` over `pa.Array` input: same output bytes, and the
+    same exception types for every input the reference also rejects."""
+
+    def __init__(self, derive_batch_fn: Callable[..., pa.Array]) -> None:
+        self._derive_batch_fn = derive_batch_fn
+
+    def derive_batch(
+        self,
+        values: KernelInput,
+        *,
+        mask_key: bytes | None,
+        namespace: str,
+        truncate: int | None,
+    ) -> pa.Array:
+        # Fail before the compiled kernel is even called, matching
+        # `_ReferenceKeyedDerivation.derive_batch`'s unconditional pre-loop guard
+        # exactly (same message, same exception type).
+        key = _require_mask_key(mask_key, "keyed_derivation")
+        # A ChunkedArray is still one Arrow-typed column, just laid out in more than
+        # one buffer; combine to the single pa.Array the compiled entry point
+        # accepts. A raw Python list has no single Arrow type to combine to and is
+        # passed through unchanged: the compiled kernel rejects it the same way it
+        # rejects any object without `__arrow_c_array__`, matching CRYPTO_EXT_ABI's
+        # mixed-object policy (that column is excluded from the native route
+        # upstream, at eligibility).
+        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+        try:
+            return self._derive_batch_fn(
+                array, mask_key=key, namespace=namespace, truncate=truncate
+            )
+        except ValueError as exc:
+            raise _translate_compiled_kernel_error(exc) from exc
+
+
+def load_compiled_crypto_kernel() -> KeyedDerivationKernel:
+    """Load the compiled keyed-derivation kernel, or fail before any output.
+
+    Imports the canonical compiled module (`decoy_engine_native._kernel`), checks
+    its `abi_version()` against `_EXPECTED_ABI_VERSION`, runs one known-answer vector
+    through its `derive_batch` entry point, and returns a thin wrapper delegating to
+    it. Any failure along the way (the companion is absent, its import raises for any
+    reason, its ABI tag does not match, its entry point is missing/not callable/
+    raises, or it does not reproduce the reference keyed derivation) raises
+    `CryptoExtensionUnavailableError` BEFORE returning, so a caller never holds a
+    half-initialized or wrong-behaving kernel and no bare `ImportError`/`AttributeError`/
+    `TypeError` leaks out. The FPE kernel is not loaded here: it stays reference-only
+    (Part 2 scope)."""
+    try:
+        from decoy_engine_native import _kernel
+    except Exception as exc:
+        raise CryptoExtensionUnavailableError(
+            "the decoy-engine-native companion is not installed or failed to load; "
+            "install the 'native' extra, or use the pure-Python reference kernels "
+            "(reference_keyed_derivation / reference_fpe) instead."
+        ) from exc
+
+    try:
+        reported_abi = _kernel.abi_version()
+    except Exception as exc:
+        raise CryptoExtensionUnavailableError(
+            "the decoy-engine-native companion's abi_version() call failed; "
+            "treating it as incompatible rather than risking a stale binary."
+        ) from exc
+
+    if reported_abi != _EXPECTED_ABI_VERSION:
+        raise CryptoExtensionUnavailableError(
+            f"the decoy-engine-native companion reports ABI {reported_abi!r}, "
+            f"expected {_EXPECTED_ABI_VERSION!r}; refusing to run against a stale "
+            "or incompatible binary."
+        )
+
+    # A matching ABI tag is necessary but not sufficient: it says the companion was
+    # built against this core revision, not that its entry point exists, is callable,
+    # or actually computes the keyed derivation. Rather than try to prove all of that
+    # by introspecting the attribute (which cannot be done soundly -- `callable()`
+    # returns True for an object whose `__call__` is None, and merely reading a
+    # pathological descriptor can raise), we run one known-answer vector through the
+    # entry point HERE, at load, inside a guard. This turns every remaining
+    # malformed-companion shape -- a missing or non-callable entry point, a raising
+    # descriptor, and (the realistic one) a mis-built binary that imports and reports
+    # the right ABI but derives wrong bytes -- into a fail-closed load error, keeping
+    # the whole class inside the fail-before-output contract. Self-testing a crypto
+    # backend against a known-answer vector on load is the standard pattern (e.g. the
+    # power-on self-tests crypto libraries run at initialization).
+    try:
+        derive_batch_fn = _kernel.derive_batch
+        probe = HASH_KAT[0]
+        probe_out = derive_batch_fn(
+            pa.array([probe.value]),
+            mask_key=probe.mask_key,
+            namespace=probe.namespace,
+            truncate=probe.truncate,
+        )
+        # Require the exact Arrow type the reference emits, not just matching Python
+        # values: a large_string array or a non-Arrow object that merely spoofs
+        # `to_pylist()` would otherwise slip a wrong-shaped result past the load gate.
+        # isinstance is checked first so `.to_pylist()` is never reached on a non-array.
+        probe_reproduces_reference = (
+            isinstance(probe_out, pa.Array)
+            and probe_out.type == pa.string()
+            and probe_out.to_pylist() == [probe.expected]
+        )
+    except Exception as exc:
+        raise CryptoExtensionUnavailableError(
+            "the decoy-engine-native companion's 'derive_batch' entry point is "
+            "missing, not callable, or raised during the load-time self-test; "
+            "treating it as incompatible rather than returning a half-initialized "
+            "kernel that would fail mid-derive."
+        ) from exc
+
+    if not probe_reproduces_reference:
+        raise CryptoExtensionUnavailableError(
+            "the decoy-engine-native companion failed its load-time known-answer "
+            "self-test; refusing to run a binary that does not reproduce the "
+            "reference keyed derivation."
+        )
+
+    return _CompiledKeyedDerivationKernel(derive_batch_fn)
 
 
 __all__ = [

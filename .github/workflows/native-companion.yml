@@ -1,0 +1,204 @@
+# Native masking hot path (engine-efficiency-plan Part 1 Phase 2).
+#
+# Three concerns: the companion package is the only thing that needs a Rust
+# toolchain (matching the Option B split, docs/plans/
+# 2026-08-28-part1-phase2-detail-DRAFT.md section 5); the core must prove it
+# stays installable and importable with the companion both present and
+# absent; and the one security-sensitive unit (the KeyedDerivationKernel)
+# gets fuzz and sanitizer evidence beyond ordinary tests. ci.yml's existing
+# jobs (ruff/mypy/regression-gate/...) already cover the companion-absent
+# state today (they install `.[dev]` only); this workflow adds the companion
+# build, the companion-present state, the fuzz/sanitizer gate, and a
+# companion-absent job scoped to exactly the two-state test file so a
+# reviewer can see every side of the split in one place.
+#
+# The wheel-build matrix and the QEMU-emulated aarch64 smoke test were NOT
+# run locally (this environment has no GitHub Actions runner or matching
+# hardware); those steps were verified by inspection against maturin-action's
+# documented behavior. The fuzz/sanitizer job's commands (nightly toolchain,
+# cargo-fuzz, `-Zbuild-std` ASan/TSan) WERE run locally against this exact
+# crate before being wired in here.
+
+name: native-companion
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "decoy-engine-native/**"
+      - "src/decoy_engine/execution/native/**"
+      - "tests/native/test_native_ext_abi.py"
+      - "tests/native/test_keyed_derivation_kernel_parity.py"
+      - "pyproject.toml"
+      - ".github/workflows/native-companion.yml"
+  pull_request:
+    paths:
+      - "decoy-engine-native/**"
+      - "src/decoy_engine/execution/native/**"
+      - "tests/native/test_native_ext_abi.py"
+      - "tests/native/test_keyed_derivation_kernel_parity.py"
+      - "pyproject.toml"
+      - ".github/workflows/native-companion.yml"
+
+jobs:
+  # companion-wheel: builds the companion across the self-hosted single-org
+  # deployment's target matrix (manylinux x86_64 + aarch64, cp310-cp312 per
+  # the core's requires-python floor) and asserts the compiled `_kernel`
+  # extension actually landed in the wheel. A build that silently skips the
+  # Rust step (a misconfigured maturin invocation, a stale cache) would
+  # otherwise ship a companion wheel with no compiled module in it.
+  companion-wheel:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build companion wheel (manylinux, ${{ matrix.target }})
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: decoy-engine-native
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist -i python${{ matrix.python-version }}
+      - name: Assert the compiled _kernel module is present in the wheel
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          test -n "$wheel" || { echo "no wheel produced"; exit 1; }
+          python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
+            || { echo "MISSING: compiled decoy_engine_native/_kernel extension not in $wheel"; exit 1; }
+          echo "OK: $wheel ships the compiled decoy_engine_native/_kernel extension"
+      # Every produced wheel is installed and imported, not just filename-checked,
+      # so a broken cp311/cp312 or aarch64 build cannot pass on the membership grep
+      # alone. x86_64 installs natively on this runner; aarch64 runs under QEMU.
+      - name: Smoke-test the wheel (x86_64 native install + import + ABI)
+        if: matrix.target == 'x86_64'
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          python -m pip install "$wheel"
+          python -c "import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-1', got; print('x86_64 cp${{ matrix.python-version }} wheel imports; abi', got)"
+      - name: Set up QEMU (aarch64 emulation)
+        if: matrix.target == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+      - name: Smoke-test the wheel (aarch64 import + ABI under emulation)
+        if: matrix.target == 'aarch64'
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          docker run --rm --platform linux/arm64 -v "$PWD/decoy-engine-native/dist:/w" \
+            python:${{ matrix.python-version }}-slim-bookworm bash -c \
+            "python -m pip install /w/$(basename "$wheel") && python -c \"import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-1', got; print('aarch64 cp${{ matrix.python-version }} wheel imports; abi', got)\""
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-wheel-${{ matrix.python-version }}-${{ matrix.target }}
+          path: decoy-engine-native/dist/*.whl
+          retention-days: 14
+
+  # companion-rust-lint: format + clippy gate on the Rust crate so the first
+  # real kernel (Task 2.2) cannot merge without Rust lint enforcement. Pins the
+  # same 1.98.0 as rust-toolchain.toml so CI and local builds agree.
+  companion-rust-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned Rust with rustfmt + clippy
+        uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - name: cargo fmt --check
+        working-directory: decoy-engine-native
+        run: cargo fmt --check
+      - name: cargo clippy (deny warnings)
+        working-directory: decoy-engine-native
+        run: cargo clippy --all-targets -- -D warnings
+
+  # core-companion-present: the core's own test suite, run WITH the compiled
+  # companion installed. Same-platform build only (the cross-compiled
+  # aarch64 wheel above cannot install on this runner); proves the native
+  # `_kernel` import path and the core's optional-dependency wiring together,
+  # AND that the compiled kernel matches the live Python reference (the
+  # parity harness below), not only the static JSON fixture the Rust suite
+  # already covers.
+  core-companion-present:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install stable Rust (companion build only; the core needs none)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install engine + dev extras
+        run: pip install -e ".[dev]"
+      - name: Build and install the companion (maturin, same-platform)
+        run: pip install ./decoy-engine-native
+      - name: Native ABI test (companion-present case)
+        run: pytest tests/native/test_native_ext_abi.py -v --tb=short
+      - name: Compiled-kernel-vs-live-reference parity harness
+        run: pytest tests/native/test_keyed_derivation_kernel_parity.py -v --tb=short
+
+  # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
+  # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A
+  # bounded libFuzzer campaign over the PyO3-free `batch::derive_array` path (built
+  # with the crate's `extension-module` feature off, since pyo3's own feature of that name
+  # omits linking libpython, which a standalone fuzz binary does not provide), plus the crate's
+  # own test suite run once under AddressSanitizer and the concurrent Send/Sync test run once
+  # under ThreadSanitizer (both need `-Zbuild-std` so the standard library itself is
+  # sanitizer-instrumented, or the linker rejects the ABI mismatch between instrumented and
+  # plain std). A crash, a sanitizer report, or an unexpected process exit fails the job.
+  companion-fuzz-sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nightly Rust with rust-src (build-std needs it)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Bounded fuzz campaign over derive_array
+        working-directory: decoy-engine-native
+        run: cargo fuzz run derive_array -- -max_total_time=120
+      - name: Crate tests under AddressSanitizer
+        working-directory: decoy-engine-native
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+        run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu
+      - name: Concurrent Send/Sync test under ThreadSanitizer
+        working-directory: decoy-engine-native
+        env:
+          RUSTFLAGS: -Zsanitizer=thread
+        run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu derive_is_send_sync_and_concurrent_calls_agree
+      - name: Upload fuzz artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-artifacts
+          path: decoy-engine-native/fuzz/artifacts/
+          retention-days: 14
+
+  # core-companion-absent: the mirror state. No Rust, no companion; proves
+  # the `native` extra really is optional and the core stays importable and
+  # runnable without it. ci.yml's regression-gate already installs `.[dev]`
+  # only and runs the whole suite, so this job scopes to the one test file
+  # that encodes the explicit guard (a full-suite run here would duplicate
+  # regression-gate for no new signal).
+  core-companion-absent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install engine + dev extras (companion NOT installed)
+        run: pip install -e ".[dev]"
+      - name: Native ABI test (companion-absent case)
+        run: pytest tests/native/test_native_ext_abi.py -v --tb=short

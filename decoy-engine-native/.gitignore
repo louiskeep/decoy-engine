@@ -1,0 +1,5 @@
+# cargo-mutants output (native-efficiency test program, Lane A). Not build
+# artifacts tracked in git; regenerated on every mutation run. The `.old`
+# variant is the previous run cargo-mutants renames aside.
+mutants.out/
+mutants.out.old/

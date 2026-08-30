@@ -40,3 +40,14 @@ docs/api/
 
 # mutmut working tree (mutation testing); never committed
 mutants/
+
+# Rust build output for the decoy-engine-native companion (cargo/maturin
+# artifacts); never committed, rebuilt from source on every CI run.
+# Cargo.lock IS committed (the crate builds a distributable wheel, not a
+# library other crates depend on, so its dependency versions are pinned the
+# same way ruff/mypy/faker are pinned elsewhere in this repo).
+target/
+# `maturin develop`'s mixed-layout output: the compiled extension module it
+# drops next to decoy_engine_native/__init__.py for the local dev venv.
+decoy-engine-native/decoy_engine_native/*.so
+decoy-engine-native/decoy_engine_native/*.pyd
