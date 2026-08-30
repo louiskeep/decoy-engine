@@ -129,17 +129,25 @@ class PoolCache:
             # the budget is a quality signal (cache thrash risk). Emit it; do
             # not fail.
             if pool_bytes > self._max_bytes * _DOMINATE_THRESHOLD:
-                self._warnings.append(
-                    QualityWarning(
-                        code="pool_dominates_cache",
-                        provider=pool.provider,
-                        detail={
-                            "pool_bytes": pool_bytes,
-                            "cache_bytes_capacity": self._max_bytes,
-                            "dominate_threshold": _DOMINATE_THRESHOLD,
-                        },
-                    )
+                warning = QualityWarning(
+                    code="pool_dominates_cache",
+                    provider=pool.provider,
+                    detail={
+                        "pool_bytes": pool_bytes,
+                        "cache_bytes_capacity": self._max_bytes,
+                        "dominate_threshold": _DOMINATE_THRESHOLD,
+                    },
                 )
+                # Dedup identical emissions: a pool evicted under budget pressure
+                # and rebuilt at the same identity re-enters put() and would
+                # re-append the SAME warning every cycle, growing `_warnings`
+                # without bound (O(re-puts)) under a dominating working set. The
+                # list is monotonic (never pruned) and read into the manifest
+                # quality_summary, so bound it to the DISTINCT dominating pools.
+                # Equality (not hashing) mirrors `aggregate_chunk_warnings`,
+                # since QualityWarning.detail is an unhashable dict.
+                if warning not in self._warnings:
+                    self._warnings.append(warning)
 
     def stats(self) -> CacheStats:
         """Return a frozen snapshot of cache state."""

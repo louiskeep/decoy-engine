@@ -204,3 +204,46 @@ def test_pool_cache_evicts_at_byte_bound_under_many_distinct_identities() -> Non
     # warning, regardless of how many of the other 29 invocations shared this
     # cache before or after it -- isolation held under real eviction churn.
     assert all(count <= 1 for count in per_invocation_warning_counts)
+
+
+def _dom_pool(provider: str, *, size: int):
+    """A synthetic float64 pool sized to a precise byte count (8 bytes/value),
+    to drive PoolCache's dominate-threshold math deterministically."""
+    import numpy as np
+
+    from decoy_engine.generation.pool._value_pool import ValuePool
+
+    return ValuePool(
+        values=np.arange(size, dtype=np.float64),
+        provider=provider,
+        locale="default",
+        config_hash="cfg0",
+        seed=b"seed_" + provider.encode(),
+        size=size,
+        build_time_ms=0.0,
+        backend_type="test",
+        backend_version="0",
+        distinct_count=size,
+    )
+
+
+def test_dominating_pool_rebuilt_under_eviction_keeps_warnings_bounded() -> None:
+    # The one state owner distinct-namespace eviction does NOT bound: a pool
+    # evicted under budget pressure and rebuilt at the SAME identity re-enters
+    # put() and would re-append its pool_dominates_cache warning every cycle,
+    # growing the monotonic _warnings list O(re-puts). PoolCache dedups identical
+    # emissions, so the list stays bounded to the DISTINCT dominating pools no
+    # matter how many rebuild cycles run.
+    cache = PoolCache(max_bytes=1000)  # dominate threshold = 250 bytes
+    pool_a = _dom_pool("A", size=40)  # 320 bytes > 250 -> dominates
+    pool_b = _dom_pool("B", size=100)  # 800 bytes -> dominates AND evicts A
+
+    for _ in range(50):
+        cache.put(pool_a)
+        cache.put(pool_b)  # evicts A
+        cache.put(pool_a)  # evicts B, A re-enters -> would re-emit without dedup
+
+    codes = [w.code for w in cache.warnings()]
+    # Bounded to the two distinct dominating identities, not ~50x that.
+    assert codes.count("pool_dominates_cache") == 2
+    assert cache.stats().evictions > 0

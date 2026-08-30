@@ -108,33 +108,33 @@ def test_repeated_identical_warning_dedupes_to_one_first_emission_order() -> Non
 
 
 def test_parity_with_oracle_aggregate_chunk_warnings() -> None:
-    """Feeding the SAME raw warning stream through the oracle's own
-    per-chunk aggregator and through this collector must produce the exact
-    same deduped, ordered tuple -- proving the two dedup/ordering
-    implementations agree, not just that each is internally consistent."""
-    cache = PoolCache(max_bytes=1000)
-    diag = RouteDiagnostics(cache)
-    cache.put(_pool("p1", size=40, seed=b"seed0001"))
-    cache.put(_pool("p2", size=40, seed=b"seed0002"))
-    cache.put(_pool("p1", size=40, seed=b"seed0003"))
+    """Feeding the SAME raw warning stream (with a duplicate) through the
+    oracle's own per-chunk aggregator and through this collector's `_dedup_
+    ordered` must produce the exact same deduped, ordered tuple -- proving the
+    two dedup/ordering implementations agree. Built as a raw list directly:
+    PoolCache now dedups identical emissions at the source (a re-put of the same
+    dominating identity), so the duplicate cannot be produced through the cache."""
+    from decoy_engine.execution.native._route_diagnostics import _dedup_ordered
+    from decoy_engine.generation.pool._events import QualityWarning
 
-    raw = cache.warnings()
-    assert len(raw) == 3
+    w_p1 = QualityWarning(code="pool_dominates_cache", provider="p1", detail={"pool_bytes": 320})
+    w_p2 = QualityWarning(code="pool_dominates_cache", provider="p2", detail={"pool_bytes": 320})
+    w_p1_dup = QualityWarning(code="pool_dominates_cache", provider="p1", detail={"pool_bytes": 320})
+    assert w_p1 == w_p1_dup  # identical -> both dedup paths must collapse them
+    raw = (w_p1, w_p2, w_p1_dup)
 
     class _FakeChunkResult:
         def __init__(self, warnings: tuple) -> None:
             self.warnings = warnings
 
-    # Split the raw stream across two "chunk results" the way the oracle
-    # receives one ExecutionResult per chunk -- the repeat lands in a later
-    # chunk than its first occurrence, the case the oracle's own docstring
-    # names explicitly.
+    # The repeat lands in a later chunk than its first occurrence -- the case
+    # the oracle aggregator's own docstring names explicitly.
     oracle_aggregated = aggregate_chunk_warnings(
         [_FakeChunkResult((raw[0],)), _FakeChunkResult((raw[1], raw[2]))]
     )
-    collector_aggregated = tuple(w.warning for w in diag.pool_warnings())
+    collector_deduped = _dedup_ordered(raw)
 
-    assert collector_aggregated == oracle_aggregated
+    assert collector_deduped == oracle_aggregated == (w_p1, w_p2)
 
 
 def test_same_input_same_order_deterministic() -> None:

@@ -12,6 +12,15 @@ is that isolation mechanism: one instance per invocation of
 the shared cache's warning count as a baseline so only warnings appended
 AFTER that point ever surface as this invocation's evidence.
 
+PRECONDITION: invocations sharing one cache must be SEQUENTIAL. The baseline is
+a global length prefix, so two `RouteDiagnostics` constructed at overlapping
+times would each slice `[baseline:]` and surface the OTHER invocation's
+concurrently-appended warnings (then fan-out mis-attributes them by provider).
+The documented coordinator is per-table sequential, so the shipped contract
+holds; a concurrent shared-cache path would first need isolation keyed on
+something stronger than a global length prefix (e.g. per-invocation tagging of
+each warning at emission), NOT this length slice.
+
 This module is standalone (Task 3.4 scope): it is not wired into
 `_dispatch.py`'s `run_native_or_oracle_chunked`, mirroring `_pool_quality.py`'s
 own standalone contract (Task 3.2) -- there is no engine end-of-stream hook
