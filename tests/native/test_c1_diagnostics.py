@@ -111,9 +111,9 @@ def test_parity_with_oracle_aggregate_chunk_warnings() -> None:
     """Feeding the SAME raw warning stream (with a duplicate) through the
     oracle's own per-chunk aggregator and through this collector's `_dedup_
     ordered` must produce the exact same deduped, ordered tuple -- proving the
-    two dedup/ordering implementations agree. Built as a raw list directly:
-    PoolCache now dedups identical emissions at the source (a re-put of the same
-    dominating identity), so the duplicate cannot be produced through the cache."""
+    two dedup/ordering implementations agree. The stream is built as a raw list
+    directly (not via a PoolCache) so the parity check isolates the two
+    aggregation algorithms, independent of how the cache happens to emit."""
     from decoy_engine.execution.native._route_diagnostics import _dedup_ordered
     from decoy_engine.generation.pool._events import QualityWarning
 
