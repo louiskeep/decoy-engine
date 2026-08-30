@@ -120,8 +120,10 @@ OUT of scope (stays on oracle / Part 2+), enforced by eligibility rejections wit
   (Task 3.6).
 - JC-5 (deterministic-variant scope). Above. The single decision the rest of the plan rests on.
 
-Doc-accuracy: the master plan calls the registry "34-provider"; the live catalog is 24 to 26
-bindings. This plan never quotes 34; Task 3.3 asserts totality against the live registry.
+Registry size: the live provider catalog is 34 bindings (19 faker + 9 decoy_native + 6 composite,
+after the MG-1/MG-4 additions), matching the master plan's "34-provider" figure. Task 3.3 asserts
+totality against the live registry by enumeration, never a hardcoded count, so the exact size can
+grow without breaking the predicate.
 
 ---
 
@@ -296,7 +298,8 @@ Steps:
    poolable provider IDs and the config shape the C1 pool builder and native selector support.
    Non-faker columns defer to the Phase 1 predicate unchanged.
 3. Reject every out-of-scope provider/config/mode with the distinct codes above, all before staging.
-4. Totality against the live provider registry (no hardcoded count; the 24-to-26 correction).
+4. Totality against the live provider registry by enumeration (no hardcoded count; the live
+   catalog is 34 bindings today and the predicate must stay total as it grows).
 5. Cross-check: Phase 1 and Phase 3 eligibility against the deterministic C1 variant. Phase 1 still
    rejects it for streaming (`strategy_not_allowlisted_for_streaming`, the real string); Phase 3
    admits it.
