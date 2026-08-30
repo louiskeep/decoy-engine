@@ -144,30 +144,51 @@ Steps:
    exact row counts and column shapes.
 3. Build the C1 data out of band (separate, non-timed, non-sampled process, drop each batch after
    write), as Phase 2's `build_w2_parquet.py` does.
-4. Run the deterministic C1 recipe on the PINNED oracle (`substrate="pandas"`,
-   `execution_mode="full_frame"`, `auto_chunk=False`) in a fresh process under external `VmHWM`
-   sampling, STAGED so peak RSS is attributed to buckets: input residency, pool build, selection,
-   publication. Record end-to-end latency, hash throughput, Faker (selection) throughput, per-bucket
-   and total peak RSS, and spill.
-5. Freeze the `pool_quality` metric DEFINITION and threshold methodology BEFORE reading the number
-   (BLOCKER 2). Specify exactly: the population measured (the pooled OUTPUT values over non-null
-   source rows of an admitted deterministic faker column); the metric = distinct-source collision
-   rate, defined as `(non-null source values that are distinct but map to an already-used pool
-   value) / (distinct non-null source values)`, EXCLUDING intentional repeats where equal source
-   values map to the same output (deterministic reuse is correct, not a collision); separately, the
-   pool-duplicate rate = `(duplicate values in the built pool) / pool_size`; the UNIQUE-feasibility
-   check applies only if an admitted column is UNIQUE-cardinality (for the reuse-only C1 scope it is
-   vacuous and recorded as N/A, not silently passed); the threshold is derived from the oracle run
-   with a stated margin, the sample tier, and deterministic reproducibility (fixed seed). Record the
-   methodology now; the numeric threshold is filled from Step 4's measurement.
-6. Freeze the JC-3 performance gate as executable thresholds (MEDIUM 3): tier sizes, chunk size,
+4. Freeze the `pool_quality` metric DEFINITION, threshold FORMULA, and bounded-aggregation method
+   BEFORE any measurement (BLOCKER 2 refinement). This step precedes the oracle run in Step 5 and is
+   recorded as an immutable checkpoint (committed) before Step 5 observes any number. Specify
+   exactly:
+   - Population: the pooled OUTPUT values over non-null source rows of an admitted deterministic
+     faker column.
+   - Distinct-source collision count = `|distinct_sources| - |distinct_outputs_for_distinct_sources|`
+     (two distinct source values landing on the same pool value); rate = that count over
+     `|distinct_sources|`. Equal source values mapping to the same output are intentional
+     deterministic reuse and are NOT collisions (they never enter the numerator). Empty population
+     (`|distinct_sources| == 0`, e.g. a null-only column) is defined as rate 0, pass.
+   - Pool-duplicate count = `pool_size - |distinct_pool_values|`; rate = that count over `pool_size`.
+   - UNIQUE-feasibility: applies only to a UNIQUE-cardinality admitted column; for the reuse-only C1
+     scope it is N/A, recorded explicitly (never silently passed).
+   - Threshold is CONDITIONAL on `(|distinct_sources|, pool_size)`, because collision rate rises with
+     distinct-source count relative to pool size: derive and validate a separate threshold for EVERY
+     gated tier (parity tier and memory tier), each = the oracle's own observed rate at that tier
+     plus a fixed non-negative margin `m` (proposed `m = 0.02` absolute, frozen here). Step 6 then
+     asserts the pinned oracle itself passes its own per-tier threshold (the threshold can never be
+     stricter than the oracle).
+   - Bounded aggregation: the cross-chunk distinct-source/collision measurement MUST NOT hold
+     O(distinct sources) resident state (that conflicts with Task 3.4). Specify spill-backed exact
+     aggregation (a DuckDB distinct/group-by over the source-to-output mapping, spilled) with a
+     concrete memory limit; the gate measurement uses this bounded path, not an in-memory set.
+   - Fixed seed for deterministic reproducibility of the measurement.
+5. Run the deterministic C1 recipe on the PINNED oracle (`substrate="pandas"`,
+   `execution_mode="full_frame"`, `auto_chunk=False`), STAGED for per-stage RSS attribution.
+   `VmHWM` is a process-lifetime high-water mark, so one process cannot yield independent per-stage
+   peaks: run FRESH-PROCESS PREFIX runs, each stopping after one stage boundary (input load; input
+   load + pool build; + selection; + publication) under external `VmHWM`, and attribute each stage's
+   peak as the difference between consecutive prefix high-water marks; also record a single
+   end-to-end external `VmHWM` as the total. Record end-to-end latency, hash throughput, Faker
+   (selection) throughput, the per-stage and total peak RSS, spill, and the per-tier `pool_quality`
+   numbers that fill Step 4's thresholds.
+6. Assert the pinned oracle passes its own per-tier `pool_quality` thresholds (the sanity check that
+   the frozen thresholds are not stricter than the oracle at any gated tier).
+7. Freeze the JC-3 performance gate as executable thresholds (MEDIUM 3): tier sizes, chunk size,
    warmup count, repetition count, the reported statistic (median) and variance policy (IQR), the
    absolute peak-RSS ceiling, the permitted RSS slope/ratio across tiers (flatness bound), and the
    wall non-regression ratio (proposed <= 1.25x oracle median) as a HARD fail, not a warning.
-7. Commit: `docs(native): freeze deterministic C1 variant + staged pinned-oracle baseline`.
+8. Commit: `docs(native): freeze deterministic C1 variant + staged pinned-oracle baseline`.
 
-Acceptance: deterministic C1 recipe + resolved sampler settings frozen; staged RSS buckets recorded;
-`pool_quality` metric definition + methodology frozen before the number; JC-3 thresholds executable.
+Acceptance: metric definition + per-tier threshold formula + bounded-aggregation method frozen and
+committed BEFORE the oracle run; staged per-stage RSS via fresh-process prefixes; oracle passes its
+own per-tier thresholds; JC-3 thresholds executable.
 
 ## Task 3.1: Native chunked deterministic-faker masking (pool once, select per chunk)
 
@@ -181,9 +202,10 @@ Files:
 - Test: `tests/parity/native/test_c1_faker_parity.py`, `tests/native/test_dispatch_faker.py`.
 
 Steps:
-0. MEASURE (JC-1 gate): micro-measure vectorized-Python per-chunk `PoolSampler` selection against
-   Task 3.0's Faker throughput. If it holds the JC-3 wall bound, proceed with Python; if not, record
-   the miss and escalate JC-1 before adding any compiled path.
+0. MEASURE (JC-1 gate): micro-measure the batched Python sampler API (which contains a per-row
+   `derive_index` loop) selecting per chunk, against Task 3.0's Faker throughput. If it holds the
+   JC-3 wall bound, proceed with Python; if not, record the miss and escalate JC-1 before adding any
+   compiled path.
 1. Strategy-set seam: add `faker` via `NATIVE_POOL_STRATEGIES`; a node is native when it is a scalar
    node whose strategy is in `NATIVE_KERNEL_STRATEGIES` OR `NATIVE_POOL_STRATEGIES`. Keep the two
    admission reasons distinct.
@@ -230,8 +252,11 @@ Steps:
    baseline run: the distinct-source collision-rate bound, the pool-duplicate-rate bound, and the
    UNIQUE-feasibility check (N/A for reuse-only C1, recorded explicitly, not silently passed).
 2. `enforce_pool_quality(evidence, *, tolerance)` reads the emitted `PoolCache.warnings()` /
-   `QualityWarning` plus the measured pooled distribution and raises a coded `PoolQualityError`
-   before publication when the frozen tolerance is exceeded.
+   `QualityWarning` plus the pooled distribution measured via Task 3.0's frozen BOUNDED
+   (spill-backed) aggregation, applies the per-tier threshold selected from
+   `(|distinct_sources|, pool_size)`, and raises a coded `PoolQualityError` before publication when
+   the frozen tolerance is exceeded. It never materializes an O(distinct sources) in-memory set (it
+   would break Task 3.4's bounded-state guarantee).
 3. Route-local guard (HIGH 4): enforcement runs ONLY when the C1 phase3 eligibility admitted the
    column. Do NOT change the general capability resolver's behavior for non-C1 obligations or
    non-C1 paths. Reject an unrecognized obligation on the C1 route coded; leave all other routes
