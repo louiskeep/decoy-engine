@@ -656,7 +656,7 @@ def drive(
         all_results[str(n_rows)] = summary
         sys.stderr.write(
             f"  SUMMARY n={n_rows}: wall_median={summary['wall_median_s']:.2f}s "
-            f"total_peak_rss={summary['total_peak_rss_kb'] / 1024:.0f}MB\n"
+            f"total_peak_rss={summary['total_peak_rss_kb'] / 1000:.0f}MB\n"
         )
         sys.stderr.flush()
         out_path.write_text(json.dumps(all_results, indent=2))
