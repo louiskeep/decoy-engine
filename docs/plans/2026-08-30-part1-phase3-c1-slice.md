@@ -335,8 +335,19 @@ Steps:
 4. Commit: `test(native): bounded state + chunk diagnostic-aggregation contract for C1`.
 
 Acceptance: diagnostic collectors bounded, deduped, deterministically ordered, isolated from prior
-cache state, and parity-matched to the oracle; every state owner bounded under the adversary; peak
-RSS flat with row count.
+cache state, and parity-matched to the oracle; the state owners Task 3.4 controls (the collector's
+per-invocation output and the PoolCache byte budget) bounded under the adversary; peak RSS flat with
+row count.
+
+Known follow-up (pre-existing, tracked): the shared `PoolCache._warnings` list is append-per-emission
+and therefore monotonic, so an adversarial evict-then-rebuild-same-identity workload grows it
+O(re-puts). A process-wide dedup CANNOT bound it without breaking `RouteDiagnostics`' length-prefix
+isolation (it would suppress a re-emission an invocation genuinely produced because a prior
+invocation emitted an identical one). The correct fix is an emission-sequence cursor (a monotonic
+counter plus a bounded key->latest-sequence map, with the collector snapshotting the counter), a
+Phase 0 hardening deferred out of this test task. C1 sizing (256 MB cache, bounded faker pools) never
+trips `pool_dominates_cache`, so the practical risk is low; the collector's own per-invocation output
+stays bounded regardless, which the adversary asserts.
 
 ## Task 3.5: Platform `phase3_c1_eligibility` admission layer (gated on streaming-flip)
 

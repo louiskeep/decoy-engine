@@ -227,23 +227,31 @@ def _dom_pool(provider: str, *, size: int):
     )
 
 
-def test_dominating_pool_rebuilt_under_eviction_keeps_warnings_bounded() -> None:
-    # The one state owner distinct-namespace eviction does NOT bound: a pool
-    # evicted under budget pressure and rebuilt at the SAME identity re-enters
-    # put() and would re-append its pool_dominates_cache warning every cycle,
-    # growing the monotonic _warnings list O(re-puts). PoolCache dedups identical
-    # emissions, so the list stays bounded to the DISTINCT dominating pools no
-    # matter how many rebuild cycles run.
+def test_collector_view_stays_bounded_under_same_identity_rebuild_churn() -> None:
+    # A pool evicted under budget pressure and rebuilt at the SAME identity
+    # re-emits pool_dominates_cache every cycle, so the shared cache's monotonic
+    # _warnings list grows O(re-puts). That is a KNOWN pre-existing Phase 0 owner
+    # (a process-wide dedup CANNOT fix it without breaking RouteDiagnostics'
+    # length-prefix isolation -- it would suppress a re-emission this invocation
+    # genuinely produced; the real fix is an emission sequence, tracked as a
+    # follow-up). What Task 3.4 owns and MUST keep bounded is the COLLECTOR's
+    # per-invocation view: one invocation's deduped output is bounded by the
+    # distinct dominating pools it saw, never by the re-put count.
     cache = PoolCache(max_bytes=1000)  # dominate threshold = 250 bytes
     pool_a = _dom_pool("A", size=40)  # 320 bytes > 250 -> dominates
     pool_b = _dom_pool("B", size=100)  # 800 bytes -> dominates AND evicts A
 
+    diag = RouteDiagnostics(cache)
     for _ in range(50):
         cache.put(pool_a)
         cache.put(pool_b)  # evicts A
-        cache.put(pool_a)  # evicts B, A re-enters -> would re-emit without dedup
+        cache.put(pool_a)  # evicts B, A re-enters -> re-emits
 
-    codes = [w.code for w in cache.warnings()]
-    # Bounded to the two distinct dominating identities, not ~50x that.
-    assert codes.count("pool_dominates_cache") == 2
+    # The cache's raw list grew with churn (the pre-existing monotonic owner)...
+    assert len(cache.warnings()) > 2
     assert cache.stats().evictions > 0
+    # ...but THIS invocation's collector view is bounded to the 2 distinct
+    # dominating identities, not ~100 re-emissions.
+    view = diag.pool_warnings()
+    assert len(view) == 2
+    assert sorted({w.warning.provider for w in view}) == ["A", "B"]

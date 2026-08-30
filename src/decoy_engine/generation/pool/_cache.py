@@ -127,27 +127,28 @@ class PoolCache:
             self._bytes_used += pool_bytes
             # NF5: a single pool occupying more than the dominate threshold of
             # the budget is a quality signal (cache thrash risk). Emit it; do
-            # not fail.
+            # not fail. This list is append-per-emission on purpose: the native
+            # route's RouteDiagnostics isolates one invocation's warnings by a
+            # length-prefix cursor, which requires every emission to append (a
+            # process-wide dedup here would suppress a re-emission this
+            # invocation genuinely produced just because a prior invocation
+            # emitted an identical one, starving that invocation of evidence).
+            # The list is therefore monotonic; bounding it under an adversarial
+            # evict-then-rebuild-same-identity workload needs an emission
+            # sequence, not a dedup -- tracked as a separate Phase 0 follow-up
+            # (see docs/plans/2026-08-30-part1-phase3-c1-slice.md Task 3.4).
             if pool_bytes > self._max_bytes * _DOMINATE_THRESHOLD:
-                warning = QualityWarning(
-                    code="pool_dominates_cache",
-                    provider=pool.provider,
-                    detail={
-                        "pool_bytes": pool_bytes,
-                        "cache_bytes_capacity": self._max_bytes,
-                        "dominate_threshold": _DOMINATE_THRESHOLD,
-                    },
+                self._warnings.append(
+                    QualityWarning(
+                        code="pool_dominates_cache",
+                        provider=pool.provider,
+                        detail={
+                            "pool_bytes": pool_bytes,
+                            "cache_bytes_capacity": self._max_bytes,
+                            "dominate_threshold": _DOMINATE_THRESHOLD,
+                        },
+                    )
                 )
-                # Dedup identical emissions: a pool evicted under budget pressure
-                # and rebuilt at the same identity re-enters put() and would
-                # re-append the SAME warning every cycle, growing `_warnings`
-                # without bound (O(re-puts)) under a dominating working set. The
-                # list is monotonic (never pruned) and read into the manifest
-                # quality_summary, so bound it to the DISTINCT dominating pools.
-                # Equality (not hashing) mirrors `aggregate_chunk_warnings`,
-                # since QualityWarning.detail is an unhashable dict.
-                if warning not in self._warnings:
-                    self._warnings.append(warning)
 
     def stats(self) -> CacheStats:
         """Return a frozen snapshot of cache state."""
