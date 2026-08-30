@@ -290,7 +290,9 @@ Steps:
    `faker_namespace_required`; a missing/implicit pool_size rejects `faker_pool_size_required`; a
    nonpoolable faker rejects `provider_not_pool_native`; a non-C1 poolable provider rejects
    `provider_not_in_c1_allowlist`; a custom callable rejects `provider_reject_large`; an unsupported
-   faker config shape rejects `faker_config_shape_unsupported`.
+   faker config shape (`vault: true` or `when:`) rejects `faker_config_shape_unsupported`. The list
+   is not exhaustive: `resolve_pool_size` may fail closed with its own compile-error code (e.g.
+   `pool_size_location_conflict`) rather than mis-attributing a genuine config error to a JC-5 code.
 2. Implement as a pure function above `native_route_eligibility`. For every faker column: resolve
    the faker config, REQUIRE the partition-independent combination (`deterministic: true`,
    `cardinality_mode` in the partition-independent set (`reuse`), explicit `namespace`, explicit

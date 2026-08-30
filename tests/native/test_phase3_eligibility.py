@@ -33,6 +33,8 @@ def _faker_col(
     pool_size: int | None = 10_000,
     cardinality_mode: str | None = None,
     vault: bool = False,
+    when: str | None = None,
+    allow_collisions: bool = False,
 ) -> dict:
     col: dict = {"name": name, "strategy": "faker", "provider": provider}
     if deterministic is not None:
@@ -45,6 +47,10 @@ def _faker_col(
         col["cardinality_mode"] = cardinality_mode
     if vault:
         col["vault"] = True
+    if when is not None:
+        col["when"] = when
+    if allow_collisions:
+        col["allow_collisions"] = True
     return col
 
 
@@ -181,6 +187,28 @@ def test_vaulted_faker_column_rejects_faker_config_shape_unsupported() -> None:
     result = phase3_c1_eligibility(config, table="t")
     assert result.admitted is False
     assert result.reasons == ("faker_config_shape_unsupported:FIRST:vault",)
+
+
+def test_when_gated_faker_column_rejects_faker_config_shape_unsupported() -> None:
+    # `when:` row gating has no wiring on the native pool route, so a
+    # `when`-gated column would mask every row instead of the gate's matches.
+    # Rejected for symmetry with vault (a raw dict can carry `when` even though
+    # a PipelineConfig-validated mask column cannot).
+    config = _config("t", _faker_col(when="AGE > 18"))
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == ("faker_config_shape_unsupported:FIRST:when",)
+
+
+def test_allow_collisions_with_deterministic_omitted_admits() -> None:
+    # `allow_collisions: true` compiles to deterministic + reuse, so a column
+    # the oracle resolves as deterministic-reuse must be ADMITTED here, not
+    # mis-rejected as faker_not_deterministic (the reason string the raw
+    # `deterministic` read alone would have produced).
+    config = _config("t", _faker_col(deterministic=None, allow_collisions=True))
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is True
+    assert result.reasons == ()
 
 
 # ---------------------------------------------------------------------------

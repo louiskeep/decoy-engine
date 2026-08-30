@@ -26,10 +26,13 @@ field) has no wiring on the native pool route.
 oracle pipelines (`execution._pipeline`, `execution._chunked`) call
 `collect_vault_entries`. Admitting a vaulted faker column natively would
 silently drop that persistence, so it is rejected as
-`faker_config_shape_unsupported` rather than allowed through. (`when:` row
-gating was considered too, but it is not a reachable rejection: `ColumnConfig`
-has no `when` field and `PipelineConfig.model_validate` rejects it via
-`extra="forbid"`, so no config this predicate is ever handed can carry it.)
+`faker_config_shape_unsupported`. `when:` row gating is rejected the same way:
+the native pool route never invokes `_when_gate`, so a `when`-gated column would
+mask every row instead of only the gate's matches. A `PipelineConfig`-validated
+MASK column cannot carry `when` today (`ColumnConfig` has no `when` field and
+`extra="forbid"`), but this predicate takes a raw `dict` and shares
+`compile_plan`'s `when`-honoring contract, so the guard is real rather than
+decorative -- it holds even if a future config surface admits `when`.
 """
 
 from __future__ import annotations
@@ -136,10 +139,16 @@ def _faker_column_rejection(
     """The coded JC-5 / allowlist / config-shape reason `name` cannot run on
     the Phase 3 native pool route, or None when it can. Checked in the exact
     order the plan's coded-rejection list gives (Task 3.3 Step 1)."""
-    if not bool(col.get("deterministic", False)):
+    # `allow_collisions: true` compiles to deterministic + reuse (a stable
+    # many-to-one map) in `plan/_seed_envelope.py`; mirror that resolution so a
+    # column the oracle resolves as deterministic-reuse is not mis-rejected here
+    # as non-deterministic or given the wrong cardinality reason.
+    allow_collisions = bool(col.get("allow_collisions", False))
+    deterministic = allow_collisions or bool(col.get("deterministic", False))
+    if not deterministic:
         return f"faker_not_deterministic:{name}"
 
-    cardinality_mode = col.get("cardinality_mode") or "reuse"
+    cardinality_mode = "reuse" if allow_collisions else (col.get("cardinality_mode") or "reuse")
     if cardinality_mode not in _PARTITION_INDEPENDENT_CARDINALITY_MODES:
         return f"faker_cardinality_not_partition_independent:{name}:{cardinality_mode}"
 
@@ -179,6 +188,17 @@ def _faker_column_rejection(
         # wiring, so a vaulted faker column would silently lose its
         # reversible mapping if admitted.
         return f"faker_config_shape_unsupported:{name}:vault"
+
+    if col.get("when"):
+        # The native pool route never consults `.when` or invokes `_when_gate`
+        # (only the oracle adapters do), so a `when`-gated faker column admitted
+        # natively would mask EVERY row instead of only the rows the gate
+        # matches -- a fidelity divergence from the oracle. Reject it for
+        # symmetry with vault. A PipelineConfig-validated MASK column cannot
+        # carry `when` today (ColumnConfig's `extra="forbid"`), but this
+        # predicate takes a raw dict and shares compile_plan's `when`-honoring
+        # contract, so the guard is real rather than decorative.
+        return f"faker_config_shape_unsupported:{name}:when"
 
     return None
 
