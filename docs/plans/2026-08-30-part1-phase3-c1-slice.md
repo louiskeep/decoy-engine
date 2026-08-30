@@ -7,12 +7,14 @@ Decision anchor: master-plan Decision 5 (limit Phase 3 to the C1 masking path; b
 for the poolable Faker providers C1 uses; native source-keyed selection; add only the cache and
 state this path uses).
 
-Revision note: this is revision 2, remediating the Codex plan-gate (round 1 NO-GO). The round-1
-findings are addressed at root here; the material changes are the deterministic-variant scope
-decision (JC-5, from BLOCKER 1), the frozen `pool_quality` metric definition (BLOCKER 2), the
-exact-count route ledger (BLOCKER 3), shared pool-identity reuse (HIGH 1), the DE-02 seam test
-(HIGH 2), the chunk warning/error aggregation contract (HIGH 3), route-local scope guards
-(HIGH 4), and the reworded rationale (MEDIUM 1 / LOW 1).
+Revision note: this is revision 3, Codex-gated GO. Rev2 remediated the round-1 NO-GO (the
+deterministic-variant scope decision JC-5 from BLOCKER 1, the frozen `pool_quality` metric
+definition from BLOCKER 2, the exact-count route ledger from BLOCKER 3, shared pool-identity reuse
+HIGH 1, the DE-02 seam test HIGH 2, the chunk warning/error aggregation contract HIGH 3, route-local
+scope guards HIGH 4, and the reworded rationale MEDIUM 1 / LOW 1). Rev3 closed the round-2 remainder:
+the `pool_quality` metric definition + per-tier threshold formula + spill-backed bounded aggregation
+are now frozen and committed BEFORE the oracle measurement (Task 3.0 Step 4), staged RSS uses
+fresh-process prefix runs (Step 5), and the sampler wording no longer overclaims vectorization.
 
 ## What Phase 3 changes, and the corrected rationale
 
@@ -161,7 +163,8 @@ Steps:
    - Threshold is CONDITIONAL on `(|distinct_sources|, pool_size)`, because collision rate rises with
      distinct-source count relative to pool size: derive and validate a separate threshold for EVERY
      gated tier (parity tier and memory tier), each = the oracle's own observed rate at that tier
-     plus a fixed non-negative margin `m` (proposed `m = 0.02` absolute, frozen here). Step 6 then
+     plus a fixed non-negative margin `m` (default `m = 0.02` absolute; the one numeric knob JC-2
+     approval settles, frozen at this Step 4 checkpoint once approved). Step 6 then
      asserts the pinned oracle itself passes its own per-tier threshold (the threshold can never be
      stricter than the oracle).
    - Bounded aggregation: the cross-chunk distinct-source/collision measurement MUST NOT hold
