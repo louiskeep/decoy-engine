@@ -291,28 +291,23 @@ ml = [
 perf = [
     "pytest-codspeed>=3.0",
 ]
-# Native masking hot path (engine-efficiency-plan Part 1 Phase 2). Optional:
-# the compiled `decoy-engine-native` companion (maturin + PyO3, ships the
-# Rust KeyedDerivationKernel) is a separate package precisely so the core
+# Native masking hot path (engine-efficiency-plan Part 1 Phase 2). The compiled
+# `decoy-engine-native` companion (maturin + PyO3, ships the Rust
+# KeyedDerivationKernel) is a separate, OPTIONAL package precisely so the core
 # stays a Rust-free, `py3-none-any` install at both build and install time.
-# Absent this extra, `load_compiled_crypto_kernel` raises
-# CryptoExtensionUnavailableError and the engine reroutes keyed-hash columns
-# to the pandas oracle at preflight; no logical output changes either way.
+# Absent it, `load_compiled_crypto_kernel` raises
+# CryptoExtensionUnavailableError and the engine reroutes keyed-hash columns to
+# the pandas oracle at preflight; no logical output changes either way.
 #
-# Local dev (editable, same-repo checkout): install the companion directly,
-# e.g. `uv pip install -e ./decoy-engine-native` or `maturin develop` against
-# this venv, then this extra's marker requirement is satisfied by whatever
-# version ends up installed.
-#
-# Release form (what ships to PyPI): pin the compatible companion version
-# exactly, e.g. `decoy-engine-native==0.1.0`, cut alongside the core release
-# per the ABI-tag compatibility contract (docs/plans/
-# 2026-08-28-part1-phase2-detail-DRAFT.md section 5). Left as a bare name
-# below because no versioned companion has shipped yet; the pin lands with
-# the first paired release.
-native = [
-    "decoy-engine-native",
-]
+# There is deliberately NO `native` extra declared here yet. The companion is
+# unpublished (no PyPI release, no version), so a bare `native = ["decoy-engine-
+# native"]` extra cannot be resolved by the locker and desyncs `uv.lock` /
+# `uv sync --frozen`. Install the companion directly for local dev
+# (`uv pip install -e ./decoy-engine-native` or `maturin develop`); CI builds it
+# via `native-companion.yml` (maturin-action), never through an extra. The
+# `native` extra lands with the first paired PyPI release, pinned exactly (e.g.
+# `decoy-engine-native==0.1.0`) with a `[tool.uv.sources]`/workspace entry so the
+# lock stays resolvable, per the ABI-tag compatibility contract.
 
 # Project URLs surfaced on the PyPI sidebar.
 [project.urls]
