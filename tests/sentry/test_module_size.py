@@ -421,6 +421,19 @@ ALLOWLIST: dict[str, int] = {
     # faker / source_keyed) into sibling modules re-exported through the
     # registry when the next draw-site batch lands.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
+    # Native program Task 2.3 (Phase 2 merge, 2026-08-30): the compiled-kernel
+    # loader gained a load-time known-answer self-test (fail-before-output
+    # hardening, the DE-08-style contract) that pushed the module to 702. It
+    # bundles the ABI/error/config/result types, the KAT vectors, the two
+    # Protocols, the two pure-Python reference kernels, and the compiled loader.
+    # Decomposition target: move the reference kernels + factories
+    # (_ReferenceKeyedDerivation / _ReferenceFpe / reference_keyed_derivation /
+    # reference_fpe / _row_error / _ROW_ERROR_MESSAGES) into a
+    # `_crypto_reference.py` sibling that imports the shared types + KATs from
+    # here. The loader does not depend on the reference kernels, so this splits
+    # with no import cycle and brings the module back under 600. Do it when the
+    # native crypto surface is next touched.
+    "src/decoy_engine/execution/native/_crypto_ext.py": 702,
 }
 
 
