@@ -235,6 +235,29 @@ No gated product module was modified for this task: `_dispatch.py`,
 (`scripts/native-baseline/bench_c1_native.py`), and this certification
 doc.
 
+## Method notes and limitations (recorded from the Codex cross-model gate)
+
+- **Repetition counts deviate from the frozen JC-3 method.** The frozen method
+  (`PHASE3-C1-BASELINE.md`) specified 5 timed reps at the parity tier and 3 at
+  the memory tier; the committed runs are 2 (parity), 3 (1M), 2 (3M). The
+  measured margins are far larger than the run-to-run variance would move them
+  (native wall 0.45-0.50x the oracle; RSS ~1/16), so the fewer reps do not
+  change any verdict, but the deviation is recorded rather than hidden. A
+  method-strict re-run at 5/3 reps is a cheap follow-up if desired.
+- **The 100M-row native RSS is an extrapolation, not a measured point here.**
+  This gate measured 10k/1M/3M. The claim that the native route "stays ~355 MB"
+  toward 100M is an extrapolation from the flat 1M->3M trend, corroborated by
+  Phase 2's own measured 100M-row native certification (the hash/redact/truncate
+  route held 398 MB flat at 100M); it is not a 100M measurement in this gate.
+- **The route ledger reconstructs (table, column, chunk) identities** from the
+  admitted node list and the emitted chunk stream, not from a per-invocation
+  event log. This is sound for the CURRENT dispatch because routing is
+  table-atomic (no partial fallback), every input chunk yields exactly one
+  same-row-count output chunk, `_mask_chunk_native` visits every column once,
+  and the runtime counters must equal the expected faker/hash column-chunk
+  counts. A future dispatch with retries or per-column routing would need a
+  real per-invocation event ledger instead.
+
 ## Status
 
 **Engine CORRECTNESS gate: PASSED (all 4 criteria). JC-3 performance bounds:
