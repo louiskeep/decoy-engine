@@ -12,6 +12,8 @@ counters. End-to-end oracle-vs-native logical parity lives in
 
 from __future__ import annotations
 
+import importlib.util
+
 import pyarrow as pa
 import pytest
 
@@ -28,6 +30,12 @@ from decoy_engine.execution.native._requirements import (
 from decoy_engine.generation.pool import PoolBuilder, PoolCache
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
+)
 
 _ENGINE_VERSION = "phase3-task3.1"
 _SECRET_A = bytes(range(32))
@@ -258,6 +266,7 @@ def test_faker_pool_precondition_met_rejects_composite_group_node() -> None:
     assert faker_pool_precondition_met(_FakeGroupNode()) is False
 
 
+@_NEEDS_COMPANION
 def test_mixed_faker_and_hash_all_admit_when_faker_is_c1_variant() -> None:
     config = _config(
         _faker_column(),

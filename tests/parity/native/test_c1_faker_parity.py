@@ -14,6 +14,7 @@ after the first).
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 
 import pyarrow as pa
@@ -29,6 +30,12 @@ from decoy_engine.execution.native._dispatch import (
 from decoy_engine.keyprovider import SecretKeyProvider
 from tests.parity.native._fixtures import LogicalResult as _LogicalResult
 from tests.parity.native._fixtures import assert_logical_parity
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
+)
 
 _ENGINE_VERSION = "phase3-task3.1-parity"
 _MASK_KEY = bytes.fromhex("b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e8f901")
@@ -157,6 +164,7 @@ _BATCH_SIZES = (1, 4, 11)
 _ORDERS = (False, True)  # natural, then reversed
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("reverse", _ORDERS, ids=["natural_order", "reversed_order"])
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES, ids=[f"batch_{b}" for b in _BATCH_SIZES])
 def test_native_faker_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> None:
@@ -170,6 +178,7 @@ def test_native_faker_route_exact_parity_vs_oracle(batch_size: int, reverse: boo
     assert_logical_parity(candidate, oracle)
 
 
+@_NEEDS_COMPANION
 def test_native_faker_route_parity_on_all_null_faker_column() -> None:
     source = _build_source(10)
     source = source.set_column(
@@ -182,6 +191,7 @@ def test_native_faker_route_parity_on_all_null_faker_column() -> None:
     assert_logical_parity(_LogicalResult(outputs={"c1": native_table}), oracle)
 
 
+@_NEEDS_COMPANION
 def test_native_faker_route_parity_with_non_zero_offset_single_row_chunks() -> None:
     # Every chunk after the first has a non-zero Arrow offset; batch_size=1
     # maximizes the count of non-zero-offset chunks relative to row count.
@@ -193,6 +203,7 @@ def test_native_faker_route_parity_with_non_zero_offset_single_row_chunks() -> N
     assert_logical_parity(_LogicalResult(outputs={"c1": native_table}), oracle)
 
 
+@_NEEDS_COMPANION
 def test_route_evidence_matches_column_count_and_native_pool_tag() -> None:
     source = _build_source(20)
     config = _build_config(source)
