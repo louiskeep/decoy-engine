@@ -238,6 +238,20 @@ def test_duplicate_faker_declarations_do_not_hide_an_unsafe_column() -> None:
     assert "faker_not_deterministic:FIRST" in result.reasons
 
 
+def test_identical_unsafe_duplicate_declarations_report_the_reason_once() -> None:
+    # Two identical non-deterministic FIRST declarations produce the same reason
+    # string; it is reported ONCE (stable-deduped), not repeated. Admission is
+    # still fail-closed either way.
+    config = _config(
+        "t",
+        _faker_col("FIRST", deterministic=False),
+        _faker_col("FIRST", deterministic=False),
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == ("faker_not_deterministic:FIRST",)
+
+
 # ---------------------------------------------------------------------------
 # Totality: every live registry provider gets a defined, non-raising verdict.
 # ---------------------------------------------------------------------------

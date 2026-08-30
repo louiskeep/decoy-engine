@@ -124,6 +124,10 @@ def phase3_c1_eligibility(
         if reason is not None:
             reasons.append(reason)
 
+    # Stable-dedupe: two identical declarations of the same unsafe column yield
+    # the same reason string; report it once (each reason already carries its
+    # column name, so distinct columns never collapse). Order preserved.
+    reasons = list(dict.fromkeys(reasons))
     return Phase3Eligibility(admitted=not reasons, reasons=tuple(reasons))
 
 
