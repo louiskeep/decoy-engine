@@ -1,0 +1,49 @@
+[package]
+name = "decoy-engine-native"
+version = "0.1.0"
+edition = "2021"
+description = "Compiled Rust companion for decoy-engine's native masking hot path. Ships the KeyedDerivationKernel (HKDF-SHA256 then HMAC-SHA256 over the Arrow C Data Interface), the one security-sensitive native masking kernel."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "_kernel"
+# "rlib" lets Rust integration tests (tests/*.rs), the FFI-boundary unit tests, and the
+# fuzz target link this crate normally; "cdylib" is what maturin ships as the importable
+# Python extension module.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# ON by default so a plain `cargo build`/`cargo test`/`maturin build` is unchanged. A
+# standalone binary that links this crate directly (a fuzz target, an ASan/TSan build run
+# outside Python) needs it OFF: pyo3's own "extension-module" feature deliberately omits
+# linking against libpython (the symbols come from the host Python process at runtime),
+# which is fine for the cdylib maturin ships but leaves a plain `rustc`/`cargo fuzz` binary
+# with undefined Python C-API symbols at link time. `batch`/`canonicalize`/`derive`/
+# `ffi_import` have no pyo3 dependency at all, so they build and link fine with this feature
+# off; only `arrow_ffi` (the PyO3 boundary) and the two pymodule/pyfunction items in lib.rs
+# need it.
+default = ["extension-module"]
+extension-module = ["dep:pyo3"]
+
+[dependencies]
+# "ffi"/"force_validate" are unconditional (not folded into the "extension-module" feature):
+# `ffi_import` uses the Arrow C Data Interface types and runs under `ArrayData::validate_data()`
+# regardless of the PyO3 feature, since the FFI-metadata fuzz target links this crate with
+# `--no-default-features` and still needs to exercise the exact validated import path the
+# compiled extension runs in production.
+arrow-array = { version = "59.2.0", features = ["ffi", "force_validate"] }
+arrow-buffer = "59.2.0"
+arrow-data = { version = "59.2.0", features = ["ffi", "force_validate"] }
+arrow-schema = { version = "59.2.0", features = ["ffi"] }
+chrono = "0.4.45"
+hkdf = "0.13.0"
+hmac = "0.13.0"
+pyo3 = { version = "0.29", features = ["extension-module"], optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.0"
+unicode-normalization = "0.1.25"
+
+[dev-dependencies]
+proptest = "1.11.0"
+serde_json = "1.0.151"

@@ -1,0 +1,84 @@
+{
+  "4000000": {
+    "n_rows": 4000000,
+    "reps": 5,
+    "wall_median_s": 177.2826655920362,
+    "wall_q1_s": 177.2527794149937,
+    "wall_q3_s": 177.46380664099706,
+    "wall_iqr_s": 0.21102722600335255,
+    "wall_p95of_s": 179.47578489599982,
+    "wall_min_s": 176.2111715329811,
+    "peak_rss_max_kb": 5055580,
+    "peak_rss_max_mb": 4937.1,
+    "hash_tput_median_rows_s": 81701.61414405503,
+    "whole_job_tput_median_rows_s": 22562.837639212965,
+    "execution_mode": "full_frame",
+    "raw_reps": [
+      {
+        "n_rows": 4000000,
+        "wall_s": 177.46380664099706,
+        "out_rows": 4000000,
+        "execution_mode": "full_frame",
+        "hash_ms": 146866.9476629584,
+        "hash_cols": 3,
+        "redact_ms": 11923.051951976959,
+        "truncate_ms": 13579.660933988634,
+        "passthrough_ms": 0.007552967872470617,
+        "peak_rss_kb": 5018796,
+        "wall_outer_s": 184.78153610229492
+      },
+      {
+        "n_rows": 4000000,
+        "wall_s": 177.2826655920362,
+        "out_rows": 4000000,
+        "execution_mode": "full_frame",
+        "hash_ms": 147777.6333040092,
+        "hash_cols": 3,
+        "redact_ms": 11667.961177940015,
+        "truncate_ms": 13187.026828993112,
+        "passthrough_ms": 0.007528986316174269,
+        "peak_rss_kb": 5051592,
+        "wall_outer_s": 184.24373507499695
+      },
+      {
+        "n_rows": 4000000,
+        "wall_s": 179.47578489599982,
+        "out_rows": 4000000,
+        "execution_mode": "full_frame",
+        "hash_ms": 147232.90129809175,
+        "hash_cols": 3,
+        "redact_ms": 12990.161222987808,
+        "truncate_ms": 14637.553369975649,
+        "passthrough_ms": 0.00780296977609396,
+        "peak_rss_kb": 5011940,
+        "wall_outer_s": 186.48851776123047
+      },
+      {
+        "n_rows": 4000000,
+        "wall_s": 176.2111715329811,
+        "out_rows": 4000000,
+        "execution_mode": "full_frame",
+        "hash_ms": 145668.0317010032,
+        "hash_cols": 3,
+        "redact_ms": 12115.417822031304,
+        "truncate_ms": 13780.534863006324,
+        "passthrough_ms": 0.008451985195279121,
+        "peak_rss_kb": 5055344,
+        "wall_outer_s": 183.18144154548645
+      },
+      {
+        "n_rows": 4000000,
+        "wall_s": 177.2527794149937,
+        "out_rows": 4000000,
+        "execution_mode": "full_frame",
+        "hash_ms": 146875.9231469012,
+        "hash_cols": 3,
+        "redact_ms": 12037.46720298659,
+        "truncate_ms": 13680.767508980352,
+        "passthrough_ms": 0.007609021849930286,
+        "peak_rss_kb": 5055580,
+        "wall_outer_s": 184.19669008255005
+      }
+    ]
+  }
+}

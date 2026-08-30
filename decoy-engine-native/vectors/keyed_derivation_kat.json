@@ -1,0 +1,620 @@
+{
+  "format_version": 1,
+  "cases": [
+    {
+      "name": "utf8_basic_with_nulls",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        "bob",
+        null,
+        ""
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "people.name",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        "626f62",
+        null,
+        ""
+      ],
+      "expected_output": [
+        "4683afb3b5fe3d5f4f9bae525fde79327425b0e618dd8443c6376a9bebb604d6",
+        "da6c02935ac09e6043a2555c6b8f9bf88e110899ea8189428f0bc76bcd245885",
+        null,
+        "477d18229b66e5aebbe1305afb5c466e72e1bde799e2b7d37340b006758b6783"
+      ]
+    },
+    {
+      "name": "utf8_truncated",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        "bob",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "people.name",
+      "truncate": 16,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        "626f62",
+        null
+      ],
+      "expected_output": [
+        "4683afb3b5fe3d5f",
+        "da6c02935ac09e60",
+        null
+      ]
+    },
+    {
+      "name": "large_utf8_basic_with_nulls",
+      "arrow_type": {
+        "kind": "large_utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        null,
+        "carol"
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "people.name",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        null,
+        "6361726f6c"
+      ],
+      "expected_output": [
+        "4683afb3b5fe3d5f4f9bae525fde79327425b0e618dd8443c6376a9bebb604d6",
+        null,
+        "73408657d21f66f2d68048c9e993611d9e484ca2495e6c8c085dad614c23e55e"
+      ]
+    },
+    {
+      "name": "utf8_nfc_nfd_equivalence",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "caf\u00e9",
+        "cafe\u0301"
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "people.name",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "636166c3a9",
+        "636166c3a9"
+      ],
+      "expected_output": [
+        "8cc06843f7d2ec6fc7848ef3367fc85bad8ea99ac838fb2c55e6ef2fe10b04e2",
+        "8cc06843f7d2ec6fc7848ef3367fc85bad8ea99ac838fb2c55e6ef2fe10b04e2"
+      ]
+    },
+    {
+      "name": "framing_boundary_ab_c",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "c"
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "ab",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "63"
+      ],
+      "expected_output": [
+        "6397fc0fbcfdc764ab512980f9d57e9c507025f068a050cc8c4f27ddf5a09ffd"
+      ]
+    },
+    {
+      "name": "framing_boundary_a_bc",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "bc"
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "a",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "6263"
+      ],
+      "expected_output": [
+        "627af21e9aca7f74037ae6232f88af47df26b85b154ac36be585976455332c49"
+      ]
+    },
+    {
+      "name": "int8_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 8,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-128",
+        "-1",
+        "0",
+        "1",
+        "127",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "00000002ff80",
+        "00000001ff",
+        "0000000100",
+        "0000000101",
+        "000000017f",
+        null
+      ],
+      "expected_output": [
+        "bcd833b9050018eec425646cef9cc080efd4a3f90014c8fc9e7fc517da1821c8",
+        "9072d880e952f94028c65f58a6087509c5249844da54749b552e865f4f2a2b47",
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "82192a4c464a276643488934be58142499c37277ff70d563ca68b99541837ed1",
+        null
+      ]
+    },
+    {
+      "name": "int8_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 8,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "1",
+        "255",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000101",
+        "0000000200ff",
+        null
+      ],
+      "expected_output": [
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "d5f9c8d263647f6ca63441c0b68d570eff759f70f46b13636468b08175397800",
+        null
+      ]
+    },
+    {
+      "name": "int16_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 16,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-32768",
+        "-1",
+        "0",
+        "1",
+        "32767",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "00000003ff8000",
+        "00000001ff",
+        "0000000100",
+        "0000000101",
+        "000000027fff",
+        null
+      ],
+      "expected_output": [
+        "706c7cd138b8fec3a5b1aa5a7e6a64af7431475853d2b87996a5909cdd27fb26",
+        "9072d880e952f94028c65f58a6087509c5249844da54749b552e865f4f2a2b47",
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "9ff67c58ded9e5e42dac3e7ad501dbeb1145befb45cb79f07125d0956a3d2bdc",
+        null
+      ]
+    },
+    {
+      "name": "int16_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 16,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "1",
+        "65535",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000101",
+        "0000000300ffff",
+        null
+      ],
+      "expected_output": [
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "8cc6761faf2a7adc958b0ec8c55cb293cb2ea67a1969b40702a8f2563d3e791b",
+        null
+      ]
+    },
+    {
+      "name": "int32_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 32,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-2147483648",
+        "-1",
+        "0",
+        "1",
+        "2147483647",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "00000005ff80000000",
+        "00000001ff",
+        "0000000100",
+        "0000000101",
+        "000000047fffffff",
+        null
+      ],
+      "expected_output": [
+        "0a253323300e208807d831c400d368329f8edbd40ffc5951e978d979343b27ee",
+        "9072d880e952f94028c65f58a6087509c5249844da54749b552e865f4f2a2b47",
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "08c434e815dd0bde7fdb28885ab4730665b46c3a4d7b78b78db6a6a4dcda307c",
+        null
+      ]
+    },
+    {
+      "name": "int32_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 32,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "1",
+        "4294967295",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000101",
+        "0000000500ffffffff",
+        null
+      ],
+      "expected_output": [
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "320f5e02fa6b659ea58bb838456cdda0a026f20354df7a6cac22f3a114a6f9d8",
+        null
+      ]
+    },
+    {
+      "name": "int64_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 64,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-9223372036854775808",
+        "-1",
+        "0",
+        "1",
+        "9223372036854775807",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "00000009ff8000000000000000",
+        "00000001ff",
+        "0000000100",
+        "0000000101",
+        "000000087fffffffffffffff",
+        null
+      ],
+      "expected_output": [
+        "5e5e327b465ad8e1f0a289ba0dc135fd59b62ac321561dd8030f3e7e5c6399c6",
+        "9072d880e952f94028c65f58a6087509c5249844da54749b552e865f4f2a2b47",
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "c1f4e6589bdb29f24fb89a0b273cb71dfb418745d303f30262f60ef5225274e3",
+        null
+      ]
+    },
+    {
+      "name": "int64_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 64,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "1",
+        "18446744073709551615",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000101",
+        "0000000900ffffffffffffffff",
+        null
+      ],
+      "expected_output": [
+        "8518c80b6a96ded0bca32fa945fdd527b9b1f48d44513bf715eee7f83e885fee",
+        "f4f289269f7382fbc18ae4a08e5bebef2da36af64c0b3836283460eb73f777da",
+        "110c2896a591112e3ca2bb3d4590ee2b1d0b5f08ab5ad5808efb473390b791b9",
+        null
+      ]
+    },
+    {
+      "name": "int64_signed_truncated",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 64,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "12345",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "accounts.balance",
+      "truncate": 16,
+      "expected_canonical_source_hex": [
+        "000000023039",
+        null
+      ],
+      "expected_output": [
+        "281e01efa39dd969",
+        null
+      ]
+    },
+    {
+      "name": "bool_basic_with_null",
+      "arrow_type": {
+        "kind": "bool",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        true,
+        false,
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "flags.active",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "01",
+        "00",
+        null
+      ],
+      "expected_output": [
+        "16c3f617eb848201f0866d373fd312cdfec19e357e8d8d7e7c6d56f69e642579",
+        "2216c5aaecef49e1c5614a13a0078d82fbc86a33bcd5ecf81e9c79c8ac817046",
+        null
+      ]
+    },
+    {
+      "name": "timestamp_s_utc",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "s",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45+00:00",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "events.at",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352b30303a3030",
+        null
+      ],
+      "expected_output": [
+        "ac0eadda0070266b55a0c57feda8f5f20ebf117c389f9cd207a521dfe63b44cd",
+        null
+      ]
+    },
+    {
+      "name": "timestamp_ms_utc",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ms",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.120000+00:00",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "events.at",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3132303030302b30303a3030",
+        null
+      ],
+      "expected_output": [
+        "6ef157975e45ff3ce6273d056d683454ac28980c74eff51e208307c446f820a7",
+        null
+      ]
+    },
+    {
+      "name": "timestamp_us_utc_with_negative_epoch",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "us",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.500000+00:00",
+        "1969-12-31T23:59:59.999999+00:00",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "events.at",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3530303030302b30303a3030",
+        "313936392d31322d33315432333a35393a35392e3939393939392b30303a3030",
+        null
+      ],
+      "expected_output": [
+        "26e7d9ebd0099af27bf548f595557a137ce88f84caf1db22aaef3114c93adf0a",
+        "10ca7b974d22d3dfd4f1ab71fcbdf679bd7edbf49b90713e42cb1fe2ffbd24f8",
+        null
+      ]
+    },
+    {
+      "name": "timestamp_ns_utc_fraction_precision",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ns",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.123456789+00:00",
+        "2020-01-01T12:30:45.123456000+00:00",
+        "2020-01-01T12:30:45+00:00",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "events.at",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3132333435363738392b30303a3030",
+        "323032302d30312d30315431323a33303a34352e3132333435362b30303a3030",
+        "323032302d30312d30315431323a33303a34352b30303a3030",
+        null
+      ],
+      "expected_output": [
+        "ba805455d6026cb0d24ab71cb9b12d49d89d613d31e64458795618e01bbe062b",
+        "831c0325adda514ab6e06f76482f1521cc727d0c363f41996d7f4a15a3288c4e",
+        "ac0eadda0070266b55a0c57feda8f5f20ebf117c389f9cd207a521dfe63b44cd",
+        null
+      ]
+    },
+    {
+      "name": "timestamp_ns_non_utc_tz",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ns",
+        "tz": "America/New_York"
+      },
+      "logical_values": [
+        "2020-06-15T08:00:00.000000001-04:00",
+        null
+      ],
+      "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "events.at",
+      "truncate": null,
+      "expected_canonical_source_hex": [
+        "323032302d30362d31355431323a30303a30302e3030303030303030312b30303a3030",
+        null
+      ],
+      "expected_output": [
+        "6ba233642cf1187046f8e52c544e3c013f5aa8199a52d3aa9d0dcaf82b669dad",
+        null
+      ]
+    }
+  ]
+}

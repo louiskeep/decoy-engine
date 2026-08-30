@@ -1,0 +1,70 @@
+{
+  "16000000": {
+    "n_rows": 16000000,
+    "reps": 3,
+    "wall_median_s": 260.14029372500954,
+    "wall_q1_s": 256.598645828024,
+    "wall_q3_s": 261.01901426399127,
+    "wall_iqr_s": 4.420368435967248,
+    "wall_p95of_s": 261.897734802973,
+    "wall_min_s": 253.0569979310385,
+    "peak_rss_max_kb": 358280,
+    "peak_rss_max_mb": 349.9,
+    "hash_tput_median_rows_s": 238722.29584500028,
+    "whole_job_tput_median_rows_s": 61505.27383087129,
+    "execution_mode": "native_streaming",
+    "raw_reps": [
+      {
+        "n_rows": 16000000,
+        "batch_rows": 50000,
+        "wall_s": 253.0569979310385,
+        "out_rows": 16000000,
+        "native_admitted": true,
+        "reroute_reason": null,
+        "compiled_kernel_executed": true,
+        "hash_ms": 196829.9499109853,
+        "hash_cols": 3,
+        "redact_ms": 23384.772411198355,
+        "truncate_ms": 30612.37075534882,
+        "passthrough_ms": 35.53020622348413,
+        "execution_mode": "native_streaming",
+        "peak_rss_kb": 356760,
+        "wall_outer_s": 254.1614921092987
+      },
+      {
+        "n_rows": 16000000,
+        "batch_rows": 50000,
+        "wall_s": 261.897734802973,
+        "out_rows": 16000000,
+        "native_admitted": true,
+        "reroute_reason": null,
+        "compiled_kernel_executed": true,
+        "hash_ms": 201663.49202144193,
+        "hash_cols": 3,
+        "redact_ms": 25081.766093499027,
+        "truncate_ms": 32667.397380049806,
+        "passthrough_ms": 38.279638276435435,
+        "execution_mode": "native_streaming",
+        "peak_rss_kb": 356144,
+        "wall_outer_s": 263.0015778541565
+      },
+      {
+        "n_rows": 16000000,
+        "batch_rows": 50000,
+        "wall_s": 260.14029372500954,
+        "out_rows": 16000000,
+        "native_admitted": true,
+        "reroute_reason": null,
+        "compiled_kernel_executed": true,
+        "hash_ms": 201070.45230147196,
+        "hash_cols": 3,
+        "redact_ms": 24891.98998361826,
+        "truncate_ms": 31710.32729995204,
+        "passthrough_ms": 36.17266402579844,
+        "execution_mode": "native_streaming",
+        "peak_rss_kb": 358280,
+        "wall_outer_s": 261.3278088569641
+      }
+    ]
+  }
+}

@@ -291,6 +291,23 @@ ml = [
 perf = [
     "pytest-codspeed>=3.0",
 ]
+# Native masking hot path (engine-efficiency-plan Part 1 Phase 2). The compiled
+# `decoy-engine-native` companion (maturin + PyO3, ships the Rust
+# KeyedDerivationKernel) is a separate, OPTIONAL package precisely so the core
+# stays a Rust-free, `py3-none-any` install at both build and install time.
+# Absent it, `load_compiled_crypto_kernel` raises
+# CryptoExtensionUnavailableError and the engine reroutes keyed-hash columns to
+# the pandas oracle at preflight; no logical output changes either way.
+#
+# There is deliberately NO `native` extra declared here yet. The companion is
+# unpublished (no PyPI release, no version), so a bare `native = ["decoy-engine-
+# native"]` extra cannot be resolved by the locker and desyncs `uv.lock` /
+# `uv sync --frozen`. Install the companion directly for local dev
+# (`uv pip install -e ./decoy-engine-native` or `maturin develop`); CI builds it
+# via `native-companion.yml` (maturin-action), never through an extra. The
+# `native` extra lands with the first paired PyPI release, pinned exactly (e.g.
+# `decoy-engine-native==0.1.0`) with a `[tool.uv.sources]`/workspace entry so the
+# lock stays resolvable, per the ABI-tag compatibility contract.
 
 # Project URLs surfaced on the PyPI sidebar.
 [project.urls]
@@ -453,6 +470,10 @@ ignore = [
 # own measured invariants (S101) and stages fixtures in a /tmp scratch tree
 # (S108); neither is a production code path.
 "scripts/tb4_calibration.py" = ["S101", "S108"]
+# Native-testing mutation pilot: a manual/gated harness whose whole job is
+# driving git / mutmut / pytest subprocesses with fully code-constructed args
+# (S603/S607 subprocess with a partial path are intentional and trusted).
+"scripts/native-testing/python_mutation_pilot.py" = ["S603", "S607"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;
@@ -804,6 +825,12 @@ module = [
     # itself ships stubs and needs no override.
     "dp_accounting",
     "dp_accounting.*",
+    # decoy-engine-native is the OPTIONAL compiled companion (the core's
+    # `native` extra) and ships no py.typed marker; imported function-locally
+    # in execution.native._crypto_ext.load_compiled_crypto_kernel, not
+    # installed in default-extras CI.
+    "decoy_engine_native",
+    "decoy_engine_native.*",
 ]
 ignore_missing_imports = true
 

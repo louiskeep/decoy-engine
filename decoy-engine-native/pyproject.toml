@@ -1,0 +1,38 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "decoy-engine-native"
+version = "0.1.0"
+description = "Compiled Rust companion for decoy-engine's native masking hot path (optional accelerator; the core engine installs and runs without it)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "louiskeep" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/louiskeep/decoy-engine"
+Repository = "https://github.com/louiskeep/decoy-engine"
+
+[tool.maturin]
+# Dotted module-name places the compiled extension at
+# decoy_engine_native/_kernel.<ext> and generates the parent package's
+# __init__.py, so `import decoy_engine_native._kernel` resolves without a
+# hand-maintained python-source tree. The pinned name is load-bearing: the
+# core's loader (`_crypto_ext.load_compiled_crypto_kernel`) and the Rust
+# crate both reference it verbatim.
+module-name = "decoy_engine_native._kernel"
+features = ["pyo3/extension-module"]

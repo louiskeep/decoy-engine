@@ -1,0 +1,36 @@
+{
+  "100000000": {
+    "n_rows": 100000000,
+    "reps": 1,
+    "wall_median_s": 1563.3855519599747,
+    "wall_q1_s": 1563.3855519599747,
+    "wall_q3_s": 1563.3855519599747,
+    "wall_iqr_s": 0.0,
+    "wall_p95of_s": 1563.3855519599747,
+    "wall_min_s": 1563.3855519599747,
+    "peak_rss_max_kb": 407928,
+    "peak_rss_max_mb": 398.4,
+    "hash_tput_median_rows_s": 246110.66979403765,
+    "whole_job_tput_median_rows_s": 63963.74833746716,
+    "execution_mode": "native_streaming",
+    "raw_reps": [
+      {
+        "n_rows": 100000000,
+        "batch_rows": 50000,
+        "wall_s": 1563.3855519599747,
+        "out_rows": 100000000,
+        "native_admitted": true,
+        "reroute_reason": null,
+        "compiled_kernel_executed": true,
+        "hash_ms": 1218963.8110816595,
+        "hash_cols": 3,
+        "redact_ms": 144940.99870149512,
+        "truncate_ms": 184446.4651219896,
+        "passthrough_ms": 206.04205905692652,
+        "execution_mode": "native_streaming",
+        "peak_rss_kb": 407928,
+        "wall_outer_s": 1564.4780957698822
+      }
+    ]
+  }
+}

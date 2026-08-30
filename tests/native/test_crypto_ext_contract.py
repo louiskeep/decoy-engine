@@ -14,6 +14,8 @@ Phase 2 compiled kernel can be graded against a byte-exact oracle:
 
 from __future__ import annotations
 
+import sys
+
 import pandas as pd
 import pyarrow as pa
 import pytest
@@ -97,6 +99,26 @@ def test_reference_hash_matches_scalar(values: object, truncate: int | None) -> 
     )
     want = hash_array(values, seed=MK32, namespace=NS, truncate=truncate)
     assert got.to_pylist() == want.to_pylist()
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pa.array([], type=pa.string()),
+        pa.array([None, None, None], type=pa.string()),
+    ],
+)
+def test_reference_hash_batch_type_is_string_even_when_empty_or_all_null(
+    values: pa.Array,
+) -> None:
+    # to_pylist() parity alone cannot catch this: pyarrow infers a null-typed array from
+    # an empty or all-null list just as readily as from an explicit type=pa.string(), and
+    # both compare equal as plain Python lists. Every KAT vector has a non-null value, so
+    # the parity tests above never exercise this shape. Pin the Arrow type directly.
+    got = reference_keyed_derivation().derive_batch(
+        values, mask_key=MK32, namespace=NS, truncate=None
+    )
+    assert got.type == pa.string()
 
 
 def test_hash_null_and_numeric_and_bytes_encoding() -> None:
@@ -296,7 +318,14 @@ def test_fpe_join_group_shares_tweak_and_warns() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compiled_kernel_absent_fails_before_output() -> None:
+def test_compiled_kernel_absent_fails_before_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Force the "companion absent" path deterministically, regardless of whether
+    # decoy-engine-native happens to be installed in this environment: setting
+    # sys.modules[name] = None makes the import machinery raise ImportError for
+    # that name (a documented Python import-system behavior), which is exactly the
+    # failure the loader must map to CryptoExtensionUnavailableError. The real
+    # present/absent environments are covered by tests/native/test_crypto_ext_loader.py.
+    monkeypatch.setitem(sys.modules, "decoy_engine_native", None)
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 

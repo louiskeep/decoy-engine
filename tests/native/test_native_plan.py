@@ -162,10 +162,14 @@ def _composite_providers() -> set[str]:
 
 def test_eligibility_agrees_with_registry_for_every_provider() -> None:
     # Walk the LIVE ProviderRegistry (not a hand-typed list): a faker column
-    # backed by a composite provider must be EXCLUDED (matching the WorkNode
-    # path's node.kind == "composite"); any other provider leaves faker native-
-    # eligible. This is the coverage that was missing and would have caught the
-    # provider-blind bug.
+    # backed by a composite provider is excluded by the composite-fanout
+    # check specifically (matching the WorkNode path's node.kind ==
+    # "composite"), distinctly from a non-composite provider, which is
+    # excluded by the native-kernel-availability gate instead (faker has no
+    # native kernel this phase): neither is ever accepted, but the coded
+    # reason still tells the two paths apart, which is the coverage that
+    # was missing and would have caught the provider-blind bug this test
+    # was written against.
     registry = get_default_registry()
     composite = _composite_providers()
     assert composite  # the registry ships composite bindings; guard the guard
@@ -173,9 +177,11 @@ def test_eligibility_agrees_with_registry_for_every_provider() -> None:
         cfg = _config({"name": "c", "strategy": "faker", "provider": provider, "namespace": "ns"})
         result = native_route_eligibility(cfg, table="t")
         is_composite = provider in composite
-        assert result.accepted is (not is_composite), provider
+        assert result.accepted is False, provider
         if is_composite:
             assert any(r.startswith("composite_provider_multi_column") for r in result.rejections)
+        else:
+            assert any(r.startswith("no_native_kernel") for r in result.rejections)
 
 
 def test_composite_provider_faker_is_rejected_the_reported_bug() -> None:
