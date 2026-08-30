@@ -20,6 +20,121 @@ predate the numbers.
 - Harness (committed for reproducibility, next commit on this doc):
   `scripts/native-baseline/bench_c1_oracle.py`.
 
+## Frozen deterministic C1 recipe variant
+
+Same two-table shape as the platform's `mask-fullframe-saturate` scenario
+(`decoy-platform/.claude/worktrees/streaming-qual/scripts/prod-sim/prodsim_run/scenarios/mask-fullframe-saturate/recipe.yaml`):
+patients masked independently of observations, no `relationships:`. The
+three faker columns each add `deterministic: true` + an explicit `namespace`
++ an explicit `pool_size` (JC-5); every hash column is unchanged from the
+platform recipe. This is the ONLY change from that recipe -- the point of
+JC-5 is that the deterministic variant is the same job, not a different one.
+
+```yaml
+version: 1
+global_settings:
+  seed: 20260830
+sources:
+  patients:
+    type: file
+    format: csv
+    path: placeholder-unused.csv
+  observations:
+    type: file
+    format: csv
+    path: placeholder-unused.csv
+tables:
+  - name: patients
+    columns:
+      - name: FIRST
+        strategy: faker
+        provider: person_first_name
+        deterministic: true
+        namespace: first_name_identity
+        pool_size: 10000
+      - name: LAST
+        strategy: faker
+        provider: person_last_name
+        deterministic: true
+        namespace: last_name_identity
+        pool_size: 10000
+      - name: MAIDEN
+        strategy: faker
+        provider: person_last_name
+        deterministic: true
+        namespace: maiden_name_identity
+        pool_size: 10000
+      - name: SSN
+        strategy: hash
+        namespace: ssn_identity
+      - name: DRIVERS
+        strategy: hash
+        namespace: drivers_identity
+      - name: PASSPORT
+        strategy: hash
+        namespace: passport_identity
+      - name: ADDRESS
+        strategy: hash
+        namespace: address_identity
+      - name: BIRTHDATE
+        strategy: hash
+        namespace: birthdate_identity
+      - name: DEATHDATE
+        strategy: hash
+        namespace: deathdate_identity
+  - name: observations
+    columns:
+      - name: DATE
+        strategy: hash
+        namespace: observation_date_identity
+      - name: VALUE
+        strategy: hash
+        namespace: observation_value_identity
+targets:
+  patients:
+    type: file
+    format: csv
+    path: mask-fullframe-saturate-patients.csv
+  observations:
+    type: file
+    format: csv
+    path: mask-fullframe-saturate-observations.csv
+relationships: []
+namespaces: {}
+```
+
+FIRST and LAST get distinct namespaces from MAIDEN even though LAST and
+MAIDEN share a provider (`person_last_name`): a namespace scopes the
+POOL (`PoolBuilder`'s pool-seed derivation folds in `namespace`, so two
+columns on the same provider with different namespaces build two different
+pools), and LAST/MAIDEN are semantically different fields on the same
+person, so this baseline gives each its own pool rather than forcing them
+to share one. This mirrors the platform recipe's own convention of giving
+every hash column its own namespace.
+
+### Resolved sampler settings (per faker column)
+
+Read off `execution/_strategies/_faker.py` and `plan/_seed_envelope.py` for
+this exact config:
+
+| Column | Provider | deterministic | cardinality_mode | pool_size | scale | locale | namespace |
+|---|---|---|---|---|---|---|---|
+| FIRST | person_first_name | true | reuse (default; not set) | 10,000 | 2.0 (default; unused under reuse) | None -> pool identity label `"default"`; Faker adapter resolves to `en_US` | first_name_identity |
+| LAST | person_last_name | true | reuse (default; not set) | 10,000 | 2.0 (default; unused under reuse) | None -> pool identity label `"default"`; Faker adapter resolves to `en_US` | last_name_identity |
+| MAIDEN | person_last_name | true | reuse (default; not set) | 10,000 | 2.0 (default; unused under reuse) | None -> pool identity label `"default"`; Faker adapter resolves to `en_US` | maiden_name_identity |
+
+The two "default" labels above are NOT the same thing: `PoolBuilder`'s own
+`effective_locale = locale or "default"` is a label folded into the pool's
+identity/pool-seed derivation, while the Faker adapter separately resolves
+an unset `spec.locale` to its own default of `"en_US"` for the actual
+values it generates. Both are pre-existing engine behavior, not something
+this baseline introduces; recorded here so Task 3.1 does not need to
+rediscover it.
+
+Neither `cardinality_mode` nor `scale` is set in the recipe; both take
+their compiled defaults (`reuse`, `2.0`). `scale` is read only under
+`scale_source_cardinality`, so it is inert here.
+
 ## Frozen dataset tiers
 
 Two tiers, both over the SAME two-table shape (patients + observations; see
