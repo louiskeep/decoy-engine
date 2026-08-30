@@ -246,8 +246,11 @@ DE-02 seam proven; positional null assignment; per-column-chunk route counters r
 
 Files:
 - Create: `execution/native/_pool_quality.py`.
-- Modify: `execution/native/_capabilities.py` (enforce `pool_quality` ONLY on the C1 native route;
-  preserve existing behavior for every other obligation and every non-C1 path, HIGH 4).
+- Do NOT modify `execution/native/_capabilities.py`: the `pool_quality` obligation tag already
+  exists there (Phase 0) and has no consumer, so the enforcer is a NEW standalone consumer.
+  Leaving `capabilities_for` and the resolver untouched IS how the HIGH-4 non-interference
+  requirement is met (enforce `pool_quality` ONLY on the C1 native route; every other obligation
+  and non-C1 path behaves exactly as before). A non-interference test pins that.
 - Test: `tests/native/test_pool_quality.py`, plus a non-interference test.
 
 Steps:

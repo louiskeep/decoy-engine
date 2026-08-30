@@ -29,10 +29,10 @@ from decoy_engine.execution.native._pool_quality import (
     UNIQUE_FEASIBILITY_NA,
     PoolQualityError,
     PoolQualityMeasurement,
-    _connect_duckdb_spill,
     enforce_pool_quality,
     measure_pool_quality,
 )
+from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._value_pool import ValuePool
 
@@ -188,14 +188,20 @@ class TestNonDeterministicSourceIntegrity:
 
 
 class TestBoundedAggregation:
-    def test_spill_backed_connection_config(self, tmp_path: Path) -> None:
-        conn = _connect_duckdb_spill(temp_dir=tmp_path, memory_limit="64MB")
+    def test_measurement_uses_the_memory_safe_shared_connection(self, tmp_path: Path) -> None:
+        # HIGH-1: the collision aggregation must use connect_duckdb (the
+        # out-of-core route's memory-safe helper), not a fork that drops its
+        # threads-vs-memory_limit clamp. A tight memory_limit pins threads low
+        # so DuckDB's per-thread working set cannot blow the budget before
+        # operators spill.
+        conn = connect_duckdb(temp_dir=tmp_path, memory_limit="64MB")
         try:
             temp_directory = conn.execute("SELECT current_setting('temp_directory')").fetchone()[0]
             preserve_order = conn.execute(
                 "SELECT current_setting('preserve_insertion_order')"
             ).fetchone()[0]
             memory_limit = conn.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+            threads = int(conn.execute("SELECT current_setting('threads')").fetchone()[0])
         finally:
             conn.close()
 
@@ -204,20 +210,23 @@ class TestBoundedAggregation:
         # DuckDB reports memory_limit in its own normalized unit string;
         # just assert our 64MB request was not ignored (not the default).
         assert "64" in memory_limit or "61" in memory_limit  # MiB/MB rounding
+        # The clamp is the safety-critical setting the forked helper dropped:
+        # a tight 64MB limit pins threads to 1, never os.cpu_count().
+        assert threads == 1
 
-    def test_measurement_spools_pairs_to_parquet_not_a_python_set(self, tmp_path: Path) -> None:
+    def test_measurement_deletes_the_cleartext_pairs_spool(self, tmp_path: Path) -> None:
+        # MEDIUM-1: the (source, masked) spool holds cleartext source PII and
+        # must not linger at rest after the aggregate row is fetched. The
+        # Parquet-spool-plus-DuckDB path (not an O(distinct-sources) Python
+        # structure) is the bounded-aggregation contract; here we prove the
+        # spool is cleaned up while the measurement still comes back correct.
         sources = [f"s{i}" for i in range(6)]
         masked = ["a", "a", "b", "b", "c", "d"]
         pool = _pool(size=10, distinct_count=10)
-        _measure("FIRST", sources, masked, pool, tmp_path)
+        measurement = _measure("FIRST", sources, masked, pool, tmp_path)
 
-        # The frozen method spools (source, masked) pairs to Parquet and lets
-        # DuckDB do the grouping; this is the on-disk evidence that no
-        # O(distinct-sources) Python structure was the aggregation path.
-        pairs_path = tmp_path / "pairs_FIRST.parquet"
-        assert pairs_path.exists()
-        table = pa.parquet.read_table(pairs_path)
-        assert table.num_rows == 6
+        assert not (tmp_path / "pairs_FIRST.parquet").exists()
+        assert measurement.distinct_sources == 6
 
     def test_hand_computed_collision_rate_oracle(self, tmp_path: Path) -> None:
         # 6 distinct sources -> masked: s0/s1 -> a, s2/s3 -> b, s4 -> c,
@@ -240,6 +249,35 @@ class TestBoundedAggregation:
         assert measurement.collision_rate == pytest.approx(expected_collision_rate)
         assert measurement.collision_rate == pytest.approx(1 / 3)
         assert measurement.non_deterministic_sources == 0
+
+
+class TestThresholdBoundary:
+    # MEDIUM-2: the comparison is `>` not `>=`, so observed == threshold is
+    # within tolerance (threshold = oracle rate + margin) and MUST pass. These
+    # pin the boundary direction against a `>=` mutation. Build the measurement
+    # at the exact boundary directly, rather than reverse-engineering pairs
+    # that land on the exact float.
+    def test_collision_rate_exactly_at_threshold_passes(self) -> None:
+        measurement = PoolQualityMeasurement(
+            column="FIRST",
+            distinct_sources=1000,
+            non_deterministic_sources=0,
+            collision_rate=COLLISION_RATE_THRESHOLD["FIRST"],
+            pool_size=10000,
+            pool_duplicate_rate=0.0,
+        )
+        enforce_pool_quality(measurement, column="FIRST")  # must not raise
+
+    def test_pool_duplicate_rate_exactly_at_threshold_passes(self) -> None:
+        measurement = PoolQualityMeasurement(
+            column="FIRST",
+            distinct_sources=1000,
+            non_deterministic_sources=0,
+            collision_rate=0.0,
+            pool_size=10000,
+            pool_duplicate_rate=POOL_DUPLICATE_RATE_THRESHOLD["FIRST"],
+        )
+        enforce_pool_quality(measurement, column="FIRST")  # must not raise
 
 
 class TestFrozenThresholdProvenance:

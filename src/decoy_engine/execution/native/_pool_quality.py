@@ -35,6 +35,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.errors import DecoyError
+from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._value_pool import ValuePool
 
@@ -93,7 +94,7 @@ WITH per_source AS (
     SELECT source, ANY_VALUE(masked) AS out_val,
            COUNT(DISTINCT masked) AS n_distinct_masked
     FROM read_parquet(?)
-    WHERE source IS NOT NULL
+    WHERE source IS NOT NULL AND masked IS NOT NULL
     GROUP BY source
 )
 SELECT COUNT(*) AS distinct_sources,
@@ -153,32 +154,6 @@ class PoolQualityMeasurement:
     unique_feasibility: str = UNIQUE_FEASIBILITY_NA
 
 
-def _connect_duckdb_spill(*, temp_dir: Path, memory_limit: str | None) -> Any:
-    """Spill-backed DuckDB connection for the collision-rate aggregation.
-
-    Mirrors `execution/out_of_core/_duckdb.py::connect_duckdb`'s config
-    (`temp_directory` + `preserve_insertion_order=False` + `memory_limit`,
-    lazy `duckdb` import) rather than importing that module, so the native
-    faker route's bounded-aggregation contract stays self-contained and does
-    not couple to the out-of-core relational route's own evolution.
-    `preserve_insertion_order=False` is safe here for the same reason as
-    there: this query's result is read back as a single unordered aggregate
-    row, never as ordered output.
-    """
-    import duckdb
-
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    # Widened value type to match duckdb.connect's config signature (a str/
-    # bool/int/float/list[str] union); every value here is str or bool.
-    config: dict[str, str | bool | int | float | list[str]] = {
-        "temp_directory": str(temp_dir),
-        "preserve_insertion_order": False,
-    }
-    if memory_limit is not None:
-        config["memory_limit"] = memory_limit
-    return duckdb.connect(database=":memory:", config=config)
-
-
 def measure_pool_quality(
     *,
     column: str,
@@ -195,24 +170,36 @@ def measure_pool_quality(
     (source, masked) pairs are spooled to `pairs_<column>.parquet` and the
     frozen `GROUP BY source` aggregation runs inside a spill-backed DuckDB
     connection, so peak memory is bounded by the `memory_limit` config, not
-    by distinct-source count. `pool_duplicate_rate` reads `pool.size` /
+    by distinct-source count. The connection is `connect_duckdb` from the
+    out-of-core route (reused, not forked): it carries the memory-safety
+    settings this measurement depends on, including the `threads`-vs-
+    `memory_limit` clamp that keeps DuckDB's per-thread working set from
+    blowing the budget on a many-core host, and the `0o700` temp-dir
+    restriction. `pool_duplicate_rate` reads `pool.size` /
     `pool.distinct_count`, already `O(pool_size)` (`ValuePool` computes
     `distinct_count` at build time; see `generation/pool/_value_pool.py`),
     never a function of row count.
 
-    `source` and `masked` must be the same length; a null `source` entry is
-    excluded from the collision population by the frozen SQL's own
-    `WHERE source IS NOT NULL` (never filtered in Python first, so the
-    exclusion is auditable in one place).
+    `source` and `masked` must be the same length; a null `source` (or null
+    `masked`) entry is excluded from the collision population by the frozen
+    SQL's own `WHERE source IS NOT NULL AND masked IS NOT NULL` (never
+    filtered in Python first, so the exclusion is auditable in one place).
+
+    The pairs spool holds CLEARTEXT source values; it is deleted before this
+    returns, and the temp dir is `0o700`-restricted by `connect_duckdb`. The
+    caller must pass a secured, job-scoped `temp_dir`.
     """
     pairs_path = temp_dir / f"pairs_{column}.parquet"
     pq.write_table(pa.table({"source": source, "masked": masked}), pairs_path)
 
-    conn = _connect_duckdb_spill(temp_dir=temp_dir, memory_limit=memory_limit)
+    conn = connect_duckdb(temp_dir=temp_dir, memory_limit=memory_limit)
     try:
         row = conn.execute(_COLLISION_SQL, [str(pairs_path)]).fetchone()
     finally:
         conn.close()
+        # The spool holds cleartext source PII and is dead once the aggregate
+        # row is fetched; delete it so it never lingers at rest (TEST-3 class).
+        pairs_path.unlink(missing_ok=True)
 
     distinct_sources = int(row[0])
     distinct_outputs = int(row[1])
@@ -225,6 +212,13 @@ def measure_pool_quality(
         # Empty population (e.g. an all-null source column): rate 0, pass,
         # per the frozen metric definition -- recorded, never omitted.
         collision_rate = 0.0
+    elif non_deterministic_sources != 0:
+        # `out_val = ANY_VALUE(masked)` is arbitrary when a source maps to
+        # more than one output, so a collision_rate computed over it is not
+        # reproducible run-to-run. Report NaN rather than an unstable number;
+        # enforcement raises on `non_deterministic_sources != 0` first, so
+        # this value is never compared against a threshold on the enforce path.
+        collision_rate = float("nan")
     else:
         collision_count = distinct_sources - distinct_outputs
         collision_rate = collision_count / distinct_sources
