@@ -586,6 +586,26 @@ def run_native_or_oracle_chunked(
                 f"{sorted(actual - covered)};missing_configured_columns:{sorted(covered - actual)}",
             )
 
+    if decision.native_admitted:
+        # Native faker selection converts the source column with per-chunk
+        # `source.to_pandas()` (_sample_faker_chunk), which diverges from the
+        # oracle's table-level `Table.to_pandas()` for non-string nullable
+        # extension types: a nullable Int64 source can materialize as float64 in
+        # a later chunk (3 -> 3.0), so deterministic canonicalization raises
+        # `float_canonicalization_unsupported` AFTER earlier chunks already
+        # yielded -- partial native output the whole-frame oracle never produces.
+        # C1's faker columns are string-typed; a faker column over a non-string
+        # source reroutes the WHOLE table to the oracle (narrower, never wider).
+        for node in decision.node_routes:
+            if node.strategy != "faker":
+                continue
+            ftype = first.schema.field(node.column).type
+            if not (pa.types.is_string(ftype) or pa.types.is_large_string(ftype)):
+                decision = _downgrade_to_oracle(
+                    decision, f"faker_source_type_not_string:{node.column}:{ftype}"
+                )
+                break
+
     if route_evidence_sink is not None:
         route_evidence_sink.append(decision)
 

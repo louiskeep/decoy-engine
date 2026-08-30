@@ -176,6 +176,55 @@ def test_non_c1_faker_variant_stays_on_oracle(columns: list[dict]) -> None:
     assert all(r.route == "oracle" for r in decision.node_routes)
 
 
+def test_non_string_faker_source_reroutes_whole_table_to_oracle() -> None:
+    # Codex HIGH (Task 3.1): native faker selection converts the source with
+    # per-chunk `source.to_pandas()`, which diverges from the oracle's
+    # table-level conversion for non-string nullable types. A nullable Int64
+    # source can materialize as float64 in a later chunk (3 -> 3.0), so
+    # deterministic canonicalization raises `float_canonicalization_unsupported`
+    # AFTER earlier chunks already yielded -- partial native output. The whole
+    # table must reroute to the oracle (C1's faker columns are string-typed).
+    config = _config(_faker_column())  # C1-valid faker config: admits if string
+    source = pa.table({"FIRST": pa.array([1, 2, None, 3, 4, 5], type=pa.int64())})
+    sink: list[NativeRouteEvidence] = []
+    # Eager preflight appends the decision before any chunk is masked; discard
+    # the iterator so the oracle fallback never runs (this asserts the route
+    # DECISION, not the oracle's own Int64 handling).
+    run_native_or_oracle_chunked(
+        config,
+        _chunk(source, 2),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        key_provider=_key_provider(),
+        route_evidence_sink=sink,
+    )
+    evidence = sink[0]
+    assert evidence.native_admitted is False
+    assert evidence.reroute_reason is not None
+    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")
+    assert all(r.route == "oracle" for r in evidence.node_routes)
+    assert evidence.compiled_kernel_executed is False
+
+
+def test_large_string_faker_source_still_admits_native() -> None:
+    # The scope-lock admits BOTH string kinds: a large_utf8 source is still a
+    # string source, so it must not be rerouted by the non-string guard.
+    config = _config(_faker_column())
+    values = [f"id-{i % 5}" for i in range(12)]
+    source = pa.table({"FIRST": pa.array(values, type=pa.large_string())})
+    sink: list[NativeRouteEvidence] = []
+    run_native_or_oracle_chunked(
+        config,
+        _chunk(source, 4),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        key_provider=_key_provider(),
+        route_evidence_sink=sink,
+    )
+    assert sink[0].native_admitted is True
+    assert {r.column: r.route for r in sink[0].node_routes} == {"FIRST": "native_pool"}
+
+
 def test_missing_namespace_on_deterministic_column_never_reaches_native_admission() -> None:
     # A deterministic column with no namespace never reaches
     # `faker_pool_precondition_met` at all: `compile_plan`'s own namespace
