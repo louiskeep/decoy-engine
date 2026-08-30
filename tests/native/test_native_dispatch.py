@@ -7,6 +7,7 @@ frozen W2 correctness/perf gate in `tests/parity/native/test_phase2_gate.py`.
 
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import replace
 from datetime import datetime
 
@@ -23,6 +24,12 @@ from decoy_engine.execution.native._dispatch import (
 )
 from decoy_engine.keyprovider import SecretKeyProvider, key_provider_from_ref
 from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
+)
 
 _MASK_KEY = bytes(range(32))
 
@@ -103,6 +110,7 @@ def _profile(*names: str) -> Profile:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_all_admitted_table_routes_every_node_to_native_kernel() -> None:
     config = _all_admitted_config()
     source = _all_admitted_source()
@@ -131,6 +139,7 @@ def test_all_admitted_table_routes_every_node_to_native_kernel() -> None:
     assert len(chunks) == 2
 
 
+@_NEEDS_COMPANION
 def test_job_success_alone_is_not_route_proof() -> None:
     # Decision 10: a job can succeed on EITHER route. The route tag, not the
     # fact that output came back, is what proves the native kernel ran.
@@ -152,6 +161,7 @@ def test_job_success_alone_is_not_route_proof() -> None:
     assert all(r.route == "native_kernel" for r in evidence.node_routes)
 
 
+@_NEEDS_COMPANION
 def test_compiled_kernel_executed_flag_proves_the_compiled_kernel_ran() -> None:
     config = _all_admitted_config()
     source = _all_admitted_source()
@@ -918,6 +928,7 @@ def test_malformed_child_entry_mixed_with_a_matching_one_is_still_found() -> Non
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> None:
     config = {
         "global_settings": {"seed": 42},
@@ -975,6 +986,7 @@ def test_provider_config_values_reach_the_kernels_not_just_the_defaults() -> Non
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
     config = {
         "global_settings": {"seed": 42},
@@ -1017,6 +1029,7 @@ def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_mask_native_resolves_key_provider_from_config_mask_secret_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

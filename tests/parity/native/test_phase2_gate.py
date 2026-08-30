@@ -20,6 +20,7 @@ chunking, so this proves both dimensions independently).
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 from typing import Any
 
@@ -41,6 +42,12 @@ from tests.parity.native._fixtures import (
     LogicalResult,
     PhysicalDiff,
     assert_logical_parity,
+)
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
 )
 
 _MASK_KEY = bytes.fromhex("a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90")
@@ -207,6 +214,7 @@ _BATCH_SIZES = (1, 4, 11)
 _ORDERS = (False, True)  # natural, then a fixed reversal
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("reverse", _ORDERS, ids=["natural_order", "reversed_order"])
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES, ids=[f"batch_{b}" for b in _BATCH_SIZES])
 def test_native_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> None:
@@ -219,6 +227,7 @@ def test_native_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> 
     _assert_gate_parity(native_table, oracle)
 
 
+@_NEEDS_COMPANION
 def test_native_route_parity_on_all_null_column() -> None:
     # Degenerate whole-column shape #1: every value null (pandas infers
     # null-type; the NULL_TYPED_NORMALIZATION reconciles it).
@@ -235,6 +244,7 @@ def test_native_route_parity_on_all_null_column() -> None:
     _assert_gate_parity(native_table, oracle)
 
 
+@_NEEDS_COMPANION
 def test_native_route_parity_on_empty_table() -> None:
     # Degenerate whole-column shape #2: zero rows (pandas infers double for
     # the redact/truncate/hash columns; EMPTY_DOUBLE_NORMALIZATION reconciles).
@@ -267,6 +277,7 @@ def test_native_route_parity_on_empty_table() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_route_proof_every_node_dispatches_to_native_kernel() -> None:
     source = _build_source(13)
     config = _build_config(source, key="route_proof")
@@ -279,6 +290,7 @@ def test_route_proof_every_node_dispatches_to_native_kernel() -> None:
     assert all(route == "native_kernel" for route in routed.values())
 
 
+@_NEEDS_COMPANION
 def test_route_proof_oracle_success_is_not_native_proof() -> None:
     # The Decision-10 trap, made explicit: running the SAME config on the
     # pinned oracle succeeds too. That success says nothing about whether the
@@ -297,6 +309,7 @@ def test_route_proof_oracle_success_is_not_native_proof() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_keyed_hash_gate_compiled_kernel_executed() -> None:
     source = _build_source(13)
     config = _build_config(source, key="keyed_gate")

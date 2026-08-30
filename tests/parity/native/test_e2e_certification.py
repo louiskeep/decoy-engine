@@ -31,11 +31,13 @@ then runs that sample through both the real dispatch and the oracle.
 
 from __future__ import annotations
 
+import importlib.util
 import random
 import sys
 from pathlib import Path
 
 import pyarrow as pa
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -45,6 +47,12 @@ from tests.parity.native.test_phase2_gate import (
     _build_source,
     _run_native,
     _run_oracle,
+)
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
 )
 
 _NATIVE_BASELINE_DIR = Path(__file__).resolve().parents[3] / "scripts" / "native-baseline"
@@ -102,6 +110,7 @@ def _build_source_with_scattered_nulls(n_rows: int, null_rows: frozenset[int]) -
     return base
 
 
+@_NEEDS_COMPANION
 @settings(max_examples=15, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     n_rows=st.integers(min_value=1, max_value=23),
@@ -123,6 +132,7 @@ def test_native_route_matches_oracle_with_scattered_nulls(
     _assert_gate_parity(native_table, oracle)
 
 
+@_NEEDS_COMPANION
 def test_100m_certified_workload_sampled_slice_matches_oracle() -> None:
     """The sampled-parity leg of the 100M-row certification (criterion a).
 
