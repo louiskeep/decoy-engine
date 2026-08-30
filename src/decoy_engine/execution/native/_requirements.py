@@ -27,6 +27,7 @@ from decoy_engine.execution.native._capabilities import (
 )
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._types import ColumnSeed
 
 FallbackPolicy = Literal["native", "python_only", "reject_large"]
 
@@ -122,6 +123,31 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # strategies have a kernel. Grows only when a later task lands a new kernel.
 NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash"})
 
+# Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
+# 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
+# identity, `resolve_faker_pool_identity`) and `PoolSampler.sample(...)`
+# selects per chunk. Deliberately NOT folded into `NATIVE_KERNEL_STRATEGIES`:
+# there is no compiled Rust kernel here, only the pre-existing Python
+# per-row `derive_index` loop the pool sampler already runs on the oracle
+# path, measured (JC-1) to hold the JC-3 wall bound when called once per
+# chunk instead of once per whole column. Grows only when a later task lands
+# another pool-backed strategy on this route.
+NATIVE_POOL_STRATEGIES = frozenset({"faker"})
+
+# The only cardinality mode whose deterministic selection is partition-
+# independent (JC-5): REUSE keys purely off the row's own source value, so a
+# chunk's selection never depends on any other chunk. UNIQUE, MATCH_*, and
+# SCALE_* all read cross-row state (a permutation prefix, the source's GLOBAL
+# distinct-value set) that a single chunk cannot see, so per-chunk selection
+# under those modes would diverge from the whole-column oracle result.
+#
+# `ColumnSeed.cardinality_mode` (`plan._types.CardinalityMode`) is a plain
+# string Literal, NOT the `generation.pool._cardinality.CardinalityMode` enum
+# (the oracle handler converts one to the other via `CardinalityMode(plan.
+# cardinality_mode)` right before calling `PoolSampler.sample`); compare
+# against the string form here to match what `plan_slice` actually carries.
+_PARTITION_INDEPENDENT_CARDINALITY_MODES = frozenset({"reuse"})
+
 
 def native_kernel_rejection(name: str, strategy: str) -> str | None:
     """The coded reason `strategy` has no compiled native kernel this phase,
@@ -137,6 +163,48 @@ def native_kernel_rejection(name: str, strategy: str) -> str | None:
     if strategy in NATIVE_KERNEL_STRATEGIES:
         return None
     return f"no_native_kernel:{name}:{strategy}"
+
+
+def faker_pool_precondition_met(node: Any) -> bool:
+    """Whether a `faker` node's resolved config is the ONE deterministic,
+    partition-independent variant the chunked native route can select
+    per-chunk (JC-5): `deterministic: true`, `cardinality_mode: reuse`, an
+    explicit `namespace`, and an explicit `pool_size`.
+
+    This is the minimal safety guard Task 3.1 needs so ITS OWN admission
+    change cannot widen scope ahead of Task 3.3's `phase3_c1_eligibility`,
+    which formalizes the full coded-rejection predicate (the exact C1
+    provider allowlist, every individual rejection code) over this same
+    precondition. A composite/group node's `plan_slice` is never a
+    `ColumnSeed`, so it never satisfies this check (composites have their
+    own admission path and are excluded here, matching the WorkNode split).
+    """
+    slice_ = node.plan_slice
+    if not isinstance(slice_, ColumnSeed):
+        return False
+    if not slice_.deterministic:
+        return False
+    if slice_.cardinality_mode not in _PARTITION_INDEPENDENT_CARDINALITY_MODES:
+        return False
+    if not slice_.namespace:
+        return False
+    return slice_.pool_size is not None
+
+
+def native_pool_rejection(node: Any, name: str, strategy: str) -> str | None:
+    """The coded reason `strategy` has no native POOL execution path for
+    `node`, or None when it does.
+
+    Distinct from `native_kernel_rejection`: a pool strategy has no compiled
+    kernel, it runs the Python `PoolSampler` once per chunk (JC-1). Only
+    fires for a strategy in `NATIVE_POOL_STRATEGIES`; every other strategy
+    goes through `native_kernel_rejection` instead (see `requirements_for`).
+    """
+    if strategy not in NATIVE_POOL_STRATEGIES:
+        return f"no_native_pool_path:{name}:{strategy}"
+    if not faker_pool_precondition_met(node):
+        return f"faker_not_deterministic_reuse_variant:{name}"
+    return None
 
 
 @dataclass(frozen=True)
@@ -389,7 +457,15 @@ def requirements_for(node: Any, *, plan: Any, profile: Any) -> NodeRequirements:
     caps = capabilities_for(strategy_name)
     cfg = _config_dict(node)
     column_name = node.columns[0] if node.columns else "?"
-    kernel_reason = native_kernel_rejection(column_name, strategy_name)
+    # A pool strategy (faker) has no compiled kernel; it is admitted through
+    # `native_pool_rejection` instead, which additionally enforces the JC-5
+    # deterministic-reuse precondition. Every other strategy keeps the
+    # existing kernel-only check, so this change touches nothing but the
+    # pool strategy set (narrower, never wider, than the pre-Task-3.1 gate).
+    if strategy_name in NATIVE_POOL_STRATEGIES:
+        kernel_reason = native_pool_rejection(node, column_name, strategy_name)
+    else:
+        kernel_reason = native_kernel_rejection(column_name, strategy_name)
     config_reason = _config_gate_rejection(node, strategy_name, cfg, profile)
     state_tables = tuple(t for t in (_STATE_TABLE_BY_STRATEGY.get(strategy_name),) if t is not None)
     return NodeRequirements(
@@ -405,11 +481,14 @@ def requirements_for(node: Any, *, plan: Any, profile: Any) -> NodeRequirements:
 
 __all__ = [
     "NATIVE_KERNEL_STRATEGIES",
+    "NATIVE_POOL_STRATEGIES",
     "FallbackPolicy",
     "NodeRequirements",
+    "faker_pool_precondition_met",
     "hash_config_rejection",
     "is_admitted_native_hash_type",
     "native_kernel_rejection",
+    "native_pool_rejection",
     "redact_config_rejection",
     "requirements_for",
     "resolve_input_arrow_type",
