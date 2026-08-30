@@ -85,6 +85,17 @@ covering test file, `tests/native/test_phase3_eligibility.py` (21 tests, runs
 in 0.24s), imports no Rust-backed kernel and carries no
 `@_NEEDS_COMPANION` marker.
 
+Precise about what "faker-only" claims here: the unit and its tests have NO
+companion dependency BY CODE INSPECTION (no import of `decoy_engine_native`,
+no `@_NEEDS_COMPANION` marker), and mutation execution required the
+`.[dev,mutation]` extra (mutmut lives in `mutation`, not `dev`; section 1). The
+mutation run below was performed in this worktree's venv, where the companion
+happens to be PRESENT -- this is NOT an empirical companion-ABSENT grading of
+the faker-only lane, which is unnecessary precisely because these bodies never
+reach the kernel. The companion-absent evidence in section 2b is about the
+OTHER lane (that a skipped companion test is not miscounted); the coverage-
+attribution check in section 2c closes that for the graded companion path.
+
 ```
 .venv/bin/python scripts/native-testing/python_mutation_pilot.py \
   --module src/decoy_engine/execution/native/_phase3_eligibility.py \
@@ -176,6 +187,62 @@ identity/config-shape logic that never touches the Rust kernel). This is the
 proof the plan asks for: a skipped companion-required test reports as SKIP,
 never as a false PASS or a covering-line credit, so a companion-absent CI run
 cannot be miscounted as having graded the companion-required lane.
+
+### 2c. Companion-required lane: mutation grading distinguishes killed from survived
+
+Section 2b proves a companion-required test SKIPS (not fails) when absent. This
+section proves the other half of the plan's gate ("both lanes demonstrably
+distinguish killed from surviving"): that a companion-PRESENT mutation run
+grades, and that the companion-absent run credits none of the companion-
+dependent bodies. The unit is `_dispatch.py`, whose hash branch calls the
+compiled kernel (`native_keyed_hash`); its companion-required test is
+`test_dispatch_faker.py::test_mixed_faker_and_hash_all_admit_when_faker_is_c1_variant`.
+
+(i) The companion-present lane grades. A pilot on `_dispatch.py` under
+`tests/native/test_dispatch_faker.py`, companion present, classified 540
+mutants as 310 killed / 230 suspect -- the harness distinguishes killed from
+survived in the companion-present configuration, not only the faker-only one.
+
+```
+.venv/bin/python scripts/native-testing/python_mutation_pilot.py \
+  --module src/decoy_engine/execution/native/_dispatch.py \
+  --tests tests/native/test_dispatch_faker.py --timeout 30
+# mutmut raw: 540 mutants, 310 killed (trusted) / 230 suspect
+```
+
+Full readjudication of the 230 suspect was NOT run to completion here on
+purpose: `_dispatch.py` is 633 LOC and `test_dispatch_faker.py` covers only its
+faker/route paths, so most suspect mutants sit in oracle/relationship helpers
+this test never reaches (named survivors from the partial readjudication:
+`x__oracle_evidence__mutmut_5`, `x__downgrade_to_oracle__mutmut_1`,
+`x__table_in_declared_relationship__mutmut_1`). Grading `_dispatch.py` in full
+is P3-T3's job, not a harness batch's.
+
+(ii) A named killed mutant ON the companion path, killed only when the
+companion is present. The compiled-kernel path cannot be reached without the
+companion, so a kill there requires it; this reproduces that on demand.
+Seed-mutate `_dispatch.py:388` `evidence.compiled_kernel_executed = True` to
+`= False`:
+
+- companion PRESENT:
+  `tests/native/test_native_dispatch.py::test_compiled_kernel_executed_flag_proves_the_compiled_kernel_ran`
+  (a `@_NEEDS_COMPANION` test asserting the flag is `True`) FAILS -> KILLED.
+- companion ABSENT (`sys.modules["decoy_engine_native"] = None`): the SAME test
+  SKIPS -> the mutant is not caught (survives, uncredited).
+
+The identical mutant flips from killed to survived purely because its covering
+test skipped: the companion lane's killed-vs-survived distinction and the proof
+that the absent run does not grade the companion-dependent body, in one check.
+
+(iii) Coverage attribution: the absent run credits none of the companion-
+dependent bodies. Branch coverage of `_dispatch.py` under
+`test_dispatch_faker.py`, companion present vs simulated-absent: PRESENT
+executes 163 lines, ABSENT 157 (the one `@_NEEDS_COMPANION` test skipped). The
+exact 6-line delta -- 268-269 (`load_compiled_crypto_kernel()`), 380
+(`native_keyed_hash(...)`), 388 (`compiled_kernel_executed = True`), 433 and 601
+(kernel-path control flow) -- is precisely the compiled-kernel path, executed
+only with the companion present and credited to nothing when absent. So a
+companion-absent CI run cannot count those bodies as covered.
 
 ## 3. Substrate wrinkle 1: DuckDB filesystem spill, empirical false-timeout check
 
@@ -322,15 +389,18 @@ Read `mutmut`'s own mutation loop
 (`.venv/lib/python3.13/site-packages/mutmut/__main__.py`, around line 1472):
 for every mutant, the parent process calls `pid = os.fork()`; the child sets
 `MUTANT_UNDER_TEST`, runs that one mutant's covering tests via
-`runner.run_tests(...)`, and calls `os._exit(result)`. The parent never runs
-tests itself -- it only forks, waits, and reads exit codes
-(`read_one_child_exit_status`). So each mutant's test run happens in its own
-freshly forked OS process, forked from the same still-pristine parent every
-time (never from a previous mutant's already-exited child), and any
-module-level singleton state (a `PoolCache`, the process-global
-`get_default_pool_cache()`) starts from whatever the PARENT held at fork
-time -- which never ran a mutant's tests -- so no warning state carries over
-from one mutant's child into another's.
+`runner.run_tests(...)`, and calls `os._exit(result)`. Being precise about the
+parent (mutmut 3.7.0 does more in-process than "only forks"): BEFORE the
+per-mutant fork loop, the parent runs the stats/coverage pass, a clean-tests
+baseline, and the forced-fail probe IN-PROCESS. What matters for cross-mutant
+isolation is that once the per-mutant loop begins, each mutant's covering
+tests run in a FRESHLY FORKED child (never in the parent, never in a previous
+mutant's already-exited child), all forked from the SAME parent baseline. So
+any module-level singleton state (a `PoolCache`, the process-global
+`get_default_pool_cache()`) each child sees is the parent's post-setup baseline
+at fork time, identical for every mutant -- no warning state produced by one
+mutant's child can carry into another's, because children do not fork from each
+other.
 
 `tq_mutate.py`'s standalone readjudication is even more strongly isolated:
 `readjudicate()` calls `_run_selection()`, which calls `subprocess.run(cmd,
@@ -341,12 +411,13 @@ confirmed at `scripts/tq_mutate.py` lines 282-308.
 Both halves of the pilot (`mutmut run`'s per-mutant fork, `tq_mutate.py`'s
 per-mutant fresh subprocess) already give every mutant its own process, so a
 `PoolCache`/`RouteDiagnostics` pair never lives across two mutants. Within one
-mutant's single forked child, every test in the covering file's session runs
-in that one process/interpreter, in test-file order -- but section 4a already
-confirmed every existing test constructs its own local `PoolCache` (never the
-process-global `get_default_pool_cache()`) and honors the construct-before-
-invocation precondition, so ordinary in-session test ordering does not
-violate it either. Per the plan's own instruction, this batch does NOT assert
+mutant's single forked child, every selected test runs in that one
+process/interpreter -- mutmut orders them by measured duration, NOT test-file
+order, so the isolation argument must not lean on file order -- but section 4a
+already confirmed every existing test constructs its own local `PoolCache`
+(never the process-global `get_default_pool_cache()`) and honors the
+construct-before-invocation precondition, so no in-session ordering (duration
+or file) can violate it. Per the plan's own instruction, this batch does NOT assert
 a serial-worker requirement the runner's process model does not create: none
 is pinned here, and P3-T3 (which grades `_route_diagnostics.py` for real)
 should run it with the default parallel mutmut runner, not a forced
@@ -375,8 +446,13 @@ to bound disk use, not left to accumulate.
 
 - Faker-only lane killed vs. survived: `_phase3_eligibility.py` pilot (154
   killed, 30 survived, named examples above). Met.
-- Companion-required lane skip-not-fail: simulated-absent run, 29 passed / 22
-  skipped / 0 failed vs. companion-present 51 passed / 0 skipped. Met.
+- Companion-required lane killed vs. survived (section 2c): companion-present
+  `_dispatch.py` pilot grades (540 mutants, 310 killed / 230 suspect); a seeded
+  kernel-path mutant (`_dispatch.py:388`) is KILLED present by a
+  `@_NEEDS_COMPANION` flag test and SURVIVES absent (that test skips); and the
+  6-line present-vs-absent coverage delta is exactly the compiled-kernel path,
+  credited to nothing when absent. Plus skip-not-fail (section 2b): 29 passed /
+  22 skipped / 0 failed absent vs. 51 passed / 0 skipped present. Met.
 - DuckDB false-timeout: empirically checked, NOT reproduced at the default
   30s floor (0 true-timeouts across 223 mutants, including both boundary
   `>`-to-`>=` threshold mutants, both killed); the pathology was then forced
