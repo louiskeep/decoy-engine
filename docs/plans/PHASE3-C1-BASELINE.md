@@ -131,9 +131,12 @@ values it generates. Both are pre-existing engine behavior, not something
 this baseline introduces; recorded here so Task 3.1 does not need to
 rediscover it.
 
-Neither `cardinality_mode` nor `scale` is set in the recipe; both take
-their compiled defaults (`reuse`, `2.0`). `scale` is read only under
-`scale_source_cardinality`, so it is inert here.
+Neither `cardinality_mode` nor `scale` is set in the recipe. `cardinality_mode`
+takes its seed-compiler default (`reuse`, `_seed_envelope.py:160`). `scale`
+resolves to `None` at the seed compiler (`_seed_envelope.py:236`); the `2.0`
+shown in the table is the config-validation-layer default, not a seed-compiler
+value. Either way `scale` is read only under `scale_source_cardinality`, so it
+is inert under `reuse` here.
 
 ## Frozen dataset tiers
 
@@ -328,6 +331,12 @@ external `VmHWM`, staged via fresh-process prefix runs (each stage's delta is
 the difference of consecutive prefix high-water marks). Raw:
 `/tmp/c1_final_parity.json`, `/tmp/c1_final_memory.json`.
 
+Units: RSS is the raw `/proc/<pid>/status` `VmHWM` value in kB; this doc
+reports it in decimal MB (`kB / 1000`) and GB (`MB / 1000`). The GiB-labeled
+figures in the calibration and safety sections above are the same decimal
+values (a GB read as GiB is smaller, so every safety comparison stays
+conservative either way).
+
 ### Parity tier (10,000 rows, 5 reps + 1 warmup)
 
 - Wall: median 2.944 s, IQR 0.015 s.
@@ -340,17 +349,17 @@ the difference of consecutive prefix high-water marks). Raw:
 - Wall: median 398.79 s, IQR 15.21 s.
 - Throughput: hash 81,330 rows/s/col; faker (selection) 91,565 rows/s/col.
 - Staged peak RSS (KB/1000 = MB): input_load 689.9, +pool_build 82.5,
-  +selection 1,313.7, +publication 3,668.4; total 5,754.5 MB (5.75 GiB),
-  peak observed across reps ~5.75 GiB (well under the 6.8 GiB harness abort
-  and 8 GiB policy ceilings; matches the ~5.2 GiB calibration projection plus
+  +selection 1,313.7, +publication 3,668.4; total 5,754.5 MB (5.75 GB),
+  peak observed across reps ~5.75 GB (well under the 7.0 GB harness abort
+  and 8.2 GB policy ceilings; matches the ~5.3 GB calibration projection plus
   run variance).
 
 The staged attribution is the evidence for the plan's corrected rationale:
 the oracle's memory is NOT the pool build (a flat +82 MB at both tiers, the
 pool is bounded), it is the full-frame residency plus the whole-column
-sampler temporaries. At 3M rows the selection stage alone adds +1.31 GiB
+sampler temporaries. At 3M rows the selection stage alone adds +1.31 GB
 (the sampler's `source.tolist()` / output list / sampled Series) and
-publication adds +3.67 GiB (the full masked output held before write). Both
+publication adds +3.67 GB (the full masked output held before write). Both
 scale with row count; that scaling is exactly what the Task 3.1 native route
 removes by streaming in 50,000-row chunks.
 
@@ -376,6 +385,15 @@ high-cardinality column with a low-cardinality fake vocabulary, not a defect:
 so the native route must REPRODUCE this behavior, not achieve low collisions.
 `non_deterministic_sources` is 0 for every column at both tiers: the
 deterministic sampler never maps one source value to two outputs.
+
+Carry-forward to Task 3.6: `pool_quality` is an UPPER-BOUND production
+guardrail (Task 3.2), not an output-equivalence gate. A native route that
+collided LESS, or the same amount on DIFFERENT values, would also pass
+`oracle_rate + 0.02` without reproducing the oracle's outputs. So Task 3.6
+must keep EXACT logical parity (values, row order, null placement, warnings)
+as the correctness gate and never treat `pool_quality` as proof of
+equivalence; if parity is ever weakened, `pool_quality` will not catch a
+broken-but-low-collision route.
 
 ### Frozen per-tier thresholds (oracle rate + m, m = 0.02)
 

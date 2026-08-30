@@ -44,6 +44,7 @@ capacity, rather than being allowed to run to an OOM.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 import statistics
@@ -149,13 +150,41 @@ def _observations_batch(start: int, end: int) -> pa.Table:
 _BATCH_BUILDERS = {"patients": _patients_batch, "observations": _observations_batch}
 DEFAULT_BATCH_ROWS = 50_000
 
+# Stage prefix order: each stage's fresh-process run does strictly more work
+# than the previous, so its VmHWM high-water mark should be >= the previous.
+_STAGE_ORDER = ("input_load", "pool_build", "selection", "publication")
+
+
+def _stage_deltas(stage_peaks: dict[str, int]) -> dict[str, int]:
+    """Per-stage RSS attribution as consecutive prefix-peak differences.
+
+    Prefix peaks are expected monotonic non-decreasing. A negative delta means
+    a noisy prefix run made a later stage's high-water mark LOWER than an
+    earlier one; clamp it to 0 and warn loudly rather than silently reporting a
+    nonsense (negative) attribution. Observed runs are cleanly monotonic; this
+    is a guard against future noise, not a correction applied today.
+    """
+    out: dict[str, int] = {"input_load": stage_peaks["input_load"]}
+    for prev, cur in itertools.pairwise(_STAGE_ORDER):
+        delta = stage_peaks[cur] - stage_peaks[prev]
+        if delta < 0:
+            sys.stderr.write(
+                f"  WARN non-monotonic prefix peak: {cur} ({stage_peaks[cur]} kB) "
+                f"< {prev} ({stage_peaks[prev]} kB); clamping {cur}_delta to 0\n"
+            )
+            delta = 0
+        out[f"{cur}_delta"] = delta
+    return out
+
 
 def build_data(n_rows: int, data_dir: Path, batch_rows: int = DEFAULT_BATCH_ROWS) -> None:
     """Write both tables' frozen shape to on-disk Parquet, in BATCHES.
 
-    Run ONCE per tier, in a SEPARATE, non-timed, non-RSS-sampled process
-    (mirrors `build_w2_parquet.py`): each batch is written as its own row
-    group and dropped, so generation never inflates a measured worker's RSS.
+    Run ONCE per tier, in the driver (unmeasured) process, batched to disk:
+    each batch is written as its own row group and dropped, so generation
+    never inflates a MEASURED worker's RSS (the measured stage workers are
+    separate `_run_fresh` processes that re-read these files from disk; the
+    driver itself is never a measured process).
     Both tables get the SAME row count (a deliberate simplification recorded
     in the baseline doc -- Decision 5's C1 shape does not mandate a
     patients:observations ratio, and equal counts still stress the intended
@@ -618,13 +647,10 @@ def drive(
             "hash_tput_median_rows_s": statistics.median(hash_tputs) if hash_tputs else None,
             "faker_tput_median_rows_s": statistics.median(faker_tputs) if faker_tputs else None,
             "stage_peak_rss_kb": stage_peaks,
-            "stage_attribution_kb": {
-                "input_load": stage_peaks["input_load"],
-                "pool_build_delta": stage_peaks["pool_build"] - stage_peaks["input_load"],
-                "selection_delta": stage_peaks["selection"] - stage_peaks["pool_build"],
-                "publication_delta": stage_peaks["publication"] - stage_peaks["selection"],
-            },
-            "total_peak_rss_kb": stage_peaks["publication"],
+            "stage_attribution_kb": _stage_deltas(stage_peaks),
+            # max, not stage_peaks["publication"]: robust if a noisy prefix run
+            # ever makes an earlier stage's high-water mark the largest.
+            "total_peak_rss_kb": max(stage_peaks.values()),
             "pool_quality": pool_quality,
         }
         all_results[str(n_rows)] = summary
