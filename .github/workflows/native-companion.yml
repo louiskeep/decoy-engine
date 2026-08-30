@@ -163,19 +163,24 @@ jobs:
           components: rust-src
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
+      # +nightly is REQUIRED: decoy-engine-native/rust-toolchain.toml pins stable
+      # 1.98.0 for reproducible cdylib builds, which overrides the nightly default
+      # installed above whenever cargo runs in this dir. The -Zsanitizer / -Zbuild-std
+      # flags are nightly-only, so the pin must be overridden per-invocation (the
+      # exact form the crate README documents and we verified locally).
       - name: Bounded fuzz campaign over derive_array
         working-directory: decoy-engine-native
-        run: cargo fuzz run derive_array -- -max_total_time=120
+        run: cargo +nightly fuzz run derive_array -- -max_total_time=120
       - name: Crate tests under AddressSanitizer
         working-directory: decoy-engine-native
         env:
           RUSTFLAGS: -Zsanitizer=address
-        run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu
+        run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu
       - name: Concurrent Send/Sync test under ThreadSanitizer
         working-directory: decoy-engine-native
         env:
           RUSTFLAGS: -Zsanitizer=thread
-        run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu derive_is_send_sync_and_concurrent_calls_agree
+        run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu derive_is_send_sync_and_concurrent_calls_agree
       - name: Upload fuzz artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v7
