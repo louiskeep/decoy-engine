@@ -313,18 +313,23 @@ class TestEnforcerInputContract:
             enforce_pool_quality(measurement, column="FIRST")
         assert exc_info.value.metric == "collision_rate"
 
-    def test_rejects_out_of_range_pool_duplicate_rate(self) -> None:
+    def test_rejects_non_finite_pool_duplicate_rate(self) -> None:
+        # NaN, not inf: a NaN duplicate rate would fail OPEN under a bare
+        # `rate > threshold` check (NaN > x is False), so this isolates the new
+        # integrity guard rather than the ordinary threshold comparison. The
+        # `[0.0, 1.0]` threshold marker proves the integrity path fired.
         measurement = PoolQualityMeasurement(
             column="FIRST",
             distinct_sources=100,
             non_deterministic_sources=0,
             collision_rate=0.0,
             pool_size=10000,
-            pool_duplicate_rate=float("inf"),
+            pool_duplicate_rate=float("nan"),
         )
         with pytest.raises(PoolQualityError) as exc_info:
             enforce_pool_quality(measurement, column="FIRST")
         assert exc_info.value.metric == "pool_duplicate_rate"
+        assert exc_info.value.threshold == "[0.0, 1.0]"
 
 
 class TestFrozenThresholdProvenance:
