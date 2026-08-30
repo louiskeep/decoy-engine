@@ -11,9 +11,16 @@ Gate test: `tests/parity/native/test_phase3_c1_gate.py`. Native bench:
 Two completion statuses this doc distinguishes (JC-4, per the plan): this
 record covers the ENGINE leg only. The PLATFORM leg (Task 3.5, the
 deterministic C1 prod-sim end to end on `streaming-flip`) has not run.
-Status: **engine gate passed; platform certification pending.** This is NOT
-"Phase 3 C1 complete" -- that status is reserved for after the platform leg
-passes (per the plan's Task 3.6 acceptance criteria).
+Status: **engine CORRECTNESS gate passed (all 4 criteria); the JC-3
+performance bounds (flatness, wall) are LITERALLY EXCEEDED at the 10,000-row
+parity tier and their reinterpretation is submitted for Cam's sign-off;
+platform certification pending.** The correctness gate is unconditionally
+passed. The JC-3 status is NOT self-certified here: two frozen, Task-0-Codex-
+gated HARD bounds fail at the parity tier (flatness 1.65x vs 1.5x; wall 1.37x
+vs 1.25x), and reinterpreting a frozen acceptance threshold is Cam's decision,
+not this gate's (Cam's standing rule: no later contributor weakens the
+plan-defined acceptance test). This is NOT "Phase 3 C1 complete" -- that
+status also needs the platform leg.
 
 ## Tiers
 
@@ -137,34 +144,37 @@ harness itself.
 | 1,000,000 (moderate) | 340.1 MB | 60.9 s | 2,052.7 MB | 120.9 s | 0.50x |
 | 3,000,000 (frozen memory tier) | 354.7 MB | 179.7 s | (baseline: 5,754.5 MB / 398.79 s) | 398.79 s | 0.45x |
 
-The headline: native peak RSS is 215.1 -> 340.1 -> 354.7 MB as rows go 10k -> 1M -> 3M, while the oracle's is 221.7 -> 2,052.7 -> 5,754.5 MB. Across the 3x jump from 1M to 3M the native route adds 14.6 MB (1.04x), the direct proof the streaming route's peak does NOT scale with row count; the oracle's grows 2.8x over the same jump and OOMs the 12 GiB box by 100M rows (~18 GB extrapolated), where the native route stays ~355 MB. Native is also ~2x faster at scale (0.50x / 0.45x wall).
+The headline: native peak RSS is 215.1 -> 340.1 -> 354.7 MB as rows go 10k -> 1M -> 3M, while the oracle's is 221.7 -> 2,052.7 -> 5,754.5 MB. Across the 3x jump from 1M to 3M the native route adds 14.6 MB (1.04x), the direct proof the streaming route's peak does NOT scale with row count; the oracle's grows 2.8x over the same jump and OOMs the 12 GiB box by 100M rows (~18 GB extrapolated), where the native route stays ~355 MB. Native is also ~2x faster at scale (0.50x / 0.45x wall). The oracle figures at 10k and 1M are this bench's OWN same-run comparison (both routes over the same freshly-generated data), not the frozen Task 3.0 oracle baseline (`results_c1_oracle_parity.json`: 223.7 MB / 2.944 s at 10k); the small differences are run variance. The 3M oracle figure IS the frozen Task 3.0 baseline (not re-run, to avoid a 5.75 GB oracle run near the box ceiling).
 
 ### JC-3 bound checks
 
 - **Absolute peak-RSS ceiling (8,192 MB, HARD): PASS at every tier
   measured** -- native peak RSS stays two to three orders of magnitude under
   the ceiling even at 1,000,000+ rows.
-- **Flatness bound (native memory-tier peak <= 1.5x its parity-tier peak,
-  HARD): PASS on the metric it exists to enforce; the frozen reference tier
-  is mis-specified.** The bound exists to prove peak RSS does not scale with
-  row count. Measured memory-tier-to-memory-tier (1M -> 3M), that is 354.7 /
-  340.1 = 1.04x for a 3x row jump: flat, decisively. Read literally against
-  the 10,000-row parity tier, it is 340.1 / 215.1 = 1.58x, marginally over
-  1.5x -- but that ratio is the native route's fixed-overhead FLOOR reaching
-  steady state (pool build, kernel load, DuckDB, two-table dispatch), NOT
-  row-linear growth: a route whose RSS grew with rows would keep climbing from
-  1M to 3M, and this one adds 14.6 MB. The 10,000-row tier sits below the
-  fixed-overhead floor, so it is the wrong flatness reference; the substantive
-  claim (no scaling with rows) holds.
-- **Wall non-regression ratio (native <= 1.25x oracle median, HARD): PASS at
-  the tier the bound is about (the memory tier); FAIL at the 10,000-row parity
-  tier as a fixed-overhead artifact.** At 1M native is 0.50x the oracle and at
-  3M 0.45x -- roughly 2x FASTER, far under 1.25x. The 1.37x at 10,000 rows is
-  the same fixed-overhead floor: at a tiny row count the per-invocation setup
-  dominates the (small) per-row work. The wall bound guards against a route
-  that is materially slower where it runs in production (at scale); it is not
-  slower there, it is faster. The parity tier's job is exact CORRECTNESS
-  (criterion 1), not wall measurement.
+- **Flatness bound (native memory-tier (3M) peak <= 1.5x its parity-tier (10k)
+  peak, HARD): LITERAL READING FAILS (1.65x); the metric the bound exists to
+  enforce passes, and the reinterpretation is submitted for Cam's sign-off.**
+  The frozen bound reads: 354.7 MB (3M) / 215.1 MB (10k) = **1.65x, over the
+  1.5x ceiling -- a literal FAIL**. The bound exists to prove peak RSS does not
+  scale with row count; measured memory-tier-to-memory-tier (1M -> 3M), that is
+  354.7 / 340.1 = 1.04x for a 3x row jump -- flat, decisively. The 1.65x is the
+  native route's fixed-overhead FLOOR reaching steady state (pool build, kernel
+  load, DuckDB, two-table dispatch) between 10k and 1M, NOT row-linear growth:
+  a route whose RSS grew with rows would keep climbing from 1M to 3M, and this
+  one adds 14.6 MB. The 10,000-row parity tier sits below that floor, so it is
+  arguably the wrong flatness reference. But that argument RE-DERIVES a frozen,
+  Task-0-Codex-gated threshold, which is not this gate's call -- see the Status
+  section: the literal bound fails and the reinterpretation is Cam's to accept.
+- **Wall non-regression ratio (native <= 1.25x oracle median "at every tier",
+  HARD): LITERAL READING FAILS at the 10,000-row parity tier (1.37x); passes
+  with large margin at scale.** At 1M native is 0.50x the oracle and at 3M
+  0.45x -- roughly 2x FASTER, far under 1.25x. The 1.37x at 10,000 rows is the
+  same fixed-overhead floor: at a tiny row count the per-invocation setup
+  dominates the (small) per-row work. The bound's INTENT (native not materially
+  slower where it runs in production, at scale) holds decisively. But the
+  frozen bound says "at every tier", and the parity tier's 1.37x is a literal
+  FAIL against it. Same governance point: reinterpreting "at every tier" to
+  "at the memory tier" re-derives a frozen threshold and is Cam's call.
 
 ### Finding: parity-tier wall ratio exceeds the JC-3 bound (flagged, not
 hidden)
@@ -227,30 +237,32 @@ doc.
 
 ## Status
 
-**Engine gate passed; platform certification pending.**
+**Engine CORRECTNESS gate: PASSED (all 4 criteria). JC-3 performance bounds:
+LITERAL FAIL at the parity tier -- reinterpretation submitted for Cam's
+sign-off. Platform certification: pending (streaming-flip).**
 
-All four criteria PASS at both the parity and moderate tiers (gate test: 12
-passed). The native bench completed at 10k, 1M, and 3M rows and confirms the
+Correctness (unconditional PASS): all four criteria pass at both gate tiers
+(gate test: 12 passed). The native bench (10k, 1M, 3M rows) confirms the
 headline Phase 3 win: peak RSS is FLAT with row count (340.1 MB at 1M ->
 354.7 MB at 3M, 1.04x for a 3x jump) at ~1/16 the oracle's 3M footprint, and
-native is ~2x faster at scale. pool_quality is byte-identical to the frozen
-baseline at every tier.
+native is ~2x faster at scale (0.50x / 0.45x wall). pool_quality is
+byte-identical to the frozen baseline at every tier.
 
-Two frozen JC-3 bounds are exceeded ONLY at the 10,000-row parity tier, and
-both are the native route's fixed-overhead floor showing at a tiny row count,
-not a regression: the flatness ratio read against the parity tier is 1.58x
-(the correct memory-tier-to-memory-tier flatness is 1.04x), and the parity-
-tier wall ratio is 1.37x (native is 0.50x / 0.45x, ~2x faster, at 1M / 3M).
-Both bounds pass decisively at the tier where the streaming route's value is
-realized. This doc reinterprets the two JC-3 bounds to the memory tier rather
-than the parity tier (which is a correctness tier); a reviewer who reads JC-3
-literally as "at every tier" would record the two parity-tier exceedances as
-findings, but the substantive claims the bounds exist to protect (RSS does not
-scale with rows; native is not materially slower in production) both hold. The
-JC-3 thresholds were frozen from the ORACLE baseline in Task 3.0 and did not
-account for the native route's fixed-overhead floor at sub-steady-state tiers;
-this reinterpretation, not a threshold the native route misses, is the finding.
+JC-3 performance bounds (NOT self-certified here -- Cam's call): two frozen,
+Task-0-Codex-gated HARD bounds are LITERALLY EXCEEDED at the 10,000-row parity
+tier -- flatness 354.7/215.1 = 1.65x (bound 1.5x) and wall 1.37x (bound 1.25x
+"at every tier"). The evidence says both are the native route's fixed-overhead
+floor at a sub-steady-state tiny tier, not a regression: RSS is flat 1M->3M
+(1.04x) and native is ~2x faster at scale, so the substantive properties the
+bounds exist to protect (RSS does not scale with rows; native is not slower in
+production) hold decisively. But reinterpreting a frozen acceptance threshold
+is Cam's decision, not this gate's (Cam's standing rule: no later contributor
+weakens the plan-defined acceptance test). Cam owns the choice: (a) accept the
+reinterpretation (bounds apply at the memory tier where the streaming route's
+value is realized; the parity tier is a correctness tier), or (b) re-derive /
+re-freeze the JC-3 bounds through the same governance that set them in Task 0.
+Until then this doc does NOT claim the JC-3 gate passed.
 
-This is NOT "Phase 3 C1 complete." That status requires the platform leg
+This is NOT "Phase 3 C1 complete." That status also requires the platform leg
 (Task 3.5, the deterministic C1 prod-sim end to end on `streaming-flip`),
 which has not run -- it is gated on Cam landing `streaming-flip` (JC-4).
