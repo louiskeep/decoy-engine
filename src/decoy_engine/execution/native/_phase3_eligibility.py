@@ -94,7 +94,13 @@ def phase3_c1_eligibility(
     base = native_route_eligibility(config, table=table, profile=profile)
     registry = get_default_registry()
 
-    faker_columns: dict[str, dict[str, Any]] = {}
+    # An ORDERED LIST, not a name-keyed dict: a table can carry two declarations
+    # for the same column name (TableConfig preserves both), and a dict would let
+    # a later valid declaration silently overwrite an earlier unsafe one, hiding
+    # its rejection. Every faker declaration is evaluated; `faker_names` is the
+    # membership set used only to strip the base predicate's kernel rejections.
+    faker_columns: list[tuple[str, dict[str, Any]]] = []
+    faker_names: set[str] = set()
     if table_cfg is not None:
         for col in table_cfg.get("columns", ()) or ():
             if not isinstance(col, dict):
@@ -107,12 +113,13 @@ def phase3_c1_eligibility(
                 # Decision 5's scope. native_route_eligibility already
                 # rejects it via composite_provider_multi_column; leave it.
                 continue
-            faker_columns[name] = col
+            faker_columns.append((name, col))
+            faker_names.add(name)
 
     reasons = [
-        r for r in base.rejections if not _is_reclassified_faker_kernel_rejection(r, faker_columns)
+        r for r in base.rejections if not _is_reclassified_faker_kernel_rejection(r, faker_names)
     ]
-    for name, col in faker_columns.items():
+    for name, col in faker_columns:
         reason = _faker_column_rejection(name, col, table=table, registry=registry)
         if reason is not None:
             reasons.append(reason)
@@ -120,17 +127,15 @@ def phase3_c1_eligibility(
     return Phase3Eligibility(admitted=not reasons, reasons=tuple(reasons))
 
 
-def _is_reclassified_faker_kernel_rejection(
-    reason: str, faker_columns: dict[str, dict[str, Any]]
-) -> bool:
+def _is_reclassified_faker_kernel_rejection(reason: str, faker_names: set[str]) -> bool:
     """True for the base predicate's `no_native_kernel:<name>:faker` entry
-    naming one of `faker_columns` -- the ONE base rejection this module
-    replaces with its own finer verdict for those columns."""
+    naming one of `faker_names` -- the ONE base rejection this module replaces
+    with its own finer verdict for those columns."""
     if not reason.startswith("no_native_kernel:"):
         return False
     _, _, rest = reason.partition(":")
     name, _, strategy = rest.partition(":")
-    return strategy == "faker" and name in faker_columns
+    return strategy == "faker" and name in faker_names
 
 
 def _faker_column_rejection(
@@ -142,13 +147,20 @@ def _faker_column_rejection(
     # `allow_collisions: true` compiles to deterministic + reuse (a stable
     # many-to-one map) in `plan/_seed_envelope.py`; mirror that resolution so a
     # column the oracle resolves as deterministic-reuse is not mis-rejected here
-    # as non-deterministic or given the wrong cardinality reason.
+    # as non-deterministic. But `_seed_envelope` also REJECTS `allow_collisions`
+    # alongside an explicit non-reuse `cardinality_mode` (allow_collisions_mode_
+    # conflict); mirror that too rather than silently coercing to reuse and
+    # admitting a config `compile_plan` itself would refuse.
     allow_collisions = bool(col.get("allow_collisions", False))
+    explicit_mode = col.get("cardinality_mode")
+    if allow_collisions and explicit_mode is not None and explicit_mode != "reuse":
+        return f"allow_collisions_mode_conflict:{name}:{explicit_mode}"
+
     deterministic = allow_collisions or bool(col.get("deterministic", False))
     if not deterministic:
         return f"faker_not_deterministic:{name}"
 
-    cardinality_mode = "reuse" if allow_collisions else (col.get("cardinality_mode") or "reuse")
+    cardinality_mode = "reuse" if allow_collisions else (explicit_mode or "reuse")
     if cardinality_mode not in _PARTITION_INDEPENDENT_CARDINALITY_MODES:
         return f"faker_cardinality_not_partition_independent:{name}:{cardinality_mode}"
 

@@ -2,9 +2,10 @@
 
 Covers the JC-5 precondition split into distinct coded reasons (Task 3.1's
 `faker_pool_precondition_met` collapses the same checks into one bool; this
-predicate names each one), the C1 provider allowlist, the one config-shape
-gap the native route cannot honor (`vault: true`), totality over the live
-provider registry, and the layering cross-check against
+predicate names each one), the C1 provider allowlist, the config shapes the
+native route cannot honor (`vault: true`, `when:`), the `allow_collisions`
+compile-time coercion and its mode conflict, duplicate-declaration safety,
+totality over the live provider registry, and the layering cross-check against
 `native_route_eligibility`.
 """
 
@@ -209,6 +210,32 @@ def test_allow_collisions_with_deterministic_omitted_admits() -> None:
     result = phase3_c1_eligibility(config, table="t")
     assert result.admitted is True
     assert result.reasons == ()
+
+
+def test_allow_collisions_with_conflicting_cardinality_mode_rejects() -> None:
+    # allow_collisions forces reuse, but compile_plan REJECTS an explicit
+    # non-reuse mode declared alongside it (allow_collisions_mode_conflict). The
+    # predicate must mirror that, not silently coerce to reuse and admit.
+    config = _config(
+        "t", _faker_col(deterministic=None, allow_collisions=True, cardinality_mode="unique")
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == ("allow_collisions_mode_conflict:FIRST:unique",)
+
+
+def test_duplicate_faker_declarations_do_not_hide_an_unsafe_column() -> None:
+    # A table can carry two declarations for one column name; a name-keyed dict
+    # would let the valid second FIRST overwrite the unsafe first and admit.
+    # Every declaration must be evaluated, so the non-deterministic one rejects.
+    config = _config(
+        "t",
+        _faker_col("FIRST", deterministic=False),
+        _faker_col("FIRST", provider="person_first_name", namespace="ns_first"),
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert "faker_not_deterministic:FIRST" in result.reasons
 
 
 # ---------------------------------------------------------------------------
