@@ -280,6 +280,53 @@ class TestThresholdBoundary:
         enforce_pool_quality(measurement, column="FIRST")  # must not raise
 
 
+class TestEnforcerInputContract:
+    def test_rejects_measurement_for_a_different_column(self) -> None:
+        # A MAIDEN measurement enforced with column="FIRST" must NOT silently
+        # apply FIRST's looser threshold: 0.5 is above MAIDEN's 0.3144 but
+        # below FIRST's 0.6630, so a mismatch that slipped through would pass a
+        # real breach. The mismatch is a coded integrity failure.
+        maiden = PoolQualityMeasurement(
+            column="MAIDEN",
+            distinct_sources=100,
+            non_deterministic_sources=0,
+            collision_rate=0.5,
+            pool_size=10000,
+            pool_duplicate_rate=0.0,
+        )
+        with pytest.raises(PoolQualityError) as exc_info:
+            enforce_pool_quality(maiden, column="FIRST")
+        assert exc_info.value.metric == "column"
+        assert exc_info.value.observed == "MAIDEN"
+
+    def test_rejects_non_finite_collision_rate(self) -> None:
+        # NaN > threshold is False, so a NaN rate would fail OPEN; reject it.
+        measurement = PoolQualityMeasurement(
+            column="FIRST",
+            distinct_sources=100,
+            non_deterministic_sources=0,
+            collision_rate=float("nan"),
+            pool_size=10000,
+            pool_duplicate_rate=0.0,
+        )
+        with pytest.raises(PoolQualityError) as exc_info:
+            enforce_pool_quality(measurement, column="FIRST")
+        assert exc_info.value.metric == "collision_rate"
+
+    def test_rejects_out_of_range_pool_duplicate_rate(self) -> None:
+        measurement = PoolQualityMeasurement(
+            column="FIRST",
+            distinct_sources=100,
+            non_deterministic_sources=0,
+            collision_rate=0.0,
+            pool_size=10000,
+            pool_duplicate_rate=float("inf"),
+        )
+        with pytest.raises(PoolQualityError) as exc_info:
+            enforce_pool_quality(measurement, column="FIRST")
+        assert exc_info.value.metric == "pool_duplicate_rate"
+
+
 class TestFrozenThresholdProvenance:
     def test_thresholds_are_oracle_rate_plus_margin(self) -> None:
         assert MARGIN == 0.02

@@ -26,6 +26,7 @@ functions of row count -- see the baseline doc's "both tiers" note).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -189,17 +190,22 @@ def measure_pool_quality(
     returns, and the temp dir is `0o700`-restricted by `connect_duckdb`. The
     caller must pass a secured, job-scoped `temp_dir`.
     """
+    # Open the connection FIRST: connect_duckdb creates and `0o700`-restricts
+    # temp_dir, so the cleartext-PII spool never lands in an unrestricted
+    # directory (and if connect_duckdb itself fails, no spool is ever written).
+    # Only then write the spool INTO the secured dir, and unlink it no matter
+    # what -- the unlink is in the outer finally with close in an inner one, so
+    # a query, write, or close failure can never leave cleartext PII at rest.
     pairs_path = temp_dir / f"pairs_{column}.parquet"
-    pq.write_table(pa.table({"source": source, "masked": masked}), pairs_path)
-
     conn = connect_duckdb(temp_dir=temp_dir, memory_limit=memory_limit)
     try:
+        pq.write_table(pa.table({"source": source, "masked": masked}), pairs_path)
         row = conn.execute(_COLLISION_SQL, [str(pairs_path)]).fetchone()
     finally:
-        conn.close()
-        # The spool holds cleartext source PII and is dead once the aggregate
-        # row is fetched; delete it so it never lingers at rest (TEST-3 class).
-        pairs_path.unlink(missing_ok=True)
+        try:
+            pairs_path.unlink(missing_ok=True)
+        finally:
+            conn.close()
 
     distinct_sources = int(row[0])
     distinct_outputs = int(row[1])
@@ -303,6 +309,17 @@ def enforce_pool_quality(
             threshold=sorted(COLLISION_RATE_THRESHOLD),
         )
 
+    if measurement.column != column:
+        raise PoolQualityError(
+            f"measurement is for column {measurement.column!r} but enforcement was "
+            f"requested for {column!r}; refusing to apply a mismatched column's "
+            "threshold to a different column's measurement",
+            column=column,
+            metric="column",
+            observed=measurement.column,
+            threshold=column,
+        )
+
     if measurement.non_deterministic_sources != 0:
         raise PoolQualityError(
             f"column {column!r}: {measurement.non_deterministic_sources} source "
@@ -314,6 +331,28 @@ def enforce_pool_quality(
             observed=measurement.non_deterministic_sources,
             threshold=0,
         )
+
+    # A rate must be a finite value in [0, 1]. A NaN (e.g. the collision_rate
+    # measure_pool_quality reports when non_deterministic_sources != 0, or any
+    # value in a hand-built measurement) would fail OPEN under `>` comparison
+    # (NaN > x is False), so reject it as a coded integrity failure BEFORE the
+    # threshold checks. The non-determinism gate above already caught the
+    # internal NaN path; this covers the standalone enforcer's accepted-input
+    # contract.
+    for metric_name, rate in (
+        ("collision_rate", measurement.collision_rate),
+        ("pool_duplicate_rate", measurement.pool_duplicate_rate),
+    ):
+        if not math.isfinite(rate) or not (0.0 <= rate <= 1.0):
+            raise PoolQualityError(
+                f"column {column!r}: {metric_name} is {rate!r}, not a finite rate in "
+                "[0, 1]; refusing to compare a non-finite or out-of-range rate against "
+                "a threshold (measurement-integrity failure)",
+                column=column,
+                metric=metric_name,
+                observed=rate,
+                threshold="[0.0, 1.0]",
+            )
 
     collision_threshold = COLLISION_RATE_THRESHOLD[column]
     if measurement.collision_rate > collision_threshold:
