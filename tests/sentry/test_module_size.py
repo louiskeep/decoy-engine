@@ -434,6 +434,19 @@ ALLOWLIST: dict[str, int] = {
     # with no import cycle and brings the module back under 600. Do it when the
     # native crypto surface is next touched.
     "src/decoy_engine/execution/native/_crypto_ext.py": 702,
+    # Phase 3 C1 slice (2026-08-31): crossed the 600 cap (434 -> 689) as the
+    # native-route dispatcher grew the faker-pool masking branch
+    # (`_sample_faker_chunk`/`_mask_chunk_native`/`_resolve_faker_pools`), the
+    # preflight string-type scope-lock, the pool_select counters, and the
+    # later-chunk schema-drift sentry (`NativeChunkSchemaDriftError`/
+    # `_check_chunk_schema_drift`). This module is THE native route orchestrator
+    # (route decision + chunk masking + route evidence + drift guard), so a
+    # sound decomposition needs its own design pass, not a merge-time hack:
+    # extract the schema-drift concern into a `_chunk_schema.py` sibling and the
+    # faker-chunk sampling/masking into a `_chunk_masking.py` sibling (both split
+    # with no import cycle) when the native route is next touched. Owes that
+    # decomposition; recorded here per the allowlist-as-ratchet (section 5.1).
+    "src/decoy_engine/execution/native/_dispatch.py": 689,
 }
 
 
