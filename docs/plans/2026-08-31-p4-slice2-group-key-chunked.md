@@ -80,33 +80,89 @@ The contract it must preserve, unchanged:
   own per-frame work ordering per chunk, so if the group_by column is itself masked, both the chunk
   and the full frame read it at the identical point in the order.
 
-- **Trap C - output dtype is chunk-invariant (verify, expected clean).** group_key returns a string
-  (`prefix + hex`) for EVERY row, including a null group_by (`str(NaN)` -> "nan" -> a derived key),
-  so the output column is always a string column regardless of chunk content. Unlike `bucketize`
-  (which falls through to the original value on null, making its dtype content-dependent), group_key
-  has no null-fallthrough and needs no runtime source gate. Confirm no `concat_masked_chunks` schema
-  disagreement can arise.
+- **Trap C - output dtype is chunk-invariant WITHOUT `when` (verify, expected clean).** With no
+  `when`, group_key returns a string (`prefix + hex`) for EVERY row, including a null group_by (which
+  stringifies to a dtype-specific sentinel: `"<NA>"` for nullable Int64, `"nan"` for float64,
+  `"None"` for object, etc. -- the exact sentinel is irrelevant to parity because the chunked route
+  and the oracle ingest the group_by column identically, so both stringify the same null the same
+  way). The output column is therefore a string column on every chunk regardless of content. Unlike
+  `bucketize` (null-fallthrough makes its dtype content-dependent), group_key has no null-fallthrough
+  in the no-`when` case. Confirm no `concat_masked_chunks` schema disagreement arises.
 
-- **Trap D - `when` predicate parity (verify, expected admit).** Unlike windowed_date (position-
-  keyed, so `when`-filtered enumeration desyncs, hence slice-1 rejected it), group_key is value-keyed
-  on the sibling, so a `when`-gated group_key masks only matching rows, each still deriving from its
-  own group_by cell, position-independent -> byte-parity holds. The auto-chunk planner independently
-  rejects ALL `when` for auto-routing (`when_predicate_not_chunk_stable`), so `when` never reaches
-  the auto route; the manual `run_mask_pipeline_chunked` entry must be confirmed to handle a value-
-  keyed `when` column exactly as it already does for `hash`/`date_shift`. No group_key-specific
-  `when` rejection is added (that would diverge from the value-keyed strategies' behaviour).
+- **Trap D - `when` predicate is REJECTED on the chunked route (fail-closed).** A `when`-gated
+  group_key masks only matching rows and passes NON-matching rows through with their ORIGINAL value
+  and dtype. If the target column is non-string, a chunk of all-non-matching rows keeps the numeric
+  dtype while a chunk containing matches becomes object/string -- a chunk-boundary-dependent output
+  dtype, and `concat_masked_chunks` then raises `chunked_schema_mismatch` where the full-frame oracle
+  produces one mixed column, a route divergence (Codex plan-gate HIGH). group_key is value-keyed so
+  it does not have windowed_date's enumeration-desync reason, but it has this dtype-mixing reason, so
+  it is rejected the same way: a new `reject_group_key_when` gate raises
+  `chunked_group_key_when_not_supported` at the public `run_mask_pipeline_chunked` entry (the auto-
+  chunk planner already rejects ALL `when` via `when_predicate_not_chunk_stable`, so this only has to
+  cover the manual entry). Fail-closed -> the job runs full-frame on the oracle.
+
+- **Trap E - equality-colliding heterogeneous group_by (cache collision), fail-closed guard.**
+  `apply_group_key`'s `key_cache` keys on the RAW Python value but the derivation keys on
+  `str(raw_val)` (`transforms/group_key.py`). Two values that are Python-`==` and hash-equal but have
+  DIFFERENT `str()` (e.g. `True`/`1` -> `"True"`/`"1"`, or `1`/`1.0` -> `"1"`/`"1.0"`) collide in the
+  cache: whichever appears FIRST in a call wins, so `1` after `True` in the full frame gets
+  `derive("True")`, but `1` alone in its own chunk gets `derive("1")` -- a byte-parity break across
+  chunk boundaries (Codex plan-gate BLOCKER). This makes the cache observable per-call state, not
+  pure memoisation, for such columns. Two facts bound it, and a guard makes it explicit:
+  (1) UNREACHABILITY on the real route: the chunked route's input is always Arrow (`Iterable[pa.Table]`
+  / the Arrow-loaded auto route), and an Arrow column is monomorphic, so a single group_by column
+  cannot hold both a `bool` and an `int`, or an `int` and a `float`; a masked group_by on an admitted
+  chunked table is produced by a chunk-safe strategy whose output is monomorphic too. For a
+  monomorphic column, `==`/hash-equal implies identical `str()`, so the cache returns exactly the key
+  the row would derive independently -- a true no-op. The collision is therefore not constructible
+  from an Arrow source. (2) We do NOT change `apply_group_key` (that would change the oracle's output,
+  violating the hard rule). (3) DEFENSE-IN-DEPTH GUARD, two placements mirroring how
+  `bucketize` is gated: for the AUTO route, a runtime-source rejection in `_planner.
+  _runtime_source_rejections` checks the SOURCE group_by column's Arrow type and, if it is not in the
+  safe monomorphic set (integer / floating / decimal / boolean / string / large_string / date /
+  timestamp / dictionary), rejects the table from chunking so the job runs full-frame on the oracle
+  from the start (a CLEAN fallback, no mid-stream error); for the MANUAL `run_mask_pipeline_chunked`
+  entry (which takes an arbitrary `Iterable[pa.Table]` with no pre-scan and whose caller explicitly
+  chose chunked), a per-chunk guard RAISES `chunked_group_key_group_by_dtype_unsupported` fail-closed
+  (the same shape as slice 1's per-chunk DGRN / FK dtype guards, which also raise rather than fall
+  back at that layer). Both are O(1) per column/chunk (a schema lookup, not a per-row scan), never
+  fire for normal data (all standard scalar Arrow types are safe), and pin the invariant so a future
+  exotic-typed source cannot silently reintroduce the collision. The counterexample cases (`True`/`1`,
+  `1`/`1.0`) are covered by tests that show they either coerce to a monomorphic Arrow column (parity
+  holds) or cannot be expressed as one Arrow column at all.
 
 ## 2. Tasks (ordered; each keeps the tree green)
 
-1. **`CHUNK_SIBLING_KEYED_STRATEGIES` set + admission.** In `_chunked_fk.py` (beside
-   `CHUNK_SAFE_STRATEGIES`) or a small sibling, define
-   `CHUNK_SIBLING_KEYED_STRATEGIES = frozenset({"group_key"})` with a docstring stating WHY it is
-   disjoint from `CHUNK_SAFE_STRATEGIES` (Trap A). Extend the `_CHUNK_ADMITTED_STRATEGIES` union in
-   `_chunked.py` to include it. No change to `gate_fk_child_edges` (it keeps using
-   `CHUNK_SAFE_STRATEGIES`), so the FK fail-closed behaviour is unchanged by construction. Watch the
-   `_chunked.py` LOC ceiling (648, at ceiling now): the union line already exists; adding one set to
-   it and one import is the only `_chunked.py` growth, so put the set + its docstring in
-   `_chunked_fk.py` (or a `_chunked_sibling.py` sibling) to keep `_chunked.py` at/under 648.
+1. **`CHUNK_SIBLING_KEYED_STRATEGIES` set + admission + the two group_key gates, in a new
+   `_chunked_group_key.py` sibling.** To keep `_chunked.py` at/under its 648 ceiling (it is AT the
+   ceiling now) and mirror slice 1's `_chunked_dgrn.py`, put all group_key-specific logic in a new
+   `_chunked_group_key.py`: define `CHUNK_SIBLING_KEYED_STRATEGIES = frozenset({"group_key"})` with a
+   docstring stating WHY it is disjoint from `CHUNK_SAFE_STRATEGIES` (Trap A); and the two gate
+   functions from tasks 1b/1c below. Extend the `_CHUNK_ADMITTED_STRATEGIES` union in `_chunked.py`
+   to include the set (one term added to the existing union line), and call the two gates from
+   `check_chunked_compatibility` / the per-chunk loop (one call site each). No change to
+   `gate_fk_child_edges` (it keeps using `CHUNK_SAFE_STRATEGIES`), so FK fail-closed behaviour is
+   unchanged by construction.
+
+   1b. **`reject_group_key_when(table_cfg, table)` gate (Trap D).** Mirror
+   `_chunked_dgrn.reject_windowed_date_when`: raise `PlanCompileError(code=
+   "chunked_group_key_when_not_supported", ...)` when any `group_key` column carries a `when`
+   predicate. Call it from `check_chunked_compatibility` (the public entry; the auto planner already
+   blanket-rejects `when`). Message: the passthrough of non-matching rows makes the output dtype
+   chunk-boundary-dependent.
+
+   1c. **group_by-dtype guard (Trap E), two placements mirroring bucketize.** A shared predicate
+   `group_by_arrow_type_is_safe(arrow_type) -> bool` for the safe monomorphic set (integer / floating
+   / decimal / boolean / string / large_string / date / timestamp / dictionary). (i) MANUAL entry:
+   `reject_unsafe_group_key_group_by_dtype(chunk, table, group_by_cols)` raises
+   `ExecutionError(code="chunked_group_key_group_by_dtype_unsupported", ...)` for an unsafe group_by
+   Arrow field type, called in the per-chunk loop of `run_mask_pipeline_chunked` alongside the
+   existing per-chunk FK guards (O(1) schema lookup). (ii) AUTO route: a source-dtype rejection in
+   `_planner._runtime_source_rejections` (which already sees the source tables) rejects a table whose
+   group_by column has an unsafe Arrow type, so the auto route falls back to full-frame cleanly
+   instead of erroring mid-stream. Both consume the group_by column set from task 2's helper.
+   Defense-in-depth: on Arrow sources neither fires; they pin the invariant against a future exotic
+   type.
 
 2. **`group_key_group_by_columns(plan, registry)` helper.** In `_runner.py`, directly mirroring
    `top_code_columns` / `date_shift_group_columns`: walk `build_work_list`, for each scalar
@@ -129,12 +185,13 @@ The contract it must preserve, unchanged:
    (raise only with a documented justification per the ratchet, as slice 1 did for the 2-line
    plumbing).
 
-5. **Confirm the auto-chunk planner needs no group_key gate.** `_planner._reasons_*` reuses
-   `check_chunked_compatibility` (line 376), so admitting group_key there auto-admits it for
-   `run_pipeline(auto_chunk=True)`. Verify group_key introduces no whole-column-state hazard needing
-   an entry in `_whole_column_state_rejections` (it does not: output always string, group_by handled
-   losslessly, no format detection). Add a one-line code comment at the group_key admission site
-   pointing to this reasoning; do NOT add a planner rejection.
+5. **Auto-chunk planner wiring.** `_planner._reasons_*` reuses `check_chunked_compatibility`
+   (line 376), so admitting group_key there (task 1) auto-admits it for `run_pipeline(auto_chunk=
+   True)`, and the `when` rejection (task 1b) flows through too. group_key introduces no WHOLE-COLUMN-
+   STATE hazard needing an entry in `_whole_column_state_rejections` (output always string, group_by
+   handled losslessly, no format detection). It DOES need the runtime-source dtype rejection (task
+   1c-ii) added to `_runtime_source_rejections` so an unsafe group_by dtype routes to the oracle
+   cleanly. Wire task 1c-ii here.
 
 ## 3. Tests (the parity + mutation bar)
 
@@ -146,30 +203,51 @@ table (values, order, dtype) and the warnings. New file `tests/unit/execution/te
    id with repeated values across chunk boundaries) at chunk sizes 1 / 7 / 500 vs full-frame: assert
    identical output and that the same group_by value in different chunks yields the identical key
    (household coherence survives chunking).
-2. **int+null group_by (Trap B).** group_by = nullable Int64 with values >= 2**53 and nulls placed so
-   that some chunks carry a null and some do not; assert chunked == full-frame == exact-integer-keyed
-   (a red test against the un-unioned baseline: without the lossless union, a widened chunk keys on
+2. **Independently-pinned expected bytes (anti self-confirmation, Codex MEDIUM).** For a known
+   `(job_seed, "group_key/<col>", value)`, pin the EXACT expected key string (computed via a direct
+   `derive(...)` call in the test, independent of the ingestion path) and assert both the chunked and
+   full-frame outputs equal it. This proves parity is to the real derivation, not merely chunked ==
+   oracle (which could hide a shared-ingestion bug).
+3. **int+null group_by (Trap B).** group_by = nullable Int64 with values >= 2**53 and nulls placed so
+   that some chunks carry a null and some do not; assert chunked == full-frame == exact-integer-keyed.
+   A RED test against the un-unioned baseline (without the lossless union, a widened chunk keys on
    "5.0" and diverges).
-3. **FK exclusion (Trap A).** A config where a group_key column is an FK parent/child key: assert the
-   chunked route rejects it (`chunked_fk_parent_strategy_not_safe`) and the job runs full-frame, and
-   that adding group_key did NOT admit a group_key FK self-mask (the RI regression guard: a
-   set-membership test that group_key not in CHUNK_SAFE_STRATEGIES, plus an end-to-end FK job).
-4. **group_by itself masked (Trap B ordering).** group_by column is also masked by a chunk-safe
-   strategy: assert chunked == full-frame (both read group_by at the identical point in the work
-   order).
-5. **`when`-gated group_key (Trap D).** A group_key column with a `when` predicate on the manual
-   `run_mask_pipeline_chunked` entry: assert chunked == full-frame (matching rows keyed, non-matching
-   passed through), confirming value-keyed `when` parity (contrast: the auto route rejects `when`).
-6. **Cross-substrate (Trap C/polars).** The same jobs under the polars adapter: assert value-equal to
-   the pandas oracle (Arrow-schema differences per SEMANTIC_DIFFERENCES.md allowed, values/keys equal).
-7. **Output dtype invariance (Trap C).** All-null group_by chunk vs mixed: assert
-   `concat_masked_chunks` raises no schema disagreement and the output column is string on every chunk.
+4. **Null-sentinel per dtype (Trap B/C).** group_by nullable Int64 (null -> "<NA>"), float64 (null ->
+   "nan"), and string (null -> the object sentinel): assert chunked == full-frame for each; the point
+   is not the sentinel value but that both routes agree because ingest is identical.
+5. **Cache-collision counterexamples (Trap E, Codex BLOCKER).** Attempt to construct a group_by
+   source with `True`/`1` and with `1`/`1.0`: show the Arrow source coerces each to a monomorphic
+   column (so no collision arises and byte-parity holds across chunk boundaries), or cannot be
+   expressed as one Arrow column. Plus a direct unit test of the dtype guard
+   (`reject_unsafe_group_key_group_by_dtype`): a safe type passes, an exotic Arrow type raises
+   `chunked_group_key_group_by_dtype_unsupported`.
+6. **FK exclusion + group_by-as-FK-key (Trap A, Codex).** (a) A group_key column that is an FK
+   parent/child key (single-column edge, `orphan_policy: remap`, so an earlier gate does not mask the
+   intended rejection): assert `chunked_fk_parent_strategy_not_safe` and full-frame fallback, plus the
+   RI guard that group_key is not in `CHUNK_SAFE_STRATEGIES`. (b) A DIFFERENT case where the group_by
+   SIBLING is itself an FK key: assert chunked == full-frame (the FK column ingests losslessly and
+   group_key derives from it consistently).
+7. **group_by itself masked, mask-before-group_key (Trap B ordering).** group_by column is masked by
+   a chunk-safe strategy AND ordered (via the work order) to run BEFORE group_key; assert chunked ==
+   full-frame AND that the sibling mask actually executed first (assert the derived key is from the
+   MASKED group_by value, not the raw one -- the opposite ordering would not be meaningful coverage).
+8. **`when`-gated group_key is REJECTED (Trap D).** A group_key column with a `when` predicate:
+   assert the manual `run_mask_pipeline_chunked` raises `chunked_group_key_when_not_supported` and
+   (separately) that a non-string target column with matches and non-matches split across chunks
+   would diverge (documents WHY the rejection exists), plus the auto route rejects it via the
+   existing planner gate.
+9. **Cross-substrate (polars).** The same admitted jobs under the polars adapter: assert value-equal
+   to the pandas oracle (Arrow-schema differences per SEMANTIC_DIFFERENCES.md allowed, keys equal)
+   AND that the intended chunked route actually ran (`result.mode == "chunked"`).
+10. **Output dtype invariance, no-`when` (Trap C).** All-null group_by chunk vs mixed: assert
+    `concat_masked_chunks` raises no schema disagreement and the output column is string on every chunk.
 
 Mutation bar (Phase 2-3 discipline): full-grade the NEW units to zero unadjudicated survivors on
-changed lines - `group_key_group_by_columns` and `CHUNK_SIBLING_KEYED_STRATEGIES` admission logic.
-The changed lines in the large allowlisted files (`_pandas_adapter.py`, `_sequential.py`,
-`_chunked.py`) are minimal union/threading; hand-verify their changed-line mutants (same standard as
-slice 1's 6 changed-line mutants).
+changed lines - `group_key_group_by_columns`, `CHUNK_SIBLING_KEYED_STRATEGIES` admission, and both
+gate functions (`reject_group_key_when`, `reject_unsafe_group_key_group_by_dtype`). The changed lines
+in the large allowlisted files (`_pandas_adapter.py`, `_sequential.py`, `_chunked.py`) are minimal
+union/threading/call-site; hand-verify their changed-line mutants (same standard as slice 1's 6
+changed-line mutants).
 
 ## 4. Acceptance
 
