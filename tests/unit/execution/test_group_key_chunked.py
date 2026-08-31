@@ -1110,6 +1110,17 @@ class TestStaticOutputTypeMapCoverage:
         assert effective == pa.string()
         assert group_by_type_is_safe(effective) is True
 
+    def test_categorical_numeric_categories_infer_numeric_type(self) -> None:
+        # categorical returns the categories' inferred type, not always-string:
+        # float categories -> float type -> unsafe (rejected), so a numeric
+        # category set cannot admit a divergent job.
+        mask = _scalar_node(
+            "people", "amount", "categorical", provider_config=(("categories", [1.5, 2.5]),)
+        )
+        effective = self._effective(mask, self._SCHEMA_INT)
+        assert pa.types.is_floating(effective)
+        assert group_by_type_is_safe(effective) is False
+
     def test_categorical_no_categories_is_dynamic(self) -> None:
         mask = _scalar_node("people", "amount", "categorical")
         assert self._effective(mask, self._SCHEMA_INT) is None
