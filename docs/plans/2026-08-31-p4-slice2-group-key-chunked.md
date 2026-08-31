@@ -107,29 +107,39 @@ The contract it must preserve, unchanged:
   DIFFERENT `str()` (e.g. `True`/`1` -> `"True"`/`"1"`, or `1`/`1.0` -> `"1"`/`"1.0"`) collide in the
   cache: whichever appears FIRST in a call wins, so `1` after `True` in the full frame gets
   `derive("True")`, but `1` alone in its own chunk gets `derive("1")` -- a byte-parity break across
-  chunk boundaries (Codex plan-gate BLOCKER). This makes the cache observable per-call state, not
-  pure memoisation, for such columns. Two facts bound it, and a guard makes it explicit:
-  (1) UNREACHABILITY on the real route: the chunked route's input is always Arrow (`Iterable[pa.Table]`
-  / the Arrow-loaded auto route), and an Arrow column is monomorphic, so a single group_by column
-  cannot hold both a `bool` and an `int`, or an `int` and a `float`; a masked group_by on an admitted
-  chunked table is produced by a chunk-safe strategy whose output is monomorphic too. For a
-  monomorphic column, `==`/hash-equal implies identical `str()`, so the cache returns exactly the key
-  the row would derive independently -- a true no-op. The collision is therefore not constructible
-  from an Arrow source. (2) We do NOT change `apply_group_key` (that would change the oracle's output,
-  violating the hard rule). (3) DEFENSE-IN-DEPTH GUARD, two placements mirroring how
-  `bucketize` is gated: for the AUTO route, a runtime-source rejection in `_planner.
-  _runtime_source_rejections` checks the SOURCE group_by column's Arrow type and, if it is not in the
-  safe monomorphic set (integer / floating / decimal / boolean / string / large_string / date /
-  timestamp / dictionary), rejects the table from chunking so the job runs full-frame on the oracle
-  from the start (a CLEAN fallback, no mid-stream error); for the MANUAL `run_mask_pipeline_chunked`
-  entry (which takes an arbitrary `Iterable[pa.Table]` with no pre-scan and whose caller explicitly
-  chose chunked), a per-chunk guard RAISES `chunked_group_key_group_by_dtype_unsupported` fail-closed
-  (the same shape as slice 1's per-chunk DGRN / FK dtype guards, which also raise rather than fall
-  back at that layer). Both are O(1) per column/chunk (a schema lookup, not a per-row scan), never
-  fire for normal data (all standard scalar Arrow types are safe), and pin the invariant so a future
-  exotic-typed source cannot silently reintroduce the collision. The counterexample cases (`True`/`1`,
-  `1`/`1.0`) are covered by tests that show they either coerce to a monomorphic Arrow column (parity
-  holds) or cannot be expressed as one Arrow column at all.
+  chunk boundaries. This makes the cache observable per-call state, not pure memoisation, for such
+  columns. The collision is REACHABLE even within ONE monomorphic type: a `float64` column can hold
+  `0.0` and `-0.0`, which are `==` and hash-equal but stringify to `"0.0"` and `"-0.0"` (Codex
+  re-gate BLOCKER; `NaN` is never `==` so it never dedups). The heterogeneous family (`True`/`1`,
+  `1`/`1.0`) is unreachable from a single Arrow column, but the signed-zero case is not, so the guard
+  must exclude FLOATING types (and float-valued dictionaries), not merely non-monomorphic ones. We do
+  NOT change `apply_group_key` (that would change the oracle's output, violating the hard rule). The
+  fix is a fail-closed EFFECTIVE-TYPE guard, two placements mirroring how `bucketize` is gated:
+
+  - SAFE SET (O(1) schema-only): `integer`, `decimal`, `boolean`, `string`, `large_string`, `date`,
+    `timestamp`. FLOATING is EXCLUDED (the `0.0`/`-0.0` collision). `dictionary` is safe only if its
+    VALUE type is in the safe set, resolved recursively (a float-valued dictionary is unsafe). Any
+    other / unknown type is unsafe.
+  - EFFECTIVE type, not just source type: the guard checks the type of the group_by column AT THE
+    POINT group_key reads it. If group_by is itself masked by another strategy, that is the masking
+    strategy's STATIC output type (from the per-strategy output-type map, e.g.
+    `_mem_estimate_schema`); if group_by is unmasked, its source Arrow type. If group_by is masked by
+    a strategy whose output type is DYNAMIC / not statically known, treat it as unsafe (fail-closed).
+    This covers a preceding mask that turns a safe source into a float. The common household-
+    coherence case (group_by = a raw or hash-masked id column) has an integer / string effective type
+    and stays admitted.
+  - AUTO route placement: a rejection in `_planner._runtime_source_rejections` (which sees the source
+    tables + the plan) rejects a table whose group_by EFFECTIVE type is unsafe, so the job runs
+    full-frame on the oracle from the start (CLEAN fallback, no mid-stream error).
+  - MANUAL `run_mask_pipeline_chunked` placement: a per-chunk guard RAISES
+    `chunked_group_key_group_by_dtype_unsupported` fail-closed (the caller chose chunked explicitly;
+    same shape as slice 1's per-chunk DGRN / FK dtype guards). At this layer the guard checks the
+    group_by column's actual type in the chunk (which reflects any masking that has run) plus the
+    plan's static output type for a not-yet-masked group_by.
+
+  Both are O(1) per column/chunk. The decisive reachable counterexample -- `0.0`/`-0.0` in one
+  float64 column split across a chunk boundary -- is a required test, alongside recursive-dictionary
+  cases and an auto-route test proving an unsafe type selects the oracle BEFORE streaming.
 
 ## 2. Tasks (ordered; each keeps the tree green)
 
@@ -144,6 +154,17 @@ The contract it must preserve, unchanged:
    `gate_fk_child_edges` (it keeps using `CHUNK_SAFE_STRATEGIES`), so FK fail-closed behaviour is
    unchanged by construction.
 
+   LOC accounting (`_chunked.py` is AT its 648 ceiling now): the irreducible `_chunked.py` growth is
+   one import of `_chunked_group_key`, one in-place term in the `_CHUNK_ADMITTED_STRATEGIES` union
+   (no new line), and the two gate call sites (`reject_group_key_when` in
+   `check_chunked_compatibility`, `reject_unsafe_group_key_group_by_dtype` in the per-chunk loop) --
+   about 3 new lines. Prefer an extraction to stay at/under 648 (fold the two calls behind a single
+   `_chunked_group_key` façade so only one call site is added at each of the two points; consolidate
+   imports). If a small residual crossing remains after that, raise the ceiling by EXACTLY that
+   amount WITH a documented justification naming the irreducible gate-call plumbing and the standing
+   decomposition target (the slice-1 `_pandas_adapter.py` +2 precedent), never a silent bump. The
+   build states the final `_chunked.py` LOC.
+
    1b. **`reject_group_key_when(table_cfg, table)` gate (Trap D).** Mirror
    `_chunked_dgrn.reject_windowed_date_when`: raise `PlanCompileError(code=
    "chunked_group_key_when_not_supported", ...)` when any `group_key` column carries a `when`
@@ -151,18 +172,19 @@ The contract it must preserve, unchanged:
    blanket-rejects `when`). Message: the passthrough of non-matching rows makes the output dtype
    chunk-boundary-dependent.
 
-   1c. **group_by-dtype guard (Trap E), two placements mirroring bucketize.** A shared predicate
-   `group_by_arrow_type_is_safe(arrow_type) -> bool` for the safe monomorphic set (integer / floating
-   / decimal / boolean / string / large_string / date / timestamp / dictionary). (i) MANUAL entry:
-   `reject_unsafe_group_key_group_by_dtype(chunk, table, group_by_cols)` raises
-   `ExecutionError(code="chunked_group_key_group_by_dtype_unsupported", ...)` for an unsafe group_by
-   Arrow field type, called in the per-chunk loop of `run_mask_pipeline_chunked` alongside the
-   existing per-chunk FK guards (O(1) schema lookup). (ii) AUTO route: a source-dtype rejection in
-   `_planner._runtime_source_rejections` (which already sees the source tables) rejects a table whose
-   group_by column has an unsafe Arrow type, so the auto route falls back to full-frame cleanly
-   instead of erroring mid-stream. Both consume the group_by column set from task 2's helper.
-   Defense-in-depth: on Arrow sources neither fires; they pin the invariant against a future exotic
-   type.
+   1c. **group_by EFFECTIVE-type guard (Trap E), two placements mirroring bucketize.** A shared
+   predicate `group_by_type_is_safe(arrow_type) -> bool` for the safe set (integer / decimal /
+   boolean / string / large_string / date / timestamp; FLOATING EXCLUDED; `dictionary` safe iff its
+   value type is safe, recursively; unknown -> unsafe). The EFFECTIVE group_by type = the masking
+   strategy's static output type if group_by is itself masked (dynamic/unknown -> unsafe), else the
+   source Arrow type. (i) MANUAL entry: `reject_unsafe_group_key_group_by_dtype(chunk, plan, table,
+   group_by_cols)` raises `ExecutionError(code="chunked_group_key_group_by_dtype_unsupported", ...)`
+   for an unsafe effective type, called in the per-chunk loop of `run_mask_pipeline_chunked` alongside
+   the existing per-chunk FK guards (O(1)). (ii) AUTO route: an effective-type rejection in
+   `_planner._runtime_source_rejections` (which sees the source tables + plan) rejects a table whose
+   group_by effective type is unsafe, so the auto route falls back to full-frame cleanly instead of
+   erroring mid-stream. Both consume the group_by column set from task 2's helper and the per-strategy
+   static-output-type map (e.g. `_mem_estimate_schema`).
 
 2. **`group_key_group_by_columns(plan, registry)` helper.** In `_runner.py`, directly mirroring
    `top_code_columns` / `date_shift_group_columns`: walk `build_work_list`, for each scalar
@@ -203,11 +225,12 @@ table (values, order, dtype) and the warnings. New file `tests/unit/execution/te
    id with repeated values across chunk boundaries) at chunk sizes 1 / 7 / 500 vs full-frame: assert
    identical output and that the same group_by value in different chunks yields the identical key
    (household coherence survives chunking).
-2. **Independently-pinned expected bytes (anti self-confirmation, Codex MEDIUM).** For a known
-   `(job_seed, "group_key/<col>", value)`, pin the EXACT expected key string (computed via a direct
-   `derive(...)` call in the test, independent of the ingestion path) and assert both the chunked and
-   full-frame outputs equal it. This proves parity is to the real derivation, not merely chunked ==
-   oracle (which could hide a shared-ingestion bug).
+2. **Literal pinned expected key (anti self-confirmation, Codex MEDIUM).** Store a LITERAL expected
+   key string (a hex constant generated ONCE from a fixed job_seed, namespace, and source value, then
+   hardcoded in the test), and assert both the chunked and full-frame outputs equal that constant.
+   A constant, not a `derive(...)` call in the test: the derive-in-test form is a useful ingestion
+   check but is not an independent oracle (it recomputes rather than pins). This catches a shared-
+   ingestion bug that a chunked == oracle comparison alone would hide.
 3. **int+null group_by (Trap B).** group_by = nullable Int64 with values >= 2**53 and nulls placed so
    that some chunks carry a null and some do not; assert chunked == full-frame == exact-integer-keyed.
    A RED test against the un-unioned baseline (without the lossless union, a widened chunk keys on
@@ -215,12 +238,18 @@ table (values, order, dtype) and the warnings. New file `tests/unit/execution/te
 4. **Null-sentinel per dtype (Trap B/C).** group_by nullable Int64 (null -> "<NA>"), float64 (null ->
    "nan"), and string (null -> the object sentinel): assert chunked == full-frame for each; the point
    is not the sentinel value but that both routes agree because ingest is identical.
-5. **Cache-collision counterexamples (Trap E, Codex BLOCKER).** Attempt to construct a group_by
-   source with `True`/`1` and with `1`/`1.0`: show the Arrow source coerces each to a monomorphic
-   column (so no collision arises and byte-parity holds across chunk boundaries), or cannot be
-   expressed as one Arrow column. Plus a direct unit test of the dtype guard
-   (`reject_unsafe_group_key_group_by_dtype`): a safe type passes, an exotic Arrow type raises
-   `chunked_group_key_group_by_dtype_unsupported`.
+5. **Cache-collision (Trap E, Codex BLOCKER) - decisive reachable counterexample.**
+   (a) A `float64` group_by column containing `0.0` and `-0.0` split across a chunk boundary: assert
+   the AUTO route routes this job to the ORACLE (not chunked) BEFORE streaming (unsafe effective
+   type), and that a forced chunked run would diverge (documents WHY float is excluded). This is the
+   reachable monomorphic collision, the decisive case.
+   (b) A `dictionary`-typed group_by with a FLOAT value type: assert unsafe (recursive), routed to
+   oracle; a dictionary with an integer/string value type: assert safe, chunked, parity holds.
+   (c) group_by masked by a strategy with a float static output type: assert the effective-type guard
+   rejects it (routes to oracle) even though the SOURCE type is safe.
+   (d) Direct unit tests of `group_by_type_is_safe` (float -> False, int/string/date -> True,
+   float-dict -> False, int-dict -> True, unknown -> False) and both gate wrappers (manual raises
+   `chunked_group_key_group_by_dtype_unsupported`; the planner rejection selects the oracle).
 6. **FK exclusion + group_by-as-FK-key (Trap A, Codex).** (a) A group_key column that is an FK
    parent/child key (single-column edge, `orphan_policy: remap`, so an earlier gate does not mask the
    intended rejection): assert `chunked_fk_parent_strategy_not_safe` and full-frame fallback, plus the
@@ -251,11 +280,16 @@ changed-line mutants).
 
 ## 4. Acceptance
 
-- BYTE-IDENTICAL output + warnings to the pinned pandas oracle on the real chunked route, across
-  chunkings, int+null group_by, group_by-masked, and `when` cases. Exact, or group_key stays on the
-  oracle.
-- The intended chunked route provably ran (`result.mode == "chunked"`); oracle completion or silent
-  fallback on an admitted job is a gate failure.
+- BYTE-IDENTICAL output + warnings to the pinned pandas oracle on the real chunked route, for the
+  ADMITTED cases: across chunkings, int+null group_by, safe-typed group_by (including a hash-masked
+  group_by). Exact, or group_key stays on the oracle.
+- The FAIL-CLOSED cases route correctly, not to a wrong output: a `when`-gated group_key rejects at
+  the manual entry (`chunked_group_key_when_not_supported`) and the auto route falls back to the
+  oracle (planner `when` gate); a float / unsafe-effective-type group_by falls back to the oracle on
+  the auto route and raises `chunked_group_key_group_by_dtype_unsupported` at the manual entry.
+- The intended route provably ran: for an admitted job `result.mode == "chunked"`; for a rejected
+  job the oracle ran. Silent fallback on an ADMITTED job, or a chunked run of a REJECTED shape, is a
+  gate failure.
 - FK RI unchanged: group_key stays a fail-closed FK-key MISS; no existing parity or FK contract
   weakens.
 - ruff + format + mypy (CI py3.10) clean; module-size sentry green (no ceiling raised without a
