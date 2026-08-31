@@ -99,7 +99,8 @@ The contract it must preserve, unchanged:
   it is rejected the same way: a new `reject_group_key_when` gate raises
   `chunked_group_key_when_not_supported` at the public `run_mask_pipeline_chunked` entry (the auto-
   chunk planner already rejects ALL `when` via `when_predicate_not_chunk_stable`, so this only has to
-  cover the manual entry). Fail-closed -> the job runs full-frame on the oracle.
+  cover the manual entry). Fail-closed with the same two-placement semantics as Trap E: the manual
+  entry RAISES, the auto route falls back to the full-frame oracle.
 
 - **Trap E - equality-colliding heterogeneous group_by (cache collision), fail-closed guard.**
   `apply_group_key`'s `key_cache` keys on the RAW Python value but the derivation keys on
@@ -116,30 +117,45 @@ The contract it must preserve, unchanged:
   NOT change `apply_group_key` (that would change the oracle's output, violating the hard rule). The
   fix is a fail-closed EFFECTIVE-TYPE guard, two placements mirroring how `bucketize` is gated:
 
-  - SAFE SET (O(1) schema-only): `integer`, `decimal`, `boolean`, `string`, `large_string`, `date`,
-    `timestamp`. FLOATING is EXCLUDED (the `0.0`/`-0.0` collision). `dictionary` is safe only if its
-    VALUE type is in the safe set, resolved recursively (a float-valued dictionary is unsafe). Any
-    other / unknown type is unsafe.
-  - EFFECTIVE type, not just source type: the guard checks the type of the group_by column AT THE
-    POINT group_key reads it. If group_by is itself masked by another strategy, that is the masking
-    strategy's STATIC output type (from the per-strategy output-type map, e.g.
-    `_mem_estimate_schema`); if group_by is unmasked, its source Arrow type. If group_by is masked by
-    a strategy whose output type is DYNAMIC / not statically known, treat it as unsafe (fail-closed).
-    This covers a preceding mask that turns a safe source into a float. The common household-
-    coherence case (group_by = a raw or hash-masked id column) has an integer / string effective type
-    and stays admitted.
+  - SAFE SET: `integer`, `boolean`, `string`, `large_string`, `date`, `timestamp`. FLOATING is
+    EXCLUDED (`0.0`/`-0.0`). DECIMAL is EXCLUDED too: `Decimal` has `==`/hash collisions with distinct
+    `str()` (signed zero `Decimal("0")`/`Decimal("-0")`, and differing exponents), and a preceding
+    pandas mask need not canonicalize scale/sign, so decimal is not provably safe under an O(1)
+    policy. `dictionary` is safe only if its VALUE type is in the safe set, resolved recursively. Any
+    other / unknown type is unsafe. (Common group_by columns -- integer or string ids -- are safe.)
+  - EFFECTIVE type is WORK-ORDER aware: group_key reads group_by at ITS OWN position in the ordered
+    work list (`order_work`), so the type that matters is group_by's type AT THAT POINT. Compute it
+    from the ordered work list: if a masking node on the group_by column is ordered BEFORE the
+    group_key node, the effective type is that mask's STATIC output type; otherwise (group_by unmasked,
+    or its mask ordered AFTER group_key) the effective type is the SOURCE Arrow type. This closes both
+    ordering errors Codex named: an unsafe float source with a safe string mask scheduled AFTER
+    group_key must be REJECTED (group_key sees the float), and a safe source with a float mask
+    scheduled AFTER group_key must be ADMITTED. Two additional unsafe cases, both fail-closed:
+    (i) a preceding sibling mask whose static output type is DYNAMIC / not statically known
+    (`formula`, `derived`, `nested`) -> unsafe; (ii) a preceding sibling mask that carries a `when`
+    predicate -> unsafe, because non-matching rows retain the raw source value while matching rows get
+    the masked value, so the column's effective domain is MIXED (source type + mask type), not the
+    single static output type.
+  - STATIC-OUTPUT-TYPE SOURCE (pin at build): the effective-type computation needs a per-strategy
+    Arrow output-type map that is config-aware and reports DYNAMIC for `formula`/`derived`/`nested`.
+    The build identifies the concrete existing map (candidates: the out-of-core fixed-schema route's
+    output-type resolver in `execution/out_of_core/`, which already must know each strategy's static
+    output type to build a fixed schema, or `_mem_estimate_schema`), asserts it reports dynamic for
+    the dynamic strategies, and if no single such map exists, adds a minimal explicit one for the
+    strategies a group_by column can be masked by. It must NOT guess.
   - AUTO route placement: a rejection in `_planner._runtime_source_rejections` (which sees the source
-    tables + the plan) rejects a table whose group_by EFFECTIVE type is unsafe, so the job runs
-    full-frame on the oracle from the start (CLEAN fallback, no mid-stream error).
-  - MANUAL `run_mask_pipeline_chunked` placement: a per-chunk guard RAISES
-    `chunked_group_key_group_by_dtype_unsupported` fail-closed (the caller chose chunked explicitly;
-    same shape as slice 1's per-chunk DGRN / FK dtype guards). At this layer the guard checks the
-    group_by column's actual type in the chunk (which reflects any masking that has run) plus the
-    plan's static output type for a not-yet-masked group_by.
+    tables + the plan, hence the work order) rejects a table whose group_by EFFECTIVE type is unsafe,
+    so the job runs full-frame on the oracle from the start (CLEAN fallback, no mid-stream error).
+  - MANUAL `run_mask_pipeline_chunked` placement: the SAME ordered effective-type analysis (it has the
+    plan), evaluated once at admission (`check_chunked_compatibility`), RAISING
+    `chunked_group_key_group_by_dtype_unsupported` fail-closed for an unsafe effective type (the caller
+    chose chunked explicitly; same shape as slice 1's guards). Evaluating at admission from the plan +
+    source schema, not per-row, keeps it O(work) not O(rows).
 
-  Both are O(1) per column/chunk. The decisive reachable counterexample -- `0.0`/`-0.0` in one
-  float64 column split across a chunk boundary -- is a required test, alongside recursive-dictionary
-  cases and an auto-route test proving an unsafe type selects the oracle BEFORE streaming.
+  The decisive reachable counterexample -- `0.0`/`-0.0` in one float64 column split across a chunk
+  boundary -- is a required test, alongside decimal signed-zero, recursive-dictionary cases, the two
+  ordering cases above, and an auto-route test proving an unsafe type selects the oracle BEFORE
+  streaming (the chunked runner is never invoked).
 
 ## 2. Tasks (ordered; each keeps the tree green)
 
@@ -172,19 +188,18 @@ The contract it must preserve, unchanged:
    blanket-rejects `when`). Message: the passthrough of non-matching rows makes the output dtype
    chunk-boundary-dependent.
 
-   1c. **group_by EFFECTIVE-type guard (Trap E), two placements mirroring bucketize.** A shared
-   predicate `group_by_type_is_safe(arrow_type) -> bool` for the safe set (integer / decimal /
-   boolean / string / large_string / date / timestamp; FLOATING EXCLUDED; `dictionary` safe iff its
-   value type is safe, recursively; unknown -> unsafe). The EFFECTIVE group_by type = the masking
-   strategy's static output type if group_by is itself masked (dynamic/unknown -> unsafe), else the
-   source Arrow type. (i) MANUAL entry: `reject_unsafe_group_key_group_by_dtype(chunk, plan, table,
-   group_by_cols)` raises `ExecutionError(code="chunked_group_key_group_by_dtype_unsupported", ...)`
-   for an unsafe effective type, called in the per-chunk loop of `run_mask_pipeline_chunked` alongside
-   the existing per-chunk FK guards (O(1)). (ii) AUTO route: an effective-type rejection in
-   `_planner._runtime_source_rejections` (which sees the source tables + plan) rejects a table whose
-   group_by effective type is unsafe, so the auto route falls back to full-frame cleanly instead of
-   erroring mid-stream. Both consume the group_by column set from task 2's helper and the per-strategy
-   static-output-type map (e.g. `_mem_estimate_schema`).
+   1c. **group_by EFFECTIVE-type guard (Trap E).** A shared `group_by_type_is_safe(arrow_type) ->
+   bool` (safe set: integer / boolean / string / large_string / date / timestamp; FLOATING and DECIMAL
+   EXCLUDED; `dictionary` safe iff its value type is safe, recursively; unknown -> unsafe), plus a
+   shared `group_by_effective_type(plan, source_schema, table, group_by_col)` that computes the
+   WORK-ORDER-aware effective type per Trap E (source type unless a masking node on group_by is
+   ordered before the group_key node via `order_work`; a preceding dynamic-output or `when`-gated
+   sibling mask -> unsafe). Both placements evaluate this ONCE from the plan + source schema (O(work),
+   not per-row): (i) MANUAL entry: at `check_chunked_compatibility`,
+   `reject_unsafe_group_key_group_by_dtype(plan, source_schema, table, group_by_cols)` raises
+   `chunked_group_key_group_by_dtype_unsupported` for an unsafe effective type. (ii) AUTO route: the
+   same check in `_planner._runtime_source_rejections` rejects the table so it runs full-frame.
+   The source schema is available at both entry points (the first chunk / the source tables).
 
 2. **`group_key_group_by_columns(plan, registry)` helper.** In `_runner.py`, directly mirroring
    `top_code_columns` / `date_shift_group_columns`: walk `build_work_list`, for each scalar
@@ -238,18 +253,28 @@ table (values, order, dtype) and the warnings. New file `tests/unit/execution/te
 4. **Null-sentinel per dtype (Trap B/C).** group_by nullable Int64 (null -> "<NA>"), float64 (null ->
    "nan"), and string (null -> the object sentinel): assert chunked == full-frame for each; the point
    is not the sentinel value but that both routes agree because ingest is identical.
-5. **Cache-collision (Trap E, Codex BLOCKER) - decisive reachable counterexample.**
-   (a) A `float64` group_by column containing `0.0` and `-0.0` split across a chunk boundary: assert
-   the AUTO route routes this job to the ORACLE (not chunked) BEFORE streaming (unsafe effective
-   type), and that a forced chunked run would diverge (documents WHY float is excluded). This is the
-   reachable monomorphic collision, the decisive case.
-   (b) A `dictionary`-typed group_by with a FLOAT value type: assert unsafe (recursive), routed to
-   oracle; a dictionary with an integer/string value type: assert safe, chunked, parity holds.
-   (c) group_by masked by a strategy with a float static output type: assert the effective-type guard
-   rejects it (routes to oracle) even though the SOURCE type is safe.
-   (d) Direct unit tests of `group_by_type_is_safe` (float -> False, int/string/date -> True,
-   float-dict -> False, int-dict -> True, unknown -> False) and both gate wrappers (manual raises
-   `chunked_group_key_group_by_dtype_unsupported`; the planner rejection selects the oracle).
+5. **Cache-collision (Trap E, Codex BLOCKER) - decisive cases.**
+   (a) A `float64` group_by column containing `0.0` and `-0.0`: (1) prove the collision is REAL via a
+   direct-handler baseline -- call `apply_group_key` on the whole column vs on two chunks and assert
+   the keys DIFFER (independent of the route); (2) assert the AUTO route selects the ORACLE and the
+   chunked runner is NEVER INVOKED (spy/patch `run_mask_pipeline_chunked` and assert not called), not
+   merely `result.mode`; (3) assert the MANUAL entry raises
+   `chunked_group_key_group_by_dtype_unsupported`.
+   (b) A `decimal` group_by with `Decimal("0")`/`Decimal("-0")`: same three assertions (decimal is
+   excluded for the same reason as float).
+   (c) `dictionary` group_by: float-valued -> unsafe (oracle); int/string-valued -> safe (chunked,
+   parity holds). Include the deepest nested-dictionary shape Arrow can construct; if it cannot nest,
+   document that the recursion is defensive and test the one-level case.
+   (d) ORDERING regressions: (1) unsafe FLOAT source + a safe (string) mask on group_by scheduled
+   AFTER the group_key node -> must REJECT (group_key sees the source float); (2) safe (int) source +
+   a float-output mask on group_by scheduled BEFORE the group_key node -> must REJECT; (3) safe source
+   + a safe (hash->string) mask scheduled BEFORE group_key -> ADMIT, chunked == full-frame (the
+   masked-group_by common case). Build these by controlling the `order_work` tie-break.
+   (e) A preceding `when`-gated sibling mask on group_by -> REJECT (mixed effective domain).
+   (f) Direct unit tests of `group_by_type_is_safe` (float/decimal -> False; int/string/date/timestamp
+   -> True; float-dict -> False; int-dict -> True; unknown -> False) and `group_by_effective_type`
+   (returns source type when the sibling mask is ordered after / absent; the mask output type when
+   ordered before; unsafe sentinel for dynamic-output or when-gated preceding masks).
 6. **FK exclusion + group_by-as-FK-key (Trap A, Codex).** (a) A group_key column that is an FK
    parent/child key (single-column edge, `orphan_policy: remap`, so an earlier gate does not mask the
    intended rejection): assert `chunked_fk_parent_strategy_not_safe` and full-frame fallback, plus the
