@@ -45,6 +45,7 @@ from typing import Any, Literal
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_profile import first_chunk_profile
@@ -74,6 +75,58 @@ from decoy_engine.generation.pool._identity import DEFAULT_POOL_SCALE, resolve_f
 from decoy_engine.providers_v2 import get_default_registry
 
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
+
+
+class NativeChunkSchemaDriftError(DecoyError):
+    """A chunk after the first no longer matches the schema the native route
+    admitted at PREFLIGHT: a column went missing, an extra one appeared, or a
+    column's Arrow type changed. Preflight only inspects the FIRST chunk (an
+    eager check before any masking starts), so nothing upstream of this class
+    catches a later chunk drifting -- without it, a missing column is silently
+    dropped from the output, an extra one raises an uncoded `KeyError`, and a
+    changed type is fed to a kernel that never validated it. Raised BEFORE the
+    drifting chunk is yielded (Decision 10): chunks already consumed by the
+    caller are unaffected, but there is no reversal of them.
+    """
+
+    code: str = "native_chunk_schema_drift"
+
+    def __init__(self, message: str, *, table: str, chunk_index: int, detail: str) -> None:
+        super().__init__(message)
+        self.table = table
+        self.chunk_index = chunk_index
+        self.detail = detail
+
+
+def _check_chunk_schema_drift(
+    expected: pa.Schema, chunk: pa.Table, *, table: str, chunk_index: int
+) -> None:
+    """Raise `NativeChunkSchemaDriftError` if `chunk` no longer matches
+    `expected` (the admitted first chunk's schema): a missing/extra column
+    name, or a changed Arrow type on a column present in both."""
+    expected_names = set(expected.names)
+    actual_names = set(chunk.schema.names)
+    if actual_names != expected_names:
+        missing = sorted(expected_names - actual_names)
+        extra = sorted(actual_names - expected_names)
+        raise NativeChunkSchemaDriftError(
+            f"{table!r} chunk {chunk_index}: schema drift vs the admitted first "
+            f"chunk (missing={missing}, extra={extra})",
+            table=table,
+            chunk_index=chunk_index,
+            detail=f"missing:{missing};extra:{extra}",
+        )
+    for name in expected.names:
+        expected_type = expected.field(name).type
+        actual_type = chunk.schema.field(name).type
+        if actual_type != expected_type:
+            raise NativeChunkSchemaDriftError(
+                f"{table!r} chunk {chunk_index}: column {name!r} type changed "
+                f"{expected_type} -> {actual_type}",
+                table=table,
+                chunk_index=chunk_index,
+                detail=f"type_changed:{name}:{expected_type}->{actual_type}",
+            )
 
 
 @dataclass(frozen=True)
@@ -507,7 +560,9 @@ def _mask_native(
     )
 
     def _masked() -> Iterator[pa.Table]:
-        for chunk in _rechain(first, chunks):
+        expected_schema = first.schema
+        for i, chunk in enumerate(_rechain(first, chunks)):
+            _check_chunk_schema_drift(expected_schema, chunk, table=table, chunk_index=i)
             yield _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -626,6 +681,7 @@ def run_native_or_oracle_chunked(
 
 
 __all__ = [
+    "NativeChunkSchemaDriftError",
     "NativeRouteEvidence",
     "NodeRouteRecord",
     "plan_native_route",

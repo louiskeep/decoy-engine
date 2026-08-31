@@ -119,7 +119,9 @@ def test_parity_with_oracle_aggregate_chunk_warnings() -> None:
 
     w_p1 = QualityWarning(code="pool_dominates_cache", provider="p1", detail={"pool_bytes": 320})
     w_p2 = QualityWarning(code="pool_dominates_cache", provider="p2", detail={"pool_bytes": 320})
-    w_p1_dup = QualityWarning(code="pool_dominates_cache", provider="p1", detail={"pool_bytes": 320})
+    w_p1_dup = QualityWarning(
+        code="pool_dominates_cache", provider="p1", detail={"pool_bytes": 320}
+    )
     assert w_p1 == w_p1_dup  # identical -> both dedup paths must collapse them
     raw = (w_p1, w_p2, w_p1_dup)
 
@@ -237,6 +239,23 @@ def test_row_error_in_a_later_chunk_captured_and_surfaced_in_job_evidence() -> N
     with pytest.raises(RowErrorsFailedError) as exc_info:
         diag.raise_if_row_errors()
     assert exc_info.value.records == evidence.row_errors
+
+
+def test_evidence_snapshot_carries_pool_warnings_alongside_row_errors() -> None:
+    # `evidence()` bundles BOTH halves of the invocation-scoped snapshot; the
+    # row-error test above never puts a pool, so it cannot tell a real
+    # `.pool_warnings` tuple apart from a dropped/None one.
+    cache = PoolCache(max_bytes=1000)
+    diag = RouteDiagnostics(cache)
+    cache.put(_pool("evidence_provider", size=40, seed=b"snapshot1"))
+
+    owners = [PoolOwner(table="t", column="FIRST", provider="evidence_provider")]
+    evidence = diag.evidence(owners=owners)
+
+    assert len(evidence.pool_warnings) == 1
+    assert evidence.pool_warnings[0].warning.provider == "evidence_provider"
+    assert {(o.table, o.column) for o in evidence.pool_warnings[0].owners} == {("t", "FIRST")}
+    assert evidence.row_errors == ()
 
 
 def test_repeated_identical_row_error_dedupes_to_one() -> None:

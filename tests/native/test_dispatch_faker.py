@@ -13,11 +13,14 @@ counters. End-to-end oracle-vs-native logical parity lives in
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.execution import run_pipeline
 from decoy_engine.execution.native._dispatch import (
     NativeRouteEvidence,
     plan_native_route,
@@ -610,3 +613,408 @@ def test_plan_native_route_agrees_with_run_native_or_oracle_chunked() -> None:
 
     _, evidence = _run_native(config, _source(), batch_size=4)
     assert evidence.native_admitted is decision.native_admitted
+
+
+# ---------------------------------------------------------------------------
+# Masking output: the faker branch SELECTS values, so grade the selection
+# against the pandas oracle -- never a native-produced golden. The oracle
+# comparison needs a real on-disk source (`profile_source` reads the
+# CONFIGURED path), unlike `run_native_or_oracle_chunked`, which never reads
+# the path (`_ENGINE_VERSION`'s in-memory chunks bypass it entirely).
+# ---------------------------------------------------------------------------
+
+_ON_DISK_SOURCE_DIR = tempfile.mkdtemp(prefix="p3t3-dispatch-oracle-")
+_on_disk_source_counter = 0
+
+
+def _config_on_disk(source: pa.Table, *columns: dict, seed: int = 20260830) -> dict:
+    global _on_disk_source_counter
+    _on_disk_source_counter += 1
+    path = f"{_ON_DISK_SOURCE_DIR}/src_{_on_disk_source_counter}.parquet"
+    pq.write_table(source, path)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": seed, "post_validation": False},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
+        "targets": {"t": {"type": "file", "format": "parquet", "path": path + ".out"}},
+        "tables": [{"name": "t", "columns": list(columns)}],
+    }
+    return PipelineConfig.model_validate(raw).model_dump()
+
+
+def _run_oracle(config: dict, source: pa.Table, key_provider: SecretKeyProvider) -> pa.Table:
+    result = run_pipeline(
+        config,
+        {"t": source},
+        engine_version=_ENGINE_VERSION,
+        substrate="pandas",
+        execution_mode="full_frame",
+        auto_chunk=False,
+        key_provider=key_provider,
+        use_byte_estimate_routing=False,
+        use_probe_routing=False,
+    )
+    return result.outputs["t"]
+
+
+def _null_dense_source(n: int = 24, *, n_distinct: int = 4) -> pa.Table:
+    # Repeated keys (n_distinct << n, so every value collides many times) AND
+    # a dense, patterned null shape: every 3rd row null, plus the very first
+    # and last rows, so null-restore is exercised at both boundaries and
+    # mid-stream.
+    values = []
+    for i in range(n):
+        if i % 3 == 0 or i in (0, n - 1):
+            values.append(None)
+        else:
+            values.append(f"src_{i % n_distinct}")
+    return pa.table({"FIRST": pa.array(values, type=pa.string())})
+
+
+@pytest.mark.parametrize("batch_size", [1, 5, 24])
+def test_selected_values_match_pandas_oracle_over_repeated_and_null_source(
+    batch_size: int,
+) -> None:
+    # Kills mutants that change a selected value, the selection seed (or its
+    # separation from the pool-build seed), the deterministic mode/namespace/
+    # scale fed to PoolSampler, or the resolved pool identity: any of those
+    # would diverge the native selection from the oracle's, which shares
+    # none of `_dispatch.py`'s code (FakerStrategyHandler.run is a completely
+    # separate implementation converged only via resolve_faker_pool_identity).
+    source = _null_dense_source()
+    config = _config_on_disk(source, _faker_column())
+    key_provider = _key_provider()
+
+    oracle_out = _run_oracle(config, source, key_provider)
+    sink: list[NativeRouteEvidence] = []
+    native_chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, batch_size),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=key_provider,
+            route_evidence_sink=sink,
+        )
+    )
+    assert sink[0].native_admitted is True
+    native_out = pa.concat_tables(native_chunks).combine_chunks()
+
+    assert native_out.column("FIRST").to_pylist() == oracle_out.column("FIRST").to_pylist()
+
+
+def test_null_positions_preserved_byte_for_byte_vs_oracle_null_dense_source() -> None:
+    # The positional null-restore, isolated from the value-selection check
+    # above: exact True/False null-mask agreement at every row, over a chunk
+    # boundary that splits a run of nulls (batch_size=3 vs. the null-every-3rd
+    # pattern in `_null_dense_source`).
+    source = _null_dense_source(n=30, n_distinct=6)
+    config = _config_on_disk(source, _faker_column())
+    key_provider = _key_provider()
+
+    oracle_out = _run_oracle(config, source, key_provider)
+    sink: list[NativeRouteEvidence] = []
+    native_chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 7),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=key_provider,
+            route_evidence_sink=sink,
+        )
+    )
+    native_out = pa.concat_tables(native_chunks).combine_chunks()
+
+    oracle_nulls = [v is None for v in oracle_out.column("FIRST").to_pylist()]
+    native_nulls = [v is None for v in native_out.column("FIRST").to_pylist()]
+    assert native_nulls == oracle_nulls
+    # The source's own null positions are the ground truth both routes must
+    # restore: a mask that drifted from the SOURCE (not just from the oracle)
+    # would be a coincidental agreement, not a proven positional restore.
+    source_nulls = [v is None for v in source.column("FIRST").to_pylist()]
+    assert native_nulls == source_nulls
+
+
+def test_faker_output_column_is_arrow_string_type() -> None:
+    # `_sample_faker_chunk` builds `pa.array(..., type=pa.string())`
+    # explicitly; a mutant dropping or changing that type argument would let
+    # pyarrow infer a different (or null) type instead.
+    config = _config(_faker_column())
+    result, evidence = _run_native(config, _source(n=6), batch_size=3)
+    assert evidence.native_admitted is True
+    assert result.column("FIRST").type == pa.string()
+
+
+def test_pool_cache_hit_selection_is_byte_identical_to_the_cold_build() -> None:
+    # A cache HIT must select from the exact same pool object a cache MISS
+    # would have built -- not a fresh, possibly-different rebuild, and not a
+    # stale/wrong entry from a prior identity. Same config/source/key on a
+    # cold cache vs. a pre-warmed one (warmed by an earlier, distinct source
+    # so this run is provably a hit, not an accidental first build).
+    config = _config(_faker_column())
+    source = _source(n=9)
+    key_provider = _key_provider()
+
+    cold_cache = PoolCache()
+    cold_sink: list[NativeRouteEvidence] = []
+    cold_chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 4),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=key_provider,
+            route_evidence_sink=cold_sink,
+            pool_cache=cold_cache,
+        )
+    )
+    cold_out = pa.concat_tables(cold_chunks).combine_chunks()
+    assert cold_cache.stats().misses == 1
+
+    warm_cache = PoolCache()
+    # Warm the SAME identity via a throwaway run over a DIFFERENT source, then
+    # rerun over the real source: the second run must be a cache hit.
+    list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(_source(n=9, n_distinct=3), 4),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=key_provider,
+            route_evidence_sink=[],
+            pool_cache=warm_cache,
+        )
+    )
+    assert warm_cache.stats().misses == 1
+    warm_sink: list[NativeRouteEvidence] = []
+    warm_chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 4),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=key_provider,
+            route_evidence_sink=warm_sink,
+            pool_cache=warm_cache,
+        )
+    )
+    warm_out = pa.concat_tables(warm_chunks).combine_chunks()
+    assert warm_cache.stats().misses == 1  # no second build; the hit reused the pool
+    assert warm_cache.stats().hits >= 1
+
+    assert warm_out.column("FIRST").to_pylist() == cold_out.column("FIRST").to_pylist()
+
+
+@_NEEDS_COMPANION
+def test_faker_source_type_reject_reroutes_whole_table_including_hash_column() -> None:
+    # The preflight string-type guard's "whole table" claim needs a
+    # MULTI-STRATEGY case: a single-column config can't distinguish "the bad
+    # faker column rerouted" from "the whole table rerouted," since there is
+    # nothing else to check. Mixing in an admitted hash column proves the
+    # native_kernel route is ALSO downgraded, not just the offending faker
+    # column.
+    config = _config(
+        _faker_column(),
+        {"name": "SSN", "strategy": "hash", "namespace": "ssn_identity"},
+    )
+    source = pa.table(
+        {
+            # No nulls here on purpose: the oracle fallback this reroute lands
+            # on ALSO cannot canonicalize a float-upcast (nullable Int64 with
+            # nulls converts to float64 under `Table.to_pandas()`), so an
+            # all-present int64 column isolates the ROUTE-level assertion
+            # (whole-table reroute) from that separate, non-native-specific
+            # deterministic-faker limitation.
+            "FIRST": pa.array([1, 2, 3, 1], type=pa.int64()),  # not string -> reroute
+            "SSN": pa.array(
+                ["111-22-3333", "222-33-4444", "333-44-5555", "444-55-6666"], type=pa.string()
+            ),
+        }
+    )
+    sink: list[NativeRouteEvidence] = []
+    list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 2),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            route_evidence_sink=sink,
+        )
+    )
+    evidence = sink[0]
+    assert evidence.native_admitted is False
+    assert evidence.reroute_reason is not None
+    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")
+    routed = {r.column: r.route for r in evidence.node_routes}
+    assert routed == {"FIRST": "oracle", "SSN": "oracle"}
+    assert evidence.compiled_kernel_executed is False
+
+
+def test_faker_source_type_reject_still_reroutes_when_a_kernel_column_precedes_it() -> None:
+    # The scope-lock loop is `for node in decision.node_routes: if node.
+    # strategy != "faker": continue`. A non-faker column appearing BEFORE the
+    # bad-typed faker column in `node_routes` order must be skipped over, not
+    # treated as a reason to stop looking -- the previous test put the faker
+    # column first, which cannot tell "skip past" apart from "stop at."
+    # passthrough (not hash) keeps this companion-free.
+    config = _config(
+        {"name": "A", "strategy": "passthrough"},
+        _faker_column("FIRST"),
+    )
+    source = pa.table(
+        {
+            "A": pa.array(["x", "y", "z", "w"], type=pa.string()),
+            "FIRST": pa.array([1, 2, 3, 1], type=pa.int64()),  # not string -> reroute
+        }
+    )
+    sink: list[NativeRouteEvidence] = []
+    list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 2),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            route_evidence_sink=sink,
+        )
+    )
+    evidence = sink[0]
+    assert evidence.native_admitted is False
+    assert evidence.reroute_reason is not None
+    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")
+    assert {r.column: r.route for r in evidence.node_routes} == {"A": "oracle", "FIRST": "oracle"}
+
+
+# ---------------------------------------------------------------------------
+# `_resolve_faker_pools`: the pool-build loop and the cache-hit/rebuild
+# decision, isolated from the full dispatch path.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_faker_pools_does_not_abort_on_a_non_faker_column_before_it() -> None:
+    # `for name, col_seed in col_seed_by_name.items(): if col_seed.strategy
+    # != "faker": continue`. A non-faker column ordered BEFORE a faker column
+    # in the dict must be skipped over, not treated as a reason to stop --
+    # every existing config in this file puts the faker column first, which
+    # cannot distinguish `continue` from `break` (nothing follows it either
+    # way). `_resolve_faker_pools` is exercised directly (not through the
+    # full route) to isolate the pool-loop's own control flow.
+    from decoy_engine.execution.native._dispatch import _resolve_faker_pools
+    from decoy_engine.plan._types import ColumnSeed
+
+    hash_seed = ColumnSeed(
+        namespace="ns_hash",
+        strategy="hash",
+        provider=None,
+        backend_type=None,
+        backend_version="",
+        cardinality_mode=None,
+        deterministic=False,
+        provider_config=(),
+        pool_size=None,
+    )
+    faker_seed = ColumnSeed(
+        namespace="ns_faker_after_hash",
+        strategy="faker",
+        provider="person_first_name",
+        backend_type="faker",
+        backend_version="",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(),
+        pool_size=20,
+    )
+    # dict preserves insertion order: "SSN" (non-faker) is visited BEFORE
+    # "FIRST" (faker).
+    col_seed_by_name = {"SSN": hash_seed, "FIRST": faker_seed}
+    pools = _resolve_faker_pools(
+        col_seed_by_name, job_seed=(11).to_bytes(8, "big"), pool_cache=PoolCache()
+    )
+    assert set(pools) == {"FIRST"}
+    assert len(pools["FIRST"].values) == 20
+
+
+def test_resolve_faker_pools_reuses_the_exact_cached_object_on_a_hit() -> None:
+    # A cache HIT must return the SAME pool object `PoolCache.get()` found,
+    # not discard it and rebuild -- a rebuild is value-identical (the build is
+    # deterministic) but defeats the cache's whole purpose, and no VALUE-based
+    # assertion can tell "reused" apart from "value-identically rebuilt."
+    # Object identity is the only thing that can.
+    from decoy_engine.execution.native._dispatch import _resolve_faker_pools
+    from decoy_engine.plan._types import ColumnSeed
+
+    seed = ColumnSeed(
+        namespace="ns_hit_identity",
+        strategy="faker",
+        provider="person_first_name",
+        backend_type="faker",
+        backend_version="",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(),
+        pool_size=15,
+    )
+    cache = PoolCache()
+    job_seed = (7).to_bytes(8, "big")
+    first_pools = _resolve_faker_pools({"c1": seed}, job_seed=job_seed, pool_cache=cache)
+    built_pool = first_pools["c1"]
+    assert cache.stats().misses == 1
+
+    second_pools = _resolve_faker_pools({"c1": seed}, job_seed=job_seed, pool_cache=cache)
+    assert cache.stats().hits == 1
+    assert cache.stats().misses == 1  # no second build
+    assert second_pools["c1"] is built_pool
+
+
+def test_resolve_faker_pools_passes_locale_and_config_through_to_the_builder(monkeypatch) -> None:
+    # `builder.build(..., locale=locale, config=build_config, ...)`: both are
+    # real determinants (they feed `cfg_hash`/`pool_seed`, i.e. pool identity
+    # and content), but every OTHER test in this file uses the default
+    # locale and an empty provider_config, so a mutant dropping either kwarg
+    # (or forcing it to None) is indistinguishable from correct code under
+    # those tests alone. Spy on `PoolBuilder.build` to capture what actually
+    # gets passed -- this sidesteps needing a real Faker provider method that
+    # happens to accept an arbitrary extra config kwarg (most reject one).
+    import numpy as np
+
+    from decoy_engine.execution.native._dispatch import _resolve_faker_pools
+    from decoy_engine.generation.pool._builder import PoolBuilder
+    from decoy_engine.generation.pool._value_pool import ValuePool
+    from decoy_engine.plan._types import ColumnSeed
+
+    captured: dict = {}
+
+    def _spy_build(self, provider, **kwargs):
+        captured.update(kwargs)
+        return ValuePool(
+            values=np.array(["stub_a", "stub_b"], dtype=object),
+            provider=provider,
+            locale=kwargs.get("locale") or "default",
+            config_hash="test-hash",
+            seed=b"test-seed",
+            size=2,
+            build_time_ms=0.0,
+            backend_type="test",
+            backend_version="0",
+            distinct_count=2,
+        )
+
+    monkeypatch.setattr(PoolBuilder, "build", _spy_build)
+
+    seed = ColumnSeed(
+        namespace="ns_spy",
+        strategy="faker",
+        provider="person_first_name",
+        backend_type="faker",
+        backend_version="",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(("locale", "en_US"), ("unused_marker", "x")),
+        pool_size=20,
+    )
+    _resolve_faker_pools({"c1": seed}, job_seed=(3).to_bytes(8, "big"), pool_cache=PoolCache())
+
+    assert captured["locale"] == "en_US"
+    assert captured["config"] == {"unused_marker": "x"}
