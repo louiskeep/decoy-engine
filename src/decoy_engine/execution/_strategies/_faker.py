@@ -21,10 +21,8 @@ import pandas as pd
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.generation.pool import CardinalityMode, PoolBuilder, PoolSampler, ValuePool
 from decoy_engine.generation.pool._events import QualityWarning
-from decoy_engine.generation.pool._runtime_pool_size import resolve_runtime_pool_size
+from decoy_engine.generation.pool._identity import DEFAULT_POOL_SCALE, resolve_faker_pool_identity
 from decoy_engine.plan._types import ColumnSeed
-
-_DEFAULT_SCALE = 2.0
 
 
 class FakerStrategyHandler:
@@ -47,25 +45,7 @@ class FakerStrategyHandler:
         source = df[column]
         n = len(source)
         cfg = provider_config_to_dict(plan.provider_config)
-        # DE-11: `plan.pool_size` / `plan.scale` are resolved ONCE at compile
-        # (plan/_seed_envelope.py) from whichever of the two legal config
-        # locations (top-level ColumnConfig field, provider_config) the
-        # operator set. Prefer the typed field; a ColumnSeed built by hand
-        # (e.g. unit tests exercising this handler directly, bypassing
-        # compile_plan) never sets it, so provider_config stays the fallback
-        # rather than a second, independently-drifting read site.
-        if plan.pool_size is not None:
-            pool_size = plan.pool_size
-        else:
-            # A hand-built ColumnSeed (or a provider_config-only declaration the
-            # compile resolver read as undeclared) leaves plan.pool_size None, so
-            # fall back to the raw config -- coalescing an explicit-null pool_size
-            # to the default the same way an absent key is (shared helper).
-            pool_size = resolve_runtime_pool_size(cfg)
-        scale = plan.scale if plan.scale is not None else _DEFAULT_SCALE
-        locale = cfg.get("locale")
-        # pool_size + locale are build knobs, not Faker provider-method kwargs.
-        build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
+        scale = plan.scale if plan.scale is not None else DEFAULT_POOL_SCALE
 
         # Consult ctx.pool_cache before building. Safe for byte parity:
         # the build is RNG-seeded by the identity's pool_seed (S5 F2), so
@@ -73,14 +53,18 @@ class FakerStrategyHandler:
         # value-identical (S5 F1 established the identity_for cheap
         # lookup for exactly this reason). Chunked execution pre-warms
         # the cache so every chunk reuses one pool instead of rebuilding.
+        # `resolve_faker_pool_identity` (Phase 3 Task 3.1 HIGH 1) is the ONE
+        # place this pool_size/locale/build_config split lives, shared with
+        # the native chunked route so the two sides cannot compute different
+        # identities for the same column.
         builder = PoolBuilder(ctx.registry)
-        identity = builder.identity_for(
-            plan.provider,
-            size=pool_size,
-            job_seed=ctx.job_seed,
-            locale=locale,
-            config=build_config,
+        pool_size, locale, build_config, identity = resolve_faker_pool_identity(
+            builder=builder,
+            provider=plan.provider,
+            plan_pool_size=plan.pool_size,
             namespace=plan.namespace,
+            job_seed=ctx.job_seed,
+            cfg=cfg,
         )
         cached = ctx.pool_cache.get(identity)
         pool = cached if isinstance(cached, ValuePool) else None

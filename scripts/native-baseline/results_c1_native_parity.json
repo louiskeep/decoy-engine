@@ -1,0 +1,63 @@
+{
+  "10000": {
+    "n_rows": 10000,
+    "chunk_rows": 50000,
+    "reps": 2,
+    "native_wall_median_s": 3.96008550649276,
+    "native_wall_iqr_s": 0.005030017520766705,
+    "native_peak_rss_kb": 215100,
+    "native_hash_tput_median_rows_s": 284508.3976300738,
+    "native_faker_tput_median_rows_s": 105228.43840751433,
+    "route_ledger": {
+      "pool_select_calls": 3,
+      "pool_select_executed": true,
+      "hash_kernel_calls": 8,
+      "compiled_kernel_executed": true,
+      "native_admitted": {
+        "patients": true,
+        "observations": true
+      }
+    },
+    "pool_quality": {
+      "FIRST": {
+        "distinct_sources": 1000,
+        "distinct_outputs_for_distinct_sources": 357,
+        "non_deterministic_sources": 0,
+        "collision_count": 643,
+        "collision_rate": 0.643,
+        "unique_feasibility": "N/A (reuse-only C1 scope)",
+        "pool_size": 10000,
+        "distinct_pool_values": 662,
+        "pool_duplicate_count": 9338,
+        "pool_duplicate_rate": 0.9338
+      },
+      "LAST": {
+        "distinct_sources": 1200,
+        "distinct_outputs_for_distinct_sources": 526,
+        "non_deterministic_sources": 0,
+        "collision_count": 674,
+        "collision_rate": 0.5616666666666666,
+        "unique_feasibility": "N/A (reuse-only C1 scope)",
+        "pool_size": 10000,
+        "distinct_pool_values": 987,
+        "pool_duplicate_count": 9013,
+        "pool_duplicate_rate": 0.9013
+      },
+      "MAIDEN": {
+        "distinct_sources": 360,
+        "distinct_outputs_for_distinct_sources": 254,
+        "non_deterministic_sources": 0,
+        "collision_count": 106,
+        "collision_rate": 0.29444444444444445,
+        "unique_feasibility": "N/A (reuse-only C1 scope)",
+        "pool_size": 10000,
+        "distinct_pool_values": 983,
+        "pool_duplicate_count": 9017,
+        "pool_duplicate_rate": 0.9017
+      }
+    },
+    "oracle_wall_s": 2.8874001159565523,
+    "oracle_peak_rss_kb": 221728,
+    "wall_ratio_native_over_oracle": 1.3715056270200512
+  }
+}

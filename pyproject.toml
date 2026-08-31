@@ -677,6 +677,7 @@ module = [
     "decoy_engine.generation.pool._cardinality",
     "decoy_engine.generation.pool._errors",
     "decoy_engine.generation.pool._events",
+    "decoy_engine.generation.pool._identity",
     "decoy_engine.generation.pool._pool_adapter",
     "decoy_engine.generation.pool._sampler",
     "decoy_engine.generation.pool._validate",

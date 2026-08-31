@@ -18,6 +18,7 @@ from decoy_engine.execution._chunked_fk import fk_passthrough_columns_for_table
 from decoy_engine.execution.native import _dispatch
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._dispatch import (
+    NativeChunkSchemaDriftError,
     NativeRouteEvidence,
     plan_native_route,
     run_native_or_oracle_chunked,
@@ -1150,7 +1151,14 @@ def test_configured_column_missing_from_first_chunk_reroutes_and_reports_both_si
     assert "missing_configured_columns:['q']" in evidence.reroute_reason
 
 
-def test_second_chunk_introducing_an_unconfigured_column_fails_after_first_chunk_consumed() -> None:
+def test_second_chunk_introducing_an_unconfigured_column_fails_coded_after_first_chunk_consumed() -> (
+    None
+):
+    # P3-T3: a later-chunk schema sentry replaced the raw KeyError this test
+    # used to pin -- the drift is invisible at preflight (the first chunk
+    # alone has none), so it can only surface once consumed, after the first
+    # chunk's own output already reached the caller; that chunk is not rolled
+    # back, but the drifting one is never yielded uncaught.
     config = {
         "global_settings": {"seed": 42},
         "tables": [{"name": "w", "columns": [{"name": "p", "strategy": "passthrough"}]}],
@@ -1161,22 +1169,28 @@ def test_second_chunk_introducing_an_unconfigured_column_fails_after_first_chunk
     it = run_native_or_oracle_chunked(
         config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
     )
-    # Preflight admits the table (the first chunk alone has no drift yet).
     assert sink[0].native_admitted is True
     first_out = next(it)
     assert first_out.column("p").to_pylist() == [1, 2]
-    # The SECOND chunk's drift was invisible at preflight; it surfaces only
-    # once consumed, after the first chunk's output already reached the
-    # caller -- exactly the limit the plan's scope correction names.
-    with pytest.raises(KeyError):
+    with pytest.raises(NativeChunkSchemaDriftError) as exc_info:
         next(it)
+    assert exc_info.value.code == "native_chunk_schema_drift"
+    assert exc_info.value.table == "w"
+    assert exc_info.value.chunk_index == 1
+    assert "extra:['surprise']" in exc_info.value.detail
+    # The exception's own message (not just its structured fields) must carry
+    # real content: `super().__init__(message)` feeds `str(exc)`, so a raise
+    # site that dropped the message to None would still pass the structured
+    # assertions above but read as "None" everywhere the exception is logged.
+    assert "schema drift" in str(exc_info.value)
+    assert "missing=[]" in str(exc_info.value)
+    assert "extra=['surprise']" in str(exc_info.value)
 
 
-def test_second_chunk_missing_a_configured_column_silently_drops_it() -> None:
-    # The mirror case: no crash, but a schema drift the caller must notice
-    # itself (each chunk's own schema, not a promise of a stable one after
-    # the first). Pinned as current, defined behavior -- not a claim that a
-    # later-chunk drift is caught the way the first chunk's is.
+def test_second_chunk_missing_a_configured_column_fails_coded_not_silently_dropped() -> None:
+    # P3-T3: this used to be pinned as "silently drops it" (no crash, no
+    # signal); the schema sentry now catches the same drift coded, before the
+    # drifting chunk reaches the caller.
     config = {
         "global_settings": {"seed": 42},
         "tables": [
@@ -1198,6 +1212,52 @@ def test_second_chunk_missing_a_configured_column_silently_drops_it() -> None:
     assert sink[0].native_admitted is True
     first_out = next(it)
     assert set(first_out.schema.names) == {"p", "q"}
-    second_out = next(it)
-    assert set(second_out.schema.names) == {"p"}
-    assert second_out.column("p").to_pylist() == [3, 4]
+    with pytest.raises(NativeChunkSchemaDriftError) as exc_info:
+        next(it)
+    assert exc_info.value.code == "native_chunk_schema_drift"
+    assert exc_info.value.chunk_index == 1
+    assert "missing:['q']" in exc_info.value.detail
+
+
+def test_second_chunk_column_type_change_fails_coded() -> None:
+    # The third drift shape the plan names: a column present in both chunks
+    # but whose Arrow type changed -- not faker-specific (passthrough here),
+    # since any admitted strategy iterates `chunk.schema.names` the same way.
+    config = {
+        "global_settings": {"seed": 42},
+        "tables": [{"name": "w", "columns": [{"name": "p", "strategy": "passthrough"}]}],
+    }
+    chunk1 = pa.table({"p": pa.array([1, 2], type=pa.int64())})
+    chunk2 = pa.table({"p": pa.array([3.0, 4.0], type=pa.float64())})
+    sink: list[NativeRouteEvidence] = []
+    it = run_native_or_oracle_chunked(
+        config, [chunk1, chunk2], table="w", engine_version="test", route_evidence_sink=sink
+    )
+    assert sink[0].native_admitted is True
+    next(it)
+    with pytest.raises(NativeChunkSchemaDriftError) as exc_info:
+        next(it)
+    assert exc_info.value.code == "native_chunk_schema_drift"
+    assert exc_info.value.table == "w"
+    assert exc_info.value.chunk_index == 1
+    assert exc_info.value.detail == "type_changed:p:int64->double"
+    assert "column 'p' type changed" in str(exc_info.value)
+    assert "int64 -> double" in str(exc_info.value)
+
+
+def test_stable_schema_across_many_chunks_never_trips_the_drift_sentry() -> None:
+    # The sentry runs on every chunk (including chunks that never drift);
+    # confirm it is a true no-op for the common well-formed case.
+    config = {
+        "global_settings": {"seed": 42},
+        "tables": [{"name": "w", "columns": [{"name": "p", "strategy": "passthrough"}]}],
+    }
+    chunks = [pa.table({"p": pa.array([i, i + 1], type=pa.int64())}) for i in range(5)]
+    sink: list[NativeRouteEvidence] = []
+    out = list(
+        run_native_or_oracle_chunked(
+            config, chunks, table="w", engine_version="test", route_evidence_sink=sink
+        )
+    )
+    assert sink[0].native_admitted is True
+    assert len(out) == 5

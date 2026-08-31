@@ -127,7 +127,16 @@ class PoolCache:
             self._bytes_used += pool_bytes
             # NF5: a single pool occupying more than the dominate threshold of
             # the budget is a quality signal (cache thrash risk). Emit it; do
-            # not fail.
+            # not fail. This list is append-per-emission on purpose: the native
+            # route's RouteDiagnostics isolates one invocation's warnings by a
+            # length-prefix cursor, which requires every emission to append (a
+            # process-wide dedup here would suppress a re-emission this
+            # invocation genuinely produced just because a prior invocation
+            # emitted an identical one, starving that invocation of evidence).
+            # The list is therefore monotonic; bounding it under an adversarial
+            # evict-then-rebuild-same-identity workload needs an emission
+            # sequence, not a dedup -- tracked as a separate Phase 0 follow-up
+            # (see docs/plans/2026-08-30-part1-phase3-c1-slice.md Task 3.4).
             if pool_bytes > self._max_bytes * _DOMINATE_THRESHOLD:
                 self._warnings.append(
                     QualityWarning(

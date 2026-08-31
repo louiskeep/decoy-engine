@@ -479,6 +479,7 @@ def _warm_faker_pools(
     """
     from decoy_engine.execution._adapter import provider_config_to_dict
     from decoy_engine.generation.pool import PoolBuilder
+    from decoy_engine.generation.pool._identity import resolve_faker_pool_identity
 
     table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
     if table_seed is None:
@@ -493,17 +494,17 @@ def _warm_faker_pools(
                 f"chunked faker column {table}.{col_name} reached pool pre-warm "
                 "with no resolved pool_size; admission should have rejected it."
             )
-        pool_size = col_seed.pool_size
+        # Task 3.1 HIGH 1: the pool_size/locale/build_config split lives in ONE
+        # place shared with the oracle handler and the native route, so this
+        # pre-warm cannot drift onto a different cache identity than they use.
         cfg = provider_config_to_dict(col_seed.provider_config)
-        locale = cfg.get("locale")
-        build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
-        identity = builder.identity_for(
-            col_seed.provider,
-            size=pool_size,
-            job_seed=plan.seed_envelope.job_seed,
-            locale=locale,
-            config=build_config,
+        pool_size, locale, build_config, identity = resolve_faker_pool_identity(
+            builder=builder,
+            provider=col_seed.provider,
+            plan_pool_size=col_seed.pool_size,
             namespace=col_seed.namespace,
+            job_seed=plan.seed_envelope.job_seed,
+            cfg=cfg,
         )
         if pool_cache.get(identity) is not None:
             continue
