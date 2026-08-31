@@ -211,14 +211,14 @@ LOGIC score:       90.76%  (167/184)
   `"deterministic"`), 73/75 (same pattern on `"vault"`). Each read is immediately wrapped in
   `bool(...)`, and `bool(None) == bool(False) == False`, so the two default values are
   indistinguishable through this wrapper for every reachable input.
-- **Discarded-diagnostic-field irrelevance (4):** `phase3_c1_eligibility` mutant 58 (`table=table`
+- **Discarded-diagnostic-field irrelevance (3):** `phase3_c1_eligibility` mutant 58 (`table=table`
   -> `table=None` in the call to `_faker_column_rejection`) and that same function's own mutants
   45/46 (`table_name=table`/`col_name=name` -> `None` in the call to `resolve_pool_size`).
   `table`/`table_name`/`col_name` are used ONLY to format `PlanCompileError.path` (a diagnostic
   dotted-path string); `_faker_column_rejection`'s except-handler reads only `exc.code` to build the
   returned reason (`f"{exc.code}:{name}"`), never `exc.path`. The argument's value never reaches
   anything the admission verdict or the coded reason depends on.
-- **Same-singleton-registry irrelevance (2):** `_faker_column_rejection` mutants 60/63 (`registry=
+- **Same-singleton-registry irrelevance (3):** `_faker_column_rejection` mutants 59/60/63 (`registry=
   registry` -> `registry=None` in the call to `classify_provider`). `classify_provider`'s own
   `registry` parameter defaults to `get_default_registry()`, and `get_default_registry()` "two
   calls return the same object" (its own docstring) -- `phase3_c1_eligibility` never accepts a
