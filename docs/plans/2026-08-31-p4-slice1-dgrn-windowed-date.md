@@ -42,14 +42,13 @@ output is not byte-identical):
   unconditionally; `None`/`pd.NA`/`pd.NaT`/`NaN` raise `ValueError: NaTType does not support strftime` in
   the pinned environment. This is the EXISTING oracle behavior and this slice does NOT change it. So the
   parity story for nulls is a FAILURE-path story: BOTH routes raise and FAIL THE JOB on a null anchor. The
-  difference is only WHEN the raise happens (full-frame: before any output; chunked: during iteration,
-  possibly after earlier chunks were yielded to the caller). But `run_mask_pipeline_chunked` returns an
-  ITERATOR and owns no sink; the caller (route-exec / `run_pipeline`) materializes it and only then writes
-  its own sink. So a null-anchor chunk raises during iteration, materialization aborts, `run_pipeline`
-  never reaches its sink write, and NO committed output results. The contract is "identical final result:
-  both raise the same error and produce no committed output", not "identical byte stream up to the error".
-  The slice VERIFIES this on the real route (a null-anchor `run_pipeline(auto_chunk=True)` raises and
-  commits nothing), not by asserting a sink mechanism the chunked coordinator does not own.
+  chunked route raises DURING ITERATION (the caller materializes the iterator with `list(...)`), so
+  materialization propagates the `ValueError` and `run_pipeline` RETURNS NO `ExecutionResult` -- exactly as
+  the full-frame route raises and returns nothing. The contract is "identical final result: both raise the
+  same error and produce no output (no `ExecutionResult`)", not "identical byte stream up to the error".
+  The slice VERIFIES this on the real route (a null-anchor `run_pipeline(auto_chunk=True)` raises the same
+  `ValueError` and returns no result). No sink/commit mechanism is claimed -- this route builds resident
+  outputs and returns an `ExecutionResult`, so the guarantee is simply "it raises, nothing is returned".
 - **`i.to_bytes(8,"big")` accepts only `0 <= i <= 2**64-1` (inclusive).** The entry point receives an
   arbitrary `Iterable[pa.Table]` with no row count, so the range cannot be validated up front.
   `base_row_offset` is validated at entry (`int`, `0 <= base <= 2**64-1`); the RANGE is then checked PER
@@ -96,11 +95,11 @@ Those are separate follow-on slices.
 7. **Characterize + gate the null-anchor contract**: confirm the oracle raises on a null anchor
    (`ValueError` from `strftime` on NaT). This slice preserves that exactly: BOTH routes raise the same
    `ValueError` and FAIL the job. The contract to hold is "identical final result: both raise the same
-   error and produce NO committed output". The chunked route raises DURING ITERATION (the caller
-   materializes the iterator, and `run_pipeline` never reaches its sink write on a raise), so nothing is
-   committed. The slice VERIFIES this on the real route (a null-anchor `run_pipeline(auto_chunk=True)`
-   raises and commits nothing), not by asserting a byte stream up to the error or a sink mechanism the
-   chunked coordinator does not own.
+   error and return NO `ExecutionResult`". The chunked route raises DURING ITERATION (the caller
+   materializes the iterator with `list(...)`), so the `ValueError` propagates and no result is returned,
+   exactly as full-frame. The slice VERIFIES this on the real route (a null-anchor
+   `run_pipeline(auto_chunk=True)` raises the same error and returns nothing); no sink/commit mechanism is
+   claimed.
 8. **Consume the offset in the handler** (`_strategies/_windowed_date.py:49-61`): read `ctx.row_offset`,
    pass to `apply_windowed_date`.
 9. **Offset the enumerate** (`transforms/windowed_date.py:181-215`): add `row_offset: int = 0` and change
@@ -134,8 +133,8 @@ Those are separate follow-on slices.
   (condition (a), which checks the PARENT strategy). Also assert `windowed_date not in CHUNK_SAFE_STRATEGIES`.
   This is the test that actually fails if someone folds `windowed_date` into `CHUNK_SAFE_STRATEGIES`.
 - **Null-anchor failure path**: on the REAL route, a null-anchor `run_pipeline(auto_chunk=True)` raises the
-  SAME `ValueError` as full-frame and commits NO output (the iterator raises during materialization, so the
-  sink write is never reached) -- not a silent skip, not a different error, not partial committed output.
+  SAME `ValueError` as full-frame and returns NO `ExecutionResult` (the iterator raises during
+  materialization) -- not a silent skip, not a different error, not a partial result.
   Place nulls at a chunk boundary and inside an otherwise all-null chunk.
 - **Cross-substrate**: the parity check under `PolarsExecutionAdapter`, pinning the repo's contract
   (Arrow/schema equality WITHIN a substrate; value parity ACROSS substrates, since polars can widen string
@@ -153,7 +152,7 @@ Those are separate follow-on slices.
 - Byte-identical to the oracle across the full chunk-size x distribution x negative-offset matrix, on the
   REAL auto-chunk route (route evidence: `mode == "chunked"`), both substrates. One differing byte fails.
 - Null anchors and `when`-gated / out-of-domain configs behave EXACTLY as the oracle: a null anchor makes
-  both routes raise the same `ValueError` and commit NO output (the run raises before its sink write);
+  both routes raise the same `ValueError` and return no `ExecutionResult` (the run raises during materialization);
   `when` and out-of-domain configs reject with a coded reason. Never a silent divergence, and never
   committed output that differs from the oracle's committed result.
 - A `windowed_date` table runs at bounded O(chunk) memory; peak RSS flat across chunk counts on a moderate
@@ -171,7 +170,8 @@ Those are separate follow-on slices.
   raise). Admission must reject/match the oracle, tested explicitly.
 - **Polars fallback threading** (task 2): non-native strategies go through `_run_via_pandas_oracle`;
   missing the forward silently resets the offset. The cross-substrate test pins it.
-- **DGRN domain** (task 4): a semantic offset must fail cleanly at the boundary, not mid-stream.
+- **DGRN domain** (task 4): the base is validated at entry and each chunk's range at its chunk boundary
+  before masking, so an out-of-range offset fails with a coded error, never an incidental `OverflowError`.
 - **Scope creep**: pandas chunked route only; do NOT touch `_dispatch.py`/native kernels or the
   `global_row_number` prepass.
 
