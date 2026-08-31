@@ -41,13 +41,17 @@ output is not byte-identical):
 - **Null anchors RAISE, they do not produce a value.** `apply_windowed_date` calls `strftime`
   unconditionally; `None`/`pd.NA`/`pd.NaT`/`NaN` raise `ValueError: NaTType does not support strftime` in
   the pinned environment. This is the EXISTING oracle behavior and this slice does NOT change it. So the
-  parity story for nulls is a FAILURE-path story, not a value-parity one, and the chunked route inherits
-  the lazy-iterator partial-output risk: a null anchor in a later chunk raises AFTER earlier chunks were
-  yielded (unlike full-frame, which raises before any output). Admission handles this by requiring a
-  characterized contract (below), not by silently changing null behavior.
-- **`i.to_bytes(8,"big")` accepts only `0 <= i <= 2**64-1`.** Once `base_row_offset` is semantic, a
-  negative/boolean/non-integer/overflowing offset must fail at the public boundary with a DELIBERATE coded
-  error, not an incidental `OverflowError`.
+  parity story for nulls is a FAILURE-path story: BOTH routes raise and FAIL THE JOB on a null anchor. The
+  difference is only WHEN the raise happens (full-frame: before any output; chunked: after earlier chunks
+  were yielded to the sink). Because the run FAILS, the transactional sink commits nothing in either case,
+  so no COMMITTED output diverges; the chunked route's transient, uncommitted partial yield is discarded.
+  The contract is therefore "identical committed result: both fail, nothing commits", not "identical byte
+  stream up to the error". The slice MUST verify the transactional-sink discard (the failing chunked run
+  leaves no committed output), not assume it.
+- **`i.to_bytes(8,"big")` accepts only `0 <= i <= 2**64-1` (inclusive).** Once `base_row_offset` is
+  semantic, a negative/boolean/non-integer offset, OR any run where `base_row_offset + (table_rows - 1)`
+  would exceed `2**64-1`, must fail with a DELIBERATE coded error, not an incidental `OverflowError`
+  mid-stream. The guard is on the whole run's index RANGE, not just the base.
 
 Explicit scope boundaries: target the `_chunked.py` PANDAS chunked route (bounded O(chunk) memory using
 the SAME `apply_windowed_date` the oracle runs; the byte-identity argument is proof-by-construction).
@@ -69,9 +73,11 @@ Those are separate follow-on slices.
    the fallback must forward it, or the polars substrate silently restarts `i` at 0 per chunk.
 3. **Pass the offset at the call site** (`_chunked.py:417-426`): pass `row_offset=row_offset` into
    `adapter.run(...)` (already computed and correctly ordered; today discarded after `_advance_row_offset`).
-4. **DGRN domain guard**: at the public chunked entry point, validate `base_row_offset` is an int in
-   `[0, 2**64-1)`; reject a negative/boolean/non-integer/overflowing value with a deliberate coded error
-   (e.g. `chunked_row_offset_out_of_domain`), never an incidental `OverflowError` mid-stream.
+4. **DGRN domain guard**: at the public chunked entry point, validate `base_row_offset` is an int with
+   `0 <= base_row_offset` AND `base_row_offset + (table_rows - 1) <= 2**64 - 1` (the whole run's index
+   range, inclusive of the max, so a valid base near the ceiling plus many rows cannot overflow
+   `i.to_bytes(8)` mid-stream); reject a negative / boolean / non-integer / range-overflowing value with a
+   deliberate coded error (e.g. `chunked_row_offset_out_of_domain`), never an incidental `OverflowError`.
 5. **Admit `windowed_date` via a SEPARATE set** (`_chunked.py`): add
    `CHUNK_DGRN_STRATEGIES = frozenset({"windowed_date"})` and admit it in `check_chunked_compatibility`'s
    column loop (`:228-239`). DO NOT add `windowed_date` to `CHUNK_SAFE_STRATEGIES`: that set is reused
@@ -83,10 +89,11 @@ Those are separate follow-on slices.
    reason (mirror the auto-planner's rejection), so the public entry point cannot admit a `when`-gated
    `windowed_date` whose filtered enumeration DGRN cannot reproduce.
 7. **Characterize + gate the null-anchor contract**: confirm the oracle raises on a null anchor
-   (`ValueError` from `strftime` on NaT). This slice preserves that exactly. Admission requires the
-   route's behavior to MATCH the oracle's on nulls (same exception, same point relative to output);
-   document that a later-chunk null raises after earlier chunks yielded, which is the accepted streaming
-   contract (no partial-output promise beyond preflight), not a new behavior.
+   (`ValueError` from `strftime` on NaT). This slice preserves that exactly: BOTH routes raise the same
+   `ValueError` and FAIL the job. The contract to hold is "identical committed result: both fail, the
+   transactional sink commits nothing"; the chunked route may yield earlier chunks to the sink before the
+   raise, but the failed run discards them. The slice VERIFIES this (a null-anchor chunked run raises and
+   leaves NO committed output), rather than asserting an identical byte stream up to the error.
 8. **Consume the offset in the handler** (`_strategies/_windowed_date.py:49-61`): read `ctx.row_offset`,
    pass to `apply_windowed_date`.
 9. **Offset the enumerate** (`transforms/windowed_date.py:181-215`): add `row_offset: int = 0` and change
@@ -103,11 +110,14 @@ Those are separate follow-on slices.
   route, not full-frame), and assert the output is BYTE-identical to `run_pipeline(auto_chunk=False)`.
   Cover the matrix: multiple chunk sizes (1, a prime not dividing the row count, > table size), `min_days
   < 0`, all three `distribution` values. A single differing byte fails.
-- **Base-offset boundary (correct oracle)**: prove `base_row_offset=N` (N != 0) makes local row 0 mask as
-  global row N by comparing against a TRUE full-frame run of the prefix+suffix, then selecting rows `N:`
-  -- never against another offset-aware helper (which could reproduce the same bug). Test zero, a positive
-  offset, and the `2**64-1` upper boundary; test that a negative / boolean / non-int / overflowing offset
-  raises the coded domain error (task 4), not `OverflowError`.
+- **Base-offset boundary (correct oracle)**: for a SMALL positive `N`, prove `base_row_offset=N` makes
+  local row 0 mask as global row N by comparing against a TRUE full-frame run of an `(N + rows)`-row table,
+  then selecting rows `N:` -- never against another offset-aware helper (which could reproduce the same
+  bug). For the `2**64-1` region (a full-frame table is infeasible there), use a DIRECT derivation oracle:
+  compute the expected date for a specific large `i` straight from `derive(seed, ns, i.to_bytes(8))` +
+  `default_rng(...).integers(...)` (the transform's own primitives), not by materializing a giant table.
+  Test that a negative / boolean / non-int offset, and a base+range that would exceed `2**64-1`, raise the
+  coded domain error (task 4), not `OverflowError`.
 - **`when:` rejection regression**: `windowed_date` + a `when` clause is rejected by
   `check_chunked_compatibility` with the coded reason (task 6), and the auto-route leaves such a table
   full-frame.
@@ -116,10 +126,10 @@ Those are separate follow-on slices.
   and assert `gate_fk_child_edges` rejects with the exact code `chunked_fk_parent_strategy_not_safe`
   (condition (a), which checks the PARENT strategy). Also assert `windowed_date not in CHUNK_SAFE_STRATEGIES`.
   This is the test that actually fails if someone folds `windowed_date` into `CHUNK_SAFE_STRATEGIES`.
-- **Null-anchor failure path**: a null anchor raises the SAME `ValueError` on the chunked route as
-  full-frame (not a silent skip, not a different error); and a null in a later chunk raises after earlier
-  chunks were yielded (the documented streaming contract). Place nulls at a chunk boundary and inside an
-  otherwise all-null chunk.
+- **Null-anchor failure path**: a null anchor makes BOTH routes raise the SAME `ValueError` and fail the
+  job (not a silent skip, not a different error); and the failed chunked run leaves NO committed output
+  (the transactional sink discards the transient partial yield), so no committed result diverges. Place
+  nulls at a chunk boundary and inside an otherwise all-null chunk.
 - **Cross-substrate**: the parity check under `PolarsExecutionAdapter`, pinning the repo's contract
   (Arrow/schema equality WITHIN a substrate; value parity ACROSS substrates, since polars can widen string
   types). This proves the polars pandas-fallback threads `row_offset` (task 2).
@@ -135,8 +145,10 @@ Those are separate follow-on slices.
 
 - Byte-identical to the oracle across the full chunk-size x distribution x negative-offset matrix, on the
   REAL auto-chunk route (route evidence: `mode == "chunked"`), both substrates. One differing byte fails.
-- Null anchors and `when`-gated / out-of-domain configs behave EXACTLY as the oracle (raise the same
-  error / reject with a coded reason), never a silent divergence or partial masked output.
+- Null anchors and `when`-gated / out-of-domain configs behave EXACTLY as the oracle: a null anchor makes
+  both routes raise the same `ValueError` and fail the job with NO committed output (transactional-sink
+  discard); `when` and out-of-domain configs reject with a coded reason. Never a silent divergence, and
+  never committed output that differs from the oracle's committed result.
 - A `windowed_date` table runs at bounded O(chunk) memory; peak RSS flat across chunk counts on a moderate
   tier (the memory win).
 - `windowed_date` stays rejected as an FK-child key (RI preserved); `CHUNK_SAFE_STRATEGIES` byte-unchanged.
