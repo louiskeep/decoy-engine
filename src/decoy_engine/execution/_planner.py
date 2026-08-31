@@ -207,12 +207,17 @@ def classify_job(
     contributes only Arrow metadata (row/null counts, schema types).
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
-    from decoy_engine.execution._runner import build_work_list
+    from decoy_engine.execution._runner import build_work_list, order_work
 
     table_kinds = classify_table_kinds(config)
     mask_tables = sorted(name for name, kind in table_kinds.items() if kind == "mask")
     generate_tables = sorted(name for name, kind in table_kinds.items() if kind == "generate")
     work = build_work_list(plan, registry)
+    # Phase 4 slice 2: the group_key group_by effective-type gate is
+    # work-order aware (Trap E), so the auto-route rejection needs the same
+    # ordered list `check_chunked_compatibility`'s manual-entry gate derives
+    # from the plan; computed once here rather than re-derived per table.
+    ordered_work = order_work(work, relationship_graph)
     has_fk = bool(relationship_graph.edges)
 
     rejections: dict[str, str] = {}
@@ -237,6 +242,7 @@ def classify_job(
         mask_tables=mask_tables,
         generate_tables=generate_tables,
         work=work,
+        ordered_work=ordered_work,
         substrate=substrate,
         source_tables=source_tables,
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
@@ -322,6 +328,7 @@ def _chunked_rejection(
     mask_tables: list[str],
     generate_tables: list[str],
     work: list[Any],
+    ordered_work: list[Any],
     substrate: str,
     source_tables: Mapping[str, pa.Table | LazySource] | None,
     auto_chunk_threshold_rows: int,
@@ -402,6 +409,7 @@ def _chunked_rejection(
                     table=table,
                     auto_chunk_threshold_rows=auto_chunk_threshold_rows,
                     bucketize_columns=_bucketize_columns(config, table=table),
+                    ordered_work=ordered_work,
                 )
             )
     return "; ".join(reasons) if reasons else None
@@ -491,6 +499,7 @@ def _runtime_source_rejections(
     table: str,
     auto_chunk_threshold_rows: int,
     bucketize_columns: list[str] | None = None,
+    ordered_work: list[Any] | None = None,
 ) -> list[str]:
     """Runtime (loaded-source) gates: presence, size threshold, dtypes,
     and the bucketize source shape.
@@ -574,6 +583,20 @@ def _runtime_source_rejections(
             "values and falls through elsewhere, so its output dtype is "
             "chunk-content-dependent unless the source column is null-free "
             "numeric"
+        )
+    # Trap E: a group_key group_by column whose effective type is not
+    # provably safe (see _chunked_group_key.py). Same reason-collector the
+    # manual entry's raising gate uses, so the two routes cannot disagree.
+    from decoy_engine.execution._chunked_group_key import unsafe_group_key_group_by_columns
+
+    offending_group_key = unsafe_group_key_group_by_columns(
+        ordered_work or [], src.schema, table=table
+    )
+    if offending_group_key:
+        reasons.append(
+            "chunked_group_key_group_by_dtype_unsupported: group_key column(s) "
+            f"{', '.join(offending_group_key)} read a group_by value whose "
+            "effective type is not provably safe for chunked self-masking"
         )
     return reasons
 

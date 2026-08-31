@@ -272,7 +272,19 @@ ALLOWLIST: dict[str, int] = {
     # itself lives in the sibling `_chunked_fk_dtype.py`; only the read + per-chunk
     # call live here, on the one path that sees each chunk. Same docstring-
     # decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 648,
+    # Phase 4 slice 2 (2026-08-31): +15 LOC (648 -> 663) admitting group_key
+    # onto the chunked route. All group_key-specific logic (the admitted
+    # set, both gate functions, the effective-type walk) lives in the new
+    # `_chunked_group_key.py` sibling; this file only gains the import, one
+    # term folded into the `_CHUNK_ADMITTED_STRATEGIES` union, the
+    # schema-independent `when` gate call inside `check_chunked_
+    # compatibility`, and the schema-dependent group_by-dtype gate call in
+    # `run_mask_pipeline_chunked` (once plan + the first chunk's schema
+    # exist -- `check_chunked_compatibility`'s own signature stays
+    # schema-blind, so that second gate cannot route through it without a
+    # much larger signature change for zero behavioral gain). Same
+    # FK-resolution-helper decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 663,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -319,7 +331,13 @@ ALLOWLIST: dict[str, int] = {
     # serialized), so it is adapter-internal plumbing like every keyed-value
     # thread above; it cannot leave this signature. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 662,
+    # Phase 4 slice 2 (2026-08-31): +5 LOC (662 -> 667) unioning group_key
+    # group_by columns into the lossless nullable-Int64 ingest set
+    # (`group_key_group_by_columns`, same treatment as the top_code/
+    # date_shift group anchor unions above it) so an int+null group_by cell
+    # never widens to float64 on a chunk-boundary-dependent subset of rows.
+    # Same FK-resolution-helper decomposition target stands.
+    "src/decoy_engine/execution/_pandas_adapter.py": 667,
     # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
     # generate-echo exemption set once and threads them into every emission route
     # (+15 LOC). The orchestration spine already owns route selection; this is the
@@ -354,7 +372,12 @@ ALLOWLIST: dict[str, int] = {
     # per-table mask/quarantine-loop decomposition target stands.
     # HC-3b (2026-07-17): +6 LOC (635 -> 641) unioning top_code columns into the
     # sequential route's lossless nullable-Int64 ingest (Codex R2 chunk-safety).
-    "src/decoy_engine/execution/_sequential.py": 641,
+    # Phase 4 slice 2 (2026-08-31): +7 LOC (641 -> 648) unioning group_key
+    # group_by columns into the sequential route's lossless nullable-Int64
+    # ingest, mirroring the pandas-adapter union above (group_key is not
+    # FK-key-eligible, but it can mask an ordinary column on any table in
+    # an FK job, so this route needs the same lossless typing).
+    "src/decoy_engine/execution/_sequential.py": 648,
     # DE-08 residual (2026-07-14): crossed the 600 cap (was 569) hardening the
     # transactional quarantine publish in place -- fail-closed on a hardlink-
     # unsupported filesystem (clear message, not an opaque OSError) and best-
@@ -454,6 +477,20 @@ ALLOWLIST: dict[str, int] = {
     # with no import cycle) when the native route is next touched. Owes that
     # decomposition; recorded here per the allowlist-as-ratchet (section 5.1).
     "src/decoy_engine/execution/native/_dispatch.py": 689,
+    # Phase 4 slice 2 (2026-08-31): crossed the 600 cap (590 -> 613) wiring
+    # the group_key group_by effective-type gate (Trap E) into the
+    # auto-chunk classifier: `classify_job` now computes `ordered_work`
+    # once (the work-order-aware guard needs it, same as the manual
+    # entry's gate), threads it through `_chunked_rejection` into
+    # `_runtime_source_rejections`, which calls the shared reason-collector
+    # `_chunked_group_key.unsafe_group_key_group_by_columns` so the auto
+    # and manual routes render the identical admission judgment. Decompose
+    # the chunked-mode admissibility helpers (`_chunked_rejection` /
+    # `_whole_column_state_rejections` / `_runtime_source_rejections` /
+    # their small column-collecting siblings) into a `_planner_chunked.py`
+    # sibling when the next chunked-admission strategy lands and this
+    # module is touched again.
+    "src/decoy_engine/execution/_planner.py": 613,
 }
 
 

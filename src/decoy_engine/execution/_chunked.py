@@ -56,6 +56,10 @@ DGRN-admitted (Phase 4 slice 1): `windowed_date`, position-keyed on the durable
 global row number via `CHUNK_DGRN_STRATEGIES` (kept SEPARATE from CHUNK_SAFE so
 the FK gate still rejects it). See `_chunked_dgrn.py` for the full design.
 
+Sibling-keyed (Phase 4 slice 2): `group_key`, keyed on a SIBLING `group_by`
+column's value via `CHUNK_SIBLING_KEYED_STRATEGIES` (also SEPARATE from
+CHUNK_SAFE for the FK reason). See `_chunked_group_key.py`.
+
 Rejected at compile time (`check_chunked_compatibility`):
 
 - shuffle (whole-column permutation), composite/nested (bundle state):
@@ -126,6 +130,7 @@ import pyarrow as pa
 from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_dgrn as dgrn
+from . import _chunked_group_key as group_key
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
@@ -142,9 +147,12 @@ from ._chunked_fk_dtype import (
 # value-keyed path (see module docstring for the per-strategy rules).
 CHUNK_CONDITIONAL_STRATEGIES: frozenset[str] = frozenset({"faker", "categorical"})
 
-# Strategies admitted onto the chunked route: value-keyed (CHUNK_SAFE) plus the
-# position-keyed DGRN set (see `_chunked_dgrn.py`).
-_CHUNK_ADMITTED_STRATEGIES: frozenset[str] = CHUNK_SAFE_STRATEGIES | dgrn.CHUNK_DGRN_STRATEGIES
+# Strategies admitted onto the chunked route: value-keyed (CHUNK_SAFE), the
+# position-keyed DGRN set (`_chunked_dgrn.py`), and the sibling-keyed set
+# (`_chunked_group_key.py`).
+_CHUNK_ADMITTED_STRATEGIES: frozenset[str] = (
+    CHUNK_SAFE_STRATEGIES | dgrn.CHUNK_DGRN_STRATEGIES | group_key.CHUNK_SIBLING_KEYED_STRATEGIES
+)
 
 
 def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
@@ -235,6 +243,8 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         gate_fk_child_edges(config, table=table)
     # `windowed_date` + `when:` inadmissible here (public entry; see `_chunked_dgrn.py`).
     dgrn.reject_windowed_date_when(table_cfg, table=table)
+    # `group_key` + `when:` inadmissible here too (see `_chunked_group_key.py`).
+    group_key.reject_group_key_when(table_cfg, table=table)
     offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:
@@ -381,6 +391,11 @@ def run_mask_pipeline_chunked(
     resolved_registry = registry if registry is not None else get_default_registry()
     ns_registry = build_namespace_registry(config, profile)
     graph = RelationshipGraph(edges=(), ordering=())
+    # Trap E group_by effective-type guard: needs the plan + source schema
+    # (absent at the config-only check_chunked_compatibility above); once, pre-stream.
+    group_key.reject_unsafe_group_key_group_by_dtype(
+        plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
+    )
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
     # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK
     # key dtype (it never sees the data). Read those declarations so the per-chunk

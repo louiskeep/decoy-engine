@@ -58,6 +58,7 @@ from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
     date_shift_group_columns,
+    group_key_group_by_columns,
     order_work,
     top_code_columns,
 )
@@ -202,12 +203,16 @@ class PandasExecutionAdapter:
         # value >= 2**53 rounds and the masked output becomes chunk-boundary
         # dependent (whether a chunk widens turns on whether it carries a null).
         top_code_cols = top_code_columns(plan, registry)
+        # Phase 4 slice 2: a group_key `group_by` sibling has the identical
+        # lossless-typing need (see `group_key_group_by_columns`'s docstring).
+        group_key_cols = group_key_group_by_columns(plan, registry)
         frames: dict[str, pd.DataFrame] = {
             t: to_pandas_fk_safe(
                 tbl,
                 fk_columns_for_table(relationship_graph.edges, t)
                 | group_anchor_cols.get(t, set())
-                | top_code_cols.get(t, set()),
+                | top_code_cols.get(t, set())
+                | group_key_cols.get(t, set()),
             )
             for t, tbl in sources.items()
         }
