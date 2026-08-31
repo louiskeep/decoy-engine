@@ -11,13 +11,18 @@ totality over the live provider registry, and the layering cross-check against
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from decoy_engine.execution.native._phase3_eligibility import (
     C1_PROVIDER_ALLOWLIST,
     phase3_c1_eligibility,
 )
 from decoy_engine.execution.native._plan import native_route_eligibility
+from decoy_engine.profile import ColumnProfile, Profile, TableProfile
 from decoy_engine.providers_v2 import get_default_registry
 
 
@@ -289,6 +294,39 @@ def test_totality_over_live_provider_registry() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_table_not_found_in_config_is_vacuously_admitted() -> None:
+    # Mirrors native_route_eligibility's own convention for an absent table:
+    # nothing to classify, so admit rather than guess. Also the only path
+    # that exercises `_find_table`'s no-match loop iteration and its final
+    # `return None`.
+    config = {"tables": [{"name": "other", "columns": []}]}
+    result = phase3_c1_eligibility(config, table="missing")
+    assert result.admitted is True
+    assert result.reasons == ()
+
+
+def test_conflicting_pool_size_locations_surface_the_compiler_own_code() -> None:
+    # top-level pool_size and provider_config.pool_size disagree:
+    # resolve_pool_size raises pool_size_location_conflict, and
+    # _faker_column_rejection surfaces the compiler's own code rather than
+    # mis-attributing it to a JC-5 reason.
+    config = _config(
+        "t",
+        {
+            "name": "FIRST",
+            "strategy": "faker",
+            "provider": "person_first_name",
+            "deterministic": True,
+            "namespace": "ns",
+            "pool_size": 100,
+            "provider_config": {"pool_size": 200},
+        },
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == ("pool_size_location_conflict:FIRST",)
+
+
 def test_phase3_admits_what_phase1_alone_rejects() -> None:
     config = _config("t", _faker_col())
 
@@ -299,3 +337,283 @@ def test_phase3_admits_what_phase1_alone_rejects() -> None:
     phase3 = phase3_c1_eligibility(config, table="t")
     assert phase3.admitted is True
     assert phase3.reasons == ()
+
+
+# ---------------------------------------------------------------------------
+# P3-T0 carried-forward survivor: dropping the caller's `profile` argument to
+# `native_route_eligibility` (x_phase3_c1_eligibility__mutmut_9/_12) must
+# change the admitted verdict. `native_route_eligibility` defers a hash
+# column's input-type gate when `profile is None` (`hash_config_rejection`
+# returns None, undecided rather than admitted-by-default); passing a real
+# profile with an unresolvable dtype turns that deferral into a real
+# rejection. A table with both an admissible faker column and one such hash
+# column is admitted without a profile and rejected with one -- the one
+# scenario the P3-T0 record found untested.
+# ---------------------------------------------------------------------------
+
+
+def _hash_profile(table: str, column: str, dtype: str) -> Profile:
+    return Profile(
+        schema_version=1,
+        tables=(
+            TableProfile(
+                name=table,
+                row_count=3,
+                columns=(
+                    ColumnProfile(
+                        name=column,
+                        dtype=dtype,
+                        row_count=3,
+                        null_count=0,
+                        distinct_count=3,
+                        sampled=False,
+                        is_candidate_key_sampled=False,
+                        declared_pk=False,
+                        is_fk=False,
+                        fk_target=None,
+                        pii_class=None,
+                    ),
+                ),
+            ),
+        ),
+        relationships=(),
+        profiled_at=datetime(2026, 8, 30, 0, 0, 0),
+        decoy_engine_version="0.1.0",
+    )
+
+
+def test_dropping_the_profile_argument_silently_admits_an_unresolvable_hash_column() -> None:
+    config = _config("t", _faker_col(), _hash_col("BAD", "bad_identity"))
+    profile = _hash_profile("t", "BAD", "mixed")  # a dtype label the resolver never recognizes
+
+    without_profile = phase3_c1_eligibility(config, table="t", profile=None)
+    with_profile = phase3_c1_eligibility(config, table="t", profile=profile)
+
+    assert without_profile.admitted is True
+    assert without_profile.reasons == ()
+    assert with_profile.admitted is False
+    assert with_profile.reasons == ("mixed_object_not_native:BAD",)
+
+
+# ---------------------------------------------------------------------------
+# A non-faker column entry must not short-circuit the scan of the REST of
+# the table's columns (a `continue`->`break` mutant would silently drop
+# every later column's rejection).
+#
+# The sibling `not isinstance(col, dict)` guard a few lines above this one
+# has NO reachable test through `phase3_c1_eligibility`: `base =
+# native_route_eligibility(...)` runs first, over the SAME `table_cfg`
+# columns list, and its own column loop has no such guard -- any non-dict
+# entry crashes there (`col.get(...)` on a `str`) before this function's own
+# loop is ever reached. A `continue`->`break` mutant on that dead guard is
+# adjudicated unreachable-by-contract, not tested.
+# ---------------------------------------------------------------------------
+
+
+def test_a_non_faker_column_does_not_hide_a_later_unsafe_faker_column() -> None:
+    config = _config(
+        "t",
+        _hash_col("H", "h_identity"),
+        _faker_col("FIRST", deterministic=False),
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert "faker_not_deterministic:FIRST" in result.reasons
+
+
+# ---------------------------------------------------------------------------
+# A composite-provider faker column must be excluded from Phase 3's own
+# per-column check (native_route_eligibility already rejects it via
+# `composite_provider_multi_column`) -- not merely admitted, but reported
+# with EXACTLY that one reason, never a spurious second one from Phase 3
+# re-processing it as if it were scalar.
+# ---------------------------------------------------------------------------
+
+
+def test_composite_provider_faker_column_reports_only_the_base_composite_reason() -> None:
+    registry = get_default_registry()
+    composite_providers = [
+        p
+        for p in registry.known_providers()
+        if registry.get_capabilities(p).backend_type == "composite"
+    ]
+    assert composite_providers  # sanity: the registry actually has one
+    provider = composite_providers[0]
+
+    config = _config("t", _faker_col("C", provider=provider))
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == (f"composite_provider_multi_column:C:{provider}",)
+
+
+def test_composite_provider_faker_column_does_not_hide_a_later_unsafe_faker_column() -> None:
+    registry = get_default_registry()
+    composite_providers = [
+        p
+        for p in registry.known_providers()
+        if registry.get_capabilities(p).backend_type == "composite"
+    ]
+    provider = composite_providers[0]
+
+    config = _config(
+        "t",
+        _faker_col("C", provider=provider),
+        _faker_col("FIRST", deterministic=False),
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert f"composite_provider_multi_column:C:{provider}" in result.reasons
+    assert "faker_not_deterministic:FIRST" in result.reasons
+
+
+# ---------------------------------------------------------------------------
+# A duplicate column NAME across two DIFFERENT strategies (not two faker
+# declarations) must not cross-contaminate: stripping the base predicate's
+# `no_native_kernel:<name>:faker` entry for a name in `faker_names` must not
+# also strip an unrelated `no_native_kernel:<name>:<other-strategy>` entry
+# for the SAME name (an `and`->`or` mutant in the dedup filter would).
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_name_across_faker_and_another_no_kernel_strategy_keeps_both_verdicts() -> None:
+    config = _config(
+        "t",
+        _faker_col("X"),  # otherwise perfectly C1-admissible
+        {"name": "X", "strategy": "date_shift", "namespace": "ns2"},
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == ("no_native_kernel:X:date_shift",)
+
+
+# ---------------------------------------------------------------------------
+# A column name containing a colon is legal (`ColumnConfig.name: str` has no
+# charset restriction); the coded-reason dedup must still correctly parse the
+# base predicate's `no_native_kernel:<name>:faker` entry and strip it for an
+# otherwise-admissible column, not mis-split the name as part of the
+# strategy token.
+# ---------------------------------------------------------------------------
+
+
+def test_colon_bearing_column_name_still_admits_cleanly() -> None:
+    config = _config("t", _faker_col("FIRST:ALT"))
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is True
+    assert result.reasons == ()
+
+
+# ---------------------------------------------------------------------------
+# `allow_collisions: true` alongside an EXPLICIT `cardinality_mode: reuse`
+# is compatible (not a conflict) and must admit: the mode-conflict check's
+# `!= "reuse"` string comparison must compare against the real literal, not
+# a corrupted one.
+# ---------------------------------------------------------------------------
+
+
+def test_allow_collisions_with_explicit_reuse_mode_admits_no_conflict() -> None:
+    config = _config(
+        "t", _faker_col(deterministic=None, allow_collisions=True, cardinality_mode="reuse")
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is True
+    assert result.reasons == ()
+
+
+# ---------------------------------------------------------------------------
+# An empty-string provider is a distinct fail-closed path from a missing/
+# non-string provider (`not isinstance(provider, str) or not provider`, not
+# `and`): both must reject, but the coded reason's exact text differs
+# (`{provider!r}` at this early guard vs. plain `{provider}` from
+# `classify_provider`'s own reject_large branch further down).
+# ---------------------------------------------------------------------------
+
+
+def test_empty_string_provider_rejects_with_repr_formatted_reason() -> None:
+    config = _config("t", _faker_col(provider=""))
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == ("provider_reject_large:FIRST:''",)
+
+
+# ---------------------------------------------------------------------------
+# Property sweep over the JC-5 config shape (Task plan candidate gap 1): the
+# admitted set is EXACTLY the deterministic, source-keyed,
+# partition-independent configs -- reconstructed independently from the
+# frozen contract (`_faker_column_rejection`'s own check order: the
+# allow_collisions/mode conflict, then deterministic, then cardinality mode,
+# then namespace, then pool_size), over every combination of the five axes,
+# for a fixed C1-allowlisted provider so only the JC-5 axes vary.
+# ---------------------------------------------------------------------------
+
+_CARDINALITY_MODES = [
+    None,
+    "reuse",
+    "unique",
+    "match_source_cardinality",
+    "scale_source_cardinality",
+]
+
+
+def _expected_jc5_admitted(
+    *,
+    deterministic: bool | None,
+    cardinality_mode: str | None,
+    has_namespace: bool,
+    has_pool_size: bool,
+    allow_collisions: bool,
+) -> bool:
+    if allow_collisions and cardinality_mode is not None and cardinality_mode != "reuse":
+        return False  # allow_collisions_mode_conflict
+    effective_deterministic = allow_collisions or bool(deterministic)
+    if not effective_deterministic:
+        return False  # faker_not_deterministic
+    effective_mode = "reuse" if allow_collisions else (cardinality_mode or "reuse")
+    if effective_mode != "reuse":
+        return False  # faker_cardinality_not_partition_independent
+    if not has_namespace:
+        return False  # faker_namespace_required
+    return has_pool_size  # else faker_pool_size_required
+
+
+@given(
+    deterministic=st.sampled_from([True, False, None]),
+    cardinality_mode=st.sampled_from(_CARDINALITY_MODES),
+    has_namespace=st.booleans(),
+    has_pool_size=st.booleans(),
+    allow_collisions=st.booleans(),
+)
+@settings(max_examples=300, deadline=None)
+def test_jc5_admitted_set_is_exactly_deterministic_source_keyed_partition_independent(
+    deterministic: bool | None,
+    cardinality_mode: str | None,
+    has_namespace: bool,
+    has_pool_size: bool,
+    allow_collisions: bool,
+) -> None:
+    col = _faker_col(
+        provider="person_first_name",
+        deterministic=deterministic,
+        namespace="ns_first" if has_namespace else None,
+        pool_size=10_000 if has_pool_size else None,
+        cardinality_mode=cardinality_mode,
+        allow_collisions=allow_collisions,
+    )
+    config = _config("t", col)
+    result = phase3_c1_eligibility(config, table="t")
+
+    expected = _expected_jc5_admitted(
+        deterministic=deterministic,
+        cardinality_mode=cardinality_mode,
+        has_namespace=has_namespace,
+        has_pool_size=has_pool_size,
+        allow_collisions=allow_collisions,
+    )
+    assert result.admitted is expected, (
+        deterministic,
+        cardinality_mode,
+        has_namespace,
+        has_pool_size,
+        allow_collisions,
+        result.reasons,
+    )
+    assert result.admitted == (result.reasons == ())

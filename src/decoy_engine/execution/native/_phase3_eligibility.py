@@ -138,7 +138,17 @@ def _is_reclassified_faker_kernel_rejection(reason: str, faker_names: set[str]) 
     if not reason.startswith("no_native_kernel:"):
         return False
     _, _, rest = reason.partition(":")
-    name, _, strategy = rest.partition(":")
+    # rpartition, not partition: `strategy` is one of a bounded set of
+    # identifier tokens that never contains a colon (`native_kernel_rejection`
+    # only ever appends "faker" or another strategy name here), but `name` is
+    # an unvalidated column name from a raw dict (`ColumnConfig.name: str` has
+    # no charset restriction) and MAY itself contain a colon. Splitting from
+    # the right always isolates the real strategy token; splitting from the
+    # left (the prior bug) misparsed a colon-bearing name as part of the
+    # strategy, so `strategy == "faker"` fell through to False and the base
+    # rejection for an otherwise-admissible column was never stripped --
+    # rejecting a table Phase 3 should have admitted.
+    name, _, strategy = rest.rpartition(":")
     return strategy == "faker" and name in faker_names
 
 
