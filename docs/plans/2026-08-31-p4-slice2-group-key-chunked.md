@@ -123,11 +123,15 @@ The contract it must preserve, unchanged:
     pandas mask need not canonicalize scale/sign, so decimal is not provably safe under an O(1)
     policy. `dictionary` is safe only if its VALUE type is in the safe set, resolved recursively. Any
     other / unknown type is unsafe. (Common group_by columns -- integer or string ids -- are safe.)
-  - EFFECTIVE type is WORK-ORDER aware: group_key reads group_by at ITS OWN position in the ordered
-    work list (`order_work`), so the type that matters is group_by's type AT THAT POINT. Compute it
-    from the ordered work list: if a masking node on the group_by column is ordered BEFORE the
-    group_key node, the effective type is that mask's STATIC output type; otherwise (group_by unmasked,
-    or its mask ordered AFTER group_key) the effective type is the SOURCE Arrow type. This closes both
+  - EFFECTIVE type is WORK-ORDER aware and PER CONSUMER: each group_key node reads group_by at ITS
+    OWN position in the ordered work list (`order_work`), so the type is computed relative to that
+    specific consuming node -- if a sibling mask on the shared group_by falls BETWEEN two group_key
+    consumers, the earlier consumer sees the source type and the later sees the mask output type, and
+    the guard must judge each independently (rejecting the table if ANY consumer is unsafe). Compute
+    it from the ordered work list: if a masking node on the group_by column is ordered BEFORE the
+    consuming group_key node, the effective type is that mask's STATIC output type; otherwise
+    (group_by unmasked, or its mask ordered AFTER this group_key) the effective type is the SOURCE
+    Arrow type. This closes both
     ordering errors Codex named: an unsafe float source with a safe string mask scheduled AFTER
     group_key must be REJECTED (group_key sees the float), and a safe source with a float mask
     scheduled AFTER group_key must be ADMITTED. Two additional unsafe cases, both fail-closed:
@@ -165,21 +169,22 @@ The contract it must preserve, unchanged:
    `_chunked_group_key.py`: define `CHUNK_SIBLING_KEYED_STRATEGIES = frozenset({"group_key"})` with a
    docstring stating WHY it is disjoint from `CHUNK_SAFE_STRATEGIES` (Trap A); and the two gate
    functions from tasks 1b/1c below. Extend the `_CHUNK_ADMITTED_STRATEGIES` union in `_chunked.py`
-   to include the set (one term added to the existing union line), and call the two gates from
-   `check_chunked_compatibility` / the per-chunk loop (one call site each). No change to
+   to include the set (one term added to the existing union line), and call BOTH gates from
+   `check_chunked_compatibility` (admission-time, evaluated once from the plan + first-chunk/source
+   schema, BEFORE any streaming; NOT in the per-chunk loop -- neither gate is per-chunk). No change to
    `gate_fk_child_edges` (it keeps using `CHUNK_SAFE_STRATEGIES`), so FK fail-closed behaviour is
    unchanged by construction.
 
    LOC accounting (`_chunked.py` is AT its 648 ceiling now): the irreducible `_chunked.py` growth is
    one import of `_chunked_group_key`, one in-place term in the `_CHUNK_ADMITTED_STRATEGIES` union
-   (no new line), and the two gate call sites (`reject_group_key_when` in
-   `check_chunked_compatibility`, `reject_unsafe_group_key_group_by_dtype` in the per-chunk loop) --
-   about 3 new lines. Prefer an extraction to stay at/under 648 (fold the two calls behind a single
-   `_chunked_group_key` façade so only one call site is added at each of the two points; consolidate
-   imports). If a small residual crossing remains after that, raise the ceiling by EXACTLY that
-   amount WITH a documented justification naming the irreducible gate-call plumbing and the standing
-   decomposition target (the slice-1 `_pandas_adapter.py` +2 precedent), never a silent bump. The
-   build states the final `_chunked.py` LOC.
+   (no new line), and the two admission gate calls in `check_chunked_compatibility`
+   (`reject_group_key_when` and `reject_unsafe_group_key_group_by_dtype`) -- about 3 new lines, all at
+   the one admission site (no per-chunk-loop growth). Prefer an extraction to stay at/under 648 (fold
+   both calls behind a single `_chunked_group_key.gate_group_key(...)` façade so only ONE call site is
+   added; consolidate imports). If a small residual crossing remains, raise the ceiling by EXACTLY
+   that amount WITH a documented justification naming the irreducible gate-call plumbing and the
+   standing decomposition target (the slice-1 `_pandas_adapter.py` +2 precedent), never a silent bump.
+   The build states the final `_chunked.py` LOC.
 
    1b. **`reject_group_key_when(table_cfg, table)` gate (Trap D).** Mirror
    `_chunked_dgrn.reject_windowed_date_when`: raise `PlanCompileError(code=
@@ -191,15 +196,19 @@ The contract it must preserve, unchanged:
    1c. **group_by EFFECTIVE-type guard (Trap E).** A shared `group_by_type_is_safe(arrow_type) ->
    bool` (safe set: integer / boolean / string / large_string / date / timestamp; FLOATING and DECIMAL
    EXCLUDED; `dictionary` safe iff its value type is safe, recursively; unknown -> unsafe), plus a
-   shared `group_by_effective_type(plan, source_schema, table, group_by_col)` that computes the
-   WORK-ORDER-aware effective type per Trap E (source type unless a masking node on group_by is
-   ordered before the group_key node via `order_work`; a preceding dynamic-output or `when`-gated
-   sibling mask -> unsafe). Both placements evaluate this ONCE from the plan + source schema (O(work),
+   shared `group_by_effective_type(plan, source_schema, table, group_key_node)` that computes the
+   WORK-ORDER-aware effective type PER CONSUMING group_key node (source type unless the masking node
+   on THIS node's group_by column is ordered before THIS group_key node via `order_work`; a preceding
+   dynamic-output or `when`-gated sibling mask -> unsafe). Keyed on the consuming node, not just the
+   column, so two group_key columns sharing one group_by that is masked BETWEEN them get their own
+   correct types. The guard iterates every group_key node on the table and rejects if ANY has an
+   unsafe effective type. Both placements evaluate this ONCE from the plan + source schema (O(work),
    not per-row): (i) MANUAL entry: at `check_chunked_compatibility`,
-   `reject_unsafe_group_key_group_by_dtype(plan, source_schema, table, group_by_cols)` raises
-   `chunked_group_key_group_by_dtype_unsupported` for an unsafe effective type. (ii) AUTO route: the
-   same check in `_planner._runtime_source_rejections` rejects the table so it runs full-frame.
-   The source schema is available at both entry points (the first chunk / the source tables).
+   `reject_unsafe_group_key_group_by_dtype(plan, source_schema, table)` raises
+   `chunked_group_key_group_by_dtype_unsupported` for an unsafe effective type on any group_key node.
+   (ii) AUTO route: the same check in `_planner._runtime_source_rejections` rejects the table so it
+   runs full-frame. The source schema is available at both entry points (the first chunk / the source
+   tables).
 
 2. **`group_key_group_by_columns(plan, registry)` helper.** In `_runner.py`, directly mirroring
    `top_code_columns` / `date_shift_group_columns`: walk `build_work_list`, for each scalar
@@ -269,7 +278,11 @@ table (values, order, dtype) and the warnings. New file `tests/unit/execution/te
    AFTER the group_key node -> must REJECT (group_key sees the source float); (2) safe (int) source +
    a float-output mask on group_by scheduled BEFORE the group_key node -> must REJECT; (3) safe source
    + a safe (hash->string) mask scheduled BEFORE group_key -> ADMIT, chunked == full-frame (the
-   masked-group_by common case). Build these by controlling the `order_work` tie-break.
+   masked-group_by common case); (4) MULTI-CONSUMER: two group_key columns sharing one group_by, with
+   a sibling mask on that group_by ordered BETWEEN them -> the guard judges each consumer's effective
+   type independently. Build these by controlling the `order_work` tie-break AND assert the resulting
+   ordered node identities (e.g. `[n.key for n in order_work(...)]`) so the fixture provably exercises
+   the intended order and cannot pass via an unrelated rejection.
    (e) A preceding `when`-gated sibling mask on group_by -> REJECT (mixed effective domain).
    (f) Direct unit tests of `group_by_type_is_safe` (float/decimal -> False; int/string/date/timestamp
    -> True; float-dict -> False; int-dict -> True; unknown -> False) and `group_by_effective_type`
