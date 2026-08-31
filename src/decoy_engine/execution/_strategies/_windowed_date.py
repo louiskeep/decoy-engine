@@ -56,6 +56,13 @@ class WindowedDateStrategyHandler:
         cfg_dict = provider_config_to_dict(plan.provider_config)
         config = WindowedDateConfig.from_dict(cfg_dict)
         namespace = f"windowed_date/{column}"
-        date_list = apply_windowed_date(config, df, seed=ctx.mask_key, namespace=namespace)
+        # Phase 4 slice 1 (DGRN): `ctx.row_offset` is the durable global row
+        # number of this call's first row (0 on every full-frame / non-chunked
+        # call, the default). Forwarding it here is what makes a chunked call
+        # enumerate from the row's true position instead of restarting at 0
+        # each chunk.
+        date_list = apply_windowed_date(
+            config, df, seed=ctx.mask_key, namespace=namespace, row_offset=ctx.row_offset
+        )
         df[column] = date_list
         return df, []

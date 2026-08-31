@@ -179,6 +179,7 @@ class PandasExecutionAdapter:
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
         key_provider: KeyProvider | None = None,
+        row_offset: int = 0,
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
@@ -231,6 +232,7 @@ class PandasExecutionAdapter:
             job_seed=plan.seed_envelope.job_seed,
             mask_key=require_mask_key(plan, key_provider),
             group_anchor_snapshots=group_anchor_snapshots,
+            row_offset=row_offset,
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)

@@ -52,6 +52,17 @@ than derived from the data:
   `provider_config.categories`, and NOT `from_profile` (profile-derived
   categories would come from the first chunk only).
 
+DGRN-admitted (Phase 4 slice 1, see `_chunked_dgrn.py` for the full design):
+`windowed_date`, via `CHUNK_DGRN_STRATEGIES`, a set kept SEPARATE from
+CHUNK_SAFE_STRATEGIES. Its output is keyed on the row's POSITION
+(`derive(seed, ns, row_index)`), not its value, so it needs the durable
+global row number `base_row_offset` carries rather than the value-keyed
+story above. Rejected alongside it: `windowed_date` + `when:`
+(`chunked_windowed_date_when_not_supported`), and `windowed_date` as an
+FK-child or FK-parent key (rejected by the existing
+`chunked_fk_parent_strategy_not_safe` gate, unchanged, because
+CHUNK_SAFE_STRATEGIES excludes it).
+
 Rejected at compile time (`check_chunked_compatibility`):
 
 - shuffle (whole-column permutation), composite/nested (bundle state):
@@ -122,6 +133,12 @@ import pyarrow as pa
 from decoy_engine.plan._errors import PlanCompileError
 
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
+from ._chunked_dgrn import (
+    CHUNK_DGRN_STRATEGIES,
+    reject_windowed_date_when,
+    validate_base_row_offset,
+    validate_chunk_row_offset_range,
+)
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
     fk_passthrough_columns_for_table,
@@ -197,6 +214,8 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         strategy_not_chunk_safe: a non-FK column uses a non-chunk-safe strategy.
         chunked_strategy_conditions_unmet: faker/categorical admission conditions
             are not met; message names each unmet condition.
+        chunked_windowed_date_when_not_supported: a `windowed_date` column
+            carries a `when:` predicate.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -223,13 +242,22 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     # are not constrained here; the parent chunks normally.
     if config.get("relationships"):
         gate_fk_child_edges(config, table=table)
+    # `windowed_date` + `when:` is inadmissible (see `_chunked_dgrn.py` for the
+    # full "why"); this entry point is the PUBLIC one, and the auto-planner's
+    # separate blanket `when` rejection does not run for a direct
+    # `run_mask_pipeline_chunked` call, so this gate must reject it too.
+    reject_windowed_date_when(table_cfg, table=table)
     offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:
         if not isinstance(col_entry, dict):
             continue
         strategy = col_entry.get("strategy")
-        if strategy is None or strategy in CHUNK_SAFE_STRATEGIES:
+        if (
+            strategy is None
+            or strategy in CHUNK_SAFE_STRATEGIES
+            or strategy in CHUNK_DGRN_STRATEGIES
+        ):
             continue
         if strategy in CHUNK_CONDITIONAL_STRATEGIES:
             failures = _conditional_admission_failures(col_entry)
@@ -303,14 +331,23 @@ def run_mask_pipeline_chunked(
     type. The auto-chunk route in `run_pipeline` uses it to keep
     warnings and timings from being dropped on routed jobs.
 
-    `base_row_offset` seeds a running row-position counter that advances
-    by each chunk's row count; it is inert here (the Phase 1 admitted set
-    is diagnostics-free) and exists so a later phase can globalize
-    per-chunk diagnostic indices from a caller-supplied starting position.
+    `base_row_offset` seeds a running row-position counter that advances by
+    each chunk's row count. It is INERT for every strategy except
+    `windowed_date` (Phase 4 slice 1): `windowed_date` reads it as the
+    durable global row number (DGRN) `i` its per-row `derive(seed, ns,
+    i.to_bytes(8))` keys on, byte-identical to the full-frame oracle's own
+    `enumerate(anchor_series)` when the chunk's physical offset from the
+    start of the table equals `base_row_offset` plus rows already streamed.
+    Every other admitted strategy is value-keyed and never reads it. `i`
+    must satisfy `0 <= i <= 2**64-1` (`int.to_bytes(8)`'s domain); an out-of-
+    range `base_row_offset` or a chunk whose row range would exceed that
+    bound raises `ExecutionError(code="chunked_row_offset_out_of_domain")`
+    rather than an incidental `OverflowError` from inside `to_bytes`.
 
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
+    validate_base_row_offset(base_row_offset)
     from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -402,8 +439,9 @@ def run_mask_pipeline_chunked(
     )
 
     def _masked() -> Iterator[pa.Table]:
-        # Foundation-only counter (no later-phase globalizer consumes it yet):
-        # tracked here so the plumbing exists before it is needed.
+        # Consumed by `windowed_date` (Phase 4 slice 1) as the durable global
+        # row number; every other admitted strategy is value-keyed and never
+        # reads it, so the counter stays inert for them (see the docstring).
         row_offset = base_row_offset
         for chunk in _chain_first(first, chunk_iter):
             if guard_passthrough_fk_columns:
@@ -414,6 +452,12 @@ def run_mask_pipeline_chunked(
                 reject_mismatched_chunked_fk_declared_dtype(
                     chunk, table=table, declared_fk_dtypes=declared_fk_dtypes
                 )
+            # Per-chunk DGRN range guard (task 4(ii)): the entry point has no
+            # whole-stream row count, so the domain can only be checked one
+            # chunk at a time, right before that chunk's `i` values would be
+            # minted. Raises the coded domain error rather than deferring to
+            # an incidental `OverflowError` inside `int.to_bytes(8)`.
+            validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             result = adapter.run(
                 plan,
                 {table: chunk},
@@ -423,6 +467,7 @@ def run_mask_pipeline_chunked(
                 namespace_registry=ns_registry,
                 unconfigured_column_policy=projection_policy,
                 key_provider=key_provider,
+                row_offset=row_offset,
             )
             if chunk_result_sink is not None:
                 chunk_result_sink.append(result)

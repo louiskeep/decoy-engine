@@ -129,6 +129,7 @@ class PolarsExecutionAdapter:
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
         key_provider: KeyProvider | None = None,
+        row_offset: int = 0,
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, identically to the pandas adapter, so
@@ -137,6 +138,9 @@ class PolarsExecutionAdapter:
         reject_null_bearing_int(plan, sources, registry, relationship_graph)
         work = order_work(build_work_list(plan, registry), relationship_graph)
         if self._is_fully_polars_native(work, relationship_graph):
+            # `windowed_date` is not in `_POLARS_NATIVE_STRATEGIES`, so a job
+            # carrying it never reaches this branch; row_offset only matters
+            # on the oracle fallback below.
             return self._run_polars_native(
                 plan,
                 sources,
@@ -172,6 +176,7 @@ class PolarsExecutionAdapter:
             unconfigured_column_policy=unconfigured_column_policy,
             generate_output_tables=generate_output_tables,
             key_provider=key_provider,
+            row_offset=row_offset,
         )
 
     def _is_fully_polars_native(
@@ -328,13 +333,16 @@ class PolarsExecutionAdapter:
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
         key_provider: KeyProvider | None = None,
+        row_offset: int = 0,
     ) -> ExecutionResult:
         # Ingest the sources into the polars substrate and back to Arrow, timing
         # both legs; the masking then runs on the pandas oracle on the
         # round-tripped tables (the pa -> pl -> pa round-trip is lossless, so the
         # result is byte-for-byte identical to a direct pandas run). Used for any
         # job the polars loop cannot yet run natively (unmigrated strategy, FK, or
-        # composite).
+        # composite). `windowed_date` always lands here (never polars-native), so
+        # row_offset MUST reach `self._pandas.run(...)` -- a missing forward here
+        # silently resets `i` to 0 per chunk on the polars substrate.
         boundary = ConversionBoundary()
         substrate_sources: dict[str, pa.Table] = {
             table: boundary.to_arrow(boundary.to_polars(tbl)) for table, tbl in sources.items()
@@ -349,6 +357,7 @@ class PolarsExecutionAdapter:
             unconfigured_column_policy=unconfigured_column_policy,
             generate_output_tables=generate_output_tables,
             key_provider=key_provider,
+            row_offset=row_offset,
         )
         metrics = dict(result.quality_metrics)
         metrics["conversion_breakdown"] = boundary.as_dict()
