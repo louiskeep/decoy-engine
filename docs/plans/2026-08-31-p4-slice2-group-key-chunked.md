@@ -259,9 +259,11 @@ table (values, order, dtype) and the warnings. New file `tests/unit/execution/te
    that some chunks carry a null and some do not; assert chunked == full-frame == exact-integer-keyed.
    A RED test against the un-unioned baseline (without the lossless union, a widened chunk keys on
    "5.0" and diverges).
-4. **Null-sentinel per dtype (Trap B/C).** group_by nullable Int64 (null -> "<NA>"), float64 (null ->
-   "nan"), and string (null -> the object sentinel): assert chunked == full-frame for each; the point
-   is not the sentinel value but that both routes agree because ingest is identical.
+4. **Null-sentinel per dtype (Trap B/C).** For the ADMITTED safe types -- nullable Int64 (null ->
+   "<NA>") and string (null -> the object sentinel): assert chunked == full-frame for each; the point
+   is not the sentinel value but that both routes agree because ingest is identical. (float64 is NOT
+   an admitted-parity case -- it falls back to the oracle per Trap E / test 5(a); its null handling is
+   not asserted here.)
 5. **Cache-collision (Trap E, Codex BLOCKER) - decisive cases.**
    (a) A `float64` group_by column containing `0.0` and `-0.0`: (1) prove the collision is REAL via a
    direct-handler baseline -- call `apply_group_key` on the whole column vs on two chunks and assert
