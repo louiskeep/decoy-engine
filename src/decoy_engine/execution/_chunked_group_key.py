@@ -146,14 +146,23 @@ def _static_group_by_source_type(node: WorkNode, source_type: pa.DataType) -> pa
     if strategy in ("hash", "fpe", "truncate"):
         return pa.string()
     if strategy == "text_redact":
-        # A NON-STRING token makes text_redact a no-op passthrough that keeps
-        # the source value + type (`_strategies/_text_redact.py:68`), so it is
-        # NOT unconditionally string. Mirror `out_of_core/_mask_group_b.py`'s
-        # identical resolution (token-type only, fail-closed): a non-string
-        # token yields the source type, which for a float/decimal source is
-        # then correctly rejected by the caller.
+        # text_redact is a no-op passthrough that keeps the source value + type
+        # under EITHER of `TextRedactHandler.run`'s two early returns: a
+        # non-string `token` (`_strategies/_text_redact.py:68`) OR a malformed
+        # `detectors` that is not None / list / tuple (line 125). provider_config
+        # is free-form, so `detectors: 123` survives model_validate and reaches
+        # the handler. Mirror BOTH conditions, fail-closed (a superset of the
+        # OOC map, which checks the token alone and would miss the detectors
+        # case). When text_redact actually runs it stringifies every cell into
+        # an object column, so a float 0.0/-0.0 becomes the DISTINCT strings
+        # "0.0"/"-0.0" (no cache collision); only a passthrough of an unsafe
+        # (float/decimal) source is dangerous, and that is what returning
+        # source_type here correctly rejects. Keep in sync with the handler.
         token = cfg.get("token", _DEFAULT_TOKEN)
-        if not isinstance(token, str):
+        detectors = cfg.get("detectors")
+        if not isinstance(token, str) or (
+            detectors is not None and not isinstance(detectors, (list, tuple))
+        ):
             return source_type
         return pa.string()
     if strategy in ("group_key", "windowed_date"):

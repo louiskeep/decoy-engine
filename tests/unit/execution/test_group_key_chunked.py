@@ -484,6 +484,55 @@ class TestCacheCollisionFloatSignedZero:
         assert "amount_key" in exc.value.message
 
 
+class TestTextRedactMaskedGroupByRoutesToOracle:
+    """End-to-end guard against the Codex final-gate BLOCKER: a float group_by
+    masked by a text_redact whose config makes it a passthrough (malformed
+    detectors, or a non-string token) keeps the float type, so the auto route
+    must fall back to the oracle rather than stream a byte-divergent job."""
+
+    def _cfg(self, tmp_path, text_redact_pc: dict):
+        n = 20
+        values = [0.0 if i % 2 == 0 else -0.0 for i in range(n)]
+        table = pa.table(
+            {"amount": pa.array(values, type=pa.float64()), "name": [f"p{i}" for i in range(n)]}
+        )
+        columns = [
+            {"name": "amount", "strategy": "text_redact", "provider_config": text_redact_pc},
+            {"name": "name", "strategy": "passthrough"},
+            {
+                "name": "amount_key",
+                "strategy": "group_key",
+                "provider_config": {"group_by": "amount"},
+            },
+        ]
+        cfg = _config(tmp_path, columns)
+        _write_csv_stub(tmp_path, "people", table)
+        return cfg, {"people": table}
+
+    @pytest.mark.parametrize(
+        "text_redact_pc",
+        [
+            {"token": "[X]", "detectors": 123},  # malformed detectors (Codex repro)
+            {"token": 123},  # non-string token
+        ],
+    )
+    def test_auto_route_falls_back_to_oracle(self, tmp_path, text_redact_pc) -> None:
+        cfg, sources = self._cfg(tmp_path, text_redact_pc)
+        with mock.patch(
+            "decoy_engine.execution._chunked.run_mask_pipeline_chunked",
+            wraps=run_mask_pipeline_chunked,
+        ) as spy:
+            result = run_pipeline(
+                cfg,
+                sources=sources,
+                engine_version=_ENGINE_VERSION,
+                auto_chunk_threshold_rows=_LOW_THRESHOLD,
+                chunk_size_rows=4,
+            )
+        assert result.quality_metrics["auto_chunk"]["mode"] == "full_frame"
+        spy.assert_not_called()
+
+
 class TestCacheCollisionDecimalSignedZero:
     def test_collision_is_real_via_direct_handler_baseline(self) -> None:
         config = GroupKeyConfig.from_dict({"group_by": "v"})
@@ -1012,15 +1061,41 @@ class TestEffectiveTypeUnitBranches:
         assert unsafe_group_key_group_by_columns(ordered, schema, table="people") == ["gk"]
 
     def test_text_redact_string_token_is_string(self) -> None:
-        # With a string token, text_redact does output a string.
+        # With a string token AND well-formed detectors, text_redact runs and
+        # stringifies every cell -> string output.
         gk = self._gk_node()
         ordered = [
-            _scalar_node("people", "amount", "text_redact", provider_config=(("token", "[X]"),)),
+            _scalar_node(
+                "people",
+                "amount",
+                "text_redact",
+                provider_config=(("token", "[X]"), ("detectors", ("email",))),
+            ),
             gk,
         ]
         schema = pa.schema([("amount", pa.float64())])
         eff = group_by_effective_type(ordered, schema, table="people", group_key_node=gk)
         assert eff == pa.string()
+
+    def test_text_redact_malformed_detectors_keeps_source_type(self) -> None:
+        # A malformed `detectors` (not None / list / tuple) is text_redact's
+        # SECOND passthrough condition: the handler returns the frame unchanged,
+        # so a float64 group_by stays float64 (unsafe). A string token alone
+        # does not make it safe. (Codex final-gate BLOCKER repro.)
+        gk = self._gk_node()
+        ordered = [
+            _scalar_node(
+                "people",
+                "amount",
+                "text_redact",
+                provider_config=(("token", "[X]"), ("detectors", 123)),
+            ),
+            gk,
+        ]
+        schema = pa.schema([("amount", pa.float64())])
+        eff = group_by_effective_type(ordered, schema, table="people", group_key_node=gk)
+        assert eff == pa.float64()
+        assert unsafe_group_key_group_by_columns(ordered, schema, table="people") == ["gk"]
 
 
 class TestUnsafeColumnsUnitBranches:
