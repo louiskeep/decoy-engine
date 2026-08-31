@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 
@@ -142,7 +143,18 @@ def _static_group_by_source_type(node: WorkNode, source_type: pa.DataType) -> pa
     cfg = provider_config_to_dict(
         node.plan_slice.provider_config if isinstance(node.plan_slice, ColumnSeed) else ()
     )
-    if strategy in ("hash", "fpe", "truncate", "text_redact"):
+    if strategy in ("hash", "fpe", "truncate"):
+        return pa.string()
+    if strategy == "text_redact":
+        # A NON-STRING token makes text_redact a no-op passthrough that keeps
+        # the source value + type (`_strategies/_text_redact.py:68`), so it is
+        # NOT unconditionally string. Mirror `out_of_core/_mask_group_b.py`'s
+        # identical resolution (token-type only, fail-closed): a non-string
+        # token yields the source type, which for a float/decimal source is
+        # then correctly rejected by the caller.
+        token = cfg.get("token", _DEFAULT_TOKEN)
+        if not isinstance(token, str):
+            return source_type
         return pa.string()
     if strategy in ("group_key", "windowed_date"):
         # apply_group_key / apply_windowed_date always return list[str]; no

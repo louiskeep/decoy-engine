@@ -995,6 +995,33 @@ class TestEffectiveTypeUnitBranches:
         eff = group_by_effective_type(ordered, schema, table="people", group_key_node=gk)
         assert eff is None
 
+    def test_text_redact_non_string_token_keeps_source_type(self) -> None:
+        # A text_redact mask with a NON-STRING token is a no-op passthrough
+        # that keeps the source value/type, so a float64 group_by stays float64
+        # (unsafe) -- it must NOT be treated as always-string. Guards the real
+        # parity hole a "text_redact -> string" shortcut would open.
+        gk = self._gk_node()
+        ordered = [
+            _scalar_node("people", "amount", "text_redact", provider_config=(("token", 123),)),
+            gk,
+        ]
+        schema = pa.schema([("amount", pa.float64())])
+        eff = group_by_effective_type(ordered, schema, table="people", group_key_node=gk)
+        assert eff == pa.float64()
+        # ...and the collector therefore rejects it (float is unsafe).
+        assert unsafe_group_key_group_by_columns(ordered, schema, table="people") == ["gk"]
+
+    def test_text_redact_string_token_is_string(self) -> None:
+        # With a string token, text_redact does output a string.
+        gk = self._gk_node()
+        ordered = [
+            _scalar_node("people", "amount", "text_redact", provider_config=(("token", "[X]"),)),
+            gk,
+        ]
+        schema = pa.schema([("amount", pa.float64())])
+        eff = group_by_effective_type(ordered, schema, table="people", group_key_node=gk)
+        assert eff == pa.string()
+
 
 class TestUnsafeColumnsUnitBranches:
     """Fast direct coverage of `unsafe_group_key_group_by_columns`."""
