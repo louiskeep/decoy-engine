@@ -65,8 +65,14 @@ Several strategies are deterministic and per-row EXCEPT that they key on the row
 determinism protocol for exactly this reason), and any strategy that needs a stable per-row order.
 The primitive: a durable, contiguous global row number assigned to each source row once, stable across
 partition boundaries, carried through the chunk route (the OOC route already mints `__decoy_row_nr`;
-this generalizes it to the native chunk route). With a DGRN, `sequence` and `windowed_date` become
-byte-identical per-row streaming ops (no sort needed) -- the cheapest Phase 4 wins.
+this generalizes it to the native chunk route). With a DGRN, `sequence` (`start + DGRN*step`) and
+`windowed_date` (`derive(mask_key, ns, DGRN.to_bytes(8))`) become byte-identical per-row streaming ops,
+no sort needed -- the cheapest Phase 4 wins. Byte identity has admission conditions: the DGRN must be
+assigned at the SAME logical point the oracle enumerates (before any route-local filtering or
+quarantine, so the numbering matches), with the same namespace, NumPy version + RNG call, and pandas
+date parsing/arithmetic/formatting; `sequence` must use Python integer semantics (no native overflow).
+DGRN does NOT solve the whole-column seeded-RNG generation strategies (`null_probability`,
+`categorical`(gen), etc.) -- those advance one contiguous stream and stay on the oracle.
 
 ### 2b. Bounded external sorter (from OOC-B, already Codex-consulted)
 
@@ -86,8 +92,8 @@ durable ordinal. (It does NOT rescue shuffle -- see the per-strategy table.)
 |---|---|---|---|
 | DuckDB external hash join (>=1.2.0, radix-partition both sides) | YES (perf "graceful degrade", pair with enforced `memory_limit` + disabled optimizers) | FK join 4b; already used by the OOC route | DuckDB "Saving Private Hash Join" |
 | DuckDB scalar `GROUP BY` hash aggregate (external) | YES for scalar state (`max(int)` over 20M groups @ 600MB) | last-write-wins dedup `max(row_nr) GROUP BY` | DuckDB "External Aggregation" |
-| DuckDB `ORDER BY` global sort | NO (21 GB @ 8 GB, 200M) | never route order-restore through it; use the external sorter | OOC-B measurement |
-| DuckDB `ROW_NUMBER()`/window at wide cardinality | NO on 1.5.4 (window/segment-tree state doesn't spill; OOM @ 33M groups) | do NOT use for the per-group ordinal; use the external sorter | DuckDB "Flying Through Windows" + repo measurement |
+| DuckDB `ORDER BY` global sort | Supports external sort, but NOT reliably PROCESS-memory-bounded (Decoy measured 21 GB @ 8 GB limit, 200M): `memory_limit` bounds the buffer manager, not every allocation | do NOT route order-restore through it for the never-OOM guarantee; use Decoy's own capped external sorter | OOC-B measurement; DuckDB OOM guidance |
+| DuckDB `ROW_NUMBER()`/window at wide cardinality | Supports larger-than-memory windowing, but the measured plan (`QUALIFY row_number()`, 33M groups @ 1.6 GB) OOMed -- it did not meet Decoy's envelope | do NOT use for the per-group ordinal on the pinned 1.5.4; use the external sorter (the measured failure, not a categorical "never spills", is the reason) | repo measurement (`_relation.py`) |
 | DuckDB `arg_max(struct)`/`list()`/`string_agg` wide state | NO (state doesn't serialize) | avoid; split into scalar-state plans | repo `_relation.py` |
 | DuckDB <-> Arrow scan (input) | YES (streamed `RecordBatchReader`) | single-pass child stream | DuckDB "SQL on Arrow" |
 | DuckDB ASOF join memory behavior | UNKNOWN (undocumented) | open question; measure before use | -- |
@@ -103,21 +109,32 @@ never DuckDB `ORDER BY` or `ROW_NUMBER()`. FK joins CAN use DuckDB's bounded ext
 
 - **External merge sort** (Knuth TAOCP v3 §5.4): run generation + k-way merge, resident memory O(M)
   independent of N. The shared sort primitive.
-- **Deterministic shuffle**: Fisher-Yates is inherently sequential over the whole array and CANNOT
-  stream. The established streamable form is "sort by a keyed pseudo-random key" (BigQuery
-  `ORDER BY FARM_FINGERPRINT`, Spark `repartitionAndSortWithinPartitions`, Dask hash-shuffle, US10713589)
-  -- but it is a DIFFERENT permutation than Fisher-Yates. A Feistel/format-preserving index permutation
-  computes `π(i)` in O(1) without sorting, also a different permutation. Neither reproduces NumPy's PCG64
-  permutation, so under the identical-output rule shuffle stays on the oracle.
+- **Deterministic shuffle**: Fisher-Yates is inherently sequential over the whole array, so no ONE-PASS
+  streaming algorithm reproduces it. Two forms exist: (a) an EXACT reproduction at O(n) DISK / bounded
+  RAM: materialize the index array `[0..n-1]` to a file-backed `numpy.memmap`, run the SAME pinned NumPy
+  PCG64 shuffle against it (identical draws and swaps), then externally gather the values by the
+  resulting indices -- byte-identical, but O(n) disk and pathological random I/O; (b) established
+  streamable substitutes -- sort-by-keyed-random-key (BigQuery `ORDER BY FARM_FINGERPRINT`, Spark, Dask,
+  US10713589) or a Feistel/format-preserving index permutation -- both O(1)/bounded but a DIFFERENT
+  permutation, so ruled out by the identical-output rule. Under identical-output, shuffle is DEFERRED to
+  the oracle for now (the exact form (a) is buildable but expensive; activate only if evidence justifies
+  the O(n)-disk cost), NOT theoretically impossible.
 - **Durable per-group ordinal** (SQL `ROW_NUMBER() OVER (PARTITION BY g ORDER BY k, tiebreak)`
   semantics): sort by `(group, order, stable-tiebreak)` then a single pass holding O(1) per-group state.
   A stable tiebreak is MANDATORY for a deterministic ordinal; execute the sort with the bounded external
   sorter (not DuckDB's window).
 - **FK-preserving join**: two cases. (4a) If the masked parent key is a keyed FUNCTION of the old key
   `new_pk = F(seed, old_pk)` (Decoy's `hash`, `fpe`), the child FK remaps INDEPENDENTLY via the same F
-  (`new_fk = F(seed, old_fk)`) -- NO JOIN, O(1)/row, RI automatic. This is the default and the cheapest
-  path. (4b) Only when the parent's new value is NOT a pure function of the old key (pool selection,
-  global uniqueness) is an actual join needed: GRACE/hybrid partitioned hash join (DuckDB's own, bounded).
+  (`new_fk = F(seed, old_fk)`) -- NO JOIN, O(1)/row, RI automatic FOR MATCHED KEYS. This is the default
+  and cheapest path, but it is admission-gated (the repo's `_chunked_fk.py:210` already encodes the
+  conditions): parent and child must evaluate the EXACT same function over the EXACT same canonical input
+  -- same seed/key, namespace, hash truncation / FPE tweak / charset / checksum config, compatible
+  raw-value + canonicalization domains and key types, and defined component semantics for composite
+  keys. Orphan policy matters: only `remap` is join-free byte-identical (an orphan FK masks through the
+  same F); `warn`/`fail`/`preserve` need knowledge of parent membership, so they cannot use the pure
+  join-free path. (4b) Any non-function parent mask (pool selection, global uniqueness,
+  parent-dependent collision resolution) or a membership-requiring orphan policy needs the actual join:
+  GRACE/hybrid partitioned hash join (DuckDB's own, bounded).
 
 ## 5. The complete per-strategy design table
 
@@ -150,7 +167,7 @@ ORACLE (no bounded identical-output form).
 | grouped_series | per-group sequential walk | no | SORT: bounded-external-sort by `(group, order, stable-tiebreak)`, one pass per-group walk with `derive(seed,ns,group)`; admit ONLY shapes where the ordinal is proven byte-identical to pandas groupby order, else ORACLE | yes on admitted shapes | SORT (proof-gated) |
 | top_code (percentile cap) | whole-column | global | PREPASS: one bounded pass to compute the percentile cap (a scalar), then per-row; exact | yes | PREPASS |
 | derived_aggregate | whole-column scalar broadcast | global | PREPASS: one bounded aggregate pass (DuckDB scalar GROUP BY is bounded), then broadcast; exact | yes | PREPASS |
-| shuffle | whole-column PCG64 Fisher-Yates | no | ORACLE: no bounded method reproduces the exact PCG64 permutation; keyed-sort/Feistel change output | NO bounded identical form | ORACLE |
+| shuffle | whole-column PCG64 Fisher-Yates | no | DEFERRED-oracle: an exact reproduction exists at O(n) DISK (memmap the index array, run the same PCG64 shuffle, gather) but is expensive; keyed-sort/Feistel are bounded but change output. Oracle for now; activate the exact external form only on evidence | yes, but only via O(n)-disk external permutation | ORACLE (deferred, not impossible) |
 | joint_mask | multi-col ref-table row select | yes (within version) | PORT: per-row source-keyed, but needs a reference-table state channel on the stream route | yes | PORT + state channel |
 | geo_generalize | whole-dataset k-anon cascade | no | ORACLE: thresholds each row on whole-dataset counts per generalization level | no bounded identical form | ORACLE (Phase 5) |
 | derived | per-row Lark expr, dynamic type | n/a | ORACLE: needs same-row sibling context + data-dependent output type | -- | ORACLE (Phase 5) |
@@ -190,8 +207,12 @@ workload/baseline/target/budget/benefit/safety-deps.
   ordinal equals pandas groupby order byte-for-byte.
 - **Row-error channel** (cross-cutting): `date_shift`/`bucketize` need a per-value format-error
   quarantine channel on the stream route before they port; sequence it with P4-C.
-- **NOT built (oracle-held for exact output):** `shuffle`, `geo_generalize`, `derived`, `formula`,
-  `nested`, and the stream-positional generation RNG strategies. Recorded as coded ineligibilities.
+- **Oracle-held for exact output:** `shuffle` (DEFERRED: an exact O(n)-disk external permutation is
+  buildable but expensive; oracle until evidence justifies it), `geo_generalize`, `derived`, `formula`,
+  `nested`, and the stream-positional generation RNG strategies (`reference`, `categorical`(gen),
+  `null_probability`, `distribution_snapshot`, `pool_nondeterministic`, `composite_build`). Recorded as
+  coded ineligibilities. Only shuffle has a known exact bounded-disk path; the rest need an architectural
+  change or are non-deterministic by contract.
 
 ## 7. Acceptance (per slice)
 
