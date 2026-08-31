@@ -152,9 +152,9 @@ Those are separate follow-on slices.
 - Byte-identical to the oracle across the full chunk-size x distribution x negative-offset matrix, on the
   REAL auto-chunk route (route evidence: `mode == "chunked"`), both substrates. One differing byte fails.
 - Null anchors and `when`-gated / out-of-domain configs behave EXACTLY as the oracle: a null anchor makes
-  both routes raise the same `ValueError` and return no `ExecutionResult` (the run raises during materialization);
-  `when` and out-of-domain configs reject with a coded reason. Never a silent divergence, and never
-  committed output that differs from the oracle's committed result.
+  both routes raise the same `ValueError` and return no `ExecutionResult` (the run raises during
+  materialization); `when` and out-of-domain configs reject with a coded reason. Never a silent divergence,
+  and never a returned result that differs from the oracle's.
 - A `windowed_date` table runs at bounded O(chunk) memory; peak RSS flat across chunk counts on a moderate
   tier (the memory win).
 - `windowed_date` stays rejected as an FK-child key (RI preserved); `CHUNK_SAFE_STRATEGIES` byte-unchanged.
