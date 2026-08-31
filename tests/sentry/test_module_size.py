@@ -312,7 +312,14 @@ ALLOWLIST: dict[str, int] = {
     # lossless nullable-Int64 ingest (top_code_columns) so a large int+null value
     # is not float64-rounded and the masked output stays chunk-boundary
     # independent (Codex R2). Same FK-resolution-helper decomposition target.
-    "src/decoy_engine/execution/_pandas_adapter.py": 660,
+    # Phase 4 slice 1 (2026-08-31): +2 LOC (660 -> 662) threading the durable
+    # global row number `row_offset` through `run()` into `StrategyContext` so the
+    # position-keyed `windowed_date` strategy reads the same global index on the
+    # chunked route as the full-frame oracle does. A run-time value (never
+    # serialized), so it is adapter-internal plumbing like every keyed-value
+    # thread above; it cannot leave this signature. Same FK-resolution-helper
+    # decomposition target stands.
+    "src/decoy_engine/execution/_pandas_adapter.py": 662,
     # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
     # generate-echo exemption set once and threads them into every emission route
     # (+15 LOC). The orchestration spine already owns route selection; this is the

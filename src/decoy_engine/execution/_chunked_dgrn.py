@@ -53,6 +53,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pyarrow as pa
+
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -62,6 +64,15 @@ CHUNK_DGRN_STRATEGIES: frozenset[str] = frozenset({"windowed_date"})
 
 # `i.to_bytes(8, "big")` in `apply_windowed_date` accepts only this range.
 ROW_OFFSET_DOMAIN_MAX: int = 2**64 - 1
+
+
+def advance_row_offset(offset: int, chunk: pa.Table) -> int:
+    """Advance the DGRN counter past one masked chunk.
+
+    A named function, not inlined arithmetic, so a later phase's
+    diagnostic-index globalizer has one call site to extend.
+    """
+    return offset + chunk.num_rows
 
 
 def validate_base_row_offset(base_row_offset: int) -> None:
