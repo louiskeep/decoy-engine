@@ -27,6 +27,7 @@ functions of row count -- see the baseline doc's "both tiers" note).
 from __future__ import annotations
 
 import math
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,17 +86,39 @@ POOL_DUPLICATE_RATE_THRESHOLD: Mapping[str, float] = {
 # step 3).
 _ENFORCED_OBLIGATION = "pool_quality"
 
+# TUPLE-AWARE threshold guard (P3-T2): the thresholds above were measured at
+# ONE fixed (pool_size, distinct_sources) tier per column (PHASE3-C1-
+# BASELINE.md "pool_quality (both tiers)" -- pool_size 10,000 for every
+# column; distinct_sources 1,000/1,200/360 for FIRST/LAST/MAIDEN, identical at
+# the 10,000-row and 3,000,000-row tiers because the synthetic generator caps
+# distinct sources independent of row count). Collision rate rises with
+# distinct-source count relative to pool size, so a measurement whose
+# pool_size or (nonzero) distinct_sources does not match the calibration point
+# has a different collision floor than the one this threshold was fit to --
+# applying it anyway is fail-open. `distinct_sources == 0` is excluded here:
+# that is the separately frozen empty-population pass (rate 0, always), not a
+# tier this guard governs.
+FROZEN_POOL_SIZE: Mapping[str, int] = {"FIRST": 10_000, "LAST": 10_000, "MAIDEN": 10_000}
+FROZEN_DISTINCT_SOURCES: Mapping[str, int] = {"FIRST": 1_000, "LAST": 1_200, "MAIDEN": 360}
+
 # Bounded aggregation (PHASE3-C1-BASELINE.md "Bounded aggregation"): a
 # spill-backed DuckDB `GROUP BY source` over a Parquet spool of the
 # (source, masked) pairs. `non_deterministic_sources` is a QC check on the
 # measurement itself (the deterministic sampler must never map one source to
-# two outputs), not part of the pool_quality metric proper.
+# two outputs), not part of the pool_quality metric proper. Frozen population
+# is "non-null SOURCE rows" (PHASE3-C1-BASELINE.md "Frozen `pool_quality`
+# metric"): filtering on `masked` too would silently drop a non-null-source/
+# null-masked row from `distinct_sources`, which is fail-open (a smaller
+# denominator can turn a real collision population into a smaller-or-empty
+# pass) and is not provably impossible for every caller of this generic
+# measurement -- so this filters `source` only, matching the frozen SQL
+# byte-for-byte.
 _COLLISION_SQL = """
 WITH per_source AS (
     SELECT source, ANY_VALUE(masked) AS out_val,
            COUNT(DISTINCT masked) AS n_distinct_masked
     FROM read_parquet(?)
-    WHERE source IS NOT NULL AND masked IS NOT NULL
+    WHERE source IS NOT NULL
     GROUP BY source
 )
 SELECT COUNT(*) AS distinct_sources,
@@ -168,10 +191,12 @@ def measure_pool_quality(
 
     Collision measurement never materializes an `O(distinct sources)`
     Python-side structure (no `set()` over sources or outputs): the
-    (source, masked) pairs are spooled to `pairs_<column>.parquet` and the
-    frozen `GROUP BY source` aggregation runs inside a spill-backed DuckDB
-    connection, so peak memory is bounded by the `memory_limit` config, not
-    by distinct-source count. The connection is `connect_duckdb` from the
+    (source, masked) pairs are spooled to a per-call `pairs_<column>_<uuid
+    hex>.parquet` file (the random suffix keeps two overlapping measurements
+    of the same column from sharing one spool) and the frozen `GROUP BY
+    source` aggregation runs inside a spill-backed DuckDB connection, so peak
+    memory is bounded by the `memory_limit` config, not by distinct-source
+    count. The connection is `connect_duckdb` from the
     out-of-core route (reused, not forked): it carries the memory-safety
     settings this measurement depends on, including the `threads`-vs-
     `memory_limit` clamp that keeps DuckDB's per-thread working set from
@@ -181,10 +206,16 @@ def measure_pool_quality(
     `distinct_count` at build time; see `generation/pool/_value_pool.py`),
     never a function of row count.
 
-    `source` and `masked` must be the same length; a null `source` (or null
-    `masked`) entry is excluded from the collision population by the frozen
-    SQL's own `WHERE source IS NOT NULL AND masked IS NOT NULL` (never
-    filtered in Python first, so the exclusion is auditable in one place).
+    `source` and `masked` must be the same length; a null `source` entry is
+    excluded from the collision population by the frozen SQL's own `WHERE
+    source IS NOT NULL` (never filtered in Python first, so the exclusion is
+    auditable in one place). A null `masked` entry for a NON-null source is
+    NOT excluded: `ANY_VALUE(masked)` returns that source's single non-null
+    masked value when one exists (verified against this repo's pinned DuckDB
+    version) or NULL only when every row for that source has a null masked
+    output, so such a source still counts toward `distinct_sources` and, since
+    `COUNT(DISTINCT out_val)` never counts a NULL, is reported as a collision
+    against nothing rather than silently vanishing from the population.
 
     The pairs spool holds CLEARTEXT source values; it is deleted before this
     returns, and the temp dir is `0o700`-restricted by `connect_duckdb`. The
@@ -196,7 +227,12 @@ def measure_pool_quality(
     # Only then write the spool INTO the secured dir, and unlink it no matter
     # what -- the unlink is in the outer finally with close in an inner one, so
     # a query, write, or close failure can never leave cleartext PII at rest.
-    pairs_path = temp_dir / f"pairs_{column}.parquet"
+    # A per-call random suffix (not just `column`) keeps two overlapping
+    # measurements of the SAME column from colliding on one spool file: a
+    # fixed `pairs_{column}.parquet` name would let a second call's write (or
+    # unlink) clobber the first's in-flight spool, corrupting or losing its
+    # in-progress read.
+    pairs_path = temp_dir / f"pairs_{column}_{uuid.uuid4().hex}.parquet"
     conn = connect_duckdb(temp_dir=temp_dir, memory_limit=memory_limit)
     try:
         pq.write_table(pa.table({"source": source, "masked": masked}), pairs_path)
@@ -281,6 +317,14 @@ def enforce_pool_quality(
     - `measurement.non_deterministic_sources != 0` -- a measurement-integrity
       failure (the deterministic sampler must never map one source to two
       outputs), checked regardless of the numeric thresholds;
+    - either rate is non-finite or outside `[0, 1]` (measurement-integrity);
+    - `measurement.pool_size` or (nonzero) `measurement.distinct_sources`
+      does not match the exact tier the frozen threshold was calibrated at
+      (TUPLE-AWARE guard; `distinct_sources == 0` is exempt -- that is the
+      separately frozen empty-population pass, not a tier this guard governs)
+      -- the threshold has no known validity outside that one calibrated
+      population, so a mismatched tier is rejected rather than silently
+      compared against a threshold measured for a different one;
     - `measurement.collision_rate` or `measurement.pool_duplicate_rate`
       exceeds its frozen per-column threshold.
 
@@ -354,6 +398,34 @@ def enforce_pool_quality(
                 threshold="[0.0, 1.0]",
             )
 
+    if measurement.pool_size != FROZEN_POOL_SIZE[column]:
+        raise PoolQualityError(
+            f"column {column!r}: measurement pool_size {measurement.pool_size} does not "
+            f"match the frozen calibration tier's pool_size {FROZEN_POOL_SIZE[column]}; "
+            "the frozen threshold has no known validity at a different pool_size "
+            "(tuple-aware integrity failure, not a tolerance breach)",
+            column=column,
+            metric="pool_size",
+            observed=measurement.pool_size,
+            threshold=FROZEN_POOL_SIZE[column],
+        )
+
+    if (
+        measurement.distinct_sources != 0
+        and measurement.distinct_sources != FROZEN_DISTINCT_SOURCES[column]
+    ):
+        raise PoolQualityError(
+            f"column {column!r}: measurement distinct_sources {measurement.distinct_sources} "
+            "does not match the frozen calibration tier's distinct_sources "
+            f"{FROZEN_DISTINCT_SOURCES[column]}; the frozen threshold has no known validity "
+            "at a different source population (tuple-aware integrity failure, not a "
+            "tolerance breach)",
+            column=column,
+            metric="distinct_sources",
+            observed=measurement.distinct_sources,
+            threshold=FROZEN_DISTINCT_SOURCES[column],
+        )
+
     collision_threshold = COLLISION_RATE_THRESHOLD[column]
     if measurement.collision_rate > collision_threshold:
         raise PoolQualityError(
@@ -385,6 +457,8 @@ def enforce_pool_quality(
 
 __all__ = [
     "COLLISION_RATE_THRESHOLD",
+    "FROZEN_DISTINCT_SOURCES",
+    "FROZEN_POOL_SIZE",
     "MARGIN",
     "ORACLE_COLLISION_RATE",
     "ORACLE_POOL_DUPLICATE_RATE",
