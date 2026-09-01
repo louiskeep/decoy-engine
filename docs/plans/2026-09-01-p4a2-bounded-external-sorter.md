@@ -90,12 +90,17 @@ already routed through **type-generic Arrow kernels**:
    row_nr_column="__decoy_row_nr")` — rename the parameter to `sort_key_column`.
 2. `_flush`: `table.sort_by(self._row_nr_column)` — sort by `sort_key_column`
    (unchanged behavior; already a column name).
-3. `_RunHead.max_value(self) -> int`: `pc.max(pending[col]).as_py()` — the **only**
-   int-typed surface. `pc.max` already works on any orderable Arrow type; change
-   the return annotation to `Any` (the value is only ever compared, never used as
-   an int).
-4. The merge cutoff `pc.less_equal(combined[col], cutoff)` (`:386`) — `pc.less_equal`
-   and `pc.min` are type-generic; no change beyond the column name.
+3. `_RunHead.max_value(self) -> int`: `pc.max(pending[col]).as_py()` (`:173-176`)
+   — the **only** int-typed surface. `pc.max` works on any orderable Arrow type;
+   change the return annotation to `Any` (the value is only compared, never used
+   as an int).
+4. The merge cutoff: `cutoff = min(head.max_value() for head in active if not
+   head.is_final_batch)` (a **Python `min()`** over the per-head `max_value()`
+   scalars, `:372`) then `pc.less_equal(combined[col], cutoff)` (`:386`). Both the
+   Python `min` and Arrow `pc.less_equal` are type-generic for a non-null orderable
+   key, so the change is only the column name — PROVIDED the key contract below
+   holds (a null in the key would make `pc.max`/`pc.less_equal` produce a `None`
+   cutoff / null mask that silently drops rows). No `pc.min` is used.
 
 Rename the class `ExternalRowNrSorter` → `BoundedExternalSorter` (keep a module
 alias `ExternalRowNrSorter = BoundedExternalSorter` only if any ported test
@@ -108,7 +113,32 @@ via a **pre-encoded single monotone sort-key column** (the consumer bakes its
 any native multi-column `sort_keys` tuple-cutoff, is deferred to P4-E when its
 real key shape can test the contiguity invariant).
 
-### Determinism + key contract (the caller's responsibility, documented)
+### Key contract — validated fail-closed BEFORE spilling (not just documented)
+
+The generic-key form is only correct for a **non-null total order**. The cutoff
+math (`pc.max` → Python `min` → `pc.less_equal`) silently misbehaves otherwise: a
+null key makes `pc.max`/`pc.less_equal` yield a `None` cutoff or a null filter
+mask, and Arrow then **drops rows**. So the sorter validates the key on every
+`write(batch)`, before the row is buffered or a run is spilled, and fails closed:
+
+- **Supported key types (allowlist):** signed/unsigned integer, string,
+  large_string, binary, date32/64, timestamp. The near-term consumers use int
+  (`__decoy_row_nr`) and string; the allowlist is what the tests cover. An
+  unsupported key type raises `out_of_core_sort_key_type_unsupported`.
+- **Float keys rejected** (`out_of_core_sort_key_type_unsupported`): NaN has no
+  total order and no consumer needs a float key. (If one ever does, define NaN
+  ordering explicitly then.)
+- **Null keys rejected:** any null in the key column raises
+  `out_of_core_sort_key_null` before spilling. (A single `pc.any(pc.is_null(col))`
+  check per batch — cheap, O(batch).)
+- **Key type drift rejected:** the key column's Arrow type must match the first
+  batch's on every subsequent batch (schema drift → mixed-type `min`/compare);
+  a mismatch raises `out_of_core_sort_key_type_drift`.
+- **Missing key column** raises `out_of_core_sort_key_missing`.
+
+All are stable error codes with direct unit tests. Keeping validation at
+`write`-time means a bad key is refused before any disk I/O, mirroring the
+existing `out_of_core_sort_row_too_wide` fail-closed posture.
 
 - **Uniqueness / stability.** The sorter does NOT rely on Arrow `sort_by` being
   stable across the multi-pass merge (a run collapse reshuffles rows). For a
@@ -117,37 +147,64 @@ real key shape can test the contiguity invariant).
   already unique. `grouped_series` must append a stable tiebreak (e.g. the source
   row number) into its encoded key. The plan states this: "A stable tiebreak is
   MANDATORY for a deterministic ordinal" (`2026-08-31-part2-phase4-plan.md:114`).
-  Document this precondition on `BoundedExternalSorter`.
-- **Partition-invariance.** The emitted order is independent of `run_bytes_cap`
-  and `merge_fan_in`: those change how many runs/passes occur, not the result.
-  The fail-closed cutoff guarantees a globally correct merge for any fan-in. This
-  is the property that makes the sorter a drop-in for an in-memory sort.
+  Document this precondition on `BoundedExternalSorter`. (Non-unique keys still
+  sort correctly by key; only the tie ORDER among equal keys is unspecified — the
+  validation does not reject duplicates, it is the caller's determinism contract.)
+- **Partition-invariance.** For a non-null total ascending key the emitted order
+  is independent of `run_bytes_cap` and `merge_fan_in`: those change how many
+  runs/passes occur, not the result. The fail-closed cutoff is mathematically
+  sufficient for a globally correct merge at any fan-in (confirmed at plan-gate).
+  The tiny-cap == huge-cap test is regression EVIDENCE of this, not the proof
+  itself.
 
 ## Byte-parity + memory-cap target (verifiable now, no route)
 
-- **Parity oracle:** an in-memory `table.sort_by(sort_key_column)` (equivalently
-  `sorted(...)` on a unique key). A shuffled input stream through the sorter
-  (`write*` → `finish` → `iter_ordered`) must reproduce it **byte-for-byte**,
-  for int AND at least one non-int key type (string/binary) — the added coverage
-  the generalization owes. `test_ooc_external_sort.py::test_shuffled_input_is_
-  sorted_by_row_nr` is the template.
+- **"Byte-parity" defined:** VALUE + SCHEMA parity of the fully reconstructed
+  table, NOT batch-for-batch identity — the sorter's output batch boundaries
+  legitimately vary with `run_bytes_cap`. The assertion is
+  `pa.concat_batches(list(iter_ordered())) == table.sort_by(...)` compared as
+  `.to_pydict()` + `.schema` (payload columns included, not just the key).
+- **Parity oracle:** an in-memory `table.sort_by(sort_key_column)` on a payload
+  table (key column + at least one non-key payload column). The shuffled input
+  stream through the sorter (`write*` → `finish` → `iter_ordered`) must reproduce
+  it, for int AND a non-int key (string; add binary if cheap).
+- **The non-int parity test MUST force the generalized multi-pass merge**
+  (HIGH from the gate): size the cap so the non-int run generates `> merge_fan_in`
+  runs, and run the parity comparison across **at least two caps × two
+  `merge_fan_in` values** — the risky generic cutoff logic lives only in the
+  multi-pass path, so a single-run non-int test would not exercise it. Include a
+  duplicate-key case (equal keys sort correctly by key even if tie order is
+  unspecified).
 - **Memory-cap proofs (ported):** `peak_pre_sort_buffer_bytes <= run_bytes_cap`;
   `peak_buffered_bytes <= run_bytes_cap * SORT_OVERHEAD_FACTOR`;
   `peak_merge_resident_bytes <= run_bytes_cap` across a forced multi-pass merge
   (`> merge_fan_in` runs); every emitted batch `nbytes <= run_bytes_cap`.
 - **Partition-invariance proof:** the same input at a huge cap and a tiny cap
-  (forcing many runs/passes) yields the identical ordered output — extend the
-  existing tiny-cap test to assert equality against the huge-cap run, not only
-  `list(range(n))`.
+  (forcing many runs/passes) yields the identical ordered output — assert the
+  full reconstructed table is equal, not only `list(range(n))`.
+- **Key-contract proofs (new):** a null key, a float key, an unsupported key
+  type, a key type that drifts between batches, and a missing key column each
+  raise their stable error code at `write`-time before any run file is created
+  (assert no spill file exists on the failed path).
+- **Failure-cleanup proof (new, MEDIUM from the gate):** if a merge step fails
+  mid-`finish()`, `close()` must still remove every run file including a partial
+  merge output — track the merge output path the moment it is created (or
+  unlink-on-exception in `_merge_group`), and test that an injected merge failure
+  leaves no file behind.
 - **Fail-closed proofs (ported):** an over-cap single row raises
   `out_of_core_sort_row_too_wide`; `run_bytes_cap <= 0` / `merge_fan_in < 2` raise
   `out_of_core_reorder_budget_too_small`; `close()` removes all run files
   idempotently.
-- **Subprocess RSS proof (ported):** a fresh allocator-pinned subprocess streams
-  ~4,000,000 variable-width rows through a fixed ceiling and asserts real VmHWM
-  stays within ~1.35x — the never-OOM proof. Keep it in `tests/perf/` (mark it so
-  it runs where perf tests run; do not make it a default-suite gate if perf tests
-  are opt-in — confirm the repo's perf-test invocation).
+- **Subprocess RSS proof (ported), placement decided:** a fresh allocator-pinned
+  subprocess streams variable-width rows through a fixed ceiling and asserts real
+  VmHWM stays within ~1.35x — the never-OOM proof. The repo's `perf` marker runs
+  in the DEFAULT regression gate by deliberate choice (`pyproject.toml:364-365`),
+  and OOC-B marked this test `pytest.mark.perf`; keep that mark so the never-OOM
+  proof gates every run. Its cost (~180s, ~1.7 GB peak spill) is accepted as the
+  price of the guarantee's proof; the builder MAY reduce the row count if CI
+  time/disk demands it, provided the dataset still far exceeds the ceiling and
+  forces a multi-pass merge (the envelope ratio, not the exact N, is the proof).
+  Do NOT reclassify it to `benchmark` (that marker is excluded from the gate).
 
 ## Tasks
 
@@ -156,24 +213,35 @@ real key shape can test the contiguity invariant).
   imports resolve on this branch (the `_errors`/`ExecutionError` codes,
   `_reorder_budget` deps). Run the ported unit tests green as-is (int key) before
   touching anything.
-- [ ] **Task 2: Key-generalize.** Rename `ExternalRowNrSorter` →
-  `BoundedExternalSorter`, `row_nr_column` → `sort_key_column`; make
-  `_RunHead.max_value` type-generic (`-> Any`); confirm `_flush` /
-  merge-cutoff use the renamed column and no other int assumption remains. Update
-  the ported tests to the new names. Document the total-key (unique/tiebreak)
-  precondition and partition-invariance on the class docstring; cite Knuth §5.4
-  and the OOC-B provenance.
-- [ ] **Task 3: Generalization tests.** Add byte-parity for a non-int key
-  (string and/or binary) against the in-memory `sort_by` oracle; add the explicit
-  partition-invariance test (tiny-cap output == huge-cap output). Keep every
-  ported proof green under the new names.
-- [ ] **Task 4: Lint + mutation + sentry.** ruff check + format on the diff;
+- [ ] **Task 2: Key-generalize + validate the key contract.** Rename
+  `ExternalRowNrSorter` → `BoundedExternalSorter`, `row_nr_column` →
+  `sort_key_column`; make `_RunHead.max_value` type-generic (`-> Any`); confirm
+  `_flush` / the Python-`min` merge cutoff use the renamed column and no other int
+  assumption remains. Add the `write`-time key validation (before buffering/spill):
+  supported-type allowlist, reject float, reject null keys, reject key type drift,
+  reject missing key column — each a stable error code. Document the total-key
+  (unique/tiebreak) precondition and partition-invariance on the class docstring;
+  cite Knuth §5.4 and the OOC-B provenance.
+- [ ] **Task 3: Generalization + robustness tests.** Non-int (string) parity
+  against the in-memory `sort_by` oracle **forcing `> merge_fan_in` runs**, across
+  ≥2 caps × ≥2 fan-ins, comparing the full reconstructed table (values + schema,
+  payload columns included); a duplicate-key case; the partition-invariance test
+  (tiny-cap == huge-cap full-table equality); the five key-contract rejections
+  (assert no spill file created); and the failure-cleanup test (injected merge
+  failure leaves no run file). Keep every ported proof green under the new names.
+- [ ] **Task 4: Failure-cleanup hardening.** Ensure a merge output path is tracked
+  the instant it is created (or unlink-on-exception in `_merge_group`) so `close()`
+  cannot leak a partial merge file after a mid-`finish()` failure. (Verified by the
+  Task 3 cleanup test.)
+- [ ] **Task 5: Lint + mutation + sentry.** ruff check + format on the diff;
   mypy on the diff where runnable (numpy-2.5.0 aborts locally on py3.13 — CI py3.10
   covers it). Mutation-grade the sorter's LOGIC (the flush-before-overflow guard,
-  the fail-closed cutoff / contiguity, the budget validation) to 0 unresolved-logic
-  survivors (message prose adjudicated per the ledger policy); write the mutation
-  ledger. Module-size sentry green (`_external_sort.py` ~428 LOC + the small
-  generalization stays under the 600 cap; confirm).
+  the fail-closed cutoff / contiguity, the key-validation gates, the budget
+  validation) to 0 unresolved-logic survivors (message prose adjudicated per the
+  ledger policy); write the mutation ledger. Module-size sentry green
+  (`_external_sort.py` ~428 LOC + the key validation stays under the 600 cap;
+  confirm — if the validation pushes it over, extract the validators to a sibling
+  or record a ratchet bump with justification).
 
 ## Non-goals (explicitly deferred)
 
@@ -187,29 +255,33 @@ real key shape can test the contiguity invariant).
 ## Acceptance
 
 - `BoundedExternalSorter` exists on `feat/native-phase3`, sorts a batch stream by
-  an arbitrary orderable key column byte-identically to an in-memory `sort_by`
-  (int + at least one non-int key type), and never alters a value.
+  a single non-null orderable key column to value+schema parity with an in-memory
+  `sort_by` (int AND string), and never alters a value. The non-int parity is
+  proven through a forced multi-pass merge across ≥2 caps × ≥2 fan-ins.
+- The key contract is enforced fail-closed at `write`-time (before any spill):
+  null key, float key, unsupported type, key type drift, and missing key column
+  each raise their stable error code with no run file created.
 - All ported memory-cap / fail-closed / RSS proofs pass under the new names;
-  partition-invariance (tiny-cap == huge-cap output) is proven.
+  partition-invariance (tiny-cap == huge-cap full-table equality) is proven; a
+  mid-`finish()` merge failure leaks no run file.
 - The total-key (unique/tiebreak) precondition and partition-invariance are
   documented on the class; the multi-column form and route wiring are recorded as
   deferred (A.3 / P4-E).
+- The subprocess RSS proof stays `pytest.mark.perf` (runs in the default gate);
+  its cost is accepted (N may be right-sized keeping the envelope proof).
 - ruff + mypy(diff, where runnable) clean; module-size sentry green; 0
-  unresolved-logic mutation survivors on the sorter's guards/cutoff/budget; ledger
-  written.
+  unresolved-logic mutation survivors on the sorter's guards/cutoff/key-validation/
+  budget; ledger written.
 - Held on `feat/native-phase3`; no merge.
 
-## Risks the plan-gate should weigh
+## Risks resolved at plan-gate (round 1)
 
-1. **Is the single-key generalization the right scope, or should A.2 ship the
-   multi-column tuple-cutoff now?** This plan defers multi-column to its first
-   consumer to avoid proving the tuple contiguity invariant speculatively. The
-   gate should confirm the near-term consumers (order-restore int key;
-   grouped_series via pre-encoded key) are genuinely served by a single-key
-   sorter, or push back if pre-encoding is unreasonable for grouped_series.
-2. **`max_value`/cutoff type-genericity.** Confirm `pc.max` / `pc.min` /
-   `pc.less_equal` behave identically for the non-int key types the tests add
-   (nulls in the key column? the key should be non-null; assert/validate).
-3. **Perf-test placement.** The subprocess RSS proof must run where perf tests
-   run and not silently no-op; confirm the repo's perf invocation and that it is
-   not a flaky default-suite gate.
+The single-key scope is confirmed right-sized (order-restore int key directly;
+grouped_series owns its order-preserving encoding / a native tuple extension in
+P4-E). The fail-closed cutoff is mathematically sufficient for global ordering +
+partition-invariance under a non-null total ascending key. The remaining build
+risks are: (1) the key-validation must run BEFORE spilling and cover null/float/
+unsupported/drift/missing (HIGH); (2) the non-int parity test must force the
+multi-pass merge, not stay single-run (HIGH); (3) failure cleanup must track the
+merge output path immediately (MEDIUM); (4) the RSS test stays `perf` in the
+default gate (MEDIUM, accepted).
