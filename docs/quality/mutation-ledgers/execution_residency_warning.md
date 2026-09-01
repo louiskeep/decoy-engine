@@ -12,11 +12,13 @@ standalone-pytest-per-mutant readjudication), selection
 
 ## Numbers
 
-**36 mutants: 20 killed, 16 survivors.** Every survivor is in
-`residency_warning_message` -- the human-readable warning string. The shape
-predicate `caller_managed_residency_shapes` has **0 surviving mutants**: every
-branch (resident-by-type, `sink is None`, `source_loader is not None`, and the
-tuple assembly) is killed by the by-shape unit tests
+**38 mutants: 22 killed, 16 survivors.** Every survivor is in
+`residency_warning_message` -- the human-readable warning string. Its one LOGIC
+branch, the `if not shapes: return ""` empty-guard, is killed
+(`test_empty_shapes_message_is_empty`). The shape predicate
+`caller_managed_residency_shapes` has **0 surviving mutants**: every branch
+(resident-by-type, `sink is None`, `source_loader is not None`, and the tuple
+assembly) is killed by the by-shape unit tests
 (`test_resident_source_is_detected_by_type_not_dict_non_emptiness`,
 `test_missing_sink_is_a_caller_managed_shape`,
 `test_source_loader_is_a_caller_managed_shape`,

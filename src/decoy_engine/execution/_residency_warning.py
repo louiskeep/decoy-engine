@@ -59,7 +59,13 @@ def caller_managed_residency_shapes(
 
 
 def residency_warning_message(shapes: tuple[str, ...]) -> str:
-    """The heads-up naming the shape(s) and the bounded alternative."""
+    """The heads-up naming the shape(s) and the bounded alternative.
+
+    Empty in, empty out: with no caller-managed shape there is nothing to warn,
+    so a direct caller cannot build a malformed "...for this call: ." message.
+    """
+    if not shapes:
+        return ""
     return (
         "out-of-core residency bound not guaranteed for this call: "
         + "; ".join(shapes)

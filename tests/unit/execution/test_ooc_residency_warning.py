@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -63,9 +62,10 @@ def test_bounded_shape_reports_no_caller_managed_shapes(tmp_path: Path) -> None:
 def test_resident_source_is_detected_by_type_not_dict_non_emptiness(tmp_path: Path) -> None:
     # A non-empty sources dict of LazySources must NOT read as resident; only a
     # pa.Table value does. This is the exact bug a `bool(sources)` check would have.
-    assert caller_managed_residency_shapes(
-        {"t": _lazy(tmp_path)}, sink=object(), source_loader=None
-    ) == ()
+    assert (
+        caller_managed_residency_shapes({"t": _lazy(tmp_path)}, sink=object(), source_loader=None)
+        == ()
+    )
     resident = caller_managed_residency_shapes(
         {"t": _resident()}, sink=object(), source_loader=None
     )
@@ -73,9 +73,7 @@ def test_resident_source_is_detected_by_type_not_dict_non_emptiness(tmp_path: Pa
 
 
 def test_missing_sink_is_a_caller_managed_shape(tmp_path: Path) -> None:
-    shapes = caller_managed_residency_shapes(
-        {"t": _lazy(tmp_path)}, sink=None, source_loader=None
-    )
+    shapes = caller_managed_residency_shapes({"t": _lazy(tmp_path)}, sink=None, source_loader=None)
     assert shapes == ("no sink (the whole output is held resident)",)
 
 
@@ -121,9 +119,7 @@ def test_forced_ooc_resident_no_sink_warns_and_records(tmp_path: Path) -> None:
     config = _fk_ooc_config(tmp_path)
     sources = _sources(config)  # resident pa.Tables, no sink passed
     with pytest.warns(CallerManagedResidencyWarning) as caught:
-        result = run_pipeline(
-            config, sources, engine_version="0.1.0", execution_mode="out_of_core"
-        )
+        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
     message = str(caught[0].message)
     assert "a resident pa.Table source" in message
@@ -160,9 +156,7 @@ def test_forced_ooc_byte_parity_preserved_with_warning(tmp_path: Path) -> None:
     sources = _sources(config)
     full = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
     with pytest.warns(CallerManagedResidencyWarning):
-        forced = run_pipeline(
-            config, sources, engine_version="0.1.0", execution_mode="out_of_core"
-        )
+        forced = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
     assert _values(forced.outputs) == _values(full.outputs)
 
 
@@ -173,9 +167,7 @@ def test_full_frame_route_does_not_warn(tmp_path: Path) -> None:
     sources = _sources(config)
     with warnings.catch_warnings():
         warnings.simplefilter("error", CallerManagedResidencyWarning)
-        result = run_pipeline(
-            config, sources, engine_version="0.1.0", execution_mode="full_frame"
-        )
+        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
     assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
     assert "residency" not in result.quality_metrics
 
@@ -187,3 +179,33 @@ def test_run_fk_out_of_core_documents_the_precondition() -> None:
     assert "Residency precondition" in doc
     assert "caller-managed" in doc
     assert "LazySource" in doc
+
+
+def test_empty_shapes_message_is_empty() -> None:
+    # A direct caller cannot build a malformed "...for this call: ." message.
+    assert residency_warning_message(()) == ""
+
+
+def test_guaranteed_lazysource_sink_shape_is_silent_end_to_end(tmp_path: Path) -> None:
+    # The no-false-positive property, pinned end to end: an all-LazySource + sink
+    # OOC job routed through run_pipeline emits no warning and records no
+    # residency entry. Locks it against a future change that resolves sources to
+    # resident tables before the guard runs.
+    from decoy_engine.execution import ParquetTransactionalSink
+
+    config = _fk_ooc_config(tmp_path)
+    lazy_sources = {
+        name: LazySource(Path(spec["path"])) for name, spec in config["sources"].items()
+    }
+    sink = ParquetTransactionalSink(tmp_path / "guaranteed_out")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CallerManagedResidencyWarning)
+        result = run_pipeline(
+            config,
+            lazy_sources,
+            engine_version="0.1.0",
+            execution_mode="out_of_core",
+            sink=sink,
+        )
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert "residency" not in result.quality_metrics
