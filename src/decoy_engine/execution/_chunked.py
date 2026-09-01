@@ -459,9 +459,9 @@ def run_mask_pipeline_chunked(
     text_mask_gate.reject_unsafe_text_mask_chunk_schema(first.schema, text_mask_cols, table=table)
     # code_set has the identical chunk-stable-string-source requirement (same
     # str()-conversion hazard); same once-resolved / per-chunk validation split.
-    # Column names come off `code_set_records`' keys (already resolved above),
-    # so this does not rebuild the work list a second time.
-    code_set_cols = [col for (_tbl, col) in code_set_records]
+    code_set_cols = code_set_gate.code_set_source_columns(
+        plan, resolved_registry, graph, table=table
+    )
     code_set_gate.reject_unsafe_code_set_chunk_schema(first.schema, code_set_cols, table=table)
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
     # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK

@@ -455,6 +455,111 @@ class TestCorpusPinning:
         records = resolve_pinned_code_set_records(plan, reg, graph, table="records")
         assert set(records) == {("records", "code")}
 
+    def test_resolve_pinned_code_set_records_scopes_to_table_and_scans_past_a_skip(
+        self, tmp_path
+    ) -> None:
+        """Two tables (proves the per-node table filter, not accidental
+        single-table scoping) and, on the target table, a non-code_set column
+        ordered BEFORE the code_set column (proves the skip loop uses
+        `continue`, not `break` -- a `break` would stop at the first
+        non-matching node and silently miss every code_set column after it)."""
+        import pyarrow.csv as pcsv
+
+        from decoy_engine.plan import compile_plan
+        from decoy_engine.profile._source import profile_source
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships import RelationshipGraph
+
+        table_a = pa.table(
+            {
+                "id": pa.array(["x"], type=pa.string()),
+                "code": pa.array(["E11.9"], type=pa.string()),
+            }
+        )
+        table_b = pa.table({"code": pa.array(["xyz"], type=pa.string())})
+        pcsv.write_csv(table_a, tmp_path / "a.csv")
+        pcsv.write_csv(table_b, tmp_path / "b.csv")
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": _SEED},
+            "sources": {
+                "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a.csv")},
+                "b": {"type": "file", "format": "csv", "path": str(tmp_path / "b.csv")},
+            },
+            "targets": {
+                "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a_out.csv")},
+                "b": {"type": "file", "format": "csv", "path": str(tmp_path / "b_out.csv")},
+            },
+            "tables": [
+                {
+                    "name": "a",
+                    "columns": [
+                        {"name": "id", "strategy": "hash"},
+                        _code_set_col("code", "icd10"),
+                    ],
+                },
+                {"name": "b", "columns": [_code_set_col("code", "mcc")]},
+            ],
+        }
+        cfg = _validated_dump(cfg)
+        profile = profile_source(cfg, seed=_SEED)
+        plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION)
+        reg = get_default_registry()
+        graph = RelationshipGraph(edges=(), ordering=())
+        records_a = resolve_pinned_code_set_records(plan, reg, graph, table="a")
+        records_b = resolve_pinned_code_set_records(plan, reg, graph, table="b")
+        assert set(records_a) == {("a", "code")}
+        assert set(records_b) == {("b", "code")}
+        # Both tables' code_set column happens to share the name "code", so
+        # the dict KEY alone cannot expose a leaked cross-table node -- a
+        # broken table filter would silently overwrite records_a[("a",
+        # "code")]'s VALUE with table b's corpus (mcc) while the key set
+        # looks unchanged. Pin the actual resolved corpus identity: icd10 and
+        # mcc are different shipped corpora with different row counts, and a
+        # leak would make table a's entry carry table b's (mcc) row count.
+        from decoy_engine.transforms.code_set import CodeSetConfig, resolve_corpus_record
+
+        icd10_rows = len(resolve_corpus_record(CodeSetConfig.from_dict({"code_set": "icd10"})).rows)
+        mcc_rows = len(resolve_corpus_record(CodeSetConfig.from_dict({"code_set": "mcc"})).rows)
+        assert icd10_rows != mcc_rows, "icd10/mcc must differ for this assertion to be meaningful"
+        assert len(records_a[("a", "code")].rows) == icd10_rows
+        assert len(records_b[("b", "code")].rows) == mcc_rows
+
+
+class TestColumnStrategyScoping:
+    def test_reject_code_set_fk_keys_scopes_the_lookup_to_table_and_column(self) -> None:
+        """`_column_strategy`'s lookup must be scoped to BOTH the correct
+        table AND an exact column-name match, not "any dict column/table
+        encountered first" -- loosening either scoping guard would silently
+        return the WRONG strategy without ever raising."""
+        cfg = {
+            "tables": [
+                # Listed FIRST: a table-scoping bug would find THIS "id"
+                # column before ever reaching "parent"'s own.
+                {"name": "unrelated", "columns": [{"name": "id", "strategy": "redact"}]},
+                {
+                    "name": "parent",
+                    "columns": [
+                        # Listed BEFORE "id": a name-scoping bug would return
+                        # THIS column's strategy instead.
+                        {"name": "decoy", "strategy": "redact"},
+                        {"name": "id", "strategy": "code_set"},
+                    ],
+                },
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["pid"]}],
+                    "orphan_policy": "remap",
+                }
+            ],
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            reject_code_set_fk_keys(cfg, table="parent")
+        assert exc.value.code == "chunked_code_set_fk_key_unsupported"
+        assert "id" in exc.value.message
+
 
 # ---------------------------------------------------------------------------
 # 4. Every non-admitted shape takes the documented reject / full-frame path.
@@ -761,6 +866,31 @@ class TestEvidenceAggregation:
         ]
         agg = aggregate_chunk_code_set_corpora(chunk_results)
         assert agg == {"code_set_corpora": [entry]}
+
+    def test_aggregate_dedupe_key_uses_both_table_and_column(self) -> None:
+        """Three entries that each differ from the other two on EXACTLY one
+        of (table, column) -- collapsing either dimension to a constant (a
+        wrong dict key, a typo'd key string, a case mismatch) would silently
+        merge two of them into one, dropping a real evidence entry."""
+        from types import SimpleNamespace
+
+        same_col_diff_table = [
+            {"code_set": "icd10", "table": "t1", "column": "code", "row_count": 10},
+            {"code_set": "mcc", "table": "t2", "column": "code", "row_count": 20},
+        ]
+        same_table_diff_col = {
+            "code_set": "icd10",
+            "table": "t1",
+            "column": "other",
+            "row_count": 30,
+        }
+        chunk_results = [
+            SimpleNamespace(quality_metrics={"code_set_corpora": same_col_diff_table}),
+            SimpleNamespace(quality_metrics={"code_set_corpora": [same_table_diff_col]}),
+        ]
+        agg = aggregate_chunk_code_set_corpora(chunk_results)
+        keys = {(e["table"], e["column"]) for e in agg["code_set_corpora"]}
+        assert keys == {("t1", "code"), ("t2", "code"), ("t1", "other")}
 
     def test_aggregate_returns_empty_dict_when_no_chunk_masked_code_set(self) -> None:
         from types import SimpleNamespace
