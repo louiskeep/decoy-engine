@@ -62,10 +62,8 @@ column's value via `CHUNK_SIBLING_KEYED_STRATEGIES` (also SEPARATE from
 CHUNK_SAFE for the FK reason). See `_chunked_group_key.py`.
 
 Own-value-keyed (Phase 4 slice 3): `text_mask` joins `CHUNK_SAFE_STRATEGIES`
-directly -- each span is masked by its OWN matched text under `ctx.mask_key`,
-so it needs no separate admitted set, and it is correctly eligible as an
-FK-self-mask key. Its only new gate is the `when:` rejection in
-`_chunked_text_mask.py`.
+directly (each span masked by its OWN text under `ctx.mask_key`; FK-self-mask
+eligible). Its only new gate is the `when:` rejection in `_chunked_text_mask.py`.
 
 Rejected at compile time (`check_chunked_compatibility`):
 
