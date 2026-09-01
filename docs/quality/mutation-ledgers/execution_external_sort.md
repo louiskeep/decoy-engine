@@ -53,11 +53,15 @@ adjudicated):
   or XX-wrapped/uppercased/re-cased in `_validate_key`, `write`, and `__init__`.
   The `code` (the machine-consumed field) is pinned by the rejection tests; the
   message is advisory.
-- **Instrumentation / attribute init (36):** the `peak_pre_sort_buffer_bytes` /
-  `peak_buffered_bytes` / `peak_merge_resident_bytes` `max(...)` updates and the
-  `__init__` attribute seeds. The memory-cap tests assert `peak_* <= cap`; a
-  mutation that UNDER-counts a peak still satisfies `<= cap`, so it cannot signal
-  a real over-cap. Output is unaffected (byte-parity tests hold).
+- **Instrumentation / attribute init:** the `__init__` attribute seeds and the
+  `peak_*` `max(...)` updates. The memory-cap tests now BRACKET the peaks
+  (`run_bytes_cap // 2 <= peak_pre_sort_buffer_bytes <= cap`;
+  `0 < peak_merge_resident_bytes <= cap`;
+  `peak_pre_sort <= peak_buffered <= cap * SORT_OVERHEAD_FACTOR`), so a mutation
+  that undercounts a peak toward zero now reddens the lower bound -- the earlier
+  "`<= cap` is vacuous under undercount" gap (Codex final MEDIUM) is closed.
+  Attribute-seed survivors that do not feed a peak or the sort output remain
+  accepted (they change neither the sorted result nor the enforced envelope).
 - **Cosmetic naming:** `_next_run_path`'s `_run_counter += 1` (-> `-= 1` / `+= 2`)
   and `finish`'s `pass_no` / merge-file prefix mutations only change run-file
   NAMES; uniqueness (and therefore correctness) is preserved.

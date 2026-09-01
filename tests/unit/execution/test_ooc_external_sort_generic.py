@@ -10,6 +10,7 @@ the fail-closed key contract, and the failure-cleanup registry.
 from __future__ import annotations
 
 import random
+import signal
 
 import pyarrow as pa
 import pytest
@@ -138,7 +139,8 @@ def test_timestamp_ns_key_multipass_does_not_hang(tmp_path):
     # Regression for the ns-timestamp merge hang: `pc.max().as_py()` returned a
     # pandas.Timestamp that `pc.less_equal` truncated to us, wedging the merge.
     # A ns key through a forced multi-pass merge (tiny cap) must terminate AND
-    # match the oracle. Without the scalar-cutoff fix this test hangs.
+    # match the oracle. GUARDED by SIGALRM: if the bug regresses, the alarm fires
+    # and the test FAILS instead of wedging the whole CI job.
     n = 1_500
     values = list(range(n))
     batches = _batches("timestamp_ns", values, batch_size=31)
@@ -146,15 +148,31 @@ def test_timestamp_ns_key_multipass_does_not_hang(tmp_path):
     sorter = BoundedExternalSorter(
         spill_dir=tmp_path / "spill", run_bytes_cap=2 * 1024, merge_fan_in=2, sort_key_column=KEY
     )
+
+    class _HangError(Exception):
+        pass
+
+    def _on_alarm(signum, frame):
+        raise _HangError
+
+    has_alarm = hasattr(signal, "SIGALRM")
+    if has_alarm:
+        old = signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(30)
     try:
         for b in batches:
             sorter.write(b)
         assert len(list((tmp_path / "spill").glob("run_*.arrow"))) > 2  # multi-pass
         sorter.finish()
         out = pa.Table.from_batches(list(sorter.iter_ordered()), schema=batches[0].schema)
+        assert out.to_pydict() == oracle.to_pydict()
+    except _HangError:
+        pytest.fail("ns-key merge did not terminate within 30s (scalar-cutoff fix regressed)")
     finally:
+        if has_alarm:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
         sorter.close()
-    assert out.to_pydict() == oracle.to_pydict()
 
 
 def test_duplicate_keys_sort_by_key_multiset_preserved(tmp_path):
@@ -235,6 +253,28 @@ def test_reject_missing_key_column(tmp_path):
         {"other": pa.array([0, 1, 2], type=pa.int64()), "payload": pa.array([b"a", b"b", b"c"])}
     )
     _assert_rejects(tmp_path, batch, "out_of_core_sort_key_missing")
+
+
+def test_reject_row_wider_than_per_head_cap(tmp_path):
+    # A single row between the per-merge-head cap (run_bytes_cap // (2*fan_in))
+    # and run_bytes_cap passes the OLD guard but would become an over-cap run
+    # batch that the merge co-loads fan_in of, breaking the run_bytes_cap
+    # envelope. It must fail closed. cap=8KB, fan_in=4 -> per-head cap=1024; a
+    # ~3KB row is under run_bytes_cap but over the per-head cap.
+    spill = tmp_path / "spill"
+    sorter = BoundedExternalSorter(
+        spill_dir=spill, run_bytes_cap=8 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        wide = pa.record_batch(
+            {KEY: pa.array([0, 1], type=pa.int64()), "payload": pa.array([b"a", b"x" * 3000])}
+        )
+        with pytest.raises(ExecutionError) as exc:
+            sorter.write(wide)
+        assert exc.value.code == "out_of_core_sort_row_too_wide"
+        assert list(spill.glob("*.arrow")) == []  # rejected before any spill
+    finally:
+        sorter.close()
 
 
 def test_reject_key_type_drift(tmp_path):

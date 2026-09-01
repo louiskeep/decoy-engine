@@ -118,7 +118,9 @@ def test_buffer_never_exceeds_cap_wide_variable_rows(tmp_path):
     widths = [rng.choice([8, 16, 4_000, 32]) for _ in range(n)]
     batches = _batches_from_row_nrs(row_nrs, widths, batch_size=53)
 
-    run_bytes_cap = 32 * 1024
+    # cap chosen so the 4000-byte rows sit under the per-merge-head cap
+    # (run_bytes_cap // (2 * fan_in) = 8192 here), which write() now enforces.
+    run_bytes_cap = 64 * 1024
     sorter = BoundedExternalSorter(
         spill_dir=tmp_path / "spill", run_bytes_cap=run_bytes_cap, merge_fan_in=4
     )
@@ -133,8 +135,16 @@ def test_buffer_never_exceeds_cap_wide_variable_rows(tmp_path):
             for value in out_batch.column(ROW_NR).to_pylist()
         ]
         assert seen == list(range(n))
-        assert sorter.peak_pre_sort_buffer_bytes <= run_bytes_cap
-        assert sorter.peak_buffered_bytes <= run_bytes_cap * SORT_OVERHEAD_FACTOR
+        # Bracketed, not just an upper bound: total bytes far exceed the cap, so
+        # the buffer fills close to the cap before each flush. A lower bound kills
+        # an instrumentation mutation that undercounts the peak toward zero (which
+        # would make `peak <= cap` vacuously pass).
+        assert run_bytes_cap // 2 <= sorter.peak_pre_sort_buffer_bytes <= run_bytes_cap
+        assert (
+            sorter.peak_pre_sort_buffer_bytes
+            <= sorter.peak_buffered_bytes
+            <= run_bytes_cap * SORT_OVERHEAD_FACTOR
+        )
     finally:
         sorter.close()
 
@@ -164,7 +174,10 @@ def test_merge_resident_within_cap(tmp_path):
             for value in out_batch.column(ROW_NR).to_pylist()
         ]
         assert seen == list(range(n))
-        assert sorter.peak_merge_resident_bytes <= run_bytes_cap
+        # Bracketed: the multi-pass merge really loads heads, so the peak is a
+        # real positive measurement (kills a zero-undercount instrumentation
+        # mutation), and it stays within the cap.
+        assert 0 < sorter.peak_merge_resident_bytes <= run_bytes_cap
     finally:
         sorter.close()
 

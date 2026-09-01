@@ -42,9 +42,11 @@ actually performs a fresh, exactly-sized gather. Every buffered slice is
 therefore materialized through `_materialize` (identity `take`), and the
 buffer is flushed to a sorted, on-disk run BEFORE a slice would push it over
 `run_bytes_cap`, never after -- the buffer itself never exceeds the cap. A
-single row wider than `run_bytes_cap` on its own raises
-`out_of_core_sort_row_too_wide` rather than silently letting the buffer grow
-past its cap.
+single row wider than the per-merge-head cap (`run_bytes_cap // (2 *
+merge_fan_in)`) raises `out_of_core_sort_row_too_wide`: such a row cannot be
+split into a bounded run-file batch, so it would become an over-cap stored batch
+that a merge round co-loads `merge_fan_in` of, breaking the `run_bytes_cap`
+envelope.
 
 `finish()`'s k-way merge never holds more than one stored batch's worth of
 data per open run. Every run file (initial or merged) is written in batches
@@ -367,18 +369,25 @@ class BoundedExternalSorter:
         self._validate_key(batch)
         if self._schema is None:
             self._schema = batch.schema
-        for view in _iter_bounded_views(batch, self._run_bytes_cap):
+        # Bound the buffered views to `_per_head_cap_bytes`, not `run_bytes_cap`:
+        # a single row wider than the per-head cap cannot be split into a
+        # run-file batch that fits it, so it would become an over-cap stored
+        # batch that the merge then co-loads `merge_fan_in` of -- blowing the
+        # `run_bytes_cap` envelope by up to 2x. Reject such a row here, before it
+        # can enter a run.
+        for view in _iter_bounded_views(batch, self._per_head_cap_bytes):
             materialized = _materialize(view)
             row_bytes = materialized.nbytes
-            if row_bytes > self._run_bytes_cap:
+            if row_bytes > self._per_head_cap_bytes:
                 raise ExecutionError(
                     code="out_of_core_sort_row_too_wide",
                     message=(
                         f"a single row is {row_bytes} bytes, over the "
-                        f"{self._run_bytes_cap}-byte run_bytes_cap; no cap "
-                        "can bound this sorter's resident memory while this "
-                        "row is buffered. Increase the process memory "
-                        "budget or shrink this column's width."
+                        f"{self._per_head_cap_bytes}-byte per-merge-head cap "
+                        "(run_bytes_cap // (2 * merge_fan_in)); a wider row would "
+                        "make one merge round's co-loaded heads exceed "
+                        "run_bytes_cap. Increase the process memory budget or "
+                        "shrink this column's width."
                     ),
                 )
             if self._buffered and self._buffered_bytes + row_bytes > self._run_bytes_cap:

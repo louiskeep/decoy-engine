@@ -1,6 +1,6 @@
 # P4-A.2: the bounded external sorter (port + key-generalize `BoundedExternalSorter`)
 
-Status: plan
+Status: built (held on `feat/native-phase3`, not merged; Phase 4 merges once at the end)
 
 > Part 2 Phase 4, slice P4-A.2. Cam chose this as the next piece (2026-09-01)
 > and chose to **build it standalone now** (a foundational primitive with its own

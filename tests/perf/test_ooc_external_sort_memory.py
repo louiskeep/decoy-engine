@@ -136,7 +136,7 @@ _WORKER_SCRIPT = textwrap.dedent(
             spill_dir=Path(args.spill_dir),
             run_bytes_cap=budgets.run_bytes_cap,
             merge_fan_in=budgets.merge_fan_in,
-            row_nr_column=ROW_NR,
+            sort_key_column=ROW_NR,
         )
 
         rng = random.Random(args.seed)

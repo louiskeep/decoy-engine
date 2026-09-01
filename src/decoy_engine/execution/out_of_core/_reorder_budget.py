@@ -48,7 +48,7 @@ from decoy_engine.execution._errors import ExecutionError
 F_DUCKDB = 0.55
 
 # Share of process_ceiling_bytes handed to the sorter: its resident write()
-# buffer cap AND (divided by merge_fan_in) its per-merge-head cap during
+# buffer cap AND (divided by 2 * merge_fan_in) its per-merge-head cap during
 # finish() (see _external_sort.py).
 F_SORT = 0.15
 
