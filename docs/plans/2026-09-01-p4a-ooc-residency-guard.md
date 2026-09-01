@@ -158,10 +158,11 @@ estimate.
 
 ## Acceptance
 
-- The bound is documented precisely (NOT "never-OOM"): engine-controlled peak
-  residency is cardinality-bounded when every source is a `LazySource` and the
-  sink consumes incrementally (`ParquetTransactionalSink`), with arbitrary
-  in-process caller memory and custom sink retention called out as caller-managed;
+- The bound is documented precisely (NOT "never-OOM"): engine-controlled residency
+  is bounded with respect to table row cardinality when every source is a
+  `LazySource` and the sink consumes `write_batches` incrementally without
+  retaining the stream (`ParquetTransactionalSink` is the production-proven sink);
+  arbitrary in-process memory and custom sink retention remain caller-managed;
   production (that shape, under a governed budget) keeps the bound, and the
   exported primitive's residency precondition is documented (Task 1).
 - Resident-source / no-sink / `source_loader` OOC jobs run exactly as today but
