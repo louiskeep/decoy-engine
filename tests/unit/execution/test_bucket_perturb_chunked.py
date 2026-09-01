@@ -48,6 +48,7 @@ from decoy_engine.execution._chunked_bucket_perturb import (
     bucket_perturb_conditional_failures,
     bucket_perturb_source_columns,
     reject_bucket_perturb_fk_keys,
+    reject_bucket_perturb_missing_namespace,
     reject_bucket_perturb_when,
     reject_unsafe_bucket_perturb_chunk_schema,
     unsafe_bucket_perturb_source_columns,
@@ -701,7 +702,14 @@ class TestAdmissionBoundary:
         # fail closed like the oracle: the data-independent namespace check runs
         # before the empty-input return, so the misconfig is caught even when no
         # chunk is ever dispatched (it would otherwise return empty silently).
-        columns = [_bucket_perturb_col("dcol", namespace=None)]
+        # A namespace-less redact column ordered BEFORE the bucket_perturb one
+        # (redact needs no namespace) proves the check SKIPS non-bucket_perturb
+        # nodes with `continue`, not `break`: a `break` would stop at the redact
+        # node and miss the offending bucket_perturb column after it.
+        columns = [
+            {"name": "aaa", "strategy": "redact", "provider_config": {"redact_with": "X"}},
+            _bucket_perturb_col("dcol", namespace=None),
+        ]
         cfg = _config(tmp_path, columns)
         with pytest.raises(StrategyError) as exc:
             list(
@@ -710,7 +718,8 @@ class TestAdmissionBoundary:
                 )
             )
         assert exc.value.code == "bucket_perturb_requires_namespace"
-        assert "dcol" in exc.value.message  # pins the offending column name
+        assert exc.value.strategy == "bucket_perturb"  # pins the coded strategy field
+        assert "dcol" in exc.value.message  # pins the offending column name (not "aaa")
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +878,51 @@ class TestRegistryLoadBearing:
         reg = get_default_registry()
         graph = RelationshipGraph(edges=(), ordering=())
         assert bucket_perturb_source_columns(plan, reg, graph, table="records") == ["d"]
+        # The namespace pre-check ALSO calls build_work_list(plan, registry), so
+        # it too is registry-load-bearing: registry=None would raise on the
+        # faker node. "d" has a namespace, so it returns without raising.
+        reject_bucket_perturb_missing_namespace(plan, reg, graph, table="records")
+
+    def test_missing_namespace_check_is_scoped_to_this_table(self, tmp_path) -> None:
+        # The check only inspects bucket_perturb columns ON `table`: a
+        # namespace-less bucket_perturb on ANOTHER table must be ignored (that
+        # table's own check catches it when it is chunked). Kills the `or`->`and`
+        # table-scope mutation that would inspect other tables' nodes.
+        import pyarrow.csv as pcsv
+
+        from decoy_engine.plan import compile_plan
+        from decoy_engine.profile._source import profile_source
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships import RelationshipGraph
+
+        ta = pa.table({"d": pa.array(["2024-01-15"], type=pa.string())})
+        tb = pa.table({"e": pa.array(["2024-02-20"], type=pa.string())})
+        pcsv.write_csv(ta, tmp_path / "a.csv")
+        pcsv.write_csv(tb, tmp_path / "b.csv")
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": _SEED},
+            "sources": {
+                "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a.csv")},
+                "b": {"type": "file", "format": "csv", "path": str(tmp_path / "b.csv")},
+            },
+            "targets": {
+                "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a_out.csv")},
+                "b": {"type": "file", "format": "csv", "path": str(tmp_path / "b_out.csv")},
+            },
+            "tables": [
+                {"name": "a", "columns": [_bucket_perturb_col("d", namespace="bp")]},
+                {"name": "b", "columns": [_bucket_perturb_col("e", namespace=None)]},
+            ],
+        }
+        cfg = _validated_dump(cfg)
+        profile = profile_source(cfg, seed=_SEED)
+        plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION)
+        reg = get_default_registry()
+        graph = RelationshipGraph(edges=(), ordering=())
+        # table "a"'s bucket_perturb has a namespace; table "b"'s missing
+        # namespace must NOT surface here.
+        reject_bucket_perturb_missing_namespace(plan, reg, graph, table="a")  # must not raise
 
 
 # ---------------------------------------------------------------------------
