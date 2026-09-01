@@ -1,6 +1,10 @@
 # P4-A.2: the bounded external sorter (port + key-generalize `BoundedExternalSorter`)
 
-Status: built (held on `feat/native-phase3`, not merged; Phase 4 merges once at the end)
+Status: DONE + held on `feat/native-phase3` (not merged; Phase 4 merges once at
+the end). Double-gated: dennis adversarial pass + Codex final GO (round 4, after
+three NO-GO rounds on the memory-cap invariant, all remediated). 44 unit + perf
+RSS proof green; mutation 499/367 killed/13 true-timeout, 0 unresolved
+correctness-critical logic; ruff/format/mypy(3.12) clean.
 
 > Part 2 Phase 4, slice P4-A.2. Cam chose this as the next piece (2026-09-01)
 > and chose to **build it standalone now** (a foundational primitive with its own
@@ -9,6 +13,19 @@ Status: built (held on `feat/native-phase3`, not merged; Phase 4 merges once at 
 > shelved branch `feat/ooc-b-external-reorder`. Ledger: auto-memory
 > `decoy-engine-efficiency-plan.md`. Phase 4 merges once at the end after all
 > testing; this slice is built and held, not merged.
+
+> **CONTRACT NARROWING (Cam scope decision 2026-09-01).** `sort_by` allocates an
+> 8-byte index per row, so rows narrower than 8 bytes make that index exceed the
+> byte cap it is sized against, in both the flush and the merge. Rather than
+> build row-count-bounded spilling for a degenerate case no consumer uses, the
+> sorter FAILS CLOSED (`out_of_core_sort_row_index_unbounded`) on any schema
+> whose minimum possible row is under 8 bytes (`_min_row_bytes(schema) <
+> INDEX_BYTES`). Effective row width >= 8 bytes is now part of the input
+> contract; every real consumer (int64 row-nr key + payload, composite key +
+> payload) already clears it. The resident guarantee is "<= run_bytes_cap *
+> SORT_OVERHEAD_FACTOR", the same envelope the flush lives under, RSS-proven; the
+> `peak_*` nbytes counters are coarse in-process witnesses, not the enforced
+> bound.
 
 ## What this slice is, and what it is NOT (READ FIRST)
 
