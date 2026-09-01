@@ -9,61 +9,87 @@ standalone-pytest-per-mutant readjudication), selection
 
 ## Numbers
 
-**456 mutants: 341 killed, 109 survived, 6 true-timeout** (76.1% logic:
-(341 + 6) / 456, counting a hang-detected mutant as a kill). The
+**499 mutants: 367 killed, 119 survived, 13 true-timeout** (76.2% logic:
+(367 + 13) / 499, counting a hang-detected mutant as a kill). The
 standalone-pytest readjudication confirmed mutmut's raw counts verbatim -- every
 survivor still survived and every timeout was a true (not merely slow) hang
 under a per-mutant standalone run, so no false-survivor came from test-ordering.
 
-The count rose from the previous 441 mutants because the Codex-round-2 fix added
-two new fail-closed guards (the narrow-row index guard in `write`, the
-zero-per-head-cap guard in `__init__`), each carrying an `ExecutionError` whose
-message prose mutates into a handful of accepted survivors (the `code` is
-pinned; the message is advisory -- see below). The logic percentage is slightly
-lower for the same reason (more advisory-prose mutants), not from any new
-unresolved logic: the metric that governs the gate is "0 unresolved
+The count grew across the Codex remediation rounds (441 -> 456 -> 499) because
+each fix added fail-closed guards and a new pure helper (`_min_row_bytes`), whose
+`ExecutionError` message prose mutates into accepted survivors (the `code` is
+pinned; the message is advisory -- see below). The logic percentage tracks that,
+not any new unresolved logic: the gate metric is "0 unresolved
 correctness-critical logic survivors", which holds.
 
 **0 unresolved-LOGIC survivors on the correctness-critical functions.** Diffing
 every survivor in `write` / `_flush` / `_validate_key` / `__init__` /
-`_merge_heads_into` against the original leaves only message prose, attribute
-seeds, cosmetic naming, redundant-guard-equivalent boundaries, and accepted
-over-rejections -- itemized below. Every condition that decides accept/reject,
-sort order, or a memory bound is killed. The 6 true-timeouts are infinite-loop
-mutations in the merge/refill logic; a mutation that hangs the tests is DETECTED
-(killed by timeout), not an escape.
+`_merge_heads_into` / `_min_row_bytes` against the original leaves only message
+prose, attribute seeds, cosmetic naming, boundary/float-equivalents, safe
+under-count mutations (which only ever over-reject, never under-bound), and
+accepted over-rejections -- itemized below. Every condition that decides
+accept/reject, sort order, or a memory bound is killed. The 13 true-timeouts are
+infinite-loop mutations in the merge/refill/slice logic; a mutation that hangs
+the tests is DETECTED (killed by timeout), not an escape.
 
-## The Codex-round-2 fix, mutation-verified
+## The Codex remediation (rounds 2-4), mutation-verified
 
-The round-2 blocker was that the resident cap did not actually hold for narrow
-keys: `sort_by` allocates an 8-byte `uint64` index per row, so a run of rows
-under 8 bytes each makes that index dwarf the data the byte cap counts, in both
-the flush sort and the merge sort (the merge also carried a 4-byte int32
-source-tag column, itself unbounded relative to a narrow key). The fix, and the
-mutants that pin it:
+The original blocker was that the resident cap did not hold for narrow keys:
+`sort_by` allocates an 8-byte `uint64` index per row, so rows under 8 bytes make
+that index dwarf the data the byte cap counts, in both the flush sort and the
+merge sort. Round 2 added a per-batch AVERAGE-width guard + dropped the merge's
+int32 source tag; round 3 found the average guard unsound (the flush sort
+reorders rows, so a schema mixing narrow and wide rows can cluster narrow rows
+into a post-sort run batch that a per-batch average never sees) and the merge's
+`filter`-based split wasteful. The final fix, and the mutants that pin it:
 
-- **`write` narrow-row guard** (`num_rows * INDEX_BYTES > row_bytes` ->
-  `out_of_core_sort_row_index_unbounded`). The condition and its `code` are
-  killed: `test_reject_narrow_rows_index_unbounded` (a bare int8 key, 1 byte/row)
-  and `test_reject_narrow_key_only_int32` (int32 key, 4 bytes/row) redden any
-  mutation that flips the direction or drops the raise; only the message prose
-  (`write__mutmut_40`,`42`,`45`-`53`) survives, `code`-pinned.
+- **`write` SCHEMA guard** (`_min_row_bytes(schema) < INDEX_BYTES` ->
+  `out_of_core_sort_row_index_unbounded`), checked once on the first batch.
+  `_min_row_bytes` is a LOWER bound over every possible row (each column's
+  unavoidable per-row cost: fixed width, or a variable column's offset entry),
+  so `>= INDEX_BYTES` proves every row -- and hence every reordered run batch and
+  every merge emit subset -- carries at least an index's worth of data. The
+  condition and its `code` are killed by three reject tests
+  (`test_reject_narrow_rows_index_unbounded` int8=1B,
+  `test_reject_narrow_key_only_int32` int32=4B,
+  `test_reject_mixed_narrow_schema_that_could_cluster` int8+binary=5B, whose
+  average is >> 8 yet is still rejected) plus two accept tests at the boundary
+  (`test_exact_8_byte_rows_accepted_and_sorted` int64=8B,
+  `test_accept_int32_key_with_binary_payload` int32+binary=8B). Any mutation that
+  flips the `<` direction reddens an accept test; any that drops the raise
+  reddens a reject test. Only the message prose survives.
 - **`__init__` zero-per-head-cap guard** (`per_head_cap_bytes < 1` raises
-  `out_of_core_reorder_budget_too_small`). Killed and boundary-pinned by
-  `test_reject_cap_too_small_for_per_head` (cap=3, fan_in=2 -> per-head 0, must
-  raise) plus `test_minimal_viable_cap_and_fan_in_construct` (cap=4 -> per-head
-  1, must construct): together they fix the `< 1` boundary exactly (a `< 2`
-  reddens the construct test, a dropped guard reddens the too-small test).
-- **tag-free merge** (`_merge_heads_into` splits each already-sorted head at the
-  cutoff, no source-tag column). Correctness across a forced multi-pass merge is
-  pinned by the value+schema parity tests (`test_string_key_multipass_parity`,
-  `test_timestamp_ns_key_multipass_does_not_hang`,
-  `test_exact_8_byte_rows_accepted_and_sorted`); the 6 true-timeouts are hangs
-  injected into this loop, all detected.
-- **honest merge peak metric** (`peak_merge_resident_bytes` now measures
-  `resident + combined.nbytes`, the co-loaded heads plus the emit gather held
-  concurrently, not just the pre-split heads). See the one accepted
-  instrumentation survivor below.
+  `out_of_core_reorder_budget_too_small`). Boundary-pinned by
+  `test_reject_cap_too_small_for_per_head` (cap=3 -> per-head 0, must raise) plus
+  `test_minimal_viable_cap_and_fan_in_construct` (cap=4 -> per-head 1, must
+  construct).
+- **tag-free, zero-copy-slice merge** (`_merge_heads_into` splits each
+  already-sorted head at the cutoff with `slice`, no source-tag column, no
+  `filter` copy). Correctness across a forced multi-pass merge is pinned by the
+  parity tests (`test_string_key_multipass_parity`,
+  `test_timestamp_ns_key_multipass_does_not_hang`, the two boundary-accept tests
+  above); the 13 true-timeouts are hangs injected into this slice/refill loop,
+  all detected.
+- **honest merge peak metric** (`peak_merge_resident_bytes` is a coarse
+  DATA-resident witness: heads + emit gather). It is NOT the enforced envelope --
+  sort_by's index array is un-instrumentable through `nbytes`, so the true merge
+  peak is bounded by `run_bytes_cap * SORT_OVERHEAD_FACTOR` (the same envelope
+  the flush lives under, per the `// 2` per-head cap) and proved by the RSS test.
+  See the accepted instrumentation survivor below.
+
+### `_min_row_bytes` survivors are all safe (never under-bound)
+
+For SOUNDNESS `_min_row_bytes` must be a lower bound (never over-estimate a
+row's true width). Its 10 survivors are all safe: under-count mutations (`+=`
+-> `=`/`-=`, `continue` -> `break`, `is_list(t)` -> `is_list(None)`) only shrink
+the estimate, which can over-reject but never accept a too-narrow schema;
+`// 8` -> `/ 8` is float-equivalent on every 8-divisible bit width; and the two
+`+1` over-estimates (`4` -> `5` on the int32 offset, `8` -> `9` on the int64
+offset, `total = 0` -> `1`) at worst accept a schema whose true minimum row is 7
+bytes -- an index/data ratio of 8/7 ~= 1.14, far inside `SORT_OVERHEAD_FACTOR`.
+The dangerous class (an over-estimate large enough to accept a sub-4-byte-row
+schema) does NOT survive: the three reject tests hold int8 (<= 2 mutated),
+int32 (<= 5), and int8+binary (<= 6) all under 8, so no survivor accepts them.
 
 ## Correctness-critical logic: fully pinned
 
@@ -96,26 +122,25 @@ mutants that pin it:
   numerically equal on every integer byte count, so no row's accept/reject
   changes.
 - **Accepted over-rejections (fail-closed, never under-bound):** `write`'s
-  `row_bytes > _per_head_cap_bytes` -> `>=` (`write__mutmut_21`) rejects a row of
+  `row_bytes > _per_head_cap_bytes` -> `>=` (`write__mutmut_39`) rejects a row of
   EXACTLY the per-head cap. This is NOT output-equivalent -- the original
   correctly ACCEPTS an exact-cap row as bounded-mergeable and the mutant
   over-rejects it -- but it only ever fails closed, never under-bounds memory, so
-  it is an accepted survivor, not an escape. (This corrects the earlier ledger's
-  looser "output-equivalent" wording, per Codex round-2.) The flush threshold
-  `_buffered_bytes + row_bytes > run_bytes_cap` -> `>=` (`write__mutmut_56`)
+  it is an accepted survivor, not an escape. The flush threshold
+  `_buffered_bytes + row_bytes > run_bytes_cap` -> `>=` (`write__mutmut_57`)
   flushes one row earlier at the exact boundary; the sorted output is identical
   and still cap-bounded, so that one is genuinely output-equivalent. The
-  exact-boundary ACCEPT side of the new index guard is pinned positively by
+  exact-boundary ACCEPT side of the schema guard is pinned positively by
   `test_exact_8_byte_rows_accepted_and_sorted` (a bare int64 key, exactly 8
-  bytes/row, must sort through a multi-pass merge), so the guard is proven to
-  over-reject nothing at its own boundary.
+  bytes/row) and `test_accept_int32_key_with_binary_payload` (schema min exactly
+  8), both through a multi-pass merge, so the guard over-rejects nothing at its
+  boundary.
 - **Instrumentation / attribute seeds:** the `__init__` peak/counter seeds
   (`= 0` -> `= 1`) and the merge peak update `resident + combined.nbytes` ->
-  `resident - combined.nbytes` (`_merge_heads_into__mutmut_47`). The merge peak
-  is instrumentation, not the enforced envelope: the memory-cap tests bracket it
-  (`0 < peak_merge_resident_bytes <= run_bytes_cap`) and the first per-round
-  `max(peak, resident)` update already holds the metric at `resident`, so the
-  mutated second update only reverts the metric to the (less honest) heads-only
+  `resident - combined.nbytes` (`_merge_heads_into__mutmut_54`). The merge peak
+  is a coarse data-resident witness, not the enforced envelope (see above): the
+  first per-round `max(peak, resident)` update already holds the metric at
+  `resident`, so the mutated second update only reverts it to the heads-only
   value without lowering it below `resident` or changing a sorted row. The TRUE
   end-to-end memory bound -- including sort_by's own un-instrumentable index
   array -- is proved by the subprocess RSS test
