@@ -284,7 +284,7 @@ ALLOWLIST: dict[str, int] = {
     # schema-blind, so that second gate cannot route through it without a
     # much larger signature change for zero behavioral gain). Same
     # FK-resolution-helper decomposition target stands.
-    # Phase 4 slice 3 (2026-09-01): +9 LOC (663 -> 672) admitting text_mask
+    # Phase 4 slice 3 (2026-09-01): +15 LOC (663 -> 678) admitting text_mask
     # onto the chunked route. text_mask joins `CHUNK_SAFE_STRATEGIES`
     # directly (own-value-keyed span masking, no new admitted set needed),
     # so this file only gains the `when:` rejection wiring: the import of
@@ -293,7 +293,7 @@ ALLOWLIST: dict[str, int] = {
     # docstring, and the CHUNK_SAFE strategy-table row + module-docstring
     # paragraph documenting the admission. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 672,
+    "src/decoy_engine/execution/_chunked.py": 678,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all

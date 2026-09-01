@@ -313,8 +313,14 @@ def run_mask_pipeline_chunked(
     `config` is the validated pipeline config dump; `chunks` yields
     pyarrow Tables of the table's rows in order. Returns an iterator of
     masked chunks in the same order; concatenating them is byte-identical
-    to a full-frame `run_pipeline` of the same rows (the value-keyed
-    contract, enforced by `check_chunked_compatibility` up front).
+    to a full-frame `run_pipeline` of the same rows. `check_chunked_
+    compatibility` enforces the CONFIG-level value-keyed contract up front,
+    but it does not see the data: runtime dtype stability is the caller's
+    precondition. A string-converting strategy on an int-with-nulls source
+    diverges by chunk boundary (a null-free chunk stays int64 -> "1"; a
+    null-bearing one widens to float64 -> "1.0"); the auto route gates that
+    at `_planner._runtime_source_rejections`, but a direct caller of THIS
+    low-level entry owns it (follow-up: mirror that gate here).
 
     `adapter` selects the execution substrate; None keeps the pandas
     adapter (the byte-stable default this mode shipped with). Pass a
