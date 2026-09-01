@@ -415,12 +415,16 @@ def run_mask_pipeline_chunked(
     group_key.reject_unsafe_group_key_group_by_dtype(
         plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
     )
-    # text_mask requires a string source (Trap: a non-string int+null source
-    # widens by chunk boundary under the handler's str()-conversion); this entry
-    # sees the data (first chunk schema), the config-only compat gate does not.
-    text_mask_gate.reject_unsafe_text_mask_source_dtype(
-        plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
+    # text_mask requires a chunk-stable string source (Trap: a non-string int+null
+    # source widens by chunk boundary under the handler's str()-conversion). This
+    # entry takes an arbitrary chunk iterable whose dtype could DRIFT across
+    # chunks, so resolve the text_mask columns once and validate the first chunk
+    # here + EVERY chunk in the masking loop below. The config-only compat gate
+    # cannot see the data.
+    text_mask_cols = text_mask_gate.text_mask_source_columns(
+        plan, resolved_registry, graph, table=table
     )
+    text_mask_gate.reject_unsafe_text_mask_chunk_schema(first.schema, text_mask_cols, table=table)
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
     # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK
     # key dtype (it never sees the data). Read those declarations so the per-chunk
@@ -463,6 +467,12 @@ def run_mask_pipeline_chunked(
             if declared_fk_dtypes:
                 reject_mismatched_chunked_fk_declared_dtype(
                     chunk, table=table, declared_fk_dtypes=declared_fk_dtypes
+                )
+            # text_mask source must stay a chunk-stable string on EVERY chunk, not
+            # just the first (the iterable's dtype can drift); see `_chunked_text_mask.py`.
+            if text_mask_cols:
+                text_mask_gate.reject_unsafe_text_mask_chunk_schema(
+                    chunk.schema, text_mask_cols, table=table
                 )
             # Per-chunk DGRN domain guard (no whole-stream row count); see `_chunked_dgrn.py`.
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)

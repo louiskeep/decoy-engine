@@ -16,14 +16,17 @@ avoids mutmut's in-process false-timeout pathology on this pandas/pyarrow-heavy 
 
 ## Numbers
 
-**91/106 = 85.85% LOGIC, 0 unresolved logic. 15 survivors: 14 ACCEPTED NON-CONTRACT (error-message
+**113/129 = 87.60% LOGIC, 0 unresolved logic. 16 survivors: 14 ACCEPTED NON-CONTRACT (error-message
 prose -- casing / `XX`-wrap mutants whose coded fields (code, path, column names, `', '.join`
-separator) are all independently pinned) + 1 EQUIVALENT (`build_work_list(plan, None)`:
-`reject_unsafe_text_mask_source_dtype` reads only node.table/kind/strategy/columns from the work
-list, none of which depend on the registry for a compiled plan -- same adjudication as slice 2's
-group_key wrapper). Every collector + wrapper LOGIC mutant (skip-guard table/kind/strategy,
-continue-not-break, `if not offending` guard, column-name index, path, join) is KILLED by the direct
-`TestSourceDtypeGate` unit tests. The prior 41/46 was the when-gate alone; this supersedes it.**
+separator) are all independently pinned) + 2 EQUIVALENT (`build_work_list(plan, None)` in
+`text_mask_source_columns` and its delegating wrapper: only node.table/kind/strategy/columns are
+read, none of which depend on the registry for a compiled plan -- same adjudication as slice 2's
+group_key wrapper). Every collector + gate LOGIC mutant (the skip-guard table/kind/strategy,
+`continue`-not-`break`, the `if not offending` guard, the column-name index, the path, the join, and
+the per-chunk-schema check) is KILLED by the direct `TestSourceDtypeGate` unit tests. Total rose from
+106 to 129 when the Codex re-gate remediation split the source-dtype gate into per-chunk pieces
+(`text_mask_source_columns` + `reject_unsafe_text_mask_chunk_schema`) so EVERY chunk is validated,
+not just the first. The prior 41/46 was the when-gate alone; this supersedes it.**
 
 | Function | Total | Killed | Accepted non-contract |
 |---|---|---|---|

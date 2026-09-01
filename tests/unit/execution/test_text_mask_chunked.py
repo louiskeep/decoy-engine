@@ -902,6 +902,21 @@ class TestSourceDtypeGate:
         assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
         assert "amount" in exc.value.message
 
+    def test_manual_entry_raises_on_later_chunk_dtype_drift(self, tmp_path) -> None:
+        # A caller feeding a STRING first chunk (passes admission) then a
+        # divergent INT chunk must be caught PER CHUNK, not just on the first
+        # (Codex re-gate BLOCKER: the manual iterable's dtype can drift).
+        cfg = self._int_source_cfg(tmp_path)  # text_mask on "amount"
+        chunk1 = pa.table({"amount": pa.array(["a", "b"], type=pa.string())})
+        chunk2 = pa.table({"amount": pa.array([1, None, 2], type=pa.int64())})
+        with pytest.raises(PlanCompileError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, [chunk1, chunk2], table="records", engine_version=_ENGINE_VERSION
+                )
+            )
+        assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
+
     def test_auto_route_falls_back_to_oracle_on_int_source(self, tmp_path) -> None:
         # Null-free int: the pre-existing integer-with-nulls gate does NOT catch
         # it, so this proves THIS slice's source-dtype gate closes the auto route.
