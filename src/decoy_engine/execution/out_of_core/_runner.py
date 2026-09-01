@@ -29,7 +29,7 @@ re-reads its spilled partitions the same way). A resident `pa.Table` source
 re-iterates without extra disk IO, but holds the WHOLE input resident -- free
 for CPU, not for memory; the residency bound (bounded peak residency w.r.t. row
 cardinality) holds only for `LazySource` sources plus an incrementally-consuming
-sink (see `CallerManagedResidencyWarning`). Without a sink, the streamed batches
+sink (others get a residency `QualityWarning`). Without a sink, the streamed batches
 are reassembled in memory column-wise under the whole-child chunk-merge rules
 (`_join.py`), so the returned tables keep the value-derived column types the
 pandas-oracle parity suite pins.

@@ -10,6 +10,14 @@ but its peak memory is the caller's responsibility. Four cross-model plan-gate
 rounds established that a precise fail-closed byte guard cannot make the bound
 absolute for arbitrary in-process callers, so the route signals these shapes
 rather than policing them.
+
+The signal is a structured `QualityWarning` in `ExecutionResult.warnings` (the
+route's own warning channel, folded into the manifest downstream). It is
+control-flow-neutral by construction: it rides in the returned result and cannot
+alter execution or be escalated by a caller's `-W error` filter, unlike a stdlib
+`warnings.warn`. Adding a new `code` to the S5-owned `QualityWarning` is within
+its contract (its docstring: "Codes added by later sprints, same shape, same
+emission channel").
 """
 
 from __future__ import annotations
@@ -19,23 +27,17 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.generation.pool._events import QualityWarning
+
 __all__ = [
-    "CallerManagedResidencyWarning",
+    "RESIDENCY_WARNING_CODE",
     "caller_managed_residency_shapes",
+    "residency_quality_warning",
     "residency_warning_message",
 ]
 
-
-class CallerManagedResidencyWarning(UserWarning):
-    """The OOC route ran a caller-managed input shape it cannot memory-bound.
-
-    A resident `pa.Table` source is RAM the caller already spent before the route
-    saw it; a no-sink output is RAM the caller asked to receive; a `source_loader`
-    returns an unbounded resident table. The route runs the job unchanged; this is
-    a best-effort heads-up that NEVER alters the result or control flow. A caller's
-    own `-W error` filter can escalate this stdlib warning into an exception; the
-    always-present, control-flow-neutral record is `quality_metrics["residency"]`.
-    """
+#: The `QualityWarning.code` a caller filters on to find the residency heads-up.
+RESIDENCY_WARNING_CODE = "out_of_core_caller_managed_residency"
 
 
 def caller_managed_residency_shapes(
@@ -75,4 +77,17 @@ def residency_warning_message(shapes: tuple[str, ...]) -> str:
         "(e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per "
         "table plus such a sink; or force execution_mode='full_frame' to run "
         "resident at your own memory risk."
+    )
+
+
+def residency_quality_warning(shapes: tuple[str, ...]) -> QualityWarning:
+    """The structured, control-flow-neutral residency warning for `.warnings`.
+
+    Route-level, not provider-attributed (`provider=""`); the shapes and the
+    human-readable message ride in `detail`.
+    """
+    return QualityWarning(
+        code=RESIDENCY_WARNING_CODE,
+        provider="",  # route-level, not provider-attributed; column defaults to None
+        detail={"shapes": list(shapes), "message": residency_warning_message(shapes)},
     )

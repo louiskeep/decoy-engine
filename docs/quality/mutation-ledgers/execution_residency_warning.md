@@ -1,9 +1,10 @@
-# Mutation grading: `execution/_residency_warning.py` -- predicate 0 unresolved
+# Mutation grading: `execution/_residency_warning.py` -- logic 0 unresolved
 
 P4-A (Option A) caller-managed residency warning
-(`docs/plans/2026-09-01-p4a-ooc-residency-guard.md`). The module holds the
-warning class, the shape predicate `caller_managed_residency_shapes` (the
-admission logic: which caller-managed input shapes are present), and
+(`docs/plans/2026-09-01-p4a-ooc-residency-guard.md`). The module holds the shape
+predicate `caller_managed_residency_shapes` (the admission logic: which
+caller-managed input shapes are present), `residency_quality_warning` (the
+structured `QualityWarning` factory attached to `ExecutionResult.warnings`), and
 `residency_warning_message` (the human-facing heads-up text).
 
 Graded via `scripts/native-testing/python_mutation_pilot.py` (mutmut generation +
@@ -12,13 +13,16 @@ standalone-pytest-per-mutant readjudication), selection
 
 ## Numbers
 
-**38 mutants: 22 killed, 16 survivors.** Every survivor is in
+**51 mutants: 35 killed, 16 survivors.** Every survivor is in
 `residency_warning_message` -- the human-readable warning string. Its one LOGIC
 branch, the `if not shapes: return ""` empty-guard, is killed
-(`test_empty_shapes_message_is_empty`). The shape predicate
-`caller_managed_residency_shapes` has **0 surviving mutants**: every branch
-(resident-by-type, `sink is None`, `source_loader is not None`, and the tuple
-assembly) is killed by the by-shape unit tests
+(`test_empty_shapes_message_is_empty`). Both the shape predicate
+`caller_managed_residency_shapes` and the `residency_quality_warning` factory
+have **0 surviving mutants**: the factory's `code`/`provider`/`detail` fields are
+pinned by `test_residency_quality_warning_shape` (and the redundant `column=None`
+default was dropped so no equivalent survivor exists). The predicate's every
+branch (resident-by-type, `sink is None`, `source_loader is not None`, and the
+tuple assembly) is killed by the by-shape unit tests
 (`test_resident_source_is_detected_by_type_not_dict_non_emptiness`,
 `test_missing_sink_is_a_caller_managed_shape`,
 `test_source_loader_is_a_caller_managed_shape`,

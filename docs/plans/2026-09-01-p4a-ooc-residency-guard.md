@@ -74,11 +74,14 @@ guarantee honestly instead.
   Neither can be retroactively bounded by the route.
 - **A cheap best-effort warning.** When the managed OOC route
   (`run_out_of_core_route`) runs with any caller-managed input shape (a resident
-  source, `sink is None`, or a `source_loader`), it emits **one** structured
-  warning naming the shape and the bounded alternative (pass a `LazySource` per
-  table + a sink, or force `execution_mode='full_frame'` to run resident at your
-  own memory risk). No byte sizing, no budget reservation, no rejection — a
-  best-effort heads-up, not a false guarantee.
+  source, `sink is None`, or a `source_loader`), it attaches **one** structured
+  `QualityWarning` (code `out_of_core_caller_managed_residency`) to the result's
+  `.warnings`, plus a `quality_metrics["residency"]` record, naming the shape and
+  the bounded alternative (pass a `LazySource` per table + a sink, or force
+  `execution_mode='full_frame'`). Both ride in the returned result, so they are
+  control-flow-neutral (a caller's `-W error` cannot escalate them, unlike a
+  stdlib `warnings.warn`). No byte sizing, no budget reservation, no rejection —
+  a best-effort heads-up, not a false guarantee.
 - **Docstring correction.** The route docstring advertises the hole as a feature
   ("a resident `pa.Table` source re-iterates for free", `_runner.py:28-29`) —
   true for CPU, false for RAM. It is corrected to state the residency cost and
@@ -127,19 +130,18 @@ estimate.
   free) and is caller-managed for memory.
 - [ ] **Task 2: Best-effort caller-managed warning.** In `run_out_of_core_route`,
   when the job runs with any caller-managed input shape — at least one resident
-  `pa.Table` source, `sink is None`, or a `source_loader` supplied — emit exactly
-  one structured warning that names the shape(s) and the bounded alternative. Pure
-  structural check on the inputs already in hand (no sizing, no loader invocation,
-  no rejection); it must not change any masked output or any routing decision.
-  Surface it primarily through the structured `ExecutionResult.warnings` result
-  field the route already returns (`_pipeline_route_exec.py:398`), so a caller's
-  `-W error` filter cannot turn the heads-up into an exception (which would
-  contradict "no rejection"). If a stdlib `warnings.warn` is also used for
-  visibility (there is no `filterwarnings = error` in the test config, so it does
-  not break existing tests), document that a caller's own warning filters can
-  alter control flow. The check runs regardless of source resolution, so it fires
-  before any loader call. Dedup so exactly one warning is emitted per invocation
-  even when multiple caller-managed shapes are present.
+  `pa.Table` source, `sink is None`, or a `source_loader` supplied — attach exactly
+  one structured `QualityWarning` (code `out_of_core_caller_managed_residency`;
+  the shapes + human message ride in `detail`) to the route's `ExecutionResult.
+  warnings` tuple, plus a `quality_metrics["residency"]` record. Pure structural
+  check on the inputs already in hand (no sizing, no loader invocation, no
+  rejection); it must not change any masked output or any routing decision.
+  Because both channels ride in the returned result (NOT a stdlib `warnings.warn`),
+  they are control-flow-neutral: a caller's `-W error` filter cannot escalate the
+  heads-up into a rejection. The shape classification runs on the pre-resolution
+  `sources`, so it is independent of source resolution. Dedup so exactly one
+  warning is emitted per invocation even when multiple caller-managed shapes are
+  present.
 - [ ] **Task 3: Tests.** (a) A `LazySource` + sink OOC job (the guaranteed shape,
   worker-shaped) emits **no** caller-managed warning. (b) A resident-source job, a
   `sink=None` job, and a `source_loader` job each emit the caller-managed warning

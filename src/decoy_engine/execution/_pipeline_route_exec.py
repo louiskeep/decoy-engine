@@ -17,7 +17,6 @@ re-decide).
 from __future__ import annotations
 
 import shutil
-import warnings
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -27,9 +26,8 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._residency_warning import (
-    CallerManagedResidencyWarning,
     caller_managed_residency_shapes,
-    residency_warning_message,
+    residency_quality_warning,
 )
 from decoy_engine.execution._sequential import run_sequential
 
@@ -267,11 +265,14 @@ def run_out_of_core_route(
     source holds the whole input in RAM (RAM the caller already spent), `sink is
     None` reassembles the whole output resident, a `source_loader` returns an
     unbounded resident table, and unrelated in-process memory the caller holds is
-    outside the route's view. Those caller-managed shapes run unchanged but emit
-    one best-effort `CallerManagedResidencyWarning` (and a `quality_metrics
-    ["residency"]` record) naming the shape and the bounded alternative; they are
-    documented, not policed -- four cross-model plan-gate rounds established that
-    a precise fail-closed byte guard cannot make the bound absolute for arbitrary
+    outside the route's view. Those caller-managed shapes run unchanged but attach
+    a best-effort structured `QualityWarning` (code
+    `out_of_core_caller_managed_residency`) to the result's `.warnings`, plus a
+    `quality_metrics["residency"]` record, naming the shape and the bounded
+    alternative. Both are control-flow-neutral -- they ride in the returned result
+    and cannot be escalated by a caller's `-W error` -- so the shapes are
+    documented, not policed; four cross-model plan-gate rounds established that a
+    precise fail-closed byte guard cannot make the bound absolute for arbitrary
     in-process callers.
     `strategy` surface is SC1's `hash/redact/truncate/passthrough`; widening is
     SC3/SC4, and an unsupported strategy is a routing miss (the job never
@@ -297,21 +298,14 @@ def run_out_of_core_route(
     from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
 
     # P4-A (Option A): the residency bound holds only for the structural bounded
-    # shape (LazySource sources + an incrementally-consuming sink). Warn on any
-    # caller-managed shape BEFORE the loader materializes anything, so the caller
-    # is told even if the loader then OOMs. Best-effort heads-up: no sizing, no
-    # rejection, no change to the result. Detection is on the pre-resolution
-    # `sources` (a loader-resolved table would look resident post-hoc; the
-    # `source_loader is not None` check already covers that shape).
+    # shape (LazySource sources + an incrementally-consuming sink). Classify any
+    # caller-managed shape on the PRE-resolution `sources` (a loader-resolved
+    # table would look resident post-hoc; the `source_loader is not None` check
+    # already covers that shape). The structured warning is attached to the
+    # returned result below -- control-flow-neutral, no sizing, no rejection.
     caller_managed_shapes = caller_managed_residency_shapes(
         sources, sink=sink, source_loader=source_loader
     )
-    if caller_managed_shapes:
-        warnings.warn(
-            residency_warning_message(caller_managed_shapes),
-            CallerManagedResidencyWarning,
-            stacklevel=2,
-        )
 
     resolved_sources = sources
     if source_loader is not None:
@@ -420,10 +414,15 @@ def run_out_of_core_route(
         source_loader=source_loader,
         sources_resident=sources_resident,
     )
-    # P4-A: the always-present, control-flow-neutral record of any caller-managed
-    # residency shape (mirrors the stdlib warning above, which a caller's -W
-    # error could escalate; this record never can).
+    # P4-A: signal any caller-managed residency shape two control-flow-neutral
+    # ways -- a structured `QualityWarning` in the route's `.warnings` channel
+    # (folded into the manifest downstream, filterable by its code) and an
+    # additive `quality_metrics["residency"]` record. Neither can alter execution
+    # or be escalated by a caller's `-W error`, so the never-rejects guarantee
+    # holds.
+    warnings = ooc_result.warnings
     if caller_managed_shapes:
+        warnings = (*warnings, residency_quality_warning(caller_managed_shapes))
         quality_metrics["residency"] = {
             "caller_managed": True,
             "shapes": list(caller_managed_shapes),
@@ -438,7 +437,7 @@ def run_out_of_core_route(
         outputs=dict(ooc_result.outputs),  # {} when a sink was provided
         timings=ooc_result.timings,
         boundary_conversion_ms=ooc_result.boundary_conversion_ms,
-        warnings=ooc_result.warnings,
+        warnings=warnings,
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=ooc_result.row_errors,

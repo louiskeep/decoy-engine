@@ -5,12 +5,16 @@ with respect to table row cardinality -- holds only for the structural bounded
 shape: every source a ``LazySource`` plus a sink that consumes ``write_batches``
 incrementally without retaining the stream. A resident ``pa.Table`` source, a
 missing sink, or a ``source_loader`` is caller-managed: the route runs it
-unchanged but emits one best-effort ``CallerManagedResidencyWarning`` and records
-``quality_metrics["residency"]``, without altering the result.
+unchanged but attaches a structured ``QualityWarning`` (code
+``out_of_core_caller_managed_residency``) to ``ExecutionResult.warnings`` and
+records ``quality_metrics["residency"]``, without altering the result.
 
-Four cross-model plan-gate rounds established that a precise fail-closed byte
-guard cannot make the bound absolute for arbitrary in-process callers, so the
-route documents and signals the caller-managed shapes rather than policing them.
+The warning is structured, NOT a stdlib ``warnings.warn``: it rides in the
+returned result, so it is control-flow-neutral -- a caller's ``-W error`` cannot
+escalate it into a rejection. Four cross-model plan-gate rounds established that a
+precise fail-closed byte guard cannot make the bound absolute for arbitrary
+in-process callers, so the route signals the caller-managed shapes rather than
+policing them.
 """
 
 from __future__ import annotations
@@ -20,12 +24,12 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._residency_warning import (
-    CallerManagedResidencyWarning,
+    RESIDENCY_WARNING_CODE,
     caller_managed_residency_shapes,
+    residency_quality_warning,
     residency_warning_message,
 )
 from decoy_engine.profile._readers import LazySource
@@ -44,6 +48,19 @@ def _lazy(tmp_path: Path, name: str = "lz") -> LazySource:
 
 def _resident() -> pa.Table:
     return pa.table({"id": pa.array(["a", "b"], type=pa.string())})
+
+
+def _residency_qws(result: object) -> list:
+    return [
+        w
+        for w in getattr(result, "warnings", ())
+        if getattr(w, "code", None) == RESIDENCY_WARNING_CODE
+    ]
+
+
+def _file_loader(config: dict):
+    paths = {name: spec["path"] for name, spec in config["sources"].items()}
+    return lambda name: pq.read_table(paths[name])
 
 
 # ---------------------------------------------------------------------------
@@ -110,44 +127,84 @@ def test_warning_message_names_shape_and_bounded_alternative() -> None:
     assert "full_frame" in msg
 
 
+def test_empty_shapes_message_is_empty() -> None:
+    # A direct caller cannot build a malformed "...for this call: ." message.
+    assert residency_warning_message(()) == ""
+
+
+def test_residency_quality_warning_shape() -> None:
+    qw = residency_quality_warning(("a resident pa.Table source",))
+    assert qw.code == RESIDENCY_WARNING_CODE
+    assert qw.provider == ""  # route-level, not provider-attributed
+    assert qw.column is None  # not column-attributed
+    assert qw.detail["shapes"] == ["a resident pa.Table source"]
+    assert "a resident pa.Table source" in qw.detail["message"]
+
+
 # ---------------------------------------------------------------------------
-# 2. Emission through run_pipeline (integration) + the structured record.
+# 2. Emission through run_pipeline (integration): a structured .warnings entry.
 # ---------------------------------------------------------------------------
 
 
 def test_forced_ooc_resident_no_sink_warns_and_records(tmp_path: Path) -> None:
     config = _fk_ooc_config(tmp_path)
     sources = _sources(config)  # resident pa.Tables, no sink passed
-    with pytest.warns(CallerManagedResidencyWarning) as caught:
-        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
+    result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
-    message = str(caught[0].message)
-    assert "a resident pa.Table source" in message
-    assert "no sink" in message
+    qws = _residency_qws(result)
+    assert len(qws) == 1
+    shapes = qws[0].detail["shapes"]
+    assert "a resident pa.Table source" in shapes
+    assert any(s.startswith("no sink") for s in shapes)
     residency = result.quality_metrics["residency"]
     assert residency["caller_managed"] is True
     assert "a resident pa.Table source" in residency["shapes"]
-    assert any(s.startswith("no sink") for s in residency["shapes"])
 
 
-def test_forced_ooc_resident_with_sink_still_warns_but_not_for_sink(tmp_path: Path) -> None:
+def test_control_flow_neutral_under_warnings_as_error(tmp_path: Path) -> None:
+    # The HIGH fix: the residency signal is a structured result entry, not a
+    # stdlib warnings.warn, so a caller's -W error cannot escalate it into a
+    # rejection. Under simplefilter("error") the job still completes and returns
+    # the structured warning.
+    config = _fk_ooc_config(tmp_path)
+    sources = _sources(config)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert len(_residency_qws(result)) == 1
+
+
+def test_forced_ooc_resident_with_sink_warns_but_not_for_sink(tmp_path: Path) -> None:
     from decoy_engine.execution import ParquetTransactionalSink
 
     config = _fk_ooc_config(tmp_path)
     sources = _sources(config)
     sink = ParquetTransactionalSink(tmp_path / "ooc_out")
-    with pytest.warns(CallerManagedResidencyWarning) as caught:
-        result = run_pipeline(
-            config,
-            sources,
-            engine_version="0.1.0",
-            execution_mode="out_of_core",
-            sink=sink,
-        )
-    message = str(caught[0].message)
-    assert "a resident pa.Table source" in message
-    assert "no sink" not in message  # a sink is present
-    assert "no sink" not in " ".join(result.quality_metrics["residency"]["shapes"])
+    result = run_pipeline(
+        config, sources, engine_version="0.1.0", execution_mode="out_of_core", sink=sink
+    )
+    shapes = _residency_qws(result)[0].detail["shapes"]
+    assert "a resident pa.Table source" in shapes
+    assert not any(s.startswith("no sink") for s in shapes)  # a sink is present
+
+
+def test_forced_ooc_loader_job_records_the_source_loader_shape(tmp_path: Path) -> None:
+    # MEDIUM fix: an end-to-end loader job (sources={} + source_loader) routed to
+    # OOC records the residency warning naming the source_loader shape. The shape
+    # is classified on the pre-resolution sources, so it is present regardless of
+    # what the loader returns.
+    config = _fk_ooc_config(tmp_path)
+    result = run_pipeline(
+        config,
+        {},
+        engine_version="0.1.0",
+        execution_mode="out_of_core",
+        source_loader=_file_loader(config),
+    )
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    shapes = _residency_qws(result)[0].detail["shapes"]
+    assert any(s.startswith("a source_loader") for s in shapes)
 
 
 def test_forced_ooc_byte_parity_preserved_with_warning(tmp_path: Path) -> None:
@@ -155,20 +212,43 @@ def test_forced_ooc_byte_parity_preserved_with_warning(tmp_path: Path) -> None:
     config = _fk_ooc_config(tmp_path)
     sources = _sources(config)
     full = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
-    with pytest.warns(CallerManagedResidencyWarning):
-        forced = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
+    forced = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
+    assert _residency_qws(forced)  # warning present
     assert _values(forced.outputs) == _values(full.outputs)
+
+
+def test_guaranteed_lazysource_sink_shape_is_silent_end_to_end(tmp_path: Path) -> None:
+    # The no-false-positive property, pinned end to end: an all-LazySource + sink
+    # OOC job routed through run_pipeline records no residency warning and no
+    # residency metric. Locks it against a future change that resolves sources to
+    # resident tables before the guard runs.
+    from decoy_engine.execution import ParquetTransactionalSink
+
+    config = _fk_ooc_config(tmp_path)
+    lazy_sources = {
+        name: LazySource(Path(spec["path"])) for name, spec in config["sources"].items()
+    }
+    sink = ParquetTransactionalSink(tmp_path / "guaranteed_out")
+    result = run_pipeline(
+        config,
+        lazy_sources,
+        engine_version="0.1.0",
+        execution_mode="out_of_core",
+        sink=sink,
+    )
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert _residency_qws(result) == []
+    assert "residency" not in result.quality_metrics
 
 
 def test_full_frame_route_does_not_warn(tmp_path: Path) -> None:
     # The warning is scoped to the managed OOC route; a full-frame job (guard
-    # never consulted) is silent even with resident sources.
+    # never consulted) records no residency warning even with resident sources.
     config = _fk_ooc_config(tmp_path)
     sources = _sources(config)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", CallerManagedResidencyWarning)
-        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
+    result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
     assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
+    assert _residency_qws(result) == []
     assert "residency" not in result.quality_metrics
 
 
@@ -179,33 +259,3 @@ def test_run_fk_out_of_core_documents_the_precondition() -> None:
     assert "Residency precondition" in doc
     assert "caller-managed" in doc
     assert "LazySource" in doc
-
-
-def test_empty_shapes_message_is_empty() -> None:
-    # A direct caller cannot build a malformed "...for this call: ." message.
-    assert residency_warning_message(()) == ""
-
-
-def test_guaranteed_lazysource_sink_shape_is_silent_end_to_end(tmp_path: Path) -> None:
-    # The no-false-positive property, pinned end to end: an all-LazySource + sink
-    # OOC job routed through run_pipeline emits no warning and records no
-    # residency entry. Locks it against a future change that resolves sources to
-    # resident tables before the guard runs.
-    from decoy_engine.execution import ParquetTransactionalSink
-
-    config = _fk_ooc_config(tmp_path)
-    lazy_sources = {
-        name: LazySource(Path(spec["path"])) for name, spec in config["sources"].items()
-    }
-    sink = ParquetTransactionalSink(tmp_path / "guaranteed_out")
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", CallerManagedResidencyWarning)
-        result = run_pipeline(
-            config,
-            lazy_sources,
-            engine_version="0.1.0",
-            execution_mode="out_of_core",
-            sink=sink,
-        )
-    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
-    assert "residency" not in result.quality_metrics
