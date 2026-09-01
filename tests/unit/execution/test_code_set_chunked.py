@@ -225,6 +225,30 @@ class TestByteParity:
         assert combined.column("a").to_pylist() == oracle.column("a").to_pylist()
         assert combined.column("b").to_pylist() == oracle.column("b").to_pylist()
 
+    def test_large_string_source_parity(self, tmp_path) -> None:
+        # The admission gate accepts large_string sources, not only string;
+        # pin that a large_string source is byte-identical to the oracle end to
+        # end (chunked vs full-frame), not merely admitted by the collector.
+        codes = ["E11.9", "I21.0", "J45.9", "N18.6"]
+        rows: list[str | None] = [None if i % 4 == 0 else codes[i % len(codes)] for i in range(20)]
+        table = pa.table({"code": pa.array(rows, type=pa.large_string())})
+        columns = [_code_set_col("code", "icd10", namespace="diag")]
+        cfg = _config(tmp_path, columns)
+        _write_csv_stub(tmp_path, "records", table)
+        sources = {"records": table}
+        auto = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            auto_chunk_threshold_rows=_LOW_THRESHOLD,
+            chunk_size_rows=3,
+        )
+        forced = run_pipeline(
+            cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False
+        )
+        assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
+        assert auto.outputs["records"].equals(forced.outputs["records"])
+
 
 # ---------------------------------------------------------------------------
 # 2. Byte-identity to the out-of-core Group (c) route on the shared admitted
@@ -559,6 +583,89 @@ class TestColumnStrategyScoping:
             reject_code_set_fk_keys(cfg, table="parent")
         assert exc.value.code == "chunked_code_set_fk_key_unsupported"
         assert "id" in exc.value.message
+        assert exc.value.path == "tables.parent.columns"
+
+
+class TestRejectionFieldPinning:
+    """Pin the coded fields (path, offending column name, placeholder) of the
+    code_set reject gates, and the reachable control-flow guards, so a mutation
+    to any of them reddens a test rather than silently surviving. Free-text
+    message prose stays adjudicated as accepted-non-contract in the mutation
+    ledger; the machine-consumed fields are pinned here."""
+
+    def test_reject_code_set_when_pins_path_columns_and_placeholder(self) -> None:
+        # Two offending columns: one explicitly named (a name sharing no word
+        # with the message prose, so the substring check cannot pass on a
+        # gutted extraction), one with no `name` key (exercises the `"?"`
+        # placeholder). Sorted order puts "?" first.
+        table_cfg = {
+            "columns": [
+                {"name": "diagnosiscol", "strategy": "code_set", "when": "a > 0"},
+                {"strategy": "code_set", "when": "b > 0"},
+            ]
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            reject_code_set_when(table_cfg, table="recs")
+        assert exc.value.code == "chunked_code_set_when_not_supported"
+        assert exc.value.path == "tables.recs.columns"
+        # Pins the get("name", "?") extraction, the "?" placeholder, the
+        # ", " join separator, and that message is not None.
+        assert "?, diagnosiscol" in exc.value.message
+
+    def test_reject_code_set_fk_keys_parent_guard_is_and_not_or(self) -> None:
+        # `table` owns a code_set column whose NAME collides with a DIFFERENT
+        # table's parent key. `table` is not itself in any edge, so it must NOT
+        # be rejected: the parent-side guard must be `parent.table == table`
+        # (an `and`->`or` mutation would flag the collision and over-reject).
+        cfg = {
+            "tables": [
+                {"name": "t", "columns": [_code_set_col("shared", "icd10")]},
+                {"name": "other", "columns": [_code_set_col("shared", "icd10")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "other", "columns": ["shared"]},
+                    "children": [{"table": "otherchild", "columns": ["fk"]}],
+                    "orphan_policy": "remap",
+                }
+            ],
+        }
+        reject_code_set_fk_keys(cfg, table="t")  # must not raise
+
+    def test_reject_code_set_fk_keys_scans_past_malformed_entries(self) -> None:
+        # A non-dict relationship entry (and a non-dict child) must be SKIPPED,
+        # not break the scan, or a real code_set FK key after it is missed.
+        cfg_rel = {
+            "tables": [
+                {"name": "t", "columns": [_code_set_col("id", "icd10")]},
+                {"name": "c", "columns": [{"name": "pid", "strategy": "hash"}]},
+            ],
+            "relationships": [
+                123,
+                {
+                    "parent": {"table": "t", "columns": ["id"]},
+                    "children": [{"table": "c", "columns": ["pid"]}],
+                    "orphan_policy": "remap",
+                },
+            ],
+        }
+        with pytest.raises(PlanCompileError):
+            reject_code_set_fk_keys(cfg_rel, table="t")
+        cfg_child = {
+            "tables": [
+                {"name": "p", "columns": [{"name": "id", "strategy": "hash"}]},
+                {"name": "t", "columns": [_code_set_col("k", "icd10")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "p", "columns": ["id"]},
+                    "children": [999, {"table": "t", "columns": ["k"]}],
+                    "orphan_policy": "remap",
+                }
+            ],
+        }
+        with pytest.raises(PlanCompileError):
+            reject_code_set_fk_keys(cfg_child, table="t")
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +815,7 @@ class TestAdmissionBoundary:
                 pa.schema([("code", pa.int64())]), ["code"], table="t"
             )
         assert exc.value.code == "chunked_code_set_source_dtype_unsupported"
+        assert exc.value.path == "tables.t.columns"
 
     def test_fk_key_parent_orientation_rejected(self, tmp_path) -> None:
         cfg = {
