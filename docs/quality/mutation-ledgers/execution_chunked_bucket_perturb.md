@@ -7,8 +7,9 @@ Phase 4 chunked-route slice 5 (`bucket_perturb` explicit-`date_format` admission
 explicit-`date_format` config gate), `bucket_perturb_source_columns` /
 `unsafe_bucket_perturb_source_columns` / `reject_unsafe_bucket_perturb_chunk_schema`
 (the schema-layer source-dtype gate trio, mirroring the code_set trio),
-`reject_bucket_perturb_when` (the `when:` gate), and `reject_bucket_perturb_fk_keys`
-(the both-orientation FK-key gate).
+`reject_bucket_perturb_when` (the `when:` gate), `reject_bucket_perturb_fk_keys`
+(the both-orientation FK-key gate), and `reject_bucket_perturb_missing_namespace`
+(the data-independent namespace pre-check run before the empty-input return).
 
 Graded via `scripts/native-testing/python_mutation_pilot.py` (mutmut generation +
 standalone-pytest-per-mutant readjudication that promotes mutmut's in-process
@@ -17,13 +18,17 @@ false-timeouts to their true verdict), selection
 
 ## Numbers
 
-**198/244 = 81.15% LOGIC, 0 unresolved logic. 46 survivors, ALL accepted
+**231/277 = 83.39% LOGIC, 0 unresolved logic. 46 survivors, ALL accepted
 error-message prose** (casing / `XX`-wrap of free-text message fragments whose
 coded fields are all independently pinned). No provable-equivalent survivors and
-no coded-field survivors: the builder pinned `code`, `PlanCompileError.path`, the
-offending column name, and the `"?"` placeholder on every reject gate, and the
-registry mutant is killed (below). The corrected tally is the contract (mutmut raw
-timeouts are readjudicated standalone).
+no coded-field survivors: `code`, `PlanCompileError.path`, the offending column
+name, the `"?"` placeholder, and the `StrategyError` `strategy` field are pinned
+on the reject gates, and the registry mutant is killed in BOTH the source-column
+collector and the namespace pre-check (below). The corrected tally is the
+contract (mutmut raw timeouts are readjudicated standalone). The namespace
+pre-check added for the Codex-final LOW is fully covered (0 survivors): its own
+registry / table+strategy scope / `continue`-not-`break` / strategy-field mutants
+are all killed.
 
 | Function | Survivors |
 |---|---|
@@ -50,10 +55,16 @@ code_set / text_mask / group_key; it is pinned here on the first pass.)
 
 ## What is PINNED
 
-`code`, `PlanCompileError.path`, offending column name, `"?"` placeholder, and the
-`", "` join separator on all three reject gates; the explicit-`date_format`
+`code`, `PlanCompileError.path`, offending column name, and the `"?"` placeholder
+on all three reject gates; the `", "` join separator on the `when` gate (on the
+source-dtype and FK gates the multi-offender separator FORMAT is accepted prose --
+the offending column NAMES are pinned individually, so a separator mutant carries
+no unverified behavior, only unverified wording); the explicit-`date_format`
 config gate; the source-dtype gate (first + every chunk + planner auto-route);
-FK-key rejection both orientations; the registry argument (above); and
+FK-key rejection both orientations; the data-independent namespace pre-check (a
+namespace-less config raises `bucket_perturb_requires_namespace` identically to
+the oracle, including on a zero-chunk input,
+`reject_bucket_perturb_missing_namespace`); the registry argument (above); and
 byte-parity (string + large_string sources, all three buckets, chunk-boundary
 splits, nulls, unparseable passthrough, real secret, empty/all-null via
 null-promotion).
