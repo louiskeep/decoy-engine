@@ -277,6 +277,72 @@ def test_reject_row_wider_than_per_head_cap(tmp_path):
         sorter.close()
 
 
+def test_reject_narrow_rows_index_unbounded(tmp_path):
+    # A run of rows narrower than the 8-byte sort index (here a bare int8 key,
+    # 1 byte/row) makes sort_by's index array dwarf the data the byte cap
+    # counts, so it fails closed BEFORE any spill rather than blow the resident
+    # envelope. int8 is an allowlisted key type, so this passes key validation
+    # and is caught by the average-row-width guard.
+    spill = tmp_path / "spill"
+    sorter = BoundedExternalSorter(
+        spill_dir=spill, run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        narrow = pa.record_batch({KEY: pa.array(list(range(100)), type=pa.int8())})
+        with pytest.raises(ExecutionError) as exc:
+            sorter.write(narrow)
+        assert exc.value.code == "out_of_core_sort_row_index_unbounded"
+        assert list(spill.glob("*.arrow")) == []  # rejected before any spill
+    finally:
+        sorter.close()
+
+
+def test_reject_narrow_key_only_int32(tmp_path):
+    # A bare int32 key (4 bytes/row, < 8) is likewise rejected: the contract is
+    # an effective row width >= 8 bytes, independent of which narrow key type.
+    spill = tmp_path / "spill"
+    sorter = BoundedExternalSorter(
+        spill_dir=spill, run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        narrow = pa.record_batch({KEY: pa.array(list(range(100)), type=pa.int32())})
+        with pytest.raises(ExecutionError) as exc:
+            sorter.write(narrow)
+        assert exc.value.code == "out_of_core_sort_row_index_unbounded"
+    finally:
+        sorter.close()
+
+
+def test_exact_8_byte_rows_accepted_and_sorted(tmp_path):
+    # The boundary is inclusive at exactly 8 bytes/row: a bare int64 key (8
+    # bytes, no payload) has num_rows * 8 == nbytes, so the guard (`> nbytes`)
+    # accepts it. It must sort correctly, proving the guard over-rejects
+    # nothing valid at its exact boundary.
+    n = 2_000
+    values = list(range(n))
+    order = list(range(n))
+    random.Random(3).shuffle(order)
+    shuffled = [values[i] for i in order]
+    batches = [
+        pa.record_batch({KEY: pa.array(shuffled[s : s + 41], type=pa.int64())})
+        for s in range(0, n, 41)
+    ]
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "spill", run_bytes_cap=2 * 1024, merge_fan_in=3, sort_key_column=KEY
+    )
+    try:
+        for b in batches:
+            sorter.write(b)
+        # Force a real multi-pass merge so the tag-free split path is exercised
+        # on exact-boundary rows, not just a single run.
+        assert len(list((tmp_path / "spill").glob("run_*.arrow"))) > 3
+        sorter.finish()
+        out = pa.Table.from_batches(list(sorter.iter_ordered()), schema=batches[0].schema)
+        assert out.column(KEY).to_pylist() == values
+    finally:
+        sorter.close()
+
+
 def test_reject_key_type_drift(tmp_path):
     spill = tmp_path / "spill"
     sorter = BoundedExternalSorter(
@@ -354,11 +420,21 @@ def test_reject_merge_fan_in_below_two(tmp_path):
     assert exc.value.code == "out_of_core_reorder_budget_too_small"
 
 
-def test_minimal_positive_cap_and_fan_in_construct(tmp_path):
-    # Any POSITIVE cap and fan_in >= 2 must construct without raising -- pins the
-    # exact boundary of the budget guards (`cap <= 0`, `fan_in < 2`), so a
-    # mutation to `cap <= 1` / `fan_in < 3` that rejects a valid minimum reddens.
-    BoundedExternalSorter(spill_dir=tmp_path / "s", run_bytes_cap=1, merge_fan_in=2).close()
+def test_minimal_viable_cap_and_fan_in_construct(tmp_path):
+    # The smallest cap whose per-head cap (run_bytes_cap // (2 * fan_in)) does
+    # not round to 0 must construct -- pins the `cap <= 0` and `fan_in < 2`
+    # boundaries (a mutation to `cap <= 1` / `fan_in < 3` that rejects this valid
+    # minimum reddens) AND the per-head-cap>=1 boundary just below.
+    BoundedExternalSorter(spill_dir=tmp_path / "s", run_bytes_cap=4, merge_fan_in=2).close()
+
+
+def test_reject_cap_too_small_for_per_head(tmp_path):
+    # A positive cap whose per-head cap (run_bytes_cap // (2 * fan_in)) rounds to
+    # 0 is rejected at construction rather than clamped to a useless 1-byte cap
+    # that could never buffer a row. cap=3, fan_in=2 -> 3 // 4 == 0.
+    with pytest.raises(ExecutionError) as exc:
+        BoundedExternalSorter(spill_dir=tmp_path / "s", run_bytes_cap=3, merge_fan_in=2)
+    assert exc.value.code == "out_of_core_reorder_budget_too_small"
 
 
 def test_write_after_finish_raises(tmp_path):

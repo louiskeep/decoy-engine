@@ -174,9 +174,13 @@ def test_merge_resident_within_cap(tmp_path):
             for value in out_batch.column(ROW_NR).to_pylist()
         ]
         assert seen == list(range(n))
-        # Bracketed: the multi-pass merge really loads heads, so the peak is a
-        # real positive measurement (kills a zero-undercount instrumentation
-        # mutation), and it stays within the cap.
+        # The merge peak now measures the concurrent DATA peak -- the co-loaded
+        # heads plus the emit gather held at the same time (`resident +
+        # combined.nbytes`), not just the pre-split heads -- so it is a real
+        # positive measurement (kills a zero-undercount mutation) that still
+        # stays within the cap. The sort_by index array on top is bounded by the
+        # >= 8-byte average-row guard and proved end-to-end by the subprocess RSS
+        # test; these 24-byte rows are comfortably above that floor.
         assert 0 < sorter.peak_merge_resident_bytes <= run_bytes_cap
     finally:
         sorter.close()
