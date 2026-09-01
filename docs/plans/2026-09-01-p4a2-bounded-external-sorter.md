@@ -167,8 +167,13 @@ existing `out_of_core_sort_row_too_wide` fail-closed posture.
 - **Parity oracle:** an in-memory `table.sort_by(sort_key_column)` on a payload
   table (key column + at least one non-key payload column). The shuffled input
   stream through the sorter (`write*` → `finish` → `iter_ordered`) must reproduce
-  it, for int AND a non-int key (string; add binary if cheap).
-- **The non-int parity test MUST force the generalized multi-pass merge**
+  it. **One cheap positive parity case per allowlisted key type** — signed int,
+  unsigned int, string, large_string, binary, date32/64, timestamp — each a small
+  single-run assertion, so the whole promised allowlist is actually exercised, not
+  just int/string.
+- **The full 2-caps × 2-fan-ins multi-pass matrix uses the string key** (one type
+  is enough to exercise the generic multi-pass cutoff; the per-type cases above
+  cover breadth cheaply). **This matrix MUST force the generalized multi-pass merge**
   (HIGH from the gate): size the cap so the non-int run generates `> merge_fan_in`
   runs, and run the parity comparison across **at least two caps × two
   `merge_fan_in` values** — the risky generic cutoff logic lives only in the
@@ -186,11 +191,17 @@ existing `out_of_core_sort_row_too_wide` fail-closed posture.
   type, a key type that drifts between batches, and a missing key column each
   raise their stable error code at `write`-time before any run file is created
   (assert no spill file exists on the failed path).
-- **Failure-cleanup proof (new, MEDIUM from the gate):** if a merge step fails
-  mid-`finish()`, `close()` must still remove every run file including a partial
-  merge output — track the merge output path the moment it is created (or
-  unlink-on-exception in `_merge_group`), and test that an injected merge failure
-  leaves no file behind.
+- **Failure-cleanup proof (MEDIUM, round 2 tightened):** the sorter keeps a
+  cleanup registry of EVERY run file it ever creates — the initial spilled runs
+  AND every intermediate merge output of every pass. Each merge output path enters
+  the registry BEFORE its file is opened and stays registered through success or
+  failure (a completed pass may unlink only the *inputs* it has finished merging,
+  never drop an un-consumed intermediate from the registry). So `close()` removes
+  all remaining files regardless of where `finish()` failed. Do NOT rely on a
+  local `unlink-on-exception in _merge_group` alone: it cleans only the failing
+  group's output and leaks a prior successful group's intermediate held in local
+  state. **Test:** inject a failure in the SECOND merge group after the first
+  group has succeeded, then call `close()` and assert no sorter file remains.
 - **Fail-closed proofs (ported):** an over-cap single row raises
   `out_of_core_sort_row_too_wide`; `run_bytes_cap <= 0` / `merge_fan_in < 2` raise
   `out_of_core_reorder_budget_too_small`; `close()` removes all run files
@@ -222,17 +233,24 @@ existing `out_of_core_sort_row_too_wide` fail-closed posture.
   reject missing key column — each a stable error code. Document the total-key
   (unique/tiebreak) precondition and partition-invariance on the class docstring;
   cite Knuth §5.4 and the OOC-B provenance.
-- [ ] **Task 3: Generalization + robustness tests.** Non-int (string) parity
-  against the in-memory `sort_by` oracle **forcing `> merge_fan_in` runs**, across
-  ≥2 caps × ≥2 fan-ins, comparing the full reconstructed table (values + schema,
-  payload columns included); a duplicate-key case; the partition-invariance test
-  (tiny-cap == huge-cap full-table equality); the five key-contract rejections
-  (assert no spill file created); and the failure-cleanup test (injected merge
-  failure leaves no run file). Keep every ported proof green under the new names.
-- [ ] **Task 4: Failure-cleanup hardening.** Ensure a merge output path is tracked
-  the instant it is created (or unlink-on-exception in `_merge_group`) so `close()`
-  cannot leak a partial merge file after a mid-`finish()` failure. (Verified by the
-  Task 3 cleanup test.)
+- [ ] **Task 3: Generalization + robustness tests.** One cheap positive parity
+  case per allowlisted key type (signed int, unsigned int, string, large_string,
+  binary, date32/64, timestamp) against the in-memory `sort_by` oracle; the STRING
+  key additionally run through the full multi-pass matrix — **forcing
+  `> merge_fan_in` runs**, across ≥2 caps × ≥2 fan-ins, comparing the full
+  reconstructed table (values + schema, payload columns included); a duplicate-key
+  case; the partition-invariance test (tiny-cap == huge-cap full-table equality);
+  the five key-contract rejections (assert no spill file created); and the
+  failure-cleanup test (fail the second merge group after the first succeeds →
+  `close()` leaves no run file). Keep every ported proof green under the new names.
+- [ ] **Task 4: Failure-cleanup registry.** The sorter registers EVERY run file
+  it creates (initial runs + all intermediate merge outputs of every pass) in a
+  cleanup set the moment before the file is opened, and keeps it registered until
+  `close()` unlinks it — a completed pass may delete only its consumed inputs,
+  never an un-consumed intermediate. So `close()` removes every remaining file no
+  matter where `finish()` failed (verified by the Task 3 test that fails the
+  second merge group after the first succeeds). A bare unlink-on-exception in
+  `_merge_group` is insufficient and is not the mechanism.
 - [ ] **Task 5: Lint + mutation + sentry.** ruff check + format on the diff;
   mypy on the diff where runnable (numpy-2.5.0 aborts locally on py3.13 — CI py3.10
   covers it). Mutation-grade the sorter's LOGIC (the flush-before-overflow guard,
@@ -256,8 +274,13 @@ existing `out_of_core_sort_row_too_wide` fail-closed posture.
 
 - `BoundedExternalSorter` exists on `feat/native-phase3`, sorts a batch stream by
   a single non-null orderable key column to value+schema parity with an in-memory
-  `sort_by` (int AND string), and never alters a value. The non-int parity is
-  proven through a forced multi-pass merge across ≥2 caps × ≥2 fan-ins.
+  `sort_by`, and never alters a value. One positive parity case covers each
+  allowlisted key type (int/uint/string/large_string/binary/date/timestamp); the
+  string key additionally proves the generic multi-pass merge across ≥2 caps × ≥2
+  fan-ins.
+- A mid-`finish()` merge failure (second group fails after the first succeeds)
+  leaks no run file: `close()` clears the sorter's cleanup registry of every run
+  and intermediate it created.
 - The key contract is enforced fail-closed at `write`-time (before any spill):
   null key, float key, unsupported type, key type drift, and missing key column
   each raise their stable error code with no run file created.
