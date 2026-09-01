@@ -314,6 +314,13 @@ def test_reject_merge_fan_in_below_two(tmp_path):
     assert exc.value.code == "out_of_core_reorder_budget_too_small"
 
 
+def test_minimal_positive_cap_and_fan_in_construct(tmp_path):
+    # Any POSITIVE cap and fan_in >= 2 must construct without raising -- pins the
+    # exact boundary of the budget guards (`cap <= 0`, `fan_in < 2`), so a
+    # mutation to `cap <= 1` / `fan_in < 3` that rejects a valid minimum reddens.
+    BoundedExternalSorter(spill_dir=tmp_path / "s", run_bytes_cap=1, merge_fan_in=2).close()
+
+
 def test_write_after_finish_raises(tmp_path):
     sorter = BoundedExternalSorter(
         spill_dir=tmp_path / "s", run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
