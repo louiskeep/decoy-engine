@@ -16,12 +16,18 @@ avoids mutmut's in-process false-timeout pathology on this pandas/pyarrow-heavy 
 
 ## Numbers
 
-**113/129 = 87.60% LOGIC, 0 unresolved logic. 16 survivors: 14 ACCEPTED NON-CONTRACT (error-message
+**115/129 = 89.15% LOGIC, 0 unresolved logic. 14 survivors, ALL ACCEPTED NON-CONTRACT (error-message
 prose -- casing / `XX`-wrap mutants whose coded fields (code, path, column names, `', '.join`
-separator) are all independently pinned) + 2 EQUIVALENT (`build_work_list(plan, None)` in
-`text_mask_source_columns` and its delegating wrapper: only node.table/kind/strategy/columns are
-read, none of which depend on the registry for a compiled plan -- same adjudication as slice 2's
-group_key wrapper). Every collector + gate LOGIC mutant (the skip-guard table/kind/strategy,
+separator) are all independently pinned).**
+
+Correction (2026-09-01, from the code_set slice's Codex final gate): a prior pass wrongly accepted
+2 `build_work_list(plan, registry)` -> `build_work_list(plan, None)` survivors (in
+`text_mask_source_columns` and its delegating wrapper) as EQUIVALENT. They are NOT equivalent: a
+chunked table can carry `text_mask` beside a provider-backed `faker` column (both are
+chunk-admitted), and `build_work_list` consults the registry (`provider_is_composite`) for the
+faker node, so `None` raises on a reachable mixed plan. Both are now killed by
+`test_registry_is_load_bearing_with_a_provider_backed_sibling`, which drove the count from 16 to
+14 and the score from 87.60% to 89.15%. Every collector + gate LOGIC mutant (the skip-guard table/kind/strategy,
 `continue`-not-`break`, the `if not offending` guard, the column-name index, the path, the join, and
 the per-chunk-schema check) is KILLED by the direct `TestSourceDtypeGate` unit tests. Total rose from
 106 to 129 when the Codex re-gate remediation split the source-dtype gate into per-chunk pieces
