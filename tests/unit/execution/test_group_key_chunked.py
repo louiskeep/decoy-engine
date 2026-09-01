@@ -873,6 +873,7 @@ class TestOrderingRegressions:
                 plan, table.schema, table="people", registry=registry, relationship_graph=graph
             )
         assert exc.value.code == "chunked_group_key_group_by_dtype_unsupported"
+        assert exc.value.path == "tables.people.columns"  # pins the coded path field
 
         with pytest.raises(PlanCompileError) as exc2:
             list(
@@ -1501,6 +1502,29 @@ class TestWhenRejection:
         with pytest.raises(PlanCompileError) as exc:
             reject_group_key_when(table_cfg, table="people")
         assert exc.value.code == "chunked_group_key_when_not_supported"
+
+    def test_reject_group_key_when_pins_path_columns_and_placeholder(self) -> None:
+        # Two offending columns: one named (a name sharing no word with the
+        # message prose, so the substring check cannot pass on a gutted
+        # extraction) and one with no `name` key (the "?" placeholder). Sorted
+        # order puts "?" first. Pins the get("name", "?") extraction, the "?"
+        # placeholder, the ", " join separator, message-not-None, and the path.
+        table_cfg = {
+            "columns": [
+                {
+                    "name": "diagnosiscol",
+                    "strategy": "group_key",
+                    "provider_config": {"group_by": "x"},
+                    "when": "a > 0",
+                },
+                {"strategy": "group_key", "provider_config": {"group_by": "y"}, "when": "b > 0"},
+            ]
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            reject_group_key_when(table_cfg, table="recs")
+        assert exc.value.code == "chunked_group_key_when_not_supported"
+        assert exc.value.path == "tables.recs.columns"
+        assert "?, diagnosiscol" in exc.value.message
 
     def test_non_string_target_would_mix_dtypes_documenting_the_rejection(self) -> None:
         """Documents WHY the rejection exists: on a non-string target column,
