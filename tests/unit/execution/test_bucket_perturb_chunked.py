@@ -891,9 +891,12 @@ class TestAdmissionSurfaces:
         assert result.quality_metrics["auto_chunk"]["mode"] == "chunked"
 
     def test_cross_substrate_polars_value_equals_pandas_oracle(self, tmp_path) -> None:
-        table = pa.table(
-            {"d": pa.array([f"2024-0{(i % 9) + 1}-15" for i in range(20)], type=pa.string())}
-        )
+        # Include a null and an unparseable value so the polars path exercises
+        # the passthrough branches (both must match the pandas oracle byte-for-byte).
+        raw: list[str | None] = [f"2024-0{(i % 9) + 1}-15" for i in range(20)]
+        raw[3] = None
+        raw[7] = "not-a-date"
+        table = pa.table({"d": pa.array(raw, type=pa.string())})
         columns = [_bucket_perturb_col("d")]
         cfg = _config(tmp_path, columns)
         _write_csv_stub(tmp_path, "records", table)
