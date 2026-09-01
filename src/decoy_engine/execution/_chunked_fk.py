@@ -10,8 +10,8 @@ chunked` (`_chunked.py`) always threads an EMPTY `RelationshipGraph` into
 the pandas adapter (self-masking has no parent-map join), so `_fk_keys.
 to_pandas_fk_safe`'s ingestion protection -- keyed off that same runtime
 graph -- protects NOTHING on this route. Every OTHER chunk-safe strategy
-(hash, fpe, redact, truncate, text_redact, date_shift, bucketize, top_code) re-derives
-its output rather than preserving the raw key, so an unprotected
+(hash, fpe, redact, truncate, text_redact, date_shift, bucketize, top_code,
+text_mask) re-derives its output rather than preserving the raw key, so an unprotected
 float64-on-null ingestion widening never survives to the output for them --
 but `passthrough` (identity) IS admitted here (`CHUNK_SAFE_STRATEGIES`
 above) and DOES preserve the raw key verbatim, so a null-bearing
@@ -82,6 +82,9 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
         "bucketize",
         "top_code",
         "passthrough",
+        # Phase 4 slice 3 (2026-09-01): value-own-keyed per-cell deterministic
+        # span masking; NOT namespace-requiring (below).
+        "text_mask",
     }
 )
 
@@ -92,9 +95,11 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
 #   fpe        -- fpe_requires_namespace
 #   date_shift -- date_shift_requires_namespace
 # The remaining CHUNK_SAFE strategies (redact, truncate, text_redact, bucketize,
-# top_code, passthrough) do not read plan.namespace and produce byte-identical
-# output regardless of whether a namespace is declared; the namespace sub-checks
-# in the FK gate are skipped for them.
+# top_code, passthrough, text_mask) do not read plan.namespace and produce
+# byte-identical output regardless of whether a namespace is declared; the
+# namespace sub-checks in the FK gate are skipped for them. text_mask keys its
+# spans on ctx.mask_key globally (RFC 2104 HMAC per span), not a per-column
+# namespace, so it belongs in this group despite its richer dispatch.
 NAMESPACE_REQUIRING_STRATEGIES: frozenset[str] = frozenset({"hash", "fpe", "date_shift"})
 
 # Strategies whose masked output does NOT depend on the key's value (only on
@@ -223,7 +228,8 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
         (chunked_fk_parent_namespace_missing), consistent with the per-strategy
         namespace-required error at execution time.
         For namespace-agnostic strategies (redact, truncate, text_redact,
-        bucketize, top_code, passthrough), namespace sub-checks are skipped entirely:
+        bucketize, top_code, passthrough, text_mask), namespace sub-checks are skipped
+        entirely:
         their output is pure(value, config) and byte-identical regardless of
         whether a namespace is declared.
     (d) orphan_policy is 'remap'.
@@ -340,8 +346,9 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # strategy is in NAMESPACE_REQUIRING_STRATEGIES (hash, fpe, date_shift).
             # Those handlers call derive(job_seed, namespace, ...) and raise at
             # execution when plan.namespace is None.  Namespace-agnostic strategies
-            # (redact, truncate, text_redact, bucketize, top_code, passthrough) do not read
-            # plan.namespace; their output is pure(value, config) and byte-identical
+            # (redact, truncate, text_redact, bucketize, top_code, passthrough,
+            # text_mask) do not read plan.namespace; their output is pure(value,
+            # config) and byte-identical
             # regardless of whether a namespace is declared, so no namespace
             # sub-checks are needed and imposing them would over-reject configs that
             # the full-frame path accepts.
@@ -354,6 +361,8 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             #       a disagreement flags a mis-wiring (edge ns != masking ns).
             #   c3. Child namespace must equal the parent-column namespace;
             #       otherwise derive() uses a different key and output diverges.
+            # text_mask is namespace-agnostic (keys on ctx.mask_key, not a
+            # per-column namespace), so it never reaches these sub-checks.
             parent_ns: str | None = parent_cfg.get("namespace")
             child_cfg = col_index.get((str(child_table), child_col), {})
             if parent_strategy in NAMESPACE_REQUIRING_STRATEGIES:

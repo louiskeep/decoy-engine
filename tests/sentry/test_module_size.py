@@ -284,7 +284,16 @@ ALLOWLIST: dict[str, int] = {
     # schema-blind, so that second gate cannot route through it without a
     # much larger signature change for zero behavioral gain). Same
     # FK-resolution-helper decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 663,
+    # Phase 4 slice 3 (2026-09-01): +11 LOC (663 -> 674) admitting text_mask
+    # onto the chunked route. text_mask joins `CHUNK_SAFE_STRATEGIES`
+    # directly (own-value-keyed span masking, no new admitted set needed),
+    # so this file only gains the `when:` rejection wiring: the import of
+    # the new `_chunked_text_mask.py` sibling, its call site + comment in
+    # `check_chunked_compatibility`, the new error code in that function's
+    # docstring, and the CHUNK_SAFE strategy-table row + module-docstring
+    # paragraph documenting the admission. Same FK-resolution-helper
+    # decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 674,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -298,7 +307,15 @@ ALLOWLIST: dict[str, int] = {
     # HC-3b (2026-07-17): +1 LOC adding "top_code" to CHUNK_SAFE_STRATEGIES
     # (it is value-deterministic, unkeyed, and chunk-independent, same as
     # bucketize). Same decomposition target stands.
-    "src/decoy_engine/execution/_chunked_fk.py": 651,
+    # Phase 4 slice 3 (2026-09-01): +9 LOC (651 -> 660) adding "text_mask" to
+    # CHUNK_SAFE_STRATEGIES (one entry + a one-line comment) and extending the
+    # four existing "namespace-agnostic strategies" call-outs (the module
+    # docstring, the NAMESPACE_REQUIRING_STRATEGIES docstring, and two spots
+    # in `gate_fk_child_edges`) to name text_mask alongside redact/truncate/
+    # text_redact/bucketize/top_code/passthrough, so those correctness claims
+    # stay accurate now that text_mask is a member too. Same decomposition
+    # target stands.
+    "src/decoy_engine/execution/_chunked_fk.py": 660,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table

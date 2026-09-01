@@ -20,6 +20,7 @@ set is exactly those:
 | date_shift   | offset derived from the value (derive(seed, ns, value)) |
 | bucketize    | bin of the value |
 | passthrough  | identity |
+| text_mask    | per-span HMAC-keyed dispatch (fpe/faker/date_shift/redact) |
 
 Two of those rows carry whole-column caveats the per-value story hides:
 date_shift's offset is value-keyed, but its date FORMAT is detected from
@@ -59,6 +60,12 @@ the FK gate still rejects it). See `_chunked_dgrn.py` for the full design.
 Sibling-keyed (Phase 4 slice 2): `group_key`, keyed on a SIBLING `group_by`
 column's value via `CHUNK_SIBLING_KEYED_STRATEGIES` (also SEPARATE from
 CHUNK_SAFE for the FK reason). See `_chunked_group_key.py`.
+
+Own-value-keyed (Phase 4 slice 3): `text_mask` joins `CHUNK_SAFE_STRATEGIES`
+directly -- each span is masked by its OWN matched text under `ctx.mask_key`,
+so it needs no separate admitted set, and it is correctly eligible as an
+FK-self-mask key. Its only new gate is the `when:` rejection in
+`_chunked_text_mask.py`.
 
 Rejected at compile time (`check_chunked_compatibility`):
 
@@ -131,6 +138,7 @@ from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
+from . import _chunked_text_mask as text_mask_gate
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
@@ -215,6 +223,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         chunked_strategy_conditions_unmet: faker/categorical admission conditions
             are not met; message names each unmet condition.
         chunked_windowed_date_when_not_supported: `windowed_date` + `when:`.
+        chunked_text_mask_when_not_supported: `text_mask` + `when:`.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -245,6 +254,8 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     dgrn.reject_windowed_date_when(table_cfg, table=table)
     # `group_key` + `when:` inadmissible here too (see `_chunked_group_key.py`).
     group_key.reject_group_key_when(table_cfg, table=table)
+    # `text_mask` + `when:` inadmissible here too (see `_chunked_text_mask.py`).
+    text_mask_gate.reject_text_mask_when(table_cfg, table=table)
     offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:
