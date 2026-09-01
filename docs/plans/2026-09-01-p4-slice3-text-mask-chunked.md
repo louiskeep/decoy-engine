@@ -134,8 +134,9 @@ span set via the handler's config) so the branch runs WITHOUT a real spaCy depen
    full-vs-chunked equality -- otherwise an accidental redact-fallback would pass on both routes.
 2. **Date span at a chunk boundary (Trap C).** Same-format and mixed-format date spans (via the
    injected detector) split across chunks: byte-identical, proving per-span (not whole-column) format.
-3. **FK self-mask RI, per branch (Trap A).** For EACH branch a text_mask FK key can route to
-   (`fpe`/`date_shift`/`passthrough`/`redact` on a keyed span), a single-column FK edge keyed on a
+3. **FK self-mask RI, per branch (Trap A).** For EACH real branch a text_mask FK key can route to
+   (`fpe`/`faker`/`date_shift`/`passthrough`/`redact` on a keyed span, and the unknown-detector-
+   strategy redact FALLBACK), a single-column FK edge keyed on a
    text_mask column (child declares text_mask + IDENTICAL provider_config + matching declared dtype,
    orphan_policy remap): chunked == full-frame AND the child's masked key EQUALS the parent's for the
    same raw value, with EXACT output-byte assertions, across chunk boundaries. The text_mask FK edge
@@ -187,8 +188,9 @@ approach (direct unit tests over pandas-pipeline tests to avoid the false-timeou
 
 ## 5. Risks (explicit review gates)
 
-- **Trap E (`when` + non-string source)** is the one genuinely open question; resolve by reproduction
-  at build, not assumption (the slice-2 lesson: pin every dtype/passthrough condition).
+- **Trap E (`when` + text_mask)** is RESOLVED as a fail-closed reject (task 2); the build verifies the
+  rejection fires on both entries and that a text_mask-without-when column still admits (the slice-2
+  lesson: pin every dtype/passthrough condition rather than assume a safe shape).
 - **The per-detector dispatch is richer than text_redact**; the FK-self-mask parity (Trap A) must be
   verified for EACH REAL branch a text_mask span can invoke (fpe / faker / date_shift / passthrough /
   redact / unknown-detector redact fallback), because an FK key that routes through date_shift or fpe
