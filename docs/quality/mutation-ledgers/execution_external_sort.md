@@ -9,17 +9,25 @@ standalone-pytest-per-mutant readjudication), selection
 
 ## Numbers
 
-**439 mutants: 341 killed, 92 survived, 6 true-timeout** (78.75% logic on the
-last full run). Two rounds shaped this: the first run (322 killed / 110 survived)
-exposed error guards no test triggered; pinning them (below) killed ~18 and the
-re-run reached 341/92. One remaining condition survivor (`__init__` `cap <= 0`
--> `cap <= 1`, distinguishable only at the degenerate 1-byte cap) is then killed
-by `test_minimal_positive_cap_and_fan_in_construct` (a positive cap must
-construct without raising). So **0 unresolved-LOGIC survivors on the
-correctness-critical functions**; the surviving 91 are all adjudicated-accepted
-(below). The 6 true-timeouts are infinite-loop mutations in the merge/finish/
-refill logic -- a mutation that hangs the tests is DETECTED (killed by timeout),
-not an escape.
+**441 mutants: 343 killed, 92 survived, 6 true-timeout** (78.85% logic on the
+final run, after the Codex-final remediation). Rounds: the first run
+(322 killed / 110 survived) exposed error guards no test triggered; pinning them
+(below) reached 341/92; the Codex-final fixes (the per-head-cap row guard and the
+bracketed peak asserts) then reached 343/92.
+
+**0 unresolved-LOGIC survivors on the correctness-critical functions.** Diffing
+every survivor in `write` / `_flush` / `_validate_key` / `__init__` /
+`_merge_heads_into` against the original leaves exactly two surviving CONDITION
+mutations, both a `>` -> `>=` boundary in `write` and both accepted:
+`_buffered_bytes + row_bytes > run_bytes_cap` -> `>=` (a flush fires one row
+earlier at the exact boundary -- the sorted output is identical, partition-
+invariant, and still cap-bounded) and `row_bytes > _per_head_cap_bytes` -> `>=`
+(differs only for a row of EXACTLY the per-head cap, which the original correctly
+accepts as bounded-mergeable; the mutant only over-rejects it, never under-bounds
+memory). Every other critical mutant -- codes, conditions on the key guards, the
+budget checks, the empty-batch guard, the sort/cutoff logic -- is killed. The 6
+true-timeouts are infinite-loop mutations in the merge/finish/refill logic; a
+mutation that hangs the tests is DETECTED (killed by timeout), not an escape.
 
 ## Correctness-critical logic: fully pinned (the mutation-found gaps)
 
