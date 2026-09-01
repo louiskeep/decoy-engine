@@ -18,18 +18,25 @@ timeout pathology on this pandas/pyarrow-heavy suite), selection
 
 ## Numbers
 
-**257/307 = 83.71% LOGIC, 0 unresolved logic. 50 survivors = 47 accepted
-error-message prose (casing / `XX`-wrap of free text whose coded fields are all
-independently pinned) + 3 provably-equivalent** (`build_work_list(plan, None)`
-in `code_set_source_columns` and `resolve_pinned_code_set_records`, and the
-unreachable `isinstance`-guard `continue`->`break` in
-`resolve_pinned_code_set_records`; adjudicated below). The corrected tally is the
-contract (mutmut raw timeouts are readjudicated standalone). Pinning the reject
-gates' machine fields (path, offending column name, `"?"` placeholder, the
-reachable fk control-flow guards) raised the score from a first-pass 77.85% by
-killing every coded-field and reachable-logic mutant, leaving only prose and
-equivalents. The bar (0 unresolved-logic survivors, message-prose + equivalents
-accepted) is met.
+**48 survivors = 47 accepted error-message prose** (casing / `XX`-wrap of free
+text whose coded fields are all independently pinned) **+ 1 provably-equivalent**
+(the unreachable `isinstance`-guard `continue`->`break` in
+`resolve_pinned_code_set_records`; adjudicated below). 0 unresolved logic. The
+corrected tally is the contract (mutmut raw timeouts are readjudicated
+standalone); regenerate with the command below for the exact LOGIC score.
+
+Two rounds of pinning got here. The first pinned the reject gates' machine
+fields (path, offending column name, `"?"` placeholder, the reachable fk
+control-flow guards), killing every coded-field and reachable-logic mutant in
+those gates. The Codex final gate then caught a mis-adjudication: the two
+`build_work_list(plan, registry)` -> `build_work_list(plan, None)` survivors
+(in `code_set_source_columns` and `resolve_pinned_code_set_records`) are NOT
+equivalent. A chunked table may carry `code_set` beside a provider-backed
+`faker` column (both are in `CHUNK_CONDITIONAL_STRATEGIES`), and `build_work_list`
+consults the registry (`provider_is_composite`) for the faker node, so `None`
+raises on a reachable mixed plan. Both are now killed by
+`test_registry_is_load_bearing_with_a_provider_backed_sibling`. The bar (0
+unresolved-logic survivors, message-prose + the one equivalent accepted) is met.
 
 ## What is PINNED (so it is not a survivor)
 
@@ -68,11 +75,6 @@ rather than survives:
   pinned above). Same policy as `execution_chunked_text_mask.md` /
   `execution_chunked_dgrn.md`: killable only by brittle full-message equality,
   which the sweep does not pursue for pure prose.
-- **`build_work_list(plan, registry)` -> `build_work_list(plan, None)`** in
-  `code_set_source_columns` and `resolve_pinned_code_set_records`: EQUIVALENT.
-  For a compiled `Plan` only `node.table/kind/strategy/columns/plan_slice` are
-  read, none of which depend on the registry -- the same adjudication as slice 2
-  (group_key) and slice 3 (text_mask).
 - **`resolve_pinned_code_set_records` `continue` -> `break`** on the
   `isinstance(plan_slice, ColumnSeed)` guard: EQUIVALENT. That guard is reached
   only after `node.strategy != "code_set"` is filtered out, and a `code_set`
