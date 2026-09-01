@@ -101,13 +101,14 @@ def test_positive_parity_per_allowlisted_key_type(kind, tmp_path):
     assert out.to_pydict() == oracle.to_pydict()
 
 
-@pytest.mark.parametrize("cap", [8 * 1024, 40 * 1024])
+@pytest.mark.parametrize("cap", [2 * 1024, 4 * 1024])
 @pytest.mark.parametrize("fan_in", [2, 4])
 def test_string_key_multipass_parity(cap, fan_in, tmp_path):
     # The generic multi-pass cutoff logic lives only in the merge; force
     # > merge_fan_in runs and compare full value+schema across caps x fan-ins.
-    # n is large enough that even the biggest cap x fan-in makes > fan_in runs.
-    n = 20_000
+    # Small n + tiny caps still makes many runs (so > fan_in for every combo),
+    # keeping the multi-pass coverage fast enough to mutation-grade.
+    n = 1_500
     values = list(range(n))
     batches = _batches("string", values, batch_size=31)
     oracle = pa.Table.from_batches(batches).sort_by(KEY)
@@ -129,10 +130,10 @@ def test_string_key_multipass_parity(cap, fan_in, tmp_path):
 def test_duplicate_keys_sort_by_key_multiset_preserved(tmp_path):
     # Duplicate keys sort correctly BY KEY (non-decreasing) and lose no rows;
     # the tie order among equal keys is unspecified, so compare as a multiset.
-    n = 4_000
-    values = [i % 200 for i in range(n)]  # heavy duplication
+    n = 1_500
+    values = [i % 50 for i in range(n)]  # heavy duplication
     batches = _batches("int64", values, batch_size=53)
-    out = _sorted(batches, tmp_path, cap=8 * 1024, fan_in=3)
+    out = _sorted(batches, tmp_path, cap=2 * 1024, fan_in=3)
     keys = out.column(KEY).to_pylist()
     assert keys == sorted(keys)  # non-decreasing by key
     in_rows = sorted(
@@ -148,10 +149,10 @@ def test_duplicate_keys_sort_by_key_multiset_preserved(tmp_path):
 
 def test_partition_invariance_tiny_cap_equals_huge_cap(tmp_path):
     # The emitted order is independent of the cap / fan-in for a unique key.
-    n = 5_000
+    n = 1_500
     values = list(range(n))
     batches = _batches("string", values, batch_size=29)
-    tiny = _sorted(batches, tmp_path, cap=4 * 1024, fan_in=2, name="tiny")
+    tiny = _sorted(batches, tmp_path, cap=2 * 1024, fan_in=2, name="tiny")
     huge = _sorted(batches, tmp_path, cap=64 * 1024 * 1024, fan_in=8, name="huge")
     assert tiny.to_pydict() == huge.to_pydict()
     assert tiny.schema == huge.schema
@@ -235,11 +236,11 @@ def test_mid_finish_failure_leaks_no_run_file(tmp_path):
     # Fail the SECOND merge group after the first has succeeded: close() must
     # still remove the first group's intermediate (the registry hazard).
     spill = tmp_path / "spill"
-    n = 6_000
+    n = 1_500
     values = list(range(n))
     batches = _batches("int64", values, batch_size=31)
     sorter = BoundedExternalSorter(
-        spill_dir=spill, run_bytes_cap=8 * 1024, merge_fan_in=2, sort_key_column=KEY
+        spill_dir=spill, run_bytes_cap=2 * 1024, merge_fan_in=2, sort_key_column=KEY
     )
     for b in batches:
         sorter.write(b)
