@@ -49,6 +49,7 @@ from decoy_engine.execution._chunked import check_chunked_compatibility, concat_
 from decoy_engine.execution._chunked_code_set import (
     aggregate_chunk_code_set_corpora,
     code_set_conditional_failures,
+    code_set_source_columns,
     reject_code_set_fk_keys,
     reject_code_set_when,
     reject_unsafe_code_set_chunk_schema,
@@ -222,8 +223,41 @@ class TestByteParity:
         oracle = run_pipeline(
             cfg, sources={"records": table}, engine_version=_ENGINE_VERSION, auto_chunk=False
         ).outputs["records"]
-        assert combined.column("a").to_pylist() == oracle.column("a").to_pylist()
-        assert combined.column("b").to_pylist() == oracle.column("b").to_pylist()
+        assert combined.equals(oracle)
+
+    @pytest.mark.parametrize("dtype", [pa.string(), pa.large_string()])
+    def test_real_secret_parity_across_namespaces_and_dtypes(self, tmp_path, dtype) -> None:
+        # Exercise the GA keyed path (a real SecretKeyProvider, not the pre-GA
+        # job_seed fallback) across two namespaces and both string dtypes, with
+        # a chunk-boundary split, asserting full Table byte-identity to the
+        # oracle. mask mode keys on the resolved mask_key, so a real secret must
+        # produce the same chunked-vs-full-frame output the fallback does.
+        from decoy_engine.keyprovider import SecretKeyProvider
+
+        secret = SecretKeyProvider(b"a-strong-32B+-managed-secret-value!!", key_version="v1")
+        codes = ["E11.9", "I21.0", "J45.9", "N18.6"]
+        rows: list[str | None] = [None if i % 4 == 0 else codes[i % len(codes)] for i in range(20)]
+        table = pa.table({"a": pa.array(rows, type=dtype), "b": pa.array(rows, type=dtype)})
+        columns = [
+            _code_set_col("a", "icd10", namespace="ns_a"),
+            _code_set_col("b", "icd10", namespace="ns_b"),
+        ]
+        cfg = _config(tmp_path, columns)
+        _write_csv_stub(tmp_path, "records", table)
+        sources = {"records": table}
+        auto = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            auto_chunk_threshold_rows=_LOW_THRESHOLD,
+            chunk_size_rows=3,
+            key_provider=secret,
+        )
+        forced = run_pipeline(
+            cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False, key_provider=secret
+        )
+        assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
+        assert auto.outputs["records"].equals(forced.outputs["records"])
 
     def test_large_string_source_parity(self, tmp_path) -> None:
         # The admission gate accepts large_string sources, not only string;
@@ -478,6 +512,36 @@ class TestCorpusPinning:
         graph = RelationshipGraph(edges=(), ordering=())
         records = resolve_pinned_code_set_records(plan, reg, graph, table="records")
         assert set(records) == {("records", "code")}
+
+    def test_registry_is_load_bearing_with_a_provider_backed_sibling(self, tmp_path) -> None:
+        # A code_set column beside a provider-backed faker column: build_work_list
+        # consults the registry (provider_is_composite) for the faker node, so
+        # both the pinning resolver and the source-column collector must thread
+        # the REAL registry through -- passing None would raise on the faker
+        # node. Pins that the registry argument is load-bearing here.
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
+        from decoy_engine.plan import compile_plan
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships import RelationshipGraph
+
+        columns = [
+            _code_set_col("code", "icd10", namespace="diag"),
+            {"name": "nm", "strategy": "faker", "provider": "person_first_name"},
+        ]
+        cfg = _config(tmp_path, columns)
+        table = pa.table(
+            {
+                "code": pa.array(["E11.9"], type=pa.string()),
+                "nm": pa.array(["Ann"], type=pa.string()),
+            }
+        )
+        profile = first_chunk_profile(table, table="records", engine_version=_ENGINE_VERSION)
+        plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION, no_profile=True)
+        reg = get_default_registry()
+        graph = RelationshipGraph(edges=(), ordering=())
+        records = resolve_pinned_code_set_records(plan, reg, graph, table="records")
+        assert set(records) == {("records", "code")}
+        assert code_set_source_columns(plan, reg, graph, table="records") == ["code"]
 
     def test_resolve_pinned_code_set_records_scopes_to_table_and_scans_past_a_skip(
         self, tmp_path
