@@ -51,13 +51,21 @@ guarantee honestly instead.
 
 ## What this slice does (Option A)
 
-- **Guarantee scope, stated true.** The OOC route's never-OOM guarantee holds for
-  the **structural bounded shape only**: every source a `LazySource` (never fully
-  materialized) *and* a `TransactionalSink` present. This is exactly what the
-  production isolated worker always passes (`LazySource` sources for every
-  relationship-bearing job, `_isolated_worker.py:215-216`; an unconditional
-  `ParquetTransactionalSink`, `:225-226`), so **production keeps its guarantee
-  unchanged**.
+- **Guarantee scope, stated precisely (not "never-OOM").** The claim is bounded
+  and exact: *engine-controlled peak residency on the OOC route is bounded with
+  respect to table row cardinality when every source is a `LazySource` (never
+  fully materialized) and the sink consumes `write_batches` incrementally without
+  retaining the stream.* That is engine-attributable residency, not absolute OOM
+  immunity — a `TransactionalSink` does not itself enforce bounded consumption (a
+  custom sink can retain batches; the callable adapter materializes the whole
+  stream with `list(batches)`, `_transactional_sink.py:107`), and unrelated
+  in-process memory the caller holds is outside the route's view. The
+  production-proven incremental sink is `ParquetTransactionalSink`. The production
+  isolated worker always passes `LazySource` sources for every relationship-bearing
+  job (`_isolated_worker.py:215-216`) and an unconditional `ParquetTransactionalSink`
+  (`:225-226`) under an explicit governed OOC budget, so **production runs the
+  bounded shape and keeps that bound**; arbitrary in-process memory and custom sink
+  retention remain caller-managed even on the guaranteed shape.
 - **Caller-managed shapes, documented not policed.** A resident `pa.Table`
   source, a missing sink, and a `source_loader`-resolved source are
   caller-managed: the route runs them exactly as today, but their peak memory is
@@ -107,25 +115,31 @@ estimate.
 ## Tasks
 
 - [ ] **Task 1: Guarantee-scope statement + docstring corrections.** State the
-  never-OOM guarantee as holding for `LazySource` sources + a `TransactionalSink`
-  only, in the `run_out_of_core_route` / route docstring and on the exported
-  `run_fk_out_of_core` primitive (`out_of_core/__init__.py`). Correct the
-  misleading "re-iterates for free" line (`_runner.py:28-29`) to state that a
-  resident source holds the whole input in RAM (a small-N convenience, not free)
-  and is caller-managed for memory.
+  bound precisely (NOT "never-OOM"): engine-controlled peak residency is bounded
+  with respect to table row cardinality when every source is a `LazySource` and
+  the sink consumes `write_batches` incrementally without retaining the stream
+  (naming `ParquetTransactionalSink` as the production-proven such sink), and note
+  that arbitrary in-process caller memory and a custom sink that retains batches
+  remain caller-managed. Put this in the `run_out_of_core_route` / route docstring
+  and on the exported `run_fk_out_of_core` primitive (`out_of_core/__init__.py`).
+  Correct the misleading "re-iterates for free" line (`_runner.py:28-29`) to state
+  that a resident source holds the whole input in RAM (a small-N convenience, not
+  free) and is caller-managed for memory.
 - [ ] **Task 2: Best-effort caller-managed warning.** In `run_out_of_core_route`,
   when the job runs with any caller-managed input shape — at least one resident
   `pa.Table` source, `sink is None`, or a `source_loader` supplied — emit exactly
   one structured warning that names the shape(s) and the bounded alternative. Pure
   structural check on the inputs already in hand (no sizing, no loader invocation,
   no rejection); it must not change any masked output or any routing decision.
-  Surface it through the channel the route already uses — a stdlib
-  `warnings.warn` with a distinct engine warning category (there is no
-  `filterwarnings = error` in the test config, so this does not break existing
-  tests), and/or the route's existing `warnings` result field
-  (`_pipeline_route_exec.py:398`). The check runs regardless of source resolution,
-  so it fires before any loader call. Dedup so exactly one warning is emitted per
-  invocation even when multiple caller-managed shapes are present.
+  Surface it primarily through the structured `ExecutionResult.warnings` result
+  field the route already returns (`_pipeline_route_exec.py:398`), so a caller's
+  `-W error` filter cannot turn the heads-up into an exception (which would
+  contradict "no rejection"). If a stdlib `warnings.warn` is also used for
+  visibility (there is no `filterwarnings = error` in the test config, so it does
+  not break existing tests), document that a caller's own warning filters can
+  alter control flow. The check runs regardless of source resolution, so it fires
+  before any loader call. Dedup so exactly one warning is emitted per invocation
+  even when multiple caller-managed shapes are present.
 - [ ] **Task 3: Tests.** (a) A `LazySource` + sink OOC job (the guaranteed shape,
   worker-shaped) emits **no** caller-managed warning. (b) A resident-source job, a
   `sink=None` job, and a `source_loader` job each emit the caller-managed warning
@@ -144,9 +158,12 @@ estimate.
 
 ## Acceptance
 
-- The never-OOM guarantee is documented as scoped to `LazySource` + sink;
-  production (always that shape) keeps it, and the exported primitive's residency
-  precondition is documented (Task 1).
+- The bound is documented precisely (NOT "never-OOM"): engine-controlled peak
+  residency is cardinality-bounded when every source is a `LazySource` and the
+  sink consumes incrementally (`ParquetTransactionalSink`), with arbitrary
+  in-process caller memory and custom sink retention called out as caller-managed;
+  production (that shape, under a governed budget) keeps the bound, and the
+  exported primitive's residency precondition is documented (Task 1).
 - Resident-source / no-sink / `source_loader` OOC jobs run exactly as today but
   emit one best-effort caller-managed warning naming the shape and the bounded
   alternative; no masked output or routing decision changes (Tasks 2, 3).
