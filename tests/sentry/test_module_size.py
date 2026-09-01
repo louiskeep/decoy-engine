@@ -318,7 +318,11 @@ ALLOWLIST: dict[str, int] = {
     # gate calls + comments in `check_chunked_compatibility`, and the
     # source-dtype gate call on the first chunk and inside the masking loop.
     # Same FK-resolution-helper decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 782,
+    # Codex final-gate LOW (2026-09-01): +7 LOC (782 -> 789) for the
+    # data-independent bucket_perturb namespace pre-check before the empty-input
+    # return (a namespace-less config with a zero-chunk input must fail closed
+    # like the oracle); the check itself is a free function in the sibling.
+    "src/decoy_engine/execution/_chunked.py": 789,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all

@@ -454,6 +454,13 @@ def run_mask_pipeline_chunked(
     code_set_records = code_set_gate.resolve_pinned_code_set_records(
         plan, resolved_registry, graph, table=table
     )
+    # bucket_perturb's namespace requirement is data-independent (the handler
+    # raises before touching data), so validate it BEFORE the empty-input return
+    # -- a namespace-less config with a zero-chunk input must fail closed like
+    # the oracle, not return empty.
+    bucket_perturb_gate.reject_bucket_perturb_missing_namespace(
+        plan, resolved_registry, graph, table=table
+    )
     if first is None:
         # Gate cleared (or the plan is unkeyed / pre-GA); there is genuinely
         # nothing to mask, so skip pool warming and adapter setup below --

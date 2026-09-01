@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.plan._errors import PlanCompileError
 
 if TYPE_CHECKING:
@@ -134,6 +135,34 @@ def bucket_perturb_source_columns(
 
     ordered_work = order_work(build_work_list(plan, registry), relationship_graph)
     return _bucket_perturb_node_columns(ordered_work, table)
+
+
+def reject_bucket_perturb_missing_namespace(
+    plan: Plan, registry: ProviderRegistry, relationship_graph: RelationshipGraph, *, table: str
+) -> None:
+    """Raise the handler's data-independent namespace error BEFORE the chunked
+    route's empty-input return, so a namespace-less bucket_perturb config fails
+    closed identically to the oracle even when the input yields zero chunks (the
+    per-chunk handler dispatch that would otherwise raise never runs). Mirrors
+    the code_set corpus pre-resolution.
+
+    Raises:
+        StrategyError: code='bucket_perturb_requires_namespace'.
+    """
+    from decoy_engine.execution._runner import build_work_list, order_work
+    from decoy_engine.plan._types import ColumnSeed
+
+    ordered_work = order_work(build_work_list(plan, registry), relationship_graph)
+    for node in ordered_work:
+        if node.table != table or node.kind != "scalar" or node.strategy != "bucket_perturb":
+            continue
+        seed = node.plan_slice
+        if isinstance(seed, ColumnSeed) and seed.namespace is None:
+            raise StrategyError(
+                code="bucket_perturb_requires_namespace",
+                strategy="bucket_perturb",
+                message=f"column {node.columns[0]!r} uses bucket_perturb but has no namespace.",
+            )
 
 
 def reject_unsafe_bucket_perturb_chunk_schema(

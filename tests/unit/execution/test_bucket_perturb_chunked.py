@@ -696,6 +696,22 @@ class TestAdmissionBoundary:
             )
         assert exc2.value.code == "bucket_perturb_requires_namespace"
 
+    def test_namespace_less_config_raises_on_zero_chunk_input(self, tmp_path) -> None:
+        # A namespace-less bucket_perturb config with a ZERO-chunk input must
+        # fail closed like the oracle: the data-independent namespace check runs
+        # before the empty-input return, so the misconfig is caught even when no
+        # chunk is ever dispatched (it would otherwise return empty silently).
+        columns = [_bucket_perturb_col("dcol", namespace=None)]
+        cfg = _config(tmp_path, columns)
+        with pytest.raises(StrategyError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, iter(()), table="records", engine_version=_ENGINE_VERSION
+                )
+            )
+        assert exc.value.code == "bucket_perturb_requires_namespace"
+        assert "dcol" in exc.value.message  # pins the offending column name
+
 
 # ---------------------------------------------------------------------------
 # Coded-field pinning (mutation bar).
