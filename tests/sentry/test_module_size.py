@@ -295,7 +295,20 @@ ALLOWLIST: dict[str, int] = {
     # boundary); the CHUNK_SAFE table row + module-docstring paragraph; and the
     # honest dtype-stability precondition note on the run_mask docstring. Same
     # FK-resolution-helper decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 698,
+    # Phase 4 slice 4 (2026-09-01): +46 LOC (698 -> 744) admitting code_set
+    # mask mode onto the chunked route. All code_set-specific logic (the
+    # conditional-admission predicate, the source-dtype gate trio, the
+    # `when:` + FK-key rejections, corpus-record pinning) lives in the new
+    # `_chunked_code_set.py` sibling; this file only gains the import, one
+    # branch in `_conditional_admission_failures` dispatching to it, the
+    # `when:` + FK-key gate calls + comments in `check_chunked_compatibility`,
+    # moving the registry/graph construction earlier (needed for corpus
+    # resolution before the empty-input return) plus the corpus-pinning call
+    # itself, the source-dtype gate call on the first chunk and inside the
+    # masking loop, and threading the pinned `code_set_records` mapping into
+    # every chunk's `adapter.run()` call. Same FK-resolution-helper
+    # decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 744,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -356,7 +369,12 @@ ALLOWLIST: dict[str, int] = {
     # date_shift group anchor unions above it) so an int+null group_by cell
     # never widens to float64 on a chunk-boundary-dependent subset of rows.
     # Same FK-resolution-helper decomposition target stands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 667,
+    # Phase 4 slice 4 (2026-09-01): +8 LOC (667 -> 675) adding the
+    # `code_set_records` parameter (a caller-supplied pinned corpus-record
+    # mapping, `_chunked_code_set.py`'s corpus-pinning contract) and seeding
+    # it into `StrategyContext` construction. Same FK-resolution-helper
+    # decomposition target stands.
+    "src/decoy_engine/execution/_pandas_adapter.py": 675,
     # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
     # generate-echo exemption set once and threads them into every emission route
     # (+15 LOC). The orchestration spine already owns route selection; this is the
@@ -515,7 +533,11 @@ ALLOWLIST: dict[str, int] = {
     # `_runtime_source_rejections` so the auto route rejects a non-string
     # text_mask source identically to the manual entry. Same `_planner_chunked.py`
     # decomposition target stands.
-    "src/decoy_engine/execution/_planner.py": 627,
+    # Phase 4 slice 4 (2026-09-01): +11 LOC (627 -> 638) for the identical
+    # code_set source-dtype auto-route gate, via the shared
+    # `_chunked_code_set.unsafe_code_set_source_columns` collector. Same
+    # `_planner_chunked.py` decomposition target stands.
+    "src/decoy_engine/execution/_planner.py": 638,
 }
 
 

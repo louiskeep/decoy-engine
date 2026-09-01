@@ -498,17 +498,21 @@ def run_mask_chunked(
     vault_writer: Any,
     chunk_size_rows: int,
     key_provider: KeyProvider | None = None,
-) -> tuple[dict[str, pa.Table], tuple, float, tuple]:
+) -> tuple[dict[str, pa.Table], tuple, float, tuple, dict[str, Any]]:
     """Mask one eligible table via the chunked entrypoint.
 
-    Returns `(outputs, timings, boundary_conversion_ms, warnings)` so the
-    routed ExecutionResult keeps the same surface as the full-frame one:
-    warnings are the order-stable union of per-chunk warnings, timings a
-    per-(strategy, column) rollup, conversion the per-chunk sum. Row
-    errors are NOT part of the return: `run_mask_pipeline_chunked`'s H1
-    fail-closed check raises `RowErrorsFailedError` the moment any chunk
-    reports one, so a normal return here is row-error-free by
-    construction (see `_pipeline_routing`'s module docstring).
+    Returns `(outputs, timings, boundary_conversion_ms, warnings,
+    quality_metrics)` so the routed ExecutionResult keeps the same surface as
+    the full-frame one: warnings are the order-stable union of per-chunk
+    warnings, timings a per-(strategy, column) rollup, conversion the
+    per-chunk sum, quality_metrics the `code_set_corpora` evidence aggregated
+    once per (table, column) across chunks (`masked_any` semantics, matching
+    the full-frame handler's own once-per-column stamp; `{}` when no chunk
+    masked a code_set column). Row errors are NOT part of the return:
+    `run_mask_pipeline_chunked`'s H1 fail-closed check raises
+    `RowErrorsFailedError` the moment any chunk reports one, so a normal
+    return here is row-error-free by construction (see `_pipeline_routing`'s
+    module docstring).
 
     Slicing is zero-copy (`pa.Table.slice` shares buffers), so the only
     per-chunk materialization is the adapter's pandas working set --
@@ -542,9 +546,12 @@ def run_mask_chunked(
         )
     )
     masked = _chunked.concat_masked_chunks(masked_chunks, table=table)
+    from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
+
     return (
         {table: masked},
         _chunked.aggregate_chunk_timings(chunk_results),
         sum(r.boundary_conversion_ms for r in chunk_results),
         _chunked.aggregate_chunk_warnings(chunk_results),
+        aggregate_chunk_code_set_corpora(chunk_results),
     )

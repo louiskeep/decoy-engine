@@ -502,7 +502,7 @@ def run_pipeline(
             # tables, so merged_sources holds only that table's frame; the
             # planner's runtime gates already rejected anything else.
             mask_table_name = next(name for name, kind in table_kinds.items() if kind == "mask")
-            mask_outputs, mask_timings, mask_conversion_ms, mask_warnings = (
+            mask_outputs, mask_timings, mask_conversion_ms, mask_warnings, mask_quality_metrics = (
                 _route_exec.run_mask_chunked(
                     config,
                     merged_sources[mask_table_name],

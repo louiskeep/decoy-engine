@@ -130,6 +130,7 @@ class PolarsExecutionAdapter:
         generate_output_tables: frozenset[str] = frozenset(),
         key_provider: KeyProvider | None = None,
         row_offset: int = 0,
+        code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, identically to the pandas adapter, so
@@ -177,6 +178,7 @@ class PolarsExecutionAdapter:
             generate_output_tables=generate_output_tables,
             key_provider=key_provider,
             row_offset=row_offset,
+            code_set_records=code_set_records,
         )
 
     def _is_fully_polars_native(
@@ -334,6 +336,7 @@ class PolarsExecutionAdapter:
         generate_output_tables: frozenset[str] = frozenset(),
         key_provider: KeyProvider | None = None,
         row_offset: int = 0,
+        code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult:
         # Ingest the sources into the polars substrate and back to Arrow, timing
         # both legs; the masking then runs on the pandas oracle on the
@@ -358,6 +361,7 @@ class PolarsExecutionAdapter:
             generate_output_tables=generate_output_tables,
             key_provider=key_provider,
             row_offset=row_offset,
+            code_set_records=code_set_records,
         )
         metrics = dict(result.quality_metrics)
         metrics["conversion_breakdown"] = boundary.as_dict()

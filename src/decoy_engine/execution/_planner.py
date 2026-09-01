@@ -612,6 +612,17 @@ def _runtime_source_rejections(
             f"{', '.join(offending_text_mask)} apply to a non-string source, which "
             "diverges by chunk boundary under the handler's str()-conversion"
         )
+    # code_set has the identical chunk-stable-string-source requirement (same
+    # str()-conversion hazard). Same collector the manual entry's raising gate uses.
+    from decoy_engine.execution._chunked_code_set import unsafe_code_set_source_columns
+
+    offending_code_set = unsafe_code_set_source_columns(ordered_work or [], src.schema, table=table)
+    if offending_code_set:
+        reasons.append(
+            "chunked_code_set_source_dtype_unsupported: code_set column(s) "
+            f"{', '.join(offending_code_set)} apply to a non-string source, which "
+            "diverges by chunk boundary under the handler's str()-conversion"
+        )
     return reasons
 
 

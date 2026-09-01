@@ -276,6 +276,12 @@ class ExecutionAdapter(Protocol):
         # Phase 4 slice 1: forwarded to StrategyContext.row_offset (see its
         # docstring). Default 0 keeps every pre-existing caller byte-unchanged.
         row_offset: int = 0,
+        # Phase 4 slice 4: a caller-resolved (table, column) -> corpus-record
+        # mapping seeded into StrategyContext.code_set_records, so every chunk
+        # of a multi-call job masks against the identical pinned corpus (see
+        # `_chunked_code_set.py`). None (default) leaves the field empty,
+        # unchanged for every pre-existing caller.
+        code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...
