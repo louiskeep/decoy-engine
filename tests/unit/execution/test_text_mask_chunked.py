@@ -1044,6 +1044,35 @@ class TestSourceDtypeGate:
             )
         assert "aaa, bbb" in exc.value.message
 
+    def test_registry_is_load_bearing_with_a_provider_backed_sibling(self, tmp_path) -> None:
+        # A text_mask column beside a provider-backed faker column: build_work_list
+        # consults the registry (provider_is_composite) for the faker node, so the
+        # source-column collector must thread the REAL registry through -- passing
+        # None would raise on the faker node. Pins that the registry is load-bearing
+        # here (the build_work_list registry argument is not a dead value).
+        from decoy_engine.execution._chunked_text_mask import (
+            reject_unsafe_text_mask_source_dtype,
+            text_mask_source_columns,
+        )
+
+        cfg = _config(
+            tmp_path,
+            [
+                {"name": "note", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}},
+                {"name": "nm", "strategy": "faker", "provider": "person_first_name"},
+            ],
+        )
+        table = pa.table(
+            {"note": pa.array(["hi"], type=pa.string()), "nm": pa.array(["Ann"], type=pa.string())}
+        )
+        plan, reg, graph = self._compiled(cfg, table)
+        assert text_mask_source_columns(plan, reg, graph, table="records") == ["note"]
+        # string source -> the reject wrapper must not raise; its own build_work_list
+        # call must likewise receive the real registry, not None.
+        reject_unsafe_text_mask_source_dtype(
+            plan, table.schema, table="records", registry=reg, relationship_graph=graph
+        )
+
 
 class TestAdmissionSurfaces:
     def test_manual_entry_admits_text_mask_job(self, tmp_path) -> None:

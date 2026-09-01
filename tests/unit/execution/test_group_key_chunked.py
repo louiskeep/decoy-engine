@@ -681,6 +681,36 @@ class TestOrderingRegressions:
         offending = unsafe_group_key_group_by_columns(ordered, table.schema, table="people")
         assert offending == ["aaa_group_key"]
 
+    def test_registry_is_load_bearing_with_a_provider_backed_sibling(self, tmp_path) -> None:
+        # A group_key column beside a provider-backed faker column: the manual
+        # dtype-gate wrapper's build_work_list consults the registry
+        # (provider_is_composite) for the faker node, so it must thread the REAL
+        # registry through -- passing None would raise on the faker node. Pins
+        # that the registry argument is load-bearing here.
+        from decoy_engine.execution._chunked_group_key import reject_unsafe_group_key_group_by_dtype
+
+        table = pa.table(
+            {
+                "amount": pa.array([1, 2, 3], type=pa.int64()),
+                "nm": pa.array(["a", "b", "c"], type=pa.string()),
+            }
+        )
+        columns = [
+            {"name": "amount", "strategy": "hash", "namespace": "amount_ns"},
+            {
+                "name": "zzz_group_key",
+                "strategy": "group_key",
+                "provider_config": {"group_by": "amount"},
+            },
+            {"name": "nm", "strategy": "faker", "provider": "person_first_name"},
+        ]
+        plan, registry, graph = self._plan_registry_graph(tmp_path, columns, table)
+        # group_by "amount" is int64 (safe) -> no rejection; a registry=None
+        # would crash on the faker node inside build_work_list.
+        reject_unsafe_group_key_group_by_dtype(
+            plan, table.schema, table="people", registry=registry, relationship_graph=graph
+        )
+
     def test_unsafe_float_output_mask_scheduled_before_is_rejected(self, tmp_path) -> None:
         """amount (int64 source, SAFE) sorts before "zzz_group_key", and is
         masked via `redact` with a numeric `redact_with` -- a chunk-safe
