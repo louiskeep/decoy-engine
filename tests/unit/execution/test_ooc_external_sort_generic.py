@@ -261,3 +261,67 @@ def test_mid_finish_failure_leaks_no_run_file(tmp_path):
     assert calls["n"] == 2  # the first group succeeded, the second failed
     sorter.close()
     assert list(spill.glob("*.arrow")) == []  # nothing leaked, including the first group's output
+
+
+# --- Budget + state-guard error codes (the machine-consumed fields pinned) ----
+
+
+def _int_batch(keys: list[int]) -> pa.RecordBatch:
+    return pa.record_batch(
+        {KEY: pa.array(keys, type=pa.int64()), "payload": pa.array([b"p"] * len(keys))}
+    )
+
+
+def test_reject_nonpositive_run_bytes_cap(tmp_path):
+    with pytest.raises(ExecutionError) as exc:
+        BoundedExternalSorter(spill_dir=tmp_path / "s", run_bytes_cap=0, merge_fan_in=4)
+    assert exc.value.code == "out_of_core_reorder_budget_too_small"
+
+
+def test_reject_merge_fan_in_below_two(tmp_path):
+    with pytest.raises(ExecutionError) as exc:
+        BoundedExternalSorter(spill_dir=tmp_path / "s", run_bytes_cap=1024, merge_fan_in=1)
+    assert exc.value.code == "out_of_core_reorder_budget_too_small"
+
+
+def test_write_after_finish_raises(tmp_path):
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "s", run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        sorter.write(_int_batch([0, 1]))
+        sorter.finish()
+        with pytest.raises(ExecutionError) as exc:
+            sorter.write(_int_batch([2, 3]))
+        assert exc.value.code == "out_of_core_sort_invalid_state"
+    finally:
+        sorter.close()
+
+
+def test_iter_ordered_before_finish_raises(tmp_path):
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "s", run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        sorter.write(_int_batch([0, 1]))
+        with pytest.raises(ExecutionError) as exc:
+            list(sorter.iter_ordered())
+        assert exc.value.code == "out_of_core_sort_invalid_state"
+    finally:
+        sorter.close()
+
+
+def test_single_row_batch_is_not_dropped(tmp_path):
+    # Pins the empty-batch guard (`num_rows == 0`): a mutation to `== 1` would
+    # silently drop a one-row batch.
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "s", run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        sorter.write(_int_batch([5]))
+        sorter.write(_int_batch([3]))
+        sorter.finish()
+        out = pa.Table.from_batches(list(sorter.iter_ordered()), schema=_int_batch([0]).schema)
+        assert out.column(KEY).to_pylist() == [3, 5]
+    finally:
+        sorter.close()
