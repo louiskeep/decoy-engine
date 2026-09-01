@@ -73,22 +73,25 @@ floor-divides to zero fails closed at construction
 1-byte cap that could never accept a real row. This is a deliberate, measured
 deviation from the milestone plan's literal formula, not a loosened envelope.
 
-`sort_by`'s index array is the reason the resident cap governs an AVERAGE row
-width, not just a byte total. Arrow sorts by materializing a `uint64` (8-byte)
-index per row, so a run of rows narrower than 8 bytes each (e.g. a bare int8 /
-int32 / date32 key with no payload) makes that index dwarf the data the byte
-cap is counting -- measured at ~8.9x the data for 1-byte rows, versus ~1.1x at
-24-byte rows -- and no byte-derived cap can bound it. `write()` therefore fails
-closed (`out_of_core_sort_row_index_unbounded`) on any stored batch whose
-`nbytes < 8 * num_rows`, i.e. whose average row is under 8 bytes. That single
-per-batch invariant bounds every downstream `sort_by`: the flush buffer is a
-sum of such batches (so its own average stays >= 8 bytes and its index stays
-<= its data), and a merge round's emit row-count is at most the co-loaded head
-bytes / 8 (so its index stays <= the head budget) regardless of which rows the
-cutoff selects. The bound is a real contract narrowing -- a caller wanting a
-narrow key column pads it to an 8-byte-effective key or carries a payload --
-chosen (over row-count-bounded spilling) because every actual consumer sorts
->= 8-byte rows and the degenerate case is not worth the extra spill machinery.
+`sort_by`'s index array is the reason the resident cap governs a per-row width,
+not just a byte total. Arrow sorts by materializing a `uint64` (8-byte) index
+per row, so a run of rows narrower than 8 bytes each (e.g. a bare int8 / int32 /
+date32 key with no payload) makes that index dwarf the data the byte cap is
+counting -- measured at ~8.9x the data for 1-byte rows, versus ~1.1x at 24-byte
+rows -- and no byte-derived cap can bound it. It is NOT enough to check a
+batch's AVERAGE row width: the flush sort REORDERS rows before `_bounded_batches`
+cuts them into run batches, so a schema that mixes narrow (small-key) rows with
+wide (large-key) rows can pass an average check yet cluster the narrow rows into
+a post-sort run batch whose index dwarfs its data. `write()` therefore fails
+closed (`out_of_core_sort_row_index_unbounded`) on the SCHEMA, up front:
+`_min_row_bytes(schema)` (a lower bound over every possible row) must be
+>= `INDEX_BYTES`. That proves EVERY row -- and hence every reordered run batch,
+and every merge emit, whatever subset the cutoff selects -- carries at least an
+8-byte index's worth of data, so the index stays <= the data the cap counts.
+The bound is a real contract narrowing -- a caller wanting a narrow key column
+pads it to an 8-byte-effective key or carries a fixed payload -- chosen (over
+row-count-bounded spilling) because every actual consumer sorts >= 8-byte rows
+and the degenerate case is not worth the extra spill machinery.
 
 The merge holds NO per-row source-tag column. An earlier design tagged every
 head's rows with an int32 run index, concatenated, sorted, then split the
@@ -132,6 +135,43 @@ INDEX_BYTES = 8
 
 _RUN_FILE_PREFIX = "run"
 _MERGE_FILE_PREFIX = "mergep"
+
+
+def _min_row_bytes(schema: pa.Schema) -> int:
+    """A LOWER bound on the byte width of the narrowest possible row of `schema`.
+
+    Every column contributes its unavoidable per-row cost: a fixed-width column
+    its byte width, a variable-width column (binary/string/list) only its offset
+    entry (4 bytes for the int32-offset variants, 8 for the large/int64 ones),
+    since a cell's data can be empty. Booleans and anything not recognized floor
+    to 0. Each term is a true lower bound, so the sum never exceeds an actual
+    row's width -- `_min_row_bytes(schema) >= INDEX_BYTES` therefore proves EVERY
+    row is at least `INDEX_BYTES` wide, which is what keeps the sort index
+    bounded after the flush sort reorders rows and `_bounded_batches`
+    repartitions them (a narrow row could otherwise cluster into a post-sort run
+    batch whose index dwarfs its data -- see the module docstring)."""
+    total = 0
+    for field in schema:
+        t = field.type
+        if pa.types.is_boolean(t):
+            continue  # bit-packed, < 1 byte/row; floor at 0
+        if (
+            pa.types.is_integer(t)
+            or pa.types.is_floating(t)
+            or pa.types.is_temporal(t)
+            or pa.types.is_decimal(t)
+        ):
+            total += t.bit_width // 8
+        elif pa.types.is_fixed_size_binary(t):
+            total += t.byte_width
+        elif (
+            pa.types.is_large_binary(t) or pa.types.is_large_string(t) or pa.types.is_large_list(t)
+        ):
+            total += 8  # int64 offset entry, data may be empty
+        elif pa.types.is_binary(t) or pa.types.is_string(t) or pa.types.is_list(t):
+            total += 4  # int32 offset entry, data may be empty
+        # else: nested / unknown -> floor at 0 (a safe under-estimate)
+    return total
 
 
 def _is_supported_key_type(key_type: pa.DataType) -> bool:
@@ -350,10 +390,15 @@ class BoundedExternalSorter:
 
     @property
     def peak_merge_resident_bytes(self) -> int:
-        """Max resident byte total during any single merge round: the larger of
-        the co-loaded heads and (the un-emitted head remainders + the emitted
-        gather). Excludes the write-buffer phase and sort_by's own index array
-        (bounded separately by the >= 8-byte average-row invariant)."""
+        """Coarse DATA-resident witness for the merge phase: the co-loaded heads
+        plus the emit gather held concurrently. This is a lower bound on the true
+        peak, not the enforced envelope -- like the flush (see
+        `SORT_OVERHEAD_FACTOR`), sort_by's own index array is un-instrumentable
+        through `nbytes`. The true merge peak is bounded by `run_bytes_cap *
+        SORT_OVERHEAD_FACTOR` (the per-head cap's `// 2` leaves that headroom)
+        and proved end-to-end by the subprocess RSS test; the `>= INDEX_BYTES`
+        schema guard is what keeps that factor bounded. Excludes the write-buffer
+        phase."""
         return self._peak_merge_resident_bytes
 
     def _validate_key(self, batch: pa.RecordBatch) -> None:
@@ -413,6 +458,28 @@ class BoundedExternalSorter:
             return
         self._validate_key(batch)
         if self._schema is None:
+            # The flush and merge both sort_by, and sort_by allocates an 8-byte
+            # index per row. A row narrower than that makes the index exceed the
+            # data the byte cap counts -- and because the flush sort reorders
+            # rows before they are written into run batches, a schema that admits
+            # any sub-8-byte row can cluster those rows into a post-sort run batch
+            # the byte cap cannot bound. Fail closed on the SCHEMA (a lower bound
+            # over every possible row), not per input batch, so no reordering can
+            # smuggle a narrow run batch past the guard.
+            min_row = _min_row_bytes(batch.schema)
+            if min_row < INDEX_BYTES:
+                raise ExecutionError(
+                    code="out_of_core_sort_row_index_unbounded",
+                    message=(
+                        f"schema {batch.schema.names} admits rows as narrow as "
+                        f"{min_row} bytes, under the {INDEX_BYTES}-byte sort index "
+                        "per row; after the flush sort reorders rows, such rows "
+                        "can cluster into a run batch whose index exceeds the "
+                        "byte cap. The bounded sorter requires an effective row "
+                        f"width of >= {INDEX_BYTES} bytes: widen the key (or carry "
+                        "a fixed payload) so every row clears the sort index."
+                    ),
+                )
             self._schema = batch.schema
         # Bound the buffered views to `_per_head_cap_bytes`, not `run_bytes_cap`:
         # a single row wider than the per-head cap cannot be split into a
@@ -433,24 +500,6 @@ class BoundedExternalSorter:
                         "make one merge round's co-loaded heads exceed "
                         "run_bytes_cap. Increase the process memory budget or "
                         "shrink this column's width."
-                    ),
-                )
-            # Rows narrower than the 8-byte sort index (on average) make sort_by's
-            # index array exceed the byte cap; see the module docstring's
-            # index-array paragraph. Fail closed on the whole batch rather than
-            # silently blow the resident envelope.
-            if materialized.num_rows * INDEX_BYTES > row_bytes:
-                raise ExecutionError(
-                    code="out_of_core_sort_row_index_unbounded",
-                    message=(
-                        f"a run of {materialized.num_rows} rows totals only "
-                        f"{row_bytes} bytes (average row < {INDEX_BYTES} bytes); "
-                        f"sort_by allocates an {INDEX_BYTES}-byte index per row, "
-                        "which would exceed the byte cap it is bounded by. The "
-                        "bounded sorter requires an effective row width of at "
-                        f">= {INDEX_BYTES} bytes: widen the key (or carry a "
-                        "payload) so the sort index stays within the memory "
-                        "budget."
                     ),
                 )
             if self._buffered and self._buffered_bytes + row_bytes > self._run_bytes_cap:
@@ -567,10 +616,14 @@ class BoundedExternalSorter:
 
             # Split each head's already-ascending-sorted pending table at the
             # cutoff: rows <= cutoff are safe to emit this round, the rest stay
-            # as that head's remainder. Splitting per head keeps every remainder
-            # attributed to its own run WITHOUT a source-tag column (whose
-            # per-row width would itself be unbounded relative to a narrow key --
-            # see the module docstring), so the only merge transient is the emit
+            # as that head's remainder. Because the head is sorted, the split is a
+            # contiguous prefix, taken with ZERO-COPY slices -- emit and remainder
+            # share the head's already resident buffer, adding no copy (a `filter`
+            # would allocate a fresh emit AND a fresh remainder while the original
+            # is still alive). Splitting per head also keeps every remainder
+            # attributed to its own run WITHOUT a source-tag column (whose per-row
+            # width would itself be unbounded relative to a narrow key -- see the
+            # module docstring), so the only new merge allocation is the emit
             # gather below.
             emit_parts: list[pa.Table] = []
             for head in active:
@@ -579,19 +632,22 @@ class BoundedExternalSorter:
                     emit_parts.append(pending)
                     head.set_remaining(pending.slice(0, 0))
                     continue
-                emit_mask = pc.less_equal(pending[self._sort_key_column], cutoff)  # type: ignore[attr-defined, unused-ignore]
-                emit_parts.append(pending.filter(emit_mask))
-                head.set_remaining(pending.filter(pc.invert(emit_mask)))  # type: ignore[attr-defined, unused-ignore]
+                # Count of keys <= cutoff = the prefix length (mask is bit-packed,
+                # O(rows/8) bytes -- negligible against the byte cap).
+                le = pc.sum(pc.less_equal(pending[self._sort_key_column], cutoff))  # type: ignore[attr-defined, unused-ignore]
+                k = le.as_py() or 0
+                emit_parts.append(pending.slice(0, k))
+                head.set_remaining(pending.slice(k))
 
             combined = pa.concat_tables(emit_parts).sort_by(self._sort_key_column)
-            # Honest peak: while sort_by gathers `combined`, the head data it was
-            # split from is still resident (the remainders in the heads plus the
-            # emit_parts feeding the concat sum to `resident`), so the concurrent
-            # data peak is `resident + combined.nbytes` -- roughly double the
-            # heads, NOT just the heads. The un-instrumentable sort_by index
-            # array is bounded separately by the >= 8-byte average-row invariant
-            # (emit rows <= resident / 8, so its index <= the resident heads) and
-            # validated end-to-end by the subprocess RSS proof.
+            # Coarse resident witness: the loaded heads plus the emit gather held
+            # concurrently. Like the flush (see SORT_OVERHEAD_FACTOR), sort_by's
+            # own index array and gather transient are un-instrumentable through
+            # nbytes; the >= INDEX_BYTES schema guard keeps them bounded (emit
+            # rows <= resident / INDEX_BYTES, so the index <= the resident heads),
+            # and the true end-to-end peak is proved by the subprocess RSS test.
+            # The per-head cap's `// 2` leaves the same headroom for this merge
+            # transient that it leaves for the flush.
             self._peak_merge_resident_bytes = max(
                 self._peak_merge_resident_bytes, resident + combined.nbytes
             )

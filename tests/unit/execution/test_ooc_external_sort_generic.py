@@ -278,11 +278,11 @@ def test_reject_row_wider_than_per_head_cap(tmp_path):
 
 
 def test_reject_narrow_rows_index_unbounded(tmp_path):
-    # A run of rows narrower than the 8-byte sort index (here a bare int8 key,
-    # 1 byte/row) makes sort_by's index array dwarf the data the byte cap
-    # counts, so it fails closed BEFORE any spill rather than blow the resident
-    # envelope. int8 is an allowlisted key type, so this passes key validation
-    # and is caught by the average-row-width guard.
+    # A schema whose narrowest row is under the 8-byte sort index (here a bare
+    # int8 key, 1 byte/row) makes sort_by's index array dwarf the data the byte
+    # cap counts, so it fails closed on the SCHEMA before any spill. int8 is an
+    # allowlisted key type, so this passes key validation and is caught by the
+    # schema min-row-width guard.
     spill = tmp_path / "spill"
     sorter = BoundedExternalSorter(
         spill_dir=spill, run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
@@ -309,6 +309,69 @@ def test_reject_narrow_key_only_int32(tmp_path):
         with pytest.raises(ExecutionError) as exc:
             sorter.write(narrow)
         assert exc.value.code == "out_of_core_sort_row_index_unbounded"
+    finally:
+        sorter.close()
+
+
+def test_reject_mixed_narrow_schema_that_could_cluster(tmp_path):
+    # The guard is on the SCHEMA, not a per-batch average: an int8 key + binary
+    # payload schema admits 5-byte rows (1-byte key + 4-byte offset + empty
+    # data). A batch of mostly-empty payloads plus one wide payload has an
+    # average row width far above 8 bytes, so an average check would ACCEPT it;
+    # but after the flush sort clusters the empty-payload rows, a post-sort run
+    # batch's 8-byte-per-row index would exceed its data. The schema guard
+    # rejects it up front regardless of the batch's average.
+    spill = tmp_path / "spill"
+    sorter = BoundedExternalSorter(
+        spill_dir=spill, run_bytes_cap=64 * 1024, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        n = 100  # int8-valid key values
+        payloads = [b""] * (n - 1) + [b"x" * 20_000]  # avg >> 8 bytes/row
+        mixed = pa.record_batch(
+            {
+                KEY: pa.array(list(range(n)), type=pa.int8()),
+                "payload": pa.array(payloads, type=pa.binary()),
+            }
+        )
+        assert mixed.nbytes / mixed.num_rows > 8  # an average check would pass this
+        with pytest.raises(ExecutionError) as exc:
+            sorter.write(mixed)
+        assert exc.value.code == "out_of_core_sort_row_index_unbounded"
+        assert list(spill.glob("*.arrow")) == []
+    finally:
+        sorter.close()
+
+
+def test_accept_int32_key_with_binary_payload(tmp_path):
+    # The boundary is inclusive: int32 key (4) + binary payload (4-byte offset)
+    # gives a schema min row of exactly 8 bytes, so every row clears the sort
+    # index and the schema is accepted (and sorts correctly through a multi-pass
+    # merge). Proves the schema guard over-rejects nothing at its boundary.
+    n = 2_000
+    values = list(range(n))
+    order = list(range(n))
+    random.Random(11).shuffle(order)
+    shuffled = [values[i] for i in order]
+    batches = [
+        pa.record_batch(
+            {
+                KEY: pa.array(shuffled[s : s + 41], type=pa.int32()),
+                "payload": pa.array([v.to_bytes(4, "big") for v in shuffled[s : s + 41]]),
+            }
+        )
+        for s in range(0, n, 41)
+    ]
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "spill", run_bytes_cap=2 * 1024, merge_fan_in=3, sort_key_column=KEY
+    )
+    try:
+        for b in batches:
+            sorter.write(b)
+        assert len(list((tmp_path / "spill").glob("run_*.arrow"))) > 3
+        sorter.finish()
+        out = pa.Table.from_batches(list(sorter.iter_ordered()), schema=batches[0].schema)
+        assert out.column(KEY).to_pylist() == values
     finally:
         sorter.close()
 

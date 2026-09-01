@@ -174,14 +174,17 @@ def test_merge_resident_within_cap(tmp_path):
             for value in out_batch.column(ROW_NR).to_pylist()
         ]
         assert seen == list(range(n))
-        # The merge peak now measures the concurrent DATA peak -- the co-loaded
-        # heads plus the emit gather held at the same time (`resident +
-        # combined.nbytes`), not just the pre-split heads -- so it is a real
-        # positive measurement (kills a zero-undercount mutation) that still
-        # stays within the cap. The sort_by index array on top is bounded by the
-        # >= 8-byte average-row guard and proved end-to-end by the subprocess RSS
-        # test; these 24-byte rows are comfortably above that floor.
+        # The merge peak witness measures the concurrent DATA resident -- the
+        # co-loaded heads plus the emit gather (`resident + combined.nbytes`) --
+        # so it is a real positive measurement (kills a zero-undercount mutation)
+        # and stays within the cap as a data bound. It is a WITNESS, not the
+        # enforced envelope: sort_by's index array on top is un-instrumentable
+        # here (bounded by the >= INDEX_BYTES schema guard and proved by the RSS
+        # test), so the true peak is bounded by run_bytes_cap * SORT_OVERHEAD, the
+        # same envelope the flush lives under. Assert both: the data witness fits
+        # the cap, and the unified peak fits that envelope.
         assert 0 < sorter.peak_merge_resident_bytes <= run_bytes_cap
+        assert sorter.peak_buffered_bytes <= run_bytes_cap * SORT_OVERHEAD_FACTOR
     finally:
         sorter.close()
 
