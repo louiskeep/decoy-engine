@@ -623,6 +623,20 @@ def _runtime_source_rejections(
             f"{', '.join(offending_code_set)} apply to a non-string source, which "
             "diverges by chunk boundary under the handler's str()-conversion"
         )
+    # bucket_perturb has the identical chunk-stable-string-source requirement
+    # (a non-string source parses to a chunk-boundary-dependent date string).
+    # Same collector the manual entry's raising gate uses.
+    from decoy_engine.execution._chunked_bucket_perturb import unsafe_bucket_perturb_source_columns
+
+    offending_bucket_perturb = unsafe_bucket_perturb_source_columns(
+        ordered_work or [], src.schema, table=table
+    )
+    if offending_bucket_perturb:
+        reasons.append(
+            "chunked_bucket_perturb_source_dtype_unsupported: bucket_perturb "
+            f"column(s) {', '.join(offending_bucket_perturb)} apply to a "
+            "non-string source, which diverges by chunk boundary"
+        )
     return reasons
 
 

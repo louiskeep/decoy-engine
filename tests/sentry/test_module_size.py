@@ -308,7 +308,17 @@ ALLOWLIST: dict[str, int] = {
     # masking loop, and threading the pinned `code_set_records` mapping into
     # every chunk's `adapter.run()` call. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 744,
+    # Phase 4 slice 5 (2026-09-01): +38 LOC (744 -> 782) admitting
+    # bucket_perturb (explicit date_format) onto the chunked route. Simpler
+    # than code_set (no corpus, no evidence), so all bucket_perturb-specific
+    # logic (the conditional-admission predicate, the source-dtype gate trio,
+    # the `when:` + FK-key rejections) lives in the new
+    # `_chunked_bucket_perturb.py` sibling; this file only gains the import,
+    # one branch in `_conditional_admission_failures`, the `when:` + FK-key
+    # gate calls + comments in `check_chunked_compatibility`, and the
+    # source-dtype gate call on the first chunk and inside the masking loop.
+    # Same FK-resolution-helper decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 782,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -537,7 +547,11 @@ ALLOWLIST: dict[str, int] = {
     # code_set source-dtype auto-route gate, via the shared
     # `_chunked_code_set.unsafe_code_set_source_columns` collector. Same
     # `_planner_chunked.py` decomposition target stands.
-    "src/decoy_engine/execution/_planner.py": 638,
+    # Phase 4 slice 5 (2026-09-01): +14 LOC (638 -> 652) for the identical
+    # bucket_perturb source-dtype auto-route gate, via the shared
+    # `_chunked_bucket_perturb.unsafe_bucket_perturb_source_columns`
+    # collector. Same `_planner_chunked.py` decomposition target stands.
+    "src/decoy_engine/execution/_planner.py": 652,
 }
 
 

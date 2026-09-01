@@ -74,6 +74,13 @@ record is resolved per column BEFORE any chunk streams and pinned into every
 chunk's context so masking cannot drift across a mid-run corpus file swap.
 See `_chunked_code_set.py`.
 
+Conditionally admitted, non-key (Phase 4 slice 5): `bucket_perturb` with an
+explicit `date_format` (chunk-stable string source, no `when:`, and no
+participation as an FK key column in either orientation). Same CONDITIONAL
+treatment as code_set -- autodetect is a whole-column reduction, so it stays
+OUT of CHUNK_SAFE_STRATEGIES -- but simpler: no corpus, no evidence, so
+there is no pinning/aggregation counterpart. See `_chunked_bucket_perturb.py`.
+
 Rejected at compile time (`check_chunked_compatibility`):
 
 - shuffle (whole-column permutation), composite/nested (bundle state):
@@ -143,6 +150,7 @@ import pyarrow as pa
 
 from decoy_engine.plan._errors import PlanCompileError
 
+from . import _chunked_bucket_perturb as bucket_perturb_gate
 from . import _chunked_code_set as code_set_gate
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
@@ -161,7 +169,9 @@ from ._chunked_fk_dtype import (
 
 # Admitted only when the column's config pins the deterministic
 # value-keyed path (see module docstring for the per-strategy rules).
-CHUNK_CONDITIONAL_STRATEGIES: frozenset[str] = frozenset({"faker", "categorical", "code_set"})
+CHUNK_CONDITIONAL_STRATEGIES: frozenset[str] = frozenset(
+    {"faker", "categorical", "code_set", "bucket_perturb"}
+)
 
 # Strategies admitted onto the chunked route: value-keyed (CHUNK_SAFE), the
 # position-keyed DGRN set (`_chunked_dgrn.py`), and the sibling-keyed set
@@ -184,6 +194,12 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
         # categorical below, mask mode is deterministic by construction and
         # namespace is optional (defaults to "code_set"). See _chunked_code_set.py.
         return code_set_gate.code_set_conditional_failures(col_entry)
+    if strategy == "bucket_perturb":
+        # bucket_perturb's only admission condition is an explicit date_format;
+        # deterministic/namespace do not apply (namespace is REQUIRED but
+        # already fails closed identically on both routes -- see
+        # _chunked_bucket_perturb.py).
+        return bucket_perturb_gate.bucket_perturb_conditional_failures(col_entry)
     cfg = col_entry.get("provider_config") or {}
     failures: list[str] = []
     if not col_entry.get("deterministic"):
@@ -241,6 +257,9 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         chunked_code_set_when_not_supported: `code_set` + `when:`.
         chunked_code_set_fk_key_unsupported: `code_set` used as an FK key
             column, as parent or child.
+        chunked_bucket_perturb_when_not_supported: `bucket_perturb` + `when:`.
+        chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` used as
+            an FK key column, as parent or child.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -271,6 +290,9 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         # gate_fk_child_edges above only inspects CHILD-side edges (see
         # _chunked_code_set.py point 4).
         code_set_gate.reject_code_set_fk_keys(config, table=table)
+        # Same both-orientation gap for bucket_perturb (see
+        # _chunked_bucket_perturb.py point 3).
+        bucket_perturb_gate.reject_bucket_perturb_fk_keys(config, table=table)
     # `windowed_date` + `when:` inadmissible here (public entry; see `_chunked_dgrn.py`).
     dgrn.reject_windowed_date_when(table_cfg, table=table)
     # `group_key` + `when:` inadmissible here too (see `_chunked_group_key.py`).
@@ -279,6 +301,8 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     text_mask_gate.reject_text_mask_when(table_cfg, table=table)
     # `code_set` + `when:` inadmissible here too (see `_chunked_code_set.py`).
     code_set_gate.reject_code_set_when(table_cfg, table=table)
+    # `bucket_perturb` + `when:` inadmissible here too (see `_chunked_bucket_perturb.py`).
+    bucket_perturb_gate.reject_bucket_perturb_when(table_cfg, table=table)
     offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:
@@ -463,6 +487,15 @@ def run_mask_pipeline_chunked(
         plan, resolved_registry, graph, table=table
     )
     code_set_gate.reject_unsafe_code_set_chunk_schema(first.schema, code_set_cols, table=table)
+    # bucket_perturb has the identical chunk-stable-string-source requirement
+    # (same date-parsing hazard on a non-string source); same once-resolved /
+    # per-chunk validation split.
+    bucket_perturb_cols = bucket_perturb_gate.bucket_perturb_source_columns(
+        plan, resolved_registry, graph, table=table
+    )
+    bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
+        first.schema, bucket_perturb_cols, table=table
+    )
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
     # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK
     # key dtype (it never sees the data). Read those declarations so the per-chunk
@@ -516,6 +549,11 @@ def run_mask_pipeline_chunked(
             if code_set_cols:
                 code_set_gate.reject_unsafe_code_set_chunk_schema(
                     chunk.schema, code_set_cols, table=table
+                )
+            # Same per-chunk check for bucket_perturb (see `_chunked_bucket_perturb.py`).
+            if bucket_perturb_cols:
+                bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
+                    chunk.schema, bucket_perturb_cols, table=table
                 )
             # Per-chunk DGRN domain guard (no whole-stream row count); see `_chunked_dgrn.py`.
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
