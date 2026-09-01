@@ -315,12 +315,16 @@ def run_mask_pipeline_chunked(
     masked chunks in the same order; concatenating them is byte-identical
     to a full-frame `run_pipeline` of the same rows. `check_chunked_
     compatibility` enforces the CONFIG-level value-keyed contract up front,
-    but it does not see the data: runtime dtype stability is the caller's
-    precondition. A string-converting strategy on an int-with-nulls source
-    diverges by chunk boundary (a null-free chunk stays int64 -> "1"; a
-    null-bearing one widens to float64 -> "1.0"); the auto route gates that
-    at `_planner._runtime_source_rejections`, but a direct caller of THIS
-    low-level entry owns it (follow-up: mirror that gate here).
+    but it does not see the data: for some strategies runtime dtype stability
+    is the caller's precondition. A string-converting strategy on an
+    int-with-nulls source diverges by chunk boundary (a null-free chunk stays
+    int64 -> "1"; a null-bearing one widens to float64 -> "1.0"). `text_mask`
+    now enforces a chunk-stable-string-source gate at admission below (both
+    this entry and the auto route); the OTHER string-converting strategies
+    (`text_redact` / `hash`) still rely on this caller precondition at this
+    low-level entry (the auto route gates them via
+    `_planner._runtime_source_rejections`). Carry-forward: extend the
+    text_mask gate to that whole class.
 
     `adapter` selects the execution substrate; None keeps the pandas
     adapter (the byte-stable default this mode shipped with). Pass a
@@ -409,6 +413,12 @@ def run_mask_pipeline_chunked(
     # Trap E group_by effective-type guard: needs the plan + source schema
     # (absent at the config-only check_chunked_compatibility above); once, pre-stream.
     group_key.reject_unsafe_group_key_group_by_dtype(
+        plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
+    )
+    # text_mask requires a string source (Trap: a non-string int+null source
+    # widens by chunk boundary under the handler's str()-conversion); this entry
+    # sees the data (first chunk schema), the config-only compat gate does not.
+    text_mask_gate.reject_unsafe_text_mask_source_dtype(
         plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
     )
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)

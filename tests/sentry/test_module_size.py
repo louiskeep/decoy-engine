@@ -284,16 +284,18 @@ ALLOWLIST: dict[str, int] = {
     # schema-blind, so that second gate cannot route through it without a
     # much larger signature change for zero behavioral gain). Same
     # FK-resolution-helper decomposition target stands.
-    # Phase 4 slice 3 (2026-09-01): +15 LOC (663 -> 678) admitting text_mask
+    # Phase 4 slice 3 (2026-09-01): +25 LOC (663 -> 688) admitting text_mask
     # onto the chunked route. text_mask joins `CHUNK_SAFE_STRATEGIES`
     # directly (own-value-keyed span masking, no new admitted set needed),
-    # so this file only gains the `when:` rejection wiring: the import of
-    # the new `_chunked_text_mask.py` sibling, its call site + comment in
-    # `check_chunked_compatibility`, the new error code in that function's
-    # docstring, and the CHUNK_SAFE strategy-table row + module-docstring
-    # paragraph documenting the admission. Same FK-resolution-helper
-    # decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 678,
+    # so this file only gains the gate WIRING (both gates' logic lives in the
+    # new `_chunked_text_mask.py` sibling): the sibling import; the `when:`
+    # rejection call + comment + error-code doc in `check_chunked_compatibility`;
+    # the source-dtype gate call + comment in `run_mask_pipeline_chunked` (Codex
+    # final-gate remediation: a non-string text_mask source diverges by chunk
+    # boundary); the CHUNK_SAFE table row + module-docstring paragraph; and the
+    # honest dtype-stability precondition note on the run_mask docstring. Same
+    # FK-resolution-helper decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 688,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -507,7 +509,13 @@ ALLOWLIST: dict[str, int] = {
     # their small column-collecting siblings) into a `_planner_chunked.py`
     # sibling when the next chunked-admission strategy lands and this
     # module is touched again.
-    "src/decoy_engine/execution/_planner.py": 613,
+    # Phase 4 slice 3 (2026-09-01): +14 LOC (613 -> 627) for the text_mask
+    # source-dtype auto-route gate (Codex final-gate remediation): the shared
+    # `_chunked_text_mask.unsafe_text_mask_source_columns` collector called from
+    # `_runtime_source_rejections` so the auto route rejects a non-string
+    # text_mask source identically to the manual entry. Same `_planner_chunked.py`
+    # decomposition target stands.
+    "src/decoy_engine/execution/_planner.py": 627,
 }
 
 

@@ -58,7 +58,10 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import PolarsExecutionAdapter
 from decoy_engine.execution._chunked import check_chunked_compatibility, concat_masked_chunks
 from decoy_engine.execution._chunked_fk import CHUNK_SAFE_STRATEGIES, NAMESPACE_REQUIRING_STRATEGIES
-from decoy_engine.execution._chunked_text_mask import reject_text_mask_when
+from decoy_engine.execution._chunked_text_mask import (
+    reject_text_mask_when,
+    unsafe_text_mask_source_columns,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan import PlanCompileError
@@ -183,8 +186,12 @@ def _check_faker(original: str, masked: str) -> None:
 
 def _check_date_shift(original: str, masked: str) -> None:
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", masked), masked
-    _dt.datetime.strptime(masked, "%Y-%m-%d")  # still a valid calendar date
-    assert masked != _TOKEN
+    # min_days == max_days == 1 -> the span is shifted by EXACTLY one day, so a
+    # redact-fallback (masked == token) or an unshifted passthrough both fail.
+    expected = (_dt.datetime.strptime(original, "%Y-%m-%d") + _dt.timedelta(days=1)).strftime(
+        "%Y-%m-%d"
+    )
+    assert masked == expected, f"{original} -> {masked}, expected {expected}"
 
 
 def _check_passthrough(original: str, masked: str) -> None:
@@ -222,7 +229,15 @@ BRANCH_CASES: list[dict[str, Any]] = [
     },
     {
         "name": "date_shift",
-        "provider_config": {"ner": True, "unmatched_span_policy": "passthrough"},
+        # min_days == max_days == 1 pins the keyed offset to exactly +1 day, so
+        # _check_date_shift can assert the EXACT shifted date (proving a real
+        # shift, not a redact-fallback that a "valid date" check would false-pass).
+        "provider_config": {
+            "ner": True,
+            "unmatched_span_policy": "passthrough",
+            "min_days": 1,
+            "max_days": 1,
+        },
         "ner_markers": {_DATE_TEXT: "iso_date"},
         "span_text": _DATE_TEXT,
         "fk_raw_keys": ["1990-06-15", "2001-11-02", "1975-01-30"],
@@ -860,6 +875,159 @@ class TestWhenRejection:
 # ---------------------------------------------------------------------------
 # 8. Admission surfaces: manual entry, auto route, cross-substrate polars.
 # ---------------------------------------------------------------------------
+
+
+class TestSourceDtypeGate:
+    """text_mask requires a chunk-stable STRING source. A non-string (int)
+    source diverges by chunk boundary under the handler's str()-conversion (a
+    null-free chunk stays int64 -> "1"; a null-bearing chunk widens to float64
+    -> "1.0"), and would break byte-parity + FK RI on the manual/FK route
+    (Codex final-gate BLOCKER). Rejected fail-closed at both entries."""
+
+    def _int_source_cfg(self, tmp_path):
+        columns = [
+            {"name": "amount", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}}
+        ]
+        return _config(tmp_path, columns)
+
+    def test_manual_entry_raises_on_int_source(self, tmp_path) -> None:
+        table = pa.table({"amount": pa.array([1, None, 2], type=pa.int64())})
+        cfg = self._int_source_cfg(tmp_path)
+        with pytest.raises(PlanCompileError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, _pa_chunks(table, 1), table="records", engine_version=_ENGINE_VERSION
+                )
+            )
+        assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
+        assert "amount" in exc.value.message
+
+    def test_auto_route_falls_back_to_oracle_on_int_source(self, tmp_path) -> None:
+        # Null-free int: the pre-existing integer-with-nulls gate does NOT catch
+        # it, so this proves THIS slice's source-dtype gate closes the auto route.
+        table = pa.table({"amount": pa.array([1, 2, 3, 4, 5, 6], type=pa.int64())})
+        cfg = self._int_source_cfg(tmp_path)
+        _write_csv_stub(tmp_path, "records", table)
+        result = run_pipeline(
+            cfg,
+            sources={"records": table},
+            engine_version=_ENGINE_VERSION,
+            auto_chunk_threshold_rows=_LOW_THRESHOLD,
+            chunk_size_rows=2,
+        )
+        assert result.quality_metrics["auto_chunk"]["mode"] == "full_frame"
+
+    def test_collector_flags_non_string_admits_string(self) -> None:
+        # Direct (fast) unit test of the shared collector. A text_mask node on a
+        # string source is safe (empty); on an int source it is offending.
+        from types import SimpleNamespace
+
+        def node(strategy: str, column: str, table: str = "records", kind: str = "scalar"):
+            return SimpleNamespace(table=table, kind=kind, strategy=strategy, columns=(column,))
+
+        str_schema = pa.schema([("cell", pa.string())])
+        int_schema = pa.schema([("cell", pa.int64())])
+        nodes = [node("text_mask", "cell"), node("hash", "other")]
+        assert unsafe_text_mask_source_columns(nodes, str_schema, table="records") == []
+        assert unsafe_text_mask_source_columns(nodes, int_schema, table="records") == ["cell"]
+        # a large_string source is also safe; a non-text_mask node is ignored
+        assert (
+            unsafe_text_mask_source_columns(
+                nodes, pa.schema([("cell", pa.large_string())]), table="records"
+            )
+            == []
+        )
+
+    def test_collector_skips_other_table_and_non_scalar_nodes(self) -> None:
+        # Pins the skip guard's three dimensions (table / kind / strategy): a
+        # text_mask node on a DIFFERENT table, or a NON-scalar text_mask node,
+        # even on an int source, must be ignored for `table="records"`.
+        from types import SimpleNamespace
+
+        def node(strategy, column, table="records", kind="scalar"):
+            return SimpleNamespace(table=table, kind=kind, strategy=strategy, columns=(column,))
+
+        int_schema = pa.schema([("cell", pa.int64())])
+        # only same-table + scalar + text_mask counts:
+        assert (
+            unsafe_text_mask_source_columns(
+                [node("text_mask", "cell", table="other_tbl")], int_schema, table="records"
+            )
+            == []
+        )
+        assert (
+            unsafe_text_mask_source_columns(
+                [node("text_mask", "cell", kind="composite")], int_schema, table="records"
+            )
+            == []
+        )
+        # and a genuine same-table scalar text_mask on the int source IS flagged
+        assert unsafe_text_mask_source_columns(
+            [node("text_mask", "cell")], int_schema, table="records"
+        ) == ["cell"]
+        # a SKIP node (other strategy) BEFORE the matching text_mask node must
+        # not stop the scan (guards `continue`, not `break`).
+        assert unsafe_text_mask_source_columns(
+            [node("hash", "x"), node("text_mask", "cell")], int_schema, table="records"
+        ) == ["cell"]
+        # a column absent from the schema cannot be proven safe -> flagged
+        assert unsafe_text_mask_source_columns(
+            [node("text_mask", "missing")], int_schema, table="records"
+        ) == ["missing"]
+
+    def _compiled(self, cfg, table_data, table: str = "records"):
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
+        from decoy_engine.plan import compile_plan
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships import RelationshipGraph
+
+        profile = first_chunk_profile(table_data, table=table, engine_version=_ENGINE_VERSION)
+        plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION, no_profile=True)
+        return plan, get_default_registry(), RelationshipGraph(edges=(), ordering=())
+
+    def test_reject_wrapper_returns_on_string_raises_on_int(self, tmp_path) -> None:
+        # Fast direct coverage of the raising wrapper's guard (string -> return;
+        # int -> raise), so it does not depend on the slow full-pipeline tests.
+        from decoy_engine.execution._chunked_text_mask import reject_unsafe_text_mask_source_dtype
+
+        cfg = self._int_source_cfg(tmp_path)  # text_mask on "amount"
+        str_table = pa.table({"amount": pa.array(["a", "b"], type=pa.string())})
+        plan_s, reg, graph = self._compiled(cfg, str_table)
+        # string source -> must NOT raise
+        reject_unsafe_text_mask_source_dtype(
+            plan_s, str_table.schema, table="records", registry=reg, relationship_graph=graph
+        )
+        int_table = pa.table({"amount": pa.array([1, 2], type=pa.int64())})
+        plan_i, _, _ = self._compiled(cfg, int_table)
+        with pytest.raises(PlanCompileError) as exc:
+            reject_unsafe_text_mask_source_dtype(
+                plan_i, int_table.schema, table="records", registry=reg, relationship_graph=graph
+            )
+        assert exc.value.code == "chunked_text_mask_source_dtype_unsupported"
+        assert exc.value.path == "tables.records.columns"  # pins the coded path field
+        assert "amount" in exc.value.message
+
+    def test_reject_wrapper_two_offending_columns_comma_joined(self, tmp_path) -> None:
+        # Two non-string text_mask columns -> both named, comma-joined (pins the
+        # `', '.join(...)` separator, not a hardcoded single name).
+        from decoy_engine.execution._chunked_text_mask import reject_unsafe_text_mask_source_dtype
+
+        cfg = _config(
+            tmp_path,
+            [
+                {"name": "aaa", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}},
+                {"name": "bbb", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}},
+            ],
+        )
+        table = pa.table(
+            {"aaa": pa.array([1, 2], type=pa.int64()), "bbb": pa.array([3, 4], type=pa.int64())}
+        )
+        plan, reg, graph = self._compiled(cfg, table)
+        with pytest.raises(PlanCompileError) as exc:
+            reject_unsafe_text_mask_source_dtype(
+                plan, table.schema, table="records", registry=reg, relationship_graph=graph
+            )
+        assert "aaa, bbb" in exc.value.message
 
 
 class TestAdmissionSurfaces:

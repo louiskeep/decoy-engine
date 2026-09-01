@@ -598,6 +598,20 @@ def _runtime_source_rejections(
             f"{', '.join(offending_group_key)} read a group_by value whose "
             "effective type is not provably safe for chunked self-masking"
         )
+    # text_mask requires a chunk-stable string source (a non-string int+null
+    # source widens by chunk boundary under str()-conversion). Same collector
+    # the manual entry's raising gate uses.
+    from decoy_engine.execution._chunked_text_mask import unsafe_text_mask_source_columns
+
+    offending_text_mask = unsafe_text_mask_source_columns(
+        ordered_work or [], src.schema, table=table
+    )
+    if offending_text_mask:
+        reasons.append(
+            "chunked_text_mask_source_dtype_unsupported: text_mask column(s) "
+            f"{', '.join(offending_text_mask)} apply to a non-string source, which "
+            "diverges by chunk boundary under the handler's str()-conversion"
+        )
     return reasons
 
 

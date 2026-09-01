@@ -1,20 +1,29 @@
-# Mutation grading: `execution/_chunked_text_mask.py` -- 89.13% (0 unresolved)
+# Mutation grading: `execution/_chunked_text_mask.py` -- 85.85% (0 unresolved logic)
 
 Phase 4 slice 3 (`text_mask` on the chunked route,
-`docs/plans/2026-09-01-p4-slice3-text-mask-chunked.md`). `_chunked_text_mask.py` is a new,
-single-function module: `reject_text_mask_when`, the `text_mask` + `when:` fail-closed gate
-(Trap E). The slice's other production change -- adding `"text_mask"` to `CHUNK_SAFE_STRATEGIES`
-in `_chunked_fk.py` -- is graded by the admission and FK-parity tests directly (see "the one-line
-admission" below), not by this mutmut run.
+`docs/plans/2026-09-01-p4-slice3-text-mask-chunked.md`). `_chunked_text_mask.py` holds the slice's
+gate logic: `reject_text_mask_when` (the `text_mask` + `when:` fail-closed gate, Trap E) and, added
+in the Codex-final-gate remediation, `unsafe_text_mask_source_columns` + `reject_unsafe_text_mask_
+source_dtype` (the source-dtype gate: text_mask requires a chunk-stable STRING source, else a
+non-string int+null source diverges by chunk boundary under the handler's str()-conversion, breaking
+byte-parity + FK RI via the manual/FK route). The slice's other production change -- adding
+`"text_mask"` to `CHUNK_SAFE_STRATEGIES` in `_chunked_fk.py` -- is graded by the admission and
+FK-parity tests directly, not by this mutmut run.
 
 Graded via `scripts/native-testing/python_mutation_pilot.py` (standalone-pytest-per-mutant,
 avoids mutmut's in-process false-timeout pathology on this pandas/pyarrow-heavy suite), selection
-`tests/unit/execution/test_text_mask_chunked.py::TestWhenRejection`, killed-bucket readjudicated.
+`::TestWhenRejection` + `::TestSourceDtypeGate`.
 
 ## Numbers
 
-**41/46 = 89.13% LOGIC, 0 unresolved. 5 survivors, all ACCEPTED NON-CONTRACT (message prose),
-0 killable-and-undocumented residual.**
+**91/106 = 85.85% LOGIC, 0 unresolved logic. 15 survivors: 14 ACCEPTED NON-CONTRACT (error-message
+prose -- casing / `XX`-wrap mutants whose coded fields (code, path, column names, `', '.join`
+separator) are all independently pinned) + 1 EQUIVALENT (`build_work_list(plan, None)`:
+`reject_unsafe_text_mask_source_dtype` reads only node.table/kind/strategy/columns from the work
+list, none of which depend on the registry for a compiled plan -- same adjudication as slice 2's
+group_key wrapper). Every collector + wrapper LOGIC mutant (skip-guard table/kind/strategy,
+continue-not-break, `if not offending` guard, column-name index, path, join) is KILLED by the direct
+`TestSourceDtypeGate` unit tests. The prior 41/46 was the when-gate alone; this supersedes it.**
 
 | Function | Total | Killed | Accepted non-contract |
 |---|---|---|---|
