@@ -177,12 +177,14 @@ def test_merge_resident_within_cap(tmp_path):
         # The merge peak witness measures the concurrent DATA resident -- the
         # co-loaded heads plus the emit gather (`resident + combined.nbytes`) --
         # so it is a real positive measurement (kills a zero-undercount mutation)
-        # and stays within the cap as a data bound. It is a WITNESS, not the
-        # enforced envelope: sort_by's index array on top is un-instrumentable
-        # here (bounded by the >= INDEX_BYTES schema guard and proved by the RSS
-        # test), so the true peak is bounded by run_bytes_cap * SORT_OVERHEAD, the
-        # same envelope the flush lives under. Assert both: the data witness fits
-        # the cap, and the unified peak fits that envelope.
+        # and stays within the cap as a data bound. Both asserts below are on
+        # nbytes WITNESSES, not the true resident peak: `peak_buffered_bytes` is
+        # the max of the flush-buffer witness and this merge data witness, so it
+        # bounds the unified DATA residency under the SORT_OVERHEAD envelope but
+        # does NOT see sort_by's own index array. That un-instrumentable transient
+        # (bounded by the >= INDEX_BYTES schema guard) is what the subprocess RSS
+        # test proves end to end; these asserts are the cheap in-process sanity
+        # bracket, the RSS test is the real memory gate.
         assert 0 < sorter.peak_merge_resident_bytes <= run_bytes_cap
         assert sorter.peak_buffered_bytes <= run_bytes_cap * SORT_OVERHEAD_FACTOR
     finally:
