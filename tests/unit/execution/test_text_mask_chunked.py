@@ -882,7 +882,7 @@ class TestSourceDtypeGate:
     source diverges by chunk boundary under the handler's str()-conversion (a
     null-free chunk stays int64 -> "1"; a null-bearing chunk widens to float64
     -> "1.0"), and would break byte-parity + FK RI on the manual/FK route
-    (Codex final-gate BLOCKER). Rejected fail-closed at both entries."""
+    (the manual/FK-route byte-parity + RI hazard). Rejected fail-closed at both entries."""
 
     def _int_source_cfg(self, tmp_path):
         columns = [
@@ -905,7 +905,7 @@ class TestSourceDtypeGate:
     def test_manual_entry_raises_on_later_chunk_dtype_drift(self, tmp_path) -> None:
         # A caller feeding a STRING first chunk (passes admission) then a
         # divergent INT chunk must be caught PER CHUNK, not just on the first
-        # (Codex re-gate BLOCKER: the manual iterable's dtype can drift).
+        # (the manual iterable's dtype can drift across chunks).
         cfg = self._int_source_cfg(tmp_path)  # text_mask on "amount"
         chunk1 = pa.table({"amount": pa.array(["a", "b"], type=pa.string())})
         chunk2 = pa.table({"amount": pa.array([1, None, 2], type=pa.int64())})

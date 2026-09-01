@@ -485,7 +485,7 @@ class TestCacheCollisionFloatSignedZero:
 
 
 class TestTextRedactMaskedGroupByRoutesToOracle:
-    """End-to-end guard against the Codex final-gate BLOCKER: a float group_by
+    """End-to-end guard against the cache-collision hazard: a float group_by
     masked by a text_redact whose config makes it a passthrough (malformed
     detectors, or a non-string token) keeps the float type, so the auto route
     must fall back to the oracle rather than stream a byte-divergent job."""
@@ -512,7 +512,7 @@ class TestTextRedactMaskedGroupByRoutesToOracle:
     @pytest.mark.parametrize(
         "text_redact_pc",
         [
-            {"token": "[X]", "detectors": 123},  # malformed detectors (Codex repro)
+            {"token": "[X]", "detectors": 123},  # malformed detectors (reproduced passthrough)
             {"token": 123},  # non-string token
         ],
     )
@@ -1081,7 +1081,7 @@ class TestEffectiveTypeUnitBranches:
         # A malformed `detectors` (not None / list / tuple) is text_redact's
         # SECOND passthrough condition: the handler returns the frame unchanged,
         # so a float64 group_by stays float64 (unsafe). A string token alone
-        # does not make it safe. (Codex final-gate BLOCKER repro.)
+        # does not make it safe. (the reproduced collision.)
         gk = self._gk_node()
         ordered = [
             _scalar_node(
