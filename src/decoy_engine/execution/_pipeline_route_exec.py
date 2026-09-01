@@ -17,6 +17,7 @@ re-decide).
 from __future__ import annotations
 
 import shutil
+import warnings
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,11 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from decoy_engine.execution._residency_warning import (
+    CallerManagedResidencyWarning,
+    caller_managed_residency_shapes,
+    residency_warning_message,
+)
 from decoy_engine.execution._sequential import run_sequential
 
 if TYPE_CHECKING:
@@ -43,6 +49,7 @@ __all__ = [
     "run_out_of_core_route",
     "run_sequential_route",
 ]
+
 
 # OOC-D: the runtime temp-disk cap (`_budget.check_temp_disk_budget`, enforced
 # inside `run_fk_out_of_core` at each table boundary) is sized off free disk
@@ -251,10 +258,21 @@ def run_out_of_core_route(
     routing_signals.resolve_execution_route`) is ADVISORY only -- it warns,
     it never rejects.
 
-    Residency: with a `sink` the runner streams bounded batches (outputs `{}`,
-    the sink holds the deliverable); without one it reassembles resident tables
-    (still bounded per-table on the DuckDB side, but the Python outputs are held
-    -- the same resident-vs-streamed distinction the sequential route makes).
+    Residency (P4-A, Option A): the route's memory bound -- engine-controlled
+    peak residency bounded with respect to table row cardinality -- holds only
+    for the structural bounded shape: every source a `LazySource` (never fully
+    materialized) AND a sink that consumes `write_batches` incrementally without
+    retaining the stream (`ParquetTransactionalSink` is the production-proven
+    such sink). It is NOT an absolute never-OOM guarantee: a resident `pa.Table`
+    source holds the whole input in RAM (RAM the caller already spent), `sink is
+    None` reassembles the whole output resident, a `source_loader` returns an
+    unbounded resident table, and unrelated in-process memory the caller holds is
+    outside the route's view. Those caller-managed shapes run unchanged but emit
+    one best-effort `CallerManagedResidencyWarning` (and a `quality_metrics
+    ["residency"]` record) naming the shape and the bounded alternative; they are
+    documented, not policed -- four cross-model plan-gate rounds established that
+    a precise fail-closed byte guard cannot make the bound absolute for arbitrary
+    in-process callers.
     `strategy` surface is SC1's `hash/redact/truncate/passthrough`; widening is
     SC3/SC4, and an unsupported strategy is a routing miss (the job never
     reaches here -- it stays sequential/full-frame), never a run failure.
@@ -277,6 +295,23 @@ def run_out_of_core_route(
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
     from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
     from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
+
+    # P4-A (Option A): the residency bound holds only for the structural bounded
+    # shape (LazySource sources + an incrementally-consuming sink). Warn on any
+    # caller-managed shape BEFORE the loader materializes anything, so the caller
+    # is told even if the loader then OOMs. Best-effort heads-up: no sizing, no
+    # rejection, no change to the result. Detection is on the pre-resolution
+    # `sources` (a loader-resolved table would look resident post-hoc; the
+    # `source_loader is not None` check already covers that shape).
+    caller_managed_shapes = caller_managed_residency_shapes(
+        sources, sink=sink, source_loader=source_loader
+    )
+    if caller_managed_shapes:
+        warnings.warn(
+            residency_warning_message(caller_managed_shapes),
+            CallerManagedResidencyWarning,
+            stacklevel=2,
+        )
 
     resolved_sources = sources
     if source_loader is not None:
@@ -385,6 +420,14 @@ def run_out_of_core_route(
         source_loader=source_loader,
         sources_resident=sources_resident,
     )
+    # P4-A: the always-present, control-flow-neutral record of any caller-managed
+    # residency shape (mirrors the stdlib warning above, which a caller's -W
+    # error could escalate; this record never can).
+    if caller_managed_shapes:
+        quality_metrics["residency"] = {
+            "caller_managed": True,
+            "shapes": list(caller_managed_shapes),
+        }
     if explain_plan and execution_plan_decision is not None:
         quality_metrics["execution_plan"] = {
             "mode": execution_plan_decision.mode,

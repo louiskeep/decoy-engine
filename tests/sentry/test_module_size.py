@@ -459,7 +459,14 @@ ALLOWLIST: dict[str, int] = {
     # new `sink=sink is not None` param to `resolve_phase_memory_limits` so
     # it computes only the opened path's pair instead of raising for the
     # unused one. Same chunk-drain / evidence-merge decomposition target.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 665,
+    # P4-A residency honesty (2026-09-01): +11 LOC (665 -> 676) DOCSTRING ONLY --
+    # corrected the misleading "a resident source re-iterates for free" line
+    # (true for CPU, false for RAM) and documented the caller-managed residency
+    # precondition on the exported `run_fk_out_of_core` primitive (the bound
+    # holds only for LazySource sources + an incrementally-consuming sink). No
+    # logic added here; the warning itself lives in the new sibling
+    # `execution/_residency_warning.py`. Same decomposition target stands.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 676,
     # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
     # schema-invariant checker (_check_corpus_schema, shared by the load path
     # and the new standalone verify_corpus primitive), the

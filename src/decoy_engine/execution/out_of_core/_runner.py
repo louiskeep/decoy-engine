@@ -25,11 +25,14 @@ path:
 
 Re-reading a source once per pass trades bounded RAM for disk IO, the
 standard external-memory discipline (DuckDB's larger-than-memory hash join
-re-reads its spilled partitions the same way); a resident `pa.Table` source
-re-iterates for free. Without a sink, the streamed batches are reassembled in
-memory column-wise under the whole-child chunk-merge rules (`_join.py`), so
-the returned tables keep the value-derived column types the pandas-oracle
-parity suite pins.
+re-reads its spilled partitions the same way). A resident `pa.Table` source
+re-iterates without extra disk IO, but holds the WHOLE input resident -- free
+for CPU, not for memory; the residency bound (bounded peak residency w.r.t. row
+cardinality) holds only for `LazySource` sources plus an incrementally-consuming
+sink (see `CallerManagedResidencyWarning`). Without a sink, the streamed batches
+are reassembled in memory column-wise under the whole-child chunk-merge rules
+(`_join.py`), so the returned tables keep the value-derived column types the
+pandas-oracle parity suite pins.
 """
 
 from __future__ import annotations
@@ -128,6 +131,14 @@ def run_fk_out_of_core(
     With a sink, each table is staged as a stream of bounded record batches
     (never whole-table resident); without one, the streamed batches are
     reassembled into in-memory tables with whole-column type semantics.
+
+    Residency precondition (caller-managed; P4-A). This exported primitive does
+    not enforce boundedness: its peak residency is bounded w.r.t. row cardinality
+    only when every `sources` value is a `LazySource` and `sink` consumes
+    `write_batches` incrementally without retaining the stream
+    (`ParquetTransactionalSink`). A resident source or `sink=None` holds a whole
+    table in RAM; a direct caller of this primitive owns that memory risk (the
+    managed `run_pipeline` route warns for those shapes, this primitive does not).
 
     `batch_rows` bounds every streamed pass (default: the pinned module
     constant); any legal value is byte-transparent on the output.
