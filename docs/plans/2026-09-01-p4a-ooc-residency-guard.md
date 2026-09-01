@@ -70,68 +70,91 @@ designed around:
   (the docstring concedes "full per-table residency"), before the line-360
   preflight. A large table OOMs before any check downstream of it can fire.
 
-Gate round 2 (NO-GO) then proved the first byte model unsound on three counts
-(budget double-spend, no-sink output mis-sized, and a per-row size model that is
-a category error). The remediated model below is designed around all three. It
-runs *before* the loader materializes anything, and it prices a **sound upper
-bound on peak resident bytes against the memory budget**, rejecting only when the
-bound does not fit.
+Gate rounds 2 and 3 (NO-GO) then reshaped the byte model. Round 2 fixed the
+double-spend plumbing; round 3 confirmed that plumbing closed but proved the
+sizing still unsound. The model below is the round-3 remediation. It runs
+*before* the loader materializes anything and prices a **hard upper bound on peak
+resident bytes**, rejecting whenever any term is not hard-boundable.
 
-**Trust boundary (states the guarantee honestly).** The route already trusts the
-profile for the routing decision itself (row counts, byte estimates). The guard
-prices against that same profile, so its guarantee is "never-OOM *relative to the
-trusted profile*" — the identical trust boundary the rest of the route uses. A
-`source_loader` that returns data contradicting its declared profile is a source
-contract violation, out of scope here exactly as it is for routing (the existing
-resolver already warns on a resident-vs-profile row-count disagreement); the
-exported `run_fk_out_of_core` primitive stays caller-managed (see hazard 3).
+**Priceable means a HARD bound, not a sampled estimate (the guarantee boundary).**
+The existing router already treats a lazy variable-width column as *unpriceable*
+and refuses to use its sampled profile width as a bound
+(`_pipeline_routing_signals.py:288`); the profile's `max_length` is a sampled
+character count (`_walk.py:172`) that a later, wider, unsampled row does not
+contradict, and CSV row counts are explicit estimates (`_readers.py:263`). This
+guard adopts the same stance rather than inventing profile-width trust: a term is
+*priceable* only from a **hard** bound — an already-resident Arrow buffer, a
+fixed-width dtype, an exact empty/all-null column (bound 0), or an independently
+declared hard byte maximum — and every other variable-width term is
+**unpriceable → reject fail-closed**. Row counts used in a bound must be exact;
+a non-exact (estimated) count on a variable-width contribution is unpriceable.
+The guard needs the `profile` to classify columns, so `run_out_of_core_route`
+must thread it through (it is not passed today, `_pipeline.py:447`). The exported
+`run_fk_out_of_core` primitive stays caller-managed (hazard 3).
 
-**One peak equation, reserved from the budget (fixes double-spend).** The OOC
-non-spillable build floor and the resident Python/Arrow footprint are *co-live*,
-so they must be bounded jointly, not each against the full budget. The guard
-computes a single `resident_peak_bytes` and reserves it from the budget at the
-one choke point that feeds *both* downstream consumers — the `reserved_bytes`
-parameter of `resolve_ooc_memory_limit` (`_budget.py:471`, applied before the
-returned `budget_bytes` and the DuckDB `memory_limit` are derived, currently
-defaulted to 0 and unset at the `_pipeline_route_exec.py:301` call site). The
-existing preflight (`enforce_ooc_memory_preflight`) then checks the DuckDB build
-floor against the *reduced* budget, so `resident_peak + build_floor + overhead`
-is bounded by the original budget with no second denomination to keep in sync.
-Before reserving, if `resident_peak_bytes` alone exceeds
-`resolved_budget_bytes` (leaving less than the minimum OOC working set), reject
-outright rather than floor the remainder.
+**One peak equation, reserved from the budget without flooring (fixes
+double-spend and the floor contradiction).** The OOC non-spillable build floor
+and the resident Python/Arrow footprint are *co-live*, so they are bounded
+jointly. The guard computes a single `resident_peak_bytes` and reserves it at the
+one choke point that feeds *every* downstream consumer — the `reserved_bytes`
+parameter of `resolve_ooc_memory_limit` (`_budget.py:471`), which round 3
+confirmed reduces the returned `budget_bytes`, the flat `memory_limit`, the
+capacity preflight, and the phase-local DuckDB limits (`resolve_phase_memory_limits`,
+`_memory_estimate.py:176`) with no path re-deriving from the un-reduced budget.
+Reserve via a **one-pass** subtraction that does NOT floor the remainder back up
+with `max(..., _MIN_BUDGET_BYTES)` — that floor is a progress heuristic
+(`_budget.py:138`), not a proven working set, and flooring would silently restore
+budget the residency already spent. Instead: reject outright when
+`resident_peak_bytes` plus the real phase-cap/build-floor plus an explicit
+transient-runtime headroom term exceeds `resolved_budget_bytes`; otherwise pass
+the reservation through so the preflight and DuckDB see the reduced budget. The
+fail-open catch at `_pipeline_route_exec.py:313` is narrowed to
+`out_of_core_memory_detection_failed` only, so a reservation/fan-in failure
+raises rather than silently failing open.
 
-`resident_peak_bytes` sums three sound terms:
+`resident_peak_bytes` sums three terms, each hard-bounded or the job is rejected:
 
-- **Pre-supplied resident `pa.Table` sources — de-duplicated buffer accounting.**
-  Sum the sizes of the *unique referenced Arrow buffers* across every column and
-  chunk (dedup by buffer id, across tables). This is a true upper bound on the
-  pinned allocation and, unlike `.nbytes`, is correct for zero-copy slices that
-  report a small logical range while pinning a large backing buffer
-  (slice-sharing is relied on elsewhere, `_pipeline_route_exec.py:517`).
-- **Loader-resolved missing sources (materialize resident) — priced per column
-  from the profile, without invoking the loader.** Fixed-width dtype columns
-  (int/float/bool/date/time) price at their exact dtype byte width × profile row
-  count (sound). Variable-length columns price at the profile's UTF-8-adjusted
-  `max_length` × row count. When a variable-length source column carries **no
-  profile width statistic at all**, it is unpriceable → reject fail-closed (do
-  not guess). `predict_ooc_build_floor_bytes` (`24 MiB + 190 B/row`) is NOT
-  reused here — it models DuckDB relation-build control structures, a different
-  quantity, and remains a separate co-live term via the existing preflight.
-- **No sink (`sink is None`) — sum over EVERY emitted table, not the largest.**
-  The runner holds a job-wide `outputs` dict and assembles each emitted table
-  resident regardless of source form (`_runner.py:177,405,411`), so a no-sink
-  job retains the sum of all output tables. Each table prices at output row
-  count × Σ per-column *output* width, where output width is the masked width,
-  not the input width: hash → its fixed hex-digest length (64, or the configured
-  truncation), redact → the constant replacement width, truncate → the configured
-  length, fpe/passthrough → the input width (known exactly for a resident source,
-  dtype-exact for a fixed-width column, profile `max_length` for a profiled
-  varlen column), bucket_perturb → the fixed reformatted-date/​numeric width,
-  categorical → the widest configured category label, code_set → the widest
-  corpus code. `text_redact` and `text_mask` produce genuinely unbounded
-  free-text output; a no-sink job that emits one of those columns is unpriceable
-  → reject fail-closed (require a sink). Cardinality is 1:1 (masking preserves
+- **Pre-supplied resident `pa.Table` sources — de-duplicated full buffer
+  accounting.** Sum the sizes of the *unique referenced Arrow buffers* across
+  every column and chunk, including validity bitmaps, offset buffers, and
+  structural buffers, recursing into dictionary/nested child buffers; dedup by a
+  **stable native allocation identity** (`Buffer.address`), not ephemeral Python
+  `id(buffer)`. This is a true upper bound on the pinned allocation and, unlike
+  `.nbytes`, is correct for zero-copy slices that report a small logical range
+  while pinning a large backing buffer (`_pipeline_route_exec.py:517`).
+- **Loader-resolved missing sources (materialize resident) — hard-bounded per
+  column, without invoking the loader.** Fixed-width dtype columns (int/float/
+  bool/date/time) price at exact dtype byte width × exact row count. An exact
+  empty/all-null variable-width column prices at 0. A variable-width column with
+  an independently declared hard byte maximum prices at that × exact row count.
+  **Any other variable-width column — a sampled `max_length`, no width stat, or a
+  non-exact row count — is unpriceable → reject.** `predict_ooc_build_floor_bytes`
+  (`24 MiB + 190 B/row`) is not reused for Arrow sizing; it models DuckDB
+  relation-build control structures and stays the separate co-live floor term.
+- **No sink (`sink is None`) — sum over EVERY emitted FIELD of EVERY emitted
+  table.** The runner holds a job-wide `outputs` dict and assembles each emitted
+  table resident regardless of source form (`_runner.py:177,405,411`), so a
+  no-sink job retains the sum of all output tables, plus Arrow structural
+  overhead and an `assemble_resident` reassembly transient (`_emit.py:212`). Each
+  field prices at exact row count × its *output* UTF-8 byte width upper bound:
+  hash → fixed hex-digest length (64, or the configured truncation); redact →
+  constant replacement width; truncate → `length` normally, but the FULL input
+  width when `mask_char` is set (it preserves input character count,
+  `_scalar.py:104`), multibyte-adjusted; fpe → input width in **UTF-8 bytes**
+  (it preserves character positions, not byte width, and accepts custom charsets,
+  `_mask_group_b.py:84`); passthrough → input width; bucket_perturb →
+  `max(reformatted width, input passthrough width)` because unparseable values
+  pass through unchanged (`bucket_perturb.py:157`); categorical → widest
+  configured label; code_set → widest corpus code. **FK-join-owned child columns**
+  (skipped by scalar masking, `_runner.py:294`) price at the policy-aware maximum
+  of their possible outputs — parent-masked value, preserved raw orphan, or
+  parent-strategy REMAP value (`_batch_join.py:365`). **Pre-GA undeclared
+  passthrough columns** (`_output_projection.py:106`) price as passthrough of
+  their input. A field whose output width derives from an unpriceable input
+  (a lazy/loader variable-width source), or `text_redact`/`text_mask` whose
+  free-text output has no finite bound unless its input width is itself hard
+  (resident/fixed → finite token-expansion bound), or **any strategy with no
+  width rule**, is unpriceable → reject. Cardinality is 1:1 (masking preserves
   rows); byte width is not.
 
 Reject with a typed `ExecutionError` (`out_of_core_resident_footprint_unbounded`,
@@ -167,23 +190,26 @@ Auto-remediation is deferred; primitives exist if a future need arises
 
 ## Design hazards to clear in the plan-gate
 
-1. **Byte model soundness (resolved in "The fix").** The peak-bytes bound must
-   not under-count (admit a real OOM). Three terms, each sound: pre-supplied
-   sources use de-duplicated referenced-buffer accounting (correct for zero-copy
-   slices, unlike `.nbytes`); loader-resolved sources price per column from the
-   profile (fixed-width dtype exact, varlen via UTF-8-adjusted `max_length`,
-   unpriceable→reject when a varlen column has no width stat); no-sink output
-   sums *every* emitted table at its per-strategy *output* width, with
-   `text_redact`/`text_mask` treated as unbounded→reject. The `24 MiB + 190 B/row`
-   floor constant is NOT reused for Arrow sizing — it stays a separate co-live
-   term (the DuckDB relation-build floor) via the existing preflight. The full
-   OOC payload surface the width rules must cover is `hash, redact, truncate,
+1. **Byte model soundness (resolved in "The fix", round 3).** The bound must be
+   HARD, never a sampled estimate: pre-supplied sources use de-duplicated full-
+   buffer accounting (all buffers, native-address dedup, slice-correct);
+   loader-resolved sources price only from a hard bound (fixed-width dtype, exact
+   empty/all-null→0, or a declared byte max with an exact row count) and are
+   otherwise unpriceable→reject, matching how routing already treats lazy varlen
+   (`_pipeline_routing_signals.py:288`); no-sink output sums *every emitted field*
+   of *every emitted table* at its output UTF-8 width, covering the width subtleties
+   round 3 named (truncate+`mask_char` keeps input width; fpe is byte-not-char;
+   bucket_perturb `max(reformatted, passthrough)`; FK-join-owned child policy max;
+   pre-GA undeclared passthrough), with `text_*` priceable only when the input
+   width is hard and unpriceable otherwise. The `24 MiB + 190 B/row` floor is NOT
+   reused for Arrow sizing — it stays the separate co-live DuckDB-floor term. The
+   full OOC payload surface the width rules must cover is `hash, redact, truncate,
    passthrough` (`_INITIAL_SUPPORTED_STRATEGIES`, also the FK parent-key set),
    `fpe, text_redact, categorical` (`_GROUP_B_SUPPORTED_STRATEGIES`), `text_mask`
    (`_GROUP_C_ALWAYS_SUPPORTED`), and `code_set, bucket_perturb`
-   (`_GROUP_C_CONDITIONAL`) — `_compat.py:29-44`. Over-counting a fitting job is a
-   usability cost, not a safety bug, and only fires for genuinely large
-   resident/no-sink jobs that should pass a sink.
+   (`_GROUP_C_CONDITIONAL`) — `_compat.py:29-44` — plus join-owned and undeclared
+   fields; unknown strategy/field → unpriceable. Over-counting a fitting job is a
+   usability cost, not a safety bug.
 2. **Guard placement before loader materialization, and one budget number.** The
    check and the budget resolution must both move before `_pipeline_route_exec.py:281`
    (loader source resolution; today the budget resolves at line ~301, after the
@@ -215,34 +241,41 @@ Auto-remediation is deferred; primitives exist if a future need arises
 
 ## Tasks
 
-- [ ] **Task 1: Residency footprint pricing (sound upper bound).** A pure free
-  function returning `resident_peak_bytes` plus a list of unpriceable offenders,
-  from three terms: (1) pre-supplied resident sources via de-duplicated
-  referenced-buffer accounting (sum unique Arrow buffer sizes across columns/
-  chunks, dedup by buffer id across tables — correct for zero-copy slices, not
-  `.nbytes`); (2) loader-resolved missing tables priced per column from the
-  profile without invoking the loader (fixed-width dtype exact × row count; varlen
-  via UTF-8-adjusted `max_length` × row count; varlen with no width stat →
-  unpriceable); (3) no-sink output summed over EVERY emitted table at per-strategy
-  *output* width (hash→digest/truncation length, redact→constant width,
-  truncate→configured length, fpe/passthrough→input width, bucket_perturb→fixed
-  reformatted width, categorical→widest label, code_set→widest corpus code;
-  `text_redact`/`text_mask`→unpriceable). A per-strategy output-width table keyed
-  on the full `_compat.py:29-44` surface, with an explicit "unknown strategy →
-  unpriceable" default so a future OOC strategy cannot silently under-price. Pure,
-  unit-testable, mutation-graded.
+- [ ] **Task 1: Residency footprint pricing (hard upper bound).** A pure free
+  function taking the pre-supplied `sources`, the `profile`, the graph, and the
+  `sink` presence, returning `resident_peak_bytes` plus a list of unpriceable
+  offenders. Three terms: (1) pre-supplied resident sources via de-duplicated
+  full-buffer accounting — sum unique Arrow buffers (data, validity, offsets,
+  structural, dictionary/nested children), dedup by `Buffer.address` not
+  `id(buffer)`, not `.nbytes` (slice-correct); (2) loader-resolved missing tables
+  priced per column from the profile without invoking the loader — fixed-width
+  dtype exact × exact row count, exact empty/all-null → 0, declared hard byte max ×
+  exact row count, else (sampled `max_length`, no stat, or non-exact row count) →
+  unpriceable; (3) no-sink output summed over EVERY emitted field of EVERY emitted
+  table at its *output* UTF-8-byte width upper bound, plus Arrow structural
+  overhead and an `assemble_resident` reassembly transient. The output-width table
+  keyed on the full `_compat.py:29-44` surface with the exact rules from "The fix"
+  (hash fixed; redact constant; truncate `length` but full-input-width when
+  `mask_char` set; fpe input UTF-8 bytes; passthrough input; bucket_perturb
+  `max(reformatted, passthrough)`; categorical widest label; code_set widest
+  corpus code; FK-join-owned child = policy-aware max of parent-masked/raw-orphan/
+  REMAP; undeclared pre-GA passthrough = input; text_* finite only when input width
+  is hard, else unpriceable) and an explicit "unknown strategy/field → unpriceable"
+  default. Pure, unit-testable, mutation-graded.
 - [ ] **Task 2: The preflight guard, placed before loader resolution, reserved
-  from the one budget.** In `run_out_of_core_route`, move budget resolution and
-  the guard ahead of source resolution (`_pipeline_route_exec.py:281`). Reject
-  when Task 1 reports any unpriceable offender, or when `resident_peak_bytes`
-  leaves less than the minimum OOC working set of `resolved_budget_bytes`, with a
-  typed `ExecutionError` (`out_of_core_resident_footprint_unbounded` /
+  from the one budget without flooring.** In `run_out_of_core_route` (now threaded
+  the `profile`), move budget resolution and the guard ahead of source resolution
+  (`_pipeline_route_exec.py:281`). Reject when Task 1 reports any unpriceable
+  offender, or when `resident_peak_bytes` + the real phase-cap/build-floor + an
+  explicit transient-runtime headroom exceeds `resolved_budget_bytes`, with a typed
+  `ExecutionError` (`out_of_core_resident_footprint_unbounded` /
   `out_of_core_unpriceable_resident_column`) naming the offending table(s)/
   column(s) and the two ways forward (pass `LazySource` + sink; or force
-  `execution_mode='full_frame'`). Otherwise pass `resident_peak_bytes` as
-  `reserved_bytes` into the same `resolve_ooc_memory_limit` call so the preflight
-  floor check and the DuckDB `memory_limit` both see the reduced budget. Fail open
-  only on abnormal budget-resolution failure. Runs before any loader call.
+  `execution_mode='full_frame'`). Otherwise reserve `resident_peak_bytes` through
+  the same `resolve_ooc_memory_limit` call via a one-pass subtraction that does NOT
+  floor the remainder back to `_MIN_BUDGET_BYTES`. Narrow the fail-open catch at
+  `_pipeline_route_exec.py:313` to `out_of_core_memory_detection_failed` only. Runs
+  before any loader call.
 - [ ] **Task 3: Docstring + scope.** Correct `_runner.py:28-29` (resident source
   is a small-N convenience with unbounded RAM, not free), document the
   never-OOM guarantee as scoped to `run_pipeline`'s managed OOC route, and
@@ -267,7 +300,10 @@ Auto-remediation is deferred; primitives exist if a future need arises
   resident OOC (`test_out_of_core_routing.py:348`) and forced small resident OOC
   streaming to a sink (`:397`); (c) byte-routed small resident OOC, Group B
   (`test_out_of_core_group_b_routing.py:114`) and Group C
-  (`test_out_of_core_group_c_routing.py:138`); (d) the **all-loader** small
+  (`test_out_of_core_group_c_routing.py:138`), including the small resident
+  **no-sink `text_mask`** case — its text output IS priceable because the input
+  width is hard (resident), so the finite token-expansion bound applies (this is
+  the case round 3 flagged as wrongly rejected); (d) the **all-loader** small
   no-sink OOC job (`test_out_of_core_group_b_routing.py:137`) and the mixed
   tiny-resident-parent + **loader-resolved child** OOC reroute (H1 supported case,
   `test_lazy_path_route_admission.py:390`) — both resolve sources through the
