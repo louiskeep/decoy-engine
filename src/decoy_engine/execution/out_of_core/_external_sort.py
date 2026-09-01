@@ -11,8 +11,9 @@ sort (Knuth TAOCP v3 §5.4) -- run generation + fan-in-bounded k-way merge,
 resident memory O(M) independent of N.
 
 KEY CONTRACT (validated fail-closed at `write`-time, before any buffering or
-spill). The generic cutoff math (`pc.max` -> Python `min` -> `pc.less_equal`) is
-only correct for a non-null total order: a null key would make `pc.max` /
+spill). The generic cutoff math (`pc.max` -> `pc.min` over per-head max scalars
+-> `pc.less_equal`, all pyarrow-scalar to stay type-exact) is only correct for a
+non-null total order: a null key would make `pc.max` /
 `pc.less_equal` yield a `None` cutoff or a null filter mask and silently drop
 rows. So every `write(batch)` validates the key column first: it must exist, be
 of an allowlisted orderable type (integer / string / large_string / binary /
@@ -80,7 +81,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -214,14 +214,21 @@ class _RunHead:
         assert self.pending is not None  # noqa: S101 -- caller filters by pending first
         return self.pending
 
-    def max_value(self) -> Any:
-        """The largest key value in the currently loaded batch. Any orderable
-        Arrow type: `pc.max` is type-generic and the value is only ever compared
-        (Python `min` across heads, then `pc.less_equal` against the column),
-        never used as an int."""
+    def max_value(self) -> pa.Scalar:
+        """The largest key in the currently loaded batch, as a pyarrow Scalar of
+        the key's exact type -- NOT `.as_py()`.
+
+        The cutoff must stay a pyarrow scalar. Round-tripping through Python
+        (`.as_py()`) re-encodes a `timestamp[ns]` value at microsecond precision
+        (it becomes a `pandas.Timestamp` that `pc.less_equal` then truncates back
+        to us), so the cutoff falls below a non-final head's own max, that head's
+        sub-microsecond rows are never emitted, the head never refills, and the
+        merge spins forever. Keeping it a scalar compares exactly for every
+        allowlisted key type (and removes the latent Python-`min`-vs-Arrow-order
+        assumption for string/binary)."""
         pending = self.pending_table()
         assert pending.num_rows > 0  # noqa: S101 -- caller checks first
-        return pc.max(pending[self._sort_key_column]).as_py()  # type: ignore[attr-defined, unused-ignore]
+        return pc.max(pending[self._sort_key_column])  # type: ignore[attr-defined, unused-ignore]
 
     def set_remaining(self, remaining: pa.Table) -> None:
         self.pending = remaining if remaining.num_rows > 0 else None
@@ -477,7 +484,10 @@ class BoundedExternalSorter:
             # value smaller than what is already loaded; a run on its last
             # stored batch has nothing hidden left to compare against.
             constrained = [head.max_value() for head in active if not head.is_final_batch]
-            cutoff = min(constrained) if constrained else None
+            # `pc.min` over the per-head max SCALARS, kept as a pyarrow scalar of
+            # the key's exact type (see `_RunHead.max_value` -- a Python round-trip
+            # truncates timestamp[ns] and hangs the merge).
+            cutoff = pc.min(pa.array(constrained)) if constrained else None
 
             tagged = [
                 head.pending_table().append_column(

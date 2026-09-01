@@ -38,8 +38,11 @@ def _key_array(kind: str, values: list[int]) -> pa.Array:
         return pa.array([v.to_bytes(8, "big") for v in values], type=pa.large_binary())
     if kind == "date32":
         return pa.array(values, type=pa.date32())
-    if kind == "timestamp":
-        return pa.array(values, type=pa.timestamp("us"))
+    if kind == "date64":
+        # date64 is ms since epoch; use whole-day multiples so values are valid.
+        return pa.array([v * 86_400_000 for v in values], type=pa.date64())
+    if kind.startswith("timestamp_"):
+        return pa.array(values, type=pa.timestamp(kind.split("_", 1)[1]))
     raise AssertionError(kind)
 
 
@@ -84,7 +87,11 @@ ALLOWLISTED = [
     "binary",
     "large_binary",
     "date32",
-    "timestamp",
+    "date64",
+    "timestamp_s",
+    "timestamp_ms",
+    "timestamp_us",
+    "timestamp_ns",  # the unit that hung the merge before the scalar-cutoff fix
 ]
 
 
@@ -124,6 +131,29 @@ def test_string_key_multipass_parity(cap, fan_in, tmp_path):
     finally:
         sorter.close()
     assert out.schema == oracle.schema
+    assert out.to_pydict() == oracle.to_pydict()
+
+
+def test_timestamp_ns_key_multipass_does_not_hang(tmp_path):
+    # Regression for the ns-timestamp merge hang: `pc.max().as_py()` returned a
+    # pandas.Timestamp that `pc.less_equal` truncated to us, wedging the merge.
+    # A ns key through a forced multi-pass merge (tiny cap) must terminate AND
+    # match the oracle. Without the scalar-cutoff fix this test hangs.
+    n = 1_500
+    values = list(range(n))
+    batches = _batches("timestamp_ns", values, batch_size=31)
+    oracle = pa.Table.from_batches(batches).sort_by(KEY)
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "spill", run_bytes_cap=2 * 1024, merge_fan_in=2, sort_key_column=KEY
+    )
+    try:
+        for b in batches:
+            sorter.write(b)
+        assert len(list((tmp_path / "spill").glob("run_*.arrow"))) > 2  # multi-pass
+        sorter.finish()
+        out = pa.Table.from_batches(list(sorter.iter_ordered()), schema=batches[0].schema)
+    finally:
+        sorter.close()
     assert out.to_pydict() == oracle.to_pydict()
 
 

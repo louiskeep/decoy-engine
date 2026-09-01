@@ -1,7 +1,13 @@
 """The reorder budget ledger for the OOC-B external-reorder architecture.
 
+Ported alongside `BoundedExternalSorter` (P4-A.2) as a foundational dependency;
+its production consumer -- the bounded-stream FK route that co-sizes DuckDB and
+the sorter -- lands in P4-A.3, which does not exist on this branch yet. On
+`feat/native-phase3` this module is exercised only by the sorter's subprocess
+RSS proof (to size a realistic cap). The design it encodes:
+
 `resolve_reorder_budgets` is the ONE place a process memory ceiling becomes
-every allocation the bounded-stream FK route uses: the DuckDB `memory_limit`
+every allocation the bounded-stream FK route will use: the DuckDB `memory_limit`
 for the join+buffer phase, and the sorter's `run_bytes_cap` (its resident
 buffer AND its per-merge-head cap, see `_external_sort.py`). Both fractions
 are derived from a single `process_ceiling_bytes` rather than sized
