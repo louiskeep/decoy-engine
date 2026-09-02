@@ -1,7 +1,8 @@
 # Polars hash: cross-adapter parity via the shared kernel + exotic-dtype pandas port
 
-Status: plan (authored 2026-09-02, Opus; plan-gate round 1 NO-GO remediated,
-re-gate round 2). Held target branch `feat/native-phase3`; merges with the
+Status: plan (authored 2026-09-02, Opus; plan-gate rounds 1-2 NO-GO remediated
+-- round 2 flipped the denylist to a fail-safe positive allowlist and added the
+same-instant tz test; re-gate round 3). Held target branch `feat/native-phase3`; merges with the
 Phase-4 bundle. ENGINE correctness fix (cross-adapter hash parity), foundational
 for the hash-only chunked-FK cascade fix
 (`2026-09-02-chunked-fk-cascade-safety.md`), which is unsound until this lands.
@@ -33,14 +34,18 @@ pyarrow 24) established exactly which dtypes each producer agrees on:
   for: string, large_string, signed/unsigned int, bool, `date32`, tz-AWARE
   timestamps in s/ms/us/ns, positive-scale `decimal32/64/128`, and Arrow
   dictionary/categorical strings. Use it for these.
-- **The Polars Arrow producer DIVERGES or cannot ingest** for: `date64`
-  (Polars remaps it, so `to_arrow()` no longer reproduces the original), and
-  `negative-scale Decimal` / `decimal256` (Polars cannot ingest them at all).
-  For these Arrow types, run the column through the PANDAS hash handler
-  (`execution/_strategies/_hash.py`, the `PandasStrategyPort` mechanism the
-  Polars adapter already uses for `date_shift`/`fpe`/`faker`/etc.), which is
-  byte-identical to the oracle by construction. This closes the "all admitted
-  dtype" property without adapter surgery.
+- **The Polars Arrow producer DIVERGES or cannot ingest** for at least `date64`
+  (Polars remaps it), `negative-scale Decimal` / `decimal256` (Polars cannot
+  ingest), `time64[ns]`, and dictionary-wrapped versions of these -- and a
+  denylist would keep growing. So the fix uses a POSITIVE ALLOWLIST, NOT a
+  denylist: only the proven-parity Arrow types (unwrapping `dictionary`
+  `value_type`, as `_chunked_fk_dtype.py:48` already does) take the fast
+  `to_arrow()` path; EVERY other hash key type is routed to the PANDAS hash
+  handler (`execution/_strategies/_hash.py`, the `PandasStrategyPort` mechanism
+  the Polars adapter already uses for `date_shift`/`fpe`/`faker`), which is
+  byte-identical to the oracle by construction. This is fail-safe: any unproven
+  or future Arrow type defaults to the pandas oracle, so there is no "forgot a
+  divergent type" hole.
 
 Fix shape for `execution/polars/_strategies/_hash.py` (masking path):
 
@@ -48,20 +53,25 @@ Fix shape for `execution/polars/_strategies/_hash.py` (masking path):
 from decoy_engine.kernel import hash_array
 ...
 arrow = source.to_arrow()            # ChunkedArray | Array
-if _hash_needs_pandas_port(arrow.type):   # date64, decimal scale<0, decimal256
+if not _hash_polars_native_ok(arrow.type):   # allowlist miss -> pandas oracle
     return _pandas_hash_port(frame, column, plan, ctx)   # existing port path
 masked = hash_array(arrow, seed=ctx.mask_key, namespace=plan.namespace,
                     truncate=truncate, derive_func=derive)
 return frame.with_columns(pl.Series(column, masked.to_pylist(), dtype=pl.Utf8)), []
 ```
 
-`hash_array` accepts `pa.Array | pa.ChunkedArray | list` and folds NaN AND None
-via `_is_missing` (`_scalar.py:13-31`), exactly matching the pandas path; the
-current Polars loop's `value is None`-only check is replaced (a fix toward
-parity, not a regression). `_hash_needs_pandas_port` is a small pure predicate
-over the Arrow type (date64; `pa.types.is_decimal` with `scale < 0` or bit_width
-256). Null-bearing integer keys are already rejected before dispatch by both
-adapters (`execution/_guards.py:34`), so they are not a hole.
+`_hash_polars_native_ok(t)` returns True only for the ALLOWLIST (unwrapping
+`dictionary` to its `value_type` first): `string`, `large_string`, signed/
+unsigned integer, `bool`, `date32`, `timestamp` WITH a tz in any unit
+(s/ms/us/ns), and positive-scale `decimal128/64/32`. Everything else -- `date64`,
+`time64`, negative-scale / `decimal256`, tz-naive timestamps, floats, and any
+unrecognized type -- returns False and goes to the pandas port (where the
+canonicalizer applies its own accept/raise rules, so tz-naive and float still
+raise consistently). `hash_array` accepts `pa.Array | pa.ChunkedArray | list`
+and folds NaN AND None via `_is_missing` (`_scalar.py:13-31`), matching the
+pandas path; the current Polars loop's `value is None`-only check is replaced (a
+fix toward parity). Null-bearing integer keys are already rejected before
+dispatch by both adapters (`execution/_guards.py:34`), so they are not a hole.
 
 ## 3. Scope
 
@@ -111,13 +121,18 @@ through `PandasExecutionAdapter` and `PolarsExecutionAdapter`, assert output
 equality). Existing hash cases (`:157-176`) cover only string/int/truncated.
 
 1. **hash cross-adapter parity matrix**: add cases for `string`, `large_string`,
-   `int`, `bool`, `date32`, **`date64`**, `timestamp[ns, tz=UTC]`,
-   `timestamp[ms, tz=<non-UTC>]` (tz-robustness), positive-scale `decimal128`,
-   **negative-scale `Decimal`**, and **`decimal256`**. Each asserts pandas-adapter
-   output == Polars-adapter output. The `timestamp[ns, tz=UTC]` case with
-   NONZERO sub-microsecond digits is the direct regression: it MUST fail before
-   the fix and pass after. `date64` and the exotic decimals exercise the
-   pandas-port fallback.
+   `int`, `bool`, `date32`, **`date64`**, **`time64[ns]`**, `timestamp[ns,
+   tz=UTC]`, positive-scale `decimal128`, **negative-scale `Decimal`**,
+   **`decimal256`**, and a **dictionary-wrapped** case (e.g. `dictionary<date64>`
+   or a dictionary string) to exercise the `value_type` unwrap. Each asserts
+   pandas-adapter output == Polars-adapter output. The `timestamp[ns, tz=UTC]`
+   case with NONZERO sub-microsecond digits is the direct regression (fail before
+   the fix, pass after). `date64` / `time64` / the exotic decimals /
+   dictionary-wrapped exotics exercise the pandas-port allowlist-miss path.
+1b. **Timezone robustness**: the SAME INSTANT represented as `timestamp[us,
+   tz=UTC]` and as the equivalent `timestamp[us, tz=<non-UTC>]` hashes to the
+   IDENTICAL value (not merely "both adapters agree on one tz") -- proving the
+   `.astimezone(utc)` normalization on both adapters.
 2. **NaN/None success-to-null**: a column with `[NaN, None]` hashes to
    `[None, None]` identically across adapters (SEPARATE from the finite-float
    case).
@@ -134,20 +149,22 @@ ruff/format/mypy(3.12) clean.
 
 ## 6. Tasks
 
-- [ ] A. Fix `polars/_strategies/_hash.py`: `to_arrow()` -> `hash_array` for the
-  common dtypes + `_hash_needs_pandas_port` predicate routing date64 /
-  negative-scale-decimal / decimal256 to the pandas hash port.
+- [ ] A. Fix `polars/_strategies/_hash.py`: a positive-allowlist
+  `_hash_polars_native_ok` predicate (dictionary-unwrapped) gates the fast
+  `to_arrow()` -> `hash_array` path; every allowlist miss routes to the pandas
+  hash port.
 - [ ] B. Tests #1-#4.
 - [ ] C. VERIFY (cross-adapter parity matrix + mutation) -> dennis REVIEW ->
   Codex FINAL gate. HELD, push, no merge.
 
 ## 7. Risks / open questions for the plan-gate
 
-- Confirm the `_hash_needs_pandas_port` set is COMPLETE: are date64,
-  negative-scale Decimal, and decimal256 the ONLY Arrow types where the Polars
-  producer diverges from / cannot reproduce the pandas kernel input? Name any
-  other (the round-1 probes cleared string/large_string/int/bool/date32/tz-aware
-  timestamps s..ns/positive-decimal/dictionary-string).
+- Confirm the `_hash_polars_native_ok` ALLOWLIST is correct: every listed type
+  (string/large_string/int/bool/date32/tz-aware-timestamp-s..ns/positive-decimal,
+  dictionary-unwrapped) is proven byte-parity through `to_arrow()`, and NOTHING
+  outside it silently takes the native path. The allowlist is fail-safe by
+  construction (misses go to pandas), so the risk is an over-broad entry, not a
+  missing one -- name any listed type that is NOT actually parity-safe.
 - Confirm the pandas hash port path is reachable and byte-identical to the oracle
   for those exotic dtypes (it runs the real pandas handler), and that routing a
   single column to it inside the Polars adapter composes cleanly with the frame
