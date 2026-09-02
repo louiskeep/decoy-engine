@@ -1,9 +1,9 @@
 # P4-A Task 6: sequential per-edge reorder driver
 
-Status: plan (authored 2026-09-02, Opus; plan-gate rounds 1-2 NO-GO remediated
--- Option A confirmed byte-safe and all round-1 findings closed by the gate;
-round 2 added shared-helper Protocol typing, the single-read regression, the
-zero-orphan FAIL test, and the <600-LOC sibling split; re-gate round 3).
+Status: plan GATE-APPROVED (2026-09-02, Opus). Plan-gate rounds 1-2 NO-GO
+remediated; round 3 closed all findings except one stale Task-A wording, fixed
+verbatim per Codex's prescription (Codex: "all other findings closed... complete
+buildable acceptance contract"). Ready for the Sonnet build.
 Held target branch `feat/native-phase3`; merges with the Phase-4 bundle.
 Greenlit by Cam after the route A/B: the reorder route is ~flat wall time as
 parent-key count grows while `_batch_join` scales super-linearly (4.5x slower at
@@ -206,9 +206,12 @@ composition); ruff/format/mypy(3.12) clean; module <600 LOC.
 - [ ] A. New `_stream_driver.py::stream_table` = salvage three-phase structure
   with the phase-2 swap to `run_ordered_join`, the FAIL precount folded into the
   per-edge loop, the `ExitStack` owning-lifecycle around phase 2 + phase 3, and
-  plain budget params. Port the `_emit.py` / `_stage.py` salvage deltas
-  (`masked_observed_types` plumbing, `MaskedKeyStager` seeded observations,
-  `ParentSource`/`StreamFkJoiner` typing, `raw_parent_source` forwarding); leave
+  plain budget params. Port the `_emit.py` / `_stage.py` salvage deltas:
+  `masked_observed_types` plumbing, seeded `MaskedKeyStager` observations,
+  `ParentSource` typing, the shared `output_types` / `observed_types` structural
+  Protocol (NOT `StreamFkJoiner`-narrowed annotations -- both routes share these
+  helpers), and `raw_parent_source` forwarding. Keep concrete `StreamFkJoiner`
+  typing confined to `_stream_driver.py` and `_stream_driver_support.py`. Leave
   `_relation.py` / `_memory_estimate.py` (newer fixes) untouched.
 - [ ] B. Tests #1-#8.
 - [ ] C. VERIFY (parity + oracle anchor + RSS + mutation on changed units) ->
