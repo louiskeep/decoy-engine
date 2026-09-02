@@ -490,13 +490,19 @@ def _build_relation(
         #
         # Steps 2 and 3 are two SEPARATE `COPY` statements (winners land on
         # disk first, step 3 re-reads them with `read_parquet`), not one query
-        # with the winners aggregate as an inline join subquery: an inline
-        # subquery keeps the hash aggregate and the hash join co-resident as
-        # one physical plan, pinning the aggregate's O(distinct-key) state
+        # with the winners aggregate as an inline join subquery. The inline
+        # subquery risks keeping the hash aggregate and the hash join co-resident
+        # as one physical plan, pinning the aggregate's O(distinct-key) state
         # alongside the join build; landing winners to disk between them makes
         # each statement its own single-blocking-operator plan, so neither
         # blocking operator's state is ever resident at the same time as the
-        # other's.
+        # other's. On the pinned DuckDB 1.5.4 the planner already softens the
+        # inline form: it pushes a dynamic min/max filter from the aggregate
+        # build onto the join's probe scan, so the two states do not fully
+        # co-reside and a measured A/B shows no memory gap between the inline and
+        # split forms today. The split is kept as a by-construction bound that
+        # does not rely on that optimizer behavior staying in place: it holds the
+        # same single-blocking-operator envelope regardless of planner version.
         conn.register("parent_keys", reader)
         # The COPY fully consumes the single-pass reader; the dedup below reads
         # the STAGED parquet, never `parent_keys` again, so the exhausted
