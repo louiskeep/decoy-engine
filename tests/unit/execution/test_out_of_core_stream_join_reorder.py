@@ -21,7 +21,11 @@ from decoy_engine.execution.out_of_core._reorder_budget import (
     require_disk,
     resolve_reorder_budgets,
 )
-from decoy_engine.execution.out_of_core._stream_join import JoinRowCursor, StreamFkJoiner
+from decoy_engine.execution.out_of_core._stream_join import (
+    JoinRowCursor,
+    StreamFkJoiner,
+    _OrderedJoinRows,
+)
 
 from ._ooc_fixtures import (
     empty_child_edge_fixture,
@@ -388,3 +392,96 @@ def test_malformed_explain_fails_closed(tmp_path, monkeypatch) -> None:
         assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
         assert joiner._conn is None
         assert _spill_files(joiner) == []
+
+
+# ---------------------------------------------------------------------------
+# VERIFY-phase mutation pins (found by mutation grading of the changed units)
+# ---------------------------------------------------------------------------
+
+
+class _StubSorter:
+    """Minimal duck-typed sorter for driving `_OrderedJoinRows`'s guard with a
+    crafted `iter_ordered()` sequence (no real spill)."""
+
+    def __init__(self, batches: list[pa.RecordBatch]) -> None:
+        self._batches = batches
+        self.closed = False
+
+    def iter_ordered(self):
+        yield from self._batches
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_contiguity_guard_catches_within_two_row_batch_duplicate() -> None:
+    # Pins the within-batch adjacent-diff check for a 2-ROW batch (mutation
+    # `if n > 1` -> `if n > 2`). A duplicate row_nr inside a single 2-row batch
+    # keeps the total count and the running position both equal to N, so neither
+    # the first-of-batch check nor the end-of-stream count catches it -- only the
+    # per-batch adjacent-diff check does. It must still fail closed.
+    batch = pa.record_batch({"__decoy_row_nr": pa.array([0, 0], type=pa.int64())})
+    sorter = _StubSorter([batch])
+    result = _OrderedJoinRows(sorter, expected_row_count=2)
+    with pytest.raises(ExecutionError) as excinfo:
+        list(result)
+    assert excinfo.value.code == "out_of_core_fk_reorder_contiguity"
+    assert sorter.closed is True  # the raise closes the owning iterator
+
+
+def test_contiguity_guard_catches_two_row_batch_internal_gap() -> None:
+    # Companion to the duplicate case: a gap inside a 2-row batch ([0, 2] with a
+    # missing 1) is caught only by the adjacent-diff check when it is the final
+    # batch, since the end position (2) would otherwise look consistent with N=3.
+    batch = pa.record_batch({"__decoy_row_nr": pa.array([0, 2], type=pa.int64())})
+    sorter = _StubSorter([batch])
+    result = _OrderedJoinRows(sorter, expected_row_count=2)
+    with pytest.raises(ExecutionError) as excinfo:
+        list(result)
+    assert excinfo.value.code == "out_of_core_fk_reorder_contiguity"
+
+
+class _FakeExplainResult:
+    def __init__(self, rows: list[tuple[str, object]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[str, object]]:
+        return self._rows
+
+
+class _FakeExplainConn:
+    def __init__(self, rows: list[tuple[str, object]]) -> None:
+        self._rows = rows
+
+    def execute(self, _sql: str) -> _FakeExplainResult:
+        return _FakeExplainResult(self._rows)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param([("logical_plan", "x")], id="no_physical_plan_row"),
+        pytest.param([("physical_plan", "not valid json{")], id="invalid_json"),
+        pytest.param([("physical_plan", '{"not": "a single-element list"}')], id="wrong_shape"),
+        pytest.param([("physical_plan", "[]")], id="empty_list"),
+        pytest.param([("physical_plan", "[1, 2]")], id="multi_element_list"),
+    ],
+)
+def test_run_explain_json_malformed_shapes_fail_closed(tmp_path, monkeypatch, rows) -> None:
+    # Pins _run_explain_json's OWN fail-closed error CODE for every malformed
+    # EXPLAIN shape (missing physical_plan row, invalid JSON, non-list/non-single
+    # top-level shape). The existing malformed test monkeypatches _run_explain_json
+    # wholesale, so these internal raises (and their machine-consumed `code`) were
+    # otherwise unpinned -- mutation flipped each `code=` to `None` and survived.
+    fx = simple_edge_fixture(tmp_path / "fx")
+    with StreamFkJoiner(
+        edge=fx.edge,
+        parent_relation=fx.parent_relation,
+        child_key_types=fx.child_key_types,
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        joiner.stage_keys(fx.child.to_batches())
+        monkeypatch.setattr(joiner, "_ensure_conn", lambda: _FakeExplainConn(rows))
+        with pytest.raises(ExecutionError) as excinfo:
+            joiner._run_explain_json("SELECT 1")
+        assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
