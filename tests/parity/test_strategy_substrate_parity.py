@@ -14,13 +14,17 @@ logical values + null positions match. Each migrated strategy adds a case here.
 
 from __future__ import annotations
 
+import datetime as dt
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter, PolarsExecutionAdapter
+from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -491,6 +495,119 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
 def test_strategy_parity(plan: Any, sources: dict[str, pa.Table]) -> None:
     pandas_out, polars_out = _both(plan, sources)
     assert_frames_semantically_equal(pandas_out, polars_out)
+
+
+# --------------------------------------------------------------------------
+# 2026-09-02 polars-hash-kernel-parity plan: `hash` cross-adapter parity for
+# the full common key-dtype matrix. The Polars handler used to feed
+# `pl.Series.to_list()` (a us-truncated stdlib `datetime` for sub-us
+# timestamps) into the shared canonicalizer while the pandas handler fed
+# `pa.array(..., from_pandas=True).to_pylist()` (an ns-preserving
+# `pandas.Timestamp`), so the two hashed different bytes for the identical
+# logical value. The fix routes the Polars handler through the same
+# `source.to_arrow()` -> `hash_array` path pandas already uses. The
+# `timestamp[ns, tz=UTC]` case carries NONZERO sub-microsecond digits: it is
+# the exact input that diverged before the fix and must match after it.
+#
+# One null-free row per dtype avoids the unrelated null-bearing-int rejection
+# (see `_INT_NULL_REJECTED` below); this matrix is about VALUE parity for
+# admitted inputs, not the null-int guard.
+# --------------------------------------------------------------------------
+
+_NS_SUBSECOND = pd.Timestamp("2020-01-01T00:00:00.123456789", tz="UTC")
+
+_HASH_COMMON_DTYPE_CASES: list[tuple[str, pa.Array]] = [
+    ("string", pa.array(["alice", "bob", None], type=pa.string())),
+    ("large_string", pa.array(["alice", "bob", None], type=pa.large_string())),
+    ("int8", pa.array([1, -2, 3], type=pa.int8())),
+    ("uint8", pa.array([1, 2, 3], type=pa.uint8())),
+    ("int16", pa.array([1, -2, 3], type=pa.int16())),
+    ("uint16", pa.array([1, 2, 3], type=pa.uint16())),
+    ("int32", pa.array([1, -2, 3], type=pa.int32())),
+    ("uint32", pa.array([1, 2, 3], type=pa.uint32())),
+    ("int64", pa.array([1, -2, 3], type=pa.int64())),
+    ("uint64", pa.array([1, 2, 3], type=pa.uint64())),
+    ("bool", pa.array([True, False, None], type=pa.bool_())),
+    ("date32", pa.array([dt.date(2020, 1, 1), None], type=pa.date32())),
+    ("timestamp_s_utc", pa.array([_NS_SUBSECOND, None], type=pa.timestamp("s", tz="UTC"))),
+    ("timestamp_ms_utc", pa.array([_NS_SUBSECOND, None], type=pa.timestamp("ms", tz="UTC"))),
+    ("timestamp_us_utc", pa.array([_NS_SUBSECOND, None], type=pa.timestamp("us", tz="UTC"))),
+    (
+        # THE regression: fails pre-fix (us-truncated `to_list()` output),
+        # passes post-fix (`to_arrow()` preserves the ns digits).
+        "timestamp_ns_utc_subsecond",
+        pa.array([_NS_SUBSECOND, None], type=pa.timestamp("ns", tz="UTC")),
+    ),
+    ("decimal32", pa.array([Decimal("123.45"), None], type=pa.decimal32(9, 2))),
+    ("decimal64", pa.array([Decimal("123.45"), None], type=pa.decimal64(15, 2))),
+    ("decimal128", pa.array([Decimal("123.45"), None], type=pa.decimal128(20, 2))),
+]
+
+
+@pytest.mark.parametrize(
+    "source", [c[1] for c in _HASH_COMMON_DTYPE_CASES], ids=[c[0] for c in _HASH_COMMON_DTYPE_CASES]
+)
+def test_hash_cross_adapter_common_dtype_matrix(source: pa.Array) -> None:
+    pandas_out, polars_out = _both(
+        _plan("t", (("c", _col("hash", namespace="h_ns")),)), {"t": pa.table({"c": source})}
+    )
+    assert_frames_semantically_equal(pandas_out, polars_out)
+
+
+def test_hash_timezone_robustness_same_instant_utc_and_iana_non_utc() -> None:
+    """The same instant expressed as UTC and as an IANA non-UTC zone must hash
+    identically on each adapter (the canonicalizer normalizes via
+    `.astimezone(utc)`), and the two adapters must agree with each other."""
+    instant = pd.Timestamp("2020-06-15T12:00:00", tz="UTC")
+    utc_source = pa.array([instant], type=pa.timestamp("us", tz="UTC"))
+    ny_source = pa.array(
+        [instant.tz_convert("America/New_York")], type=pa.timestamp("us", tz="America/New_York")
+    )
+
+    plan = _plan("t", (("c", _col("hash", namespace="h_ns")),))
+    pandas_utc, polars_utc = _both(plan, {"t": pa.table({"c": utc_source})})
+    pandas_ny, polars_ny = _both(plan, {"t": pa.table({"c": ny_source})})
+
+    assert pandas_utc.to_pydict() == polars_utc.to_pydict()
+    assert pandas_ny.to_pydict() == polars_ny.to_pydict()
+    assert pandas_utc.to_pydict() == pandas_ny.to_pydict()
+
+
+def test_hash_nan_and_none_fold_to_null_identically() -> None:
+    """`[NaN, None]` hashes to `[None, None]` on both adapters (`hash_array`'s
+    `_is_missing` folds NaN AND None, unlike the pre-fix Polars loop's
+    `value is None`-only check)."""
+    source = pa.array([float("nan"), None], type=pa.float64())
+    pandas_out, polars_out = _both(
+        _plan("t", (("c", _col("hash", namespace="h_ns")),)), {"t": pa.table({"c": source})}
+    )
+    assert pandas_out.to_pydict() == {"c": [None, None]}
+    assert_frames_semantically_equal(pandas_out, polars_out)
+
+
+@pytest.mark.parametrize(
+    "source,expected_code",
+    [
+        (pa.array([1.5, 2.5], type=pa.float64()), "float_canonicalization_unsupported"),
+        (
+            pa.array([dt.datetime(2020, 1, 1)], type=pa.timestamp("us")),
+            "timezone_naive_datetime",
+        ),
+    ],
+    ids=["finite-float-key", "tz-naive-datetime-key"],
+)
+def test_hash_fail_closed_parity_both_substrates(source: pa.Array, expected_code: str) -> None:
+    """A finite float and a tz-naive datetime are both unhashable identifiers
+    (S5 spec's float/naive-datetime hard errors); neither adapter may silently
+    mask them, and both must fail with the SAME typed error."""
+    plan = _plan("t", (("c", _col("hash", namespace="h_ns")),))
+    sources = {"t": pa.table({"c": source})}
+    for adapter in (PandasExecutionAdapter(), PolarsExecutionAdapter()):
+        with pytest.raises(GenerationError) as exc:
+            adapter.run(
+                plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+            )
+        assert exc.value.code == expected_code
 
 
 # --------------------------------------------------------------------------
