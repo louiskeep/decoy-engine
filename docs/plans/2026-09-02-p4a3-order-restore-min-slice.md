@@ -45,9 +45,15 @@ IN (this slice):
   `stage_keys`, `total_orphans`) and `_payload_store.py` (`SpillPayloadStore`,
   `RawParentKeySpill`, `SpillChildKeys`, `open_reader`) from
   `origin/fix/ooc-b-memory-streaming-join`, adapted to current
-  `feat/native-phase3` APIs. Adapt the M1-sorter call site
-  `ExternalRowNrSorter(...)` → `BoundedExternalSorter(...)` (drop the renamed
-  `row_nr_column`→`sort_key_column` kwarg; the `__decoy_row_nr` default is exact).
+  `feat/native-phase3` APIs. NOTE (build finding, Task A done at `01725f19`): the
+  scaffolding never called the M1 sorter -- `iter_join_rows` runs its own
+  `ORDER BY` shim, and `ExternalRowNrSorter` only ever lived on the separate,
+  never-merged `feat/ooc-b-external-reorder` branch (sorter, no consumer). There
+  is therefore NO sorter call site to adapt here; the sorter is wired NEW in
+  Task 3's `run_ordered_join` (constructed as
+  `BoundedExternalSorter(..., sort_key_column="__decoy_row_nr")`). The reland was
+  mechanical (one import-path change: `_resolve_output_types`/`_cast_chunks` moved
+  from the deleted `_fixed_schema_typing.py` into `_batch_join.py`).
 - **Task 2** — unordered join: `StreamFkJoiner._iter_unordered_join_rows(batch_rows)`
   (a copy of `iter_join_rows` with the `ORDER BY` dropped), lazy per-edge
   connection open (`_ensure_conn()`), the pinned-optimizer pragmas
@@ -274,9 +280,10 @@ ruff/format/mypy(3.12) clean; the perf RSS test green.
 
 ## 7. Tasks (build order; each gate-able)
 
-- [ ] **A. Reland scaffolding** (`_stream_join.py`, `_payload_store.py` + single-edge
-  fixtures) adapted to native-phase3 APIs; adapt the sorter call site to
-  `BoundedExternalSorter`. Land test #9 (smoke) green.
+- [x] **A. Reland scaffolding** (`_stream_join.py`, `_payload_store.py` + single-edge
+  fixtures) adapted to native-phase3 APIs. DONE at `01725f19` (mechanical port;
+  no sorter call site existed, see §2 note). Test #9 (smoke) + full unit suite
+  green (2 pre-existing unrelated failures noted, untouched).
 - [ ] **B. Task 2** unordered join + pragmas + `explain_join()` + fail-closed
   plan guard. Land test #5.
 - [ ] **C. Task 3** `run_ordered_join` + contiguity guard + budget wiring
