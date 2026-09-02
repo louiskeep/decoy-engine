@@ -1,7 +1,9 @@
 # P4-A Task 6: sequential per-edge reorder driver
 
-Status: plan (authored 2026-09-02, Opus; plan-gate round 1 NO-GO 2 HIGH + 2
-MEDIUM remediated -- Option A confirmed byte-safe by the gate; re-gate round 2).
+Status: plan (authored 2026-09-02, Opus; plan-gate rounds 1-2 NO-GO remediated
+-- Option A confirmed byte-safe and all round-1 findings closed by the gate;
+round 2 added shared-helper Protocol typing, the single-read regression, the
+zero-orphan FAIL test, and the <600-LOC sibling split; re-gate round 3).
 Held target branch `feat/native-phase3`; merges with the Phase-4 bundle.
 Greenlit by Cam after the route A/B: the reorder route is ~flat wall time as
 parent-key count grows while `_batch_join` scales super-linearly (4.5x slower at
@@ -31,7 +33,14 @@ IN:
   open the ordered join per edge; phase 3 resolve from the payload store), adapted
   to `run_ordered_join`. `_runner.py` is at its ~600-LOC orchestration cap
   (size-sentry pinned at 676, `tests/sentry/test_module_size.py`), so the driver
-  MUST be its own module, matching the salvage structure.
+  MUST be its own module, matching the salvage structure. The salvage
+  `_stream_driver.py` is 641 LOC, over the size sentry's 600 HARD cap for a NEW
+  module (`tests/sentry/test_module_size.py:32`), so this slice extracts the
+  driver's pure/leaf helpers into a sibling `_stream_driver_support.py` -- the
+  `code_set` records+evidence resolver, `_fk_component_map`, `_payload_schema`,
+  `_fixed_output_schema`, and `_replace_fk_columns` -- leaving `stream_table` +
+  `_open_joiner` + `_iter_source_batches` in `_stream_driver.py` under 600. No
+  functionality is excluded; the split is purely to satisfy the size cap.
 - **Phase-2 swap (the core change), with the FAIL precount folded INTO the
   loop.** Replace the salvage phase-2 line `cursors =
   [JoinRowCursor(joiner.iter_join_rows(batch_rows), ...) for ...]` AND move the
@@ -65,10 +74,18 @@ IN:
   observations and produce incorrect outgoing parent-relation types for all-null
   / degenerate masked columns. Port ONLY the salvage deltas to `_emit.py` and
   `_stage.py`: `masked_observed_types` plumbing, the `MaskedKeyStager` seeded
-  observations, the `ParentSource`/`StreamFkJoiner` typing, and `raw_parent_source`
-  forwarding. Do NOT replace the current `_relation.py` or `_memory_estimate.py`
-  (they carry newer fixes). A sink-chain regression with a degenerate (all-null)
-  masked outgoing parent key guards the type-observation behavior.
+  observations, and `raw_parent_source` forwarding. Do NOT replace the current
+  `_relation.py` or `_memory_estimate.py` (they carry newer fixes). CRITICAL
+  typing constraint (plan-gate HIGH): `_emit.py` / `_stage.py` are SHARED by the
+  live `_batch_join` route -- `_runner.py:324,398` still constructs
+  `ChildFkBatchJoiner` and passes it to these helpers -- so their annotations
+  (`_emit.py:46,132,161,199`) must NOT be narrowed to `StreamFkJoiner`, which
+  would fail the mypy gate. Type the shared helpers against a small structural
+  Protocol exposing `output_types` + `observed_types` (or the union
+  `ChildFkBatchJoiner | StreamFkJoiner`); keep `StreamFkJoiner`-only typing INSIDE
+  `_stream_driver.py`. A sink-chain regression with a degenerate (all-null) masked
+  outgoing parent key guards the type-observation behavior; a separate single-read
+  regression (test #7b) guards `raw_parent_source` forwarding.
 - **Owning-lifecycle change.** Each `_OrderedJoinRows` must be closed. The N
   per-edge ordered iterators stay open across the whole of phase 3 (phase 3 takes
   from all cursors per payload batch), so hold them in a single `ExitStack` (or
@@ -148,12 +165,25 @@ OUT (deferred, explicit non-goals):
    raising AFTER edge k's `_OrderedJoinRows` has entered the `ExitStack`. The
    `ExitStack` wraps phase 2 AND the entirety of phase 3, registering each result
    immediately.
-6. **FAIL-precount lifecycle**: a table with TWO FAIL edges asserts the maximum
-   number of live DuckDB connections at any instant is exactly one (the folded
-   per-edge precount, not the salvage all-edges-first precount).
+6. **FAIL-precount lifecycle**: a table with TWO ZERO-ORPHAN FAIL edges asserts
+   that BOTH precounts AND both ordered joins execute while the maximum live
+   DuckDB connections at any instant is exactly one (the folded per-edge precount,
+   not the salvage all-edges-first precount). (Two FAIL edges where edge 1 has an
+   orphan would false-pass, since edge 2 never runs -- so the edges must be
+   zero-orphan.) Plus a later-edge-orphan variant: edge 2 raising asserts the
+   exact orphan count, zero sink batches emitted, and cleanup of edge 1's already
+   registered iterator.
 7. **Sink-chain type observation**: a degenerate (all-null) masked outgoing
    parent key produces the correct outgoing parent-relation Arrow type via the
    ported `masked_observed_types` plumbing.
+7b. **Single-read `raw_parent_source` forwarding**: a parent -> child ->
+   grandchild chain where the intermediate child source is REVERSED after its
+   first read; assert exactly ONE read of the child source and that the
+   grandchild output matches the unmutated oracle (guarding that phase 1 forwards
+   the `RawParentKeySpill`, not a second read of `raw`, which
+   `RawParentKeySpill` exists to prevent, `_payload_store.py:125`;
+   `build_parent_key_relation_aligned` assumes row alignment, `_relation.py:174`).
+   Exercise both the sink and resident paths.
 8. **Route evidence**: the driver provably ran `run_ordered_join` (not
    `iter_join_rows` / `_batch_join`) -- assert the reorder path executed.
 
