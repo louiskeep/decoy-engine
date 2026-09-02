@@ -61,6 +61,7 @@ gate against the pandas oracle.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -93,13 +94,23 @@ if TYPE_CHECKING:
     from decoy_engine.relationships._graph import RelationshipEdge
 
 
-# DuckDB's build-side-swap optimizer, by name, in `duckdb_optimizers()`. Kept as
-# a module constant so the structural version-guard test below can assert on
-# the exact same string this module pragmas against.
-_BUILD_SIDE_SWAP_OPTIMIZER = "build_side_probe_side"
+# DuckDB's optimizers, by name in `duckdb_optimizers()`, pinned off so the
+# unordered join keeps the WRITTEN join order (child probe, deduplicated
+# parent build) rather than DuckDB's own cardinality-estimate-driven choice:
+# `build_side_probe_side` can swap which side builds the hash table, and
+# `join_order` can reorder multi-relation joins. Kept as a module constant so
+# the structural plan-pin test can assert on the exact same names this module
+# pragmas against.
+_PINNED_DISABLED_OPTIMIZERS = ("build_side_probe_side", "join_order")
+
+# Physical-plan operator names (DuckDB 1.5.4's `EXPLAIN (FORMAT JSON)`) that
+# perform a GLOBAL sort/order. The whole point of `run_ordered_join`'s
+# unordered-join + bounded-sorter split is that NEITHER side re-injects one of
+# these; the plan guard below fails closed if it ever sees one here.
+_GLOBAL_SORT_OPERATOR_NAMES = frozenset({"ORDER_BY", "TOP_N"})
 
 
-def _disable_build_side_swap(conn: Any) -> None:
+def _disable_join_optimizers(conn: Any) -> None:
     """Pin the joiner's own connection to the written join order (parent-build).
 
     Public DuckDB API only (`duckdb_optimizers()` + `SET disabled_optimizers`),
@@ -109,51 +120,155 @@ def _disable_build_side_swap(conn: Any) -> None:
     connections that never register an unsized Arrow stream as a join side.
     """
     names = {row[0] for row in conn.execute("SELECT name FROM duckdb_optimizers()").fetchall()}
-    if _BUILD_SIDE_SWAP_OPTIMIZER not in names:
-        # Older DuckDB without this optimizer name never swaps this way; a
-        # missing/renamed name must degrade to a no-op, never an error.
-        return
     existing = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
     disabled = {name for name in existing.split(",") if name}
-    disabled.add(_BUILD_SIDE_SWAP_OPTIMIZER)
-    conn.execute(f"SET disabled_optimizers = '{','.join(sorted(disabled))}'")
+    for optimizer in _PINNED_DISABLED_OPTIMIZERS:
+        if optimizer in names:
+            disabled.add(optimizer)
+        # else: an older/renamed DuckDB without this optimizer name never
+        # swaps/reorders this way; a missing name must degrade to a no-op,
+        # never an error.
+    if disabled:
+        conn.execute(f"SET disabled_optimizers = '{','.join(sorted(disabled))}'")
+
+
+def _iter_plan_nodes(node: Any) -> Iterator[dict[str, Any]]:
+    """Depth-first walk of a parsed `EXPLAIN (FORMAT JSON)` operator tree.
+
+    Fails closed on any node that is not a `{"name": ..., "children": [...]}`
+    shape: a malformed plan must never be silently skipped over, since a
+    verification that quietly ignores what it cannot parse is no verification
+    at all.
+    """
+    if not isinstance(node, dict) or "name" not in node:
+        raise ExecutionError(
+            code="out_of_core_fk_join_plan_unverified",
+            message=(
+                "the unordered join's EXPLAIN (FORMAT JSON) plan had an unexpected "
+                f"node shape (expected a dict with a 'name' key, got {node!r}); "
+                "refusing to run an unverified plan."
+            ),
+        )
+    yield node
+    children = node.get("children", [])
+    if not isinstance(children, list):
+        raise ExecutionError(
+            code="out_of_core_fk_join_plan_unverified",
+            message=(
+                f"the unordered join's EXPLAIN plan node {node.get('name')!r} had a "
+                "non-list 'children'; refusing to run an unverified plan."
+            ),
+        )
+    for child in children:
+        yield from _iter_plan_nodes(child)
+
+
+def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
+    """Fail-closed structural guard (Codex plan-gate MEDIUM 4).
+
+    The unordered join's physical plan must carry NO global sort operator (the
+    whole reason it is unordered is that order is restored separately, by the
+    bounded sorter), and its single `HASH_JOIN` must keep the WRITTEN join
+    order: the child (a registered Arrow reader, `ARROW_SCAN`) as the streamed
+    probe side, and the deduplicated parent (a `read_parquet` view,
+    `READ_PARQUET`) as the build side. This is a structural check on operator
+    TYPES, not the query's view aliases: a future optimizer change that
+    reintroduces a global sort, or flips the build side onto the (unsized,
+    unbounded) child stream, would make the join hold an O(child) resident
+    hash table -- exactly the regression the pinned optimizers exist to
+    prevent -- so it must fail closed here, not silently regress.
+    """
+    nodes = list(_iter_plan_nodes(plan))
+    for node in nodes:
+        if node["name"] in _GLOBAL_SORT_OPERATOR_NAMES:
+            raise ExecutionError(
+                code="out_of_core_fk_join_plan_unverified",
+                message=(
+                    f"the unordered join's plan regained a global sort operator "
+                    f"({node['name']!r}); the reorder path requires an UNORDERED "
+                    "join -- order is restored separately by the bounded sorter."
+                ),
+            )
+    joins = [node for node in nodes if node["name"] == "HASH_JOIN"]
+    if len(joins) != 1:
+        raise ExecutionError(
+            code="out_of_core_fk_join_plan_unverified",
+            message=(
+                "expected exactly one HASH_JOIN operator in the unordered join's "
+                f"plan, found {len(joins)}; refusing to run an unverified plan."
+            ),
+        )
+    join = joins[0]
+    children = join.get("children", [])
+    if len(children) != 2:
+        raise ExecutionError(
+            code="out_of_core_fk_join_plan_unverified",
+            message=(
+                f"the HASH_JOIN operator had {len(children)} children, expected "
+                "exactly 2 (probe, build); refusing to run an unverified plan."
+            ),
+        )
+    probe, build = children
+    join_type = join.get("extra_info", {}).get("Join Type")
+    probe_name = str(probe.get("name", "")).upper()
+    build_name = str(build.get("name", "")).upper()
+    if join_type != "LEFT" or "ARROW" not in probe_name or "PARQUET" not in build_name:
+        raise ExecutionError(
+            code="out_of_core_fk_join_plan_unverified",
+            message=(
+                "the unordered join's physical plan did not keep the written join "
+                f"order (child probe / deduplicated-parent build): Join Type="
+                f"{join_type!r}, probe operator={probe.get('name')!r}, build "
+                f"operator={build.get('name')!r}. A regained global sort or a "
+                "flipped build side would make the join hold an O(child) resident "
+                "hash table, breaking the never-OOM memory model; refusing to run "
+                "an unverified plan."
+            ),
+        )
 
 
 class StreamFkJoiner:
     """One streamed FK join per edge, emitting an ordered FK-output reader.
 
-    Lifecycle, one DuckDB connection per edge (spillable, no materialized
-    parent):
+    Lifecycle, one LAZILY-opened DuckDB connection per edge (spillable, no
+    materialized parent):
 
     1. Construct: resolve the fixed `output_types` from schemas (may raise
-       fail-closed before any connection is opened), then open the connection
-       and register the parent relation as a `read_parquet` VIEW.
+       fail-closed before any connection is opened). NO connection is opened
+       here (P4-A.3 Task 2) -- `_ensure_conn()` opens and configures one
+       (single-threaded, pinned-optimizer pragmas, `parent_keys` as a
+       `read_parquet` VIEW) on first use, so a joiner that never joins never
+       leaks one.
     2. `begin_staging()` then `stage_batch(source_batch)` per raw child batch
        (or `stage_keys(iter)` for the whole child at once): append the
        `(row_nr, join_key, src)` keys, GLOBALLY numbered, to a `SpillChildKeys`
        Arrow-IPC file -- never a resident structure, so the child's own row
-       count no longer sets a memory floor.
+       count no longer sets a memory floor. `self._staged_rows` (the count of
+       everything staged) is this edge's INDEPENDENT child-row-count witness,
+       later used as `run_ordered_join`'s contiguity target.
     3. `finalize_staging()`: close the spill's writer so its stream carries
-       its end-of-stream marker; idempotent. Must run before either scan
-       below opens a reader over it (the driver calls this once, at the
+       its end-of-stream marker; idempotent. Must run before any scan below
+       opens a reader over it (the driver calls this once, at the
        phase-1/phase-2 boundary; `stage_keys` calls it automatically for a
        single-shot caller).
     4. `total_orphans()`: the FAIL-policy anti-join precount over the whole
        child (the runner raises before any output if it is non-zero). Opens
-       its OWN fresh reader over the spill (scan 1 of 2).
+       its OWN fresh reader over the spill.
     5. `iter_join_rows(batch_rows)`: run the single ordered LEFT JOIN and yield
        RAW join-result batches (row_nr, join key, source components, parent
        match indicator, parent masked components) -- no resolution. Opens
-       its OWN fresh reader over the spill (scan 2 of 2); a shared reader
-       would return zero rows here since a DuckDB-registered
-       `RecordBatchReader` is single-pass.
+       its OWN fresh reader over the spill; a shared reader would return zero
+       rows here since a DuckDB-registered `RecordBatchReader` is single-pass.
+       `_iter_unordered_join_rows(batch_rows)` is the UNORDERED sibling (no
+       `ORDER BY`, plan-verified via `explain_join`'s structural guard) that a
+       later slice's bounded-reorder consumer drains and restores order over.
     6. `resolve_batch(join_rows)`: resolve one payload-aligned slice of those
        raw join rows into FK output arrays, accumulating `orphan_total` and
        `observed_types`. Called by the driver once per payload-store batch
        (the same source-chunk granularity `main` resolves at), never once per
-       `iter_join_rows` reader batch -- those boundaries can differ, and a
-       reader batch that coalesces a matched-bool run beside an orphan-int run
-       cannot always be resolved as a single unit (Codex HIGH finding).
+       reader batch -- those boundaries can differ, and a reader batch that
+       coalesces a matched-bool run beside an orphan-int run cannot always be
+       resolved as a single unit (Codex HIGH finding).
     7. `close()`.
     """
 
@@ -223,32 +338,13 @@ class StreamFkJoiner:
         self._staged_rows = 0
         self._staged = False
         self._temp_dir = temp_dir
+        self._memory_limit = memory_limit
         self._child_keys: SpillChildKeys | None = None
-        # Typing is settled; only now acquire the connection so a fail-closed
-        # rejection never leaks one.
-        self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
-        try:
-            # `child_keys` is a registered Arrow RecordBatchReader with no known
-            # row count, so DuckDB's cardinality estimator treats it as ~1 row and
-            # swaps the LEFT JOIN's build side onto it -- building the hash table
-            # on the O(child) side instead of the bounded `parent_keys` VIEW.
-            # `build_side_probe_side` (DuckDB 1.5.4, public `duckdb_optimizers()`
-            # pragma) forces the planner to keep the written join order, i.e. the
-            # bounded parent, as the build side; guarded so an absent/renamed
-            # optimizer name on a future DuckDB version is a no-op, not an error.
-            _disable_build_side_swap(self._conn)
-            # Parent as a VIEW, never a materialized TEMP TABLE: this joiner runs
-            # ONE join against it per edge (unlike the removed per-batch joiner
-            # that ran hundreds), so DuckDB reads the relation parquet once as a
-            # spillable grace-hash build side -- the same shape `_join.py` uses.
-            self._conn.execute(
-                "CREATE TEMP VIEW parent_keys AS SELECT * FROM "
-                f"read_parquet({_sql_string(str(parent_relation.path))})"
-            )
-        except BaseException:
-            self._conn.close()
-            self._conn = None
-            raise
+        # No connection is opened here (Codex plan-gate LOW 7 / P4-A.3 Task 2):
+        # a joiner that only ever stages keys (or fails before any join runs)
+        # never needs one, so `_ensure_conn()` opens and configures it lazily,
+        # on first use, rather than unconditionally at construction.
+        self._conn: Any = None
 
     @property
     def output_types(self) -> tuple[pa.DataType, ...]:
@@ -340,12 +436,13 @@ class StreamFkJoiner:
         if not self._staged:
             raise AssertionError("begin_staging must run before total_orphans")
         assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
+        conn = self._ensure_conn()
         join_key = self._relation.join_key_column
         reader = self._child_keys.open_reader()
         try:
-            self._conn.register("child_keys", reader)
+            conn.register("child_keys", reader)
             try:
-                count = self._conn.execute(
+                count = conn.execute(
                     f"""
                     SELECT count(*)
                     FROM child_keys c
@@ -356,7 +453,7 @@ class StreamFkJoiner:
                     """
                 ).fetchone()[0]
             finally:
-                self._conn.unregister("child_keys")
+                conn.unregister("child_keys")
         finally:
             reader.close()
         return int(count)
@@ -390,6 +487,7 @@ class StreamFkJoiner:
         if not self._staged:
             raise AssertionError("begin_staging must run before iter_join_rows")
         assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
+        conn = self._ensure_conn()
         edge = self._edge
         n_components = len(edge.child_columns)
         join_key = self._relation.join_key_column
@@ -410,9 +508,9 @@ class StreamFkJoiner:
             ORDER BY c.__decoy_row_nr
         """
         reader = self._child_keys.open_reader()
-        self._conn.register("child_keys", reader)
+        conn.register("child_keys", reader)
         try:
-            yield from self._conn.execute(query).to_arrow_reader(batch_rows)
+            yield from conn.execute(query).to_arrow_reader(batch_rows)
         finally:
             # An abandoned (never fully drained) generator's cleanup can run
             # AFTER `close()` has already torn down the connection -- e.g. a
@@ -426,6 +524,166 @@ class StreamFkJoiner:
             if self._conn is not None:
                 self._conn.unregister("child_keys")
             reader.close()
+
+    def _unordered_join_query(self) -> str:
+        """The Task 2 join query, identical to `iter_join_rows`'s SELECT/JOIN
+        but with the `ORDER BY` dropped -- shared by `_iter_unordered_join_rows`
+        and `explain_join()` so the plan a test inspects is exactly the plan
+        the drain actually runs."""
+        edge = self._edge
+        n_components = len(edge.child_columns)
+        join_key = self._relation.join_key_column
+        select_list = [f"c.{_q('__decoy_row_nr')}", f"c.{_q('__decoy_fk_join_key')}"]
+        select_list += [f"c.{_q(f'__decoy_src_{idx}')}" for idx in range(n_components)]
+        select_list.append(f"p.{_q(join_key)} AS {_q('__decoy_parent_match')}")
+        for idx, masked_column in enumerate(self._relation.masked_key_columns):
+            select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
+        return f"""
+            SELECT {", ".join(select_list)}
+            FROM child_keys c
+            LEFT JOIN parent_keys p
+              ON c.__decoy_fk_join_key = p.{_q(join_key)}
+        """
+
+    def _run_explain_json(self, query: str) -> dict[str, Any]:
+        """Parsed `EXPLAIN (FORMAT JSON)` physical plan for `query`.
+
+        Assumes `child_keys` is already registered on this joiner's connection
+        (the caller's job, since a fresh reader must back it and EXPLAIN never
+        consumes that reader -- it plans without executing). Fails closed
+        (`out_of_core_fk_join_plan_unverified`) on any malformed, missing, or
+        unparseable EXPLAIN output rather than proceeding on an unverified plan.
+        """
+        conn = self._ensure_conn()
+        rows = conn.execute(f"EXPLAIN (FORMAT JSON) {query}").fetchall()
+        raw = next((value for key, value in rows if key == "physical_plan"), None)
+        if raw is None:
+            raise ExecutionError(
+                code="out_of_core_fk_join_plan_unverified",
+                message="EXPLAIN (FORMAT JSON) returned no 'physical_plan' row.",
+            )
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(
+                code="out_of_core_fk_join_plan_unverified",
+                message="EXPLAIN (FORMAT JSON) output was not valid JSON.",
+            ) from exc
+        if not isinstance(parsed, list) or len(parsed) != 1 or not isinstance(parsed[0], dict):
+            raise ExecutionError(
+                code="out_of_core_fk_join_plan_unverified",
+                message=(
+                    f"EXPLAIN (FORMAT JSON) plan had an unexpected top-level shape: {parsed!r}."
+                ),
+            )
+        return parsed[0]
+
+    def _disabled_optimizers(self) -> frozenset[str]:
+        conn = self._ensure_conn()
+        value = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
+        return frozenset(name for name in value.split(",") if name)
+
+    def explain_join(self) -> dict[str, Any]:
+        """Structural proof of the unordered join's physical plan.
+
+        Returns `{"plan": <parsed EXPLAIN (FORMAT JSON) root operator>,
+        "disabled_optimizers": <frozenset of names currently disabled on this
+        connection>}` so a caller (test #5) can assert on operator TYPES and
+        pragma state without depending on the query's view aliases. Registers
+        its OWN fresh child-key reader for the duration of the EXPLAIN call
+        (EXPLAIN never executes the query, so the reader is never consumed)
+        and unregisters it before returning, exactly like `total_orphans` and
+        `iter_join_rows`'s own single-purpose scans.
+        """
+        if not self._staged:
+            raise AssertionError("begin_staging must run before explain_join")
+        assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
+        conn = self._ensure_conn()
+        reader = self._child_keys.open_reader()
+        conn.register("child_keys", reader)
+        try:
+            plan = self._run_explain_json(self._unordered_join_query())
+            disabled = self._disabled_optimizers()
+        finally:
+            conn.unregister("child_keys")
+            reader.close()
+        return {"plan": plan, "disabled_optimizers": disabled}
+
+    def _iter_unordered_join_rows(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
+        """Yield UNORDERED raw join-result batches: no `ORDER BY`, no resolution.
+
+        A copy of `iter_join_rows` with the `ORDER BY` dropped: the join
+        itself no longer asks DuckDB to sort the whole output, so the never-
+        OOM claim shifts onto this method's own build-side pin plus
+        `run_ordered_join`'s bounded sorter, instead of DuckDB's unbounded
+        global sort. Batches here are UNORDERED (whatever order DuckDB's
+        hash-join probe happens to emit them in); the ONLY intended consumer
+        is `run_ordered_join`, which drains this into the bounded sorter and
+        restores `__decoy_row_nr` order afterward. Runs the SAME fail-closed
+        plan verification `explain_join()`'s test exercises, but on every
+        real drain (not just the dedicated plan test): dropping the `ORDER BY`
+        means this query's build-side pin is the only thing standing between
+        a never-OOM parent-build join and an accidental child-build
+        regression, so it must never run unverified.
+        """
+        if not self._staged:
+            raise AssertionError("begin_staging must run before _iter_unordered_join_rows")
+        assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
+        conn = self._ensure_conn()
+        query = self._unordered_join_query()
+        reader = self._child_keys.open_reader()
+        conn.register("child_keys", reader)
+        try:
+            plan = self._run_explain_json(query)
+            _verify_unordered_plan_or_raise(plan)
+            yield from conn.execute(query).to_arrow_reader(batch_rows)
+        finally:
+            # See iter_join_rows's own finally: an abandoned generator's
+            # cleanup can run after close() already tore down the connection.
+            if self._conn is not None:
+                self._conn.unregister("child_keys")
+            reader.close()
+
+    def _ensure_conn(self) -> Any:
+        """Open and configure this edge's DuckDB connection on first use.
+
+        Lazy (Codex plan-gate LOW 7 / P4-A.3 Task 2): a joiner that never
+        needs a connection never opens one to leak. Idempotent -- the pinned
+        optimizers and the `parent_keys` view are only ever set up once per
+        connection.
+        """
+        if self._conn is not None:
+            return self._conn
+        conn = connect_duckdb(temp_dir=self._temp_dir / "duckdb", memory_limit=self._memory_limit)
+        try:
+            # Single-threaded so the unordered join's physical plan (verified
+            # structurally by `_verify_unordered_plan_or_raise`) is deterministic
+            # run to run, and so DuckDB's own join+buffer memory stays inside
+            # the budget this joiner's caller sized for one thread.
+            conn.execute("SET threads = 1")
+            # `child_keys` is a registered Arrow RecordBatchReader with no known
+            # row count, so DuckDB's cardinality estimator treats it as ~1 row and
+            # can swap the LEFT JOIN's build side onto it -- building the hash
+            # table on the O(child) side instead of the bounded `parent_keys`
+            # VIEW. Disabling `build_side_probe_side` (+ `join_order`, DuckDB
+            # 1.5.4, public `duckdb_optimizers()` pragma) forces the planner to
+            # keep the written join order, i.e. the bounded parent, as the build
+            # side; guarded so an absent/renamed optimizer name on a future
+            # DuckDB version is a no-op, not an error.
+            _disable_join_optimizers(conn)
+            # Parent as a VIEW, never a materialized TEMP TABLE: this joiner runs
+            # ONE join against it per edge (unlike the removed per-batch joiner
+            # that ran hundreds), so DuckDB reads the relation parquet once as a
+            # spillable grace-hash build side -- the same shape `_join.py` uses.
+            conn.execute(
+                "CREATE TEMP VIEW parent_keys AS SELECT * FROM "
+                f"read_parquet({_sql_string(str(self._relation.path))})"
+            )
+        except BaseException:
+            conn.close()
+            raise
+        self._conn = conn
+        return conn
 
     def resolve_batch(self, join_rows: pa.RecordBatch) -> tuple[pa.Array, ...]:
         """Resolve one payload-aligned slice of raw join rows into FK output.
