@@ -62,6 +62,7 @@ gate against the pandas oracle.
 from __future__ import annotations
 
 import json
+import weakref
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -87,7 +88,7 @@ from decoy_engine.execution.out_of_core._payload_store import SpillChildKeys
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Generator, Iterable, Iterator
     from pathlib import Path
 
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
@@ -211,21 +212,42 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
         )
     probe, build = children
     join_type = join.get("extra_info", {}).get("Join Type")
-    probe_name = str(probe.get("name", "")).upper()
-    build_name = str(build.get("name", "")).upper()
-    if join_type != "LEFT" or "ARROW" not in probe_name or "PARQUET" not in build_name:
+    # Match the SCAN LEAVES of each join input, not the immediate child operator:
+    # a future DuckDB planner that interposes a PROJECTION/FILTER (e.g. for the
+    # `AS __decoy_parent_masked_i` projections) between the join and its scans
+    # would otherwise fail-close a correct plan. Descending to the leaf scans
+    # keeps the O(child)-build detection (the child stream is ARROW, the parent
+    # relation is READ_PARQUET) while tolerating benign interposed operators. A
+    # flipped build still fails: the flip swaps which subtree holds which scan.
+    probe_scans = _subtree_scan_names(probe)
+    build_scans = _subtree_scan_names(build)
+    probe_is_child_stream = any("ARROW" in name for name in probe_scans)
+    build_is_parent_relation = any("PARQUET" in name for name in build_scans)
+    if join_type != "LEFT" or not probe_is_child_stream or not build_is_parent_relation:
         raise ExecutionError(
             code="out_of_core_fk_join_plan_unverified",
             message=(
                 "the unordered join's physical plan did not keep the written join "
-                f"order (child probe / deduplicated-parent build): Join Type="
-                f"{join_type!r}, probe operator={probe.get('name')!r}, build "
-                f"operator={build.get('name')!r}. A regained global sort or a "
+                f"order (child ARROW probe / deduplicated-parent PARQUET build): "
+                f"Join Type={join_type!r}, probe scans={sorted(probe_scans)!r}, "
+                f"build scans={sorted(build_scans)!r}. A regained global sort or a "
                 "flipped build side would make the join hold an O(child) resident "
                 "hash table, breaking the never-OOM memory model; refusing to run "
                 "an unverified plan."
             ),
         )
+
+
+def _subtree_scan_names(node: dict[str, Any]) -> set[str]:
+    """Uppercased operator names of the SCAN LEAVES under `node` (a leaf has no
+    children). The plan tree is already shape-validated by `_iter_plan_nodes`."""
+    children = node.get("children", [])
+    if not children:
+        return {str(node.get("name", "")).upper()}
+    names: set[str] = set()
+    for child in children:
+        names |= _subtree_scan_names(child)
+    return names
 
 
 def _contiguity_error(detail: str) -> ExecutionError:
@@ -241,6 +263,65 @@ def _contiguity_error(detail: str) -> ExecutionError:
             "valid FK output."
         ),
     )
+
+
+def _guarded_reorder_iter(
+    sorter: BoundedExternalSorter, expected_row_count: int
+) -> Generator[pa.RecordBatch, None, None]:
+    """The fail-closed 0..N-1 contiguity guard over `sorter.iter_ordered()`.
+
+    A module-level generator (NOT a bound method) so its frame captures only
+    `sorter` and `expected_row_count`, never an `_OrderedJoinRows` instance --
+    see that class's `__init__` for why the finalizer depends on that.
+    """
+    expected_next = 0
+    seen = 0
+    for batch in sorter.iter_ordered():
+        n = batch.num_rows
+        if n == 0:
+            continue
+        row_nr = batch.column("__decoy_row_nr")
+        first = row_nr[0].as_py()
+        if first != expected_next:
+            raise _contiguity_error(f"a batch started at row_nr {first}, expected {expected_next}")
+        if n > 1:
+            # pc.* funcs are dynamically generated; stubs miss them.
+            diffs = pc.subtract(  # type: ignore[attr-defined, unused-ignore]
+                row_nr.slice(1, n - 1), row_nr.slice(0, n - 1)
+            )
+            if not pc.all(pc.equal(diffs, 1)).as_py():  # type: ignore[attr-defined, unused-ignore]
+                raise _contiguity_error(
+                    f"row_nr [{first}..{row_nr[n - 1].as_py()}] is not a "
+                    "contiguous ascending run (duplicate or missing value)"
+                )
+        expected_next = first + n
+        seen += n
+        yield batch
+    # The per-batch first-of-batch check makes `expected_next` telescope to
+    # exactly `seen` (each batch begins where the last ended), so the second
+    # clause is provably redundant with the first -- kept as intentional
+    # belt-and-suspenders on the safety-critical count. (A mutation dropping it
+    # therefore survives; that survivor is accepted, not a coverage gap.)
+    if seen != expected_row_count or expected_next != expected_row_count:
+        raise _contiguity_error(
+            f"expected exactly {expected_row_count} contiguous rows (the "
+            f"independent child-stage count) but the ordered stream produced "
+            f"{seen} row(s), ending at row_nr {expected_next - 1}"
+        )
+
+
+def _release_reorder(
+    guarded_iter: Generator[pa.RecordBatch, None, None], sorter: BoundedExternalSorter
+) -> None:
+    """Close the guarded generator FIRST (GeneratorExit unwinds
+    `iter_ordered`'s open run-file FD), then unlink the sorter's spill. Guarded
+    so a failure closing one still attempts the other. Bound as a
+    `weakref.finalize` callback, so it must reference neither the owning object
+    nor any bound method of it."""
+    try:
+        guarded_iter.close()
+    finally:
+        sorter.close()
 
 
 class StreamFkJoiner:
@@ -575,7 +656,15 @@ class StreamFkJoiner:
         """
         conn = self._ensure_conn()
         rows = conn.execute(f"EXPLAIN (FORMAT JSON) {query}").fetchall()
-        raw = next((value for key, value in rows if key == "physical_plan"), None)
+        # Iterate WITHOUT a 2-tuple unpack in the comprehension: a DuckDB version
+        # that changes EXPLAIN's result arity would otherwise raise a bare
+        # ValueError with no `code`, escaping this method's coded fail-closed
+        # contract (the parity harness would see an unexpected crash, not an
+        # admitted rejection). A non-2-column row simply does not match.
+        raw = next(
+            (row[1] for row in rows if len(row) == 2 and row[0] == "physical_plan"),
+            None,
+        )
         if raw is None:
             raise ExecutionError(
                 code="out_of_core_fk_join_plan_unverified",
@@ -872,9 +961,23 @@ class _OrderedJoinRows:
 
     def __init__(self, sorter: BoundedExternalSorter, expected_row_count: int) -> None:
         self._sorter = sorter
-        self._expected_row_count = expected_row_count
-        self._iter = self._guarded_iter()
+        # The guarded iterator is a STANDALONE generator (not a bound method), so
+        # its frame captures only `sorter`/`expected_row_count`, never `self`.
+        # That is what lets the finalizer below hold `self._iter` as an argument
+        # without transitively pinning `self` alive -- a bound-method generator's
+        # frame WOULD reference self, forming a cycle that defeats the whole GC
+        # backstop.
+        self._iter = _guarded_reorder_iter(sorter, expected_row_count)
         self._closed = False
+        # GC backstop for the pure-abandonment path (dropped without close() or a
+        # `with` block): a bare generator would run its `finally` on the
+        # `GeneratorExit` GC throws at it, so this owning object -- which exists
+        # precisely to HARDEN abandonment -- must be at least as safe, not worse.
+        # `_release_reorder` closes the guarded generator (propagating
+        # GeneratorExit into `iter_ordered`'s `pa.OSFile` context, releasing the
+        # FD) and the sorter's spill. `close()` fires it explicitly (at-most-once
+        # and detaching), and GC fires it otherwise.
+        self._finalizer = weakref.finalize(self, _release_reorder, self._iter, sorter)
 
     def __iter__(self) -> _OrderedJoinRows:
         return self
@@ -896,45 +999,15 @@ class _OrderedJoinRows:
         self.close()
 
     def close(self) -> None:
-        """Unlink the sorter's spill. Idempotent; safe before the first
-        `next()`, after partial consumption, or called more than once."""
+        """Release the ordered-run FD (by closing the guarded generator) and
+        unlink the sorter's spill. Idempotent; safe before the first `next()`,
+        after partial consumption, or called more than once."""
         if self._closed:
             return
         self._closed = True
-        self._sorter.close()
-
-    def _guarded_iter(self) -> Iterator[pa.RecordBatch]:
-        expected_next = 0
-        seen = 0
-        for batch in self._sorter.iter_ordered():
-            n = batch.num_rows
-            if n == 0:
-                continue
-            row_nr = batch.column("__decoy_row_nr")
-            first = row_nr[0].as_py()
-            if first != expected_next:
-                raise _contiguity_error(
-                    f"a batch started at row_nr {first}, expected {expected_next}"
-                )
-            if n > 1:
-                # pc.* funcs are dynamically generated; stubs miss them.
-                diffs = pc.subtract(  # type: ignore[attr-defined, unused-ignore]
-                    row_nr.slice(1, n - 1), row_nr.slice(0, n - 1)
-                )
-                if not pc.all(pc.equal(diffs, 1)).as_py():  # type: ignore[attr-defined, unused-ignore]
-                    raise _contiguity_error(
-                        f"row_nr [{first}..{row_nr[n - 1].as_py()}] is not a "
-                        "contiguous ascending run (duplicate or missing value)"
-                    )
-            expected_next = first + n
-            seen += n
-            yield batch
-        if seen != self._expected_row_count or expected_next != self._expected_row_count:
-            raise _contiguity_error(
-                f"expected exactly {self._expected_row_count} contiguous rows (the "
-                f"independent child-stage count) but the ordered stream produced "
-                f"{seen} row(s), ending at row_nr {expected_next - 1}"
-            )
+        # Runs `_release_reorder(self._iter, self._sorter)` exactly once and
+        # detaches, so the GC backstop above becomes a no-op after explicit close.
+        self._finalizer()
 
 
 class JoinRowCursor:

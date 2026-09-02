@@ -465,6 +465,8 @@ class _FakeExplainConn:
         pytest.param([("physical_plan", '{"not": "a single-element list"}')], id="wrong_shape"),
         pytest.param([("physical_plan", "[]")], id="empty_list"),
         pytest.param([("physical_plan", "[1, 2]")], id="multi_element_list"),
+        pytest.param([("physical_plan", "x", "extra_col")], id="three_column_row"),
+        pytest.param([("physical_plan",)], id="one_column_row"),
     ],
 )
 def test_run_explain_json_malformed_shapes_fail_closed(tmp_path, monkeypatch, rows) -> None:
@@ -485,3 +487,103 @@ def test_run_explain_json_malformed_shapes_fail_closed(tmp_path, monkeypatch, ro
         with pytest.raises(ExecutionError) as excinfo:
             joiner._run_explain_json("SELECT 1")
         assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
+
+
+# ---------------------------------------------------------------------------
+# dennis MEDIUM-1: _OrderedJoinRows GC/FD cleanup (abandonment + FD release)
+# ---------------------------------------------------------------------------
+
+
+def test_result_abandoned_without_close_cleans_up(tmp_path) -> None:
+    # A result dropped WITHOUT close()/with (pure abandonment) must still unlink
+    # the sorter's final run -- the weakref.finalize backstop. A bare generator
+    # would run its finally on GeneratorExit at GC; this owning object must be at
+    # least as safe, never worse.
+    import gc
+
+    fx = wide_edge_fixture(tmp_path / "fx", parent_rows=10, child_rows=80)
+    with StreamFkJoiner(
+        edge=fx.edge,
+        parent_relation=fx.parent_relation,
+        child_key_types=fx.child_key_types,
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        joiner.stage_keys(fx.child.to_batches())
+        rows = joiner.run_ordered_join(16, run_bytes_cap=2048, merge_fan_in=_MERGE_FAN_IN)
+        assert _spill_files(joiner) != []  # a real final run exists on disk
+        del rows  # abandon: no close(), no `with`, never iterated
+        gc.collect()
+        assert _spill_files(joiner) == []  # the finalizer unlinked it
+
+
+def test_close_releases_run_file_fd_on_partial_consumption(tmp_path) -> None:
+    # close() must release the ordered-run FILE DESCRIPTOR (held open inside the
+    # suspended guarded generator's iter_ordered OSFile), not just unlink the
+    # spill. Best-effort FD count via /proc/self/fd (Linux); skip elsewhere.
+    import os
+
+    fd_dir = "/proc/self/fd"
+    if not os.path.isdir(fd_dir):
+        pytest.skip("no /proc/self/fd (non-Linux)")
+    fx = wide_edge_fixture(tmp_path / "fx", parent_rows=10, child_rows=80)
+    with StreamFkJoiner(
+        edge=fx.edge,
+        parent_relation=fx.parent_relation,
+        child_key_types=fx.child_key_types,
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        joiner.stage_keys(fx.child.to_batches())
+        rows = joiner.run_ordered_join(16, run_bytes_cap=2048, merge_fan_in=_MERGE_FAN_IN)
+        next(iter(rows))  # open the ordered-run FD (partial consumption)
+        fds_open = len(os.listdir(fd_dir))
+        rows.close()
+        fds_after = len(os.listdir(fd_dir))
+        assert fds_after < fds_open  # the run-file FD was released
+        assert _spill_files(joiner) == []
+
+
+# ---------------------------------------------------------------------------
+# dennis LOW-2: plan guard tolerates an interposed operator, still detects a flip
+# ---------------------------------------------------------------------------
+
+
+def _plan(name, children=None, join_type=None):
+    node = {"name": name, "children": children or []}
+    if join_type is not None:
+        node["extra_info"] = {"Join Type": join_type}
+    return node
+
+
+def test_plan_guard_accepts_interposed_projection() -> None:
+    from decoy_engine.execution.out_of_core._stream_join import _verify_unordered_plan_or_raise
+
+    # HASH_JOIN whose child ARROW scan and parent PARQUET scan sit UNDER an
+    # interposed PROJECTION/FILTER -- a plausible future planner shape. Must NOT
+    # false-abort (descend to the scan leaves).
+    plan = _plan(
+        "HASH_JOIN",
+        join_type="LEFT",
+        children=[
+            _plan("PROJECTION", [_plan("ARROW_SCAN")]),
+            _plan("FILTER", [_plan("READ_PARQUET")]),
+        ],
+    )
+    _verify_unordered_plan_or_raise(plan)  # no raise
+
+
+def test_plan_guard_rejects_flipped_build_even_with_interposed_op() -> None:
+    from decoy_engine.execution.out_of_core._stream_join import _verify_unordered_plan_or_raise
+
+    # Build side flipped onto the child ARROW stream (O(child) hash table) --
+    # must fail closed even through interposed operators.
+    plan = _plan(
+        "HASH_JOIN",
+        join_type="LEFT",
+        children=[
+            _plan("PROJECTION", [_plan("READ_PARQUET")]),  # parent now probes
+            _plan("FILTER", [_plan("ARROW_SCAN")]),  # child now builds
+        ],
+    )
+    with pytest.raises(ExecutionError) as excinfo:
+        _verify_unordered_plan_or_raise(plan)
+    assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
