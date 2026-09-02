@@ -3,9 +3,11 @@
 Mirrors the plan/edge/relation construction `test_out_of_core_batch_join.py`
 already uses for `ChildFkBatchJoiner` (the resident-parent joiner these tests
 sit beside): a two-table plan, one `RelationshipEdge`, and a `ParentKeyRelation`
-built with `build_parent_key_relation_from_tables`. Kept minimal for the P4-A.3
-Task A smoke test (stage -> join -> resolve on a single edge); the byte-parity
-fixtures (orphans, empty child, batch/run boundaries) are Task C's to add.
+built with `build_parent_key_relation_from_tables`. `simple_edge_fixture` /
+`remap_edge_fixture` back the P4-A.3 Task A smoke test (stage -> join ->
+resolve on a single edge); `orphan_and_null_edge_fixture`,
+`empty_child_edge_fixture`, and `wide_edge_fixture` are Task C's byte-parity
+fixtures (orphans, empty child, batch/run boundaries).
 """
 
 from __future__ import annotations
@@ -151,4 +153,145 @@ def remap_edge_fixture(temp_dir: Path) -> OocEdgeFixture:
     )
 
 
-__all__ = ["OocEdgeFixture", "remap_edge_fixture", "simple_edge_fixture"]
+def orphan_and_null_edge_fixture(temp_dir: Path) -> OocEdgeFixture:
+    """A WARN edge whose child mixes matched rows, real orphans (unmatched
+    non-null keys), and null FK rows (never orphans, under any policy).
+    Exercises `mask_child_fk`'s WARN aggregation and the reorder path's
+    `resolve_batch` warning parity together (P4-A.3 acceptance test #3b).
+    """
+    seed = _seed("passthrough")
+    plan = _plan(seed, parent="parents", child="children", column="key")
+    edge = RelationshipEdge(
+        parent_table="parents",
+        parent_columns=("key",),
+        child_table="children",
+        child_columns=("key",),
+        namespace="parent_rel",
+        orphan_policy=OrphanPolicy.WARN,
+    )
+    parent = pa.table({"key": ["p0", "p1", "p2"]})
+    child = pa.table(
+        {
+            "key": ["p0", "orphanA", None, "p1", "orphanB", "p2", None, "p0"],
+            "amount": [1, 2, 3, 4, 5, 6, 7, 8],
+        }
+    )
+    masked_parent = mask_table(plan, edge.parent_table, parent, skip_columns=frozenset())
+    relation = build_parent_key_relation_from_tables(
+        source_parent=parent,
+        masked_parent=masked_parent,
+        edge=edge,
+        temp_dir=temp_dir / "relation",
+    )
+    return OocEdgeFixture(
+        plan=plan,
+        edge=edge,
+        parent_relation=relation,
+        child=child,
+        child_key_types=(child.column("key").type,),
+        remap_seeds=None,
+        job_seed=None,
+    )
+
+
+def empty_child_edge_fixture(temp_dir: Path) -> OocEdgeFixture:
+    """A zero-row child against a real (non-empty) parent relation: the
+    reorder path's `N=0` case (P4-A.3 acceptance test #3b), which must yield
+    an empty, correctly-typed result and never crash on an empty stage.
+    """
+    seed = _seed("passthrough")
+    plan = _plan(seed, parent="parents", child="children", column="key")
+    edge = RelationshipEdge(
+        parent_table="parents",
+        parent_columns=("key",),
+        child_table="children",
+        child_columns=("key",),
+        namespace="parent_rel",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    parent = pa.table({"key": ["c1", "c2"]})
+    child = pa.table(
+        {
+            "key": pa.array([], type=pa.string()),
+            "amount": pa.array([], type=pa.int64()),
+        }
+    )
+    masked_parent = mask_table(plan, edge.parent_table, parent, skip_columns=frozenset())
+    relation = build_parent_key_relation_from_tables(
+        source_parent=parent,
+        masked_parent=masked_parent,
+        edge=edge,
+        temp_dir=temp_dir / "relation",
+    )
+    return OocEdgeFixture(
+        plan=plan,
+        edge=edge,
+        parent_relation=relation,
+        child=child,
+        child_key_types=(child.column("key").type,),
+        remap_seeds=None,
+        job_seed=None,
+    )
+
+
+def wide_edge_fixture(
+    temp_dir: Path, *, parent_rows: int = 40, child_rows: int = 400
+) -> OocEdgeFixture:
+    """A larger PRESERVE edge sized so a small `batch_rows` spans several
+    join-output batches AND a small `run_bytes_cap` spills the bounded sorter
+    across several runs -- the batch/run-boundary case (P4-A.3 acceptance
+    test #3b), where a staging/resolution/merge boundary bug would surface.
+    Roughly a third of the child rows are deliberate orphans, one in six is a
+    null FK, and the rest cycle through every parent row at least once.
+    """
+    seed = _seed("passthrough")
+    plan = _plan(seed, parent="parents", child="children", column="key")
+    edge = RelationshipEdge(
+        parent_table="parents",
+        parent_columns=("key",),
+        child_table="children",
+        child_columns=("key",),
+        namespace="parent_rel",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    parent = pa.table({"key": [f"p{i}" for i in range(parent_rows)]})
+    child_keys: list[str | None] = []
+    for i in range(child_rows):
+        if i % 6 == 0:
+            child_keys.append(None)
+        elif i % 3 == 0:
+            child_keys.append(f"orphan{i}")
+        else:
+            child_keys.append(f"p{i % parent_rows}")
+    child = pa.table(
+        {
+            "key": child_keys,
+            "amount": list(range(child_rows)),
+        }
+    )
+    masked_parent = mask_table(plan, edge.parent_table, parent, skip_columns=frozenset())
+    relation = build_parent_key_relation_from_tables(
+        source_parent=parent,
+        masked_parent=masked_parent,
+        edge=edge,
+        temp_dir=temp_dir / "relation",
+    )
+    return OocEdgeFixture(
+        plan=plan,
+        edge=edge,
+        parent_relation=relation,
+        child=child,
+        child_key_types=(child.column("key").type,),
+        remap_seeds=None,
+        job_seed=None,
+    )
+
+
+__all__ = [
+    "OocEdgeFixture",
+    "empty_child_edge_fixture",
+    "orphan_and_null_edge_fixture",
+    "remap_edge_fixture",
+    "simple_edge_fixture",
+    "wide_edge_fixture",
+]

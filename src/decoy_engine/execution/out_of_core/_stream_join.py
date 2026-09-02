@@ -75,6 +75,7 @@ from decoy_engine.execution.out_of_core._batch_join import (
     _resolve_output_types,
 )
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 from decoy_engine.execution.out_of_core._join import (
     _append_output_batch,
     _child_key_batches,
@@ -227,6 +228,21 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
         )
 
 
+def _contiguity_error(detail: str) -> ExecutionError:
+    return ExecutionError(
+        code="out_of_core_fk_reorder_contiguity",
+        message=(
+            "the order-restored FK join output is not exactly the child's own "
+            f"0..N-1 row_nr domain: {detail}. N is taken from the INDEPENDENT "
+            "child-stage count (the SpillChildKeys row count), never inferred "
+            "from the join output itself, so a lost suffix fails closed instead "
+            "of silently self-validating as a shorter dense range. This is an "
+            "all-or-nothing failure: no partial result from this iterator is a "
+            "valid FK output."
+        ),
+    )
+
+
 class StreamFkJoiner:
     """One streamed FK join per edge, emitting an ordered FK-output reader.
 
@@ -254,14 +270,17 @@ class StreamFkJoiner:
     4. `total_orphans()`: the FAIL-policy anti-join precount over the whole
        child (the runner raises before any output if it is non-zero). Opens
        its OWN fresh reader over the spill.
-    5. `iter_join_rows(batch_rows)`: run the single ordered LEFT JOIN and yield
-       RAW join-result batches (row_nr, join key, source components, parent
-       match indicator, parent masked components) -- no resolution. Opens
-       its OWN fresh reader over the spill; a shared reader would return zero
-       rows here since a DuckDB-registered `RecordBatchReader` is single-pass.
-       `_iter_unordered_join_rows(batch_rows)` is the UNORDERED sibling (no
-       `ORDER BY`, plan-verified via `explain_join`'s structural guard) that a
-       later slice's bounded-reorder consumer drains and restores order over.
+    5. EITHER `iter_join_rows(batch_rows)` (the pre-existing ORDERED shim: one
+       `LEFT JOIN ... ORDER BY __decoy_row_nr`, DuckDB's own global sort,
+       staying live only until Task 6 removes it) OR the new bounded-reorder
+       path: `run_ordered_join(batch_rows, run_bytes_cap=..., merge_fan_in=...)`
+       drains the UNORDERED join (`_iter_unordered_join_rows`, plan-verified
+       via `explain_join`'s structural guard) into a `BoundedExternalSorter`
+       and returns an owning, order-restored, contiguity-guarded iterator.
+       Either way, each RAW join-result batch carries `__decoy_row_nr`,
+       `__decoy_fk_join_key`, one `__decoy_src_i` per child column,
+       `__decoy_parent_match`, and one `__decoy_parent_masked_i` per child
+       column -- exactly the columns `resolve_batch` needs.
     6. `resolve_batch(join_rows)`: resolve one payload-aligned slice of those
        raw join rows into FK output arrays, accumulating `orphan_total` and
        `observed_types`. Called by the driver once per payload-store batch
@@ -644,6 +663,67 @@ class StreamFkJoiner:
                 self._conn.unregister("child_keys")
             reader.close()
 
+    def run_ordered_join(
+        self,
+        batch_rows: int,
+        *,
+        run_bytes_cap: int,
+        merge_fan_in: int = 16,
+    ) -> _OrderedJoinRows:
+        """Restore `__decoy_row_nr` order over this edge's unordered join output.
+
+        Two distinct lifecycle mechanisms (Codex plan-gate MEDIUM 6 + round-2
+        MEDIUM), because a bare generator's `try/finally` does not reliably run
+        when a caller abandons the returned iterator before its first `next()`:
+
+        1. EAGER blocking phase, right here, inside `try/finally`: every
+           unordered join-row batch is drained into a fresh
+           `BoundedExternalSorter` (constructed with an EXPLICIT
+           `sort_key_column="__decoy_row_nr"`, never the default -- Codex
+           plan-gate LOW 7) while this joiner's DuckDB connection is live, the
+           connection is then CLOSED, and `sorter.finish()` runs the bounded
+           merge -- so DuckDB's join buffers and the sorter's merge buffers
+           are never co-resident. Any failure anywhere in this phase (drain
+           error, sorter failure, disk exhaustion, a malformed/unverified
+           plan) closes the connection AND the sorter (unlinking every spill
+           file) before propagating.
+        2. The returned `_OrderedJoinRows` is an OWNING, closeable iterator,
+           not a bare generator: its `close()` (idempotent) unlinks the
+           sorter's spill and is safe before the first `next()`, after partial
+           consumption, or called twice. It also wraps `sorter.iter_ordered()`
+           in a fail-closed 0..N-1 contiguity guard against `N`, the
+           INDEPENDENT child-stage row count (`self._staged_rows`, the
+           `SpillChildKeys` count) -- never inferred from the join output --
+           so a lost suffix fails closed instead of silently self-validating
+           as a shorter dense range.
+
+        By the time this method RETURNS (successfully), the connection is
+        already closed; the only resource the result still owns is the
+        sorter's final ordered run on disk.
+        """
+        if not self._staged:
+            raise AssertionError("begin_staging must run before run_ordered_join")
+        expected_row_count = self._staged_rows
+        sorter = BoundedExternalSorter(
+            spill_dir=self._temp_dir / "reorder",
+            run_bytes_cap=run_bytes_cap,
+            merge_fan_in=merge_fan_in,
+            sort_key_column="__decoy_row_nr",
+        )
+        try:
+            for batch in self._iter_unordered_join_rows(batch_rows):
+                sorter.write(batch)
+            # The connection is closed BEFORE finish()'s merge runs, so the
+            # DuckDB join's buffers and the sorter's merge buffers are never
+            # co-resident (the memory contract this consumer exists to prove).
+            self.close()
+            sorter.finish()
+        except BaseException:
+            self.close()
+            sorter.close()
+            raise
+        return _OrderedJoinRows(sorter, expected_row_count)
+
     def _ensure_conn(self) -> Any:
         """Open and configure this edge's DuckDB connection on first use.
 
@@ -759,6 +839,102 @@ class StreamFkJoiner:
         idx = result.schema.get_field_index("__decoy_row_nr")
         columns[idx] = pa.array(range(result.num_rows), type=pa.int64())
         return pa.record_batch(columns, schema=result.schema)
+
+
+class _OrderedJoinRows:
+    """Owning, closeable iterator over one edge's order-restored join rows.
+
+    Returned by `StreamFkJoiner.run_ordered_join`, which has ALREADY drained
+    the unordered join into `sorter` and closed the DuckDB connection by the
+    time this object exists -- the only resource it owns is the sorter's
+    final ordered run on disk. Implements `__iter__`/`__next__`, the context-
+    manager protocol, and an idempotent `close()` (Codex plan-gate MEDIUM 6):
+    a bare generator's `try/finally` does not run reliably when a caller
+    abandons it before the first `next()` (cleanup would wait for
+    nondeterministic GC), so the consumer contract is `with
+    joiner.run_ordered_join(...) as rows:` or an explicit `close()` -- the
+    only reliable cleanup for abandonment before first use, after partial
+    consumption, or on error. The iterator also self-closes on normal
+    exhaustion AND on any exception (including its own contiguity failure),
+    so no exit path leaks the sorter's spill.
+
+    Wraps `sorter.iter_ordered()` in the fail-closed 0..N-1 contiguity guard:
+    `N` (`expected_row_count`) is the INDEPENDENT child-stage row count (the
+    `SpillChildKeys` count `run_ordered_join` captured BEFORE the join ran),
+    never inferred from the join output itself, so a lost suffix cannot
+    silently self-validate as a shorter dense range. A gap is detected only
+    when the batch AFTER it arrives (or, for a lost suffix, only once the
+    whole stream is exhausted) -- earlier batches have already been yielded
+    to the caller by then, so this is an ALL-OR-NOTHING contract: the
+    consumer must not commit any batch to durable output until this iterator
+    is fully drained without raising.
+    """
+
+    def __init__(self, sorter: BoundedExternalSorter, expected_row_count: int) -> None:
+        self._sorter = sorter
+        self._expected_row_count = expected_row_count
+        self._iter = self._guarded_iter()
+        self._closed = False
+
+    def __iter__(self) -> _OrderedJoinRows:
+        return self
+
+    def __next__(self) -> pa.RecordBatch:
+        try:
+            return next(self._iter)
+        except BaseException:
+            # StopIteration (normal exhaustion) and any raised failure
+            # (contiguity violation, or anything unexpected) both end this
+            # iterator's life -- close it either way, exactly once.
+            self.close()
+            raise
+
+    def __enter__(self) -> _OrderedJoinRows:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Unlink the sorter's spill. Idempotent; safe before the first
+        `next()`, after partial consumption, or called more than once."""
+        if self._closed:
+            return
+        self._closed = True
+        self._sorter.close()
+
+    def _guarded_iter(self) -> Iterator[pa.RecordBatch]:
+        expected_next = 0
+        seen = 0
+        for batch in self._sorter.iter_ordered():
+            n = batch.num_rows
+            if n == 0:
+                continue
+            row_nr = batch.column("__decoy_row_nr")
+            first = row_nr[0].as_py()
+            if first != expected_next:
+                raise _contiguity_error(
+                    f"a batch started at row_nr {first}, expected {expected_next}"
+                )
+            if n > 1:
+                # pc.* funcs are dynamically generated; stubs miss them.
+                diffs = pc.subtract(  # type: ignore[attr-defined, unused-ignore]
+                    row_nr.slice(1, n - 1), row_nr.slice(0, n - 1)
+                )
+                if not pc.all(pc.equal(diffs, 1)).as_py():  # type: ignore[attr-defined, unused-ignore]
+                    raise _contiguity_error(
+                        f"row_nr [{first}..{row_nr[n - 1].as_py()}] is not a "
+                        "contiguous ascending run (duplicate or missing value)"
+                    )
+            expected_next = first + n
+            seen += n
+            yield batch
+        if seen != self._expected_row_count or expected_next != self._expected_row_count:
+            raise _contiguity_error(
+                f"expected exactly {self._expected_row_count} contiguous rows (the "
+                f"independent child-stage count) but the ordered stream produced "
+                f"{seen} row(s), ending at row_nr {expected_next - 1}"
+            )
 
 
 class JoinRowCursor:
