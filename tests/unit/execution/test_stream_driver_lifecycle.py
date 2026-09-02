@@ -326,6 +326,59 @@ def test_lifecycle_edge2_raises_after_edge1_registered(tmp_path: Path, monkeypat
     assert not child_temp_dir.exists()
 
 
+def test_lifecycle_finalize_staging_failure_still_closes_and_cleans(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A persistent `finalize_staging` failure must not abort the finally: EVERY
+    joiner is still closed and `temp_dir` removed. Regression -- the finally
+    looped `finalize_staging(); close()` unguarded, so a raise on the first
+    finalize skipped every close and left the spill dir (close_calls 0,
+    temp_exists True).
+    """
+    plan, sources, edge_a, edge_b = _two_edge_setup(
+        OrphanPolicy.PRESERVE, OrphanPolicy.PRESERVE, n=12
+    )
+    parent_relations = _build_parent_relations(plan, sources, edge_a, edge_b, tmp_path / "parents")
+
+    close_calls = [0]
+    orig_close = StreamFkJoiner.close
+
+    def spy_close(self: StreamFkJoiner) -> None:
+        close_calls[0] += 1
+        orig_close(self)
+
+    def boom_finalize(self: StreamFkJoiner) -> None:
+        raise RuntimeError("boom-finalize-staging")
+
+    monkeypatch.setattr(StreamFkJoiner, "close", spy_close)
+    monkeypatch.setattr(StreamFkJoiner, "finalize_staging", boom_finalize)
+
+    child_temp_dir = tmp_path / "joins" / "child"
+
+    with pytest.raises(RuntimeError, match="boom-finalize-staging"):
+        stream_table(
+            plan,
+            "child",
+            sources["child"],
+            incoming_edges=(edge_a, edge_b),
+            outgoing_edges=(),
+            parent_relations=parent_relations,
+            temp_dir=child_temp_dir,
+            relation_dir=tmp_path / "relations" / "child",
+            staging_path=tmp_path / "staged" / "child" / "masked_keys.parquet",
+            memory_limit=None,
+            batch_rows=3,
+            run_bytes_cap=_RUN_BYTES_CAP,
+            sink=None,
+            outputs={},
+            warnings=[],
+        )
+
+    # Both joiners closed despite the finalize failure; the spill dir is gone.
+    assert close_calls[0] == 2
+    assert not child_temp_dir.exists()
+
+
 # ---------------------------------------------------------------------------
 # #6: FAIL-precount lifecycle -- at most one live DuckDB connection at a
 # time, plus the later-edge-orphan variant.

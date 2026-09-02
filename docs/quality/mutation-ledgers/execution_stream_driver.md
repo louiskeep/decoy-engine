@@ -39,9 +39,15 @@ the sort order, the FAIL-before-output ordering, or a leaked resource.
   the full parity oracle, i.e. it does not change the produced schema on any
   tested shape -- `table_name` there is naming, not an output-affecting input.
 - **`code_set_null_seen` plumbing**: the driver threads code_set records +
-  null-seen; code_set correctness (incl. null handling) is graded by the OOC
-  group-C parity suite (`test_out_of_core_group_c_parity.py`), not the driver.
-  Flagged to the reviewer as an optional driver-level code_set-null coverage add.
+  null-seen. The numbers above are from the mutation run at commit 670bdf49,
+  BEFORE the driver-level code_set-null coverage was added in commit 40007f0c
+  (`test_code_set_stamp_parity_missing_vs_normal_column`, negative-checked
+  against a broken stamp-gate). That test now exercises the phase-1 missing
+  detection + the deferred stamp commit directly, so several of the
+  code_set-plumbing survivors counted here are now killed; the recorded 98/366
+  is a floor, not the post-40007f0c figure. (code_set masking correctness is
+  also graded by the OOC group-C parity suite,
+  `test_out_of_core_group_c_parity.py`.)
 - **Message / reject-code prose** on `_open_joiner` (13) and a few on
   `stream_table`: machine-consumed codes preserved; message text mutated.
 

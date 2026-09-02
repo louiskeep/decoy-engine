@@ -420,22 +420,34 @@ def stream_table(
             if joiner.orphan_total and edge.orphan_policy is OrphanPolicy.WARN:
                 warnings.append(orphan_fk_warning(edge, joiner.orphan_total))
     finally:
-        # Guard only, mirroring the raw_parent_spill re-finalize below: the
-        # normal path already finalizes every joiner's child-key spill right
-        # after phase 1. This catches an exception raised mid-phase-1 (a
-        # LATER batch in the same table's own loop), where that finalize call
-        # was never reached; `finalize_staging` is idempotent, so re-running
-        # it here is safe whether or not the primary call already ran.
+        # Best-effort cleanup: every resource release below is INDEPENDENTLY
+        # guarded so a failure in one (e.g. a `finalize_staging` that raises on
+        # an error path) still runs the rest -- every joiner is closed, the
+        # payload store is closed, and `temp_dir` is removed. The guards swallow
+        # cleanup-only errors so the finally never raises, preserving the primary
+        # exception from the try body; the driver's output is already delivered
+        # to the sink in phase 3, so a post-hoc release error changes no output.
+        # The `finalize_staging` re-run is guard-only (idempotent, mirrors the
+        # raw_parent_spill re-finalize): it catches a mid-phase-1 abort where the
+        # normal finalize was never reached, but must never gate `close()`.
         for joiner in joiners:
-            joiner.finalize_staging()
-            joiner.close()
-        store.close()
-        # Guard only: the normal path already finalizes this right after phase 1
-        # (before its stream is read back). This catches an exception raised
-        # mid-phase-1, where that finalize was never reached; `finalize` is
-        # idempotent.
+            try:
+                joiner.finalize_staging()
+            except Exception:  # guard-only re-finalize; must never gate close()
+                pass
+            try:
+                joiner.close()
+            except Exception:  # best-effort release; every joiner must be closed
+                pass
+        try:
+            store.close()
+        except Exception:  # best-effort release
+            pass
         if raw_parent_spill is not None:
-            raw_parent_spill.finalize()
+            try:
+                raw_parent_spill.finalize()
+            except Exception:  # guard-only re-finalize
+                pass
         # Every spill this call created -- child_keys.arrow per edge,
         # raw_parent_keys.arrow, payload.arrow, each edge's reorder run files --
         # lives under this table's OWN `temp_dir` and has had its last read by
