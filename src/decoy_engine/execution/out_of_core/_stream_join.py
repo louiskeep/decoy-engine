@@ -105,11 +105,21 @@ if TYPE_CHECKING:
 # pragmas against.
 _PINNED_DISABLED_OPTIMIZERS = ("build_side_probe_side", "join_order")
 
-# Physical-plan operator names (DuckDB 1.5.4's `EXPLAIN (FORMAT JSON)`) that
-# perform a GLOBAL sort/order. The whole point of `run_ordered_join`'s
-# unordered-join + bounded-sorter split is that NEITHER side re-injects one of
-# these; the plan guard below fails closed if it ever sees one here.
-_GLOBAL_SORT_OPERATOR_NAMES = frozenset({"ORDER_BY", "TOP_N"})
+
+def _is_global_sort_operator(name: str) -> bool:
+    """True for any physical-plan operator that performs a GLOBAL sort/order.
+
+    A SUBSTRING match ("SORT"/"ORDER"), plus the sort-limit `TOP_N`, rather than
+    a fixed name blacklist: the whole point of `run_ordered_join`'s
+    unordered-join + bounded-sorter split is that NEITHER join input re-injects a
+    global sort, so an operator the pinned DuckDB does not currently emit (or one
+    a future version renames, e.g. a bare `SORT`) must still fail closed here, not
+    slip through an exact-name list. Our real unordered plan is a `HASH_JOIN`
+    over scans/projections/filters -- none of which contain "SORT"/"ORDER" -- so
+    this never false-positives on a correct plan (and a sort-merge join, which
+    would, is already rejected by the single-`HASH_JOIN` requirement)."""
+    upper = name.upper()
+    return "SORT" in upper or "ORDER" in upper or upper == "TOP_N"
 
 
 def _disable_join_optimizers(conn: Any) -> None:
@@ -182,7 +192,7 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
     """
     nodes = list(_iter_plan_nodes(plan))
     for node in nodes:
-        if node["name"] in _GLOBAL_SORT_OPERATOR_NAMES:
+        if _is_global_sort_operator(node["name"]):
             raise ExecutionError(
                 code="out_of_core_fk_join_plan_unverified",
                 message=(
@@ -221,9 +231,24 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
     # flipped build still fails: the flip swaps which subtree holds which scan.
     probe_scans = _subtree_scan_names(probe)
     build_scans = _subtree_scan_names(build)
-    probe_is_child_stream = any("ARROW" in name for name in probe_scans)
-    build_is_parent_relation = any("PARQUET" in name for name in build_scans)
-    if join_type != "LEFT" or not probe_is_child_stream or not build_is_parent_relation:
+    probe_has_child = any("ARROW" in name for name in probe_scans)
+    probe_has_parent = any("PARQUET" in name for name in probe_scans)
+    build_has_child = any("ARROW" in name for name in build_scans)
+    build_has_parent = any("PARQUET" in name for name in build_scans)
+    # EXCLUSIVE placement, not mere presence: the child ARROW stream must be on
+    # the PROBE side and NOT the build side, and the parent PARQUET relation on
+    # the BUILD side and NOT the probe. A build subtree that contains ANY child
+    # scan builds an O(child) hash table even if it also reads the parent, so
+    # `build_has_child` (or `probe_has_parent`) fails closed -- checking only for
+    # a parent scan somewhere in the build subtree would let that through.
+    plan_ok = (
+        join_type == "LEFT"
+        and probe_has_child
+        and not probe_has_parent
+        and build_has_parent
+        and not build_has_child
+    )
+    if not plan_ok:
         raise ExecutionError(
             code="out_of_core_fk_join_plan_unverified",
             message=(
@@ -281,6 +306,13 @@ def _guarded_reorder_iter(
         if n == 0:
             continue
         row_nr = batch.column("__decoy_row_nr")
+        # Reject nulls explicitly: `pc.all` below SKIPS null diffs, so a null
+        # row_nr would slip the adjacent-difference check while still counting
+        # toward `seen`/`expected_next`. The sorter's own key contract already
+        # rejects null keys, but the guard must not depend on that to stay
+        # fail-closed on its own.
+        if row_nr.null_count > 0:
+            raise _contiguity_error("the ordered stream contains a null row_nr")
         first = row_nr[0].as_py()
         if first != expected_next:
             raise _contiguity_error(f"a batch started at row_nr {first}, expected {expected_next}")
@@ -708,12 +740,16 @@ class StreamFkJoiner:
         assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
         conn = self._ensure_conn()
         reader = self._child_keys.open_reader()
-        conn.register("child_keys", reader)
+        # register() INSIDE the outer try so a registration failure still hits
+        # `reader.close()` -- otherwise the reader FD leaks. Mirrors total_orphans.
         try:
-            plan = self._run_explain_json(self._unordered_join_query())
-            disabled = self._disabled_optimizers()
+            conn.register("child_keys", reader)
+            try:
+                plan = self._run_explain_json(self._unordered_join_query())
+                disabled = self._disabled_optimizers()
+            finally:
+                conn.unregister("child_keys")
         finally:
-            conn.unregister("child_keys")
             reader.close()
         return {"plan": plan, "disabled_optimizers": disabled}
 
@@ -740,16 +776,20 @@ class StreamFkJoiner:
         conn = self._ensure_conn()
         query = self._unordered_join_query()
         reader = self._child_keys.open_reader()
-        conn.register("child_keys", reader)
+        # register() INSIDE the outer try so a registration failure still hits
+        # `reader.close()` -- otherwise the reader FD leaks.
         try:
-            plan = self._run_explain_json(query)
-            _verify_unordered_plan_or_raise(plan)
-            yield from conn.execute(query).to_arrow_reader(batch_rows)
+            conn.register("child_keys", reader)
+            try:
+                plan = self._run_explain_json(query)
+                _verify_unordered_plan_or_raise(plan)
+                yield from conn.execute(query).to_arrow_reader(batch_rows)
+            finally:
+                # See iter_join_rows's own finally: an abandoned generator's
+                # cleanup can run after close() already tore down the connection.
+                if self._conn is not None:
+                    self._conn.unregister("child_keys")
         finally:
-            # See iter_join_rows's own finally: an abandoned generator's
-            # cleanup can run after close() already tore down the connection.
-            if self._conn is not None:
-                self._conn.unregister("child_keys")
             reader.close()
 
     def run_ordered_join(

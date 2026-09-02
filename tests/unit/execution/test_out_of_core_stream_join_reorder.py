@@ -587,3 +587,60 @@ def test_plan_guard_rejects_flipped_build_even_with_interposed_op() -> None:
     with pytest.raises(ExecutionError) as excinfo:
         _verify_unordered_plan_or_raise(plan)
     assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
+
+
+# ---------------------------------------------------------------------------
+# Codex final-gate: plan guard exclusivity + broad sort + null row_nr
+# ---------------------------------------------------------------------------
+
+
+def test_plan_guard_rejects_build_subtree_containing_child_scan() -> None:
+    from decoy_engine.execution.out_of_core._stream_join import _verify_unordered_plan_or_raise
+
+    # The build subtree contains BOTH the parent PARQUET and a child ARROW scan
+    # -> it builds an O(child) hash table even though a parent scan is present.
+    # Mere-presence ("any PARQUET in build") would wrongly pass; exclusive
+    # placement fails closed.
+    plan = _plan(
+        "HASH_JOIN",
+        join_type="LEFT",
+        children=[
+            _plan("ARROW_SCAN"),
+            _plan("PROJECTION", [_plan("READ_PARQUET"), _plan("ARROW_SCAN")]),
+        ],
+    )
+    with pytest.raises(ExecutionError) as excinfo:
+        _verify_unordered_plan_or_raise(plan)
+    assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
+
+
+def test_plan_guard_rejects_unknown_sort_operator() -> None:
+    from decoy_engine.execution.out_of_core._stream_join import _verify_unordered_plan_or_raise
+
+    # A global sort re-introduced under a name NOT in the old fixed blacklist
+    # (e.g. a bare "SORT") must still fail closed -- substring detection.
+    plan = _plan(
+        "SORT",
+        [
+            _plan(
+                "HASH_JOIN",
+                join_type="LEFT",
+                children=[_plan("ARROW_SCAN"), _plan("READ_PARQUET")],
+            )
+        ],
+    )
+    with pytest.raises(ExecutionError) as excinfo:
+        _verify_unordered_plan_or_raise(plan)
+    assert excinfo.value.code == "out_of_core_fk_join_plan_unverified"
+
+
+def test_contiguity_guard_rejects_null_row_nr() -> None:
+    # `pc.all` skips null diffs, so a null row_nr would slip the adjacent-diff
+    # check while still counting toward seen/expected_next. The guard rejects
+    # nulls explicitly (defense in depth beyond the sorter's own key contract).
+    batch = pa.record_batch({"__decoy_row_nr": pa.array([0, 1, None], type=pa.int64())})
+    sorter = _StubSorter([batch])
+    result = _OrderedJoinRows(sorter, expected_row_count=3)
+    with pytest.raises(ExecutionError) as excinfo:
+        list(result)
+    assert excinfo.value.code == "out_of_core_fk_reorder_contiguity"
