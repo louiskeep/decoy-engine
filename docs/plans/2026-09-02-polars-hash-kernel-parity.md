@@ -1,7 +1,11 @@
 # Polars hash: cross-adapter parity for the common key dtypes via the shared kernel
 
-Status: plan (authored 2026-09-02, Opus; plan-gate rounds 1-3 NO-GO -> Cam
-right-size decision, re-gate round 4). Held target branch `feat/native-phase3`;
+Status: plan HANDLER-FIX GATE-CONFIRMED (2026-09-02, Opus). Rounds 1-3 NO-GO ->
+Cam right-size; round 4: Codex confirmed the handler fix is a STRICT no-regression
+and the exotic divergences are pre-existing (GO on the fix itself). Round-4
+findings applied: test #1 parameterized over the full common set; the one BLOCKER
+is cross-plan (the cascade plan must carry the exact-dtype restriction, section 6)
+and is tracked in the cascade-safety plan's rescope, not here. Ready to build. Held target branch `feat/native-phase3`;
 merges with the Phase-4 bundle. ENGINE correctness fix, foundational for the
 hash-only chunked-FK cascade fix (`2026-09-02-chunked-fk-cascade-safety.md`).
 
@@ -84,11 +88,14 @@ Extend `tests/parity/test_strategy_substrate_parity.py` (same `(plan, sources)`
 through both adapters, assert output equality). Existing hash cases (`:157-176`)
 cover only string/int/truncated.
 
-1. **hash cross-adapter parity, common dtype matrix**: add cases for `string`,
-   `large_string`, `int` (a couple of widths), `bool`, `date32`, `timestamp[ns,
-   tz=UTC]`, positive-scale `decimal128`. Each asserts pandas-adapter output ==
-   Polars-adapter output. The `timestamp[ns, tz=UTC]` case with NONZERO
-   sub-microsecond digits is the direct regression (fail before, pass after).
+1. **hash cross-adapter parity, FULL common dtype matrix** (parameterized -- the
+   plan-gate flagged a partial matrix as insufficient): `string`, `large_string`,
+   EVERY signed width (int8/16/32/64) AND unsigned width (uint8/16/32/64), `bool`,
+   `date32`, IANA-zone `timestamp` in ALL FOUR units (s/ms/us/ns, tz=UTC), and
+   positive-scale `decimal32`, `decimal64`, `decimal128`. Each asserts
+   pandas-adapter output == Polars-adapter output at the `Series.to_arrow()`
+   boundary. The `timestamp[ns, tz=UTC]` case with NONZERO sub-microsecond digits
+   is the direct regression (fail before, pass after).
 1b. **Timezone robustness**: the SAME INSTANT as `timestamp[us, tz=UTC]` and as
    the equivalent `timestamp[us, tz=<IANA non-UTC>]` hashes to the IDENTICAL value.
 2. **NaN/None success-to-null**: `[NaN, None]` hashes to `[None, None]`
