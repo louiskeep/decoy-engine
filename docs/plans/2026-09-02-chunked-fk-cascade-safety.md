@@ -1,6 +1,11 @@
 # Chunked-FK admission soundness: restrict self-mask to the robust key strategies
 
-Status: plan RESCOPED to hash-only + exact-dtype restriction (2026-09-02, Opus).
+Status: plan GATE-APPROVED (2026-09-02, Opus). Codex plan-gate = GO with
+implementation guidance now folded in: predicate 12 is a two-stage
+declared(gate)+real(per-chunk runtime) check; safe set refined (scale>=0,
+zoneinfo-resolvable tz, reject dict-wrappers before unwrap, preserve pa.null
+carveout); many existing chunked-FK/DE-10 passthrough/redact fixtures must be
+rebased to hash. Ready for the Sonnet build.
 Prior plan-gate rounds narrowed the strategy allowlist; Cam then chose hash-only,
 and the Polars-hash round-4 gate required the EXACT-dtype companion (predicate
 12). This plan DEPENDS ON the Polars-hash fix (`2026-09-02-polars-hash-kernel-
@@ -98,22 +103,41 @@ code.
   to composite bundle generation, `_runner.py:88` / `_pandas_adapter.py:380`;
   the gate lacks the registry, so reject any provider on an FK key
   conservatively). New code `chunked_fk_endpoint_not_scalar`.
-- **12. FK key dtype is in the EXACT cross-adapter-safe set.** hash is
-  cross-adapter byte-identical only for the common key dtypes proven by the
-  Polars-hash plan-gate: string, large_string, signed/unsigned integer, bool,
-  `date32`, IANA-zone `timestamp` (any unit), and positive-scale decimal. Admit
-  only when BOTH the declared AND the real runtime Arrow type of the FK key is in
-  that set. This must be an EXACT type check, NOT the existing coarse dtype-FAMILY
-  comparison: the current gate collapses `date32`/`date64`, all timestamp
-  variants, and decimal scales (`_chunked_fk.py:161`, `_chunked_fk_dtype.py:125`),
-  so it admits `date64`-declared-as-`date32`, `decimal256`-as-`decimal128`, and
-  fixed-offset-tz-as-IANA -- exactly the exotic dtypes the Polars adapter's
-  ingestion corrupts/rejects (`polars/_conversion_boundary.py`). Reject `date64`,
-  `time64`, negative-scale / 256-bit decimal, fixed-offset (non-IANA) tz
-  timestamps, tz-naive timestamps, float, and dictionary-wrapped exotics.
-  New code `chunked_fk_key_dtype_not_cross_adapter_safe`. This is the companion
-  the Polars-hash plan (section 6) requires; together they make hash-only FK
-  self-mask byte-parity-sound across both adapters for every ADMITTED key dtype.
+- **12. FK key dtype is in the EXACT cross-adapter-safe set (TWO-STAGE).** hash
+  is cross-adapter byte-identical only for the safe key dtypes (below). This must
+  be an EXACT type check, NOT the existing coarse dtype-FAMILY comparison (which
+  collapses `date32`/`date64`, timestamp variants, and decimal scales at
+  `_chunked_fk.py:161` / `_chunked_fk_dtype.py:125`, admitting
+  `date64`-as-`date32`, `decimal256`-as-`decimal128`, fixed-offset-as-IANA). Per
+  the plan-gate, it CANNOT live entirely in `gate_fk_child_edges` (config-only,
+  never sees data); implement it in TWO stages:
+  1. **Declared check at the gate** (`gate_fk_child_edges`): exact-parse and
+     validate BOTH endpoint declarations; an unsafe/unprovable declared type
+     raises `PlanCompileError(code="chunked_fk_key_dtype_not_cross_adapter_safe")`.
+     Use anchored parsers + Arrow-constructor validation for parameterized
+     timestamp/decimal strings (`pa.type_for_alias` does not parse them on the
+     pinned PyArrow 24). This does NOT replace the existing missing-dtype or
+     parent/child compat comparison (`_chunked_fk.py:513`).
+  2. **Real-type check at the existing per-chunk runtime guard**
+     (`_chunked_fk_dtype.py:122`, real type = `chunk.schema.field(col).type`,
+     runs at `_chunked.py:538` BEFORE `adapter.run` and thus before Polars
+     ingestion at `polars/_conversion_boundary.py:43`): an unsafe real type
+     raises `ExecutionError` with the SAME code. `fk_declared_dtypes_for_table`
+     already gathers both endpoints (`_chunked_fk_dtype.py:67`); each endpoint's
+     real type is checked when ITS table is streamed (a child-only invocation
+     cannot see the remote parent's real schema -- per-table contract).
+  **Exact safe set:** string, large_string, all signed/unsigned integer widths,
+  bool, `date32` ONLY, `timestamp` (s/ms/us/ns) with a non-empty
+  `zoneinfo.ZoneInfo`-resolvable tz, and `decimal32/64/128` with scale >= 0
+  (scale 0 is hash-identical -- use `>= 0`, not `> 0`). REJECT dictionary
+  wrappers BEFORE unwrapping (the family helper unwraps at
+  `_chunked_fk_dtype.py:38`, unsuitable here), plus `date64`, `time64`,
+  negative-scale / 256-bit decimal, fixed-offset (non-IANA) tz, tz-naive, and
+  float. PRESERVE the existing `pa.null()` runtime carveout
+  (`_chunked_fk_dtype.py:126`, vacuously safe -- all values null, pinned by
+  `test_de10_chunked_fk_declared_dtype.py:282`). Together with the landed
+  Polars-hash fix, this makes hash-only FK self-mask byte-parity-sound across
+  both adapters for every ADMITTED key dtype.
 
 No fpe-tweak predicate is needed: fpe is dropped by 2a.
 
@@ -154,15 +178,22 @@ mirror `test_chunked_fk.py:170-268` (`TestByteParityWithRemapOrphans`).
    string), a `redact` non-scalar `redact_with` with reordered keys, an fpe
    default-column-tweak, and a `passthrough` tz-aware timestamp (child keeps its
    own tz representation, arrow-unequal to the parent's).
-1b. **Dtype gate-kill (predicate 12).** A `hash` FK key whose EXACT dtype is
-   exotic -- `date64` (declared even as `date32`), `decimal256` /
-   negative-scale decimal (declared as `decimal128`), a fixed-offset (non-IANA)
-   tz timestamp (declared as an IANA timestamp), `time64`, a tz-naive timestamp,
-   float, or a dictionary-wrapped exotic -- rejects with
-   `chunked_fk_key_dtype_not_cross_adapter_safe`, on BOTH the declared and the
-   real runtime type (the coarse family gate must not admit them). A hash FK key
-   in the safe set (string/int/bool/date32/IANA-tz-timestamp/positive-decimal)
-   stays admitted.
+1b. **Dtype gate-kill, two-stage (predicate 12).** Split into declared vs real:
+   - **Declared gate-kill**: a `hash` FK key DECLARED exotic (`date64`,
+     `decimal256` / negative-scale decimal, fixed-offset non-IANA tz, `time64`,
+     tz-naive, float, dictionary-wrapped) raises
+     `chunked_fk_key_dtype_not_cross_adapter_safe` at the gate.
+   - **Real-type runtime rejection**: a SAFE-declared key whose REAL runtime
+     Arrow type is exotic (e.g. `date64`-real declared `date32`,
+     `decimal256`-real declared `decimal128`, fixed-offset-real declared IANA)
+     raises the same code at the per-chunk guard -- for the CHILD role, the
+     PARENT role, and a LATER chunk (not just the first). Prove on BOTH adapters
+     that rejection occurs BEFORE Polars ingestion.
+   - **Carveout preserved**: an all-null `pa.null()` real column on a
+     safe-declared key stays ADMITTED (vacuously safe).
+   - **Admitted end-to-end**: parameterize a chunked-vs-oracle byte-parity proof
+     across EVERY safe dtype class (string/large_string/int widths/bool/date32/
+     IANA-tz-timestamp all units/decimal scale>=0) -- admitted + byte-identical.
 2. **Predicate gate-kills.** Same-key A->B->C chain ->
    `chunked_fk_parent_not_root`; parent/child non-blank `when` -> the two `when`
    codes; a `provider` on the parent (then child) FK key ->
@@ -176,14 +207,20 @@ mirror `test_chunked_fk.py:170-268` (`TestByteParityWithRemapOrphans`).
    end-to-end.
 5. **`when` normalization.** A blank/whitespace `when` on an FK key does NOT
    reject; a non-blank one does.
-6. **Positive lock + no-regression.** A root-key hash FK edge on a safe-dtype key
-   stays admitted and byte-identical (the existing hash `TestByteParityWithRemap
-   Orphans` stays green); the passthrough-FK-key parity tests
-   (`test_chunked_fk.py:970`, `:1022`) FLIP to gate-kills asserting the new
-   strategy reject code; the full chunked-FK gate suites
-   (`test_chunked_fk_gate_kills.py`, `test_chunked_fk.py`, `test_de10_chunked_fk_*`,
-   `test_chunked_admitted_set.py`) stay green; update the admitted-set snapshot for
-   the newly-rejected shapes.
+6. **Positive lock + no-regression + REBASE.** A root-key hash FK edge on a
+   safe-dtype key stays admitted and byte-identical (the existing hash
+   `TestByteParityWithRemapOrphans` stays green). CRITICAL (plan-gate): MANY
+   existing chunked-FK / DE-10 tests use `passthrough`/`redact` as the FK-key
+   strategy (not only the two named passthrough tests -- e.g.
+   `test_de10_chunked_fk_declared_dtype.py:149`). The hash-only allowlist now
+   REJECTS those, so they must be REBASED to valid `hash` fixtures, or they never
+   reach the behavior they were meant to cover; the pure passthrough-admission
+   tests (`test_chunked_fk.py:970`, `:1022`) instead FLIP to gate-kills asserting
+   the new strategy reject code. Audit every `test_chunked_fk*` / `test_de10_*` /
+   `test_chunked_admitted_set` fixture: rebase strategy-incidental ones to hash,
+   flip admission-of-a-dropped-strategy ones to gate-kills. The full chunked-FK
+   gate suites stay green; update the admitted-set snapshot for the newly-rejected
+   shapes.
 
 VERIFY bar: coverage + mutation on the CHANGED lines of `gate_fk_child_edges`
 (the hash-only narrowing + predicates 8-12 + reject codes), 0 unresolved
@@ -204,12 +241,18 @@ is only cross-adapter byte-identical for the safe dtypes AFTER it.
 
 ## 7. Tasks
 
-- [ ] A. Narrow condition (a) to `parent strategy == hash`; add predicates 8-12
-  + reject codes to `gate_fk_child_edges` (predicate 12 = the EXACT declared+real
-  Arrow-type restriction, not the coarse family compare). Keep other existing
+- [ ] A. Narrow condition (a) to `parent strategy == hash`; add predicates 8-11
+  + reject codes to `gate_fk_child_edges`. Predicate 12 is TWO-STAGE: (i) the
+  exact DECLARED-type validator in `gate_fk_child_edges` (anchored parsers +
+  Arrow-constructor validation), (ii) the exact REAL-type check extending the
+  per-chunk runtime guard in `_chunked_fk_dtype.py` (reject dict-wrappers before
+  unwrap, preserve the `pa.null()` carveout, raise the same code as
+  `ExecutionError`). Keep the existing missing-dtype / parent-child compat
   conditions intact.
-- [ ] B. Tests #1-#6 (incl #1b dtype gate-kill).
-- [ ] C. VERIFY -> dennis REVIEW -> Codex FINAL gate. HELD, push, no merge.
+- [ ] B. Tests #1-#6 (incl the two-stage #1b + the passthrough/redact fixture
+  REBASE audit in #6).
+- [ ] C. VERIFY (gate suites + parity + mutation on the changed gate/runtime
+  lines) -> dennis REVIEW -> Codex FINAL gate. HELD, push, no merge.
 
 ## 8. Risks / open questions for the plan-gate
 
