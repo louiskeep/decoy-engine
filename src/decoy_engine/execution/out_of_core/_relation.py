@@ -453,6 +453,9 @@ def _build_relation(
     staged_path = duckdb_dir / (
         f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_staged.parquet"
     )
+    winners_path = duckdb_dir / (
+        f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_winners.parquet"
+    )
     conn = connect_duckdb(temp_dir=duckdb_dir, memory_limit=memory_limit)
     try:
         # Last-write-wins dedup via STAGE -> max(row_nr) GROUP BY -> JOIN BACK,
@@ -484,37 +487,62 @@ def _build_relation(
         # stitch a composite key's columns across different rows) simply cannot
         # arise here: masked columns ride through the join as ordinary columns,
         # NULL or not, so no struct_pack is needed.
+        #
+        # Steps 2 and 3 are two SEPARATE `COPY` statements (winners land on
+        # disk first, step 3 re-reads them with `read_parquet`), not one query
+        # with the winners aggregate as an inline join subquery: an inline
+        # subquery keeps the hash aggregate and the hash join co-resident as
+        # one physical plan, pinning the aggregate's O(distinct-key) state
+        # alongside the join build; landing winners to disk between them makes
+        # each statement its own single-blocking-operator plan, so neither
+        # blocking operator's state is ever resident at the same time as the
+        # other's.
         conn.register("parent_keys", reader)
         # The COPY fully consumes the single-pass reader; the dedup below reads
         # the STAGED parquet, never `parent_keys` again, so the exhausted
         # registration just rides along until conn.close() in the finally.
         conn.execute(f"COPY parent_keys TO {_sql_string(str(staged_path))} (FORMAT PARQUET)")
         staged_sql = f"read_parquet({_sql_string(str(staged_path))})"
+        conn.execute(
+            f"""
+            COPY (
+                SELECT __decoy_fk_join_key,
+                       max(__decoy_row_nr) AS __decoy_win_row_nr
+                FROM {staged_sql}
+                GROUP BY __decoy_fk_join_key
+            ) TO {_sql_string(str(winners_path))} (FORMAT PARQUET)
+            """
+        )
+        winners_sql = f"read_parquet({_sql_string(str(winners_path))})"
         masked_select = ", ".join(f"s.{col} AS {col}" for col in masked_columns)
         conn.execute(
             f"""
             COPY (
                 SELECT s.__decoy_fk_join_key, {masked_select}
                 FROM {staged_sql} s
-                JOIN (
-                    SELECT __decoy_fk_join_key,
-                           max(__decoy_row_nr) AS __decoy_win_row_nr
-                    FROM {staged_sql}
-                    GROUP BY __decoy_fk_join_key
-                ) w
+                JOIN {winners_sql} w
                   ON s.__decoy_fk_join_key = w.__decoy_fk_join_key
                  AND s.__decoy_row_nr = w.__decoy_win_row_nr
             ) TO ? (FORMAT PARQUET)
             """,
             [str(out_path)],
         )
+    except BaseException:
+        # A mid-build failure may have left a partially written output
+        # parquet (COPY is not atomic); never publish a partial relation.
+        out_path.unlink(missing_ok=True)
+        raise
     finally:
         try:
             conn.close()
         finally:
-            # The staged dedup copy is transient scratch, never part of the
-            # published relation; remove it whether the build succeeded or not.
-            staged_path.unlink(missing_ok=True)
+            # Both scratch files are transient, never part of the published
+            # relation; each unlink is its OWN guard so one failing (or
+            # `conn.close()` above raising) never skips the other.
+            try:
+                staged_path.unlink(missing_ok=True)
+            finally:
+                winners_path.unlink(missing_ok=True)
     return ParentKeyRelation(path=out_path, masked_key_columns=masked_columns)
 
 
