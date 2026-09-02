@@ -1,12 +1,12 @@
-"""P4-A slice 1 acceptance tests #1-#4: `_build_relation`'s split dedup.
+"""`_build_relation`'s split dedup: query-shape and value-identity.
 
-Companion to `tests/perf/test_out_of_core_relation_dedup_memory.py` (#5, the
-measured-RSS boundedness proof). These four cover the query-shape and
-correctness side: the split issues two structurally distinct physical plans
-(#1), the split's VALUES match the exact pre-split combined query it replaced
-(#2, the primary oracle), a successful build leaves no scratch behind (#3),
-and a mid-build or cleanup-time failure still leaves both scratch files
-independently handled and never a partial output (#4).
+Companion to `tests/perf/test_out_of_core_relation_dedup_memory.py` (the
+measured-RSS boundedness proof). These cover the query-shape and correctness
+side: the split issues two structurally distinct physical plans, the split's
+VALUES match the exact pre-split combined query it replaced (the primary
+oracle), a successful build leaves no scratch behind, and a mid-build or
+cleanup-time failure still leaves both scratch files independently handled and
+never a partial output.
 """
 
 from __future__ import annotations
