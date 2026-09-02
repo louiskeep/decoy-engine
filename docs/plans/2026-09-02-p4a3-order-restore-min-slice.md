@@ -1,9 +1,15 @@
 # P4-A.3 (minimal slice): order-restore reland — the sorter's first consumer
 
-Status: plan APPROVED for build (authored 2026-09-02, Opus; Codex PLAN-gate:
-round 1 NO-GO 7 findings → round 2 NO-GO 1 lifecycle MEDIUM → round 3 GO). Build
-next (Sonnet, task-by-task against §7); then VERIFY + dennis + Codex final gate.
-Held target branch `feat/native-phase3`; Phase 4 merges once at the end; no merge.
+Status: DONE + held on `feat/native-phase3` (not merged; Phase 4 merges once at
+the end). Double-gated: dennis APPROVE (MEDIUM-1 + LOW-2/3/4 remediated) + Codex
+final GO (round 1 NO-GO 3 findings -> round 2 GO). Plan-gate history: round 1
+NO-GO 7 findings -> round 2 NO-GO 1 lifecycle -> round 3 GO. Verified: byte-parity
+42, A.3 unit 37, perf RSS 621-635MB < 691 envelope with real spill, mutation 879
+mutants 0-unresolved-correctness-critical-logic (every new guard/consumer
+function 0 survivors), ruff/format/mypy(3.12) clean. New fail-closed codes:
+`out_of_core_fk_reorder_contiguity`, `out_of_core_fk_join_plan_unverified`.
+Deferred to follow-on slices: Tasks 4/5/6/7/8 (esp. Task 7 wires this consumer
+into the live route + enforces `require_disk` before the drain).
 
 > Part 2 Phase 4, slice P4-A.3, **minimal sorter-consumer scope** (Cam decision
 > 2026-09-02). The bounded external sorter (P4-A.2) is DONE + held with no
@@ -304,7 +310,7 @@ ruff/format/mypy(3.12) clean; the perf RSS test green.
 - [x] **D. Perf** RSS reorder proof (test #8). DONE at `d7924930`. Peak RSS
   621–635 MB across three runs against a 691.2 MB (1.35x × 512 MiB) envelope;
   real 6-run spill, join-row bytes 5.3x `run_bytes_cap`.
-- [ ] VERIFY (coverage+mutation on changed units, lint/type), dennis REVIEW,
+- [x] VERIFY (coverage+mutation on changed units, lint/type), dennis REVIEW,
   Codex FINAL gate. HELD — no merge.
 
 ## 8. Non-goals / risks
