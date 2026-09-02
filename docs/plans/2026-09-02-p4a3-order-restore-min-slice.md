@@ -72,7 +72,16 @@ IN (this slice):
   eagerly inside the call; the connection is closed by the time the call returns
   (so join state and merge buffers are never co-resident).
 - Budget wiring at the consumer boundary: `resolve_reorder_budgets` →
-  `ReorderBudgets`; `require_disk(...)` before the blocking drain.
+  `ReorderBudgets`; `require_disk(...)` before the blocking drain. BUILD
+  INTERPRETATION (Sonnet, accepted for this slice): budget RESOLUTION lives at
+  the CALLER boundary, not inside `run_ordered_join` (whose literal signature
+  takes an already-resolved `run_bytes_cap`, matching how Task D's perf worker
+  calls it). Test #6 exercises `resolve_reorder_budgets`/`require_disk` fail-
+  closed directly. Enforcing `require_disk` before the drain INSIDE the live
+  path (which would need the disk-ledger params threaded through) is the route
+  seam's job (Task 7, deferred); the sorter's own spill-write failure + the
+  eager `try/finally` cleanup are the backstop if a caller skips the pre-check.
+  Flagged for the final gate to confirm this boundary is right for the slice.
 - Single-edge fixtures (`simple_edge_fixture`, `remap_edge_fixture`) and the
   acceptance tests in §5.
 
