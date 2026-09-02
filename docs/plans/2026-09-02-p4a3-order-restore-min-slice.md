@@ -284,11 +284,17 @@ ruff/format/mypy(3.12) clean; the perf RSS test green.
   fixtures) adapted to native-phase3 APIs. DONE at `01725f19` (mechanical port;
   no sorter call site existed, see §2 note). Test #9 (smoke) + full unit suite
   green (2 pre-existing unrelated failures noted, untouched).
-- [ ] **B. Task 2** unordered join + pragmas + `explain_join()` + fail-closed
-  plan guard. Land test #5.
-- [ ] **C. Task 3** `run_ordered_join` + contiguity guard + budget wiring
-  (`resolve_reorder_budgets` / `require_disk`). Land tests #1–#4, #6, #7.
-- [ ] **D. Perf** RSS reorder proof (test #8).
+- [x] **B. Task 2** unordered join + pragmas + `explain_join()` + fail-closed
+  plan guard. DONE at `ff1999af`. Test #5 green; lazy `_ensure_conn()` also
+  moved `total_orphans`/`iter_join_rows` off the constructor-owned connection.
+- [x] **C. Task 3** `run_ordered_join` + contiguity guard + budget wiring
+  (`resolve_reorder_budgets` / `require_disk`). DONE at `3dc27a23`. Tests
+  #1–#4, #6, #7, and #10 (full lifecycle matrix) green; byte-parity against
+  `mask_child_fk` held on every fixture tried (simple, REMAP, orphan/null,
+  empty child, batch/run-boundary) with no rework needed.
+- [x] **D. Perf** RSS reorder proof (test #8). DONE at `d7924930`. Peak RSS
+  621–635 MB across three runs against a 691.2 MB (1.35x × 512 MiB) envelope;
+  real 6-run spill, join-row bytes 5.3x `run_bytes_cap`.
 - [ ] VERIFY (coverage+mutation on changed units, lint/type), dennis REVIEW,
   Codex FINAL gate. HELD — no merge.
 
