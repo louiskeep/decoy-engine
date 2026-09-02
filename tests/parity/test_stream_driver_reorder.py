@@ -495,6 +495,114 @@ def test_all_null_redact_outgoing_key_sink_matches_batch_join(tmp_path: Any) -> 
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# code_set stamp parity: the phase-1 missing/NaN detection + the deferred
+# `code_set_corpora` commit (docs/plans/2026-09-02-p4-task6-reorder-driver.md
+# section 4's driver-specific code_set plumbing) are exercised by NO other
+# driver test -- `run_stream_driver` never threaded `code_set_corpora` and no
+# driver fixture used a `code_set` column, so `_code_set_records_and_evidence_
+# for_table` returned empty and the withhold-vs-stamp branch was dead code
+# under test. One column masks real values (earns its stamp); its FK-linked
+# sibling is entirely null (withholds it) -- the same masked_any parity
+# `test_out_of_core_group_c_parity.TestOutOfCoreCodeSetCorporaAllNullEvidence
+# Parity` pins for the live `_batch_join` route.
+# ---------------------------------------------------------------------------
+
+
+def _code_set_col(*, namespace: str, code_set: str = "mcc") -> ColumnSeed:
+    return ColumnSeed(
+        namespace=namespace,
+        strategy="code_set",
+        provider="code_set",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(("code_set", code_set),),
+        coherent_with=(),
+    )
+
+
+def _code_set_missing_vs_normal_fixture() -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                (
+                    "parent",
+                    TableSeed(
+                        per_column=(
+                            ("pk", _col("hash", namespace="kns")),
+                            ("pay", _code_set_col(namespace="cs")),
+                        ),
+                        per_group=(),
+                    ),
+                ),
+                (
+                    "child",
+                    TableSeed(
+                        per_column=(
+                            ("fk", _col("hash", namespace="kns")),
+                            ("cpay", _code_set_col(namespace="cs")),
+                        ),
+                        per_group=(),
+                    ),
+                ),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="parent",
+        parent_columns=("pk",),
+        child_table="child",
+        child_columns=("fk",),
+        namespace="kns",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table(
+        {
+            "pk": pa.array(["p0", "p1", "p2"], type=pa.string()),
+            # normal: at least one non-missing value -> earns the stamp.
+            "pay": pa.array(["alpha", "beta", None], type=pa.string()),
+        }
+    )
+    child = pa.table(
+        {
+            "fk": pa.array(["p0", "p1", "p2"], type=pa.string()),
+            # all-missing (all-null) -> masks zero values, withholds the stamp.
+            "cpay": pa.array([None, None, None], type=pa.string()),
+        }
+    )
+    return plan, {"parent": parent, "child": child}, graph
+
+
+def test_code_set_stamp_parity_missing_vs_normal_column(tmp_path: Any) -> None:
+    plan, sources, graph = _code_set_missing_vs_normal_fixture()
+    oracle = _run_oracle(plan, sources, graph)
+    code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
+    driver_res = run_stream_driver(
+        plan, sources, graph, temp_dir=tmp_path, code_set_corpora=code_set_corpora
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(oracle.outputs[table], driver_res.outputs[table], f"code_set:{table}")
+
+    # The oracle (pandas route) stamps only the non-missing column.
+    oracle_corpora = oracle.quality_metrics.get("code_set_corpora")
+    assert oracle_corpora is not None and len(oracle_corpora) == 1
+    assert oracle_corpora[0]["table"] == "parent"
+    assert oracle_corpora[0]["column"] == "pay"
+
+    # Driver-side parity, straight off the threaded sink: the all-null sibling
+    # withholds its stamp even though it shares the SAME edge and corpus as
+    # the column that earns one.
+    assert set(code_set_corpora) == {("parent", "pay")}
+    driver_res_metrics = driver_res.quality_metrics.get("code_set_corpora")
+    assert driver_res_metrics is not None and len(driver_res_metrics) == 1
+    assert driver_res_metrics[0]["table"] == "parent"
+    assert driver_res_metrics[0]["column"] == "pay"
+
+
 def test_route_evidence_uses_run_ordered_join_not_batch_join(
     tmp_path: Any, monkeypatch: Any
 ) -> None:

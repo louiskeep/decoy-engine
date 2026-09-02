@@ -44,8 +44,16 @@ def run_stream_driver(
     run_bytes_cap: int = _DEFAULT_RUN_BYTES_CAP,
     merge_fan_in: int = _DEFAULT_MERGE_FAN_IN,
     mask_key: bytes | None = None,
+    code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> ExecutionResult:
-    """Run every table in `sources` through the reorder driver, topo-ordered."""
+    """Run every table in `sources` through the reorder driver, topo-ordered.
+
+    `code_set_corpora` (default None): passed straight through to every
+    `stream_table` call, exactly as `_runner.run_fk_out_of_core` threads its
+    own same-named dict -- a caller-owned sink so a multi-table run's evidence
+    (and the withheld-stamp cases) can be inspected after the call, the same
+    shape `run_fk_out_of_core` folds into `ExecutionResult.quality_metrics`.
+    """
     incoming, outgoing = _edge_indexes(graph)
     parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
     outputs: dict[str, pa.Table] = {}
@@ -73,11 +81,19 @@ def run_stream_driver(
             outputs=outputs,
             warnings=warnings,
             mask_key=mask_key,
+            code_set_corpora=code_set_corpora,
         )
+    quality_metrics: dict[str, Any] = (
+        {"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}
+    )
     if sink is not None:
         sink.commit()
-        return ExecutionResult(outputs={}, warnings=tuple(warnings))
-    return ExecutionResult(outputs=outputs, warnings=tuple(warnings))
+        return ExecutionResult(
+            outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
+        )
+    return ExecutionResult(
+        outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
+    )
 
 
 __all__ = ["run_stream_driver"]

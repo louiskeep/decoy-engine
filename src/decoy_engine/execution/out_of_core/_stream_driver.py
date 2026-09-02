@@ -408,9 +408,10 @@ def stream_table(
                         memory_limit=resident_build_memory_limit,
                         batch_rows=batch_rows,
                     )
-        # Deferred commit: `rewritten()` is fully consumed by now, so
-        # `code_set_null_seen` reflects the whole stream. Only a column that saw
-        # a non-missing value earns its stamp (masked_any parity).
+        # Deferred commit: `code_set_null_seen` was populated during the phase-1
+        # source pass (which always precedes this point), so it reflects the
+        # whole stream. Only a column that saw a non-missing value earns its
+        # stamp (masked_any parity).
         if code_set_corpora is not None:
             for key, evidence in table_code_set_evidence.items():
                 if code_set_null_seen.get(key[1], False):
