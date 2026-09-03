@@ -117,6 +117,14 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._external_sort_bounding import (
+    _bounded_batches,
+    _is_supported_key_type,
+    _iter_bounded_views,
+    _materialize,
+    _min_row_bytes,
+)
+from decoy_engine.execution.out_of_core._external_sort_run import _RunHead
 
 # Transient overhead multiplier for the flush-time sort: `Table.sort_by`
 # computes a sort-indices array and gathers a freshly copied result table
@@ -135,179 +143,6 @@ INDEX_BYTES = 8
 
 _RUN_FILE_PREFIX = "run"
 _MERGE_FILE_PREFIX = "mergep"
-
-
-def _min_row_bytes(schema: pa.Schema) -> int:
-    """A LOWER bound on the byte width of the narrowest possible row of `schema`.
-
-    Every column contributes its unavoidable per-row cost: a fixed-width column
-    its byte width, a variable-width column (binary/string/list) only its offset
-    entry (4 bytes for the int32-offset variants, 8 for the large/int64 ones),
-    since a cell's data can be empty. Booleans and anything not recognized floor
-    to 0. Each term is a true lower bound, so the sum never exceeds an actual
-    row's width -- `_min_row_bytes(schema) >= INDEX_BYTES` therefore proves EVERY
-    row is at least `INDEX_BYTES` wide, which is what keeps the sort index
-    bounded after the flush sort reorders rows and `_bounded_batches`
-    repartitions them (a narrow row could otherwise cluster into a post-sort run
-    batch whose index dwarfs its data -- see the module docstring)."""
-    total = 0
-    for field in schema:
-        t = field.type
-        if pa.types.is_boolean(t):
-            continue  # bit-packed, < 1 byte/row; floor at 0
-        if (
-            pa.types.is_integer(t)
-            or pa.types.is_floating(t)
-            or pa.types.is_temporal(t)
-            or pa.types.is_decimal(t)
-        ):
-            total += t.bit_width // 8
-        elif pa.types.is_fixed_size_binary(t):
-            total += t.byte_width
-        elif (
-            pa.types.is_large_binary(t) or pa.types.is_large_string(t) or pa.types.is_large_list(t)
-        ):
-            total += 8  # int64 offset entry, data may be empty
-        elif pa.types.is_binary(t) or pa.types.is_string(t) or pa.types.is_list(t):
-            total += 4  # int32 offset entry, data may be empty
-        # else: nested / unknown -> floor at 0 (a safe under-estimate)
-    return total
-
-
-def _is_supported_key_type(key_type: pa.DataType) -> bool:
-    """True for the allowlisted orderable, total-order key types.
-
-    Float is excluded on purpose: NaN has no total order, so the cutoff math is
-    ill-defined and no consumer needs a float key. Everything else here has a
-    well-defined Arrow ordering that `pc.max`/`pc.less_equal` respect.
-    """
-    return (
-        pa.types.is_integer(key_type)  # signed + unsigned
-        or pa.types.is_string(key_type)
-        or pa.types.is_large_string(key_type)
-        or pa.types.is_binary(key_type)
-        or pa.types.is_large_binary(key_type)
-        or pa.types.is_date(key_type)  # date32 + date64
-        or pa.types.is_timestamp(key_type)
-    )
-
-
-def _materialize(batch: pa.RecordBatch) -> pa.RecordBatch:
-    """Force a real, right-sized copy of `batch`.
-
-    A zero-copy `RecordBatch.slice(...)` -- and a `Table.combine_chunks()`
-    wrapping a single-chunk column, which is a no-op -- both keep the WHOLE
-    parent batch's buffers alive. `pyarrow.compute.take` with an identity
-    index is a genuine gather: it always allocates fresh buffers sized to
-    just the requested rows, the one operation confirmed (by measuring the
-    default memory pool before/after) to actually release the parent once
-    the caller drops its own reference to the slice.
-    """
-    if batch.num_rows == 0:
-        return batch
-    identity = pa.array(range(batch.num_rows), type=pa.int64())
-    return pc.take(batch, identity)
-
-
-def _iter_bounded_views(batch: pa.RecordBatch, max_bytes: int) -> Iterator[pa.RecordBatch]:
-    """Yield zero-copy sub-slices of `batch`, in original row order, each with
-    `nbytes <= max_bytes` -- except a single-row slice that itself exceeds
-    `max_bytes`, which is yielded anyway so the caller can identify and
-    reject that exact row.
-
-    Binary bisection rather than a per-row Python loop: `nbytes` on a
-    zero-copy slice already reflects that slice's own logical byte content
-    (a slice touching only small cells reports a small `nbytes` even when its
-    parent batch also holds a huge cell elsewhere), so bisecting on it finds
-    byte-bounded row ranges cheaply without materializing every candidate or
-    looping row-by-row over millions of rows.
-    """
-    if batch.num_rows == 0:
-        return
-    if batch.num_rows == 1 or batch.nbytes <= max_bytes:
-        yield batch
-        return
-    mid = batch.num_rows // 2
-    yield from _iter_bounded_views(batch.slice(0, mid), max_bytes)
-    yield from _iter_bounded_views(batch.slice(mid, batch.num_rows - mid), max_bytes)
-
-
-def _bounded_batches(table: pa.Table, max_bytes: int) -> Iterator[pa.RecordBatch]:
-    """Split `table` (already sorted by the caller) into materialized batches
-    whose `nbytes` is `<= max_bytes`, in order. Used to write run files whose
-    stored batches are safe to re-read one at a time as a bounded merge head."""
-    for combined_batch in table.combine_chunks().to_batches():
-        for view in _iter_bounded_views(combined_batch, max_bytes):
-            yield _materialize(view)
-
-
-class _RunHead:
-    """One open run's read cursor during a merge pass: at most one stored
-    batch resident at a time, refilled from disk only once fully consumed.
-
-    Opened with `pa.OSFile` (a buffered, pool-tracked read), NOT
-    `pa.memory_map`: a subprocess RSS measurement showed `memory_map` leaves
-    the touched pages of the WHOLE mapped file resident (counted in VmHWM)
-    even though pyarrow's own allocator never "sees" them as an allocation --
-    reading a handful of small batches from each of several memory-mapped run
-    files inflated real RSS by roughly the total on-disk run size, hundreds
-    of MB above `pyarrow.default_memory_pool().max_memory()`'s own reported
-    peak for the same run. `OSFile` reads copy each batch through the
-    tracked pool instead, so the resident cost is bounded by what
-    `peak_merge_resident_bytes` actually accounts for.
-    """
-
-    def __init__(self, path: Path, sort_key_column: str) -> None:
-        self._sort_key_column = sort_key_column
-        self._source = pa.OSFile(str(path), "rb")
-        self._reader = pa.ipc.open_file(self._source)
-        self._next_batch_idx = 0
-        self.pending: pa.Table | None = None
-
-    @property
-    def is_final_batch(self) -> bool:
-        """True once the currently pending batch is the last stored batch
-        for this run (no more to load after it)."""
-        return self._next_batch_idx >= self._reader.num_record_batches
-
-    def ensure_loaded(self) -> None:
-        if self.pending is not None and self.pending.num_rows > 0:
-            return
-        if self._next_batch_idx >= self._reader.num_record_batches:
-            self.pending = None
-            return
-        batch = self._reader.get_batch(self._next_batch_idx)
-        self._next_batch_idx += 1
-        self.pending = pa.Table.from_batches([batch])
-
-    def pending_table(self) -> pa.Table:
-        """`self.pending`, narrowed to non-`None` for callers that already
-        filtered on `pending is not None` (mypy cannot see across that
-        filter's boundary, e.g. a list comprehension, on its own)."""
-        assert self.pending is not None  # noqa: S101 -- caller filters by pending first
-        return self.pending
-
-    def max_value(self) -> pa.Scalar:
-        """The largest key in the currently loaded batch, as a pyarrow Scalar of
-        the key's exact type -- NOT `.as_py()`.
-
-        The cutoff must stay a pyarrow scalar. Round-tripping through Python
-        (`.as_py()`) re-encodes a `timestamp[ns]` value at microsecond precision
-        (it becomes a `pandas.Timestamp` that `pc.less_equal` then truncates back
-        to us), so the cutoff falls below a non-final head's own max, that head's
-        sub-microsecond rows are never emitted, the head never refills, and the
-        merge spins forever. Keeping it a scalar compares exactly for every
-        allowlisted key type (and removes the latent Python-`min`-vs-Arrow-order
-        assumption for string/binary)."""
-        pending = self.pending_table()
-        assert pending.num_rows > 0  # noqa: S101 -- caller checks first
-        return pc.max(pending[self._sort_key_column])  # type: ignore[attr-defined, unused-ignore]
-
-    def set_remaining(self, remaining: pa.Table) -> None:
-        self.pending = remaining if remaining.num_rows > 0 else None
-
-    def close(self) -> None:
-        self._source.close()
 
 
 class BoundedExternalSorter:

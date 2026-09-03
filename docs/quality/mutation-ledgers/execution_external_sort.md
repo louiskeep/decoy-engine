@@ -179,6 +179,14 @@ fail-closed over-rejection, or an output-equivalent no-op; none exposes a wrong
 sort order, a dropped/duplicated row, a leaked spill file, a broken guard, or an
 under-bounded memory envelope.
 
+## Path note (P4 HIGH-1 decomposition, 2026-09-03)
+
+`_min_row_bytes`, `_is_supported_key_type`, `_materialize`, `_iter_bounded_views`,
+and `_bounded_batches` moved to the sibling `_external_sort_bounding.py`, and
+`_RunHead` to `_external_sort_run.py` -- pure moves (module-size decomposition
+only), no logic change, so the grading above still holds. Regrading the split
+would need one `--module` invocation per sibling.
+
 ## Regenerate
 
 ```
