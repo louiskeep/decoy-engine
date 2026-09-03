@@ -1,12 +1,22 @@
 # P4-A Task 7: reorder-route live seam (auto-select by parent-key size)
 
-Status: plan (DRAFT v3 — remediated after Codex plan-gate rounds 1 & 2 NO-GO).
+Status: plan (DRAFT v4 — remediated after Codex plan-gate rounds 1-3 NO-GO).
 Author: Opus, 2026-09-03. Held target branch `feat/native-phase3`; merges with
 the Phase-4 bundle. Route-selection behavior change (R2).
 
 Cam decision (2026-09-03): fix the reorder job's safety gaps now, then wire the
 route live so large jobs use it — auto-selected by parent-key size, small tables
 stay on `_batch_join`.
+
+Cam decision (2026-09-03, round 3): **the reorder route's disk-safety bar
+MATCHES the existing `_batch_join` OOC route** — the route-entry `_spill_estimate`
+advisory plus the table-boundary `check_temp_disk_budget`, no new enforced
+aggregate sorter quota. Neither route has a hard within-table disk cap today, and
+Task 7 does not add one to only one of them. Hardening disk safety, if wanted
+later, is a separate slice for the WHOLE OOC route. This decision removes the
+enforced-quota / `max_temp_directory_size` / `_emit`+`_relation`+`_stream_join`
+disk-wiring work that round-3 P0/P1 demanded; the reorder route INHERITS the
+existing disk safety unchanged.
 
 ## 0. Guiding correction from two gate rounds
 
@@ -56,9 +66,14 @@ head ≤ `run_bytes_cap // (2·merge_fan_in)`.
 | Phase | Peak residency | Bound source |
 |---|---|---|
 | 1 stage+mask (sink path) | O(batch) Arrow + payload spill to disk | inherited |
-| 2 per edge (one at a time) | DuckDB join (`F_DUCKDB`) + active sorter fill (`F_SORT`, ×2.2 flush transient) co-resident during drain | existing `resolve_reorder_budgets` + RSS proof @1.35× |
-| 3 resolve | N lazy heads @ `run_bytes_cap/(2·fan_in)` + O(batch) | 4.2 admission |
-| build (joiners released) | one dedup conn @ undivided sink build cap | existing preflight |
+| 2-3 join + resolve | phase 2: DuckDB join (`F_DUCKDB`) + active sorter fill (`F_SORT`, ×2.2 flush transient) co-resident during drain; phase 3: N lazy heads @ `run_bytes_cap/(2·fan_in)` + O(batch) | existing `resolve_reorder_budgets`; **memory contract = the RSS envelope, 1.35× ceiling, scoped to phases 2-3** (§4.1) |
+| build (joiners released) | one dedup conn @ undivided sink build cap | existing capacity preflight + the build's OWN measured envelope (`test_out_of_core_relation_dedup_memory.py`, ~1.6× of the DuckDB limit) |
+
+The memory contract is NOT a single whole-route 1.35× number (round-3 P1-2): the
+1.35× ceiling envelope covers the reorder join+resolve phases (2-3); the outgoing
+relation build is bounded separately by its existing dedup-memory envelope, which
+the capacity preflight already gates. Task 7 proves phases 2-3 to 1.35× at the
+admitted maximum fan-in (§5 T12) and leaves the build's contract as-is.
 
 **Bounded residency requires the sink + `LazySource` shape.** Without a sink,
 `ResidentPayloadStore` retains every masked batch and the driver materializes
@@ -71,21 +86,23 @@ parity tests but is never auto-selected.
 IN:
 - `_stream_driver.py`: on the reorder path, size the joiner connection from
   `ReorderBudgets` (not `resolve_phase_memory_limits`); keep the outgoing-build
-  cap = existing undivided sink build cap; add per-edge `require_disk` admission
-  with cross-edge accumulation; add a DuckDB `max_temp_directory_size` runtime cap.
-- `_reorder_budget.py`: add the phase-3 multi-edge head admission + input
+  cap = existing undivided sink build cap. (No new disk mechanism — §4.3.)
+- `_reorder_budget.py`: add the phase-3 multi-edge head-fit helper + input
   validation (no change to `F_*` fractions or `run_bytes_cap`).
-- `_duckdb.py`: accept an optional `max_temp_directory_size` (runtime disk cap).
 - new leaf `_route_policy.py` + `_runner.py`: sink-path route selection; extract
   `_table_order`/`_edge_indexes` into `_route_policy.py` to keep `_runner.py ≤ 676`.
 - `_pipeline.py` + `_pipeline_route_exec.py`: thread the
-  `out_of_core_reorder_threshold_rows` runtime kwarg.
+  `out_of_core_reorder_threshold_rows` runtime kwarg (with the module-size
+  compensations named in §4.4 — three files are at/near their sentry ceilings).
 - Tests + a calibration benchmark; docstring corrections (§6.3).
 
 OUT: `_batch_join` internals; full-frame/chunked/sequential routes; the reorder
 driver's phase structure and byte-parity logic; the validated `F_*` fractions and
 the capacity preflight (untouched — build cap unchanged); resident-path
-auto-selection; live per-host threshold calibration (deferred).
+auto-selection; live per-host threshold calibration (deferred); **any new disk
+mechanism** — the reorder route inherits the existing OOC disk safety unchanged
+(§4.3), so `_duckdb.py` / `_emit.py` / `_relation.py` get NO disk-cap wiring, and
+`_stream_join.py` gets only a docstring correction (§6.3).
 
 ## 4. Design
 
@@ -104,9 +121,11 @@ On the reorder (sink) path, size two connections directly and unambiguously
 present (reorder path), it uses those and takes NO `resolve_phase_memory_limits`
 branch; when `None` (its existing standalone/test callers), behavior is
 unchanged. This removes the "don't call the legacy resolver / pass
-`budget_bytes=None`" contradiction: one path, one cap source. Memory correctness
-is inherited from the validated model and proven by the multi-edge RSS test
-(§5 T9) to the same 1.35× envelope.
+`budget_bytes=None`" contradiction: one path, one cap source. Phase 2-3 memory
+correctness is inherited from the validated model and proven by the multi-edge
+RSS test (§5 T12) to the 1.35× envelope, exercised at the admitted maximum fan-in
+with all phase-3 heads concurrently loaded; the outgoing build keeps its own
+existing envelope (§2).
 
 ### 4.2 Multi-edge phase-3 head admission (P1-1/P1-2)
 
@@ -121,38 +140,38 @@ predicate (§4.4). `resolve_reorder_budgets` still exposes the head-fit check
 it; it raises only on genuinely invalid inputs (§P3), never on plausible fan-in.
 `co_resident_readers` = all incoming edges.
 
-### 4.3 Disk admission + runtime cap (P0-3)
+### 4.3 Disk safety — inherited, no new mechanism (Cam round-3 decision)
 
-Call the existing `require_disk` per edge inside `stream_table`, at **phase-2
-entry** (phase 1 has written all `SpillChildKeys` + `payload`, no join open yet),
-with a correct upper bound and cross-edge accumulation:
-- `estimated_output_bytes(k)` priced from edge k's **child/staged row count**
-  (`joiner._staged_rows`, one ordered row per staged child row — the sorter's
-  real output cardinality), × the masked join-row width from `_spill_estimate`'s
-  masked-width logic (`max(source_width, strategy_output_width)`,
-  `UNKNOWN_WIDTH_CEILING` fallback). NOT parent cardinality (rounds-2 error:
-  small-parent/huge-child underestimates).
-- cross-edge accumulation: prior edges' final sorted runs stay on disk until
-  phase 3, so before edge k the effective remaining disk is
-  `budgets.remaining_disk_bytes − Σ_{j<k} estimated_output_bytes(j)`. Thread this
-  as a running decrement into each `require_disk` call (its `3×` already covers
-  edge k's own duckdb-temp + runs + merge; the decrement adds the retained-prior
-  term).
-- quota denomination: `remaining_disk_bytes` is computed ONCE at budget
-  resolution as `temp_disk_budget_bytes − current_root_usage` (via `_budget`'s
-  `temp_disk_bytes`); the per-edge check compares future demand against that
-  single remaining figure and its running decrement — no double-charge of
-  already-written staging (rounds-2 error).
-- runtime cap (hard, not just admission): pass
-  `max_temp_directory_size = memory_limit_for-style byte string of the edge's
-  duckdb-temp allowance` into `connect_duckdb` for the reorder join, so DuckDB
-  aborts rather than overrunning if the estimate is beaten. The
-  `BoundedExternalSorter` write path already fails closed on its own run cap.
-- The table-boundary `check_temp_disk_budget` stays as the cross-table
-  accumulation enforcer, unchanged.
+Task 7 adds NO new disk mechanism. The reorder route's disk-safety posture is
+made IDENTICAL to the existing `_batch_join` OOC route, which Cam accepted as the
+bar (round-3 decision, §0):
+- Route-entry advisory: `_spill_estimate.enforce_ooc_disk_preflight` (warn-only,
+  conservative over-estimate) already runs for the OOC route regardless of which
+  child-join driver is chosen — it estimates the whole job's spill footprint and
+  logs a WARNING; it does not reject. Unchanged.
+- Runtime enforcer: the table-boundary `check_temp_disk_budget(root, ...)` fires
+  at every table boundary, walks `root` (driver-agnostic — reorder spills under
+  the same `root`), and aborts cleanly (rolling back the transactional sink) if
+  accumulated disk exceeds the run quota. Unchanged.
 
-Residual: this is an admission estimate + runtime cap, not a hard reservation;
-concurrent external disk consumers remain a documented residual race.
+This is the exact safety the shipped OOC route relies on. The known residual —
+a within-table transient spill peak can exceed the quota between boundary checks,
+and `stream_table` removes its temp subtree before the next boundary check — is
+IDENTICAL in kind to `_batch_join`'s (its DuckDB temp is likewise only bounded
+between boundary checks), so Task 7 does not regress the route's disk posture;
+it matches it. Both routes assume adequate disk headroom for a single table's
+transient spill. Reorder may spill somewhat more per table (staged keys + N
+sorted runs + merge amplification) than `_batch_join`'s DuckDB temp; the
+route-entry conservative advisory is the operator's heads-up for that, exactly as
+for the existing route.
+
+`require_disk` / `max_temp_directory_size` / an enforced aggregate sorter quota
+are explicitly OUT (they would hold reorder to a higher bar than the shipped
+route — deferred to a future whole-OOC-route disk-hardening slice if wanted).
+This also means the round-3 P1-1 concern (a child-priced hard cap wrongly
+aborting a feasible parent≫child job) cannot arise: there is no new hard cap,
+and the boundary check aborts only on genuine quota exhaustion, identically for
+both routes.
 
 ### 4.4 Route selection (P1-1/P1-2/P1-3)
 
@@ -191,10 +210,25 @@ aborts, no output) — the one entered-but-unsizeable case, tested.
 Override: `out_of_core_reorder_threshold_rows: int | None` runtime kwarg on
 `run_pipeline`, threaded (like `out_of_core_threshold_rows`) through
 `_pipeline` → `_pipeline_route_exec.run_out_of_core_route` → `run_fk_out_of_core`
-→ `decide_route`. Default `REORDER_PARENT_KEY_THRESHOLD = 2_000_000`
-(module constant). Validated non-negative; documented on `_pipeline_routing`
-alongside the sibling routing kwargs; isolated-run (`_isolated_worker`)
+→ `decide_route`. Semantics: `None` = use the default
+`REORDER_PARENT_KEY_THRESHOLD = 2_000_000` (module constant); an explicit `0`
+means "reorder every eligible sink table" (valid, for forcing/tests); reject
+`bool` (a common `True`/`1` confusion) and negative values with a clear error.
+Documented on `_pipeline_routing` alongside the sibling routing kwargs;
+isolated-run (`_isolated_worker` serializes/forwards JSON-compatible kwargs)
 threading covered.
+
+Module-size cost (round-3 P2): `_pipeline.py` and `_stream_join.py` are AT their
+sentry ceilings and `_pipeline_route_exec.py` has ~1 line of headroom
+(`test_module_size.py`). Threading a kwarg adds a param + a forward line per file,
+which the allowlist-shrink-only ratchet forbids. Compensate concretely:
+`_stream_join.py`'s parity-docstring correction (§6.3) removes more lines than it
+adds (net negative); in `_pipeline.py` and `_pipeline_route_exec.py`, fold the new
+kwarg into the existing routing-kwarg passthrough grouping and trim an adjacent
+over-long comment block by the same count, so each stays ≤ its ceiling. The build
+MUST keep the full module-size sentry green (§5 T18) — if a clean trim is not
+found, the fallback is a tiny leaf extraction of the routing-kwarg bundle, not a
+ratchet bump.
 
 ### 4.5 Threshold calibration (P2-1)
 
@@ -226,26 +260,31 @@ Selection:
 
 Memory (route-level, through `run_fk_out_of_core`):
 - T11 `connect_duckdb` limit spy: joiner == `F_DUCKDB`·ceiling, build ==
-  `memory_limit_for(budget,1)`; FAILS on the batch-model sizing, PASSES on the fix.
-- T12 subprocess RSS proof (reuse `test_out_of_core_reorder_memory.py` harness):
-  a sink+`LazySource` job with N incoming edges, peak RSS ≤ `1.35 × ceiling`;
-  representative fan-in, real multi-run spill, route evidence asserted.
+  `memory_limit_for(budget,1)`; FAILS on the batch-model sizing, PASSES on the
+  fix. Additionally monkeypatch `resolve_phase_memory_limits` to RAISE and assert
+  a reorder-routed job completes — proving the reorder path never consults it.
+- T12 subprocess RSS proof (reuse `test_out_of_core_reorder_memory.py` harness),
+  scoped to reorder phases 2-3: a sink+`LazySource` job at the ADMITTED MAXIMUM
+  fan-in (`N = 2·merge_fan_in`), a threshold-scale parent, real multi-run spill,
+  and all N phase-3 heads concurrently loaded near their per-head cap; peak RSS ≤
+  `1.35 × ceiling` (`_ENVELOPE_FACTOR`) without relaxing the factor; route
+  evidence asserted. The outgoing relation build's memory is covered by its
+  existing envelope test — not re-proven here.
 - T13 `resolve_reorder_budgets` input validation: `co_resident_readers ≤ 0`,
   `merge_fan_in < 2`, `remaining_disk_bytes < 0` each raise a coded error (no
-  silent clamp). Head-fit helper returns pass ≤ 2·fan_in.
+  silent clamp). Head-fit helper returns pass while `N ≤ 2·fan_in`.
 
-Disk:
-- T14 `require_disk` admission: no join opens when required > remaining (assert
-  `out_of_core_reorder_budget_too_small` before the first `connect_duckdb`);
-  child≫parent and parent≫child both priced correctly (child-row output); the
-  multi-edge case charges prior edges' retained runs (decrement).
-- T15 DuckDB `max_temp_directory_size` runtime cap: a join whose real spill
-  exceeds the admission estimate aborts cleanly (not an unbounded overrun).
-- T16 table-boundary `check_temp_disk_budget` still fires for a reorder-routed
-  job overrunning cross-table disk.
+Disk (inherited posture — §4.3; no new mechanism):
+- T14 disk-posture parity: a reorder-routed job's disk safety behaves exactly as
+  `_batch_join`'s — the route-entry `_spill_estimate` advisory WARNS (not
+  rejects) for a tight job, and the job still proceeds. No reorder-specific hard
+  cap aborts a feasible parent≫child job.
+- T15 table-boundary `check_temp_disk_budget` fires for a reorder-routed job that
+  overruns accumulated cross-table disk, aborting cleanly with sink rollback —
+  same enforcer, same behavior as the `_batch_join` route.
 
 Parity (§6.1):
-- T17 forced-reorder (threshold lowered via the real kwarg) == `_batch_join`
+- T16 forced-reorder (threshold lowered via the real kwarg) == `_batch_join`
   EXACTLY, with a reorder-route witness asserted per case, across: 4 orphan
   policies (PRESERVE, REMAP, WARN, FAIL); sink + `LazySource`; `code_set_corpora`;
   warning order+content; unconfigured-column projection warn AND fail; keyed-mask;
@@ -253,7 +292,9 @@ Parity (§6.1):
   columns; every payload strategy in `_compat.py`; every admitted parent-key
   strategy. Where `_stream_table` raises, assert `stream_table` raises the same
   type+code+message and leaves the sink in the same state.
-- T18 module-size sentry stays green (`_runner.py ≤ 676`).
+- T17 the FULL module-size sentry stays green (`test_module_size.py`), not only
+  `_runner.py ≤ 676`: `_pipeline.py`, `_stream_join.py`, `_pipeline_route_exec.py`
+  each stay ≤ their current ceilings after the kwarg threading + extraction (§4.4).
 
 ## 6. Contracts
 
@@ -272,21 +313,45 @@ choice changes timing and memory, never output.
 
 R2 — changes which route runs above the threshold, on the sink path. Mitigations:
 fail-safe selection (non-sink / budget-absent / sub-threshold / high-fan-in / root
-all keep current behavior); T17 makes route choice output-invariant with a
-per-case witness; memory inherited from the validated model + T11/T12; disk
-fail-closed before spill (T14) plus a hard runtime cap (T15). No R3 side effects.
-Held on `feat/native-phase3`; merges only with explicit Cam go.
+all keep current behavior); T16 makes route choice output-invariant with a
+per-case witness; phase-2-3 memory inherited from the validated model + T11/T12,
+build memory from its existing envelope; disk posture matched to the shipped
+`_batch_join` route (route-entry advisory + boundary enforcer, T14/T15), a
+deliberate right-size call (§0). No R3 side effects. Held on
+`feat/native-phase3`; merges only with explicit Cam go.
 
 ### 6.3 Docstring corrections
 
 `_stream_driver.py` and `_stream_join.py` docstrings currently assert
 pandas-oracle byte parity for the reorder path; correct them to the
-reorder-equals-`_batch_join` contract (§6.1). No logic change.
+reorder-equals-`_batch_join` contract (§6.1). No logic change. `_stream_join.py`
+receives ONLY this docstring correction (no disk-cap wiring — §4.3), and the
+correction is net line-negative, absorbing that file's kwarg-threading cost (§4.4).
 
-## 7. Open questions (gate/Cam, non-blocking)
+### 6.4 Follow-on touch points (round-3 P3)
+
+- Moving `_table_order` / `_edge_indexes` out of `_runner.py` requires updating
+  their importers: `tests/unit/execution/_stream_driver_harness.py` and any stale
+  `_compat.py` comment that identifies `_runner.py` as their owner.
+- The new kwarg is documented on `_pipeline_routing` (add it to the doc scope
+  alongside the sibling routing kwargs).
+
+## 7. Calibration benchmark pass rule (round-3 P2)
+
+`scripts/native-testing/reorder_crossover_bench.py`: for each shape (child sizes,
+masked widths, sink, fan-in), run each route `R` repetitions (R ≥ 5), report
+median and p90 wall time. Pass rule for the 2M default: at `parent_key_count ≥ 2M`
+the reorder route's median wall time is ≤ `_batch_join`'s median by a margin ≥
+20%, AND reorder's p90 ≤ `_batch_join`'s median (tail does not erase the win);
+below ~1M the two are within run-to-run variance (no regression claim). Record the
+results file in-repo. Live per-host calibration deferred (Q3).
+
+## 8. Open questions (gate/Cam, non-blocking)
 
 - Q-A: RESOLVED — build cap unchanged (existing sink build cap), so no preflight
   change.
 - Q-B: RESOLVED — count all incoming edges; high fan-in falls back to `_batch_join`.
-- Q-C: fixed 2M threshold + checked-in benchmark acceptable for merge, live
+- Q-C: RESOLVED — disk-safety bar matches the existing OOC route (Cam round-3);
+  no new disk mechanism.
+- Q-D: fixed 2M threshold + checked-in benchmark acceptable for merge, live
   calibration deferred?
