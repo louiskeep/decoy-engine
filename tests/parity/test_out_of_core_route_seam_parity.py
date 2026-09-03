@@ -803,4 +803,76 @@ def test_orphan_fail_x_masking_both_fail_closed_codes_may_differ() -> None:
     )
 
 
+def test_orphan_fail_x_undeclared_column_both_fail_closed_codes_may_differ() -> None:
+    """dennis delta HIGH -- the SECOND arm of the same carve-out (no masking
+    failure needed). `child` has orphan_policy=FAIL with a real orphan row AND
+    an undeclared output column, under unconfigured_column_policy="error". The
+    batch route precounts FAIL orphans BEFORE projection and raises
+    orphan_fk_violation; the reorder route enforces output projection (hoisted
+    before phase-1 masking) BEFORE its phase-2 orphan precount and raises
+    undeclared_output_columns first. Same single-read root cause as the fpe
+    case: any reorder-side fail-closed error detected before phase 2 preempts
+    the orphan error batch surfaces first. Both fail closed, sink uncommitted --
+    OUTPUT parity preserved -- so the codes legitimately differ (plan section
+    6.1 carve-out).
+    """
+    namespace = "ns_orphan_proj"
+    fk_seed = _passthrough_fk_seed(namespace)
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=b"\x66" * 8,
+            per_table=(
+                ("parent", TableSeed(per_column=(("pk", fk_seed),), per_group=())),
+                # `undeclared_col` deliberately NOT declared -> undeclared output.
+                ("child", TableSeed(per_column=(("fk", fk_seed),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="parent",
+        parent_columns=("pk",),
+        child_table="child",
+        child_columns=("fk",),
+        namespace=namespace,
+        orphan_policy=OrphanPolicy.FAIL,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table({"pk": pa.array(["p0", "p1", "p2"], type=pa.string())})
+    child = pa.table(
+        {
+            # "missing_parent" matches no parent pk -> a FAIL-policy orphan.
+            "fk": pa.array(["p0", "p1", "missing_parent"], type=pa.string()),
+            "undeclared_col": pa.array(["u0", "u1", "u2"], type=pa.string()),
+        }
+    )
+    sources = {"parent": parent, "child": child}
+    assert _gate_admits(plan, graph)
+
+    root = _tmp_for("orphan-x-undeclared")
+    batch_dir = root / "batch"
+    batch_outcome, batch_val = _run_sink(
+        plan, sources, graph, batch_dir, force_reorder=False, unconfigured_column_policy="error"
+    )
+    reorder_dir = root / "reorder"
+    reorder_outcome, reorder_val = _run_sink(
+        plan, sources, graph, reorder_dir, force_reorder=True, unconfigured_column_policy="error"
+    )
+
+    assert batch_outcome == "raised", f"batch route did not fail closed: {batch_val!r}"
+    assert reorder_outcome == "raised", f"reorder route did not fail closed: {reorder_val!r}"
+    assert not batch_dir.exists(), f"batch_join sink committed despite raising: {batch_val!r}"
+    assert not reorder_dir.exists(), f"reorder sink committed despite raising: {reorder_val!r}"
+
+    batch_code = getattr(batch_val, "code", None)
+    reorder_code = getattr(reorder_val, "code", None)
+    assert batch_code in {_ORPHAN_FAIL_CODE, _UNDECLARED_OUTPUT_CODE}, batch_code
+    assert reorder_code in {_ORPHAN_FAIL_CODE, _UNDECLARED_OUTPUT_CODE}, reorder_code
+    # Pin the per-route ordering: batch's orphan precount wins before projection;
+    # reorder's hoisted projection wins before its phase-2 orphan check.
+    assert batch_code == _ORPHAN_FAIL_CODE, f"batch route raised {batch_code!r}, expected orphan"
+    assert reorder_code == _UNDECLARED_OUTPUT_CODE, (
+        f"reorder route raised {reorder_code!r}, expected undeclared (projection precedes orphan)"
+    )
+
+
 __all__: list[str] = []

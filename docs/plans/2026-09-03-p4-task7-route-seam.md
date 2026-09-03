@@ -329,18 +329,25 @@ it back and asserting logical table identity, which is the meaningful guarantee.
 
 **Exception-parity carve-out (Cam decision, Codex-final round 1).** When both
 routes fail closed on the SAME input, they must raise the same error EXCEPT for
-one narrow cross-product: a table that both violates a FAIL orphan policy AND
-carries an unmaskable value (e.g. `fpe` with an uncoverable charset). The batch
-route reads the source an extra time to precount orphans before masking; the
-reorder route is single-read (its byte-parity guarantee) so it stages keys and
-masks in one pass and can only precount orphans afterward — so it may surface the
-masking error where batch surfaces the orphan error. Both fail closed, sink
-uncommitted, no output emitted, so OUTPUT parity is fully preserved; forcing
-identical error order here would require a second source read or spilling raw PII
-to disk, neither acceptable. Projection-vs-masking is NOT carved out: projection
-enforcement is schema-only and runs before masking on both routes (identical
-error). The acceptance test asserts same-error everywhere except this
-orphan-FAIL × unmaskable cross-product, where it asserts both-fail-closed.
+one family, rooted in a single cause: the batch route reads the source an extra
+time to precount FAIL orphans BEFORE anything else, while the reorder route is
+single-read (its byte-parity guarantee) so its FAIL-orphan precount cannot run
+until phase 2. Therefore ANY reorder-side fail-closed error that is detected
+before phase 2 — payload masking (e.g. `fpe` with an uncoverable charset) OR
+output-projection enforcement (an undeclared output column) — preempts the
+orphan error that the batch route surfaces first. The carve-out is exactly:
+**orphan-FAIL × {unmaskable value, undeclared output column}**, where the two
+routes may raise different (both fail-closed, sink-uncommitted, no-output)
+errors. OUTPUT parity is fully preserved in every case; forcing identical error
+order would require a second source read or spilling raw PII to disk, neither
+acceptable. Outside the orphan-FAIL interaction the routes are identical: in
+particular projection-vs-masking is NOT carved out — projection enforcement is
+schema-only and runs before masking on BOTH routes, so an undeclared column +
+unmaskable value raises the same `undeclared_output_columns` on both. The
+acceptance tests assert same-error everywhere except the two orphan-FAIL
+cross-products, where they assert both-fail-closed with the per-route codes
+pinned (batch → `orphan_fk_violation`; reorder → the earlier phase-1/hoisted
+error it hit first).
 `_batch_join` is the oracle-conformant baseline; its own pandas-oracle parity is
 the normalized-value contract already documented for that route — Task 7 does not
 re-open it and claims no byte-identity to the pandas oracle beyond what
