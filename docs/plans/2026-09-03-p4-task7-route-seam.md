@@ -332,13 +332,20 @@ routes fail closed on the SAME input, they must raise the same error EXCEPT for
 one family, rooted in a single cause: the batch route reads the source an extra
 time to precount FAIL orphans BEFORE anything else, while the reorder route is
 single-read (its byte-parity guarantee) so its FAIL-orphan precount cannot run
-until phase 2. Therefore ANY reorder-side fail-closed error that is detected
-before phase 2 — payload masking (e.g. `fpe` with an uncoverable charset) OR
-output-projection enforcement (an undeclared output column) — preempts the
-orphan error that the batch route surfaces first. The carve-out is exactly:
-**orphan-FAIL × {unmaskable value, undeclared output column}**, where the two
-routes may raise different (both fail-closed, sink-uncommitted, no-output)
-errors. OUTPUT parity is fully preserved in every case; forcing identical error
+until phase 2. Any reorder-side fail-closed error detected before phase 2 thus
+preempts the orphan error the batch route surfaces first. With the CURRENT set of
+pre-phase-2 reorder-side errors, that is exactly two: payload masking (e.g. `fpe`
+with an uncoverable charset) and output-projection enforcement (an undeclared
+output column). So the carve-out is: **orphan-FAIL × {unmaskable value,
+undeclared output column}**, where the two routes may raise different (both
+fail-closed, sink-uncommitted, no-output) errors. NOTE for future work: the real
+guarantee — both routes fail closed, sink uncommitted, no output — holds for ANY
+such error; only the error-CODE may differ, and only within this family. If a new
+pre-phase-2 reorder-side fail-closed error class is ever added (a new strategy
+that can fail during phase-1 masking, a new pre-dispatch gate), it must be
+re-checked against this carve-out and the enumeration extended; the route-
+independent gates (e.g. `validate_outgoing_parent_columns`) that raise the SAME
+coded error on both routes are NOT in the carve-out. OUTPUT parity is fully preserved in every case; forcing identical error
 order would require a second source read or spilling raw PII to disk, neither
 acceptable. Outside the orphan-FAIL interaction the routes are identical: in
 particular projection-vs-masking is NOT carved out — projection enforcement is
