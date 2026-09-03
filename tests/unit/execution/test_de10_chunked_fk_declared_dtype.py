@@ -570,9 +570,7 @@ def test_undeclared_hash_fk_key_still_predicate12_checked(
     raised timezone_naive / Int256-panicked on the same input). The real stage
     is exact-type and needs no declaration; it now runs for every present hash
     FK key column. Safe dtypes and the all-null carveout must not regress."""
-    config = _fk_config(
-        strategy="hash", parent_dtype=None, child_dtype=None, namespace="ns"
-    )
+    config = _fk_config(strategy="hash", parent_dtype=None, child_dtype=None, namespace="ns")
     parent_chunk = pa.table({"id": real_array})
     if admitted:
         out = list(
@@ -596,9 +594,7 @@ def test_undeclared_hash_fk_key_unsafe_on_later_chunk_still_rejected() -> None:
     chunk, not just the first: a stream whose first chunk is a safe int64 and
     whose second drifts to date64 must still fail closed on the drifting chunk,
     same as the declared-dtype guard's per-chunk contract."""
-    config = _fk_config(
-        strategy="hash", parent_dtype=None, child_dtype=None, namespace="ns"
-    )
+    config = _fk_config(strategy="hash", parent_dtype=None, child_dtype=None, namespace="ns")
     safe_chunk = pa.table({"id": pa.array([1], type=pa.int64())})
     drifted_chunk = pa.table({"id": pa.array([0], type=pa.date64())})
     with pytest.raises(ExecutionError) as exc:

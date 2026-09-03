@@ -233,7 +233,7 @@ def reject_mismatched_chunked_fk_declared_dtype(
     # Predicate 12 also runs for hash FK keys with NO declared dtype: `dtype`
     # is optional in config, so those never enter the loop above, yet an unsafe
     # real type (date64/decimal256/tz-naive/...) on such a key still reaches the
-    # hash kernel and diverges cross-adapter (Codex final-gate P1-1). The real
+    # hash kernel and diverges cross-adapter. The real
     # stage is exact-type, so it needs no declaration to run -- it judges the
     # chunk's actual Arrow type directly. Same `pa.null()` carveout applies.
     for column in hash_fk_key_columns:

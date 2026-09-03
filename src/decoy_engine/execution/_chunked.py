@@ -564,8 +564,7 @@ def run_mask_pipeline_chunked(
             # `declared_fk_dtypes`: `dtype` is optional in config, so a hash FK
             # key with no declared dtype leaves `declared_fk_dtypes` empty yet
             # still needs predicate 12's real-type check (else an unsafe real
-            # date64/decimal256 reaches the kernel unchecked -- Codex final-gate
-            # P1-1).
+            # date64/decimal256 reaches the kernel unchecked).
             if declared_fk_dtypes or hash_fk_key_columns:
                 reject_mismatched_chunked_fk_declared_dtype(
                     chunk,

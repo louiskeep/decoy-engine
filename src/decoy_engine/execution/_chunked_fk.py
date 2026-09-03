@@ -371,8 +371,8 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
     # Predicate 8 matches on components, not whole tuples: composite FK
     # resolution rewrites EVERY participating child column, so a scalar parent
     # that is ANY component of an upstream composite child endpoint is NOT a
-    # root and must be rejected (Codex final-gate P1-2). A scalar child endpoint
-    # decomposes to itself, so this also subsumes the same-key scalar cascade.
+    # root and must be rejected. A scalar child endpoint decomposes to itself,
+    # so this also subsumes the same-key scalar cascade.
     child_endpoint_columns = {
         (child_table, child_col)
         for child_table, child_cols in child_endpoints
@@ -568,28 +568,25 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                     ),
                 )
 
-            # Predicate 8: the parent KEY NODE must not itself be an FK child
-            # endpoint anywhere in the config (e.g. a same-key cascade
-            # A -> B -> C, or A.id -> B.id -> C.id). If it were, the oracle
-            # FK-RESOLVES the parent key via ITS OWN parent map (and an
-            # upstream cascade failure can null it out) instead of masking it
-            # by the declared strategy -- self-masking the grandchild computes
-            # hash(raw_value) where the oracle computes
-            # hash(resolved_grandparent_value), a silent divergence. The check
-            # is on the EXACT (table, columns) tuple, matching how
-            # `RelationshipGraph`'s FK override keys edges
-            # (`relationships/_graph.py`), so a distinct-column self-FK on the
-            # same table (`employees.id -> employees.manager_id`) is NOT
-            # caught: `(employees, "id")` and `(employees, "manager_id")` are
-            # different components, and `id` is never resolved by any edge.
-            # Composite scope: the match is on COMPONENTS, not whole tuples. A
-            # scalar parent that is one column of an upstream COMPOSITE child --
-            # e.g. `A.(x,y)->B.(id,z)` then `B.id->C.id` -- must be rejected when
-            # gating C, because composite FK resolution rewrites B.id (so the
-            # oracle emits the resolved value while chunked self-masking emits
-            # hash(raw), a silent divergence). Gating C never gates B's incoming
-            # edge, so this component check -- not per-table gating -- is what
-            # closes it (Codex final-gate P1-2).
+            # Predicate 8: the parent key COLUMN must not itself be resolved by
+            # any FK edge -- i.e. it must not be a component of any child
+            # endpoint in the config. If it were, the oracle FK-RESOLVES it via
+            # its own parent map (and an upstream cascade failure can null it
+            # out) instead of masking it by the declared strategy, so
+            # self-masking the grandchild computes hash(raw_value) where the
+            # oracle computes hash(resolved_value) -- a silent divergence. The
+            # test is scalar `(table, column)` membership in the globally
+            # decomposed child-component set (`child_endpoint_columns`), so it
+            # catches both the same-key scalar cascade (A.id -> B.id -> C.id)
+            # and the composite case where the parent is ONE column of an
+            # upstream composite child (A.(x,y) -> B.(id,z) then B.id -> C.id):
+            # composite FK resolution rewrites every participating column, and
+            # gating C never gates B's incoming composite edge, so only a
+            # component test -- not per-table gating -- closes it. A
+            # distinct-column self-FK (`employees.id -> employees.manager_id`)
+            # is correctly NOT caught: `id` is never a child-endpoint component,
+            # so it is never resolved. Membership is keyed on (table, column),
+            # so a same-named column on an unrelated table does not collide.
             parent_component = (str(parent_table), str(parent_col))
             if parent_component in child_endpoint_columns:
                 raise PlanCompileError(
