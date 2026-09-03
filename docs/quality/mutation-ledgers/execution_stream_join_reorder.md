@@ -49,6 +49,15 @@ no-op). None changes a sort order, a dropped/duplicated row, a leaked resource,
 or a fail-closed guard. The round-1 `_run_explain_json` `code=None` survivors are
 now killed by the direct malformed-EXPLAIN arity/shape tests.
 
+## Path note (P4 HIGH-1 decomposition, 2026-09-03)
+
+`_verify_unordered_plan_or_raise`, `_is_global_sort_operator`, and
+`_subtree_scan_names` moved to the sibling `_stream_join_plan.py`;
+`_guarded_reorder_iter`, `_release_reorder`, and `_OrderedJoinRows` moved to
+`_stream_join_cursors.py`. Pure moves (module-size decomposition only), no
+logic change, so the grading above still holds. Regrading the split would need
+one `--module` invocation per sibling.
+
 ## Regenerate
 
 ```

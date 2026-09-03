@@ -600,6 +600,19 @@ ALLOWLIST: dict[str, int] = {
     # `_chunked_bucket_perturb.unsafe_bucket_perturb_source_columns`
     # collector. Same `_planner_chunked.py` decomposition target stands.
     "src/decoy_engine/execution/_planner.py": 652,
+    # P4 HIGH-1 (2026-09-03): decomposition slice itself. Extracted the DuckDB
+    # EXPLAIN-plan verification helpers into `_stream_join_plan.py` and the
+    # complete reorder/cursor/lifecycle unit (`_OrderedJoinRows` +
+    # `JoinRowCursor` + their contiguity guard) into `_stream_join_cursors.py`,
+    # bringing this module down from 1173 to 720. The residual is
+    # `StreamFkJoiner` itself plus its EXPLAIN methods (`explain_join` /
+    # `_iter_unordered_join_rows` / `_unordered_join_query` /
+    # `_run_explain_json` / `_disabled_optimizers`), which the plan gate found
+    # not cleanly liftable without changing signatures or breaking test
+    # monkeypatch seams. Decomposition target: none identified beyond this
+    # ratchet -- the plan gate found no cleaner class split worth introducing
+    # solely to reach 600 LOC.
+    "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
 }
 
 
