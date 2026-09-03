@@ -55,6 +55,15 @@ REORDER_PARENT_KEY_THRESHOLD: Final = 2_000_000
 # object that has not been resolved yet at that point.
 _MERGE_FAN_IN_DEFAULT: Final = 16
 
+# The joined row the sorter materializes carries payload columns from BOTH
+# sides of the join plus per-row encoding overhead, not just the raw masked
+# key bytes `ParentKeyRelation.max_key_bytes` measures (a reproduced case
+# observed ~4x raw->joined on a 6 MiB string FK key). 8x is a deliberately
+# conservative margin so a row the sorter would reject can never slip past
+# this admission check; ordinary FK keys are KB-scale, orders of magnitude
+# below the resulting threshold, so this never triggers for them.
+_JOINED_ROW_WIDTH_FACTOR: Final = 8
+
 
 @dataclass(frozen=True)
 class RouteDecision:
@@ -140,6 +149,18 @@ def decide_route(
         run_bytes_cap=budgets.run_bytes_cap,
         merge_fan_in=budgets.merge_fan_in,
     )
+    # Width admission: a joined row wider than the sorter's per-merge-head cap
+    # (`_external_sort.py`'s `out_of_core_sort_row_too_wide`) would make the
+    # reorder route raise on a job `_batch_join` handles fine (no per-row
+    # width limit there), so fall back rather than routing into a guaranteed
+    # rejection -- fail SAFE toward `_batch_join`, same posture as the
+    # high-fan-in fallback above.
+    per_head_cap = reorder_caps.run_bytes_cap // (2 * reorder_caps.merge_fan_in)
+    est_joined_row_bytes = _JOINED_ROW_WIDTH_FACTOR * sum(
+        parent_relations[edge].max_key_bytes for edge in incoming_edges
+    )
+    if est_joined_row_bytes >= per_head_cap:
+        return RouteDecision(use_reorder=False, reorder_caps=None)
     return RouteDecision(use_reorder=True, reorder_caps=reorder_caps)
 
 

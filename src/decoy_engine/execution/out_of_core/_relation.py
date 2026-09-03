@@ -13,6 +13,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
+from decoy_engine.execution.out_of_core._key_width import MaxKeyWidthTracker
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.kernel import hash_array
@@ -48,6 +49,8 @@ class ParentKeyRelation:
     path: Path
     join_key_column: str = "__decoy_fk_join_key"
     masked_key_columns: tuple[str, ...] = ("__decoy_masked_key",)
+    # Widest single masked-key row seen; `_route_policy.decide_route`'s width admission check.
+    max_key_bytes: int = 0
 
     @property
     def masked_key_column(self) -> str:
@@ -435,9 +438,11 @@ def _build_relation(
         masked_batch_fn=masked_batch_fn,
         batch_rows=batch_rows,
     )
+    # Measured on the same pass the reader below consumes, not a second read.
+    width_tracker = MaxKeyWidthTracker(masked_columns)
     reader = pa.RecordBatchReader.from_batches(
         _staging_schema(masked_types, masked_columns),
-        batches,
+        width_tracker.wrap(batches),
     )
     temp_dir.mkdir(parents=True, exist_ok=True)
     out_path = temp_dir / (
@@ -549,7 +554,9 @@ def _build_relation(
                 staged_path.unlink(missing_ok=True)
             finally:
                 winners_path.unlink(missing_ok=True)
-    return ParentKeyRelation(path=out_path, masked_key_columns=masked_columns)
+    return ParentKeyRelation(
+        path=out_path, masked_key_columns=masked_columns, max_key_bytes=width_tracker.max_bytes
+    )
 
 
 def _column_tuple_slug(columns: tuple[str, ...]) -> str:
