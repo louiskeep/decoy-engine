@@ -79,6 +79,7 @@ from decoy_engine.execution.out_of_core._route_policy import (
     _table_order,
     decide_route,
     resolve_reorder_threshold_rows,
+    validate_outgoing_parent_columns,
 )
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
@@ -218,6 +219,8 @@ def run_fk_out_of_core(
                 continue
             table_incoming_edges = tuple(incoming[table_name])
             table_outgoing_edges = tuple(outgoing[table_name])
+            # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
+            validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
             route = decide_route(
                 table_incoming_edges,
                 parent_relations,
@@ -226,9 +229,7 @@ def run_fk_out_of_core(
                 temp_disk_budget_bytes=temp_disk_budget_bytes,
                 threshold_rows=reorder_threshold_rows,
             )
-            # Shared by both drivers -- only the memory-sizing kwargs differ
-            # (route.reorder_caps vs. the batch-model resolver each driver's
-            # own default handles internally when its extra kwargs are absent).
+            # Shared by both drivers; the reorder branch adds only memory-sizing kwargs.
             table_kwargs: dict[str, Any] = {
                 "plan": plan,
                 "table_name": table_name,

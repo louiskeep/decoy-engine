@@ -143,6 +143,29 @@ def decide_route(
     return RouteDecision(use_reorder=True, reorder_caps=reorder_caps)
 
 
+def validate_outgoing_parent_columns(
+    outgoing_edges: tuple[RelationshipEdge, ...],
+    source_schema: pa.Schema,
+) -> None:
+    """Fail closed with the coded `out_of_core_parent_column_missing` (never a
+    bare Arrow KeyError) when an outgoing edge names a parent-key column this
+    table's schema lacks. Run route-independently BEFORE dispatch: the reorder
+    driver dereferences these columns very early (building its raw-parent
+    projection) and would otherwise raise an uncoded KeyError, while the batch
+    route raises this coded error later in its relation build -- so the two
+    routes must be pre-empted here to raise the SAME error at the SAME point.
+    Message matches `_relation.py`'s so the two routes are byte-identical.
+    """
+    names = set(source_schema.names)
+    for edge in outgoing_edges:
+        for parent_col in edge.parent_columns:
+            if parent_col not in names:
+                raise ExecutionError(
+                    code="out_of_core_parent_column_missing",
+                    message=f"parent source table has no column {parent_col!r}.",
+                )
+
+
 def _parent_key_count(relation: ParentKeyRelation) -> int:
     """Distinct parent-key row count, off the relation's own parquet footer
     -- no data read, since this file already IS the deduped, null-filtered
@@ -200,4 +223,5 @@ __all__ = [
     "RouteDecision",
     "decide_route",
     "resolve_reorder_threshold_rows",
+    "validate_outgoing_parent_columns",
 ]

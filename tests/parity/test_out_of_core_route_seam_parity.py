@@ -124,17 +124,22 @@ def _run_sink(
             ChildFkBatchJoiner.__init__ = orig_batch_init  # type: ignore[method-assign]
             StreamFkJoiner.__init__ = orig_reorder_init  # type: ignore[method-assign]
     if force_reorder:
-        # Witness on BOTH ok and raised outcomes. A route regression to
-        # _batch_join must be caught even when the case raises -- otherwise the
-        # raised parity cases (orphan/projection x masking) could pass vacuously,
-        # comparing _batch_join to itself. The joiners are constructed before any
-        # phase-1 masking, so a masking-error case still constructs the reorder
-        # joiner; these fixtures always route (threshold=0 + ample budget).
+        # Anti-vacuous witness. A route regression to _batch_join must be caught
+        # even when the case raises -- otherwise the raised parity cases could
+        # pass vacuously, comparing _batch_join to itself. This assertion is the
+        # load-bearing one: a forced-reorder run must NEVER open a batch joiner.
         assert not saw["batch"], (
             "forced-reorder run constructed a ChildFkBatchJoiner: route selection "
             "regressed to _batch_join, making this parity case vacuous"
         )
-        assert saw["reorder"], "forced-reorder run constructed no StreamFkJoiner"
+        # It must also construct a StreamFkJoiner -- EXCEPT when the run fails
+        # closed in a route-INDEPENDENT pre-dispatch gate (e.g.
+        # validate_outgoing_parent_columns, or a too-small reorder budget), which
+        # raises before EITHER driver opens a joiner. That is not a route
+        # regression, so only require the reorder joiner on a completed run or one
+        # that raised after entering the reorder driver (orphan/projection/mask).
+        if status[0] == "ok" or saw["reorder"]:
+            assert saw["reorder"], "forced-reorder run constructed no StreamFkJoiner"
     return status
 
 
@@ -873,6 +878,164 @@ def test_orphan_fail_x_undeclared_column_both_fail_closed_codes_may_differ() -> 
     assert reorder_code == _UNDECLARED_OUTPUT_CODE, (
         f"reorder route raised {reorder_code!r}, expected undeclared (projection precedes orphan)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Codex-final round 2: a MIDDLE table (child on an incoming edge, forced
+# reorder-routed, AND parent on an outgoing edge) whose outgoing edge names a
+# parent-key column its own source schema lacks. Pre-fix, the reorder driver
+# dereferenced that column building its raw-parent projection and raised a
+# bare Arrow KeyError, while the batch route raised the coded
+# `out_of_core_parent_column_missing` later in its relation build -- a
+# route-dependent divergence in both exception TYPE and message. FIX:
+# `validate_outgoing_parent_columns` (`_route_policy.py`) now runs
+# route-independently in `run_fk_out_of_core` BEFORE either driver dispatches,
+# so both routes raise the identical coded error at the identical point,
+# pre-empting whatever error the table's OTHER conditions (an undeclared
+# output column, an incoming FAIL orphan) would otherwise have raised.
+# ---------------------------------------------------------------------------
+
+_PARENT_COLUMN_MISSING_CODE = "out_of_core_parent_column_missing"
+
+
+def _missing_outgoing_key_chain(
+    *,
+    incoming_orphan_policy: OrphanPolicy,
+    middle_refs: list[int | None],
+    include_undeclared_col: bool,
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """parent -> middle -> grandchild, where `middle` is both a child (incoming
+    edge from `parent`) and a parent (outgoing edge to `grandchild`). The
+    outgoing edge's parent_columns names `mk`, which the PLAN declares a seed
+    for on `middle` (so `_check_edge`'s gate check, which only consults the
+    plan's seed envelope, admits the config) but which `middle`'s ACTUAL
+    source table omits -- the schema-drift shape `validate_outgoing_parent_
+    columns` exists to catch fail-closed instead of letting either driver
+    dereference a column that is not there.
+    """
+    ns_in, ns_out = "ns_missing_in", "ns_missing_out"
+    in_seed = _passthrough_fk_seed(ns_in)
+    out_seed = _passthrough_fk_seed(ns_out)
+
+    n_parent = 4
+    parent = pa.table({"pk": pa.array([f"p{i}" for i in range(n_parent)], type=pa.string())})
+
+    middle_fk = [None if r is None else (f"orphan{r}" if r == -1 else f"p{r}") for r in middle_refs]
+    middle_columns: dict[str, pa.Array] = {"pfk": pa.array(middle_fk, type=pa.string())}
+    middle_per_column: list[tuple[str, ColumnSeed]] = [("pfk", in_seed), ("mk", out_seed)]
+    if include_undeclared_col:
+        middle_columns["undeclared_col"] = pa.array(
+            [f"u{i}" for i in range(len(middle_refs))], type=pa.string()
+        )
+    # Deliberately no "mk" column here -- the missing outgoing parent key.
+    middle = pa.table(middle_columns)
+
+    grandchild = pa.table(
+        {"gcfk": pa.array([f"m{i}" for i in range(len(middle_refs))], type=pa.string())}
+    )
+
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=b"\x77" * 8,
+            per_table=(
+                ("parent", TableSeed(per_column=(("pk", in_seed),), per_group=())),
+                ("middle", TableSeed(per_column=tuple(middle_per_column), per_group=())),
+                ("grandchild", TableSeed(per_column=(("gcfk", out_seed),), per_group=())),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="middle",
+                child_columns=("pfk",),
+                namespace=ns_in,
+                orphan_policy=incoming_orphan_policy,
+            ),
+            RelationshipEdge(
+                parent_table="middle",
+                parent_columns=("mk",),  # missing from `middle`'s actual schema
+                child_table="grandchild",
+                child_columns=("gcfk",),
+                namespace=ns_out,
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"parent": parent, "middle": middle, "grandchild": grandchild}, graph
+
+
+def test_missing_outgoing_key_preempts_undeclared_column_on_both_routes() -> None:
+    """Counterexample 1: no orphan (incoming edge PRESERVE) but `middle` also
+    carries an undeclared output column under `unconfigured_column_policy=
+    "error"`. Pre-fix this raced with the undeclared-column check on the batch
+    route and a bare KeyError on the reorder route; post-fix the route-
+    independent gate fires first on BOTH routes, so this is a SAME-error case
+    (not a carve-out like the undeclared/orphan races above).
+    """
+    plan, sources, graph = _missing_outgoing_key_chain(
+        incoming_orphan_policy=OrphanPolicy.PRESERVE,
+        middle_refs=[0, 1, 2],
+        include_undeclared_col=True,
+    )
+    assert _gate_admits(plan, graph)
+
+    root = _tmp_for("missing-outgoing-key-undeclared")
+    batch_dir = root / "batch"
+    batch_outcome, batch_val = _run_sink(
+        plan, sources, graph, batch_dir, force_reorder=False, unconfigured_column_policy="error"
+    )
+    reorder_dir = root / "reorder"
+    reorder_outcome, reorder_val = _run_sink(
+        plan, sources, graph, reorder_dir, force_reorder=True, unconfigured_column_policy="error"
+    )
+
+    assert batch_outcome == "raised", f"batch route did not raise: {batch_val!r}"
+    assert reorder_outcome == "raised", f"reorder route did not raise: {reorder_val!r}"
+    assert type(batch_val) is type(reorder_val), (
+        f"exception types differ: {type(batch_val)} vs {type(reorder_val)}"
+    )
+    assert getattr(batch_val, "code", None) == _PARENT_COLUMN_MISSING_CODE
+    assert getattr(reorder_val, "code", None) == _PARENT_COLUMN_MISSING_CODE
+    assert str(batch_val) == str(reorder_val), f"messages differ: {batch_val!r} vs {reorder_val!r}"
+    assert not batch_dir.exists(), f"batch_join sink committed despite raising: {batch_val!r}"
+    assert not reorder_dir.exists(), f"reorder sink committed despite raising: {reorder_val!r}"
+
+
+def test_missing_outgoing_key_preempts_incoming_fail_orphan_on_both_routes() -> None:
+    """Counterexample 2: `middle`'s incoming edge is FAIL with a real orphan
+    row (`"orphan-1"` matches no parent `pk`), and every output column is
+    declared (no undeclared-column race). Pre-fix this raced with `orphan_fk_
+    violation` on both routes' own orphan handling; post-fix the route-
+    independent gate fires before either route ever reaches its orphan check,
+    so this is also a SAME-error case, not the orphan-vs-masking carve-out.
+    """
+    plan, sources, graph = _missing_outgoing_key_chain(
+        incoming_orphan_policy=OrphanPolicy.FAIL,
+        middle_refs=[0, 1, -1],
+        include_undeclared_col=False,
+    )
+    assert _gate_admits(plan, graph)
+
+    root = _tmp_for("missing-outgoing-key-orphan-fail")
+    batch_dir = root / "batch"
+    batch_outcome, batch_val = _run_sink(plan, sources, graph, batch_dir, force_reorder=False)
+    reorder_dir = root / "reorder"
+    reorder_outcome, reorder_val = _run_sink(plan, sources, graph, reorder_dir, force_reorder=True)
+
+    assert batch_outcome == "raised", f"batch route did not raise: {batch_val!r}"
+    assert reorder_outcome == "raised", f"reorder route did not raise: {reorder_val!r}"
+    assert type(batch_val) is type(reorder_val), (
+        f"exception types differ: {type(batch_val)} vs {type(reorder_val)}"
+    )
+    assert getattr(batch_val, "code", None) == _PARENT_COLUMN_MISSING_CODE
+    assert getattr(reorder_val, "code", None) == _PARENT_COLUMN_MISSING_CODE
+    assert str(batch_val) == str(reorder_val), f"messages differ: {batch_val!r} vs {reorder_val!r}"
+    assert not batch_dir.exists(), f"batch_join sink committed despite raising: {batch_val!r}"
+    assert not reorder_dir.exists(), f"reorder sink committed despite raising: {reorder_val!r}"
 
 
 __all__: list[str] = []
