@@ -191,7 +191,8 @@ both routes.
 ### 4.4 Route selection (P1-1/P1-2/P1-3)
 
 New leaf `_route_policy.py` (imports: relation metadata, `_reorder_budget`,
-`_budget`; NOT `_runner`/`_stream_driver` → no cycle). Move `_table_order` and
+`_memory_estimate` for `memory_limit_for` — and `_budget` only if a concrete
+symbol is needed; NOT `_runner`/`_stream_driver` → no cycle; matches §3). Move `_table_order` and
 `_edge_indexes` here from `_runner.py` (they are topology/routing helpers), which
 frees enough LOC for the selection dispatch to keep `_runner.py ≤ 676` (the
 sentry stays green; asserted in §5).
