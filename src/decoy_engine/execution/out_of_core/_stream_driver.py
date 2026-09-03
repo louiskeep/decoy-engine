@@ -271,6 +271,25 @@ def stream_table(
             # there cannot leak the just-opened DuckDB connection.
             joiners.append(joiner)
             joiner.begin_staging()
+        # Fail-closed output projection BEFORE any masking, matching the batch
+        # route's failure order (orphan precount -> projection -> mask). The
+        # fixed output schema comes from the opened joiners' construction-time
+        # types, so no staged data is needed here; running it before the mask
+        # loop keeps the two routes reporting the SAME error when an undeclared
+        # column and a masking failure coexist. FK-resolved child columns are
+        # legitimate output but not in the seed envelope, so pass them as
+        # extra_known to avoid a false positive.
+        fk_components = _fk_component_map(incoming_edges, joiners)
+        fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
+        warnings.extend(
+            enforce_output_projection(
+                table_name,
+                fixed_schema.names,
+                plan,
+                unconfigured_column_policy,
+                extra_known=frozenset(fk_components),
+            )
+        )
         for raw_batch in _iter_source_batches(raw, batch_rows):
             for joiner in joiners:
                 joiner.stage_batch(raw_batch)
@@ -329,22 +348,6 @@ def stream_table(
         # (phase 2) opens the first reader over it.
         for joiner in joiners:
             joiner.finalize_staging()
-
-        fk_components = _fk_component_map(incoming_edges, joiners)
-        fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
-        # DE-03: fail-closed output projection at the earliest point -- the fixed
-        # output schema is known before any batch streams. FK-resolved child
-        # columns are legitimate output but not in the mask plan's seed envelope,
-        # so they are passed as extra_known to avoid a false positive.
-        warnings.extend(
-            enforce_output_projection(
-                table_name,
-                fixed_schema.names,
-                plan,
-                unconfigured_column_policy,
-                extra_known=frozenset(fk_components),
-            )
-        )
 
         # --- Phase 2 + 3, one ExitStack over both. Each edge, in order: the
         # FAIL precount (if any), then the bounded-reorder join (which closes

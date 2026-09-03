@@ -174,6 +174,8 @@ def run_fk_out_of_core(
             code="out_of_core_batch_rows_invalid",
             message=f"batch_rows must be a positive row count, got {batch_rows}.",
         )
+    # Validate the override before creating the temp root: an invalid value must not leak a scratch dir.
+    reorder_threshold_rows = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
     # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST -- before any admissibility
     # or source checks -- so a keyed out-of-core job can never run off job_seed at
     # GA regardless of entry point.
@@ -197,7 +199,6 @@ def run_fk_out_of_core(
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     committed = False
-    reorder_threshold_rows = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}

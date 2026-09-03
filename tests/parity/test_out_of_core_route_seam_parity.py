@@ -123,7 +123,13 @@ def _run_sink(
         if force_reorder:
             ChildFkBatchJoiner.__init__ = orig_batch_init  # type: ignore[method-assign]
             StreamFkJoiner.__init__ = orig_reorder_init  # type: ignore[method-assign]
-    if force_reorder and status[0] == "ok":
+    if force_reorder:
+        # Witness on BOTH ok and raised outcomes. A route regression to
+        # _batch_join must be caught even when the case raises -- otherwise the
+        # raised parity cases (orphan/projection x masking) could pass vacuously,
+        # comparing _batch_join to itself. The joiners are constructed before any
+        # phase-1 masking, so a masking-error case still constructs the reorder
+        # joiner; these fixtures always route (threshold=0 + ample budget).
         assert not saw["batch"], (
             "forced-reorder run constructed a ChildFkBatchJoiner: route selection "
             "regressed to _batch_join, making this parity case vacuous"
@@ -589,6 +595,211 @@ def test_every_admitted_payload_strategy_parity(strategy: str) -> None:
     )
     _assert_route_parity(
         plan, {"parent": parent, "child": child}, graph, f"payload-strategy-{strategy}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Codex-final route-dependent EXCEPTION-parity gaps (docs/plans/2026-09-03-
+# p4-task7-route-seam.md): an undeclared output column and an unmaskable fpe
+# value can both fire on the same table, and the two routes used to resolve
+# that race differently. The output-projection hoist in `_stream_driver.py`
+# (projection enforced before phase-1 masking, matching the batch route's
+# always-projection-first order) fixes the projection x masking case; the
+# orphan-FAIL x masking case is a Cam-approved narrowed-contract carve-out
+# (both fail closed, codes MAY differ), not a bug this hoist can close -- the
+# reorder route is single-read, so its own FAIL precount cannot run before
+# phase-1 masking the way the batch route's total-orphan prepass can.
+# ---------------------------------------------------------------------------
+
+_UNDECLARED_OUTPUT_CODE = "undeclared_output_columns"
+_ORPHAN_FAIL_CODE = "orphan_fk_violation"
+_FPE_UNENCRYPTABLE_CODE = "fpe_unencryptable_value"
+
+
+def _passthrough_fk_seed(namespace: str) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=namespace,
+        strategy="passthrough",
+        provider="passthrough",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=False,
+        provider_config=(),
+        coherent_with=(),
+    )
+
+
+def _fpe_seed(charset: str = "digits") -> ColumnSeed:
+    return ColumnSeed(
+        namespace="fpe_ns",
+        strategy="fpe",
+        provider="fpe",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(("charset", charset),),
+        coherent_with=(),
+    )
+
+
+def test_projection_before_masking_wins_on_both_routes() -> None:
+    """Codex-final gap 1: `child` carries an output column no strategy
+    declares (`undeclared_col`, under `unconfigured_column_policy="error"`)
+    AND an fpe column whose one value ('abc') has no character in its
+    digits-only charset (unmaskable -- see `_strategies/_fpe.py`). Post-hoist,
+    the reorder route now enforces output projection BEFORE phase-1 masking,
+    matching the batch route's order, so BOTH routes raise the SAME
+    undeclared_output_columns error. Without the hoist, the reorder side
+    would instead run `mask_batch` first and raise fpe_unencryptable_value --
+    diverging from the batch side's projection error; this test pins the fix
+    (see the sibling carve-out test below for the one case this hoist does
+    NOT unify).
+    """
+    namespace = "ns_proj_mask"
+    fk_seed = _passthrough_fk_seed(namespace)
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=b"\x44" * 8,
+            per_table=(
+                ("parent", TableSeed(per_column=(("pk", fk_seed),), per_group=())),
+                # `undeclared_col` is deliberately NOT declared -> undeclared output.
+                (
+                    "child",
+                    TableSeed(
+                        per_column=(("fk", fk_seed), ("fpe_col", _fpe_seed())),
+                        per_group=(),
+                    ),
+                ),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="parent",
+        parent_columns=("pk",),
+        child_table="child",
+        child_columns=("fk",),
+        namespace=namespace,
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table({"pk": pa.array(["p0", "p1", "p2"], type=pa.string())})
+    child = pa.table(
+        {
+            "fk": pa.array(["p0", "p1", "p2"], type=pa.string()),
+            "fpe_col": pa.array(["12345", "abc", "67890"], type=pa.string()),
+            "undeclared_col": pa.array(["u0", "u1", "u2"], type=pa.string()),
+        }
+    )
+    sources = {"parent": parent, "child": child}
+    assert _gate_admits(plan, graph)
+
+    root = _tmp_for("projection-x-masking")
+    batch_dir = root / "batch"
+    batch_outcome, batch_val = _run_sink(
+        plan,
+        sources,
+        graph,
+        batch_dir,
+        force_reorder=False,
+        unconfigured_column_policy="error",
+    )
+    reorder_dir = root / "reorder"
+    reorder_outcome, reorder_val = _run_sink(
+        plan,
+        sources,
+        graph,
+        reorder_dir,
+        force_reorder=True,
+        unconfigured_column_policy="error",
+    )
+
+    assert batch_outcome == "raised", f"batch route did not raise: {batch_val!r}"
+    assert reorder_outcome == "raised", f"reorder route did not raise: {reorder_val!r}"
+    assert type(batch_val) is type(reorder_val), (
+        f"exception types differ: {type(batch_val)} vs {type(reorder_val)}"
+    )
+    assert getattr(batch_val, "code", None) == _UNDECLARED_OUTPUT_CODE
+    # The hoist: projection wins on BOTH routes now, not just the batch route.
+    assert getattr(reorder_val, "code", None) == _UNDECLARED_OUTPUT_CODE
+    assert not batch_dir.exists(), f"batch_join sink committed despite raising: {batch_val!r}"
+    assert not reorder_dir.exists(), f"reorder sink committed despite raising: {reorder_val!r}"
+
+
+def test_orphan_fail_x_masking_both_fail_closed_codes_may_differ() -> None:
+    """Codex-final gap 2 -- Cam's narrowed-contract carve-out (2026-09-03):
+    `child` has orphan_policy=FAIL with a real orphan row AND an unmaskable
+    fpe value, with every output column declared (no undeclared_col, so
+    projection cannot fire and mask the ordering this test pins). The batch
+    route's own FAIL precount (`_raise_on_total_orphans`) runs before ANY
+    masking and raises orphan_fk_violation; the reorder route is single-read,
+    so its FAIL precount runs in phase 2, AFTER phase-1 masking has already
+    streamed this table's one batch and raised fpe_unencryptable_value. Both
+    routes still fail closed -- neither ever commits output -- but the codes
+    legitimately differ, so unlike every other case in this file, this test
+    does NOT assert same-code parity.
+    """
+    namespace = "ns_orphan_mask"
+    fk_seed = _passthrough_fk_seed(namespace)
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=b"\x55" * 8,
+            per_table=(
+                ("parent", TableSeed(per_column=(("pk", fk_seed),), per_group=())),
+                (
+                    "child",
+                    TableSeed(
+                        per_column=(("fk", fk_seed), ("fpe_col", _fpe_seed())),
+                        per_group=(),
+                    ),
+                ),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="parent",
+        parent_columns=("pk",),
+        child_table="child",
+        child_columns=("fk",),
+        namespace=namespace,
+        orphan_policy=OrphanPolicy.FAIL,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table({"pk": pa.array(["p0", "p1", "p2"], type=pa.string())})
+    child = pa.table(
+        {
+            # "missing_parent" matches no parent pk -> a FAIL-policy orphan.
+            "fk": pa.array(["p0", "p1", "missing_parent"], type=pa.string()),
+            "fpe_col": pa.array(["12345", "abc", "67890"], type=pa.string()),
+        }
+    )
+    sources = {"parent": parent, "child": child}
+    assert _gate_admits(plan, graph)
+
+    root = _tmp_for("orphan-x-masking")
+    batch_dir = root / "batch"
+    batch_outcome, batch_val = _run_sink(plan, sources, graph, batch_dir, force_reorder=False)
+    reorder_dir = root / "reorder"
+    reorder_outcome, reorder_val = _run_sink(plan, sources, graph, reorder_dir, force_reorder=True)
+
+    assert batch_outcome == "raised", f"batch route did not fail closed: {batch_val!r}"
+    assert reorder_outcome == "raised", f"reorder route did not fail closed: {reorder_val!r}"
+    assert not batch_dir.exists(), f"batch_join sink committed despite raising: {batch_val!r}"
+    assert not reorder_dir.exists(), f"reorder sink committed despite raising: {reorder_val!r}"
+
+    batch_code = getattr(batch_val, "code", None)
+    reorder_code = getattr(reorder_val, "code", None)
+    # The carve-out: both codes must be one of the two expected fail-closed
+    # codes, but they are NOT asserted equal -- that is the point of this test.
+    assert batch_code in {_ORPHAN_FAIL_CODE, _FPE_UNENCRYPTABLE_CODE}, batch_code
+    assert reorder_code in {_ORPHAN_FAIL_CODE, _FPE_UNENCRYPTABLE_CODE}, reorder_code
+    # Pin the actual per-route ordering the carve-out narrative depends on,
+    # not just "some fail-closed code": batch's orphan precount always wins
+    # before masking; reorder's masking always wins before its orphan check.
+    assert batch_code == _ORPHAN_FAIL_CODE, f"batch route raised {batch_code!r}, expected orphan"
+    assert reorder_code == _FPE_UNENCRYPTABLE_CODE, (
+        f"reorder route raised {reorder_code!r}, expected fpe (masks before its own FAIL check)"
     )
 
 

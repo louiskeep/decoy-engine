@@ -26,7 +26,7 @@ from decoy_engine.execution.out_of_core._memory_estimate import memory_limit_for
 from decoy_engine.execution.out_of_core._reorder_budget import F_DUCKDB
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy
-from tests.parity.test_out_of_core_fk_parity import _build_single_edge
+from tests.parity.test_out_of_core_fk_parity import _build_chain, _build_single_edge
 
 _REG = get_default_registry()
 _BUDGET_BYTES = 1024 * 1024 * 1024  # 1 GiB
@@ -123,6 +123,60 @@ def test_t11_reorder_path_never_consults_resolve_phase_memory_limits(
     # the child table's route is the only one with an incoming edge, and it
     # completed without ever calling the patched-to-raise resolver.
     assert pq.read_table(target / "child.parquet").num_rows == len(sources["child"])
+
+
+def _forced_reorder_chain_fixture() -> Any:
+    # parent -> child -> grandchild: `child` is the MIDDLE table here, the
+    # one this gap-fix test targets -- it carries BOTH an incoming edge
+    # (parent->child, reorder-routed at threshold=0) and an outgoing edge
+    # (child->grandchild) whose relation build this test isolates.
+    return _build_chain(
+        strategy="passthrough",
+        policy=OrphanPolicy.PRESERVE,
+        child_refs=[0, 1, 2, 3],
+        gc_refs=[0, 1, 2, 3],
+    )
+
+
+def test_t11_middle_table_reorder_build_gets_undivided_sink_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T11 coverage gap: `test_t11_joiner_and_build_caps_match_reorder_budgets_
+    not_batch_model` above routes `child` (no outgoing edge in that 2-table
+    fixture) through reorder, so the ONE build call it observes is actually
+    `parent`'s (batch route, since `parent` has no incoming edge) -- which
+    happens to open at the SAME undivided cap as `ReorderCaps.build_memory_
+    limit` purely because `resolve_phase_memory_limits`'s sink branch is ALSO
+    undivided (`memory_limit_for(budget_bytes, 1)` regardless of incoming-
+    edge count). That test would keep passing even if a reorder-routed
+    table's OWN build cap regressed to a different formula, because it never
+    actually observes one. This chain fixture gives `child` BOTH an incoming
+    edge (so IT is reorder-routed) and an outgoing edge (so ITS OWN build
+    runs through `reorder_caps.build_memory_limit`), isolating the call this
+    invariant is actually about.
+    """
+    plan, sources, graph = _forced_reorder_chain_fixture()
+    seen = _capture_connect_duckdb(monkeypatch)
+
+    run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(tmp_path / "out"),
+        temp_dir=tmp_path / "work",
+        budget_bytes=_BUDGET_BYTES,
+        temp_disk_budget_bytes=_DISK_BYTES,
+        out_of_core_reorder_threshold_rows=0,
+    )
+
+    expected_build = memory_limit_for(_BUDGET_BYTES, 1)
+    # Build calls happen in the run's topo order (parent, then child;
+    # `grandchild` has no outgoing edge so opens none): index 0 is `parent`'s
+    # (batch route), index 1 is `child`'s -- the MIDDLE table's own reorder-
+    # routed build, the one T11 pins.
+    assert len(seen["build"]) == 2
+    assert seen["build"][1] == expected_build
 
 
 __all__: list[str] = []

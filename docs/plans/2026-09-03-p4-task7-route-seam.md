@@ -326,6 +326,21 @@ representation, warnings (order and content), and `quality_metrics`. (Literal
 byte-for-byte parquet bytes are NOT the contract — parquet is not guaranteed
 byte-reproducible across two write paths; the sink output is compared by reading
 it back and asserting logical table identity, which is the meaningful guarantee.)
+
+**Exception-parity carve-out (Cam decision, Codex-final round 1).** When both
+routes fail closed on the SAME input, they must raise the same error EXCEPT for
+one narrow cross-product: a table that both violates a FAIL orphan policy AND
+carries an unmaskable value (e.g. `fpe` with an uncoverable charset). The batch
+route reads the source an extra time to precount orphans before masking; the
+reorder route is single-read (its byte-parity guarantee) so it stages keys and
+masks in one pass and can only precount orphans afterward — so it may surface the
+masking error where batch surfaces the orphan error. Both fail closed, sink
+uncommitted, no output emitted, so OUTPUT parity is fully preserved; forcing
+identical error order here would require a second source read or spilling raw PII
+to disk, neither acceptable. Projection-vs-masking is NOT carved out: projection
+enforcement is schema-only and runs before masking on both routes (identical
+error). The acceptance test asserts same-error everywhere except this
+orphan-FAIL × unmaskable cross-product, where it asserts both-fail-closed.
 `_batch_join` is the oracle-conformant baseline; its own pandas-oracle parity is
 the normalized-value contract already documented for that route — Task 7 does not
 re-open it and claims no byte-identity to the pandas oracle beyond what
