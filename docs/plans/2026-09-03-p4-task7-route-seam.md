@@ -320,9 +320,12 @@ Parity (§6.1):
 
 ### 6.1 Parity (precise)
 
-Task 7's invariant is **reorder == `_batch_join`, exactly**: Arrow schema +
-metadata, row/chunk order, values + null/NaN representation, warnings (order and
-content), `quality_metrics`, and serialized sink bytes on the sink path.
+Task 7's invariant is **reorder == `_batch_join`, exactly**, at the logical
+Arrow level on read-back: Arrow schema + metadata, row order, values + null/NaN
+representation, warnings (order and content), and `quality_metrics`. (Literal
+byte-for-byte parquet bytes are NOT the contract — parquet is not guaranteed
+byte-reproducible across two write paths; the sink output is compared by reading
+it back and asserting logical table identity, which is the meaningful guarantee.)
 `_batch_join` is the oracle-conformant baseline; its own pandas-oracle parity is
 the normalized-value contract already documented for that route — Task 7 does not
 re-open it and claims no byte-identity to the pandas oracle beyond what

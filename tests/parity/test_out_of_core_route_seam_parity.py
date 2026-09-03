@@ -32,11 +32,13 @@ from hypothesis import HealthCheck, given, settings
 
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import run_fk_out_of_core
+from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._compat import (
     _INITIAL_SUPPORTED_STRATEGIES,
     SUPPORTED_STRATEGIES,
 )
 from decoy_engine.execution.out_of_core._source import LazySource
+from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
 from decoy_engine.keyprovider import KeyProvider, SecretKeyProvider
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -83,6 +85,25 @@ def _run_sink(
             temp_disk_budget_bytes=_DISK_BYTES,
             out_of_core_reorder_threshold_rows=0,
         )
+    # T16 witness: a forced-reorder run must construct StreamFkJoiner and never
+    # ChildFkBatchJoiner. Without this, a route-selection regression would make
+    # the forced side silently run _batch_join too, and every parity case would
+    # pass vacuously (batch-vs-batch). Spy the constructors around this run only.
+    saw = {"batch": False, "reorder": False}
+    orig_batch_init = ChildFkBatchJoiner.__init__
+    orig_reorder_init = StreamFkJoiner.__init__
+
+    def _spy_batch(self: Any, *a: Any, **k: Any) -> None:
+        saw["batch"] = True
+        orig_batch_init(self, *a, **k)
+
+    def _spy_reorder(self: Any, *a: Any, **k: Any) -> None:
+        saw["reorder"] = True
+        orig_reorder_init(self, *a, **k)
+
+    if force_reorder:
+        ChildFkBatchJoiner.__init__ = _spy_batch  # type: ignore[method-assign]
+        StreamFkJoiner.__init__ = _spy_reorder  # type: ignore[method-assign]
     try:
         result = run_fk_out_of_core(
             plan,
@@ -95,9 +116,20 @@ def _run_sink(
             unconfigured_column_policy=unconfigured_column_policy,
             **kwargs,
         )
-        return "ok", result
+        status: tuple[str, Any] = ("ok", result)
     except Exception as exc:
-        return "raised", exc
+        status = ("raised", exc)
+    finally:
+        if force_reorder:
+            ChildFkBatchJoiner.__init__ = orig_batch_init  # type: ignore[method-assign]
+            StreamFkJoiner.__init__ = orig_reorder_init  # type: ignore[method-assign]
+    if force_reorder and status[0] == "ok":
+        assert not saw["batch"], (
+            "forced-reorder run constructed a ChildFkBatchJoiner: route selection "
+            "regressed to _batch_join, making this parity case vacuous"
+        )
+        assert saw["reorder"], "forced-reorder run constructed no StreamFkJoiner"
+    return status
 
 
 def _warning_key(warning: Any) -> tuple[object, ...]:

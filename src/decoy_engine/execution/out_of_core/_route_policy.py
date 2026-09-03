@@ -147,8 +147,8 @@ def _parent_key_count(relation: ParentKeyRelation) -> int:
     """Distinct parent-key row count, off the relation's own parquet footer
     -- no data read, since this file already IS the deduped, null-filtered
     relation the join consumes. Kept here rather than as a `ParentKeyRelation`
-    property: `_relation.py` sits at the 600-LOC module cap, with no room for
-    even a small cached property (see that module's docstring)."""
+    property: `_relation.py` is close enough to the 600-LOC module cap that a
+    documented cached property would breach it, so the footer read lives here."""
     return pq.read_metadata(relation.path).num_rows
 
 
