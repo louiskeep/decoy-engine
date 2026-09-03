@@ -3,21 +3,57 @@ multi-edge phase-3 head-admission proof, at the ADMITTED MAXIMUM fan-in
 (`N = 2 * merge_fan_in`) -- the shape `_route_policy.decide_route` falls
 back to `_batch_join` for above (`4.2`).
 
-Reuses `test_out_of_core_reorder_memory.py`'s discipline (fresh subprocess,
-pinned allocator env, VmHWM peak) but drives `_stream_driver.stream_table`
-directly (the multi-edge ExitStack that holds every incoming edge's
-`_OrderedJoinRows` reader open across the whole of phase 3 -- see that
-module's docstring) rather than a single `StreamFkJoiner`, over a
-sink + `LazySource` child at N=8 incoming edges (`merge_fan_in=4`, the
-harness-scale fan-in `tests/unit/execution/_stream_driver_harness.py`
-already uses, not production's 16 -- the shape under test is "N heads at
-the admitted ceiling", not a specific production constant).
+Codex-final round 3 P2 (this test's prior form): a direct
+`_stream_driver.stream_table` call with hand-duplicated `F_DUCKDB`/`F_SORT`
+budget fractions proves the reorder driver alone is memory-bounded, but not
+that PRODUCTION (`_runner.run_fk_out_of_core` -> `_route_policy.decide_route`
+-> `stream_table`, with budgets resolved by `resolve_reorder_budgets` inside
+the route seam) is memory-bounded and actually SELECTS the reorder route for
+a multi-edge child. This version drives the worker through
+`run_fk_out_of_core` itself, with a `ParquetTransactionalSink` and
+path-backed `LazySource` sources, `out_of_core_reorder_threshold_rows=0`
+forcing reorder SELECTION, and `budget_bytes` / `temp_disk_budget_bytes` so
+every budget (DuckDB `memory_limit`, `run_bytes_cap`, `merge_fan_in`) is
+resolved by the production helpers inside the run -- no hand-duplicated
+fractions and no manually constructed `ReorderCaps`. Route selection is
+asserted two ways: `ChildFkBatchJoiner.__init__` is patched to raise if
+called at all (the child table must never fall back to the batch-join
+driver), and `StreamFkJoiner.__init__` is counted (must construct exactly
+`_N_EDGES` times, one per incoming edge).
+
+FAN-IN. The aggregate phase-3 head residency `_reorder_budget.
+phase3_head_fit` prices is `N * run_bytes_cap // (2 * merge_fan_in)`, which
+collapses to `run_bytes_cap` at the admitted maximum (`N = 2 *
+merge_fan_in`) REGARDLESS of `merge_fan_in`'s own value -- dennis and Codex
+both confirmed this fan-in invariance in earlier plan-review rounds. So the
+bound this test proves does not depend on which `merge_fan_in` is used;
+what does depend on it is wall-clock and disk: at production's actual
+default (`_route_policy._MERGE_FAN_IN_DEFAULT = 16`, so N=32), each of the
+32 edges needs the same per-edge child-row volume the single-edge proof
+uses to force a real (>1-run) sorter spill, so total data volume -- and
+runtime -- scales with N. Measured empirically on this box: the harness-scale
+fan-in (4, N=8) this test used to run at completes in ~95s; the same per-edge
+row volume at production fan-in (16, N=32) is roughly 4x that data and blew
+well past a practical perf-test budget (multi-minute, disk-heavy on a shared
+devbox) for a bound already proven fan-in-invariant. So this test stays at
+the harness-scale fan-in (4, N=8) -- proving the SAME bound, at N=32's
+computational cost -- while still driving every table through
+`run_fk_out_of_core` with production-resolved budgets and asserted route
+selection.
+
+`run_fk_out_of_core` does not expose `merge_fan_in` as a parameter (only
+`_route_policy.decide_route`'s own default does, `_MERGE_FAN_IN_DEFAULT`);
+the worker pins it to `_MERGE_FAN_IN` by wrapping the runner module's
+`decide_route` reference to pass `merge_fan_in` explicitly on every call --
+every other production computation `run_fk_out_of_core` performs (the
+compatibility gate, work ordering, the threshold check, `resolve_
+reorder_budgets`, `ReorderCaps` construction, and the sink-incremental
+per-table streaming) runs completely unmodified.
 
 Each edge independently spills more than one sorter run (proven per-edge,
 not just in aggregate), and all N edges' phase-3 readers are open
 concurrently while payload batches drain -- the exact residency phase 3's
-memory model prices (`N * run_bytes_cap // (2 * merge_fan_in)`, `_reorder_
-budget.phase3_head_fit`). Peak RSS must stay within the SAME envelope
+memory model prices. Peak RSS must stay within the SAME envelope
 (`_ENVELOPE_FACTOR`, 1.35x) the single-edge proof uses, without relaxing it.
 """
 
@@ -59,9 +95,11 @@ _TIMEOUT_S = 420
 
 _WORKER_SCRIPT = textwrap.dedent(
     '''
-    """Fresh-subprocess worker: streams an N-incoming-edge table through
-    `_stream_driver.stream_table` (sink + LazySource) and reports peak RSS
-    plus per-edge spill proof facts as one JSON line on stdout."""
+    """Fresh-subprocess worker: streams an N-incoming-edge job through the
+    PRODUCTION `_runner.run_fk_out_of_core` entry point (sink + LazySource
+    sources, budgets resolved by the production helpers) and reports peak
+    RSS plus per-edge spill and route-selection proof facts as one JSON line
+    on stdout."""
 
     import argparse
     import json
@@ -72,13 +110,13 @@ _WORKER_SCRIPT = textwrap.dedent(
     import pyarrow.parquet as pq
 
     from decoy_engine.execution import ParquetTransactionalSink
+    from decoy_engine.execution.out_of_core import run_fk_out_of_core
+    from decoy_engine.execution.out_of_core import _runner as runner_mod
     from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
-    from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
-    from decoy_engine.execution.out_of_core._route_policy import _edge_indexes, _table_order
     from decoy_engine.execution.out_of_core._source import LazySource
-    from decoy_engine.execution.out_of_core._stream_driver import stream_table
     from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
     from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+    from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 
     _JOB_SEED = b"\\x66" * 8
@@ -118,9 +156,7 @@ _WORKER_SCRIPT = textwrap.dedent(
         args = parser.parse_args()
 
         ceiling_bytes = args.ceiling_mib * 1024 * 1024
-        run_bytes_cap = round(0.15 * ceiling_bytes)  # F_SORT, mirrors _reorder_budget.py
-        duckdb_bytes = round(0.55 * ceiling_bytes)  # F_DUCKDB
-        memory_limit = f"{duckdb_bytes // (1024 * 1024)}MB"
+        big_disk_bytes = 200 * 1024 * 1024 * 1024  # disk is not under test here
 
         temp_dir = Path(args.temp_dir)
         seed = _seed()
@@ -178,14 +214,28 @@ _WORKER_SCRIPT = textwrap.dedent(
         pq.write_table(child_table, child_path)
         sources["child"] = LazySource(child_path)
 
-        # Route evidence: the reorder driver must be the one running, never
-        # ChildFkBatchJoiner (T16's own witness pattern, reused here).
+        # Route evidence #1: the reorder driver must be the one running for
+        # the multi-edge child, never ChildFkBatchJoiner (T16's own witness
+        # pattern, reused here) -- proves PRODUCTION route SELECTION
+        # (`_route_policy.decide_route`), not just that stream_table can be
+        # called directly.
         real_batch_init = ChildFkBatchJoiner.__init__
 
         def _forbidden_batch_init(self, *a, **kw):
             raise AssertionError("multi-edge RSS proof must drive the reorder route only")
 
         ChildFkBatchJoiner.__init__ = _forbidden_batch_init
+
+        # Route evidence #2 (positive): every edge must construct a real
+        # StreamFkJoiner -- counted, not just "not ChildFkBatchJoiner".
+        real_stream_init = StreamFkJoiner.__init__
+        stream_init_count = {"n": 0}
+
+        def _counting_stream_init(self, *a, **kw):
+            stream_init_count["n"] += 1
+            return real_stream_init(self, *a, **kw)
+
+        StreamFkJoiner.__init__ = _counting_stream_init
 
         run_count_by_edge: dict[str, int] = {}
         join_row_bytes_by_edge: dict[str, int] = {}
@@ -207,33 +257,38 @@ _WORKER_SCRIPT = textwrap.dedent(
 
         StreamFkJoiner.run_ordered_join = _spy_run_ordered_join
 
+        # `run_fk_out_of_core` does not expose `merge_fan_in` (only
+        # `decide_route`'s own default does); pin it explicitly here so this
+        # worker can prove the bound at a chosen fan-in without touching any
+        # other production computation the runner performs.
+        real_decide_route = runner_mod.decide_route
+        captured_caps: dict[str, int] = {}
+
+        def _pinned_decide_route(*a, **kw):
+            decision = real_decide_route(*a, merge_fan_in=args.merge_fan_in, **kw)
+            if decision.reorder_caps is not None:
+                captured_caps["run_bytes_cap"] = decision.reorder_caps.run_bytes_cap
+                captured_caps["merge_fan_in"] = decision.reorder_caps.merge_fan_in
+            return decision
+
+        runner_mod.decide_route = _pinned_decide_route
+
         sink_target = temp_dir / "out"
         sink = ParquetTransactionalSink(sink_target)
-        incoming, outgoing = _edge_indexes(graph)
-        parent_relations: dict = {}
-        outputs: dict = {}
-        warnings: list = []
-        root = temp_dir / "work"
-        for table_name in _table_order(plan, graph, sources):
-            stream_table(
-                plan,
-                table_name,
-                sources[table_name],
-                incoming_edges=tuple(incoming[table_name]),
-                outgoing_edges=tuple(outgoing[table_name]),
-                parent_relations=parent_relations,
-                temp_dir=root / "joins" / table_name,
-                relation_dir=root / "relations" / table_name,
-                staging_path=root / "staged" / table_name / "masked_keys.parquet",
-                memory_limit=memory_limit,
-                batch_rows=args.batch_rows,
-                run_bytes_cap=run_bytes_cap,
-                merge_fan_in=args.merge_fan_in,
-                sink=sink,
-                outputs=outputs,
-                warnings=warnings,
-            )
-        sink.commit()
+        registry = get_default_registry()
+
+        run_fk_out_of_core(
+            plan,
+            sources,
+            registry=registry,
+            relationship_graph=graph,
+            sink=sink,
+            temp_dir=temp_dir / "work",
+            batch_rows=args.batch_rows,
+            budget_bytes=ceiling_bytes,
+            temp_disk_budget_bytes=big_disk_bytes,
+            out_of_core_reorder_threshold_rows=0,
+        )
 
         child_out = pq.read_table(sink_target / "child.parquet")
 
@@ -243,7 +298,9 @@ _WORKER_SCRIPT = textwrap.dedent(
                     "ceiling_mib": args.ceiling_mib,
                     "n_edges": args.n_edges,
                     "merge_fan_in": args.merge_fan_in,
-                    "run_bytes_cap": run_bytes_cap,
+                    "resolved_run_bytes_cap": captured_caps.get("run_bytes_cap"),
+                    "resolved_merge_fan_in": captured_caps.get("merge_fan_in"),
+                    "stream_joiner_init_count": stream_init_count["n"],
                     "child_rows_out": child_out.num_rows,
                     "child_rows_expected": args.child_rows,
                     "edges_with_multi_run_spill": sum(
@@ -302,6 +359,16 @@ def test_multi_edge_admitted_max_fan_in_peak_rss_within_envelope(tmp_path):
     rec = _run_worker(tmp_path)
 
     assert rec["n_edges"] == _N_EDGES
+    assert rec["merge_fan_in"] == _MERGE_FAN_IN
+    # Route selection, positive + negative: every edge built a real
+    # StreamFkJoiner (never ChildFkBatchJoiner -- the worker raises if one is
+    # constructed), proving `run_fk_out_of_core` -> `decide_route` actually
+    # SELECTED the reorder route for this multi-edge child, not merely that
+    # stream_table can be called directly.
+    assert rec["stream_joiner_init_count"] == _N_EDGES, rec
+    assert rec["resolved_run_bytes_cap"] is not None, "decide_route never returned reorder_caps"
+    assert rec["resolved_merge_fan_in"] == _MERGE_FAN_IN
+
     assert rec["child_rows_out"] == rec["child_rows_expected"]
     # Real spill, per edge, not just in aggregate: at least most of the N
     # edges' sorters produced more than one run (a small number landing at

@@ -389,19 +389,29 @@ its sentry ceiling.
 - The new kwarg is documented on `_pipeline_routing` (add it to the doc scope
   alongside the sibling routing kwargs).
 
-## 7. Calibration benchmark pass rule (round-3 P2)
+## 7. Threshold calibration (Q-D, Cam decision 2026-09-03)
 
-`scripts/native-testing/reorder_crossover_bench.py`: for each shape (child sizes,
-masked widths, sink, fan-in), run each route `R` repetitions (R ≥ 5), report
-median and p90 wall time. Pass rule for the 2M default: at `parent_key_count ≥ 2M`
-the reorder route's median wall time is ≤ `_batch_join`'s median by a margin ≥
-20%, AND reorder's p90 ≤ `_batch_join`'s median (tail does not erase the win);
-below ~1M the two are within run-to-run variance (no regression claim). Record
-the results file in-repo alongside: warmup reps discarded, the exact shape matrix
-(child sizes, masked widths, sink flag, fan-in values), the quantile method
-(median + p90, linear interpolation), the environment (CPU, RAM, disk type), and
-the pinned dependency versions (pyarrow, duckdb). Live per-host calibration
-deferred (Q3).
+The 2M default threshold is KEPT (Cam, Codex-final round 3). It sits at the
+measured crossover, not at a fixed-margin point: the checked-in route A/B
+(`scripts/route_ab_results*.json`) shows reorder faster than `_batch_join` from
+~2M parent keys (≈10-15% at 2M on 3M/10M child rows), rising to ≈1.8x at 6M and
+≈4.5x at 10M, with `parity_ok` in every run. Below ~1M the two are within
+run-to-run variance (no regression claim); at/above the threshold reorder is
+never slower.
+
+The earlier §7 pass rule (median margin ≥ 20% at 2M) was stricter than the
+crossover warrants — reorder wins from 2M but does not clear a full 20% until
+~4-6M. Cam's decision: keep 2M and price the rule to the measured crossover
+(reorder faster at threshold, dominant by 6M), rather than move the threshold up
+to satisfy an arbitrary 20% bar. Rationale: parity holds at any threshold (pure
+tuning, no correctness impact), 2M captures the widest set of jobs into the
+faster route with zero regression risk, and moving to 6M would forfeit a real
+10-15% win on 2M-6M jobs for no safety benefit.
+
+`scripts/native-testing/reorder_crossover_bench.py` remains as a live-seam
+crossover harness (it ran only a sub-1M `--quick` sample; a full 2M+ matrix is
+deferred, per Cam — the route A/B above is the accepted evidence for the 2M
+default). Live per-host recalibration stays a Q3 follow-up.
 
 ## 8. Open questions (gate/Cam, non-blocking)
 
