@@ -8,7 +8,10 @@ Held target branch `feat/native-phase3`; merges with the Phase-4 bundle.
 Greenlit by Cam after the route A/B: the reorder route is ~flat wall time as
 parent-key count grows while `_batch_join` scales super-linearly (4.5x slower at
 10M parent keys), so it is worth building for THROUGHPUT at the 100M-row target
-(peak RSS is a wash). This slice builds the STANDALONE driver; wiring it into the
+(peak RSS is a wash at that scale). Source: the route A/B benchmark
+`scripts/route_reorder_vs_batchjoin_ab.py`, results measured in
+`scripts/route_ab_results_large.json` (10M child rows: reorder 83.0s vs
+`_batch_join` 369.0s at 10M parent keys = 4.45x; `parity_ok: true` in every run). This slice builds the STANDALONE driver; wiring it into the
 live route is Task 7 (deferred).
 
 ## 1. Why this slice
