@@ -34,8 +34,10 @@ primitives; do not invent new bounds.** The primitives:
   Task 7 inherits it and adds a multi-edge RSS proof to the SAME envelope. No
   `0.70` hard-bound claim (rounds 1-2 error).
 - `require_disk(budgets, *, mandatory_staging_bytes, estimated_output_bytes)` is
-  the per-edge disk ledger: `staging + 3×output` (duckdb-temp + sorter-runs +
-  merge-amplification). It exists but has zero production callers. Task 7 calls it.
+  an existing per-edge disk ledger primitive (`staging + 3×output`) that ENFORCES
+  a per-edge rejection. It has zero production callers, and **Task 7 does NOT wire
+  it** — that would impose the enforced-quota bar Cam declined (§0 round-3
+  decision, §4.3). It stays an unused primitive.
 - `memory_limit_for(budget_bytes, live_instances)` is the canonical
   bytes→DuckDB-`"NNMB"`-string helper (base-10, safe direction). Use it (there is
   no `_duckdb_limit_str`).
@@ -89,8 +91,16 @@ IN:
   cap = existing undivided sink build cap. (No new disk mechanism — §4.3.)
 - `_reorder_budget.py`: add the phase-3 multi-edge head-fit helper + input
   validation (no change to `F_*` fractions or `run_bytes_cap`).
+- `_relation.py`: metadata-only — add a `ParentKeyRelation.key_count` cached
+  property (`pq.read_metadata(self.path).num_rows`). File is 592/600 LOC, so a
+  small cached property fits; if it would breach the cap, put the footer-read
+  helper in `_route_policy.py` instead and drop the property.
 - new leaf `_route_policy.py` + `_runner.py`: sink-path route selection; extract
   `_table_order`/`_edge_indexes` into `_route_policy.py` to keep `_runner.py ≤ 676`.
+  `_route_policy.py` imports: relation metadata (`pyarrow.parquet` /
+  `ParentKeyRelation`), `_reorder_budget`, and `_memory_estimate`
+  (`memory_limit_for`, for the join/build cap strings) — cycle-free (none import
+  `_runner`/`_stream_driver`); `_budget` only if a concrete symbol is needed.
 - `_pipeline.py` + `_pipeline_route_exec.py`: thread the
   `out_of_core_reorder_threshold_rows` runtime kwarg (with the module-size
   compensations named in §4.4 — three files are at/near their sentry ceilings).
@@ -161,9 +171,14 @@ IDENTICAL in kind to `_batch_join`'s (its DuckDB temp is likewise only bounded
 between boundary checks), so Task 7 does not regress the route's disk posture;
 it matches it. Both routes assume adequate disk headroom for a single table's
 transient spill. Reorder may spill somewhat more per table (staged keys + N
-sorted runs + merge amplification) than `_batch_join`'s DuckDB temp; the
-route-entry conservative advisory is the operator's heads-up for that, exactly as
-for the existing route.
+sorted runs + merge amplification) than `_batch_join`'s DuckDB temp. The
+route-entry advisory runs unchanged, but note honestly: it is calibrated to the
+shipped batch posture and assumes payload columns stream to the sink rather than
+becoming transient spill (`_spill_estimate`), so it MAY UNDERPREDICT reorder's
+additional transient run files. Under Cam's decision this needs no new estimator;
+it is disclosed as a known advisory limitation, and the boundary
+`check_temp_disk_budget` remains the actual enforcer for both routes. T14 pins
+the identical warn-only control flow, not the estimate's numerical adequacy.
 
 `require_disk` / `max_temp_directory_size` / an enforced aggregate sorter quota
 are explicitly OUT (they would hold reorder to a higher bar than the shipped
@@ -226,9 +241,9 @@ which the allowlist-shrink-only ratchet forbids. Compensate concretely:
 adds (net negative); in `_pipeline.py` and `_pipeline_route_exec.py`, fold the new
 kwarg into the existing routing-kwarg passthrough grouping and trim an adjacent
 over-long comment block by the same count, so each stays ≤ its ceiling. The build
-MUST keep the full module-size sentry green (§5 T18) — if a clean trim is not
+MUST keep the full module-size sentry green (§5 T17) — if a clean trim is not
 found, the fallback is a tiny leaf extraction of the routing-kwarg bundle, not a
-ratchet bump.
+ratchet bump. (§5 T17 runs the full sentry.)
 
 ### 4.5 Threshold calibration (P2-1)
 
@@ -253,8 +268,12 @@ Selection:
   `out_of_core_reorder_budget_too_small`, sink aborted, no output.
 - T8 relation-cardinality key: many duplicate/null raw parent rows but few
   distinct keys → routes by the deduped count.
-- T9 override kwarg `out_of_core_reorder_threshold_rows` changes the boundary;
-  validated non-negative; threaded through isolated-run.
+- T9 override kwarg `out_of_core_reorder_threshold_rows` changes the boundary,
+  via a direct call AND an isolated-run call. Enumerate the semantics/validation:
+  `None` → default; `0` → reorder every eligible sink table; a positive int →
+  that boundary; a negative int → coded error; `True`/`False` (`bool`) → coded
+  error (not silently treated as 1/0); a non-integer → coded error. Assert the
+  same coded error from both the direct and isolated paths.
 - T10 mixed multi-table job: each table routed independently; whole-job output
   == all-`_stream_table` (§6.1).
 
@@ -325,8 +344,9 @@ deliberate right-size call (§0). No R3 side effects. Held on
 `_stream_driver.py` and `_stream_join.py` docstrings currently assert
 pandas-oracle byte parity for the reorder path; correct them to the
 reorder-equals-`_batch_join` contract (§6.1). No logic change. `_stream_join.py`
-receives ONLY this docstring correction (no disk-cap wiring — §4.3), and the
-correction is net line-negative, absorbing that file's kwarg-threading cost (§4.4).
+receives ONLY this docstring correction (no disk-cap wiring — §4.3, and no kwarg
+threads through it); the correction is net line-negative, so the file stays under
+its sentry ceiling.
 
 ### 6.4 Follow-on touch points (round-3 P3)
 
@@ -343,8 +363,12 @@ masked widths, sink, fan-in), run each route `R` repetitions (R ≥ 5), report
 median and p90 wall time. Pass rule for the 2M default: at `parent_key_count ≥ 2M`
 the reorder route's median wall time is ≤ `_batch_join`'s median by a margin ≥
 20%, AND reorder's p90 ≤ `_batch_join`'s median (tail does not erase the win);
-below ~1M the two are within run-to-run variance (no regression claim). Record the
-results file in-repo. Live per-host calibration deferred (Q3).
+below ~1M the two are within run-to-run variance (no regression claim). Record
+the results file in-repo alongside: warmup reps discarded, the exact shape matrix
+(child sizes, masked widths, sink flag, fan-in values), the quantile method
+(median + p90, linear interpolation), the environment (CPU, RAM, disk type), and
+the pinned dependency versions (pyarrow, duckdb). Live per-host calibration
+deferred (Q3).
 
 ## 8. Open questions (gate/Cam, non-blocking)
 
