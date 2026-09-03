@@ -1,13 +1,13 @@
 """Drive tables through `_stream_driver.stream_table` in topological order.
 
-Task 6 builds the reorder driver standalone; wiring it into a route (a
-`table_name -> stream_table` loop that a caller reaches through
-`run_fk_out_of_core`) is Task 7. This harness IS that loop, for tests only: it
-mirrors `_runner.run_fk_out_of_core`'s outer topological walk
-(`_edge_indexes` / `_table_order`, both reused unmodified) but calls
-`stream_table` instead of `_runner._stream_table`, so multi-table fixtures
-(chains, fanouts) can drive the reorder path exactly the way the eventual
-route seam will, without that seam existing yet.
+Task 6 built the reorder driver standalone; Task 7 wired it into
+`run_fk_out_of_core`'s live route selection (`_route_policy.decide_route`).
+This harness predates that seam and still mirrors `run_fk_out_of_core`'s
+outer topological walk directly (`_edge_indexes` / `_table_order`, both
+reused unmodified from their new home in `_route_policy.py`) but calls
+`stream_table` unconditionally instead of routing through `decide_route`,
+so multi-table fixtures (chains, fanouts) can drive the reorder path on
+every table regardless of parent-key size or threshold.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution.out_of_core._runner import _edge_indexes, _table_order
+from decoy_engine.execution.out_of_core._route_policy import _edge_indexes, _table_order
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 
 if TYPE_CHECKING:

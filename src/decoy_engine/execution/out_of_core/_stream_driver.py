@@ -47,8 +47,9 @@ stay open (and bounded by `run_bytes_cap` each) through phase 3.
 
 Every heavy relational operation (the join, its spill, the sort) is delegated
 to DuckDB / `BoundedExternalSorter`; nothing here re-implements memory
-management. Byte-parity to the pandas oracle is unchanged and pinned by
-`tests/parity/`.
+management. This driver's byte-parity contract is reorder == `_batch_join`'s
+own output, exactly (`_runner.py`'s module docstring documents THAT route's
+own pandas-oracle parity, divergences included); pinned by `tests/parity/`.
 """
 
 from __future__ import annotations
@@ -100,6 +101,7 @@ if TYPE_CHECKING:
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
+    from decoy_engine.execution.out_of_core._reorder_budget import ReorderCaps
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.relationships._graph import RelationshipEdge
@@ -128,6 +130,7 @@ def stream_table(
     warnings: list[QualityWarning],
     merge_fan_in: int = 16,
     budget_bytes: int | None = None,
+    reorder_caps: ReorderCaps | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
     code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
@@ -141,7 +144,13 @@ def stream_table(
     are aggregated over the whole stream and appended to `warnings` in
     incoming-edge order. `budget_bytes` (when not None) sizes the joiner/build
     DuckDB connections by their own phase-local liveness (see
-    `_memory_estimate.resolve_phase_memory_limits`).
+    `_memory_estimate.resolve_phase_memory_limits`) -- UNLESS `reorder_caps` is
+    given, in which case its `joiner_memory_limit` / `build_memory_limit`
+    strings are used directly and `resolve_phase_memory_limits` is never
+    consulted (the route seam's own sizing, `_route_policy.decide_route`; see
+    `ReorderCaps`'s docstring for why the batch-model phase resolver does not
+    describe this driver's connection shape). `None` (this driver's
+    standalone/test callers) keeps the pre-route-seam behavior unchanged.
 
     `run_bytes_cap` / `merge_fan_in` bound each edge's `BoundedExternalSorter`
     (phase 2's order-restore sort), threaded straight into every
@@ -195,15 +204,28 @@ def stream_table(
     # Phase-local caps (Part A + HIGH): a resident-path joiner stays live
     # through this table's own build, so it opens at the build's cap; sink-ness
     # selects the joiner cap here since memory_limit is fixed at open.
-    sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
-        resolve_phase_memory_limits(
-            budget_bytes=budget_bytes,
-            memory_limit=memory_limit,
-            incoming_edges=len(incoming_edges),
-            sink=sink is not None,
+    joiner_memory_limit: str | None
+    sink_build_memory_limit: str | None
+    resident_build_memory_limit: str | None
+    if reorder_caps is not None:
+        # Route-selected reorder path: sized directly from the ReorderBudgets
+        # the router already resolved (which proved the job fits before
+        # choosing this route), never through the batch-model phase resolver
+        # below -- its divisor assumes `_batch_join`'s per-edge connection
+        # shape, not this driver's sequential one-connection-at-a-time phases.
+        joiner_memory_limit = reorder_caps.joiner_memory_limit
+        sink_build_memory_limit = reorder_caps.build_memory_limit
+        resident_build_memory_limit = reorder_caps.build_memory_limit
+    else:
+        sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
+            resolve_phase_memory_limits(
+                budget_bytes=budget_bytes,
+                memory_limit=memory_limit,
+                incoming_edges=len(incoming_edges),
+                sink=sink is not None,
+            )
         )
-    )
-    joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
+        joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
     joiners: list[StreamFkJoiner] = []
     store: PayloadStore = (
         ResidentPayloadStore() if sink is None else SpillPayloadStore(temp_dir / "payload.arrow")

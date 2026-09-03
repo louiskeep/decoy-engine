@@ -193,6 +193,7 @@ def run_out_of_core_route(
     execution_plan_decision: ExecutionPlan | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    out_of_core_reorder_threshold_rows: int | None = None,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -370,8 +371,7 @@ def run_out_of_core_route(
     # in O(1), so no source is materialized just to count it) -- the same
     # "site with row counts already in hand" precedent the disk preflight
     # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
-    # a job whose predicted floor cannot fit is refused before any DuckDB
-    # work starts.
+    # a job whose predicted floor cannot fit is refused before any DuckDB work.
     #
     # Gated against `resolved_budget_bytes` -- THE SAME `OutOfCoreBudget.
     # budget_bytes` resolved above at the ONE `resolve_ooc_memory_limit` call
@@ -405,6 +405,7 @@ def run_out_of_core_route(
         temp_disk_budget_bytes=temp_disk_budget_bytes,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
+        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(

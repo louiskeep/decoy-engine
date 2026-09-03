@@ -101,8 +101,7 @@ __all__ = ["classify_table_kinds", "run_pipeline"]
 # None): resolve_substrate(None) follows DECOY_SUBSTRATE and its S13
 # default flip to polars, and run_pipeline's default route must stay
 # byte-identical to the original hardcoded pandas path. The signature
-# defaults and the non-default metadata stamp both read from here so
-# they cannot drift.
+# defaults and the non-default metadata stamp both read from here so they cannot drift.
 _SUBSTRATE_DEFAULT = "pandas"
 _FPE_CHUNK_COUNT_DEFAULT = 4
 _MAX_WORKERS_DEFAULT = 4
@@ -181,6 +180,7 @@ def run_pipeline(
     use_byte_estimate_routing: bool = True,
     use_probe_routing: bool = True,
     key_provider: KeyProvider | None = None,
+    out_of_core_reorder_threshold_rows: int | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -265,6 +265,7 @@ def run_pipeline(
         resolve_substrate,
         select_execution_adapter,
     )
+    from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
     from decoy_engine.generation.synthesize import generate_tables
     from decoy_engine.plan import compile_plan
     from decoy_engine.profile import profile_source
@@ -299,6 +300,7 @@ def run_pipeline(
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
+    resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
@@ -459,6 +461,7 @@ def run_pipeline(
             execution_plan_decision=execution_plan_decision,
             unconfigured_column_policy=projection_policy,
             key_provider=resolved_key_provider,
+            out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         )
 
     # TB-1: only full_frame / auto-chunk below needs every source resident.
@@ -529,8 +532,7 @@ def run_pipeline(
             # Adapters echo every source frame in `outputs` (generate-kind
             # entries in `merged_sources` come back round-tripped through the
             # substrate). Keeping them all preserves the established stitch
-            # contract below, where mask_result wins ties over the raw
-            # generate outputs.
+            # contract below, where mask_result wins ties over the raw generate outputs.
             mask_outputs = dict(mask_result.outputs)
             mask_timings = mask_result.timings
             mask_conversion_ms = mask_result.boundary_conversion_ms
@@ -602,8 +604,7 @@ def run_pipeline(
 
     # Explain surfacing: stamp the SAME classification the routing decision
     # used (computed once above), so the explain block and the executed
-    # route cannot drift apart. Behind the default-off flag; default runs
-    # stamp nothing here.
+    # route cannot drift apart. Behind the default-off flag; default runs stamp nothing here.
     if explain_plan and execution_plan_decision is not None:
         quality_metrics["execution_plan"] = {
             "mode": execution_plan_decision.mode,
@@ -614,8 +615,7 @@ def run_pipeline(
     # SP-05 job-level validators (P5.INFRA.4) + D8 combined quarantine pass;
     # see `_pipeline_finalize.finalize_validators_and_quarantine` for the
     # full "why" (trap T5, LOW-1 raise-before-write ordering, etc). Mutates
-    # `quality_metrics` in place and returns the (possibly quarantine
-    # -filtered) outputs.
+    # `quality_metrics` in place and returns the (possibly quarantine-filtered) outputs.
     outputs = _pipeline_finalize.finalize_validators_and_quarantine(
         outputs,
         config=config,

@@ -54,9 +54,8 @@ batch:
   index; the values are identical to the whole-child mint because the kernels
   are per-value deterministic.
 
-See `_batch_join.py`'s module docstring for the full inventory of documented
-typing divergences (all preserved), and `tests/parity/` for the byte-parity
-gate against the pandas oracle.
+See `_batch_join.py`'s docstring for the typing divergences this class
+inherits; `tests/parity/` pins this route's output identical to `_batch_join`'s.
 """
 
 from __future__ import annotations

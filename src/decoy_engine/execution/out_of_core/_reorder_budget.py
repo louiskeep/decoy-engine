@@ -83,6 +83,69 @@ class ReorderBudgets:
     remaining_disk_bytes: int
 
 
+@dataclass(frozen=True)
+class ReorderCaps:
+    """The route seam's per-table sizing for `_stream_driver.stream_table`'s
+    `reorder_caps` param, bundled from one `ReorderBudgets` resolution
+    (`_route_policy.decide_route`) so the driver receives one internally
+    consistent object instead of four independently re-derived values.
+
+    `joiner_memory_limit` / `build_memory_limit` are `memory_limit_for(...)`
+    strings the driver uses INSTEAD OF `resolve_phase_memory_limits`
+    (`_memory_estimate.py`'s batch-model phase resolver, which assumes
+    `_batch_join`'s per-edge connection shape, not this driver's sequential
+    one-connection-at-a-time phases). `run_bytes_cap` / `merge_fan_in` are
+    `ReorderBudgets`' own fields, carried alongside for the caller's
+    convenience; `stream_table` reads them from its own same-named params,
+    not from this object.
+    """
+
+    joiner_memory_limit: str
+    build_memory_limit: str
+    run_bytes_cap: int
+    merge_fan_in: int
+
+
+@dataclass(frozen=True)
+class HeadFitResult:
+    """Whether N co-resident phase-3 merge-cursor heads fit one edge's
+    `run_bytes_cap`, and the numbers behind that verdict (`_route_policy.py`
+    consults `fits` via its own `len(incoming_edges) <= 2 * merge_fan_in`
+    check before a `ReorderBudgets` exists; `phase3_head_fit` is the
+    post-budget confirmation / diagnostic form of the same arithmetic)."""
+
+    fits: bool
+    per_head_cap_bytes: int
+    max_co_resident_readers: int
+
+
+def phase3_head_fit(budgets: ReorderBudgets, co_resident_readers: int) -> HeadFitResult:
+    """Whether `co_resident_readers` open phase-3 `_OrderedJoinRows` heads
+    (one per incoming edge, all held open together across phase 3 -- see
+    `_stream_driver.stream_table`'s module docstring) fit within
+    `budgets.run_bytes_cap`.
+
+    Each open head costs `run_bytes_cap // (2 * merge_fan_in)` (the sorter's
+    per-merge-head cap, `_external_sort.py`), so N heads fit only while
+    `N <= 2 * merge_fan_in` (32 at the default fan-in). A table with more
+    incoming edges than that is a plausible schema shape (wide event / ERP /
+    healthcare tables), not a misconfiguration -- `_route_policy.decide_route`
+    falls back to `_batch_join` for it rather than raising.
+    """
+    if co_resident_readers <= 0:
+        raise ExecutionError(
+            code="out_of_core_reorder_head_fit_invalid",
+            message=f"co_resident_readers must be >= 1, got {co_resident_readers}.",
+        )
+    max_co_resident_readers = 2 * budgets.merge_fan_in
+    per_head_cap_bytes = budgets.run_bytes_cap // max_co_resident_readers
+    return HeadFitResult(
+        fits=co_resident_readers <= max_co_resident_readers,
+        per_head_cap_bytes=per_head_cap_bytes,
+        max_co_resident_readers=max_co_resident_readers,
+    )
+
+
 def resolve_reorder_budgets(
     process_ceiling_bytes: int | None,
     remaining_disk_bytes: int | None,
@@ -99,7 +162,10 @@ def resolve_reorder_budgets(
     architecture exists to remove, so silently proceeding unbounded is never
     an option here). Also fails closed
     (`out_of_core_reorder_budget_too_small`) when the ceiling is so small
-    that the sorter's share cannot clear `MIN_RUN_BYTES`.
+    that the sorter's share cannot clear `MIN_RUN_BYTES`, and closed
+    (`out_of_core_reorder_fan_in_invalid` / `_disk_budget_invalid`) on a
+    structurally invalid `merge_fan_in` or negative disk ledger -- neither
+    is ever silently clamped.
     """
     if process_ceiling_bytes is None or remaining_disk_bytes is None:
         raise ExecutionError(
@@ -112,6 +178,16 @@ def resolve_reorder_budgets(
                 "budgets explicitly, or use the resident (_batch_join.py) "
                 "path for jobs that fit in memory."
             ),
+        )
+    if merge_fan_in < 2:
+        raise ExecutionError(
+            code="out_of_core_reorder_fan_in_invalid",
+            message=f"merge_fan_in must be >= 2 (a merge needs >= 2 participants), got {merge_fan_in}.",
+        )
+    if remaining_disk_bytes < 0:
+        raise ExecutionError(
+            code="out_of_core_reorder_disk_budget_invalid",
+            message=f"remaining_disk_bytes must be >= 0, got {remaining_disk_bytes}.",
         )
     duckdb_memory_limit_bytes = round(F_DUCKDB * process_ceiling_bytes)
     run_bytes_cap = round(F_SORT * process_ceiling_bytes)
@@ -171,7 +247,10 @@ __all__ = [
     "F_DUCKDB",
     "F_SORT",
     "MIN_RUN_BYTES",
+    "HeadFitResult",
     "ReorderBudgets",
+    "ReorderCaps",
+    "phase3_head_fit",
     "require_disk",
     "resolve_reorder_budgets",
 ]
