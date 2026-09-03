@@ -431,17 +431,26 @@ class TestDateFormatChunkBoundary:
 
 
 class TestFkSelfMaskRI:
-    @pytest.mark.parametrize("chunk_size", [1, 2, 500])
+    """Was a byte-parity proof (chunked FK self-mask == full-frame, across
+    chunk boundaries, per text_mask branch): `text_mask` is one of the
+    strategies the 2026-09-02 cascade-safety plan DROPS from the FK self-mask
+    allowlist (`gate_fk_child_edges` condition (a) now admits `hash` only),
+    so this is now a gate-kill instead -- the config is rejected at compile
+    time, before any chunk is ever read, regardless of chunk_size or which
+    span sub-provider `provider_config` dispatches to (the reject fires on
+    the OUTER `text_mask` strategy name alone). Dropped the `chunk_size`
+    parametrize dimension: a compile-time reject cannot depend on how the
+    (never-read) input would have been chunked."""
+
     @pytest.mark.parametrize("case", BRANCH_CASES, ids=lambda c: c["name"])
-    def test_fk_self_mask_matches_parent_across_chunk_boundaries(
-        self, tmp_path, monkeypatch, case, chunk_size
+    def test_fk_self_mask_now_gate_killed_regardless_of_branch(
+        self, tmp_path, monkeypatch, case
     ) -> None:
         if case["fk_ner_markers"]:
             _install_fake_ner(monkeypatch, case["fk_ner_markers"])
         provider_config = case["provider_config"]
-        raw_keys = case["fk_raw_keys"] * 3  # 9 rows, repeated to cross chunk boundaries
+        raw_keys = case["fk_raw_keys"] * 3
 
-        parent_table = pa.table({"id": pa.array(raw_keys, type=pa.string())})
         child_table = pa.table({"customer_id": pa.array(raw_keys, type=pa.string())})
         parent_columns = [
             {
@@ -474,43 +483,16 @@ class TestFkSelfMaskRI:
             extra_tables=[{"name": "orders", "columns": child_columns}],
         )
 
-        chunked_child = pa.concat_tables(
+        with pytest.raises(PlanCompileError) as exc:
             list(
                 run_mask_pipeline_chunked(
                     cfg,
-                    _pa_chunks(child_table, chunk_size),
+                    _pa_chunks(child_table, 2),
                     table="orders",
                     engine_version=_ENGINE_VERSION,
                 )
             )
-        ).combine_chunks()
-
-        cfg_child_only = _config(tmp_path, child_columns, table="orders")
-        _write_csv_stub(tmp_path, "orders", child_table)
-        forced_child = run_pipeline(
-            cfg_child_only,
-            sources={"orders": child_table},
-            engine_version=_ENGINE_VERSION,
-            auto_chunk=False,
-        ).outputs["orders"]
-        assert chunked_child.equals(forced_child), (
-            f"{case['name']}: child chunked != child full-frame"
-        )
-
-        cfg_parent_only = _config(tmp_path, parent_columns, table="customers")
-        _write_csv_stub(tmp_path, "customers", parent_table)
-        parent_out = run_pipeline(
-            cfg_parent_only,
-            sources={"customers": parent_table},
-            engine_version=_ENGINE_VERSION,
-            auto_chunk=False,
-        ).outputs["customers"]
-
-        parent_masked = parent_out.column("id").to_pylist()
-        child_masked = chunked_child.column("customer_id").to_pylist()
-        assert parent_masked == child_masked, f"{case['name']}: parent/child linkage broke"
-        for raw, masked in zip(raw_keys, child_masked, strict=True):
-            case["check"](raw, masked)
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe", case["name"]
 
 
 class TestFkNegativeAndNamespaceIndependence:
@@ -521,6 +503,12 @@ class TestFkNegativeAndNamespaceIndependence:
         assert "text_mask" not in NAMESPACE_REQUIRING_STRATEGIES
 
     def test_child_config_mismatch_rejected(self, tmp_path) -> None:
+        """`text_mask` is dropped from the FK self-mask allowlist by the
+        2026-09-02 cascade-safety plan (condition (a) now admits `hash`
+        only), which fires BEFORE condition (e)'s provider_config-mismatch
+        check this test used to reach -- so the code flips to the allowlist
+        reject. The provider_config-mismatch check itself is still fully
+        exercised for `hash` in test_chunked_fk_gate_kills.py."""
         cfg = {
             "global_settings": {"seed": 7},
             "tables": [
@@ -559,7 +547,7 @@ class TestFkNegativeAndNamespaceIndependence:
         }
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(cfg, table="orders")
-        assert exc.value.code == "chunked_fk_child_config_mismatch"
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_namespace_absent_vs_differing_produces_identical_output(self, tmp_path) -> None:
         """text_mask keys on ctx.mask_key, not a per-column namespace: two

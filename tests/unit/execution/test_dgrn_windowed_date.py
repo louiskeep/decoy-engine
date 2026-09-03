@@ -550,7 +550,7 @@ class TestFkChildRIRegression:
         }
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(cfg, table="orders")
-        assert exc.value.code == "chunked_fk_parent_strategy_not_safe"
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
 # ---------------------------------------------------------------------------

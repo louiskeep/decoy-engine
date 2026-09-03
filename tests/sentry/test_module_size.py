@@ -322,7 +322,16 @@ ALLOWLIST: dict[str, int] = {
     # data-independent bucket_perturb namespace pre-check before the empty-input
     # return (a namespace-less config with a zero-chunk input must fail closed
     # like the oracle); the check itself is a free function in the sibling.
-    "src/decoy_engine/execution/_chunked.py": 789,
+    # Chunked-FK cascade-safety fix (2026-09-02): +21 LOC (789 -> 810) for
+    # predicate 12's REAL-stage dtype check on the hash-only FK self-mask
+    # allowlist -- the new `fk_hash_strategy_columns_for_table` import, the
+    # once-per-run column-set resolve, and threading it into the existing
+    # per-chunk `reject_mismatched_chunked_fk_declared_dtype` call. All of
+    # predicate 12's actual logic lives in the sibling `_chunked_fk_dtype.py` /
+    # `_chunked_fk_dtype_safety.py`; this file only gains the wiring, same as
+    # every other Phase 4 slice's split. Same FK-resolution-helper
+    # decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 810,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -344,7 +353,15 @@ ALLOWLIST: dict[str, int] = {
     # text_redact/bucketize/top_code/passthrough, so those correctness claims
     # stay accurate now that text_mask is a member too. Same decomposition
     # target stands.
-    "src/decoy_engine/execution/_chunked_fk.py": 660,
+    # Chunked-FK cascade-safety fix (2026-09-02): +293 LOC (660 -> 953)
+    # narrowing condition (a) to hash-only and adding predicates 8-12 (parent-
+    # not-root, parent/child `when`, endpoint `provider`, and predicate 12's
+    # declared-dtype stage), plus the `fk_hash_strategy_columns_for_table`
+    # helper predicate 12's runtime stage needs. `_chunked_fk_dtype_safety.py`
+    # carries the actual exact-dtype-set predicate as its own sibling
+    # specifically to avoid this file crossing the cap by MORE than it already
+    # has to for the gate logic itself. Same decomposition target stands.
+    "src/decoy_engine/execution/_chunked_fk.py": 953,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table

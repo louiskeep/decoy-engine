@@ -25,7 +25,9 @@ module enforces:
    set; `group_key` is admitted into `check_chunked_compatibility`'s
    per-column loop via this set, not by joining `CHUNK_SAFE_STRATEGIES`, so
    it stays correctly rejected by the FK gate exactly as before this slice
-   (`chunked_fk_parent_strategy_not_safe`). Mirrors slice 1's separate
+   (`chunked_fk_parent_strategy_not_self_mask_safe`, or -- for group_key
+   specifically, since it was never chunk-safe to begin with -- would have
+   been even before that 2026-09-02 narrowing). Mirrors slice 1's separate
    `CHUNK_DGRN_STRATEGIES`.
 
 2. `group_key` + `when:` must be rejected (Trap D). A when-gated group_key

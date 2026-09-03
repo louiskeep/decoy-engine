@@ -95,11 +95,15 @@ FK child self-masking (SC1 port, Option 1, docs/relationships-memory-scaling.md
 
 An FK edge where the current table is the child is ADMITTED for chunked
 execution -- the child self-masks via its own value-keyed strategy under the
-shared namespace rather than resolving by parent-map lookup -- ONLY WHEN all
-four gate conditions hold (`_chunked_fk.gate_fk_child_edges`). Any failure
+shared namespace rather than resolving by parent-map lookup -- ONLY WHEN
+every gate condition holds (`_chunked_fk.gate_fk_child_edges`). Any failure
 raises PlanCompileError (fail closed):
 
-  (a) Parent key strategy is in CHUNK_SAFE_STRATEGIES.
+  (a) Parent key strategy is EXACTLY `hash` (2026-09-02 cascade-safety fix:
+      every other CHUNK_SAFE_STRATEGIES member is a proven strategy x
+      representation x substrate divergence hole for FK self-masking
+      specifically, even though each is safe as an ordinary chunked
+      strategy).
   (b) Child FK column explicitly declares the same value-keyed strategy
       (no 'by-reference' model; the child must own its masking).
   (c) Child FK column explicitly declares the same namespace as the parent
@@ -117,6 +121,14 @@ raises PlanCompileError (fail closed):
       masking the orphan key under the same strategy and namespace.
       WARN/FAIL/PRESERVE all require the parent key set resident and are
       rejected with chunked_fk_orphan_policy_not_remap.
+  (8-12) The parent key node is not itself an FK child endpoint elsewhere
+      (a same-key cascade); neither FK key column has an effective `when`;
+      neither FK key column declares a `provider`; and the FK key dtype is
+      in the exact cross-adapter-safe set hash is proven byte-identical
+      for, validated at BOTH compile time (the declared dtype) and per
+      chunk (the real dtype) -- see `_chunked_fk.gate_fk_child_edges`'s
+      docstring for the full rationale and `_chunked_fk_dtype_safety.py`
+      for the exact dtype set.
 
 First cut: single-column FK edges only (composite FK rejected with
 chunked_fk_composite_unsupported). Tables that are FK parents but not
@@ -158,6 +170,7 @@ from . import _chunked_text_mask as text_mask_gate
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
+    fk_hash_strategy_columns_for_table,
     fk_passthrough_columns_for_table,
     gate_fk_child_edges,
     reject_lossy_chunked_fk_passthrough,
@@ -244,7 +257,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         chunked_generate_unsupported: `table` is a generate-kind table.
         chunked_fk_orphan_policy_not_remap: FK child edge with non-REMAP policy.
         chunked_fk_composite_unsupported: FK child edge with a composite key.
-        chunked_fk_parent_strategy_not_safe: parent key strategy not chunk-safe.
+        chunked_fk_parent_strategy_not_self_mask_safe: parent key strategy is not exactly `hash`.
         chunked_fk_child_namespace_missing: child column has no explicit namespace.
         chunked_fk_child_namespace_mismatch: child namespace != parent namespace.
         chunked_fk_child_strategy_missing: child column has no explicit strategy.
@@ -510,6 +523,11 @@ def run_mask_pipeline_chunked(
     # misdeclaration (which would else silently void RI). Substrate-independent,
     # so unlike the passthrough magnitude guard it is not adapter-gated.
     declared_fk_dtypes = fk_declared_dtypes_for_table(config, table)
+    # Predicate 12's REAL stage (cascade-safety fix) is scoped to hash-
+    # strategy FK columns specifically, not every chunk-safe strategy the
+    # family guard above covers -- see `reject_mismatched_chunked_fk_declared_
+    # dtype`'s docstring.
+    hash_fk_key_columns = fk_hash_strategy_columns_for_table(config, table)
     if adapter is None:
         adapter = PandasExecutionAdapter()
     # MEDIUM (DE-10 reland): only pay the guard's cost -- and only reject --
@@ -544,7 +562,10 @@ def run_mask_pipeline_chunked(
                 )
             if declared_fk_dtypes:
                 reject_mismatched_chunked_fk_declared_dtype(
-                    chunk, table=table, declared_fk_dtypes=declared_fk_dtypes
+                    chunk,
+                    table=table,
+                    declared_fk_dtypes=declared_fk_dtypes,
+                    hash_fk_key_columns=hash_fk_key_columns,
                 )
             # text_mask source must stay a chunk-stable string on EVERY chunk, not
             # just the first (the iterable's dtype can drift); see `_chunked_text_mask.py`.

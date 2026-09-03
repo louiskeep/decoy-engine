@@ -24,7 +24,9 @@ module enforces:
    `windowed_date` is admitted into `check_chunked_compatibility`'s
    per-column loop via this set, not by joining `CHUNK_SAFE_STRATEGIES`,
    so it stays correctly rejected by the FK gate exactly as before this
-   slice (`chunked_fk_parent_strategy_not_safe`).
+   slice (`chunked_fk_parent_strategy_not_self_mask_safe`, or -- for
+   windowed_date specifically, since it was never chunk-safe to begin with
+   -- would have been even before that 2026-09-02 narrowing).
 2. `windowed_date` + `when:` must be rejected. `run_with_when_gate`
    (`_when_gate.py`) passes only the MATCHING rows to the handler, so
    the full-frame oracle's `enumerate(anchor_series)` numbers the

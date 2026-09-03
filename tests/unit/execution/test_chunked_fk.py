@@ -1,11 +1,16 @@
 """Chunked FK self-masking -- Option 1, docs/relationships-memory-scaling.md §2.
 
-FK child columns are admitted for chunked self-masking when ALL four gate
-conditions hold:
+FK child columns are admitted for chunked self-masking when EVERY gate
+condition holds (`_chunked_fk.gate_fk_child_edges`'s docstring has the full
+list, including predicates 8-12 added by the 2026-09-02 cascade-safety fix).
+The core four:
 
-  (a) The parent key column strategy is in CHUNK_SAFE_STRATEGIES (value-keyed,
-      deterministic: hash, fpe, redact, truncate, text_redact, date_shift,
-      bucketize, passthrough).
+  (a) The parent key column strategy is EXACTLY `hash` (narrowed from the
+      full CHUNK_SAFE_STRATEGIES set by the 2026-09-02 cascade-safety fix:
+      every other member -- fpe, redact, truncate, text_redact, date_shift,
+      bucketize, top_code, text_mask, passthrough -- is a proven strategy x
+      representation x substrate hole for FK self-masking specifically, even
+      though each stays a safe ORDINARY chunked strategy).
   (b) The child FK column explicitly declares the same value-keyed strategy.
   (c) The child FK column explicitly declares the same namespace as the parent
       (required because ColumnSeed.namespace comes from the config column
@@ -13,8 +18,7 @@ conditions hold:
       plan_slice.namespace directly).
   (d) The edge's orphan_policy is 'remap'.
 
-Byte-identity proof (hash strategy; identical argument for any CHUNK_SAFE
-strategy):
+Byte-identity proof (hash strategy; the only strategy admitted post-2026-09-02):
 
   Non-orphan child row with FK value V matching parent row:
     full-frame: parent masks V -> M = hash(seed, ns, V); child resolves by
@@ -37,7 +41,7 @@ First cut (thin vertical slice):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pyarrow as pa
 import pytest
@@ -410,14 +414,14 @@ class TestFailClosedRejections:
         config = _fk_config(parent_strategy="shuffle")
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(config, table="orders")
-        assert exc.value.code == "chunked_fk_parent_strategy_not_safe"
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_parent_strategy_faker_rejected(self) -> None:
         """faker without the deterministic path is not chunk-safe as a parent key."""
         config = _fk_config(parent_strategy="faker")
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(config, table="orders")
-        assert exc.value.code == "chunked_fk_parent_strategy_not_safe"
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_child_strategy_mismatch_rejected(self) -> None:
         """Child strategy must equal parent strategy exactly."""
@@ -448,15 +452,18 @@ class TestFailClosedRejections:
         assert exc.value.code == "chunked_fk_child_namespace_mismatch"
 
     def test_child_provider_config_mismatch_rejected(self) -> None:
-        """P1: same strategy NAME is not enough. A parent redacting to 'P'
-        and a child redacting to 'C' would self-mask to different bytes even
-        though both declare strategy='redact', silently breaking FK RI.
+        """P1: same strategy NAME is not enough. A parent truncating its hash
+        to 8 hex chars and a child truncating to 16 would self-mask to
+        different bytes even though both declare strategy='hash', silently
+        breaking FK RI. (hash is the only strategy admitted post-2026-09-02
+        narrowing; `truncate` here is hash's own provider_config option, not
+        the dropped `truncate` STRATEGY.)
         """
         config = _fk_config(
-            parent_strategy="redact",
-            child_strategy="redact",
-            parent_provider_config={"redact_with": "P"},
-            child_provider_config={"redact_with": "C"},
+            parent_strategy="hash",
+            child_strategy="hash",
+            parent_provider_config={"truncate": 8},
+            child_provider_config={"truncate": 16},
         )
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(config, table="orders")
@@ -467,10 +474,10 @@ class TestFailClosedRejections:
     def test_child_provider_config_matching_is_admitted(self) -> None:
         """Same strategy name AND identical provider_config is admitted."""
         config = _fk_config(
-            parent_strategy="redact",
-            child_strategy="redact",
-            parent_provider_config={"redact_with": "X"},
-            child_provider_config={"redact_with": "X"},
+            parent_strategy="hash",
+            child_strategy="hash",
+            parent_provider_config={"truncate": 8},
+            child_provider_config={"truncate": 8},
         )
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
@@ -564,16 +571,17 @@ class TestFailClosedRejections:
             assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
 
     def test_truncate_undeclared_dtype_rejected(self) -> None:
-        """truncate is the silent-divergence case (str(1) != str(1.0)); with an
-        undeclared dtype it must fail closed."""
+        """The undeclared-dtype rejection (condition (f), first check) applies
+        to whichever strategy reaches it -- originally demonstrated with
+        `truncate` (the silent-divergence case, str(1) != str(1.0)), but
+        `truncate` is itself dropped by the hash-only allowlist now (condition
+        (a) rejects it before condition (f) is ever reached; see the allowlist
+        gate-kill coverage in test_chunked_fk_gate_kills.py). Rebased to
+        `hash` -- the only strategy that still reaches condition (f) -- to
+        keep exercising the undeclared-dtype rejection itself."""
         config = _fk_config(
-            parent_strategy="truncate",
-            child_strategy="truncate",
-            parent_ns=None,
-            child_ns=None,
-            rel_ns=None,
-            parent_provider_config={"length": 3},
-            child_provider_config={"length": 3},
+            parent_strategy="hash",
+            child_strategy="hash",
             parent_dtype=None,
             child_dtype=None,
         )
@@ -581,10 +589,13 @@ class TestFailClosedRejections:
             check_chunked_compatibility(config, table="orders")
         assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
 
-    def test_redact_undeclared_dtype_admitted_value_independent(self) -> None:
-        """redact is the one value-INDEPENDENT strategy: it emits a constant for
-        every non-null input regardless of dtype, so parent and child provably
-        mask to the same value even with no dtype declared. It must be admitted."""
+    def test_redact_no_longer_reaches_dtype_invariant_carveout(self) -> None:
+        """Was `test_redact_undeclared_dtype_admitted_value_independent`:
+        redact's DTYPE_INVARIANT_STRATEGIES carve-out (condition (f) skips
+        the dtype check for it, since it emits a constant regardless of
+        dtype) is now moot for FK self-masking -- the hash-only allowlist
+        (condition (a)) rejects redact before condition (f) is ever reached.
+        Flipped to a gate-kill (2026-09-02 cascade-safety plan, task #6)."""
         config = _fk_config(
             parent_strategy="redact",
             child_strategy="redact",
@@ -594,8 +605,9 @@ class TestFailClosedRejections:
             parent_dtype=None,
             child_dtype=None,
         )
-        # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_child_key_dtype_decimal_scale_mismatch_rejected(self) -> None:
         """Decimal scale-awareness (Codex gpt-5.6-sol HIGH-1, 2026-07-14): a
@@ -619,20 +631,23 @@ class TestFailClosedRejections:
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
 
-    def test_child_key_dtype_bare_decimal_both_sides_admitted_at_compile_gate(self) -> None:
+    def test_child_key_dtype_bare_decimal_both_sides_rejected_at_compile_gate(self) -> None:
         """A bare `"decimal"` declaration on both sides (no scale -- Codex's
-        exact repro shape) compares EQUAL at the compile gate (same literal
-        unprovable-family string), so it is admitted HERE. The actual
-        fail-closed reject for a bare declaration happens one layer down, at
-        the per-chunk runtime guard (`_chunked_fk_dtype`), which has real
-        Arrow data to compare against and can prove a bare declaration never
-        matches any real scaled family. See
-        test_de10_chunked_fk_declared_dtype.py for that runtime coverage."""
+        exact repro shape) compares EQUAL under the coarse dtype-FAMILY check
+        (same literal unprovable-family string), so THAT check alone admits
+        it. Predicate 12 (2026-09-02 cascade-safety plan) is a stricter,
+        EXACT declared-dtype check layered on top: a bare `"decimal"` names no
+        concrete Arrow type at all, so it cannot be proven cross-adapter-safe
+        and is now rejected right here at compile time -- a strict
+        improvement over the prior behavior, which deferred the reject to the
+        per-chunk runtime guard (see test_de10_chunked_fk_declared_dtype.py
+        for how that runtime guard's OWN bare-decimal-sentinel check still
+        covers the case where predicate 12's declared stage never runs for
+        this edge, e.g. gating the table on its PARENT role)."""
         config = _fk_config(parent_dtype="decimal", child_dtype="decimal")
-        # Must not raise -- the compile gate cannot see real data, so a
-        # same-string bare/bare declaration is not, by itself, a proven
-        # mismatch at THIS layer.
-        check_chunked_compatibility(config, table="orders")
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
 
     def test_composite_fk_rejected(self) -> None:
         """Composite FK (multi-column key) is out of scope for first cut."""
@@ -908,145 +923,119 @@ class TestByteParityNonDefaultNamespace:
 
 
 # ---------------------------------------------------------------------------
-# Test 6: namespace-agnostic strategies admitted when parent_ns=None
+# Test 6 (2026-09-02 cascade-safety plan, task #6): namespace-agnostic
+# strategies are now GATE-KILLED, not admitted, for FK self-masking.
 # ---------------------------------------------------------------------------
 
 
-class TestNamespaceAgnosticStrategiesAdmitted:
-    """Strategies that do not consume namespace (redact, passthrough, truncate,
-    text_redact, bucketize) must be admitted by the gate even when parent_ns=None.
+class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
+    """Was `TestNamespaceAgnosticStrategiesAdmitted`: redact/passthrough (and
+    every other namespace-agnostic strategy) used to be ADMITTED for FK
+    self-masking even with no namespace declared, because the namespace
+    sub-checks (c1/c2/c3) only ever applied to NAMESPACE_REQUIRING_STRATEGIES.
 
-    Before the fix the namespace check was unconditional: any strategy with
-    parent_ns=None raised chunked_fk_parent_namespace_missing. That rejected
-    configs the full-frame path ACCEPTS -- a regression introduced by the prior fix.
-
-    After the fix the namespace sub-checks (c1/c2/c3) apply only to strategies in
-    NAMESPACE_REQUIRING_STRATEGIES (hash, fpe, date_shift), which call
-    derive(job_seed, namespace, ...) and raise at execution when namespace is None.
-    Namespace-agnostic strategies produce byte-identical output regardless of
-    whether a namespace is declared, so admitting them is not a security regression.
+    The 2026-09-02 cascade-safety fix narrows condition (a) to `hash` ONLY:
+    redact, passthrough, truncate, fpe, date_shift, bucketize, top_code,
+    text_redact, and text_mask are each a proven strategy x representation x
+    substrate hole for FK self-masking specifically (see `_chunked_fk.
+    gate_fk_child_edges`'s docstring), even though every one of them stays a
+    perfectly safe ORDINARY chunked strategy. So the "namespace-agnostic
+    strategies are admitted" story from before is now moot for the FK route:
+    these strategies are rejected at condition (a), before the namespace
+    sub-checks (or anything else) ever run. Flipped to gate-kills rather than
+    deleted, to keep asserting that outcome rather than losing the coverage.
     """
 
-    def test_redact_parent_ns_none_admitted_and_produces_redacted_output(self) -> None:
-        """redact with no namespace on parent or child must be admitted and mask correctly.
-
-        FAILS before fix: gate raises chunked_fk_parent_namespace_missing because
-        the pre-fix namespace check is unconditional.
-        PASSES after fix: gate skips the namespace sub-checks for redact (not in
-        NAMESPACE_REQUIRING_STRATEGIES) and the chunked run produces "REDACTED"
-        for every value -- byte-identical to the full-frame path.
-
-        Byte-identity proof: redact is pure(value, config) -> constant "REDACTED"
-        for any non-null input, independent of namespace. Full-frame path:
-        parent masked to "REDACTED"; child FK values found in map -> "REDACTED";
-        REMAP orphan: redact(orphan_key) = "REDACTED". Both paths produce
-        ["REDACTED", "REDACTED", "REDACTED", "REDACTED"] for the input below.
-        """
+    def test_redact_rejected_by_hash_only_allowlist(self) -> None:
+        """Was `test_redact_parent_ns_none_admitted_and_produces_redacted_
+        output`: redact is no longer admitted for FK self-masking at all."""
         config = _fk_config(
             parent_strategy="redact",
             child_strategy="redact",
-            parent_ns=None,
-            child_ns=None,
-            rel_ns=None,
-        )
-        rows = ["c1", "c2", "c1", "c9"]
-        child_chunks = _chunks(rows, "customer_id", chunk_size=2)
-        # Before fix: raises chunked_fk_parent_namespace_missing.
-        # After fix: succeeds.
-        chunked_output = list(
-            run_mask_pipeline_chunked(config, child_chunks, table="orders", engine_version=_ENGINE)
-        )
-        chunked_vals = pa.concat_tables(chunked_output).column("customer_id").to_pylist()
-
-        # All values -- matched and orphan -- become "REDACTED".
-        assert all(v == "REDACTED" for v in chunked_vals), (
-            f"Expected all 'REDACTED'; got {chunked_vals}"
-        )
-        assert len(chunked_vals) == len(rows)
-        # No raw FK key appears in output.
-        assert "c1" not in [v for v in chunked_vals if v != "REDACTED"]
-        assert "c9" not in chunked_vals
-
-    def test_passthrough_parent_ns_none_admitted_and_preserves_raw_values(self) -> None:
-        """passthrough with no namespace on parent or child must be admitted.
-
-        FAILS before fix: gate raises chunked_fk_parent_namespace_missing.
-        PASSES after fix: gate skips namespace sub-checks for passthrough and
-        the chunked run returns values unchanged -- byte-identical to full-frame.
-
-        Byte-identity proof: passthrough is a no-op, pure(value) = value,
-        namespace-independent. Full-frame path: parent identity (c1->c1, c2->c2,
-        c3->c3); child FK values found in map -> same raw value; REMAP orphan:
-        passthrough(orphan) = orphan. Both paths preserve the raw input exactly.
-
-        Note: passthrough as an FK key strategy retains raw values in the output --
-        the same behavior as the full-frame path. This is the user's explicit
-        config choice; it is not a regression introduced by this admission.
-        """
-        config = _fk_config(
-            parent_strategy="passthrough",
-            child_strategy="passthrough",
-            parent_ns=None,
-            child_ns=None,
-            rel_ns=None,
-        )
-        rows = ["c1", "c2", "c1", "c9"]
-        child_chunks = _chunks(rows, "customer_id", chunk_size=2)
-        # Before fix: raises chunked_fk_parent_namespace_missing.
-        # After fix: succeeds.
-        chunked_output = list(
-            run_mask_pipeline_chunked(config, child_chunks, table="orders", engine_version=_ENGINE)
-        )
-        chunked_vals = pa.concat_tables(chunked_output).column("customer_id").to_pylist()
-
-        # passthrough is a no-op: raw FK key values are preserved (user's choice).
-        assert chunked_vals == rows, f"passthrough must preserve raw values; got {chunked_vals}"
-
-    def test_redact_gate_admission_check_only(self) -> None:
-        """Gate-only admission test: check_chunked_compatibility must not raise
-        for redact with no namespace."""
-        config = _fk_config(
-            parent_strategy="redact",
-            child_strategy="redact",
-            parent_ns=None,
-            child_ns=None,
-            rel_ns=None,
-        )
-        # Must not raise -- FAILS before fix, PASSES after fix.
-        check_chunked_compatibility(config, table="orders")
-
-    def test_passthrough_gate_admission_check_only(self) -> None:
-        """Gate-only admission test: check_chunked_compatibility must not raise
-        for passthrough with no namespace."""
-        config = _fk_config(
-            parent_strategy="passthrough",
-            child_strategy="passthrough",
-            parent_ns=None,
-            child_ns=None,
-            rel_ns=None,
-        )
-        # Must not raise -- FAILS before fix, PASSES after fix.
-        check_chunked_compatibility(config, table="orders")
-
-    def test_other_gates_still_apply_to_namespace_agnostic_strategies(self) -> None:
-        """Conditions (a), (b), (d) still gate even namespace-agnostic strategies.
-
-        The namespace sub-check exemption does NOT loosen the other conditions.
-        Child strategy must still match parent; orphan_policy must still be remap.
-        """
-        # Mismatched child strategy must still be rejected.
-        config_bad_child = _fk_config(
-            parent_strategy="redact",
-            child_strategy="truncate",  # mismatch
             parent_ns=None,
             child_ns=None,
             rel_ns=None,
         )
         with pytest.raises(PlanCompileError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    _chunks(["c1", "c2", "c1", "c9"], "customer_id", chunk_size=2),
+                    table="orders",
+                    engine_version=_ENGINE,
+                )
+            )
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
+
+    def test_passthrough_rejected_by_hash_only_allowlist(self) -> None:
+        """Was `test_passthrough_parent_ns_none_admitted_and_preserves_raw_
+        values`: passthrough is no longer admitted for FK self-masking at
+        all -- it is a family-C hole (a tz-aware timestamp key keeps the
+        child's own tz representation, arrow-unequal to the parent's)."""
+        config = _fk_config(
+            parent_strategy="passthrough",
+            child_strategy="passthrough",
+            parent_ns=None,
+            child_ns=None,
+            rel_ns=None,
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    config,
+                    _chunks(["c1", "c2", "c1", "c9"], "customer_id", chunk_size=2),
+                    table="orders",
+                    engine_version=_ENGINE,
+                )
+            )
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
+
+    def test_redact_gate_kill_check_only(self) -> None:
+        """Gate-only version of the above: check_chunked_compatibility raises
+        before any chunk is ever read."""
+        config = _fk_config(
+            parent_strategy="redact",
+            child_strategy="redact",
+            parent_ns=None,
+            child_ns=None,
+            rel_ns=None,
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
+
+    def test_passthrough_gate_kill_check_only(self) -> None:
+        """Gate-only version of the passthrough case above."""
+        config = _fk_config(
+            parent_strategy="passthrough",
+            child_strategy="passthrough",
+            parent_ns=None,
+            child_ns=None,
+            rel_ns=None,
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
+
+    def test_other_gates_still_apply_to_the_sole_admitted_strategy(self) -> None:
+        """Was `test_other_gates_still_apply_to_namespace_agnostic_
+        strategies`: conditions (b) and (d) still gate hash -- the sole
+        strategy now admitted -- exactly as they gated every namespace-
+        agnostic strategy before this fix."""
+        # Mismatched child strategy must still be rejected.
+        config_bad_child = _fk_config(
+            parent_strategy="hash",
+            child_strategy="fpe",  # mismatch
+            parent_ns="pns",
+            child_ns="pns",
+            rel_ns="pns",
+        )
+        with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(config_bad_child, table="orders")
         assert exc.value.code == "chunked_fk_child_strategy_mismatch"
 
-        # Wrong orphan_policy must still be rejected.
+        # Wrong orphan_policy must still be rejected (fires before condition
+        # (a) even looks at the strategy, so redact works here unchanged).
         config_bad_policy = _fk_config(
             parent_strategy="redact",
             child_strategy="redact",
@@ -1058,3 +1047,235 @@ class TestNamespaceAgnosticStrategiesAdmitted:
         with pytest.raises(PlanCompileError) as exc2:
             check_chunked_compatibility(config_bad_policy, table="orders")
         assert exc2.value.code == "chunked_fk_orphan_policy_not_remap"
+
+
+# ---------------------------------------------------------------------------
+# Test #4 (2026-09-02 cascade-safety plan): multi-hop SAME-key cascade
+# divergence proof. See plan §1 family A(1): when a parent key is itself a
+# downstream FK child on the SAME column, the oracle FK-RESOLVES it (rather
+# than masking it by its declared strategy); self-masking each table in
+# isolation cannot reproduce that resolution. Predicate 8 blocks the whole
+# shape at compile time, end to end, before any table's chunks are ever read.
+# ---------------------------------------------------------------------------
+
+
+class TestMultiHopSameKeyCascadeBlocked:
+    def test_same_key_chain_blocked_end_to_end_before_any_chunk_read(self) -> None:
+        """A.id -> B.id -> C.id, all hash/ns matching, orphan_policy remap on
+        both edges (the only shape condition (d) would otherwise admit).
+        B.id is BOTH the child of hop 1 and the parent key of hop 2 -- the
+        SAME key node -- so gating table "c" must fail closed (predicate 8),
+        and it must do so BEFORE any chunk is pulled from the iterator."""
+        config = {
+            "global_settings": {"seed": 7},
+            "tables": [
+                {
+                    "name": "a",
+                    "columns": [
+                        {"name": "id", "strategy": "hash", "namespace": "ns", "dtype": "string"}
+                    ],
+                },
+                {
+                    "name": "b",
+                    "columns": [
+                        {"name": "id", "strategy": "hash", "namespace": "ns", "dtype": "string"}
+                    ],
+                },
+                {
+                    "name": "c",
+                    "columns": [
+                        {"name": "id", "strategy": "hash", "namespace": "ns", "dtype": "string"}
+                    ],
+                },
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["id"]}],
+                    "orphan_policy": "remap",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "c", "columns": ["id"]}],
+                    "orphan_policy": "remap",
+                },
+            ],
+        }
+
+        class _LazyTracker:
+            """Iterator that records pulls on __next__, not at construction."""
+
+            def __init__(self) -> None:
+                self._items: list[pa.Table] = [pa.table({"id": ["v1", "v2"]})]
+                self.consumed = 0
+
+            def __iter__(self) -> _LazyTracker:
+                return self
+
+            def __next__(self) -> pa.Table:
+                if not self._items:
+                    raise StopIteration
+                self.consumed += 1
+                return self._items.pop(0)
+
+        tracker = _LazyTracker()
+        with pytest.raises(PlanCompileError) as exc:
+            list(run_mask_pipeline_chunked(config, tracker, table="c", engine_version=_ENGINE))
+        assert exc.value.code == "chunked_fk_parent_not_root"
+        assert tracker.consumed == 0, (
+            f"Gate must fire before any chunks are consumed; {tracker.consumed} were pulled"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test #1b(d) (2026-09-02 cascade-safety plan): a parameterized chunked-vs-
+# oracle byte-parity proof across EVERY predicate-12 safe dtype class.
+# Mirrors TestByteParityWithRemapOrphans's structure (full-frame FK
+# resolution vs chunked self-masking of the SAME rows), parameterized over
+# the exact safe-dtype-class list predicate 12 admits.
+# ---------------------------------------------------------------------------
+
+
+def _byte_parity_check(
+    parent_values: list, child_values: list, arrow_type: pa.DataType, dtype_label: str
+) -> None:
+    import random
+
+    parent_src = pa.table({"id": pa.array(parent_values, type=arrow_type)})
+    child_src = pa.table({"customer_id": pa.array(child_values, type=arrow_type)})
+
+    parent_profile = walk_dataframe(
+        parent_src.to_pandas(),
+        table_name="customers",
+        declared_pk_cols=frozenset(),
+        fk_specs={},
+        sample_rows=None,
+        rng=random.Random(0),
+    )
+    child_profile = walk_dataframe(
+        child_src.to_pandas(),
+        table_name="orders",
+        declared_pk_cols=frozenset(),
+        fk_specs={},
+        sample_rows=None,
+        rng=random.Random(0),
+    )
+    full_profile = Profile(
+        schema_version=1,
+        tables=(parent_profile, child_profile),
+        relationships=(
+            Relationship(
+                parent_table="customers",
+                parent_columns=("id",),
+                child_table="orders",
+                child_columns=("customer_id",),
+                namespace="cust_ns",
+            ),
+        ),
+        profiled_at=datetime(1970, 1, 1, 0, 0, 0),
+        decoy_engine_version=_ENGINE,
+        profile_seed=None,
+    )
+
+    config = _fk_config(parent_dtype=dtype_label, child_dtype=dtype_label)
+    full_plan = compile_plan(config, full_profile, decoy_engine_version=_ENGINE)
+    ns_reg = build_namespace_registry(config, full_profile)
+    policy_lookup = check_orphan_fk_policy_completeness(config, full_profile.relationships)
+    real_graph = build_relationship_graph(
+        full_profile.relationships,
+        namespace_registry=ns_reg,
+        orphan_policy_lookup=policy_lookup,
+    )
+
+    full_result = PandasExecutionAdapter().run(
+        full_plan,
+        {"customers": parent_src, "orders": child_src},
+        registry=_REGISTRY,
+        relationship_graph=real_graph,
+        namespace_registry=ns_reg,
+    )
+    full_child_output = full_result.outputs["orders"].column("customer_id").to_pylist()
+
+    # NOT the shared `_chunks` helper: it infers the Arrow type from the raw
+    # Python values (`pa.table({col_name: batch})`), which would silently
+    # drop the tz off a naive Python `datetime` and defeat this test's own
+    # point (an IANA-tz timestamp specifically). Chunk the SAME typed source
+    # array instead, so every chunk carries the exact `arrow_type` requested.
+    child_column = child_src.column("customer_id")
+    child_chunks = [
+        pa.table({"customer_id": child_column.slice(i, 2)}) for i in range(0, len(child_values), 2)
+    ]
+    chunked_output = list(
+        run_mask_pipeline_chunked(config, child_chunks, table="orders", engine_version=_ENGINE)
+    )
+    chunked_child = pa.concat_tables(chunked_output).column("customer_id").to_pylist()
+
+    assert chunked_child == full_child_output, (
+        f"Byte parity failed for dtype class {dtype_label!r}.\n"
+        f"full-frame: {full_child_output}\nchunked:    {chunked_child}"
+    )
+
+
+class TestByteParitySafeDtypeClasses:
+    def test_string(self) -> None:
+        _byte_parity_check(
+            ["p1", "p2", "p3"], ["p1", "p3", "orphan_z", "p2"], pa.string(), "string"
+        )
+
+    def test_large_string(self) -> None:
+        _byte_parity_check(
+            ["p1", "p2", "p3"],
+            ["p1", "p3", "orphan_z", "p2"],
+            pa.large_string(),
+            "large_string",
+        )
+
+    def test_int_width(self) -> None:
+        _byte_parity_check([1, 2, 3], [1, 3, 999, 2], pa.int64(), "int64")
+
+    def test_bool(self) -> None:
+        # Only two possible keys, so no genuine "orphan" -- both booleans are
+        # always present in the parent; still proves admission + parity.
+        _byte_parity_check([True, False], [True, False, True, False], pa.bool_(), "bool")
+
+    def test_date32(self) -> None:
+        _byte_parity_check(
+            [date(2020, 1, 1), date(2020, 1, 2), date(2020, 1, 3)],
+            [date(2020, 1, 1), date(2020, 1, 3), date(2099, 1, 1), date(2020, 1, 2)],
+            pa.date32(),
+            "date32",
+        )
+
+    def test_timestamp_iana_tz(self) -> None:
+        # No orphan value here (unlike the other classes): REMAP re-masks an
+        # orphan key through a FRESH pandas Series the oracle's own orphan
+        # resolver builds (`_strategies/_orphan.py`), which is an existing,
+        # unrelated mechanism this plan does not touch -- this test's claim is
+        # specifically that a MATCHED IANA-tz timestamp key round-trips
+        # byte-identically through both routes, which does not need an orphan
+        # to prove.
+        _byte_parity_check(
+            [
+                datetime(2020, 1, 1, 12, 0, 0),
+                datetime(2020, 1, 2, 12, 0, 0),
+                datetime(2020, 1, 3, 12, 0, 0),
+            ],
+            [
+                datetime(2020, 1, 1, 12, 0, 0),
+                datetime(2020, 1, 3, 12, 0, 0),
+                datetime(2020, 1, 2, 12, 0, 0),
+            ],
+            pa.timestamp("us", tz="UTC"),
+            "timestamp[us, tz=UTC]",
+        )
+
+    def test_decimal_scale_ge_0(self) -> None:
+        import decimal
+
+        # No orphan value here -- see test_timestamp_iana_tz's comment.
+        _byte_parity_check(
+            [decimal.Decimal("1.0"), decimal.Decimal("2.0"), decimal.Decimal("3.0")],
+            [decimal.Decimal("1.0"), decimal.Decimal("3.0"), decimal.Decimal("2.0")],
+            pa.decimal128(4, 1),
+            "decimal128(4, 1)",
+        )

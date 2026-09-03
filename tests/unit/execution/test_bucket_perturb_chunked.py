@@ -621,7 +621,7 @@ class TestAdmissionBoundary:
             check_chunked_compatibility(cfg, table="child")
         assert exc.value.code in (
             "chunked_bucket_perturb_fk_key_unsupported",
-            "chunked_fk_parent_strategy_not_safe",
+            "chunked_fk_parent_strategy_not_self_mask_safe",
         )
 
     def test_reject_bucket_perturb_fk_keys_direct_unit_both_orientations(self) -> None:
