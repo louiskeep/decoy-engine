@@ -550,6 +550,69 @@ def test_unsafe_real_dtype_in_parent_role_rejected_by_predicate12(
     assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
 
 
+@pytest.mark.parametrize(
+    ("real_array", "admitted"),
+    [
+        (pa.array([0], type=pa.date64()), False),
+        (pa.array([decimal.Decimal("1.00")], type=pa.decimal256(10, 2)), False),
+        (pa.array([5], type=pa.int64()), True),  # safe: must NOT false-positive
+        (pa.array([None], type=pa.null()), True),  # all-null carveout intact
+    ],
+    ids=["date64", "decimal256", "safe_int", "all_null"],
+)
+def test_undeclared_hash_fk_key_still_predicate12_checked(
+    real_array: pa.Array, admitted: bool
+) -> None:
+    """(Codex final-gate P1-1) `dtype` is optional in config, so a hash FK key
+    with NO declared dtype leaves `declared_fk_dtypes` empty and used to skip
+    predicate 12's runtime real stage entirely -- an unsafe real date64 /
+    decimal256 reached the hash kernel and diverged cross-adapter (native Polars
+    raised timezone_naive / Int256-panicked on the same input). The real stage
+    is exact-type and needs no declaration; it now runs for every present hash
+    FK key column. Safe dtypes and the all-null carveout must not regress."""
+    config = _fk_config(
+        strategy="hash", parent_dtype=None, child_dtype=None, namespace="ns"
+    )
+    parent_chunk = pa.table({"id": real_array})
+    if admitted:
+        out = list(
+            run_mask_pipeline_chunked(
+                config, [parent_chunk], table="customers", engine_version=_ENGINE
+            )
+        )
+        assert out[0].num_rows == 1
+    else:
+        with pytest.raises(ExecutionError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    config, [parent_chunk], table="customers", engine_version=_ENGINE
+                )
+            )
+        assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
+
+
+def test_undeclared_hash_fk_key_unsafe_on_later_chunk_still_rejected() -> None:
+    """(Codex final-gate P1-1) The undeclared-hash real check must fire on EVERY
+    chunk, not just the first: a stream whose first chunk is a safe int64 and
+    whose second drifts to date64 must still fail closed on the drifting chunk,
+    same as the declared-dtype guard's per-chunk contract."""
+    config = _fk_config(
+        strategy="hash", parent_dtype=None, child_dtype=None, namespace="ns"
+    )
+    safe_chunk = pa.table({"id": pa.array([1], type=pa.int64())})
+    drifted_chunk = pa.table({"id": pa.array([0], type=pa.date64())})
+    with pytest.raises(ExecutionError) as exc:
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [safe_chunk, drifted_chunk],
+                table="customers",
+                engine_version=_ENGINE,
+            )
+        )
+    assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
+
+
 def test_dtype_family_decimal_scale_aware_unit() -> None:
     """Direct unit coverage of the scale-aware family strings themselves."""
     from decoy_engine.execution._chunked_fk import _dtype_family

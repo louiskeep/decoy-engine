@@ -560,7 +560,13 @@ def run_mask_pipeline_chunked(
                 reject_lossy_chunked_fk_passthrough(
                     chunk, table=table, passthrough_fk_columns=guard_passthrough_fk_columns
                 )
-            if declared_fk_dtypes:
+            # `hash_fk_key_columns` triggers the guard INDEPENDENTLY of
+            # `declared_fk_dtypes`: `dtype` is optional in config, so a hash FK
+            # key with no declared dtype leaves `declared_fk_dtypes` empty yet
+            # still needs predicate 12's real-type check (else an unsafe real
+            # date64/decimal256 reaches the kernel unchecked -- Codex final-gate
+            # P1-1).
+            if declared_fk_dtypes or hash_fk_key_columns:
                 reject_mismatched_chunked_fk_declared_dtype(
                     chunk,
                     table=table,

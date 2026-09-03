@@ -765,6 +765,67 @@ def test_same_key_multihop_chain_gate_kill() -> None:
     assert err_again.code == "chunked_fk_parent_not_root"
 
 
+def test_predicate8_scalar_parent_is_composite_component_rejected() -> None:
+    """(Codex final-gate P1-2) A.(x,y) -> B.(id,z) then B.id -> C.id: gating C
+    must reject. B.id is a COMPONENT of the composite child endpoint B.(id,z),
+    and composite FK resolution rewrites every participating child column, so
+    the oracle emits B.id's resolved value while chunked self-masking of C.id
+    would hash B.id's raw value -- a silent RI divergence. Predicate 8's
+    exact-tuple match missed this (`(b,("id",))` != `(b,("id","z"))`); the
+    component-based check catches it. Gating C never gates B's incoming
+    composite edge, so per-table gating alone does NOT close this."""
+
+    def col(name: str) -> dict:
+        return {"name": name, "strategy": "hash", "namespace": "ns", "dtype": "int64"}
+
+    cfg = {
+        "global_settings": {"seed": 7},
+        "tables": [
+            {"name": "a", "columns": [col("x"), col("y")]},
+            {"name": "b", "columns": [col("id"), col("z")]},
+            {"name": "c", "columns": [col("id")]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "a", "columns": ["x", "y"]},
+                "children": [{"table": "b", "columns": ["id", "z"]}],
+                "orphan_policy": "remap",
+            },
+            {
+                "parent": {"table": "b", "columns": ["id"]},
+                "children": [{"table": "c", "columns": ["id"]}],
+                "orphan_policy": "remap",
+            },
+        ],
+    }
+    err = _reject(cfg, table="c")
+    assert err.code == "chunked_fk_parent_not_root"
+    assert err.path == "tables.b.columns.id"
+
+
+def test_predicate8_distinct_column_self_fk_not_over_rejected() -> None:
+    """The component check must NOT over-reject the distinct-column self-FK
+    `employees.id -> employees.manager_id`: `id` is a parent key but never a
+    child-endpoint component, so gating employees is admitted (the oracle never
+    resolves `id`). Guards the P1-2 fix against collapsing this valid case."""
+
+    def col(name: str) -> dict:
+        return {"name": name, "strategy": "hash", "namespace": "ns", "dtype": "int64"}
+
+    cfg = {
+        "global_settings": {"seed": 7},
+        "tables": [{"name": "employees", "columns": [col("id"), col("manager_id")]}],
+        "relationships": [
+            {
+                "parent": {"table": "employees", "columns": ["id"]},
+                "children": [{"table": "employees", "columns": ["manager_id"]}],
+                "orphan_policy": "remap",
+            }
+        ],
+    }
+    gate_fk_child_edges(cfg, table="employees")  # must not raise
+
+
 # ---------------------------------------------------------------------------
 # Task #1b (declared stage only -- the REAL-type runtime stage lives in
 # test_de10_chunked_fk_declared_dtype.py, alongside the rest of that guard's

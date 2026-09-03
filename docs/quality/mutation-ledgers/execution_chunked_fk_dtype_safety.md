@@ -12,16 +12,22 @@ readjudication), selection `test_chunked_fk_dtype_safety.py` +
 
 ## Numbers
 
-**89 mutants: 87 killed, 2 survived, 0 true-timeout (97.75% logic).**
-**0 unresolved correctness-critical logic on the changed unit** -- both
-survivors are output-equivalent (proof below).
+**89 mutants: 88 killed, 1 survived, 0 true-timeout (98.88% logic).**
+**0 unresolved correctness-critical logic on the changed unit** -- the one
+survivor is output-equivalent (proof below).
 
-This is the post-pinning figure. The pre-pinning run (gate-kill + de10 selection
-only) scored 82.02% (73/89) with 16 survivors, all on this predicate's own
-admit/reject branches -- the behavioral consumers exercised the predicate
-indirectly but did not pin its every branch. A direct exhaustive unit test
-(`test_chunked_fk_dtype_safety.py`, every admit branch, every reject branch,
-every declared-parse path) closed 14 of the 16.
+This is the post-pinning, post-Codex-remediation figure. The pre-pinning run
+(gate-kill + de10 selection only) scored 82.02% (73/89) with 16 survivors, all on
+this predicate's own admit/reject branches -- the behavioral consumers exercised
+the predicate indirectly but did not pin its every branch. A direct exhaustive
+unit test (`test_chunked_fk_dtype_safety.py`, every admit branch, every reject
+branch, every declared-parse path) closed 14 of the 16, reaching 87/89. The
+Codex final gate (P2-1) then showed the 88th -- mutant 26, the timestamp
+construction `except` -- was NOT equivalent as first recorded: a surrogate
+character in the tz (`timestamp[us, tz=UTC\ud800]`) matches the regex but makes
+`pa.timestamp("us", tz=...)` raise `UnicodeEncodeError`, so the `except` IS
+reachable and the mutant is live-but-fail-closed. Adding that case to the unsafe
+parser tests kills it.
 
 ## Why the reject branches had to be pinned
 
@@ -44,7 +50,7 @@ assertion that the corresponding real type (or declared string) is rejected:
   precision-overflow construction failure, tz-naive/fixed-offset declared
   timestamps, and the final unrecognized reject.
 
-## Accepted survivors (both output-equivalent, on `declared_fk_hash_dtype_is_safe`)
+## Accepted survivor (output-equivalent, on `declared_fk_hash_dtype_is_safe`)
 
 - **mutmut_25** -- the tz-absent else branch mutated
   `pa.timestamp(unit)` -> `pa.timestamp(None)`. The else branch is reached ONLY
@@ -53,16 +59,24 @@ assertion that the corresponding real type (or declared string) is rejected:
   (returns False); the mutant calls `pa.timestamp(None)`, which raises, hits the
   `except`, and also returns False. No tz-naive timestamp is ever safe, so both
   paths return False for every input that reaches this branch -- equivalent, not
-  killable.
-- **mutmut_26** -- the construction `except` mutated `return False` ->
-  `return True`. The `except` is defensive-only: `pa.timestamp` accepts any of
-  the regex-matched units (`s|ms|us|ns`) with an arbitrary tz string without
-  raising (tz is stored verbatim; ZoneInfo validation happens later inside the
-  shared predicate). No regex-matched declared string reaches this `except`, so
-  the mutation is unreachable -- equivalent.
+  killable. (Codex final-gate P2-1 independently confirmed mutant 25 is the
+  genuinely equivalent one.)
 
-Neither survivor changes what dtype is admitted vs. rejected on any reachable
+The survivor does not change what dtype is admitted vs. rejected on any reachable
 input.
+
+### Note on the earlier mis-classification (Codex P2-1)
+
+An earlier version of this ledger listed mutant 26 (the construction `except`,
+`return False -> return True`) as a second equivalent survivor, on the reasoning
+that `pa.timestamp` never raises for a regex-matched unit and an arbitrary tz
+string. That reasoning was wrong: a surrogate code point in the tz makes
+`pa.timestamp` raise `UnicodeEncodeError`, so the `except` is reachable and the
+mutant is a live fail-closed mutant, not equivalent. The lesson: "PyArrow accepts
+any Python string as a tz" is false for surrogate-bearing strings. The unsafe
+parser tests now include that declaration, which kills mutant 26. Production was
+always fail-closed here (the real `except` returns False); only the mutation
+evidence was inaccurate.
 
 ## Regenerate
 

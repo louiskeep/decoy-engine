@@ -123,6 +123,9 @@ _UNSAFE_DECLARED = [
     "float64",
     "timestamp[us]",  # tz-naive declared
     "timestamp[us, tz=+02:00]",  # fixed-offset declared
+    "timestamp[us, tz=UTC\ud800]",  # surrogate in tz: regex matches, pa.timestamp
+    # raises UnicodeEncodeError -> the construction except must fail closed (this
+    # is the case that makes the timestamp-except reachable; Codex final-gate P2-1)
     "timestamp[xs, tz=UTC]",  # invalid unit -> regex miss -> reject
     "decimal256(10, 2)",  # 256-bit declared
     "decimal128(10, -1)",  # negative scale, explicit-width branch

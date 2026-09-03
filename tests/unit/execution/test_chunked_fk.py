@@ -1126,6 +1126,65 @@ class TestMultiHopSameKeyCascadeBlocked:
             f"Gate must fire before any chunks are consumed; {tracker.consumed} were pulled"
         )
 
+    def test_composite_component_scalar_cascade_blocked_end_to_end(self) -> None:
+        """(Codex final-gate P1-2) A.(x,y) -> B.(id,z) then B.id -> C.id: B.id is
+        a COMPONENT of the composite child endpoint B.(id,z), so composite FK
+        resolution rewrites it and the oracle emits its resolved value, while
+        chunked self-masking of C.id would hash B.id's raw value -- a silent RI
+        divergence. Predicate 8's exact-tuple match missed this; the component
+        check blocks the whole shape end to end, before any chunk is read."""
+
+        def col(name: str) -> dict:
+            return {
+                "name": name,
+                "strategy": "hash",
+                "namespace": "ns",
+                "dtype": "string",
+            }
+
+        config = {
+            "global_settings": {"seed": 7},
+            "tables": [
+                {"name": "a", "columns": [col("x"), col("y")]},
+                {"name": "b", "columns": [col("id"), col("z")]},
+                {"name": "c", "columns": [col("id")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["x", "y"]},
+                    "children": [{"table": "b", "columns": ["id", "z"]}],
+                    "orphan_policy": "remap",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "c", "columns": ["id"]}],
+                    "orphan_policy": "remap",
+                },
+            ],
+        }
+
+        class _LazyTracker:
+            def __init__(self) -> None:
+                self._items: list[pa.Table] = [pa.table({"id": ["v1", "v2"]})]
+                self.consumed = 0
+
+            def __iter__(self) -> _LazyTracker:
+                return self
+
+            def __next__(self) -> pa.Table:
+                if not self._items:
+                    raise StopIteration
+                self.consumed += 1
+                return self._items.pop(0)
+
+        tracker = _LazyTracker()
+        with pytest.raises(PlanCompileError) as exc:
+            list(run_mask_pipeline_chunked(config, tracker, table="c", engine_version=_ENGINE))
+        assert exc.value.code == "chunked_fk_parent_not_root"
+        assert tracker.consumed == 0, (
+            f"Gate must fire before any chunks are consumed; {tracker.consumed} were pulled"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Test #1b(d) (2026-09-02 cascade-safety plan): a parameterized chunked-vs-

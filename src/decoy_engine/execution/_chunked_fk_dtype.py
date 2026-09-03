@@ -113,6 +113,28 @@ def fk_declared_dtypes_for_table(config: dict[str, Any], table: str) -> dict[str
     return declared
 
 
+def _reject_unsafe_hash_fk_key_real_type(table: str, column: str, real_type: pa.DataType) -> None:
+    """Raise predicate 12's cross-adapter-safety error if a hash FK key's REAL
+    Arrow type is outside the exact safe set. Shared by both the declared-dtype
+    loop and the undeclared-hash loop so the two paths raise identically."""
+    if arrow_type_is_fk_hash_safe(real_type):
+        return
+    raise ExecutionError(
+        code="chunked_fk_key_dtype_not_cross_adapter_safe",
+        message=(
+            f"Column {table}.{column} is a hash-strategy FK key whose "
+            f"REAL chunk dtype is {real_type}, which is outside predicate "
+            "12's exact cross-adapter-safe set (string, large_string, any "
+            "integer width, bool, date32, an IANA-tz timestamp, or a "
+            "32/64/128-bit decimal with scale >= 0). hash is only proven "
+            "cross-adapter byte-identical for these dtypes -- a dictionary-"
+            "wrapped, date64, 256-bit/negative-scale decimal, fixed-offset-"
+            "tz, or tz-naive real value voids that guarantee. Use "
+            "run_pipeline / run_sequential instead."
+        ),
+    )
+
+
 def reject_mismatched_chunked_fk_declared_dtype(
     chunk: pa.Table,
     *,
@@ -205,18 +227,19 @@ def reject_mismatched_chunked_fk_declared_dtype(
         # yet date64 is not in hash's proven cross-adapter-safe set. Scoped to
         # `hash_fk_key_columns` (see docstring); a column outside that set
         # relies on the family check above only, unchanged.
-        if column in hash_fk_key_columns and not arrow_type_is_fk_hash_safe(real_type):
-            raise ExecutionError(
-                code="chunked_fk_key_dtype_not_cross_adapter_safe",
-                message=(
-                    f"Column {table}.{column} is a hash-strategy FK key whose "
-                    f"REAL chunk dtype is {real_type}, which is outside predicate "
-                    "12's exact cross-adapter-safe set (string, large_string, any "
-                    "integer width, bool, date32, an IANA-tz timestamp, or a "
-                    "32/64/128-bit decimal with scale >= 0). hash is only proven "
-                    "cross-adapter byte-identical for these dtypes -- a dictionary-"
-                    "wrapped, date64, 256-bit/negative-scale decimal, fixed-offset-"
-                    "tz, or tz-naive real value voids that guarantee. Use "
-                    "run_pipeline / run_sequential instead."
-                ),
-            )
+        if column in hash_fk_key_columns:
+            _reject_unsafe_hash_fk_key_real_type(table, column, real_type)
+
+    # Predicate 12 also runs for hash FK keys with NO declared dtype: `dtype`
+    # is optional in config, so those never enter the loop above, yet an unsafe
+    # real type (date64/decimal256/tz-naive/...) on such a key still reaches the
+    # hash kernel and diverges cross-adapter (Codex final-gate P1-1). The real
+    # stage is exact-type, so it needs no declaration to run -- it judges the
+    # chunk's actual Arrow type directly. Same `pa.null()` carveout applies.
+    for column in hash_fk_key_columns:
+        if column in declared_fk_dtypes or column not in chunk.column_names:
+            continue
+        real_type = chunk.schema.field(column).type
+        if pa.types.is_null(real_type):
+            continue
+        _reject_unsafe_hash_fk_key_real_type(table, column, real_type)

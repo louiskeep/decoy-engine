@@ -367,6 +367,17 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
     """
     col_index = _col_index_from_config(config)
     child_endpoints = _child_endpoints_from_config(config)
+    # Decompose every child endpoint to its component (table, column) pairs.
+    # Predicate 8 matches on components, not whole tuples: composite FK
+    # resolution rewrites EVERY participating child column, so a scalar parent
+    # that is ANY component of an upstream composite child endpoint is NOT a
+    # root and must be rejected (Codex final-gate P1-2). A scalar child endpoint
+    # decomposes to itself, so this also subsumes the same-key scalar cascade.
+    child_endpoint_columns = {
+        (child_table, child_col)
+        for child_table, child_cols in child_endpoints
+        for child_col in child_cols
+    }
 
     for rel_entry in config.get("relationships") or []:
         if not isinstance(rel_entry, dict):
@@ -569,14 +580,18 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # `RelationshipGraph`'s FK override keys edges
             # (`relationships/_graph.py`), so a distinct-column self-FK on the
             # same table (`employees.id -> employees.manager_id`) is NOT
-            # caught: `(employees, ("id",))` and `(employees, ("manager_id",))`
-            # are different key nodes, and `id` is never resolved by any edge.
-            # Scope note: the key node is a SINGLE-column tuple `(parent_col,)`,
-            # so a COMPOSITE child endpoint never matches it here -- composite FK
-            # edges are handled (rejected) when their own child table is gated,
-            # not by this single-column predicate-8 lookup.
-            parent_key_node = (str(parent_table), (parent_col,))
-            if parent_key_node in child_endpoints:
+            # caught: `(employees, "id")` and `(employees, "manager_id")` are
+            # different components, and `id` is never resolved by any edge.
+            # Composite scope: the match is on COMPONENTS, not whole tuples. A
+            # scalar parent that is one column of an upstream COMPOSITE child --
+            # e.g. `A.(x,y)->B.(id,z)` then `B.id->C.id` -- must be rejected when
+            # gating C, because composite FK resolution rewrites B.id (so the
+            # oracle emits the resolved value while chunked self-masking emits
+            # hash(raw), a silent divergence). Gating C never gates B's incoming
+            # edge, so this component check -- not per-table gating -- is what
+            # closes it (Codex final-gate P1-2).
+            parent_component = (str(parent_table), str(parent_col))
+            if parent_component in child_endpoint_columns:
                 raise PlanCompileError(
                     code="chunked_fk_parent_not_root",
                     path=f"tables.{parent_table}.columns.{parent_col}",

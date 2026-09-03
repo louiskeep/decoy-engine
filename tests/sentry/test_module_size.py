@@ -331,7 +331,12 @@ ALLOWLIST: dict[str, int] = {
     # `_chunked_fk_dtype_safety.py`; this file only gains the wiring, same as
     # every other Phase 4 slice's split. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 810,
+    # Codex final-gate P1-1 (2026-09-03): +6 LOC (810 -> 816) invoking the
+    # per-chunk FK dtype guard whenever `hash_fk_key_columns` is non-empty, not
+    # only when `declared_fk_dtypes` is (dtype is optional in config, so an
+    # undeclared hash FK key otherwise skipped predicate 12's real stage and an
+    # unsafe date64/decimal256 reached the kernel). Comment + widened condition.
+    "src/decoy_engine/execution/_chunked.py": 816,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -370,7 +375,13 @@ ALLOWLIST: dict[str, int] = {
     # table`, `fk_passthrough_columns_for_table`) into one parameterized
     # `_fk_participant_columns_for_table(config, table, predicate=...)` in the
     # branch-hygiene cleanup slice.
-    "src/decoy_engine/execution/_chunked_fk.py": 957,
+    # Codex final-gate P1-2 (2026-09-03): +15 LOC (957 -> 972) for predicate 8's
+    # component-based rootness check -- a scalar parent that is a COMPONENT of an
+    # upstream COMPOSITE child endpoint is non-root (composite FK resolution
+    # rewrites every participating column), which the prior exact-tuple match
+    # missed. The child-endpoint-column decomposition + the corrected scope
+    # comment. Same decomposition target stands.
+    "src/decoy_engine/execution/_chunked_fk.py": 972,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
