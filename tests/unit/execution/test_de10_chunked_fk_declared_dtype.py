@@ -514,6 +514,42 @@ def test_reproduced_ri_case_bare_decimal_parent_role_still_runtime() -> None:
     assert parent_exc.value.code == "chunked_fk_declared_dtype_mismatch"
 
 
+@pytest.mark.parametrize(
+    ("declared", "real_array"),
+    [
+        ("date32", pa.array([0], type=pa.date64())),
+        (
+            "decimal128(10,2)",
+            pa.array([decimal.Decimal("1.00")], type=pa.decimal256(10, 2)),
+        ),
+    ],
+    ids=["date64", "decimal256"],
+)
+def test_unsafe_real_dtype_in_parent_role_rejected_by_predicate12(
+    declared: str, real_array: pa.Array
+) -> None:
+    """(dennis LOW-2) The parent-role real-type half of predicate 12. Gating the
+    PARENT table never reaches the compile-time declared stage (only child edges
+    are walked there), and the coarse family check collapses date32/date64 and
+    every decimal width into one family, so a real `date64` under a declared
+    `date32` (or a real `decimal256` under a declared `decimal128`) sails past
+    the family check. The runtime real stage must still reject it, because the
+    hash-column scope set is both-sides symmetric. Complements the bare-decimal
+    parent-role case above with the two exact dtypes the family check cannot
+    distinguish on its own."""
+    config = _fk_config(
+        strategy="hash", parent_dtype=declared, child_dtype=declared, namespace="ns"
+    )
+    parent_chunk = pa.table({"id": real_array})
+    with pytest.raises(ExecutionError) as exc:
+        list(
+            run_mask_pipeline_chunked(
+                config, [parent_chunk], table="customers", engine_version=_ENGINE
+            )
+        )
+    assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
+
+
 def test_dtype_family_decimal_scale_aware_unit() -> None:
     """Direct unit coverage of the scale-aware family strings themselves."""
     from decoy_engine.execution._chunked_fk import _dtype_family

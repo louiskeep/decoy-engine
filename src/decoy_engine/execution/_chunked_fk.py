@@ -571,6 +571,10 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # same table (`employees.id -> employees.manager_id`) is NOT
             # caught: `(employees, ("id",))` and `(employees, ("manager_id",))`
             # are different key nodes, and `id` is never resolved by any edge.
+            # Scope note: the key node is a SINGLE-column tuple `(parent_col,)`,
+            # so a COMPOSITE child endpoint never matches it here -- composite FK
+            # edges are handled (rejected) when their own child table is gated,
+            # not by this single-column predicate-8 lookup.
             parent_key_node = (str(parent_table), (parent_col,))
             if parent_key_node in child_endpoints:
                 raise PlanCompileError(

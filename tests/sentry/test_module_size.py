@@ -361,7 +361,16 @@ ALLOWLIST: dict[str, int] = {
     # carries the actual exact-dtype-set predicate as its own sibling
     # specifically to avoid this file crossing the cap by MORE than it already
     # has to for the gate logic itself. Same decomposition target stands.
-    "src/decoy_engine/execution/_chunked_fk.py": 953,
+    # dennis final-gate LOW-1 (2026-09-03): +4 LOC (953 -> 957) for the
+    # predicate-8 single-column-tuple scope note (a composite child endpoint
+    # never matches the single-column key node; composites are rejected when
+    # their own table is gated). Docstring only. The concrete decomposition
+    # target dennis named: collapse the three near-identical both-sides-scan
+    # helpers (`fk_declared_dtypes_for_table`, `fk_hash_strategy_columns_for_
+    # table`, `fk_passthrough_columns_for_table`) into one parameterized
+    # `_fk_participant_columns_for_table(config, table, predicate=...)` in the
+    # branch-hygiene cleanup slice.
+    "src/decoy_engine/execution/_chunked_fk.py": 957,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
