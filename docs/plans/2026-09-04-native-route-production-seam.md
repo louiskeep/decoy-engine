@@ -84,6 +84,18 @@ The preflight costs one extra streaming read of the source (bounded memory, not 
 materialization); this is the honest price of exact parity on a streaming route and matches the
 out-of-core route's own preflight discipline.
 
+The two passes must see the same source. `LazySource.iter_batches()` reopens the file on each
+pass, so a source that mutates between preflight and execution could present the same Arrow type
+with newly-arrived nulls (a null-free integer column admitted for native passthrough that then
+carries a null, which the oracle would render as `double`), and schema-drift detection would not
+fire because the type is unchanged. The lane therefore fingerprints the source at preflight (the
+Parquet footer's row count and schema, an O(1) metadata read, plus file size and mtime) and
+re-validates the fingerprint before commit; a mismatch aborts, discards the staged artifact, and
+raises a coded error, never a commit outside the parity contract. On a stable source (the normal
+case) the preflight verdict holds and nothing aborts. As defense in depth the per-batch integer
+guard covers `passthrough` as well as `truncate`: if a null integer appears despite the
+preflight it aborts and discards. A two-pass-disagreement test exercises exactly this.
+
 ### 2.3 Reject-before-output contract (closed world)
 
 Before any output, the lane reroutes to the oracle every feature it cannot honor while streaming.
@@ -113,21 +125,29 @@ actual-first-batch schema/type validation stays at the executor boundary.
 Routing precedence is defined and tested as a matrix. Every explicit `execution_mode`, meaning
 `sequential`, `full_frame`, and `out_of_core`, wins first (unchanged). Then layer-1 FK routing.
 Then the native lane (only when enabled and admitting). Then the existing chunked vs full_frame
-decision. An explicit non-pandas substrate falls through to the existing decision.
+decision. An explicit non-pandas substrate falls through to the existing decision. The current
+pre-early-return `decide_chunk_route` call (`_pipeline.py`) must be moved or guarded so the native
+early return happens only after the explicit-mode and FK checks, never swallowing a forced mode.
 
 "Streaming sink" is not guaranteed by the structural `TransactionalSink` interface: the callable
-sink adapter materializes its batch iterable (`_transactional_sink.py`). So this slice admits
-native only for the known bounded streaming Parquet sink, and reroutes any callable or otherwise
-retaining sink to the oracle. This is a nominal capability, tested by rejecting the callable
-adapter and a deliberately retaining custom sink.
+sink adapter materializes its batch iterable (`_transactional_sink.py`). So the sink predicate is
+literal, not structural: `sink is None` selects the resident-output native mode (no flat-RSS
+claim, the whole output resides in memory because the caller asked for it); `type(sink) is
+ParquetTransactionalSink` exactly (not `isinstance`, so a retaining subclass is excluded) selects
+the bounded streaming mode; every other sink reroutes to the oracle. Tested by rejecting the
+callable adapter, a structural custom sink, and a retaining `ParquetTransactionalSink` subclass.
 
 ### 2.5 Source shape and the sink=None contract
 
-The memory claim holds only for `LazySource` inputs. `caller_sources` may also carry resident
-`pa.Table` objects or data from `source_loader`; this slice routes only `LazySource` inputs to the
-native lane and reroutes resident/`source_loader` inputs to the oracle (a later slice may admit
-them with an explicit resident-input contract). Tests cover `LazySource`, resident tables, and
-`source_loader`.
+The memory claim holds only for `LazySource` inputs. `caller_sources` is built from the caller's
+`sources` mapping and may carry resident `pa.Table` objects; the native lane engages only for a
+`LazySource` entry and leaves a resident-table entry on the existing path (a later slice may admit
+residents with an explicit contract). A `source_loader` is separate: it is not part of
+`caller_sources`, and the existing full-frame continuation does not resolve it, so this slice does
+not treat a loader as a native-reroute case. The native decision simply does not fire for a
+loader-driven job; the job takes the path it takes today. The tests reflect this: a `LazySource`
+entry, a resident-table entry, and a `source_loader` presented alongside an actual source mapping
+(not loader-only), asserting each lands on the correct existing behavior.
 
 When the caller provides the streaming Parquet sink, the lane stages, drains the whole stream,
 validates route evidence and the ledger, then atomically commits; any error discards the staged
@@ -204,12 +224,18 @@ harness rules on the committed Parquet artifact, with no new broad `PhysicalDiff
    processes over tiers with lazy input and incremental output.
 6. **Every rejected feature reroutes to the oracle, byte-identical, with full deps**,
    parameterized over FK, `vault: true` on each strategy, a validator, a fidelity request,
-   quarantine config, the callable sink, a retaining custom sink, resident-table and
-   `source_loader` inputs, unsupported projection, a generation column, a multi-table job, and
+   quarantine config, unsupported projection, a generation column, a multi-table job, and
    `native_route_enabled=False`, each with the correct coded ledger reason and a custom registry.
-7. **Transactional failure behavior**, parameterized over late kernel failure, the truncate late
-   -null guard, ledger-validation failure, and commit failure: no final artifact, staged data
-   cleaned up, zero oracle retry, and `attempted`-vs-`completed` ledger state correct at each point.
+   The sink predicate is tested separately: the callable adapter, a structural custom sink, and a
+   retaining `ParquetTransactionalSink` subclass each reroute; `sink is None` runs the resident
+   mode; `type(sink) is ParquetTransactionalSink` runs the streaming mode. Source shape is tested
+   separately: a resident-table entry stays on the existing path, and a `source_loader` presented
+   alongside a real source mapping lands on today's behavior (the native decision does not fire).
+7. **Transactional and snapshot failure behavior**, parameterized over late kernel failure, the
+   integer `passthrough` and `truncate` late-null guards, a source whose fingerprint changes
+   between preflight and commit, ledger-validation failure, and commit failure: no final artifact,
+   staged data cleaned up, zero oracle retry, and `attempted`-vs-`completed` ledger state correct
+   at each point.
 8. **Routing precedence matrix**: `sequential`, `full_frame`, `out_of_core` overrides, FK, native,
    and the chunked vs full_frame decision resolve in the defined order.
 9. **Closed-world admission sentry** and **compiled-plan/registry reuse** (one compile, honors a
