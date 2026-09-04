@@ -1,201 +1,219 @@
 Status: plan
 
-# Q3 slice 1: make the native route a runtime-selectable production path
+# Q3 slice 1: a streaming native lane for passthrough, redact, truncate
 
-The native columnar-streaming route (`execution/native/`) is built and gated for five
-strategies (`passthrough`, `redact`, `truncate`, keyed `hash`, C1 `faker`) but nothing in
-production calls it. `plan_native_route` and `run_native_or_oracle_chunked` are exercised
-only by tests and benchmarks; the production routers never select it, so real mask jobs run
-the pandas oracle and pay its row-linear memory. This slice builds the production seam that
-makes the native route selectable and proves it through the production entry, so the later
-default-on flip is a one-line change on a foundation that already passes parity, memory, and
-route-evidence gates.
+The native columnar-streaming route is built and gated but nothing in production selects it,
+so real mask jobs run the pandas oracle and pay its row-linear memory. This slice makes the
+native route a real production path for the three pure-kernel strategies that need neither the
+Rust companion nor the pool-quality machinery: `passthrough`, `redact`, `truncate`. It builds
+the streaming lifecycle those strategies need (a lane that branches before the source is
+materialized, owns a streaming transactional sink, and refuses any job feature that would force
+a whole-dataset pass), proven end to end through the production entry. `faker`, keyed `hash`,
+and the wider payload ports layer onto this lane in later slices.
 
-Enablement is a validated runtime option defaulting OFF. Default-on in production is a later,
-separate flip, gated on two things this slice does not deliver: the Rust companion extension
-being published with an installable path (without it `hash` downgrades to the oracle anyway),
-and a companion-present CI lane that proves the production seam green. This is the native
-analogue of Task 7 (the reorder route seam), but sequenced honestly: the plumbing and the
-proof now, the default flip when its dependencies land.
+The narrowing is deliberate. The two plan-gate rounds showed that wiring the full five-strategy
+route live couples three hard problems: the streaming lifecycle, `faker`'s pool-quality check
+(which as built needs the whole dataset at once), and keyed `hash`'s Rust companion (unpublished,
+no installable path). The three chosen strategies use the in-process Python kernel
+(`decoy_engine.kernel._scalar`), carry no pool-quality obligation, and emit no row errors, so
+this slice isolates the foundational lifecycle work from those two problems and, because no
+companion is involved, its whole test surface runs in the normal CI environment.
 
-This plan supersedes the earlier "wire it live, default-on, in `run_mask_chunked`" draft,
-which the Codex plan-gate returned NO-GO for reconstructing a result surface the native route
-cannot produce, placing the seam below the routing layer, and defaulting on against an
-unpublished companion and a platform that pins streaming off.
+Enablement is a validated runtime option defaulting OFF. Flipping the default and adding `hash`
+and `faker` are later slices with their own gates.
 
-## 1. Where the native route fits
+## 1. Current reality and why a seam is not enough
 
-Route selection is a ladder (`_pipeline_routing` module docstring): out_of_core (FK, bounded
-DuckDB) then, for single-table non-FK jobs, a layer-2 decision between chunked and full_frame.
-The native route has the same admission shape as the chunked route (single table, no declared
-FK, whole-table atomic decision), so it is a third layer-2 outcome for single-table non-FK
-jobs: native, else chunked, else full_frame.
+Route selection is a ladder: layer-1 sends FK jobs to the bounded out-of-core route; layer-2
+(`decide_chunk_route`) picks chunked vs full_frame for single-table non-FK jobs. The native
+route has the layer-2 admission shape (single table, no FK, whole-table atomic decision), so it
+is naturally a third layer-2 outcome.
 
-The seam therefore belongs in **layer-2 routing** (`decide_chunk_route` /
-`_pipeline_chunk_route.py`), not in the chunked executor. The plan-gate established why: the
-executor `run_mask_chunked` receives neither the resolved profile nor the compiled `Plan`
-that `run_pipeline` already built, so a native preflight placed there would recompile a second
-profile via `to_pandas`. The layer-2 decision already has the compiled plan and config in hand
-and is the correct, cheap place to select native.
+The plan-gate established that placing native inside the existing chunked executor cannot deliver
+the memory win. Two facts force a dedicated lane instead:
+
+- The production pipeline materializes every `LazySource` into a full in-memory table
+  (`resolve_resident_sources`) before the chunked/full_frame split. A native branch downstream of
+  that point has already paid the full-frame memory cost, so its flat-memory claim would be false.
+- Finalization (fidelity reports, validators, quarantine, result assembly) operates on complete
+  materialized outputs, and the chunked executor itself concatenates every chunk. A native branch
+  that returns early would silently skip those steps; one that returns late loses the memory win.
+
+So the native path must be a dedicated lane that branches immediately after layer-1 routing and
+BEFORE source materialization, streams the source in batches, and explicitly refuses any job that
+needs a whole-dataset pass.
 
 ## 2. Design
 
-### 2.1 Admission in layer-2 routing
+### 2.1 The dedicated streaming lane
 
-`decide_chunk_route` gains a native-selection step ahead of the chunked/full_frame decision.
-It runs the pure config/plan admission (`native_route_eligibility` + the C1 config-aware layer)
-against the already-compiled plan, with no I/O and no recompile. When the table admits AND the
-runtime `native_route_enabled` option is true, the route is native; otherwise the existing
-chunked/full_frame decision stands unchanged. The compiled-plan reuse is load-bearing: the
-native decision must consume the same plan the rest of the pipeline uses, not a second one.
+A new native lane branches right after layer-1 (FK) routing, before `resolve_resident_sources`.
+It consumes the source as batches (`LazySource.iter_batches()`), never materializing the whole
+source table. It is selected only when the runtime option is on AND the table admits AND the job
+carries none of the rejected whole-dataset features below.
 
-The existing native admission gates are unchanged and load-bearing (declared FK participation,
-any non-scalar node, any node whose `fallback_policy != "native"`, uncovered columns,
-non-string faker source, vault columns, and the crypto extension when a `hash` node is
-present). This slice consumes their verdict; it does not touch them. Admission is **closed
-world**: a strategy is native only if it is on the audited allowlist, and a sentry (section 4)
-fails the build if any admitted capability has a row-error or quarantine dependency.
+A test asserts `resolve_resident_sources` is never called on the native path (a spy or a call
+counter), so a future change that reintroduces materialization fails loudly.
 
-Only the actual-first-batch schema/type validation and the crypto-extension load stay at the
-streaming executor boundary, because those need the real first chunk, not the plan.
+### 2.2 Reject-before-output contract (closed world)
 
-### 2.2 A structured native execution result (the core new work)
+Before any output is produced, the lane rejects, by routing the whole job to the existing oracle
+path, every feature it cannot honor while streaming. Rejection is a clean reroute, not an error,
+and happens before the first batch is masked:
 
-The chunked route returns a 5-tuple (outputs, timings, boundary_conversion_ms, warnings,
-quality_metrics) so the routed `ExecutionResult` matches the full-frame surface. The native
-entry returns only an `Iterator[pa.Table]` plus an optional evidence sink, and the plan-gate
-showed that surface cannot be reconstructed faithfully: `NativeRouteEvidence` aggregates timing
-by strategy (column identity lost) and carries no peak-memory or boundary field, `RouteDiagnostics`
-is a standalone object not wired into the dispatcher, native execution does real pandas
-conversion during first-chunk profiling and faker selection (so `boundary_conversion_ms=0`
-would be a lie), and the inner native-to-oracle fallback currently calls the oracle without the
-production registry, adapter, vault writer, or chunk-result sink.
+- FK participation (already handled at layer-1, reasserted here).
+- `vault: true` on any column. This is new and load-bearing: the generic native eligibility has
+  no vault check today, only the faker gate rejects vault, so `passthrough` / `redact` /
+  `truncate` with `vault: true` would otherwise admit while the lane has no streaming
+  vault-collection path. The lane rejects any vault column outright.
+- Any validator, fidelity-report request, or quarantine / row-error configuration (these need
+  complete outputs).
+- A non-streaming sink (a legacy callable sink that materializes the whole stream). The lane
+  requires a streaming transactional sink or the in-memory `sink=None` contract in 2.4.
+- Unsupported projection, generation columns, or multi-table jobs.
+- Any strategy not on the audited three-strategy allowlist for this slice.
 
-So this slice defines a structured result the native executor returns directly, carrying every
-field the router needs, measured not fabricated:
+A closed-world admission sentry (test) enumerates the admitted capabilities and fails the build
+if any admitted strategy carries a row-error mode, a quarantine dependency, a pool-quality
+obligation, or any `quality_obligation` / `warning_code` this slice does not explicitly implement.
+Widening the allowlist later cannot silently pull in an unhandled obligation.
 
-- per-**column** timings (not strategy-level totals split across columns),
-- peak memory and the measured boundary-conversion time,
-- the canonically ordered warnings **the oracle would emit for this job** (see 2.3),
-- quality metrics (`{}` for the five strategies, asserted, not dropped),
-- route evidence with per-node executed proof (see 2.4),
-- vault effects,
-- and, on the fallback path, the complete oracle 5-tuple.
+### 2.3 Layer-2 selection reusing the compiled plan and registry
 
-The exact production dependencies (registry, adapter, vault_writer, chunk-result sink) are
-threaded through **both** the native path and its inner oracle fallback, so a fallback produces
-the identical surface a direct chunked-oracle run would.
+The native decision runs in `decide_chunk_route`, which already holds the config, the compiled
+`Plan`, the resolved registry, and source metadata. The plan-gate found that the current native
+APIs recompile (`compile_native_plan`, `_mask_native`) and call `get_default_registry()`, which
+would add a second compile and ignore a custom registry. This slice adds a plan-aware admission
+and execution API that takes the existing compiled `Plan` and the resolved registry, so the
+native decision does pure config/plan inspection with no I/O and no recompile. Only the
+actual-first-batch schema and type validation stays at the streaming executor boundary, since it
+needs the real first batch.
 
-### 2.3 Warnings: match the oracle, do not invent
+Routing precedence is defined explicitly and tested as a matrix: `execution_mode="full_frame"`
+and `execution_mode="out_of_core"` overrides win first (unchanged), then layer-1 FK routing, then
+the native lane (only when `native_route_enabled` is true and the job admits), then the existing
+chunked vs full_frame decision. An explicit non-pandas substrate, or a sink the lane cannot
+stream to, falls through to the existing decision.
 
-The chunked oracle unions `ExecutionResult.warnings` in chunk order (`_chunked.py`), and the
-five native strategies (including C1 faker) emit no `QualityWarning` there. `RouteDiagnostics`
-exposes pool-cache `AttributedWarning`s, which are a diagnostics side-channel, not the
-user-facing masking-warning channel. Surfacing them as `ExecutionResult.warnings` would add
-warnings the oracle never emits, a parity break. The structured result's warnings field
-therefore carries only oracle-equivalent `QualityWarning`s (empty for this slice's strategies),
-in chunk order; pool diagnostics stay on the route-evidence/diagnostics channel.
+### 2.4 Streaming transactional sink and the sink=None contract
 
-### 2.4 Route evidence with executed proof
+When the caller provides a sink, the lane requires a streaming transactional sink and follows the
+established stage / drain / validate / commit-or-abort discipline (the same ordering the
+out-of-core runner uses): it stages output, drains the whole stream, validates route evidence and
+the ledger (2.6), then atomically commits; any error discards the staged artifact. There is no
+fallback to the oracle after the first native output; a post-output failure is a coded error.
 
-Route evidence must prove the native route actually ran, per node, per chunk, not merely that
-preflight intended it. `NativeRouteEvidence`'s single hash boolean and aggregate faker counter
-are insufficient. This slice extends the executed-side counters so evidence records, for each
-node, that it executed natively on every chunk (a per-node completed count reconciled against
-chunk count), and `compiled_kernel_executed` for hash nodes. A native-admitted job whose
-evidence shows any oracle-executed node, or a node count short of the chunk count, is a gate
-failure. `ExecutionResult` gains a route-evidence field to carry this to the caller.
+When `sink=None` (the caller wants outputs in memory), the memory contract is stated honestly:
+the whole output necessarily resides in memory because the caller asked for it, so peak RSS is
+about one output dataset, not the flat-streaming figure. The win even here is that the source is
+never fully materialized alongside an intermediate full-frame and the output at once. The
+flat-RSS acceptance test therefore uses a streaming sink, where the guarantee is real.
 
-### 2.5 Transactional publication
+### 2.5 Structured native execution result
 
-The native iterator can raise (schema drift, a kernel error) after earlier chunks executed.
-The executor stages output, drains the whole stream, validates route evidence, diagnostics,
-and pool quality, then atomically publishes; any error discards the staged artifact. The
-pre-first-output oracle fallback stays (an admission miss before any native chunk runs is a
-clean oracle run), but there is **no fallback after the first native output**: a post-output
-failure is a hard, coded error, never a silent oracle retry.
+The lane returns a structured result carrying every field the routed `ExecutionResult` needs,
+measured not fabricated: per-column timings (not strategy totals split across columns), the
+measured boundary-conversion time, peak memory by the established meaning (an external
+fresh-process VmHWM for the route gate; the existing `StrategyTimingRecord` delta keeps its
+current before/after meaning), the oracle-equivalent ordered warnings, quality metrics, and route
+evidence. For the three strategies the warnings are empty (they emit no `QualityWarning` in the
+oracle) and quality metrics are `{}`; both are asserted, not silently dropped. Pool-cache
+diagnostics do not exist here (no faker), so the warning-channel confusion the earlier draft had
+cannot arise.
 
-### 2.6 Enablement
+`ExecutionResult` gains a route-evidence field so this reaches the caller, and all existing
+`ExecutionResult` fields and telemetry are preserved on the native path.
 
-`native_route_enabled` is a validated runtime option on `run_pipeline` (a kwarg, like the other
-routing controls), default **False**, threaded to `decide_chunk_route`. It is not a
-`GlobalSettings` field: routing controls are runtime kwargs, not profile-hashed semantic config,
-and `GlobalSettings` forbids unknown fields. Default False holds until the companion is published
-and the companion-present CI lane is green; flipping the default is a later slice, not this one.
+### 2.6 Restored invocation-scoped route ledger
+
+The frozen Part-1 route-evidence gate requires proof that a native job made zero oracle calls,
+zero oracle rows, zero fallback calls, zero fallback rows, and zero rejected chunks. A per-node
+"native" label cannot prove an accidental oracle call did not happen. This slice restores an
+invocation-scoped ledger: attempted and completed native / oracle / fallback call counters and
+row counters, a rejected-chunk counter, and exact `(table, work-node identity, chunk index)`
+records. The acceptance tests assert every frozen Part-1 count is zero after a successful native
+publication, and additionally install a fail-fast spy on the oracle chunked entry so any stray
+invocation fails the test immediately.
+
+### 2.7 Enablement
+
+`native_route_enabled` is a validated runtime option on `run_pipeline` (a kwarg alongside the
+other routing controls), default False, threaded to `decide_chunk_route`. It is not a
+`GlobalSettings` field (routing controls are runtime kwargs, not profile-hashed config, and
+`GlobalSettings` forbids unknown fields). Flipping the default is a later slice.
 
 ## 3. Failure modes
 
-1. **Admission miss at preflight** (FK edge, non-scalar node, unsupported strategy, vault
-   column, uncovered columns, non-string faker). Layer-2 selects chunked/full_frame; the oracle
-   runs with full production deps. Route evidence records the coded reason. Not an error.
-2. **Crypto extension unavailable** with a `hash` node present. Whole table downgrades to the
-   oracle before any output, fail-before-output. Not an error.
-3. **`native_route_enabled=False`**. Native is never selected; behavior is identical to today.
-4. **Schema drift across chunks** (`NativeChunkSchemaDriftError`) after native output began.
-   A coded error, staged output discarded, no oracle fallback. Not admissible to reach through
-   the production single-`pa.Table` entry (which is schema-fixed); tested direct-native.
-5. **Parity divergence** native vs oracle. A gate failure caught before ship; the byte-parity
+1. Admission miss or a rejected whole-dataset feature (FK, vault, validators, fidelity,
+   quarantine, non-streaming sink, unsupported projection, generation, multi-table, unsupported
+   strategy). The job reroutes to the oracle with full production dependencies before any native
+   output. The ledger records the coded reason. Not an error.
+2. `native_route_enabled=False`. Native is never selected; behavior is identical to today.
+3. A post-first-output failure (a kernel error mid-stream). The staged artifact is discarded and
+   a coded error is raised; no oracle retry. A hard failure, by design.
+4. Parity divergence native vs oracle. A gate failure caught before ship; the byte-parity
    contract is frozen.
 
 ## 4. Acceptance tests
 
-Every test asserts against the pinned pandas oracle. Tests that prove routing drive the
-**production** entry (`run_pipeline` with `native_route_enabled=True`), not the native function.
+Every test asserts against the pinned pandas oracle. Routing tests drive the production entry
+(`run_pipeline` with `native_route_enabled=True`), not the native function directly. No companion
+is involved, so the whole surface runs in normal CI.
 
-1. **Byte-parity through the production seam.** For a non-FK table covering the five strategies
-   across the admitted type surface (utf8, large_utf8, bool, int8/16/32/64, uint*,
-   timestamp-with-tz), the routed result is byte-identical (values, row order, null placement,
-   warnings **in order**) to both the chunked-oracle and full-frame-oracle results. Warnings are
-   compared order-sensitively, not as the multiset `assert_logical_parity` currently uses.
-2. **Native route provably ran.** Route evidence shows every node executed natively on every
-   chunk (per-node completed count == chunk count), `compiled_kernel_executed=True` when a hash
-   node is present, and zero oracle-executed nodes.
-3. **Flat memory through the production router.** Peak RSS driven through `run_pipeline` is flat
-   in row count (4x <= 1.5x the 1x value) and under the frozen Phase-1 ceiling, measured in
-   fresh processes over multiple tiers with lazy input and incremental output, so a reintroduced
-   full-frame materialization is caught.
-4. **FK tables never go native.** A table on either side of a declared relationship routes to
-   out_of_core or oracle through the production router, never native.
-5. **Every fallback lands on the oracle, byte-identical, with full deps.** Admission miss,
-   crypto unavailable, vault-column rejection, uncovered columns, non-string faker, and
-   `native_route_enabled=False` each produce the oracle result with a custom registry, vault
-   writer, and the correct route evidence. Crypto-unavailable is simulated as the loader tests do.
-6. **Ordered warnings and coded rejections direct.** All coded C1 rejections and the ordered
-   warning union are asserted directly on the native executor, since some cannot be driven
-   through the production schema-fixed entry.
-7. **Schema drift raises, direct-native.** A second chunk drifting from the admitted schema
-   raises `NativeChunkSchemaDriftError` and discards staged output; labeled direct-native.
-8. **Closed-world admission sentry.** A test enumerates the admitted capabilities and fails if
-   any has a row-error mode or quarantine dependency, so widening the allowlist later cannot
-   silently pull in a strategy that needs the unbuilt row-error channel.
-9. **Companion-present CI lane.** A CI lane that installs the compiled companion runs the
-   production-entry parity, executed-proof, memory, and fallback tests. Main CI (no companion)
-   keeps running the oracle-only and ABI tests; the lane's path filters include the routing seam.
-10. **Mutation bar** on the changed units (layer-2 native selection, structured-result
-    construction, transactional publish, evidence reconciliation).
+1. **Byte-parity through the production entry.** For a non-FK, non-vault table covering
+   `passthrough`, `redact`, `truncate` across the admitted type surface (utf8, large_utf8, bool,
+   int8/16/32/64, uint*, timestamp-with-tz), the routed result is byte-identical (values, row
+   order, null placement, warnings in order) to both the chunked-oracle and full-frame-oracle
+   results. Warnings are compared order-sensitively.
+2. **The native lane provably ran.** After a successful native publication, every frozen Part-1
+   ledger count is zero (oracle calls, oracle rows, fallback calls, fallback rows, rejected
+   chunks), per-node completed counts equal the chunk count, and the oracle-entry spy recorded no
+   call.
+3. **Source never materialized.** A spy proves `resolve_resident_sources` is never called on the
+   native path.
+4. **Flat memory with a streaming sink.** Peak RSS driven through the production entry with a
+   streaming sink is flat in row count (4x <= 1.5x the 1x value) and under the frozen Phase-1
+   ceiling, measured in fresh processes over multiple tiers with lazy input and incremental
+   output.
+5. **Every rejected feature reroutes to the oracle, byte-identical, with full deps.** Parameterized
+   over FK, `vault: true` on each of the three strategies, a validator, a fidelity-report request,
+   quarantine config, a non-streaming callable sink, unsupported projection, a generation column,
+   a multi-table job, and `native_route_enabled=False`. Each produces the oracle result with a
+   custom registry and the correct coded ledger reason.
+6. **Routing precedence matrix.** `execution_mode` overrides, FK, native, and the chunked vs
+   full_frame decision resolve in the defined order.
+7. **Closed-world admission sentry.** The admitted-capability enumeration fails the build if any
+   admitted strategy carries a row-error, quarantine, pool-quality, or unimplemented
+   obligation / warning code.
+8. **Compiled-plan and registry reuse.** A native run compiles the plan exactly once and honors a
+   custom registry (no `get_default_registry()` on the native path).
+9. **Mutation bar** on the changed units (native lane selection, reject-before-output, structured
+   result, ledger, transactional publish).
 
 Non-regression: the full suite stays green; no Part-1 gate or the FK byte-parity contract is
 weakened.
 
 ## 5. Scope
 
-In: the layer-2 native selection reusing the compiled plan, the structured native execution
-result with production deps threaded through both paths, oracle-equivalent ordered warnings,
-per-node/per-chunk executed evidence on `ExecutionResult`, transactional staged publication,
-the `native_route_enabled` runtime option (default False), the closed-world admission sentry,
-and the companion-present CI lane.
+In: the dedicated streaming native lane branching before source materialization; the
+reject-before-output closed-world contract including the new all-strategy vault rejection; layer-2
+native selection reusing the compiled plan and registry via a plan-aware API; the routing
+precedence matrix; the streaming transactional sink and the `sink=None` memory contract; the
+structured native result; the restored invocation-scoped route ledger; the `native_route_enabled`
+runtime option (default False); and the acceptance suite above, all in normal CI.
 
-Out (later slices): flipping `native_route_enabled` default to True (gated on the two items
-below); publishing the Rust companion with an installable extra (its own packaging slice, the
-prerequisite for `hash` going native in production); porting `fpe`, `categorical`,
-`text_redact`, `text_mask`, `code_set`, `bucket_perturb`, `group_key` (the P4-C ports); the
-FPE native kernel; the per-value row-error channel; the platform-side
-`classify_streaming_eligibility` adoption and its default-off streaming flag.
+Out (later slices, each its own plan and gate): `faker` on the live lane (needs streaming or
+admission-aligned pool quality); keyed `hash` on the live lane (needs the Rust companion and,
+for production, publishing it with an installable path); flipping `native_route_enabled` default
+to True; the P4-C payload ports (`fpe`, `categorical`, `text_redact`, `text_mask`, `code_set`,
+`bucket_perturb`, `group_key`); the FPE native kernel; the per-value row-error channel; and the
+platform-side streaming-eligibility adoption.
 
-## 6. Sequencing note for Cam
+## 6. Program sequence (this slice is step 1)
 
-The default-on flip and `hash`-in-production both depend on publishing the Rust companion
-(currently no installable extra) and the companion-present CI lane being green. This slice
-builds the seam and the proof so that flip is a one-line, low-risk change once those land. If
-publishing the companion is prioritized first, this slice and that packaging slice are
-independent and can proceed in parallel.
+1. This slice: the streaming lane for `passthrough` / `redact` / `truncate`.
+2. `faker` on the lane: streaming or admission-aligned pool-quality enforcement.
+3. Keyed `hash` on the lane: the companion-present execution path plus a companion CI lane; in
+   parallel, publish the Rust companion so `hash` can go native in a real install.
+4. The default-on flip, once the companion is published and its CI lane is green.
+5. The P4-C payload ports, each gated, some behind the row-error channel.
