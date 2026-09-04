@@ -254,7 +254,11 @@ class TestByteParity:
             key_provider=secret,
         )
         forced = run_pipeline(
-            cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False, key_provider=secret
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            auto_chunk=False,
+            key_provider=secret,
         )
         assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
         assert auto.outputs["records"].equals(forced.outputs["records"])

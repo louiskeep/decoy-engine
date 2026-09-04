@@ -1046,7 +1046,11 @@ class TestSourceDtypeGate:
         cfg = _config(
             tmp_path,
             [
-                {"name": "note", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}},
+                {
+                    "name": "note",
+                    "strategy": "text_mask",
+                    "provider_config": {"detectors": ["ssn"]},
+                },
                 {"name": "nm", "strategy": "faker", "provider": "person_first_name"},
             ],
         )
