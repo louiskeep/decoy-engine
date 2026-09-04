@@ -34,7 +34,10 @@ def _resolve_whole_child(fx, temp_dir) -> tuple[pa.Table, int]:
         cursor = JoinRowCursor(joiner.iter_join_rows(64), join_columns=fx.edge.child_columns)
         raw = cursor.take(n, 0)
         cursor.assert_exhausted()
-        fk_arrays = joiner.resolve_batch(raw)
+        # `iter_join_rows` (the legacy shim) keeps the FULL projection, so the
+        # one batch carries every column `resolve_batch` recombines: pass it as
+        # both the slim and raw slice.
+        fk_arrays = joiner.resolve_batch(raw, raw)
         assert fk_arrays[0].type == joiner.output_types[0]
         result = fx.child.set_column(
             fx.child.schema.get_field_index(fx.edge.child_columns[0]),

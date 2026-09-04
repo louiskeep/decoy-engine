@@ -91,7 +91,11 @@ from decoy_engine.execution.out_of_core._stream_driver_support import (
     _payload_schema,
     _replace_fk_columns,
 )
-from decoy_engine.execution.out_of_core._stream_join import JoinRowCursor, StreamFkJoiner
+from decoy_engine.execution.out_of_core._stream_join import (
+    ChildKeyLockstepCursor,
+    JoinRowCursor,
+    StreamFkJoiner,
+)
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
@@ -359,6 +363,12 @@ def stream_table(
         # closes all of them on normal completion or on abandonment/exception. ---
         with ExitStack() as stack:
             cursors: list[JoinRowCursor] = []
+            # The raw child columns no longer ride through the sorter (the slim
+            # sort); phase 3 re-fetches them out-of-line from each edge's
+            # SpillChildKeys spill, LOCKSTEP with the payload batches (the two
+            # were co-written per source batch in phase 1). ExitStack-owned so
+            # every reader closes on completion, early exit, AND exception.
+            child_cursors: list[ChildKeyLockstepCursor] = []
             for edge, joiner in zip(incoming_edges, joiners, strict=True):
                 if edge.orphan_policy is OrphanPolicy.FAIL:
                     total = joiner.total_orphans()
@@ -369,28 +379,39 @@ def stream_table(
                 )
                 stack.enter_context(rows)
                 cursors.append(JoinRowCursor(rows, join_columns=edge.child_columns))
+                child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
+                stack.callback(child_cursor.close)
+                child_cursors.append(child_cursor)
 
             # --- Phase 3: resolve FK columns from the payload store; no source read. ---
             def rewritten() -> Iterator[pa.RecordBatch]:
                 for row_nr_start, masked_batch in store.iter_batches():
                     out = masked_batch
-                    for edge, joiner, cursor in zip(incoming_edges, joiners, cursors, strict=True):
+                    for edge, joiner, cursor, child_cursor in zip(
+                        incoming_edges, joiners, cursors, child_cursors, strict=True
+                    ):
                         # Each edge's FK values were staged from the RAW child in
                         # phase 1, so overlapping edges never key off an earlier
                         # edge's rewrite; a later edge still overwrites the shared
                         # column last, matching the whole-child contract. `take`
-                        # asserts the join reader's row_nr against this SAME
-                        # payload batch's row_nr -- both artifacts of one read.
-                        join_rows = cursor.take(out.num_rows, row_nr_start)
-                        fk_arrays = joiner.resolve_batch(join_rows)
+                        # asserts both the slim join reader's AND the raw child
+                        # spill's row_nr against this SAME payload batch's row_nr
+                        # -- three artifacts of one read. The raw child batch is
+                        # consumed and released each iteration (O(batch) residency).
+                        slim_rows = cursor.take(out.num_rows, row_nr_start)
+                        raw_rows = child_cursor.take(out.num_rows, row_nr_start)
+                        fk_arrays = joiner.resolve_batch(slim_rows, raw_rows)
                         out = _replace_fk_columns(
                             out, edge.child_columns, fk_arrays, joiner.output_types
                         )
                     yield out
                 # Row_nr alignment backbone: the payload store must have consumed
-                # every join row (neither longer nor shorter than the join).
+                # every slim join row AND every raw child row (neither side longer
+                # nor shorter than the payload).
                 for cursor in cursors:
                     cursor.assert_exhausted()
+                for child_cursor in child_cursors:
+                    child_cursor.assert_exhausted()
 
             def _release_joiners() -> None:
                 # Free joiner DuckDB instances before the relation build (emit_to_sink).

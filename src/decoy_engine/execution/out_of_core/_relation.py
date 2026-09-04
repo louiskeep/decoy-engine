@@ -13,7 +13,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
-from decoy_engine.execution.out_of_core._key_width import MaxKeyWidthTracker
+from decoy_engine.execution.out_of_core._key_width import SlimRowWidthTracker
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.kernel import hash_array
@@ -49,8 +49,9 @@ class ParentKeyRelation:
     path: Path
     join_key_column: str = "__decoy_fk_join_key"
     masked_key_columns: tuple[str, ...] = ("__decoy_masked_key",)
-    # Widest single masked-key row seen; `_route_policy.decide_route`'s width admission check.
-    max_key_bytes: int = 0
+    # Conservative upper bound on the widest materialized SLIM sorter row
+    # (row_nr + match token + masked components); `decide_route`'s per-edge cap check.
+    max_sort_payload_row_bytes: int = 0
 
     @property
     def masked_key_column(self) -> str:
@@ -439,7 +440,7 @@ def _build_relation(
         batch_rows=batch_rows,
     )
     # Measured on the same pass the reader below consumes, not a second read.
-    width_tracker = MaxKeyWidthTracker(masked_columns)
+    width_tracker = SlimRowWidthTracker(masked_columns, masked_types)
     reader = pa.RecordBatchReader.from_batches(
         _staging_schema(masked_types, masked_columns),
         width_tracker.wrap(batches),
@@ -502,12 +503,9 @@ def _build_relation(
         # each statement its own single-blocking-operator plan, so neither
         # blocking operator's state is ever resident at the same time as the
         # other's. On the pinned DuckDB 1.5.4 the planner already softens the
-        # inline form: it pushes a dynamic min/max filter from the aggregate
-        # build onto the join's probe scan, so the two states do not fully
-        # co-reside and a measured A/B shows no memory gap between the inline and
-        # split forms today. The split is kept as a by-construction bound that
-        # does not rely on that optimizer behavior staying in place: it holds the
-        # same single-blocking-operator envelope regardless of planner version.
+        # inline form (a dynamic min/max filter pushed onto the join probe, so a
+        # measured A/B shows no gap today); the split is kept as a by-construction
+        # bound that holds the same envelope regardless of planner version.
         conn.register("parent_keys", reader)
         # The COPY fully consumes the single-pass reader; the dedup below reads
         # the STAGED parquet, never `parent_keys` again, so the exhausted
@@ -555,7 +553,9 @@ def _build_relation(
             finally:
                 winners_path.unlink(missing_ok=True)
     return ParentKeyRelation(
-        path=out_path, masked_key_columns=masked_columns, max_key_bytes=width_tracker.max_bytes
+        path=out_path,
+        masked_key_columns=masked_columns,
+        max_sort_payload_row_bytes=width_tracker.max_sort_payload_row_bytes,
     )
 
 

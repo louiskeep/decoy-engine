@@ -80,7 +80,11 @@ _WORKER_SCRIPT = textwrap.dedent(
         build_parent_key_relation_from_tables,
     )
     from decoy_engine.execution.out_of_core._reorder_budget import resolve_reorder_budgets
-    from decoy_engine.execution.out_of_core._stream_join import JoinRowCursor, StreamFkJoiner
+    from decoy_engine.execution.out_of_core._stream_join import (
+        ChildKeyLockstepCursor,
+        JoinRowCursor,
+        StreamFkJoiner,
+    )
     from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
     from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
 
@@ -185,13 +189,17 @@ _WORKER_SCRIPT = textwrap.dedent(
                 # (which also never accumulates rewritten output) instead of
                 # holding all _CHILD_ROWS resolved rows resident at once.
                 cursor = JoinRowCursor(rows, join_columns=edge.child_columns)
+                child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
                 offset = 0
                 while offset < args.child_rows:
                     take_n = min(args.batch_rows, args.child_rows - offset)
-                    raw = cursor.take(take_n, offset)
-                    joiner.resolve_batch(raw)  # discarded: symmetric with batchjoin
+                    slim = cursor.take(take_n, offset)
+                    raw = child_cursor.take(take_n, offset)
+                    joiner.resolve_batch(slim, raw)  # discarded: symmetric with batchjoin
                     offset += take_n
                 cursor.assert_exhausted()
+                child_cursor.assert_exhausted()
+                child_cursor.close()
         return offset
 
 

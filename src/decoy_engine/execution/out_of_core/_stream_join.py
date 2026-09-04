@@ -1,61 +1,37 @@
 """Single-streaming-join FK joiner for the batch-streaming sink path (OOC-B).
 
 This replaces the removed per-child-batch `ChildFkBatchJoiner`'s join against a
-MATERIALIZED parent TEMP TABLE. That table held one row per distinct parent
-key and, being a DuckDB temp table, could not fully evict its
-buffer-manager/control state, so on a large parent it pinned an
-O(distinct-parent-key) resident structure for the whole child stream -- the
-floor that made out-of-core peak memory rise with parent row count.
-
-fix#1b (this module): the FIRST fix (above) made the child side a DuckDB
-`child_keys` TEMP TABLE fed by per-batch `INSERT` -- itself an O(child)
-resident structure for the SAME reason (a DuckDB temp table cannot fully evict
-its buffer-manager/control state), so peak memory rose with CHILD row count
-instead. The child side is now symmetric with the parent: staged once into a
-`SpillChildKeys` Arrow-IPC file (`_payload_store.py`, mirroring
-`RawParentKeySpill`) during phase 1, then each of this joiner's two scans
-(`total_orphans`'s FAIL precount, `iter_join_rows`'s join) opens a FRESH
-`pa.ipc.open_stream` reader and `conn.register()`s it for that scan alone. A
-DuckDB-registered `pyarrow.RecordBatchReader` is SINGLE-PASS (rows on the
-first query against it, zero on a second -- observed on DuckDB 1.5.4's Python
-Arrow integration), which is exactly why each scan needs its own reader
-rather than one shared registration.
-
-This joiner uses the SAME shape the whole-child resident path
-(`_join.py::mask_child_fk`) already proves: the parent relation is a
-`read_parquet` VIEW (never materialized), the child keys are a file-backed
-streaming scan (never a resident structure), and ONE `LEFT JOIN child_keys x
-parent_keys ORDER BY __decoy_row_nr` per edge is read back through
-`to_arrow_reader`. The join build, hash table, and external sort are DuckDB's
-established larger-than-memory (grace / hybrid hash join + external merge
-sort) operations under `memory_limit`, spilling to `temp_directory`; we
-delegate all memory-management, spill, and ordering to DuckDB and do not roll
-our own. The one difference from `_join.py` is that this joiner EMITS
-incrementally (an ordered FK-output reader the runner zips to its mask
-stream) rather than setting columns into a whole resident `pa.Table`.
+MATERIALIZED parent TEMP TABLE (an O(distinct-parent-key) resident structure a
+DuckDB temp table cannot fully evict), and its own fix#1b successor which pinned
+an O(child) `child_keys` temp table for the same reason. The child side is now
+symmetric with the parent: staged once into a `SpillChildKeys` Arrow-IPC file
+during phase 1, then each scan opens a FRESH `pa.ipc.open_stream` reader and
+`conn.register()`s it for that scan alone (a DuckDB-registered
+`RecordBatchReader` is SINGLE-PASS, so each scan needs its own reader). The
+parent relation is a `read_parquet` VIEW (never materialized); the join build,
+hash table, and external sort are DuckDB's own larger-than-memory operations
+under `memory_limit`, spilling to `temp_directory`. This joiner EMITS
+incrementally (an ordered FK-output reader) rather than setting columns into a
+whole resident `pa.Table`.
 
 Two invariants carried over UNCHANGED from `ChildFkBatchJoiner`, because the
-sink path writes one Parquet file under one schema fixed before the first
-batch:
+sink path writes one Parquet file under one schema fixed before the first batch:
 
 - Fixed output schema. `output_types` is resolved from schemas alone at
   construction (`_batch_join._resolve_output_types`), fail-closing on any mix
   that cannot be typed byte-identically to whole-column inference, and
-  `observed_types` records the pre-cast chunk types so `_emit.py` can replay
-  the whole-column narrowing on the resident/relation sides. Neither the
-  fixed-schema typing nor the documented divergences it carries change here.
+  `observed_types` records the pre-cast chunk types so `_emit.py` can replay the
+  whole-column narrowing. Neither changes here.
 - Per-(output-)batch REMAP minting. Orphan REMAP values are minted from each
-  join-output batch's own `__decoy_src_i` keys (the raw child values, which
-  ride through the join unchanged, so every edge still keys off the RAW child),
-  never precomputed over the whole child -- so no kernel call is sized by total
-  child cardinality. Because the streamed join numbers rows GLOBALLY (for the
-  `ORDER BY`), each output batch's `__decoy_row_nr` is re-based to positional
-  0..n before `_append_output_batch`, which uses row_nr solely as the REMAP
-  index; the values are identical to the whole-child mint because the kernels
-  are per-value deterministic.
+  slice's own `__decoy_src_i` keys (the raw child values re-fetched out-of-line
+  in phase 3, so every edge still keys off the RAW child), never precomputed
+  over the whole child. Each slice's `__decoy_row_nr` is re-based to positional
+  0..n before `_append_output_batch` (which uses row_nr solely as the REMAP
+  index); the values match the whole-child mint because the kernels are
+  per-value deterministic.
 
-See `_batch_join.py`'s docstring for the typing divergences this class
-inherits; `tests/parity/` pins this route's output identical to `_batch_join`'s.
+See `_batch_join.py`'s docstring for the typing divergences this class inherits;
+`tests/parity/` pins this route's output identical to `_batch_join`'s.
 """
 
 from __future__ import annotations
@@ -84,7 +60,10 @@ from decoy_engine.execution.out_of_core._join import (
 from decoy_engine.execution.out_of_core._mask import mask_column
 from decoy_engine.execution.out_of_core._payload_store import SpillChildKeys
 from decoy_engine.execution.out_of_core._stream_join_cursors import (
+    ChildKeyLockstepCursor,
     JoinRowCursor,
+    _assert_slim_sorter_schema,
+    _combine_join_slices,
     _OrderedJoinRows,
 )
 from decoy_engine.execution.out_of_core._stream_join_plan import (
@@ -130,23 +109,24 @@ class StreamFkJoiner:
        child (the runner raises before any output if it is non-zero). Opens
        its OWN fresh reader over the spill.
     5. EITHER `iter_join_rows(batch_rows)` (the pre-existing ORDERED shim: one
-       `LEFT JOIN ... ORDER BY __decoy_row_nr`, DuckDB's own global sort,
-       staying live only until Task 6 removes it) OR the new bounded-reorder
-       path: `run_ordered_join(batch_rows, run_bytes_cap=..., merge_fan_in=...)`
-       drains the UNORDERED join (`_iter_unordered_join_rows`, plan-verified
-       via `explain_join`'s structural guard) into a `BoundedExternalSorter`
-       and returns an owning, order-restored, contiguity-guarded iterator.
-       Either way, each RAW join-result batch carries `__decoy_row_nr`,
-       `__decoy_fk_join_key`, one `__decoy_src_i` per child column,
-       `__decoy_parent_match`, and one `__decoy_parent_masked_i` per child
-       column -- exactly the columns `resolve_batch` needs.
-    6. `resolve_batch(join_rows)`: resolve one payload-aligned slice of those
-       raw join rows into FK output arrays, accumulating `orphan_total` and
-       `observed_types`. Called by the driver once per payload-store batch
-       (the same source-chunk granularity `main` resolves at), never once per
-       reader batch -- those boundaries can differ, and a reader batch that
-       coalesces a matched-bool run beside an orphan-int run cannot always be
-       resolved as a single unit (Codex HIGH finding).
+       `LEFT JOIN ... ORDER BY __decoy_row_nr`, DuckDB's own global sort, keeping
+       the FULL projection, staying live only until Task 6 removes it) OR the new
+       bounded-reorder path: `run_ordered_join(batch_rows, run_bytes_cap=...,
+       merge_fan_in=...)` drains the SLIM unordered join
+       (`_iter_unordered_join_rows`, plan-verified via `explain_join`'s
+       structural guard) into a `BoundedExternalSorter` and returns an owning,
+       order-restored, contiguity-guarded iterator. The reorder path's sorted
+       batches are SLIM: `__decoy_row_nr`, a compact `__decoy_parent_match`
+       token, and one `__decoy_parent_masked_i` per child column -- the raw child
+       columns are re-fetched out-of-line via `open_child_key_reader` +
+       `ChildKeyLockstepCursor` in phase 3.
+    6. `resolve_batch(slim_rows, raw_rows)`: recombine one payload-aligned slim
+       slice with its row-aligned raw child slice and resolve into FK output
+       arrays, accumulating `orphan_total` and `observed_types`. Called by the
+       driver once per payload-store batch (the same source-chunk granularity
+       `main` resolves at), never once per reader batch -- those boundaries can
+       differ, and a reader batch that coalesces a matched-bool run beside an
+       orphan-int run cannot always be resolved as a single unit (Codex HIGH).
     7. `close()`.
     """
 
@@ -390,30 +370,34 @@ class StreamFkJoiner:
         try:
             yield from conn.execute(query).to_arrow_reader(batch_rows)
         finally:
-            # An abandoned (never fully drained) generator's cleanup can run
-            # AFTER `close()` has already torn down the connection -- e.g. a
-            # sibling edge's fail-closed error unwinds `stream_table` while
-            # THIS edge's cursor is mid-batch, and Python finalizes this
-            # generator (GeneratorExit) whenever the `JoinRowCursor` holding
-            # it is garbage-collected, which is not ordered against
-            # `stream_table`'s own `finally` block closing every joiner.
-            # `unregister` is meaningless on an already-closed connection, so
-            # skip it rather than raise past a GeneratorExit.
+            # An abandoned generator's cleanup can run AFTER `close()` already
+            # tore down the connection (Python finalizes it via GeneratorExit at
+            # GC, unordered against `stream_table`'s own joiner-closing finally).
+            # `unregister` is meaningless on a closed connection, so skip it
+            # rather than raise past a GeneratorExit.
             if self._conn is not None:
                 self._conn.unregister("child_keys")
             reader.close()
 
     def _unordered_join_query(self) -> str:
-        """The Task 2 join query, identical to `iter_join_rows`'s SELECT/JOIN
-        but with the `ORDER BY` dropped -- shared by `_iter_unordered_join_rows`
-        and `explain_join()` so the plan a test inspects is exactly the plan
-        the drain actually runs."""
-        edge = self._edge
-        n_components = len(edge.child_columns)
+        """The SLIM unordered join query -- shared by `_iter_unordered_join_rows`
+        and `explain_join()` so the plan a test inspects is exactly the plan the
+        drain actually runs.
+
+        Projects ONLY what the bounded sorter must reorder: `__decoy_row_nr` (the
+        sort key), a COMPACT nullable-boolean match token (`TRUE` matched, NULL
+        orphan -- never the raw parent value), and the masked parent components.
+        The raw child columns (`__decoy_fk_join_key`, `__decoy_src_*`) stay OUT of
+        the SELECT -- they are re-fetched out-of-line from `SpillChildKeys` in
+        phase 3 -- so no wide raw key, orphan, or dictionary encoding can overflow
+        the sorter. `__decoy_fk_join_key` remains the JOIN predicate, not output.
+        """
         join_key = self._relation.join_key_column
-        select_list = [f"c.{_q('__decoy_row_nr')}", f"c.{_q('__decoy_fk_join_key')}"]
-        select_list += [f"c.{_q(f'__decoy_src_{idx}')}" for idx in range(n_components)]
-        select_list.append(f"p.{_q(join_key)} AS {_q('__decoy_parent_match')}")
+        select_list = [
+            f"c.{_q('__decoy_row_nr')}",
+            f"CASE WHEN p.{_q(join_key)} IS NULL THEN NULL ELSE TRUE END "
+            f"AS {_q('__decoy_parent_match')}",
+        ]
         for idx, masked_column in enumerate(self._relation.masked_key_columns):
             select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
         return f"""
@@ -587,6 +571,10 @@ class StreamFkJoiner:
         )
         try:
             for batch in self._iter_unordered_join_rows(batch_rows):
+                # Fail closed if the raw child columns ever reach the sorter: a
+                # single-read job cannot re-run _batch_join, so this must be an
+                # internal-invariant guard, not a runtime fallback (plan §3.4).
+                _assert_slim_sorter_schema(batch.schema)
                 sorter.write(batch)
             # The connection is closed BEFORE finish()'s merge runs, so the
             # DuckDB join's buffers and the sorter's merge buffers are never
@@ -640,18 +628,31 @@ class StreamFkJoiner:
         self._conn = conn
         return conn
 
-    def resolve_batch(self, join_rows: pa.RecordBatch) -> tuple[pa.Array, ...]:
-        """Resolve one payload-aligned slice of raw join rows into FK output.
+    def open_child_key_reader(self) -> Any:
+        """A fresh single-pass reader over this edge's raw child-key spill, for
+        the phase-3 out-of-line re-fetch (`ChildKeyLockstepCursor`). Must run
+        after `finalize_staging`; the caller owns closing the reader."""
+        if self._child_keys is None:
+            raise AssertionError("begin_staging must run before open_child_key_reader")
+        return self._child_keys.open_reader()
 
-        `join_rows` must be a single, internally consistent slice (typically a
-        `JoinRowCursor.take` result sized to one payload-store batch, the same
-        source-chunk granularity `main` resolved at). FK columns are produced
-        by `_append_output_batch` (the shared orphan-policy code) and cast to
-        the fixed `output_types`, with per-slice REMAP minting; `orphan_total`
-        and `observed_types` accumulate across every call.
+    def resolve_batch(
+        self, slim_rows: pa.RecordBatch, raw_rows: pa.RecordBatch
+    ) -> tuple[pa.Array, ...]:
+        """Resolve one payload-aligned slice into FK output, from TWO slices.
+
+        `slim_rows` is the sorted slim slice (row_nr + match token + masked
+        parent) from the reorder cursor; `raw_rows` is the row-aligned raw child
+        slice (row_nr + fk_join_key + src) re-read out-of-line from
+        `SpillChildKeys`. Both are sized to one payload-store batch (the same
+        source-chunk granularity `main` resolved at). They are recombined into
+        the one join row `_append_output_batch` (the shared orphan-policy code)
+        resolves, cast to the fixed `output_types`, with per-slice REMAP minting;
+        `orphan_total` and `observed_types` accumulate across every call.
         """
         edge = self._edge
         n_components = len(edge.child_columns)
+        join_rows = _combine_join_slices(slim_rows, raw_rows, n_components)
         remap_values = self._batch_remap_values(join_rows)
         # REMAP indexes remap_values by row_nr; re-base to positional 0..n so
         # the per-slice mint aligns (row_nr is used ONLY as the REMAP index).
@@ -716,4 +717,4 @@ class StreamFkJoiner:
         return pa.record_batch(columns, schema=result.schema)
 
 
-__all__ = ["JoinRowCursor", "StreamFkJoiner"]
+__all__ = ["ChildKeyLockstepCursor", "JoinRowCursor", "StreamFkJoiner"]

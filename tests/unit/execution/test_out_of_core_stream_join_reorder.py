@@ -22,6 +22,7 @@ from decoy_engine.execution.out_of_core._reorder_budget import (
     resolve_reorder_budgets,
 )
 from decoy_engine.execution.out_of_core._stream_join import (
+    ChildKeyLockstepCursor,
     JoinRowCursor,
     StreamFkJoiner,
     _OrderedJoinRows,
@@ -95,16 +96,22 @@ def test_reorder_shuffled_input_restores_row_order(tmp_path) -> None:
     ) as joiner:
         joiner.stage_keys(fx.child.to_batches())
         n = fx.child.num_rows
-        with joiner.run_ordered_join(32, run_bytes_cap=2048, merge_fan_in=_MERGE_FAN_IN) as rows:
+        # Small run_bytes_cap forces MANY initial runs even though the slim
+        # sorter row is far narrower than the old raw-carrying row.
+        with joiner.run_ordered_join(32, run_bytes_cap=512, merge_fan_in=_MERGE_FAN_IN) as rows:
             # A real multi-run merge: more initial runs than merge_fan_in, so
             # finish() ran at least one merge PASS (not a single buffered run).
             assert rows._sorter._run_counter > _MERGE_FAN_IN
             cursor = JoinRowCursor(rows, join_columns=fx.edge.child_columns)
-            raw = cursor.take(n, 0)
+            child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
+            slim = cursor.take(n, 0)
             cursor.assert_exhausted()
-            row_nrs = raw.column("__decoy_row_nr").to_pylist()
+            row_nrs = slim.column("__decoy_row_nr").to_pylist()
             assert row_nrs == list(range(n))
-            fk_arrays = joiner.resolve_batch(raw)
+            raw = child_cursor.take(n, 0)
+            child_cursor.assert_exhausted()
+            child_cursor.close()
+            fk_arrays = joiner.resolve_batch(slim, raw)
         result = fx.child.set_column(
             fx.child.schema.get_field_index(fx.edge.child_columns[0]),
             fx.edge.child_columns[0],
@@ -273,20 +280,20 @@ def test_drain_failure_closes_connection_and_spill(tmp_path, monkeypatch) -> Non
         original = joiner._iter_unordered_join_rows
 
         def _raising(batch_rows: int):
-            for i, batch in enumerate(original(batch_rows)):
-                if i == 6:
-                    # By this point (measured empirically for this fixture's
-                    # sizing), the sorter has already flushed a real run file
-                    # to disk -- proving the cleanup below unlinks an ACTUAL
-                    # spill, not a directory that was merely never populated.
-                    assert _spill_files(joiner) != []
+            for batch in original(batch_rows):
+                # Fail only AFTER the sorter has flushed a real run file (a prior
+                # write's flush), so the cleanup below unlinks an ACTUAL spill.
+                # The slim sorter row is narrower than the raw-carrying row this
+                # test predated, so a fixed batch index no longer guarantees a
+                # prior flush; keying off the spill itself keeps the intent.
+                if _spill_files(joiner):
                     raise RuntimeError("injected mid-drain failure")
                 yield batch
 
         monkeypatch.setattr(joiner, "_iter_unordered_join_rows", _raising)
 
         with pytest.raises(RuntimeError, match="injected mid-drain failure"):
-            joiner.run_ordered_join(8, run_bytes_cap=2048, merge_fan_in=_MERGE_FAN_IN)
+            joiner.run_ordered_join(8, run_bytes_cap=512, merge_fan_in=_MERGE_FAN_IN)
 
         assert joiner._conn is None
         assert _spill_files(joiner) == []
@@ -309,21 +316,20 @@ def test_drain_sorter_failure_closes_connection_and_spill(tmp_path, monkeypatch)
         joiner.stage_keys(fx.child.to_batches())
 
         real_write = stream_join_mod.BoundedExternalSorter.write
-        calls = {"n": 0}
 
         def _failing_write(self, batch):
-            calls["n"] += 1
-            if calls["n"] == 5:
-                # By call 5, with this run_bytes_cap, real run files already
-                # exist on disk (proven by the assertion just below).
-                assert len(self._all_run_files) > 0
+            # Fail on the first write AFTER a run file has been flushed to disk,
+            # so the cleanup below provably unlinks run files ALREADY on disk (the
+            # slim sorter row shifts the exact flush timing a fixed call count
+            # used to rely on).
+            real_write(self, batch)
+            if self._all_run_files:
                 raise RuntimeError("injected sorter failure")
-            return real_write(self, batch)
 
         monkeypatch.setattr(stream_join_mod.BoundedExternalSorter, "write", _failing_write)
 
         with pytest.raises(RuntimeError, match="injected sorter failure"):
-            joiner.run_ordered_join(32, run_bytes_cap=2048, merge_fan_in=_MERGE_FAN_IN)
+            joiner.run_ordered_join(32, run_bytes_cap=512, merge_fan_in=_MERGE_FAN_IN)
 
         assert joiner._conn is None
         assert _spill_files(joiner) == []

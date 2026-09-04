@@ -301,6 +301,139 @@ class JoinRowCursor:
         return batch
 
 
+class ChildKeyLockstepCursor:
+    """Forward-only LOCKSTEP reader over one edge's raw child-key spill.
+
+    The slim sorter no longer carries the raw child columns
+    (`__decoy_fk_join_key`, `__decoy_src_*`); phase 3 re-fetches them here,
+    out-of-line, from the phase-1 `SpillChildKeys` spill. Unlike
+    `JoinRowCursor`, this cursor NEVER retains a partial batch across calls:
+    each `take` consumes only WHOLE spill batches and releases them, so
+    residency stays O(one raw child batch) at a time -- matching `_batch_join`'s
+    own O(batch) transit, never one unbounded raw child batch pinned per edge.
+
+    Boundaries coincide because `SpillChildKeys` and the payload store are
+    co-written per source batch in the SAME phase-1 pass, so one raw child batch
+    lines up with one payload batch by `__decoy_row_nr`. A short, long, missing,
+    or wrong-`row_nr` batch fails closed (never silently self-validates).
+    """
+
+    def __init__(self, reader: pa.RecordBatchReader) -> None:
+        self._reader = reader
+        self._emitted = 0
+
+    def take(self, n: int, expected_row_nr_start: int) -> pa.RecordBatch:
+        """Return exactly `n` raw child rows starting at `expected_row_nr_start`,
+        consuming (and releasing) only whole spill batches."""
+        if self._emitted != expected_row_nr_start:
+            raise _row_alignment_error(
+                f"the child-key spill is positioned at row_nr {self._emitted}, but the "
+                f"payload store's next batch starts at row_nr {expected_row_nr_start}"
+            )
+        if n == 0:
+            schema = self._reader.schema
+            return pa.record_batch(
+                [pa.array([], type=field.type) for field in schema], schema=schema
+            )
+        collected: list[pa.RecordBatch] = []
+        got = 0
+        while got < n:
+            try:
+                batch = next(self._reader)
+            except StopIteration:
+                raise _row_alignment_error(
+                    "child-key spill exhausted before the payload store did "
+                    "(raw child shorter than the masked payload)"
+                ) from None
+            if batch.num_rows == 0:
+                continue
+            first = batch.column("__decoy_row_nr")[0].as_py()
+            if first != self._emitted + got:
+                raise _row_alignment_error(
+                    f"child-key spill batch starts at row_nr {first}, expected "
+                    f"{self._emitted + got}"
+                )
+            if got + batch.num_rows > n:
+                # One spill batch overshooting one payload batch means the two
+                # phase-1 streams were NOT written in lockstep; fail closed
+                # rather than slice a partial (which would leave a retained
+                # remainder resident, the very thing this cursor exists to avoid).
+                raise _row_alignment_error(
+                    f"child-key spill batch of {batch.num_rows} row(s) overshoots the "
+                    f"{n - got} row(s) the payload batch expects (phase-1 boundaries "
+                    "must coincide)"
+                )
+            collected.append(batch)
+            got += batch.num_rows
+        self._emitted += n
+        return collected[0] if len(collected) == 1 else _concat_join_row_batches(collected)
+
+    def assert_exhausted(self) -> None:
+        """Fail closed unless every raw child row has been consumed (the payload
+        store must be neither longer nor shorter than the child spill)."""
+        for batch in self._reader:
+            if batch.num_rows:
+                raise _row_alignment_error(
+                    "child-key spill has rows the payload store never consumed"
+                )
+
+    def close(self) -> None:
+        self._reader.close()
+
+
+def _assert_slim_sorter_schema(schema: pa.Schema) -> None:
+    """Fail closed if the raw child columns ever reach the sorter.
+
+    The whole point of the slim sort is that `__decoy_fk_join_key` and
+    `__decoy_src_*` are re-fetched out-of-line in phase 3, never sorted; a
+    regression that re-adds them to the sorter projection would silently
+    reintroduce the wide-row overflow this fix removes.
+    """
+    for name in schema.names:
+        if name == "__decoy_fk_join_key" or name.startswith("__decoy_src_"):
+            raise ExecutionError(
+                code="out_of_core_sorter_schema_not_slim",
+                message=(
+                    f"the reorder sorter's input schema {schema.names} still carries the "
+                    f"raw child column {name!r}; the slim sort must project only "
+                    "__decoy_row_nr, the match token, and the masked parent components."
+                ),
+            )
+
+
+def _combine_join_slices(
+    slim_rows: pa.RecordBatch, raw_rows: pa.RecordBatch, n_components: int
+) -> pa.RecordBatch:
+    """Rebuild the full join-row batch `_append_output_batch` resolves, from the
+    two phase-3 slices: the raw child components from `raw_rows`
+    (`__decoy_fk_join_key`, `__decoy_src_*`) and the match/masked-parent values
+    from the slim sorted slice `slim_rows`. Both are keyed by `__decoy_row_nr`;
+    a length or row_nr mismatch fails closed (the two artifacts of one read must
+    agree)."""
+    if slim_rows.num_rows != raw_rows.num_rows:
+        raise _row_alignment_error(
+            f"the slim slice has {slim_rows.num_rows} row(s) but the raw child slice has "
+            f"{raw_rows.num_rows}; they must be the same payload batch"
+        )
+    slim_row_nr = slim_rows.column("__decoy_row_nr")
+    if not slim_row_nr.equals(raw_rows.column("__decoy_row_nr")):
+        raise _row_alignment_error("the slim and raw child slices disagree on __decoy_row_nr")
+    columns: list[pa.Array] = [
+        raw_rows.column("__decoy_row_nr"),
+        raw_rows.column("__decoy_fk_join_key"),
+    ]
+    names = ["__decoy_row_nr", "__decoy_fk_join_key"]
+    for idx in range(n_components):
+        columns.append(raw_rows.column(f"__decoy_src_{idx}"))
+        names.append(f"__decoy_src_{idx}")
+    columns.append(slim_rows.column("__decoy_parent_match"))
+    names.append("__decoy_parent_match")
+    for idx in range(n_components):
+        columns.append(slim_rows.column(f"__decoy_parent_masked_{idx}"))
+        names.append(f"__decoy_parent_masked_{idx}")
+    return pa.record_batch(columns, names=names)
+
+
 def _concat_join_row_batches(batches: list[pa.RecordBatch]) -> pa.RecordBatch:
     table = pa.Table.from_batches(batches).combine_chunks()
     return table.to_batches()[0]

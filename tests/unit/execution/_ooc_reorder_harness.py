@@ -18,7 +18,11 @@ import pyarrow as pa
 
 from decoy_engine.execution.out_of_core._join import mask_child_fk, orphan_fk_warning
 from decoy_engine.execution.out_of_core._runner import _remap_values
-from decoy_engine.execution.out_of_core._stream_join import JoinRowCursor, StreamFkJoiner
+from decoy_engine.execution.out_of_core._stream_join import (
+    ChildKeyLockstepCursor,
+    JoinRowCursor,
+    StreamFkJoiner,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity.test_out_of_core_fk_parity import _assert_value_equal
@@ -88,9 +92,13 @@ def ordered_join_output(
                 )
             else:
                 cursor = JoinRowCursor(rows, join_columns=fx.edge.child_columns)
-                raw = cursor.take(n, 0)
+                child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
+                slim = cursor.take(n, 0)
                 cursor.assert_exhausted()
-                fk_arrays = joiner.resolve_batch(raw)
+                raw = child_cursor.take(n, 0)
+                child_cursor.assert_exhausted()
+                child_cursor.close()
+                fk_arrays = joiner.resolve_batch(slim, raw)
         result = fx.child
         for idx, child_col in enumerate(fx.edge.child_columns):
             result = result.set_column(

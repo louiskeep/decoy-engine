@@ -2,8 +2,11 @@
 
 `BoundedExternalSorter` sorts an unordered stream of Arrow batches by a single
 orderable `sort_key_column` while keeping RESIDENT memory byte-capped at
-`run_bytes_cap`, regardless of how many rows stream through or how wide any one
-row is. It never changes a value, only the memory envelope. It generalizes the
+`run_bytes_cap`, regardless of how many rows stream through. A single row wider
+than the per-merge-head cap (`run_bytes_cap // (2 * merge_fan_in)`) cannot be
+bounded and is REJECTED at write-time (`out_of_core_sort_row_too_wide`, see the
+memory contract below), so the cap does bound per-row width, not just the row
+count. It never changes a value, only the memory envelope. It generalizes the
 original OOC-B `ExternalRowNrSorter` (which hard-wired an integer `__decoy_row_nr`
 key) to any non-null orderable key type; `_reorder_budget.py` is the budget model
 that sizes `run_bytes_cap` and `merge_fan_in`. Established method: external merge

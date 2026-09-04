@@ -43,11 +43,19 @@ _CAPPED_ENV = {
 _CEILING_MIB = 512
 
 # A small parent (bounded dedup relation) and a large child, sized so the
-# join-row bytes actually flowing into the sorter comfortably exceed
+# SLIM join-row bytes actually flowing into the sorter comfortably exceed
 # run_bytes_cap (F_SORT * ceiling, ~77 MiB at this ceiling) by more than 5x --
 # proven a real multi-run spill, not an accidental single-buffer pass -- while
-# staying disk-safe on a shared devbox (this measured ~430 MB of join-row
-# bytes on disk at peak, well under the few-GiB free space this box has).
+# staying disk-safe on a shared devbox. The slim sort carries only row_nr, the
+# match token, and the masked key (the raw child columns no longer ride through
+# it), so the per-row sort bytes dropped ~4x versus the pre-slim raw join row.
+# The sort volume still exceeds run_bytes_cap (forcing a real multi-run spill),
+# but no longer by 5x -- and it cannot be pushed back to 5x without inflating
+# DuckDB's OWN join-phase peak (more rows) or the masked value's transit (wider
+# values) past the RSS envelope, neither of which is the sorter residency under
+# test. So the sizing is unchanged from the pre-slim proof and the spill
+# assertion tracks the real slim volume instead (~100 MB of slim join-row bytes,
+# ~1.3x run_bytes_cap, two initial runs).
 _PARENT_ROWS = 500
 _CHILD_ROWS = 3_000_000
 _KEY_WIDTH = 32
@@ -305,10 +313,12 @@ def test_reorder_peak_rss_within_envelope_while_far_exceeding_ceiling(tmp_path):
     assert rec["real_spill"] is True, "expected multiple sorter runs, got a single buffered run"
     assert rec["initial_run_count"] > 1
 
-    # The join-row bytes actually flowing into the sorter must genuinely
-    # exceed run_bytes_cap for this to be a real spill proof, not an
-    # accidental single-buffer pass.
-    assert rec["total_join_row_bytes"] > rec["run_bytes_cap"] * 5
+    # The SLIM join-row bytes flowing into the sorter must genuinely exceed
+    # run_bytes_cap for this to be a real spill proof, not an accidental
+    # single-buffer pass. The slim row is ~4x narrower than the pre-slim raw
+    # join row, so this margin is ~1.3x (not the pre-slim 5x); the multi-run
+    # `initial_run_count > 1` assertion above is the primary spill proof.
+    assert rec["total_join_row_bytes"] > rec["run_bytes_cap"] * 1.15
 
     envelope_bytes = _CEILING_MIB * _ENVELOPE_FACTOR
     assert rec["peak_rss_mb"] <= envelope_bytes, (
