@@ -47,31 +47,46 @@ never called on the native path.
 
 A native lane branches after layer-1 (FK) routing, before `resolve_resident_sources`. It is
 selected only when `native_route_enabled` is on, `execution_mode == "auto"`, the source is a
-`LazySource` (see 2.5), the table admits, and the job carries none of the rejected features (2.3).
-It consumes the source as batches (`LazySource.iter_batches()`) exactly once, masking and writing
-each batch as it goes, never materializing the whole source and never reading it twice.
+`LazySource` (see 2.5), the config admits (2.3), and the FIRST batch of the execution iterator
+admits (2.2). It consumes the source as batches (`LazySource.iter_batches()`) exactly once, masking
+and writing each batch as it goes, never materializing the whole source and never reading it twice.
+Admission is taken from that first execution batch, not a separate schema read, so there is no
+second open of the source and no no-first-batch race.
 
-### 2.2 Schema-only admission (why one pass is exact)
+### 2.2 First-batch admission (why one pass is exact)
 
-Admission is decided from the batch schema, with no whole-source pass, because the admitted
-strategies on `utf8` columns produce an output type that does not depend on the column's null
-state:
+Admission is decided from the first execution batch, with no whole-source pass, because the
+admitted strategies on `utf8` columns produce an output type that does not depend on the column's
+null state:
 
 - `passthrough` on `utf8` preserves `utf8`; the oracle round-trip also yields `utf8` (string).
   This is not true of `large_utf8` (the oracle yields `string`, a width drift the parity harness
   does not allow by default and which the plan-gate forbids papering over with a broad
-  `PhysicalDiff`), so `large_utf8` is rejected.
-- `redact` and `truncate` always output `string` regardless of input, and their `utf8` inputs
-  stay `string` across both routes.
-- Empty and all-null `utf8` columns resolve to the one physical difference the harness already
-  allows (the null-typed normalization), not a width or dtype drift.
+  `PhysicalDiff`), so `large_utf8` is rejected. Admission pins on `field.type == pa.utf8()`
+  exactly, with no dictionary unwrapping: a `dictionary<*, utf8>` column is rejected, because the
+  oracle and native disagree on the index width (`dictionary<string, int8>` vs
+  `dictionary<string, int32>`).
+- `redact` outputs `string` only when its `redact_with` fill is a string; a non-string
+  `redact_with` is rejected (the existing `redact_config_rejection` is an explicit production-lane
+  prerequisite). `truncate` always outputs `string`. Their `utf8` inputs stay `string` on both
+  routes.
+- An all-null `utf8` column resolves to the one physical difference the harness already allows
+  (the null-typed normalization).
 
-So the admission matrix is exact and schema-only: admit `passthrough` / `redact` / `truncate` on a
-`utf8` column; reject every other Arrow type (`large_utf8`, integer, unsigned integer, boolean,
-floating, timestamp, decimal, and the rest) and route those tables to the oracle. Later batches
-are checked for schema drift; a drifting batch aborts (see 2.6). No integer null guard, no
-preflight, and no source fingerprint are needed, because no admitted column's output type depends
-on data the first batch does not already reveal.
+A zero-row source is the one shape first-batch admission cannot make exact: on an empty column the
+oracle yields `null` for passthrough (allowed) but `double` for `redact` / `truncate`, while native
+constructs `string` (a `double`-vs-`string` drift the harness does not allow). So a zero-batch
+source reroutes to the oracle before any output, matching the existing native coordinator's
+behavior. This is also why admission reads the first execution batch: an iterator that yields
+nothing takes the oracle reroute.
+
+So the admission matrix is exact: admit `passthrough` / `truncate`, and `redact` with a string
+`redact_with`, on an exact `pa.utf8()` column of a non-empty source; reject every other Arrow type
+(`large_utf8`, `dictionary<*, utf8>`, integer, unsigned integer, boolean, floating, timestamp,
+`decimal128`, binary, nested, null, and the rest), a non-string `redact_with`, and a zero-row
+source, routing those tables to the oracle. Later batches are checked for schema drift; a drifting
+batch aborts (see 2.6). No integer null guard, no preflight, and no source fingerprint are needed,
+because no admitted column's output type depends on data the first batch does not already reveal.
 
 ### 2.3 Reject-before-output contract (closed world)
 
@@ -85,7 +100,11 @@ Rerouting is clean, not an error, and happens before the first batch is masked:
 - a sink the lane cannot stream to (2.4).
 - unsupported projection, generation columns, or multi-table jobs.
 - a non-`None` `source_loader`, or any non-`LazySource` source entry (2.5).
-- any strategy off the three-strategy allowlist, or any column whose type is not `utf8`.
+- a zero-row source (empty first batch), which the oracle types differently for `redact` /
+  `truncate` (2.2).
+- any strategy off the three-strategy allowlist, any column whose type is not exact `pa.utf8()`
+  (including `large_utf8` and `dictionary<*, utf8>`), or a `redact` node with a non-string
+  `redact_with`.
 
 A closed-world admission sentry (test) enumerates the admitted capabilities and fails the build if
 any admitted strategy carries a row-error mode, a quarantine dependency, a pool-quality
@@ -167,9 +186,9 @@ other routing controls), default False, threaded to `decide_chunk_route`. It is 
 ## 3. Failure modes
 
 1. Admission miss, a rejected whole-dataset feature, a non-streaming sink, a non-`LazySource`
-   source, a non-`None` loader, or a non-`utf8` column. The job reroutes to the oracle with full
-   production dependencies before any native output; the ledger records the coded reason. Not an
-   error.
+   source, a non-`None` loader, a non-exact-`utf8` column, a non-string `redact_with`, or a
+   zero-row source. The job reroutes to the oracle with full production dependencies before any
+   native output; the ledger records the coded reason. Not an error.
 2. `native_route_enabled=False` or a non-`auto` execution mode. Native is never selected; behavior
    is identical to today.
 3. A post-first-output failure (mid-stream kernel error, schema drift, ledger-validation failure,
@@ -185,13 +204,14 @@ Every test asserts against the pinned pandas oracle. Routing tests drive the pro
 involved, so the whole surface runs in normal CI. Physical-schema parity uses the existing harness
 rules on the committed Parquet artifact, with no new broad `PhysicalDiff` allowance.
 
-1. **Byte and physical-schema parity through the production entry**: `passthrough` / `redact` /
-   `truncate` on `utf8` columns including non-null, null-bearing, empty, and all-null cases.
-   Byte-identical values, row order, null placement, ordered warnings, and physical schema to both
-   chunked-oracle and full-frame-oracle.
-2. **Non-`utf8` and `large_utf8` columns reroute, byte-identical**: `large_utf8`, integer, unsigned
-   integer, boolean, floating, and timestamp columns each route to the oracle with the coded
-   reason.
+1. **Byte and physical-schema parity through the production entry**: `passthrough` / `truncate`
+   and `redact` (string `redact_with`) on non-empty `utf8` columns including non-null, null-bearing,
+   and all-null cases. Byte-identical values, row order, null placement, ordered warnings, and
+   physical schema to both chunked-oracle and full-frame-oracle.
+2. **Rejected shapes reroute, byte-identical**: `large_utf8`, `dictionary<*, utf8>`, `decimal128`,
+   integer, unsigned integer, boolean, floating, timestamp, and binary columns; a non-string
+   `redact_with`; and a zero-row source (whose `redact` / `truncate` output the oracle types as
+   `double`) each route to the oracle with the coded reason.
 3. **The native lane provably ran.** After a successful commit, every frozen Part-1 ledger count is
    zero, `attempted == completed`, per-node completed counts equal the chunk count, the job
    completed only after commit, and the oracle-entry spy recorded no call.
