@@ -25,6 +25,10 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from decoy_engine.execution._residency_warning import (
+    caller_managed_residency_shapes,
+    residency_quality_warning,
+)
 from decoy_engine.execution._sequential import run_sequential
 
 if TYPE_CHECKING:
@@ -43,6 +47,7 @@ __all__ = [
     "run_out_of_core_route",
     "run_sequential_route",
 ]
+
 
 # OOC-D: the runtime temp-disk cap (`_budget.check_temp_disk_budget`, enforced
 # inside `run_fk_out_of_core` at each table boundary) is sized off free disk
@@ -188,6 +193,7 @@ def run_out_of_core_route(
     execution_plan_decision: ExecutionPlan | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    out_of_core_reorder_threshold_rows: int | None = None,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -251,10 +257,24 @@ def run_out_of_core_route(
     routing_signals.resolve_execution_route`) is ADVISORY only -- it warns,
     it never rejects.
 
-    Residency: with a `sink` the runner streams bounded batches (outputs `{}`,
-    the sink holds the deliverable); without one it reassembles resident tables
-    (still bounded per-table on the DuckDB side, but the Python outputs are held
-    -- the same resident-vs-streamed distinction the sequential route makes).
+    Residency (P4-A, Option A): the route's memory bound -- engine-controlled
+    peak residency bounded with respect to table row cardinality -- holds only
+    for the structural bounded shape: every source a `LazySource` (never fully
+    materialized) AND a sink that consumes `write_batches` incrementally without
+    retaining the stream (`ParquetTransactionalSink` is the production-proven
+    such sink). It is NOT an absolute never-OOM guarantee: a resident `pa.Table`
+    source holds the whole input in RAM (RAM the caller already spent), `sink is
+    None` reassembles the whole output resident, a `source_loader` returns an
+    unbounded resident table, and unrelated in-process memory the caller holds is
+    outside the route's view. Those caller-managed shapes run unchanged but attach
+    a best-effort structured `QualityWarning` (code
+    `out_of_core_caller_managed_residency`) to the result's `.warnings`, plus a
+    `quality_metrics["residency"]` record, naming the shape and the bounded
+    alternative. Both are control-flow-neutral -- they ride in the returned result
+    and cannot be escalated by a caller's `-W error` -- so the shapes are
+    documented, not policed; four cross-model plan-gate rounds established that a
+    precise fail-closed byte guard cannot make the bound absolute for arbitrary
+    in-process callers.
     `strategy` surface is SC1's `hash/redact/truncate/passthrough`; widening is
     SC3/SC4, and an unsupported strategy is a routing miss (the job never
     reaches here -- it stays sequential/full-frame), never a run failure.
@@ -277,6 +297,16 @@ def run_out_of_core_route(
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
     from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
     from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
+
+    # P4-A (Option A): the residency bound holds only for the structural bounded
+    # shape (LazySource sources + an incrementally-consuming sink). Classify any
+    # caller-managed shape on the PRE-resolution `sources` (a loader-resolved
+    # table would look resident post-hoc; the `source_loader is not None` check
+    # already covers that shape). The structured warning is attached to the
+    # returned result below -- control-flow-neutral, no sizing, no rejection.
+    caller_managed_shapes = caller_managed_residency_shapes(
+        sources, sink=sink, source_loader=source_loader
+    )
 
     resolved_sources = sources
     if source_loader is not None:
@@ -341,8 +371,7 @@ def run_out_of_core_route(
     # in O(1), so no source is materialized just to count it) -- the same
     # "site with row counts already in hand" precedent the disk preflight
     # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
-    # a job whose predicted floor cannot fit is refused before any DuckDB
-    # work starts.
+    # a job whose predicted floor cannot fit is refused before any DuckDB work.
     #
     # Gated against `resolved_budget_bytes` -- THE SAME `OutOfCoreBudget.
     # budget_bytes` resolved above at the ONE `resolve_ooc_memory_limit` call
@@ -376,6 +405,7 @@ def run_out_of_core_route(
         temp_disk_budget_bytes=temp_disk_budget_bytes,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
+        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(
@@ -385,6 +415,19 @@ def run_out_of_core_route(
         source_loader=source_loader,
         sources_resident=sources_resident,
     )
+    # P4-A: signal any caller-managed residency shape two control-flow-neutral
+    # ways -- a structured `QualityWarning` in the route's `.warnings` channel
+    # (folded into the manifest downstream, filterable by its code) and an
+    # additive `quality_metrics["residency"]` record. Neither can alter execution
+    # or be escalated by a caller's `-W error`, so the never-rejects guarantee
+    # holds.
+    warnings = ooc_result.warnings
+    if caller_managed_shapes:
+        warnings = (*warnings, residency_quality_warning(caller_managed_shapes))
+        quality_metrics["residency"] = {
+            "caller_managed": True,
+            "shapes": list(caller_managed_shapes),
+        }
     if explain_plan and execution_plan_decision is not None:
         quality_metrics["execution_plan"] = {
             "mode": execution_plan_decision.mode,
@@ -395,7 +438,7 @@ def run_out_of_core_route(
         outputs=dict(ooc_result.outputs),  # {} when a sink was provided
         timings=ooc_result.timings,
         boundary_conversion_ms=ooc_result.boundary_conversion_ms,
-        warnings=ooc_result.warnings,
+        warnings=warnings,
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=ooc_result.row_errors,
@@ -498,17 +541,21 @@ def run_mask_chunked(
     vault_writer: Any,
     chunk_size_rows: int,
     key_provider: KeyProvider | None = None,
-) -> tuple[dict[str, pa.Table], tuple, float, tuple]:
+) -> tuple[dict[str, pa.Table], tuple, float, tuple, dict[str, Any]]:
     """Mask one eligible table via the chunked entrypoint.
 
-    Returns `(outputs, timings, boundary_conversion_ms, warnings)` so the
-    routed ExecutionResult keeps the same surface as the full-frame one:
-    warnings are the order-stable union of per-chunk warnings, timings a
-    per-(strategy, column) rollup, conversion the per-chunk sum. Row
-    errors are NOT part of the return: `run_mask_pipeline_chunked`'s H1
-    fail-closed check raises `RowErrorsFailedError` the moment any chunk
-    reports one, so a normal return here is row-error-free by
-    construction (see `_pipeline_routing`'s module docstring).
+    Returns `(outputs, timings, boundary_conversion_ms, warnings,
+    quality_metrics)` so the routed ExecutionResult keeps the same surface as
+    the full-frame one: warnings are the order-stable union of per-chunk
+    warnings, timings a per-(strategy, column) rollup, conversion the
+    per-chunk sum, quality_metrics the `code_set_corpora` evidence aggregated
+    once per (table, column) across chunks (`masked_any` semantics, matching
+    the full-frame handler's own once-per-column stamp; `{}` when no chunk
+    masked a code_set column). Row errors are NOT part of the return:
+    `run_mask_pipeline_chunked`'s H1 fail-closed check raises
+    `RowErrorsFailedError` the moment any chunk reports one, so a normal
+    return here is row-error-free by construction (see `_pipeline_routing`'s
+    module docstring).
 
     Slicing is zero-copy (`pa.Table.slice` shares buffers), so the only
     per-chunk materialization is the adapter's pandas working set --
@@ -542,9 +589,12 @@ def run_mask_chunked(
         )
     )
     masked = _chunked.concat_masked_chunks(masked_chunks, table=table)
+    from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
+
     return (
         {table: masked},
         _chunked.aggregate_chunk_timings(chunk_results),
         sum(r.boundary_conversion_ms for r in chunk_results),
         _chunked.aggregate_chunk_warnings(chunk_results),
+        aggregate_chunk_code_set_corpora(chunk_results),
     )

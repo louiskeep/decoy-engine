@@ -763,14 +763,22 @@ class TestRunMaskChunkedCallSites:
         """A lossy (null-bearing, > 2**53) passthrough FK column fails closed with
         the offending TABLE named in the message. Kills
         reject_lossy_chunked_fk_passthrough(table=None) (the message would read
-        'Column None.customer_id ...'); the declared-dtype twin already asserts the
-        table name, so this closes the same gap for the passthrough guard."""
+        'Column None.id ...'); the declared-dtype twin already asserts the
+        table name, so this closes the same gap for the passthrough guard.
+
+        PARENT role (`table="customers"`), not child: the 2026-09-02 cascade-
+        safety plan narrows `gate_fk_child_edges` (only ever consulted for the
+        CHILD role) to admit `hash` only, so a passthrough FK CHILD column is
+        now rejected earlier still, before this guard ever runs for it (see
+        test_de10_chunked_fk_passthrough.py's gate-kill coverage for that).
+        The PARENT role is untouched by that gate and still reaches this
+        guard directly."""
         config = _passthrough_fk_config()
-        chunk = pa.table({"customer_id": pa.array([1, None, 9007199254740993], type=pa.int64())})
+        chunk = pa.table({"id": pa.array([1, None, 9007199254740993], type=pa.int64())})
         with pytest.raises(ExecutionError) as exc:
-            list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_EV))
+            list(run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_EV))
         assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
-        assert "orders" in exc.value.message
+        assert "customers" in exc.value.message
 
     def test_polars_nonnative_table_still_applies_fk_passthrough_guard(self) -> None:
         """On a POLARS adapter whose table carries a non-native strategy
@@ -782,19 +790,25 @@ class TestRunMaskChunkedCallSites:
         guard is skipped -- the null-bearing big-int passthrough FK then rounds
         silently instead of failing closed. `table` is load-bearing only on this
         polars branch (the pandas adapter returns True before reading it), which is
-        why the pandas-route reject tests above cannot reach this mutant."""
+        why the pandas-route reject tests above cannot reach this mutant.
+
+        PARENT role (`table="customers"`), not child -- see the previous
+        test's docstring for why: a passthrough FK CHILD column is rejected
+        earlier now, at the compile-time allowlist gate, before this guard
+        (or the adapter it runs under) is ever reached."""
         pytest.importorskip("polars")
         from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
 
         config = _passthrough_fk_config()
-        # A non-native (top_code) column on `orders` forces the polars adapter to
-        # the pandas oracle for this table, so the pandas-ingestion guard applies.
-        config["tables"][1]["columns"].append(
+        # A non-native (top_code) column on `customers` forces the polars
+        # adapter to the pandas oracle for this table, so the pandas-ingestion
+        # guard applies.
+        config["tables"][0]["columns"].append(
             {"name": "age", "strategy": "top_code", "provider_config": {"preset": "hipaa_age"}}
         )
         chunk = pa.table(
             {
-                "customer_id": pa.array([1, None, 9007199254740993], type=pa.int64()),
+                "id": pa.array([1, None, 9007199254740993], type=pa.int64()),
                 "age": pa.array([40, 55, 92], type=pa.int64()),
             }
         )
@@ -803,7 +817,7 @@ class TestRunMaskChunkedCallSites:
                 run_mask_pipeline_chunked(
                     config,
                     [chunk],
-                    table="orders",
+                    table="customers",
                     engine_version=_EV,
                     adapter=PolarsExecutionAdapter(),
                 )

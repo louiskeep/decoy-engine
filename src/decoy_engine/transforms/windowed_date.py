@@ -183,6 +183,7 @@ def apply_windowed_date(
     df: pd.DataFrame,
     seed: bytes,
     namespace: str,
+    row_offset: int = 0,
 ) -> list[str]:
     """Generate one date per row within the configured window around the anchor.
 
@@ -191,12 +192,20 @@ def apply_windowed_date(
     offset sampling; pandas Timestamp + Timedelta for date arithmetic.
 
     Args:
-        config:    Parsed WindowedDateConfig.
-        df:        DataFrame containing the anchor date column.
-        seed:      8-byte job seed for per-row RNG seeding.
-        namespace: Per-column namespace string (e.g. "windowed_date/<col>")
-                   passed to derive() so two windowed_date columns in the
-                   same job produce independent offset streams.
+        config:     Parsed WindowedDateConfig.
+        df:         DataFrame containing the anchor date column.
+        seed:       8-byte job seed for per-row RNG seeding.
+        namespace:  Per-column namespace string (e.g. "windowed_date/<col>")
+                    passed to derive() so two windowed_date columns in the
+                    same job produce independent offset streams.
+        row_offset: Durable global row number of `df`'s row 0 (Phase 4 slice
+                    1 / DGRN). Default 0 keeps every full-frame / non-chunked
+                    call byte-unchanged: `row_index` for local row `j` is
+                    `row_offset + j`, which equals the plain `j` full-frame
+                    enumeration produces when `row_offset == 0`. A chunked
+                    caller passes the chunk's own durable offset so `i`
+                    tracks the row's true position in the whole, unchunked
+                    source instead of restarting at 0 each chunk.
 
     Returns:
         List of ISO-format date strings (``YYYY-MM-DD``) aligned to df rows.
@@ -204,7 +213,7 @@ def apply_windowed_date(
     anchor_series = df[config.anchor]
     result: list[str] = []
 
-    for i, raw_anchor in enumerate(anchor_series):
+    for i, raw_anchor in enumerate(anchor_series, start=row_offset):
         anchor_ts = pd.Timestamp(raw_anchor)
         row_seed_int = int.from_bytes(derive(seed, namespace, i.to_bytes(8, "big"))[:8], "big")
         row_rng = np.random.default_rng(row_seed_int)

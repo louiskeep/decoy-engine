@@ -186,6 +186,16 @@ class StrategyContext:
     # mutate-in-place / default-empty pattern as the sinks above; a fresh dict
     # per job via default_factory.
     group_anchor_snapshots: dict[tuple[str, str], pd.Series] = field(default_factory=dict)
+    # Phase 4 slice 1 (DGRN -> windowed_date): the durable global row offset of
+    # this call's FIRST row, i.e. the position the physical row 0 of `df`
+    # occupies in the full, unchunked source. Full-frame and every other
+    # existing caller default to 0 (their row 0 IS the durable row 0), so this
+    # field is byte-unchanged for every pre-existing construction. Only
+    # `windowed_date` reads it (`ctx.row_offset` -> `apply_windowed_date`'s
+    # `row_offset` param); every other handler ignores it, matching the
+    # value-keyed (not position-keyed) contract the other CHUNK_SAFE
+    # strategies rely on.
+    row_offset: int = 0
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is
@@ -263,6 +273,15 @@ class ExecutionAdapter(Protocol):
         # DE-02: the keyed-mask secret source, injected at run time and NEVER
         # serialized into the plan. None -> the no-secret job_seed fallback.
         key_provider: KeyProvider | None = None,
+        # Phase 4 slice 1: forwarded to StrategyContext.row_offset (see its
+        # docstring). Default 0 keeps every pre-existing caller byte-unchanged.
+        row_offset: int = 0,
+        # Phase 4 slice 4: a caller-resolved (table, column) -> corpus-record
+        # mapping seeded into StrategyContext.code_set_records, so every chunk
+        # of a multi-call job masks against the identical pinned corpus (see
+        # `_chunked_code_set.py`). None (default) leaves the field empty,
+        # unchanged for every pre-existing caller.
+        code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...
