@@ -28,6 +28,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._native_route import NativeRouteReport
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.generation.pool._cache import PoolCache
     from decoy_engine.keyprovider import KeyProvider
@@ -66,6 +67,14 @@ class ExecutionResult:
     # table-attributed by the adapter's drain point. Additive; default empty
     # tuple leaves every existing ExecutionResult construction unchanged.
     row_errors: tuple[RowErrorRecord, ...] = ()
+    # Q3 slice 1 (2026-09-04): route evidence for the production single-pass
+    # streaming native lane (`_native_route_exec.try_native_route`). None on
+    # every pre-existing construction site and on any job that never asked
+    # for the lane (`native_route_enabled=False`, the default); populated by
+    # `run_pipeline` for both an admitted native run (with its ledger) and a
+    # reroute the lane itself decided on, so a caller can tell "never asked"
+    # from "asked and declined" from "asked and ran."
+    native_route: NativeRouteReport | None = None
 
     @property
     def output(self) -> pa.Table:

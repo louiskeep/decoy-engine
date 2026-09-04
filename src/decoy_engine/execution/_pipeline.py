@@ -78,10 +78,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_finalize, _pipeline_routing
+from decoy_engine.execution import _native_route_exec, _pipeline_finalize, _pipeline_routing
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._native_route import NativeRouteReport
 from decoy_engine.execution._planner import (
     AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
     FULL_FRAME_REJECT_ROWS_DEFAULT,
@@ -181,6 +182,7 @@ def run_pipeline(
     use_probe_routing: bool = True,
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
+    native_route_enabled: bool = False,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -257,6 +259,16 @@ def run_pipeline(
     ``quality_metrics["execution_adapter"]`` so a job's performance mode
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
+
+    `native_route_enabled` (Q3 slice 1, default False -- a runtime routing
+    control, not a `GlobalSettings` field, matching `execution_mode`'s own
+    reasoning above): when True and `execution_mode == "auto"`, a single-
+    table non-FK mask job over `passthrough` / `redact` / `truncate` on
+    exact `pa.utf8()` columns may run the dedicated single-pass streaming
+    native lane instead of the pandas oracle. Every other shape reroutes to
+    the unchanged oracle path; see `_native_route` and `_native_route_exec`
+    for the admission contract and `ExecutionResult.native_route` for the
+    evidence this stamps.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -464,6 +476,34 @@ def run_pipeline(
             out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         )
 
+    # Q3 slice 1: the dedicated single-pass streaming native lane. Sits here
+    # on purpose -- after layer-1 FK routing declined (both early returns
+    # above), before `resolve_resident_sources` -- so a candidate job's
+    # LazySource is peeked at most once and a non-candidate job's source is
+    # never touched by this check at all. `try_native_route` itself re-checks
+    # `execution_mode == "auto"` and FK participation, so an explicit
+    # sequential/full_frame/out_of_core override or an FK job that fell
+    # through to here for an unrelated reason (e.g. validators) can never
+    # reach the peek. Only evaluated when the caller opted in, so a job that
+    # never sets `native_route_enabled` (the default) pays nothing and
+    # `ExecutionResult.native_route` stays None, matching every pre-slice
+    # construction.
+    native_route_report: NativeRouteReport | None = None
+    if has_mask_table and native_route_enabled:
+        native_result, native_route_report = _native_route_exec.try_native_route(
+            config=config,
+            plan=plan,
+            table_kinds=table_kinds,
+            caller_sources=caller_sources,
+            source_loader=source_loader,
+            sink=sink,
+            fidelity_report=fidelity_report,
+            execution_mode=execution_mode,
+            graph=graph,
+        )
+        if native_result is not None:
+            return native_result
+
     # TB-1: only full_frame / auto-chunk below needs every source resident.
     resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)
 
@@ -642,4 +682,5 @@ def run_pipeline(
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=mask_row_errors,
+        native_route=native_route_report,
     )
