@@ -338,6 +338,35 @@ def test_keyed_mask_parity() -> None:
     _assert_route_parity(plan, sources, graph, "keyed-mask", key_provider=secret)
 
 
+def test_dict_encoded_child_key_under_fail_parity() -> None:
+    # A dictionary-encoded child FK KEY column is admitted under FAIL policy (the
+    # FAIL branch of _resolve_output_types resolves output types from the masked
+    # parent type alone and never round-trips the child type), unlike
+    # PRESERVE/WARN/REMAP which reject it. It selects reorder and must equal
+    # _batch_join exactly: the slim sort re-fetches the raw child key out-of-line,
+    # so dict-encoding of that raw column cannot reach the sorter (Codex-final P3-2).
+    from tests.parity.test_out_of_core_fk_parity import _build_single_edge
+
+    plan, sources, graph = _build_single_edge(
+        parent_kind="str",
+        child_kind="str",
+        strategy="passthrough",
+        policy=OrphanPolicy.FAIL,
+        parent_rows=5,
+        child_refs=[0, 1, 2, None, 4],
+        parent_nan_row=None,
+    )
+    edge = graph.edges[0]
+    child = sources[edge.child_table]
+    name = edge.child_columns[0]
+    idx = child.schema.get_field_index(name)
+    dict_sources = dict(sources)
+    dict_sources[edge.child_table] = child.set_column(
+        idx, name, child.column(name).combine_chunks().dictionary_encode()
+    )
+    _assert_route_parity(plan, dict_sources, graph, "dict-child-key-fail")
+
+
 def test_lazy_source_sink_parity(tmp_path: Path) -> None:
     from tests.parity.test_out_of_core_fk_parity import _build_single_edge
 

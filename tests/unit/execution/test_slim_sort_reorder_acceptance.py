@@ -220,9 +220,11 @@ def test_compact_token_matched_null_masked_vs_orphan(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Binary raw keys, matched and orphaned (the raw-key width vector, closed by
 # the out-of-line re-fetch; dictionary-encoded MASKED values are covered by
-# tests/unit/execution/test_key_width_slim_bound.py, and a dict-encoded child
-# key COLUMN is not an admitted route input -- `_resolve_output_types` rejects
-# it in both the batch and reorder routes).
+# tests/unit/execution/test_key_width_slim_bound.py. A dict-encoded child key
+# COLUMN is rejected under PRESERVE/WARN/REMAP (`_python_roundtrip_type`) but
+# admitted under FAIL (which resolves output types from the masked parent alone);
+# that FAIL case's byte-parity is pinned by
+# test_dict_encoded_child_key_under_fail_parity in the route-seam parity suite.
 # ---------------------------------------------------------------------------
 
 
