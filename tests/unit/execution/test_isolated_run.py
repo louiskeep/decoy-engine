@@ -281,14 +281,26 @@ class TestNormalJobCompletes:
 
 class TestMemCapOom:
     def test_low_mem_cap_classifies_oom_cleanly_not_an_opaque_crash(self, tmp_path):
+        # The cap sits ABOVE the child's import floor on purpose. A worker that
+        # imports duckdb + polars reserves close to half a GB of RLIMIT_DATA in
+        # glibc arenas before any job runs (RSS is far lower; the arenas are the
+        # ceiling that RLIMIT_DATA sees). A cap below that floor kills the child
+        # mid-import, and whether that death is a caught MemoryError (soft,
+        # self-reported oom_killed) or a hard C-extension abort (classified
+        # crashed) depends on the runner's glibc, so it flakes. Capping above
+        # the floor and handing the job enough rows to exhaust the remaining
+        # headroom forces the OOM at RUN time, where run_pipeline raises a
+        # catchable ArrowMemoryError the worker self-reports. That is the real
+        # guarantee under test: a running job that exhausts its cap is named
+        # oom_killed, never an opaque crashed.
         cfg = _mask_config(tmp_path, n_cols=8)
-        sources = _mask_sources(tmp_path, n_rows=200_000, n_cols=8)
+        sources = _mask_sources(tmp_path, n_rows=2_000_000, n_cols=8)
 
         result = run_pipeline_isolated(
             cfg,
             sources,
             engine_version=_ENGINE_VERSION,
-            mem_cap_bytes=64 * 1024 * 1024,
+            mem_cap_bytes=768 * 1024 * 1024,
             rlimit_kind="data",
         )
 
