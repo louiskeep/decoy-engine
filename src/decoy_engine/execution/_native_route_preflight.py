@@ -84,7 +84,18 @@ def type_family(arrow_type: pa.DataType) -> TypeFamily | None:
 # and the existing execution-time guard (`_guards.reject_null_bearing_int`)
 # raises its own coded error once that continuation actually runs -- this
 # resolver has no separate "reject" outcome to express, see plan section 6.
-def _row(no_null: bool, partial_null: bool, all_null: bool, empty: bool) -> dict[ColumnState, bool]:
+def _row(
+    no_null: bool, partial_null: bool, all_null: bool, empty: bool
+) -> dict[ColumnState, bool]:  # pragma: no mutate block
+    # Excluded from mutation, not for coverage reasons but because it is called
+    # at MODULE-IMPORT time to build `_ADMISSION_MATRIX`; a trampolined mutant
+    # here raises during pytest COLLECTION under mutmut's forced-fail probe
+    # (rc 2), which the tq_mutate soundness gate reads as a broken harness. The
+    # matrix cells it produces are pinned exactly by
+    # `test_admission_matrix_matches_normative_table` (every cell asserted
+    # against the normative table), so excluding this helper hides no gap -- and
+    # since every mutant it would generate is already killed by that test,
+    # excluding it can only lower the raw count, never inflate the score.
     return {"no_null": no_null, "partial_null": partial_null, "all_null": all_null, "empty": empty}
 
 

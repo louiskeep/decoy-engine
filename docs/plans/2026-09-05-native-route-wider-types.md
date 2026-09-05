@@ -213,14 +213,24 @@ deliberately consuming that normalization says so.
 6. **Bounded memory + read cost with a decision threshold.** Peak RSS through the production entry
    with the streaming sink is flat in row count under the frozen ceiling, measured in fresh
    processes over tiers (the preflight accumulator is O(columns)). Benchmark the two-read design
-   against the single-read oracle-chunked baseline on the same data: cold-cache and warm-cache
-   wall time and bytes read, at least five reps with median + IQR. Read amplification must stay at
-   most 2.1x (two bounded reads plus digest overhead). The warm-cache wall ratio measured 2.54x the
-   single-read baseline, above the original 2.2x line; the owner accepted the two-read cost (digest
-   preferred over the private-spool alternative, section 4) rather than switching spools, so the
-   accept ceiling is 2.8x as a regression bound with headroom over the measured 2.54x. A future
-   breach past 2.8x reopens the spool-vs-digest decision rather than shipping an unbounded cost
-   silently.
+   against the single-read oracle-chunked baseline on the same data. Evidence shape actually
+   measured and accepted (matching `tests/perf/test_native_route_wider_types_memory.py`):
+   WARM-cache only, median + IQR over five reps, against the resident oracle-CHUNKED baseline. The
+   chunked route needs a resident source (the auto-chunk planner's dtype-stability gate declines a
+   `LazySource`), so the baseline is fed a resident `pa.Table` exactly as the production-seam
+   chunked oracle is, with one resident read per rep inside the timed region as the single-read
+   reference. Cold-cache measurement is deliberately omitted: dropping the OS page cache needs
+   privileged access the test environment lacks, so both arms are measured warm and the docstring
+   says so. Read amplification must stay at most 2.1x (two bounded reads plus digest overhead), and
+   is measured directly: the native lane's two counted file reads over one file-size-per-rep
+   reference, so it is exactly 2.00x by construction. The warm-cache wall ratio measured ~1.4x the
+   resident chunked baseline (the chunked route's own per-chunk overhead makes it a closer wall
+   reference than full_frame, under which an earlier pass measured 2.54x). The accept ceiling is
+   2.8x as an owner-accepted regression bound (digest preferred over the private-spool alternative,
+   section 4; the two-read + integrity-digest design is inherently >2x a single read) with generous
+   headroom over the measured ~1.4x for cross-machine noise. A future breach past 2.8x reopens the
+   spool-vs-digest decision rather than shipping an unbounded cost silently; the ceiling is not
+   loosened to pass a slow run.
 7. **Every slice-1 guarantee still holds**: `utf8` parity unchanged, the reject-before-output
    closed world, the transactional lifecycle, the precedence matrix, the closed-world sentry.
 8. **Mutation bar** on the changed units (preflight accumulator + state resolution, matrix

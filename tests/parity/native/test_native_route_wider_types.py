@@ -636,3 +636,43 @@ def test_widened_admitted_job_ledger_zero_and_two_reads(
     assert ledger.native_attempted == ledger.native_completed
     assert ledger.native_attempted > 0
     assert calls["n"] == 2, f"expected exactly 2 iter_batches calls, got {calls['n']}"
+
+
+# ---------------------------------------------------------------------------
+# Widened-lane execution wiring: envelope/adapter stamp + reroute report
+# (the widened-admission additions to _native_route_exec / run_widened_execution)
+# ---------------------------------------------------------------------------
+
+
+def test_widened_admit_streaming_sink_stamps_envelope_and_adapter(tmp_path: Path) -> None:
+    """A widened (int/bool) admit through a streaming sink must thread the
+    streaming flag and the resolved substrate all the way through
+    `run_widened_execution` into the quality-metrics stamp."""
+    table = pa.table(
+        {
+            "pt_int": pa.array([1, 2, 3], type=pa.int64()),
+            "pt_bool": pa.array([True, False, True], type=pa.bool_()),
+        }
+    )
+    config, source_path = _config(tmp_path, [_pt("pt_int"), _pt("pt_bool")], table=table)
+    sink = ParquetTransactionalSink(tmp_path / "sink")
+    result = _run_native(config, source_path, sink=sink)
+    assert result.native_route is not None and result.native_route.admitted is True
+    assert result.quality_metrics["execution"]["outputs_streamed"] is True
+    assert result.quality_metrics["execution_adapter"]["resolved_substrate"] == "pandas"
+
+
+def test_widened_reroute_report_marks_attempted_and_table(tmp_path: Path) -> None:
+    """A widened reroute still reports through the production seam as attempted
+    on the resolved table (the report the platform reads), not as an
+    un-attempted or table-less decline."""
+    table = pa.table({"c": pa.array([1, None], type=pa.int64())})
+    config, source_path = _config(tmp_path, [_pt("c")], table=table)
+    result = _run_native(config, source_path)
+    assert result.native_route is not None
+    assert result.native_route.admitted is False
+    assert result.native_route.attempted is True
+    assert result.native_route.table == _TABLE
+    assert (
+        result.native_route.reason == "native_preflight_reroute:c:passthrough:integer:partial_null"
+    )

@@ -10,9 +10,18 @@ slice 1's utf8-only one -- the preflight's own accumulator (per-column
 counters + a fixed-size hash state) must not grow with row count either.
 
 The benchmark half runs in-process (no subprocess isolation needed; it times
-wall clock and counts bytes read, not RSS) and applies the plan's own
-decision thresholds: warm-cache wall time within 2.2x the single-read
-baseline, read amplification at most 2.1x.
+wall clock and counts bytes read, not RSS). Evidence shape actually measured
+and accepted (plan section 7 test 6): WARM-cache only, median + IQR over five
+reps, against the resident oracle-CHUNKED baseline (the representative
+single-read comparison for this lane -- see `_run_chunked_oracle` in the
+production-seam suite for why the auto-chunk planner needs a resident source).
+Cold-cache measurement is omitted deliberately: dropping the OS page cache
+needs privileged access this test environment does not have, so both arms are
+measured warm. Accept thresholds: warm-cache wall ratio at most 2.8x (an
+owner-accepted regression bound, not a tuning target -- the two-read +
+integrity-digest design is inherently >2x a single read, and the security
+review preferred that digest over a private raw-PII spool), read amplification
+at most 2.1x (two bounded reads plus digest overhead).
 """
 
 from __future__ import annotations
@@ -54,8 +63,13 @@ _MAX_TIER_RATIO = 1.5
 # opt-in and default-off, exists for memory-boundedness rather than speed, and
 # its two-read + integrity-digest design is inherently >2x a single read. The
 # security review preferred that digest over a private raw-PII spool, so the
-# extra read is deliberate. Measured warm wall was 2.54x the single-read
-# baseline; 2.8 leaves headroom over that without loosening the read-byte bound.
+# extra read is deliberate. Measured warm wall was ~1.4x the resident
+# oracle-chunked baseline (the representative single-read comparison; the
+# chunked route carries its own per-chunk overhead, so it is a closer wall
+# reference than full_frame). The ceiling stays at 2.8x as a regression bound
+# with generous headroom over the measured ~1.4x for cross-machine noise; a
+# future breach reopens the spool-vs-digest decision rather than silently
+# loosening it. Do not raise it to make a slow run pass.
 _MAX_WARM_WALL_RATIO = 2.8
 _MAX_READ_AMPLIFICATION = 2.1
 _BENCH_REPS = 5
@@ -111,6 +125,15 @@ def test_native_route_wider_types_flat_across_row_count(
 # ---------------------------------------------------------------------------
 # Two-read benchmark vs the single-read oracle-chunked baseline
 # ---------------------------------------------------------------------------
+
+
+def _median_iqr(samples: list[float]) -> tuple[float, float]:
+    """Median and interquartile range (Q3 - Q1) of the reps. Reporting the IQR
+    alongside the median makes the run-to-run spread visible, so a wall ratio
+    near the ceiling can be read as signal rather than one noisy sample."""
+    median = statistics.median(samples)
+    quartiles = statistics.quantiles(samples, n=4)
+    return median, quartiles[2] - quartiles[0]
 
 
 def _bench_fixture(tmp_path_factory: pytest.TempPathFactory) -> Path:
@@ -192,33 +215,50 @@ def test_native_route_wider_types_two_read_benchmark(
         native_times.append(time.perf_counter() - t0)
         assert result.native_route is not None and result.native_route.admitted is True
 
+    # The oracle-CHUNKED baseline is the representative single-read comparison
+    # (plan section 7 test 6), not full_frame. The auto-chunk planner's runtime
+    # dtype-stability gate declines a LazySource, so the baseline is fed a
+    # resident pa.Table exactly as the production-seam chunked oracle is
+    # (`_run_chunked_oracle`) -- output-identical, and it exercises the chunked
+    # masking path. One resident read per rep is the single-read reference: it
+    # sits inside the timed region so this is an honest one-pass-vs-two-pass
+    # wall comparison, and one file size per rep is the byte reference the
+    # native lane's two counted reads are amplified against.
     baseline_times: list[float] = []
     baseline_bytes = [0]
+    chunked_mode: str | None = None
     for i in range(_BENCH_REPS):
         out_path = path.parent / f"oracle_out_{i}.parquet"
         config = _bench_config(path, out_path)
         baseline_bytes[0] += path.stat().st_size
         t0 = time.perf_counter()
-        run_pipeline(
+        oracle = run_pipeline(
             config,
-            {"t": LazySource(path=path)},
+            {"t": pq.read_table(path)},
             engine_version="wider-types-bench",
             substrate="pandas",
-            execution_mode="full_frame",
-            auto_chunk=False,
+            execution_mode="auto",
+            auto_chunk=True,
+            auto_chunk_threshold_rows=1,
             native_route_enabled=False,
         )
         baseline_times.append(time.perf_counter() - t0)
+        chunked_mode = oracle.quality_metrics["auto_chunk"]["mode"]
+    assert chunked_mode == "chunked", (
+        f"the oracle baseline did not chunk (auto_chunk mode={chunked_mode!r}); "
+        "it would not be the intended single-read chunked comparison"
+    )
 
-    native_median = statistics.median(native_times)
-    baseline_median = statistics.median(baseline_times)
+    native_median, native_iqr = _median_iqr(native_times)
+    baseline_median, baseline_iqr = _median_iqr(baseline_times)
     wall_ratio = native_median / baseline_median
     read_amplification = native_bytes[0] / baseline_bytes[0]
 
     detail = (
-        f"native median={native_median * 1000:.1f}ms baseline median="
-        f"{baseline_median * 1000:.1f}ms wall_ratio={wall_ratio:.2f} "
-        f"read_amplification={read_amplification:.2f}"
+        f"[warm-cache, {_BENCH_REPS} reps] native median={native_median * 1000:.1f}ms "
+        f"IQR={native_iqr * 1000:.1f}ms baseline(chunked) median="
+        f"{baseline_median * 1000:.1f}ms IQR={baseline_iqr * 1000:.1f}ms "
+        f"wall_ratio={wall_ratio:.2f} read_amplification={read_amplification:.2f}"
     )
     if wall_ratio > _MAX_WARM_WALL_RATIO or read_amplification > _MAX_READ_AMPLIFICATION:
         pytest.fail(
