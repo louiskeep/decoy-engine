@@ -345,9 +345,10 @@ def maybe_run_native_route(
     top level; this module cannot return the favor at the top level).
     """
     from decoy_engine.execution._native_route_exec import try_native_route
-    from decoy_engine.execution._substrate import require_bool
 
-    require_bool("native_route_enabled", native_route_enabled)
+    # `native_route_enabled` is require_bool-validated at run_pipeline's top
+    # validation block (alongside the other routing knobs), so a bad value
+    # fails early on every route, not only the ones that reach here.
     if not (has_mask_table and native_route_enabled):
         return None, None
     return try_native_route(

@@ -503,12 +503,21 @@ def test_validate_ledger_raises_on_rows_attempted_completed_mismatch() -> None:
     ROW counts a call actually claimed diverge -- a corruption the call
     counters alone cannot see. This is the P2-1 strengthening: attempted-
     vs-completed native ROWS, not just calls."""
+    # Records are well-formed (count == completed, unique identities, own
+    # table) so the ONLY failing invariant is the row mismatch -- otherwise
+    # the record-count guard would raise first with the same code and this
+    # test would pass even with the row guard deleted.
     ledger = NativeRouteLedger(
-        native_attempted=3, native_completed=3, native_rows_attempted=10, native_rows_completed=7
+        native_attempted=3,
+        native_completed=3,
+        native_rows_attempted=10,
+        native_rows_completed=7,
+        records=[LedgerEntry(table=_TABLE, node="n", chunk_index=i) for i in range(3)],
     )
     with pytest.raises(_exec_mod.ExecutionError) as excinfo:
         _exec_mod._validate_ledger(ledger, table=_TABLE)
     assert excinfo.value.code == "native_route_ledger_invalid"
+    assert "rows" in excinfo.value.message
 
 
 def test_validate_ledger_raises_on_nonzero_rejected_chunks() -> None:

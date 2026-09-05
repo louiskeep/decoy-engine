@@ -284,6 +284,7 @@ def run_pipeline(
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
+    require_bool("native_route_enabled", native_route_enabled)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
