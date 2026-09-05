@@ -19,7 +19,7 @@ unit tests of the private helpers, including `maybe_run_native_route`),
 
 ## Numbers
 
-**813 mutants total, 765 killed, 48 survived: 94.10% (765/813).** This
+**813 mutants total, 766 killed, 47 survived: 94.22% (766/813).** This
 supersedes every earlier number recorded against this file (a 95.10%/641/674
 claim from a prior pass, itself already marked stale after the P0/P1/P2
 native-route-production-seam remediation added `_validate_ledger`'s three
@@ -29,16 +29,16 @@ current source, including `maybe_run_native_route` -- the routing-decision
 gate a recent refactor moved out of `_pipeline.py` and into `_native_route.py`
 -- which had no direct unit tests before this pass.
 
-Of the 48 residual survivors, 22 are non-contract diagnostic prose (an
+Of the 47 residual survivors, 31 are non-contract diagnostic prose (an
 `ExecutionError.message` string changed while `.code` and every branch
-stayed put) and 26 are genuine equivalents (no test, however written, could
+stayed put) and 16 are genuine equivalents (no test, however written, could
 ever distinguish the mutant from the real code). Each is listed below with
 its own one-line justification; none is left un-investigated because it
 happened to survive the run.
 
 ## Killed by new tests
 
-Three real-logic gaps, closed by extending `test_native_route_units.py`
+Four real-logic gaps, closed by extending `test_native_route_units.py`
 (no source change):
 
 **`maybe_run_native_route`'s admission gate (3 mutants)** -- this function
@@ -92,7 +92,17 @@ new tests pin literals a caller relies on when it omits these keywords:
   so this asserts the literal value reaching the callee, not the gated
   behavior -- the earlier, weaker check a regression could still slip past.
 
-## Non-contract diagnostic prose (accepted-not-killed) -- 22
+**`try_native_route`'s malformed-admission guard (1 mutant)** -- `mutmut_63`
+mutates the `first_batch is None or rest is None` defensive guard to `and`.
+An earlier pass filed this as an unreachable-precondition equivalent, but it
+is behavioral: with `and`, a half-populated `admitted=True, first_batch=None,
+rest=<iterator>` admission slips past the guard into `_run_native_streaming`,
+which then fails on a `None` batch far from the cause.
+`test_try_native_route_rejects_malformed_admission_missing_batch` injects
+exactly that admission and asserts the guard raises the "no batch/iterator"
+`AssertionError`, so the `and` mutant no longer survives.
+
+## Non-contract diagnostic prose (accepted-not-killed) -- 31
 
 Each of these DOES change an observable value (part of `str(exc)`), so a
 test reading that string would catch it. They are accepted anyway because
@@ -133,7 +143,19 @@ killed by `test_validate_ledger_raises_on_attempted_completed_mismatch`,
 (message forced to `None`) and `mutmut_23` (message kwarg dropped) on the
 `code="native_chunk_schema_drift"` raise; the code is untouched by either.
 
-## Genuine equivalents -- 26
+**Defensive-precondition-guard messages (9)** -- the message-text mutants on
+the `# pragma: no cover` guards (`try_native_route`'s "no table name"
+`mutmut_36`/`37`/`38`, "non-LazySource entry" `mutmut_41`, "no batch/iterator"
+`mutmut_66`, and `_run_native_streaming`'s "streaming but no sink"
+`mutmut_41`/`42`/`43`/`44`). Same posture as the raises above: `str(exc)`
+changes, `.code` does not, no caller reads `.message`. The guards sit behind
+invariants an upstream function already established, so the branch is
+unreachable in production, but the message change is still observable-in-
+principle, so these are diagnostic prose, not equivalents. (The one genuinely
+behavioral mutant that shared these guards, `mutmut_63`, is killed -- see
+"Killed by new tests".)
+
+## Genuine equivalents -- 16
 
 No test, however written, could distinguish these from the real code.
 
@@ -153,31 +175,6 @@ by `test_static_candidacy_admits_resident_when_vault_key_is_absent`.)
 `_schema_drift_reason(expected_schema, batch.schema)` compares `first.schema`
 against itself and always returns `None`. Running that comparison on the
 first batch too changes nothing observable.
-
-**Preconditions the source itself marks unreachable (10)** -- every one of
-these sits on a branch already commented `# pragma: no cover -
-precondition` (or the equivalent "already proved this" phrasing), because
-an earlier function in the same call chain already established the
-invariant the guard restates before this code ever reaches it:
-
-- `try_native_route`'s "candidacy admitted with no table name" guard:
-  `mutmut_36` (message forced to `None`), `mutmut_37`, `mutmut_38`
-  (message text case-mangled) -- `static_candidacy` only ever sets
-  `candidate=True` alongside a real `table` string.
-- `try_native_route`'s "admitted a non-LazySource entry" guard: `mutmut_41`
-  (message forced to `None`) -- `static_candidacy` only admits a table
-  whose `caller_sources` entry already passed `isinstance(source,
-  LazySource)`.
-- `try_native_route`'s "admitted=True with no batch/iterator" guard:
-  `mutmut_63` (`is None or ... is None` mutated to `and`), `mutmut_66`
-  (message forced to `None`) -- `peek_and_admit`'s only `admitted=True`
-  return sets `first_batch` and `rest` together, never one without the
-  other, so `or` and `and` can never observably differ on a branch neither
-  disjunct can ever satisfy for a real caller.
-- `_run_native_streaming`'s "streaming=True but no sink" guard:
-  `mutmut_41` (message forced to `None`), `mutmut_42`, `mutmut_43`,
-  `mutmut_44` (message text case-mangled) -- `static_candidacy` never
-  returns `sink_mode="streaming"` without a real `ParquetTransactionalSink`.
 
 **`try_native_route` passes an unused `plan` through (1)** -- `mutmut_68`
 (`plan=None` in the call to `_run_native_streaming`): that function's first

@@ -744,6 +744,48 @@ def test_try_native_route_admission_decline_report_is_attempted_true_with_table(
     assert report.ledger is None
 
 
+def test_try_native_route_rejects_malformed_admission_missing_batch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The defensive guard uses `first_batch is None OR rest is None`, not
+    `and`: an admission that reports admitted=True but carries only one of the
+    two (here first_batch=None with a real iterator) is malformed and must
+    trip the guard. An `or`->`and` regression would let this half-populated
+    state through to `_run_native_streaming`, which would then fail on a None
+    batch far from the cause."""
+    source = _lazy_source(tmp_path)
+    monkeypatch.setattr(
+        _exec_mod,
+        "static_candidacy",
+        lambda **kwargs: _route_mod.NativeStaticCandidacy(
+            candidate=True, table=_TABLE, reason=None, sink_mode="resident"
+        ),
+    )
+    monkeypatch.setattr(
+        _exec_mod,
+        "peek_and_admit",
+        lambda *a, **k: _route_mod.NativeBatchAdmission(
+            admitted=True,
+            reason=None,
+            column_order=("c",),
+            first_batch=None,
+            rest=iter(()),
+        ),
+    )
+    with pytest.raises(AssertionError, match="no batch/iterator"):
+        _exec_mod.try_native_route(
+            config={},
+            plan=None,
+            table_kinds={},
+            caller_sources={_TABLE: source},
+            source_loader=None,
+            sink=None,
+            fidelity_report=False,
+            execution_mode="auto",
+            graph=_EMPTY_GRAPH,
+        )
+
+
 def test_try_native_route_threads_table_kinds_into_run_native_streaming(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
