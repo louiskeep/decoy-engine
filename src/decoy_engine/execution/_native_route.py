@@ -45,6 +45,8 @@ from decoy_engine.profile._readers import LazySource
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
 
+    from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships import RelationshipGraph
@@ -305,6 +307,65 @@ class NativeRouteReport:
     ledger: NativeRouteLedger | None
 
 
+def maybe_run_native_route(
+    *,
+    has_mask_table: bool,
+    native_route_enabled: bool,
+    config: dict[str, Any],
+    plan: Plan,
+    table_kinds: dict[str, str],
+    caller_sources: Mapping[str, pa.Table | LazySource],
+    source_loader: Callable[[str], pa.Table] | None,
+    sink: TransactionalSink | None,
+    fidelity_report: bool,
+    execution_mode: str,
+    graph: RelationshipGraph,
+    resolved_substrate: str,
+    explain_plan: bool,
+    execution_plan_decision: ExecutionPlan | None,
+) -> tuple[ExecutionResult | None, NativeRouteReport | None]:
+    """`run_pipeline`'s single call site for the Q3 slice 1 native lane.
+
+    Sits after layer-1 FK routing declined (the sequential/out_of_core early
+    returns already ran) and before `resolve_resident_sources`, so a
+    candidate job's `LazySource` is peeked at most once and a non-candidate
+    job's source is never touched by this check at all. Validates
+    `native_route_enabled` (a stringy `"false"` is truthy and must raise, not
+    silently enable the route) before the has_mask_table/native_route_enabled
+    admission gate, mirroring the other routing knobs' fail-early contract.
+
+    `(None, None)` means the lane was never attempted (the caller did not opt
+    in, or the job has no mask table to route); see `try_native_route` for
+    every attempted-or-admitted outcome. `has_mask_table`/`native_route_
+    enabled` gate admission rather than being folded into `try_native_route`
+    itself, matching every OTHER route's compact call at this call site
+    (`run_sequential_route` / `run_out_of_core_route` are likewise gated by
+    the caller before being invoked). The `try_native_route` import is local
+    to avoid a module cycle (`_native_route_exec` imports this module at the
+    top level; this module cannot return the favor at the top level).
+    """
+    from decoy_engine.execution._native_route_exec import try_native_route
+    from decoy_engine.execution._substrate import require_bool
+
+    require_bool("native_route_enabled", native_route_enabled)
+    if not (has_mask_table and native_route_enabled):
+        return None, None
+    return try_native_route(
+        config=config,
+        plan=plan,
+        table_kinds=table_kinds,
+        caller_sources=caller_sources,
+        source_loader=source_loader,
+        sink=sink,
+        fidelity_report=fidelity_report,
+        execution_mode=execution_mode,
+        graph=graph,
+        resolved_substrate=resolved_substrate,
+        explain_plan=explain_plan,
+        execution_plan_decision=execution_plan_decision,
+    )
+
+
 __all__ = [
     "ALLOWED_STRATEGIES",
     "LedgerEntry",
@@ -313,6 +374,7 @@ __all__ = [
     "NativeRouteReport",
     "NativeStaticCandidacy",
     "SinkMode",
+    "maybe_run_native_route",
     "peek_and_admit",
     "static_candidacy",
 ]

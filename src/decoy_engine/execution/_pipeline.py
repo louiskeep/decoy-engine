@@ -78,13 +78,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.execution import _native_route_exec, _pipeline_finalize, _pipeline_routing
+from decoy_engine.execution import _native_route, _pipeline_finalize, _pipeline_routing
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._native_route import NativeRouteReport
 from decoy_engine.execution._planner import (
-    AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
@@ -98,29 +96,10 @@ if TYPE_CHECKING:
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# run_pipeline's execution-knob defaults. `substrate` pins "pandas" (NOT
-# None): resolve_substrate(None) follows DECOY_SUBSTRATE and its S13
-# default flip to polars, and run_pipeline's default route must stay
-# byte-identical to the original hardcoded pandas path. The signature
-# defaults and the non-default metadata stamp both read from here so they cannot drift.
-_SUBSTRATE_DEFAULT = "pandas"
-_FPE_CHUNK_COUNT_DEFAULT = 4
-_MAX_WORKERS_DEFAULT = 4
-_FALLBACK_TO_PANDAS_DEFAULT = True
-# Auto-chunk defaults. Default-ON is safe because identity is enforced
-# twice: the planner's fail-closed gates admit only jobs whose every
-# per-column output is a pure function of (value, config, seed) with all
-# whole-column inputs pinned (date_shift needs an explicit date_format,
-# bucketize a null-free numeric source, `when` predicates never route),
-# and the strict chunk concat refuses to merge chunks whose schemas
-# disagree (a gate miss raises rather than silently promoting); the
-# fixture matrix in tests/unit/execution/test_auto_chunk_routing.py is
-# regression evidence for that contract, not its proof. 50k-row chunks
-# bound the per-chunk pandas working set at negligible per-chunk
-# plan/adapter overhead (P0 showed wall-clock parity at 10k rows).
-_AUTO_CHUNK_DEFAULT = True
-_CHUNK_SIZE_ROWS_DEFAULT = 50_000
-_AUTO_CHUNK_THRESHOLD_DEFAULT = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now
+# (single source of truth for both this signature and the non-default-ness
+# check `stamp_execution_metrics` computes); referenced here via the
+# already-imported module so this file does not re-declare them.
 # SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults
 # target the 32 GB deployment box; see `_planner` for the memory-model
 # reasoning. Plumbed as run_pipeline kwargs so the platform SC5 estimator can
@@ -167,14 +146,14 @@ def run_pipeline(
     execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
-    substrate: str | None = _SUBSTRATE_DEFAULT,
-    fpe_chunk_count: int = _FPE_CHUNK_COUNT_DEFAULT,
-    max_workers: int = _MAX_WORKERS_DEFAULT,
-    fallback_to_pandas: bool = _FALLBACK_TO_PANDAS_DEFAULT,
+    substrate: str | None = _pipeline_finalize.SUBSTRATE_DEFAULT,
+    fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
+    max_workers: int = _pipeline_finalize.MAX_WORKERS_DEFAULT,
+    fallback_to_pandas: bool = _pipeline_finalize.FALLBACK_TO_PANDAS_DEFAULT,
     explain_plan: bool = False,
-    auto_chunk: bool = _AUTO_CHUNK_DEFAULT,
-    chunk_size_rows: int = _CHUNK_SIZE_ROWS_DEFAULT,
-    auto_chunk_threshold_rows: int = _AUTO_CHUNK_THRESHOLD_DEFAULT,
+    auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
+    chunk_size_rows: int = _pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT,
+    auto_chunk_threshold_rows: int = _pipeline_finalize.AUTO_CHUNK_THRESHOLD_DEFAULT,
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
@@ -260,19 +239,8 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
-    `native_route_enabled` (Q3 slice 1, default False -- a runtime routing
-    control, not a `GlobalSettings` field, matching `execution_mode`'s own
-    reasoning above): when True, `execution_mode == "auto"`, AND the
-    resolved substrate is `"pandas"` (an explicit non-pandas `substrate`
-    reroutes with reason `non_pandas_substrate:{substrate}` before any
-    source peek -- the native kernels are pandas-oracle-equivalent, not
-    polars-equivalent, so admitting under another substrate would silently
-    override the caller's choice), a single-table non-FK mask job over
-    `passthrough` / `redact` / `truncate` on exact `pa.utf8()` columns may
-    run the dedicated single-pass streaming native lane instead of the
-    pandas oracle. Every other shape reroutes to the unchanged oracle path;
-    see `_native_route` and `_native_route_exec` for the admission contract
-    and `ExecutionResult.native_route` for the evidence this stamps.
+    `native_route_enabled` (default False): opt-in routing control, not a
+    `GlobalSettings` field; see `_native_route.maybe_run_native_route`.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -316,10 +284,6 @@ def run_pipeline(
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
-    # A string like "false" is truthy, so an untyped caller would silently
-    # enable the route it meant to keep off; fail fast alongside the other
-    # routing-knob validations rather than let truthiness decide admission.
-    require_bool("native_route_enabled", native_route_enabled)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
@@ -484,36 +448,25 @@ def run_pipeline(
             out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         )
 
-    # Q3 slice 1: the dedicated single-pass streaming native lane. Sits here
-    # on purpose -- after layer-1 FK routing declined (both early returns
-    # above), before `resolve_resident_sources` -- so a candidate job's
-    # LazySource is peeked at most once and a non-candidate job's source is
-    # never touched by this check at all. `try_native_route` itself re-checks
-    # `execution_mode == "auto"` and FK participation, so an explicit
-    # sequential/full_frame/out_of_core override or an FK job that fell
-    # through to here for an unrelated reason (e.g. validators) can never
-    # reach the peek. Only evaluated when the caller opted in, so a job that
-    # never sets `native_route_enabled` (the default) pays nothing and
-    # `ExecutionResult.native_route` stays None, matching every pre-slice
-    # construction.
-    native_route_report: NativeRouteReport | None = None
-    if has_mask_table and native_route_enabled:
-        native_result, native_route_report = _native_route_exec.try_native_route(
-            config=config,
-            plan=plan,
-            table_kinds=table_kinds,
-            caller_sources=caller_sources,
-            source_loader=source_loader,
-            sink=sink,
-            fidelity_report=fidelity_report,
-            execution_mode=execution_mode,
-            graph=graph,
-            resolved_substrate=resolved_substrate,
-            explain_plan=explain_plan,
-            execution_plan_decision=execution_plan_decision,
-        )
-        if native_result is not None:
-            return native_result
+    # Q3 slice 1 native lane; see maybe_run_native_route's docstring.
+    native_result, native_route_report = _native_route.maybe_run_native_route(
+        has_mask_table=has_mask_table,
+        native_route_enabled=native_route_enabled,
+        config=config,
+        plan=plan,
+        table_kinds=table_kinds,
+        caller_sources=caller_sources,
+        source_loader=source_loader,
+        sink=sink,
+        fidelity_report=fidelity_report,
+        execution_mode=execution_mode,
+        graph=graph,
+        resolved_substrate=resolved_substrate,
+        explain_plan=explain_plan,
+        execution_plan_decision=execution_plan_decision,
+    )
+    if native_result is not None:
+        return native_result
 
     # TB-1: only full_frame / auto-chunk below needs every source resident.
     resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)
@@ -600,18 +553,8 @@ def run_pipeline(
                 vault_writer.add(collect_vault_entries(config, merged_sources, mask_outputs))
         # Reproducibility stamps (selected adapter identity + auto-chunk
         # decision) and the BF1 fidelity report are finalize-only concerns;
-        # see `_pipeline_finalize` for the full "why" on each.
-        adapter_non_default = (substrate, fpe_chunk_count, max_workers, fallback_to_pandas) != (
-            _SUBSTRATE_DEFAULT,
-            _FPE_CHUNK_COUNT_DEFAULT,
-            _MAX_WORKERS_DEFAULT,
-            _FALLBACK_TO_PANDAS_DEFAULT,
-        )
-        auto_chunk_non_default = (auto_chunk, chunk_size_rows, auto_chunk_threshold_rows) != (
-            _AUTO_CHUNK_DEFAULT,
-            _CHUNK_SIZE_ROWS_DEFAULT,
-            _AUTO_CHUNK_THRESHOLD_DEFAULT,
-        )
+        # see `_pipeline_finalize` for the full "why" on each, including how
+        # it derives non-default-ness from the raw knobs below.
         _pipeline_finalize.stamp_execution_metrics(
             mask_quality_metrics,
             adapter=adapter,
@@ -620,12 +563,10 @@ def run_pipeline(
             fpe_chunk_count=fpe_chunk_count,
             max_workers=max_workers,
             fallback_to_pandas=fallback_to_pandas,
-            adapter_non_default=adapter_non_default,
             route_chunked=route_chunked,
             auto_chunk=auto_chunk,
             chunk_size_rows=chunk_size_rows,
             auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-            auto_chunk_non_default=auto_chunk_non_default,
             table_kinds=table_kinds,
             caller_sources=resident_sources,
             execution_plan_decision=execution_plan_decision,
