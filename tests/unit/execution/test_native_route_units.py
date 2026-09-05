@@ -418,6 +418,12 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
     job would) plus a sub-1.0 assembly gap make both distinguishable, and a
     nonzero clock epoch stops a `+`/`-` sign flip on `batch_total` from
     happening to cancel out against a zero epoch.
+
+    `mem_acc` gets the same two-call treatment, but for MAX rather than SUM:
+    call 2's rss delta (10) is smaller than call 1's (50), so only a real
+    `max(mem_acc.get(key, 0), delta_kb)` keeps 50 after call 2. Looking the
+    previous value up under the wrong key (e.g. `None` instead of `key`)
+    always misses, so `max` collapses to the latest delta (10) instead.
     """
     out_schema = pa.schema([pa.field("pt", pa.utf8())])
     strategy_cfg: dict[str, tuple[str, dict[str, Any]]] = {"pt": ("passthrough", {})}
@@ -433,6 +439,8 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
     monkeypatch.setattr(
         _exec_mod.time, "perf_counter", _fake_clock([1000.0, 1000.0, 1000.5, 1000.75])
     )
+    # rss delta for call 1: 1050 - 1000 = 50.
+    monkeypatch.setattr(_exec_mod, "rss_kb", _fake_clock([1000.0, 1050.0]))
     _exec_mod._mask_one_batch(
         pa.record_batch({"pt": pa.array(["a"], type=pa.utf8())}),
         0,
@@ -447,6 +455,7 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
     )
     assert timing_acc[("passthrough", "pt")] == 500.0
     assert boundary_ms_box[0] == 250.0
+    assert mem_acc[("passthrough", "pt")] == 50
 
     # Call 2 (same column, same accumulators): t_batch0=2000.0, t0=2000.0,
     # elapsed-read=2000.25 (elapsed=0.25), batch_total-read=2000.375 (=0.375).
@@ -454,6 +463,8 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
     monkeypatch.setattr(
         _exec_mod.time, "perf_counter", _fake_clock([2000.0, 2000.0, 2000.25, 2000.375])
     )
+    # rss delta for call 2: 2010 - 2000 = 10, smaller than call 1's 50.
+    monkeypatch.setattr(_exec_mod, "rss_kb", _fake_clock([2000.0, 2010.0]))
     _exec_mod._mask_one_batch(
         pa.record_batch({"pt": pa.array(["b"], type=pa.utf8())}),
         1,
@@ -468,6 +479,7 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
     )
     assert timing_acc[("passthrough", "pt")] == 750.0
     assert boundary_ms_box[0] == 375.0
+    assert mem_acc[("passthrough", "pt")] == 50  # call 1's peak, not call 2's smaller delta
 
 
 # ---------------------------------------------------------------------------
@@ -778,3 +790,213 @@ def test_try_native_route_threads_table_kinds_into_run_native_streaming(
     assert report == "REPORT_SENTINEL"
     assert captured["table_kinds"] == table_kinds
     assert captured["table_kinds"] is table_kinds
+
+
+def test_try_native_route_resolved_substrate_default_is_exactly_pandas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`try_native_route`'s own `resolved_substrate` default must reach
+    `static_candidacy` as the literal string `"pandas"` -- any other
+    spelling or casing would make every caller that omits this kwarg
+    (there are several: this default predates the substrate thread-through)
+    fall through to the non-pandas-substrate decline instead of admitting."""
+    captured: dict[str, Any] = {}
+
+    def _fake_static_candidacy(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return _route_mod.NativeStaticCandidacy(
+            candidate=False, table=None, reason="declined_for_test", sink_mode=None
+        )
+
+    monkeypatch.setattr(_exec_mod, "static_candidacy", _fake_static_candidacy)
+    _exec_mod.try_native_route(
+        config={},
+        plan=None,
+        table_kinds={},
+        caller_sources={},
+        source_loader=None,
+        sink=None,
+        fidelity_report=False,
+        execution_mode="auto",
+        graph=_EMPTY_GRAPH,
+        # resolved_substrate omitted deliberately: pins the default itself.
+    )
+    assert captured["resolved_substrate"] == "pandas"
+
+
+def test_try_native_route_explain_plan_and_execution_plan_decision_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both telemetry-only knobs default to off (`explain_plan=False`,
+    `execution_plan_decision=None`) when a caller omits them. A flipped
+    `explain_plan` default alone would be unobservable through the gated
+    `if explain_plan and execution_plan_decision is not None` check in
+    `_run_native_streaming` (the same call also defaults `execution_plan_
+    decision` to `None`, so the `and` is false either way) -- this pins the
+    literal default VALUE actually reaching `_run_native_streaming`, not
+    the gated behavior, which is what a real regression would flip first."""
+    source = _lazy_source(tmp_path)
+    captured: dict[str, Any] = {}
+
+    def _fake_run_native_streaming(**kwargs: Any) -> tuple[str, str]:
+        captured.update(kwargs)
+        return "RESULT_SENTINEL", "REPORT_SENTINEL"
+
+    monkeypatch.setattr(
+        _exec_mod,
+        "static_candidacy",
+        lambda **kwargs: _route_mod.NativeStaticCandidacy(
+            candidate=True, table=_TABLE, reason=None, sink_mode="resident"
+        ),
+    )
+    batch = pa.record_batch({"c": pa.array(["x"], type=pa.utf8())})
+    monkeypatch.setattr(
+        _exec_mod,
+        "peek_and_admit",
+        lambda *a, **k: _route_mod.NativeBatchAdmission(
+            admitted=True, reason=None, column_order=("c",), first_batch=batch, rest=iter(())
+        ),
+    )
+    monkeypatch.setattr(_exec_mod, "_run_native_streaming", _fake_run_native_streaming)
+
+    _exec_mod.try_native_route(
+        config={},
+        plan=None,
+        table_kinds={},
+        caller_sources={_TABLE: source},
+        source_loader=None,
+        sink=None,
+        fidelity_report=False,
+        execution_mode="auto",
+        graph=_EMPTY_GRAPH,
+        # explain_plan / execution_plan_decision omitted: pins the defaults.
+    )
+    assert captured["explain_plan"] is False
+    assert captured["execution_plan_decision"] is None
+
+
+# ---------------------------------------------------------------------------
+# maybe_run_native_route (run_pipeline's single call site: the has_mask_
+# table/native_route_enabled gate layered in front of try_native_route)
+# ---------------------------------------------------------------------------
+
+
+def test_maybe_run_native_route_declines_without_calling_try_native_route_when_no_mask_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`has_mask_table=False` must short-circuit before `try_native_route`
+    is ever called -- an `and`-to-`or` regression on the gate would instead
+    fall through to it even though the job has no mask table to route."""
+
+    def _boom(**kwargs: Any) -> Any:
+        raise AssertionError("try_native_route must not be called when has_mask_table is False")
+
+    monkeypatch.setattr(_exec_mod, "try_native_route", _boom)
+    result, report = _route_mod.maybe_run_native_route(
+        has_mask_table=False,
+        native_route_enabled=True,
+        config={},
+        plan=None,
+        table_kinds={},
+        caller_sources={},
+        source_loader=None,
+        sink=None,
+        fidelity_report=False,
+        execution_mode="auto",
+        graph=_EMPTY_GRAPH,
+        resolved_substrate="pandas",
+        explain_plan=False,
+        execution_plan_decision=None,
+    )
+    assert result is None
+    assert report is None
+
+
+def test_maybe_run_native_route_declines_without_calling_try_native_route_when_route_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`native_route_enabled=False` is the gate's other half; the same
+    `and`-to-`or` regression would let a job with a mask table through even
+    though the caller never opted in to the native route."""
+
+    def _boom(**kwargs: Any) -> Any:
+        raise AssertionError(
+            "try_native_route must not be called when native_route_enabled is False"
+        )
+
+    monkeypatch.setattr(_exec_mod, "try_native_route", _boom)
+    result, report = _route_mod.maybe_run_native_route(
+        has_mask_table=True,
+        native_route_enabled=False,
+        config={},
+        plan=None,
+        table_kinds={},
+        caller_sources={},
+        source_loader=None,
+        sink=None,
+        fidelity_report=False,
+        execution_mode="auto",
+        graph=_EMPTY_GRAPH,
+        resolved_substrate="pandas",
+        explain_plan=False,
+        execution_plan_decision=None,
+    )
+    assert result is None
+    assert report is None
+
+
+def test_maybe_run_native_route_calls_try_native_route_with_every_kwarg_threaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once both gate flags are True, every argument must reach
+    `try_native_route` unchanged -- a dropped kwarg would silently fall back
+    to that function's own default instead -- and the returned tuple must
+    pass through exactly, whatever shape it is (this is a passthrough call,
+    not a shape `maybe_run_native_route` itself constructs)."""
+    captured: dict[str, Any] = {}
+
+    def _fake_try_native_route(**kwargs: Any) -> tuple[str, str]:
+        captured.update(kwargs)
+        return "RESULT_SENTINEL", "REPORT_SENTINEL"
+
+    monkeypatch.setattr(_exec_mod, "try_native_route", _fake_try_native_route)
+
+    config_sentinel: dict[str, Any] = {"tables": []}
+    plan_sentinel = object()
+    table_kinds_sentinel = {"t": "mask"}
+    caller_sources_sentinel: dict[str, Any] = {}
+    source_loader_sentinel: Callable[[str], pa.Table] = lambda name: pa.table({})
+    sink_sentinel = object()
+    execution_plan_decision_sentinel = object()
+
+    result, report = _route_mod.maybe_run_native_route(
+        has_mask_table=True,
+        native_route_enabled=True,
+        config=config_sentinel,
+        plan=plan_sentinel,
+        table_kinds=table_kinds_sentinel,
+        caller_sources=caller_sources_sentinel,
+        source_loader=source_loader_sentinel,
+        sink=sink_sentinel,
+        fidelity_report=True,
+        execution_mode="auto",
+        graph=_EMPTY_GRAPH,
+        resolved_substrate="pandas",
+        explain_plan=True,
+        execution_plan_decision=execution_plan_decision_sentinel,
+    )
+
+    assert result == "RESULT_SENTINEL"
+    assert report == "REPORT_SENTINEL"
+    assert captured["config"] is config_sentinel
+    assert captured["plan"] is plan_sentinel
+    assert captured["table_kinds"] is table_kinds_sentinel
+    assert captured["caller_sources"] is caller_sources_sentinel
+    assert captured["source_loader"] is source_loader_sentinel
+    assert captured["sink"] is sink_sentinel
+    assert captured["fidelity_report"] is True
+    assert captured["execution_mode"] == "auto"
+    assert captured["graph"] is _EMPTY_GRAPH
+    assert captured["resolved_substrate"] == "pandas"
+    assert captured["explain_plan"] is True
+    assert captured["execution_plan_decision"] is execution_plan_decision_sentinel
