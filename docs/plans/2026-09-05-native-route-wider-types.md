@@ -42,22 +42,25 @@ new leaf `execution/_native_route_preflight.py` (target <= 600 LOC). `_native_ro
 
 ## 2. The bounded preflight
 
-Before any output, the lane runs one streaming pass over the runtime source
-(`LazySource.iter_batches`) that accumulates, per column, `total_rows`, `null_count`, and the
-physical Arrow type; it freezes the first preflight batch's schema and rejects any later batch
-whose column names, order, or types drift from it. This is O(columns) state plus the one bounded
-active batch, no materialization. From the accumulated counts each column resolves to exactly one
-state:
+Before any output, the lane runs the preflight, the first of the two runtime passes over the
+source (`LazySource.iter_batches`); execution is the second. The preflight accumulates, per
+column, `total_rows`, `null_count`, and the physical Arrow type. It does not freeze the first
+batch's schema as its authority, because an empty Parquet file yields zero batches: the baseline
+schema is `LazySource.schema` (read from the footer, always available), and every batch,
+including the first, is validated against it, rejecting any column name, order, or type drift.
+This is O(columns) state plus the one bounded active batch, no materialization. From the
+accumulated counts each column resolves to exactly one state:
 
-- `empty`: `total_rows == 0`
+- `empty`: `total_rows == 0` (resolved from `num_rows` / a zero-batch pass, typed by
+  `LazySource.schema`)
 - `no-null`: `null_count == 0 and total_rows > 0`
 - `partial-null`: `0 < null_count < total_rows`
 - `all-null`: `null_count == total_rows and total_rows > 0`
 
 The preflight then resolves the admit/reroute decision and the oracle-equivalent output schema
-per the matrix (section 3), and freezes that output schema before the first sink write. It is a
-second read of the runtime source (execution being the first); that is the honest cost of exact
-parity for global-state-dependent types. "Read exactly twice" in this plan means the
+per the matrix (section 3), and freezes that output schema before the first sink write. The
+preflight second-reading the source is the honest cost of exact parity for global-state-dependent
+types. "Read exactly twice" in this plan means the
 caller-supplied runtime `LazySource.iter_batches`, distinct from the pipeline's own bounded
 profiling reads, which are unchanged.
 
@@ -71,7 +74,7 @@ widen an Admit to a Reroute (never the reverse) if a probe on the pinned version
 
 | strategy / type       | no-null | partial-null   | all-null        | empty  |
 |-----------------------|:-------:|:--------------:|:---------------:|:------:|
-| passthrough / integer | Admit   | Reroute (double) | Reroute (null) | Admit  |
+| passthrough / integer | Admit   | Reroute (double) | Reroute (double) | Admit  |
 | passthrough / boolean | Admit   | Admit          | Reroute (null)  | Admit  |
 | passthrough / timestamp | Admit | Admit          | Admit           | Admit  |
 | redact / int,bool,ts  | Admit   | Admit          | Reroute (null)  | Reroute (double) |
@@ -89,8 +92,10 @@ Notes that fix the earlier draft:
   passthrough, so empty passthrough is exact for all three.
 - Native `truncate` accepts integer, boolean, and timestamp (`truncate_array` converts each
   non-null scalar with `str(value)`); its output matched the oracle for the admitted cells.
-- The all-null Reroute cells are where the oracle infers `null` while native pins a concrete type
-  or `string`; the empty Reroute cells for redact/truncate are where the oracle infers `double`
+- The all-null Reroute cells are where the oracle infers a type native cannot match: `double` for
+  all-null integer passthrough, `null` for all-null boolean/timestamp passthrough and for all-null
+  redact/truncate (native pins a concrete type or `string`); the empty Reroute cells for
+  redact/truncate are where the oracle infers `double`
   while native pins `string`. Both are drifts the harness does not allow, hence Reroute.
 
 Integer covers all signed and unsigned widths; timestamp covers all units, tz-aware and
@@ -111,16 +116,22 @@ aborts, discards any staged artifact, and raises a coded error, never committing
 specified so the encoding is injective (a cryptographic hash does not rescue ambiguous framing):
 
 - Algorithm: BLAKE2b, keyed with a fixed domain-separation constant and a format-version byte.
-- The hash is updated directly from Arrow buffers / memoryviews per batch; `to_pylist()`,
-  `combine_chunks()`, and whole-stream IPC materialization are forbidden in the digest path.
-- Per column, framed with explicit lengths: the field name, the Arrow type (including timestamp
-  unit and timezone and integer signedness/width), then the validity bitmap and the value
-  buffers, each length-prefixed. Length prefixes make concatenation unambiguous.
-- The running total is `total_rows` and the frozen column order, so a row permutation, a
-  validity-only change, a timezone change, or a reordered schema all change the digest.
-- The digest is partition-independent: it is a fold over the logical column stream, not over
-  batch boundaries, so preflight and execution reading the same file at different batch sizes
-  produce the same digest. Batch partitioning is explicitly not part of identity.
+- It digests the LOGICAL stream, not raw buffers. Raw Arrow buffers carry slice offsets, trailing
+  padding bits, reset per-batch UTF-8 offsets, and undefined payload bytes at null positions, all
+  of which make two logically-identical streams differ across batch partitions or decodes. So the
+  codec is forbidden from hashing raw buffers, `to_pylist()`, `combine_chunks()`, or whole-stream
+  IPC. It updates BLAKE2b from `memoryview`s of canonicalized logical regions instead.
+- Each logical COLUMN is framed once (not per batch): a length-prefixed field name, then the Arrow
+  type token (timestamp unit + timezone, integer signedness + width), then `total_rows`.
+- Values and validity are then folded across batch boundaries as one logical column: only each
+  array's logical `offset:length` region is read; validity and boolean bits are accumulated across
+  batches with trailing padding bits masked; payload bytes at null positions are zeroed (or
+  omitted) so an undefined null slot cannot change the digest; UTF-8 (and any offset-buffer) values
+  are emitted as length-prefixed logical value slices rebased from the local offsets, never the raw
+  offset buffer.
+- The column order is the frozen order, so a reordered schema, a row permutation, a validity-only
+  change, or a timezone change all change the digest, while re-partitioning the same logical data
+  into different batch sizes does not. Batch partitioning is explicitly not part of identity.
 
 Memory is O(columns) digest state plus the bounded active batch, not literal O(1). As defense in
 depth the per-batch guards still fire, and the first execution batch is checked against the
@@ -129,17 +140,17 @@ null-free that presents a null at execution aborts rather than emitting a diverg
 
 A private spool of the source is a stronger anti-mutation guarantee but creates a
 raw-PII-at-rest, disk-budget, permission, and cleanup obligation; the digest is preferred unless
-the benchmarks in section 6 show it is too costly, at which point the spool is the fallback.
+the section 7 benchmarks breach their threshold, at which point the spool is the fallback.
 
 ## 5. Failure modes
 
 1. A column whose cell is Reroute (partial/all-null int passthrough, all-null bool/ts passthrough,
    all-null redact, empty redact/truncate, and any probe-failing cell) reroutes to the oracle
    before output. Not an error.
-2. A truncate integer column with a null: if the null is in the profile sample the existing
-   compile guard raises `PlanCompileError` before native is reached; otherwise the native
-   preflight reroutes and the existing execution guard raises `ExecutionError`. Both paths are
-   preserved unchanged (section 6).
+2. A truncate integer column with a null on the production Parquet path: the native preflight
+   reroutes and the existing execution guard raises `ExecutionError` (the compile guard does not
+   fire because profiling reads a nullable Parquet integer as `float64`; see section 6). The
+   compile guard's own contract is unchanged and covered directly.
 3. `native_route_enabled=False` or a non-`auto` execution mode: native is never selected.
 4. A source whose digest changes between preflight and commit, or a per-batch guard trip: abort,
    discard staged output, coded error, no oracle retry.
@@ -148,17 +159,20 @@ the benchmarks in section 6 show it is too costly, at which point the spool is t
 ## 6. Interaction with the existing integer-null guards
 
 `check_null_bearing_int_unsupported` runs at plan compile, before `maybe_run_native_route`, and
-rejects a null-bearing integer under `{truncate, hash, categorical}` when the null is visible in
-the 10,000-row profile sample. This slice does not weaken or bypass it. Consequently the matrix's
-"truncate / integer / partial-null / all-null = Oracle rejects" cells split by where the null
-first appears:
+rejects a null-bearing integer under `{truncate, hash, categorical}`. This slice does not weaken
+or bypass it. But for the production Parquet path the compile guard does not fire on a nullable
+integer: bounded profiling reads a nullable Parquet integer as pandas `float64`
+(`profile/_readers.py`), so the profile records `dtype="float64"`, `_is_integer_dtype` is false,
+and the guard's precondition is not met. An empirical production-entry probe confirms it: a
+null-bearing integer truncate raises the existing `ExecutionError(null_bearing_int_unsupported)`
+whether the null is at row 5 or after row 50,000, never `PlanCompileError`.
 
-- Null in the profile sample: `PlanCompileError` (unchanged, native never entered).
-- Null only after the sample and after the first native batch: the native preflight sees it,
-  reroutes, and the existing execution guard raises `ExecutionError`.
-
-The acceptance tests assert the correct one of these per case; neither is weakened to make the
-native matrix uniform.
+So the matrix's "truncate / integer / partial-null / all-null = Oracle rejects" cells resolve
+uniformly on the production Parquet path: the native preflight sees the integer nulls, reroutes,
+and the existing execution guard raises `ExecutionError`. The compile guard's narrower contract
+(it does fire when the profile is genuinely integer-typed) is preserved and covered by a direct
+compiler unit test built on a deliberately integer-typed `Profile`, not through the production
+Parquet entry. Neither guard is weakened.
 
 ## 7. Acceptance tests
 
@@ -187,12 +201,19 @@ deliberately consuming that normalization says so.
    concatenations, a validity-only change, a row permutation, a timezone change, and two
    different batch partitions of the same data (which must digest equal).
 5. **The native lane provably ran without materialization.** For an Admit job the frozen Part-1
-   ledger counts are all zero, `resolve_resident_sources` is never called on the native path, and
-   the runtime source's `iter_batches` is called exactly twice.
-6. **Bounded memory + read cost.** Peak RSS through the production entry with the streaming sink
-   is flat in row count under the frozen ceiling, measured in fresh processes over tiers (the
-   preflight accumulator is O(columns)). Add cold-cache and warm-cache wall-time and read-byte
-   benchmarks for the two-read design, so its cost is measured, not assumed.
+   ledger's oracle, fallback, and rejected-chunk counts are all zero (native attempted and
+   completed counts are equal and non-zero on a non-empty admitted run), `resolve_resident_sources`
+   is never called on the native path, and the runtime source's `iter_batches` is called exactly
+   twice.
+6. **Bounded memory + read cost with a decision threshold.** Peak RSS through the production entry
+   with the streaming sink is flat in row count under the frozen ceiling, measured in fresh
+   processes over tiers (the preflight accumulator is O(columns)). Benchmark the two-read design
+   against the single-read oracle-chunked baseline on the same data: cold-cache and warm-cache
+   wall time and bytes read, at least five reps with median + IQR. The design is accepted if
+   warm-cache wall time is within 2.2x the single-read baseline and read amplification is at most
+   2.1x (two bounded reads plus digest overhead); if either threshold is exceeded, switch to the
+   private-spool alternative (section 4) or record an explicit owner acceptance rather than
+   shipping an unbounded cost silently.
 7. **Every slice-1 guarantee still holds**: `utf8` parity unchanged, the reject-before-output
    closed world, the transactional lifecycle, the precedence matrix, the closed-world sentry.
 8. **Mutation bar** on the changed units (preflight accumulator + state resolution, matrix
