@@ -139,8 +139,13 @@ frozen preflight schema (not only later batches): an integer column the prefligh
 null-free that presents a null at execution aborts rather than emitting a divergent batch.
 
 A private spool of the source is a stronger anti-mutation guarantee but creates a
-raw-PII-at-rest, disk-budget, permission, and cleanup obligation; the digest is preferred unless
-the section 7 benchmarks breach their threshold, at which point the spool is the fallback.
+raw-PII-at-rest, disk-budget, permission, and cleanup obligation; the digest is preferred. The
+section 7 benchmark measured warm-cache wall at 2.54x the single-read baseline, over the original
+2.2x accept line. The owner accepted the two-read cost rather than switching to the spool: the lane
+is opt-in and default-off, exists for memory-boundedness not speed, its two-read + integrity-digest
+design is inherently >2x a single read, and the security review preferred the digest over a
+raw-PII-at-rest spool. The warm-wall ceiling is raised to 2.8x as an accepted regression bound (not
+a tuning target), leaving headroom over the measured 2.54x; read amplification stays at 2.1x.
 
 ## 5. Failure modes
 
@@ -209,11 +214,13 @@ deliberately consuming that normalization says so.
    with the streaming sink is flat in row count under the frozen ceiling, measured in fresh
    processes over tiers (the preflight accumulator is O(columns)). Benchmark the two-read design
    against the single-read oracle-chunked baseline on the same data: cold-cache and warm-cache
-   wall time and bytes read, at least five reps with median + IQR. The design is accepted if
-   warm-cache wall time is within 2.2x the single-read baseline and read amplification is at most
-   2.1x (two bounded reads plus digest overhead); if either threshold is exceeded, switch to the
-   private-spool alternative (section 4) or record an explicit owner acceptance rather than
-   shipping an unbounded cost silently.
+   wall time and bytes read, at least five reps with median + IQR. Read amplification must stay at
+   most 2.1x (two bounded reads plus digest overhead). The warm-cache wall ratio measured 2.54x the
+   single-read baseline, above the original 2.2x line; the owner accepted the two-read cost (digest
+   preferred over the private-spool alternative, section 4) rather than switching spools, so the
+   accept ceiling is 2.8x as a regression bound with headroom over the measured 2.54x. A future
+   breach past 2.8x reopens the spool-vs-digest decision rather than shipping an unbounded cost
+   silently.
 7. **Every slice-1 guarantee still holds**: `utf8` parity unchanged, the reject-before-output
    closed world, the transactional lifecycle, the precedence matrix, the closed-world sentry.
 8. **Mutation bar** on the changed units (preflight accumulator + state resolution, matrix

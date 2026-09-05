@@ -302,9 +302,19 @@ def test_full_matrix_parity_through_production_entry(
         assert candidate.native_route.reason.startswith("native_preflight_reroute:")
 
     oracle = _run_full_frame_oracle(config, source_path)
-    assert_logical_parity(
-        LogicalResult.from_execution_result(candidate), LogicalResult.from_execution_result(oracle)
-    )
+    candidate_logical = LogicalResult.from_execution_result(candidate)
+    oracle_logical = LogicalResult.from_execution_result(oracle)
+    if outcome == "admit":
+        # Plan 7.1 requires exact physical-cell parity for an Admit cell: the
+        # native lane emits its own output, so the default null-typed
+        # normalization must not be allowed to silently absorb an all-null
+        # drift. No current Admit cell relies on it.
+        assert_logical_parity(candidate_logical, oracle_logical, allowed_physical_diffs=())
+    else:
+        # A reroute runs the ordinary chunked continuation, whose per-chunk
+        # all-null concat is exactly the drift the default normalization
+        # covers; keep the default allow-list here.
+        assert_logical_parity(candidate_logical, oracle_logical)
 
 
 # ---------------------------------------------------------------------------
