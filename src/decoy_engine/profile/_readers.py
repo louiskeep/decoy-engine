@@ -116,6 +116,16 @@ class LazySource:
         parquet_file = pq.ParquetFile(self.path)
         yield from parquet_file.iter_batches(batch_size=batch_rows)
 
+    def open_batches(self, batch_rows: int) -> tuple[pa.Schema, Iterator[pa.RecordBatch]]:
+        """Footer schema and a batch iterator from ONE open handle, so the
+        schema a caller validates is the schema its batches are read under.
+        `schema` then `iter_batches` reopens the file twice and leaves a gap in
+        which it can change; a caller that must trust the two agree needs this.
+        The schema is real even for a zero-row file, whose iterator yields none.
+        """
+        parquet_file = pq.ParquetFile(self.path)
+        return parquet_file.schema_arrow, parquet_file.iter_batches(batch_size=batch_rows)
+
     @property
     def schema(self) -> pa.Schema:
         """The file's Arrow schema, read from the Parquet footer only."""

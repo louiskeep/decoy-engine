@@ -402,7 +402,21 @@ def run_widened_execution(
 
     if classification.schema is None or classification.digest is None:  # pragma: no cover
         raise AssertionError(f"{table!r}: widened admission missing its frozen schema/digest")
-    execution_batches = source.iter_batches(batch_rows)
+    second_read_schema, execution_batches = source.open_batches(batch_rows)
+    # The second read must present the schema the preflight froze, checked here
+    # from the same handle its batches come from. A zero-row second read yields
+    # no batches, so the per-batch guard in _masked_batches never runs and the
+    # digest observes no arrays: with nothing streamed, a reorder, rename, drop,
+    # add, or same-name type swap between the two reads all go unseen and the
+    # stale frozen-schema output commits. Fail closed rather than reroute: the
+    # source broke the between-reads stability the route assumes, and the
+    # oracle's third read could see a third state.
+    drift = schema_drift_reason(classification.schema, second_read_schema)
+    if drift is not None:
+        raise ExecutionError(
+            code="native_chunk_schema_drift",
+            message=f"{table!r}: second-read schema drift vs the admitted schema ({drift})",
+        )
     first = next(execution_batches, None)
     digest_state = ExecutionDigestState(
         column_order=classification.column_order,

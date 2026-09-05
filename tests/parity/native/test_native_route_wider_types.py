@@ -415,14 +415,24 @@ def test_partial_null_and_all_null_resolve_to_different_verdicts(tmp_path: Path)
 
 
 def _rewriting_source(path: Path, calls: dict[str, int], mutated: pa.Table) -> LazySource:
+    # The preflight reads via iter_batches (read 1); the widened execution reads
+    # via open_batches (read 2). Both count against the same tally so the rewrite
+    # lands on read 2 whichever method the execution path uses.
     class _RewritingSource(LazySource):
-        def iter_batches(self, batch_rows: int):
+        def _maybe_rewrite(self) -> None:
             calls["n"] += 1
             if calls["n"] == 2:
                 st = os.stat(self.path)
                 pq.write_table(mutated, self.path)
                 os.utime(self.path, (st.st_atime, st.st_mtime))
+
+        def iter_batches(self, batch_rows: int):
+            self._maybe_rewrite()
             yield from super().iter_batches(batch_rows)
+
+        def open_batches(self, batch_rows: int):
+            self._maybe_rewrite()
+            return super().open_batches(batch_rows)
 
     return _RewritingSource(path=path)
 
@@ -581,6 +591,89 @@ def test_column_reorder_between_reads_aborts_before_commit(
     assert oracle_calls["n"] == 0, "a schema-drift abort must never fall back to the oracle"
 
 
+@pytest.mark.parametrize(
+    "variant, mutated",
+    [
+        (
+            "reorder",
+            pa.table({"b": pa.array([], type=pa.int64()), "a": pa.array([], type=pa.int64())}),
+        ),
+        (
+            "rename",
+            pa.table({"a": pa.array([], type=pa.int64()), "c": pa.array([], type=pa.int64())}),
+        ),
+        ("drop", pa.table({"a": pa.array([], type=pa.int64())})),
+        (
+            "add",
+            pa.table(
+                {
+                    "a": pa.array([], type=pa.int64()),
+                    "b": pa.array([], type=pa.int64()),
+                    "c": pa.array([], type=pa.int64()),
+                }
+            ),
+        ),
+        (
+            "type_change",
+            pa.table({"a": pa.array([], type=pa.int64()), "b": pa.array([], type=pa.float64())}),
+        ),
+    ],
+)
+def test_empty_widened_source_schema_drift_aborts_before_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variant: str, mutated: pa.Table
+) -> None:
+    """A ZERO-ROW widened source whose schema changes between the preflight and
+    execution reads must abort before commit. With no batches the per-batch
+    drift guard never runs and the digest observes no arrays, so the second
+    read's schema is validated from its own handle before any masking. Covers
+    reorder, rename, drop, add, and a same-name type swap -- each of which would
+    otherwise commit output carrying the stale frozen schema."""
+    original = pa.table({"a": pa.array([], type=pa.int64()), "b": pa.array([], type=pa.int64())})
+    source_path = _write_source(tmp_path, original)
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {_TABLE: {"type": "file", "format": "parquet", "path": str(source_path)}},
+            "targets": {
+                _TABLE: {"type": "file", "format": "parquet", "path": str(tmp_path / "out.parquet")}
+            },
+            "tables": [{"name": _TABLE, "columns": [_pt("a"), _pt("b")]}],
+        }
+    ).model_dump()
+    calls = {"n": 0}
+    source = _rewriting_source(source_path, calls, mutated)
+    sink_dir = tmp_path / "sink"
+    sink = ParquetTransactionalSink(sink_dir)
+
+    from decoy_engine.execution import _chunked as _chunked_mod
+
+    oracle_calls = {"n": 0}
+    orig_chunked = _chunked_mod.run_mask_pipeline_chunked
+
+    def _spy(*args: Any, **kwargs: Any):
+        oracle_calls["n"] += 1
+        return orig_chunked(*args, **kwargs)
+
+    monkeypatch.setattr(_chunked_mod, "run_mask_pipeline_chunked", _spy)
+    with pytest.raises(ExecutionError) as excinfo:
+        run_pipeline(
+            config,
+            {_TABLE: source},
+            engine_version=_ENGINE_VERSION,
+            native_route_enabled=True,
+            execution_mode="auto",
+            sink=sink,
+            use_byte_estimate_routing=False,
+        )
+    assert excinfo.value.code == "native_chunk_schema_drift", variant
+    assert calls["n"] == 2, f"{variant}: expected exactly 2 reads, got {calls['n']}"
+    assert not (sink_dir / f"{_TABLE}.parquet").exists(), (
+        f"{variant}: a drifted read must not commit"
+    )
+    assert oracle_calls["n"] == 0, f"{variant}: a schema-drift abort must never reach the oracle"
+
+
 # ---------------------------------------------------------------------------
 # Test 5 (partial): the native lane provably ran without materialization
 # on a WIDENED (two-read) admitted job
@@ -607,15 +700,23 @@ def test_widened_admitted_job_ledger_zero_and_two_reads(
 
     monkeypatch.setattr(_pipeline_mod._psrc, "resolve_resident_sources", _boom)
 
+    # Preflight reads via iter_batches, the widened execution via open_batches;
+    # count both so "exactly two reads" holds however each side opens the file.
     calls = {"n": 0}
     source = LazySource(path=source_path)
     orig_iter_batches = source.iter_batches
+    orig_open_batches = source.open_batches
 
     def _counting_iter_batches(batch_rows: int):
         calls["n"] += 1
         return orig_iter_batches(batch_rows)
 
+    def _counting_open_batches(batch_rows: int):
+        calls["n"] += 1
+        return orig_open_batches(batch_rows)
+
     object.__setattr__(source, "iter_batches", _counting_iter_batches)
+    object.__setattr__(source, "open_batches", _counting_open_batches)
 
     result = run_pipeline(
         config,
