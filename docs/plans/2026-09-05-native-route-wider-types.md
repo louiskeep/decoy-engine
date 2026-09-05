@@ -35,9 +35,8 @@ admitted only after a preflight pass has resolved that its global null/empty sta
 parity-safe matrix cell, and execution is gated on the source being byte-identical to the one
 the preflight read.
 
-New module: the preflight state accumulator, the matrix resolver, and the digest codec live in a
-new leaf `execution/_native_route_preflight.py` (target <= 600 LOC). `_native_route.py` (381) and
-`_native_route_exec.py` (544, only ~56 headroom) gain small call sites, not the bulk;
+New modules: the preflight state accumulator and matrix resolver live in `execution/_native_route_preflight.py` (445 LOC, target <= 600), and the source-snapshot digest codec lives in `execution/_native_route_digest.py` (221 LOC). `_native_route.py` (381) and
+`_native_route_exec.py` (593) gain small call sites, not the bulk;
 `_pipeline.py` (639, ceiling 645) receives no new logic.
 
 ## 2. The bounded preflight

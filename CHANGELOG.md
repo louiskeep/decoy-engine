@@ -19,6 +19,16 @@ The native columnar execution kernel was proven byte-identical to the pandas ora
 - **Mutation grading (94.22%, 766 killed of 813 mutants):** Ledger recorded at `docs/quality/mutation-ledgers/execution_native_route.md`. Four real-logic gaps closed by new direct unit tests (`test_native_route_units.py`): `maybe_run_native_route`'s admission gate (3 mutants killed via `and`-to-`or` detection and kwargs identity pinning), `_mask_one_batch`'s per-column peak-RSS accumulation (1 mutant killed via min vs max delta), `try_native_route`'s default parameter values (3 mutants killed via literal-value pinning), and malformed-admission detection (1 mutant killed by injecting half-populated admission). Of 47 residual survivors, 31 are non-contract diagnostic prose (message strings only; callers key off error codes) and 16 are genuine equivalents (indistinguishable from the real code). Zero test gaps remain on the contract surface.
 - No engine version bump: this is additive-only (new module exports, new `run_pipeline` kwarg, new dataclasses), and the engine's surface compatibility contract carries the old behavior as the default.
 
+### Added (Q3 slice 2: widen the native lane to integer, boolean, and timestamp columns, 2026-09-05)
+
+Slice 1 admitted only `utf8` columns because their output type never depends on null state. This slice extends the native lane to integer, boolean, and timestamp by adding a bounded-memory preflight that resolves each column's global null state, and a source-snapshot identity digest that ensures the preflight verdict still holds when execution reads the source a second time. Memory bounds and byte-physical parity to the pandas oracle remain; the default-off posture is unchanged.
+
+- **`_native_route_preflight.py` (new module):** Global column state classification (`run_preflight`), a four-state resolver (empty / no-null / partial-null / all-null), and the normative physical-parity admission matrix (`ADMISSION_MATRIX`) that decides admit-vs-reroute per `(strategy, type, state)` cell. Pre-source-read validation gates the schema against schema drift on the second (execution) read.
+- **`_native_route_digest.py` (new module):** Source-snapshot identity codec (versioned, domain-separated BLAKE2b digest) that canonicalizes the logical stream per column (field name, Arrow type token with timestamp unit and integer width, total rows, then validity and values canonicalized across batch boundaries) so a digest mismatch before commit aborts cleanly without output.
+- Admission matrix resolves column type and null-state combinations to either byte+physical-identical (Admit) or reroute-to-oracle cells, validated via probe on pandas 2.3.3 / PyArrow 24.0.0. Partial-null boolean passthrough is exact (not drift); `NaT` does not alter timestamp type; empty columns preserve type.
+- Integer covers all signed/unsigned widths; timestamp covers all units, tz-aware and tz-naive.
+- No engine version bump: additive widening (new modules, new preflight discipline), backward-compatible routing surface.
+
 ### Added (OOM checker v1: a pure capacity evaluator + an estimate-only entrypoint for the out-of-core-FK memory gate, 2026-07-24)
 
 The out-of-core-FK route's memory-capacity gate (`enforce_ooc_memory_
