@@ -123,11 +123,11 @@ specified so the encoding is injective (a cryptographic hash does not rescue amb
 - Each logical COLUMN is framed once (not per batch): a length-prefixed field name, then the Arrow
   type token (timestamp unit + timezone, integer signedness + width), then `total_rows`.
 - Values and validity are then folded across batch boundaries as one logical column: only each
-  array's logical `offset:length` region is read; validity and boolean bits are accumulated across
-  batches with trailing padding bits masked; payload bytes at null positions are zeroed (or
-  omitted) so an undefined null slot cannot change the digest; UTF-8 (and any offset-buffer) values
-  are emitted as length-prefixed logical value slices rebased from the local offsets, never the raw
-  offset buffer.
+  array's logical `offset:length` region is read; validity and boolean columns are accumulated
+  as one byte per row (not bit-packed) across batches, with trailing padding masked; payload bytes
+  at null positions are zeroed (or omitted) so an undefined null slot cannot change the digest;
+  UTF-8 (and any offset-buffer) values are emitted as length-prefixed logical value slices
+  rebased from the local offsets, never the raw offset buffer.
 - The column order is the frozen order, so a reordered schema, a row permutation, a validity-only
   change, or a timezone change all change the digest, while re-partitioning the same logical data
   into different batch sizes does not. Batch partitioning is explicitly not part of identity.
@@ -139,12 +139,12 @@ null-free that presents a null at execution aborts rather than emitting a diverg
 
 A private spool of the source is a stronger anti-mutation guarantee but creates a
 raw-PII-at-rest, disk-budget, permission, and cleanup obligation; the digest is preferred. The
-section 7 benchmark measured warm-cache wall at 2.54x the single-read baseline, over the original
-2.2x accept line. The owner accepted the two-read cost rather than switching to the spool: the lane
-is opt-in and default-off, exists for memory-boundedness not speed, its two-read + integrity-digest
-design is inherently >2x a single read, and the security review preferred the digest over a
-raw-PII-at-rest spool. The warm-wall ceiling is raised to 2.8x as an accepted regression bound (not
-a tuning target), leaving headroom over the measured 2.54x; read amplification stays at 2.1x.
+finalized benchmark measured warm-cache wall at approximately 1.52x against the resident oracle-
+chunked baseline, well under the 2.8x ceiling. The owner accepted the two-read cost rather than
+switching to the spool: the lane is opt-in and default-off, exists for memory-boundedness not
+speed, its two-read + integrity-digest design is inherently >2x a single read, and the security
+review preferred the digest over a raw-PII-at-rest spool. The warm-wall ceiling is 2.8x as an
+accepted regression bound (not a tuning target); read amplification stays at 2.1x.
 
 ## 5. Failure modes
 

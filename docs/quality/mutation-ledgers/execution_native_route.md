@@ -1,12 +1,11 @@
 # Mutation grading: `_native_route.py` + `_native_route_exec.py` (native-route production seam)
 
-Scope: the two modules behind the single-pass streaming native lane --
+Scope: the two modules behind the streaming native lane --
 `_native_route.py` (`maybe_run_native_route`, `static_candidacy`,
 `peek_and_admit`, the ledger/report dataclasses) and `_native_route_exec.py`
 (`try_native_route` and its private helpers: `_resolve_truncate_keep`,
-`_resolve_strategy_cfg`, `_schema_drift_reason`, `_mask_one_batch`,
-`_validate_ledger`, `_masked_batches`, `_execution_envelope`,
-`_execution_adapter_stamp`, `_run_native_streaming`). Graded with `mutmut`
+`_resolve_strategy_cfg`, `_mask_one_batch`, `_validate_ledger`, `_masked_batches`,
+`_execution_envelope`, `_execution_adapter_stamp`, `_run_native_streaming`). Graded with `mutmut`
 (`only_mutate` scoped to the two files, selection = the three covering test
 files below), readjudicated per-mutant with `scripts/tq_mutate.py` (fresh-
 subprocess pytest re-run of every non-`killed` verdict, since mutmut's
@@ -172,7 +171,7 @@ by `test_static_candidacy_admits_resident_when_vault_key_is_absent`.)
 
 **`_masked_batches`'s `i > 0` -> `i >= 0` (1)** -- `mutmut_9`: at `i == 0`,
 `batch` in the loop IS `first` (see `_rechain`), so
-`_schema_drift_reason(expected_schema, batch.schema)` compares `first.schema`
+`schema_drift_reason(expected_schema, batch.schema)` compares `first.schema`
 against itself and always returns `None`. Running that comparison on the
 first batch too changes nothing observable.
 
