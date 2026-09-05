@@ -32,6 +32,7 @@ from decoy_engine.execution._native_route_preflight import (
     ExecutionDigestState,
     classify_and_preflight,
     run_widened_execution,
+    schema_drift_reason,
 )
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -123,20 +124,6 @@ def _resolve_strategy_cfg(
             kwargs = {}
         resolved[name] = (strategy, kwargs)
     return resolved
-
-
-def _schema_drift_reason(expected: pa.Schema, actual: pa.Schema) -> str | None:
-    """None when `actual` still matches the admitted first batch's schema."""
-    expected_names, actual_names = set(expected.names), set(actual.names)
-    if actual_names != expected_names:
-        missing = sorted(expected_names - actual_names)
-        extra = sorted(actual_names - expected_names)
-        return f"missing={missing};extra={extra}"
-    for name in expected.names:
-        want, got = expected.field(name).type, actual.field(name).type
-        if want != got:
-            return f"type_changed:{name}:{want}->{got}"
-    return None
 
 
 def _mask_one_batch(
@@ -305,7 +292,13 @@ def _masked_batches(
     else:  # pragma: no cover - precondition
         raise AssertionError("no schema to validate batches against")
     for i, batch in enumerate(_rechain(first, rest)):
-        drift = _schema_drift_reason(schema_to_check, batch.schema)
+        # The order-sensitive shared check (not a name-set duplicate): a source
+        # reordered between the preflight read and this execution read has the
+        # same column names but a different order, which the digest reads back
+        # in the frozen preflight order and so would not catch. Aborting here,
+        # before masking, is what keeps a reordered second read from committing
+        # divergent output.
+        drift = schema_drift_reason(schema_to_check, batch.schema)
         if drift is not None:
             ledger.rejected_chunks += 1
             raise ExecutionError(

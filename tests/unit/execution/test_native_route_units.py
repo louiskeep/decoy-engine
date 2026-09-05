@@ -282,12 +282,16 @@ def test_resolve_strategy_cfg_resolves_kwargs_exactly() -> None:
 
 
 def test_schema_drift_reason_reports_missing_and_extra_column_names_exactly() -> None:
-    """Only the type-changed branch is exercised elsewhere (the transactional
-    failure suite); the name-mismatch branch's set-difference computation
-    needs its own coverage."""
+    """The execution pass now shares the preflight's ORDER-sensitive
+    schema_drift_reason rather than a weaker name-set duplicate. Cover its
+    name-mismatch branch here; the order-sensitive and type-changed branches
+    are covered in the preflight unit suite."""
     expected = pa.schema([pa.field("pt", pa.utf8())])
     actual = pa.schema([pa.field("other", pa.utf8())])
-    assert _exec_mod._schema_drift_reason(expected, actual) == "missing=['pt'];extra=['other']"
+    assert (
+        _exec_mod.schema_drift_reason(expected, actual)
+        == "columns_changed:missing=['pt']:extra=['other']"
+    )
 
 
 # ---------------------------------------------------------------------------

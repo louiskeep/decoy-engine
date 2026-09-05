@@ -514,6 +514,73 @@ def test_digest_mismatch_aborts_resident_mode(tmp_path: Path) -> None:
     assert calls["n"] == 2
 
 
+def test_column_reorder_between_reads_aborts_before_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source whose COLUMNS are reordered between the preflight and the
+    execution read (same names, same values, different order) must abort. The
+    digest reads columns back in the frozen preflight order, so it would not
+    see the reorder; the order-sensitive execution schema guard catches it
+    before masking and refuses to commit output that no longer matches the
+    oracle's column order over the second snapshot."""
+    # Integer columns so the job takes the WIDENED two-read path (where the
+    # preflight and execution reads can disagree); a utf8-only job is a single
+    # read and cannot exhibit a between-reads reorder.
+    original = pa.table(
+        {
+            "a": pa.array([1, 2, 3], type=pa.int64()),
+            "b": pa.array([10, 20, 30], type=pa.int64()),
+        }
+    )
+    reordered = pa.table(
+        {
+            "b": pa.array([10, 20, 30], type=pa.int64()),
+            "a": pa.array([1, 2, 3], type=pa.int64()),
+        }
+    )
+    source_path = _write_source(tmp_path, original)
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {_TABLE: {"type": "file", "format": "parquet", "path": str(source_path)}},
+            "targets": {
+                _TABLE: {"type": "file", "format": "parquet", "path": str(tmp_path / "out.parquet")}
+            },
+            "tables": [{"name": _TABLE, "columns": [_pt("a"), _pt("b")]}],
+        }
+    ).model_dump()
+    calls = {"n": 0}
+    source = _rewriting_source(source_path, calls, reordered)
+    sink_dir = tmp_path / "sink"
+    sink = ParquetTransactionalSink(sink_dir)
+
+    from decoy_engine.execution import _chunked as _chunked_mod
+
+    oracle_calls = {"n": 0}
+    orig_chunked = _chunked_mod.run_mask_pipeline_chunked
+
+    def _spy(*args: Any, **kwargs: Any):
+        oracle_calls["n"] += 1
+        return orig_chunked(*args, **kwargs)
+
+    monkeypatch.setattr(_chunked_mod, "run_mask_pipeline_chunked", _spy)
+    with pytest.raises(ExecutionError) as excinfo:
+        run_pipeline(
+            config,
+            {_TABLE: source},
+            engine_version=_ENGINE_VERSION,
+            native_route_enabled=True,
+            execution_mode="auto",
+            sink=sink,
+            use_byte_estimate_routing=False,
+        )
+    assert excinfo.value.code == "native_chunk_schema_drift"
+    assert calls["n"] == 2, f"expected exactly 2 iter_batches calls, got {calls['n']}"
+    assert not (sink_dir / f"{_TABLE}.parquet").exists(), "a reordered second read must not commit"
+    assert oracle_calls["n"] == 0, "a schema-drift abort must never fall back to the oracle"
+
+
 # ---------------------------------------------------------------------------
 # Test 5 (partial): the native lane provably ran without materialization
 # on a WIDENED (two-read) admitted job
