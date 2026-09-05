@@ -25,11 +25,23 @@ import pytest
 from decoy_engine.execution import _native_route as _route_mod
 from decoy_engine.execution import _native_route_exec as _exec_mod
 from decoy_engine.execution._native_route import LedgerEntry, NativeRouteLedger
+from decoy_engine.execution._native_route_preflight import RouteAdmission
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.relationships import RelationshipGraph
 
 _TABLE = "t"
 _EMPTY_GRAPH = RelationshipGraph(edges=(), ordering=())
+
+
+def _stub_utf8_only_classification(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These orchestration tests stub `peek_and_admit` directly and pass
+    `plan=None` (the plan's real content is irrelevant to what they pin), so
+    the real `classify_and_preflight` -- which reads the plan to resolve
+    declared columns before `try_native_route` ever reaches `peek_and_admit`
+    -- must be stubbed too, or it raises on the `None` plan first."""
+    monkeypatch.setattr(
+        _exec_mod, "classify_and_preflight", lambda *a, **k: RouteAdmission(mode="utf8_only")
+    )
 
 
 def _lazy_source(tmp_path: Path) -> LazySource:
@@ -707,6 +719,7 @@ def test_try_native_route_admission_decline_report_is_attempted_true_with_table(
     """A batch WAS peeked (attempted=True) even though it was not admitted --
     and the report must still carry which table that peek happened on."""
     source = _lazy_source(tmp_path)
+    _stub_utf8_only_classification(monkeypatch)
     monkeypatch.setattr(
         _exec_mod,
         "static_candidacy",
@@ -754,6 +767,7 @@ def test_try_native_route_rejects_malformed_admission_missing_batch(
     state through to `_run_native_streaming`, which would then fail on a None
     batch far from the cause."""
     source = _lazy_source(tmp_path)
+    _stub_utf8_only_classification(monkeypatch)
     monkeypatch.setattr(
         _exec_mod,
         "static_candidacy",
@@ -799,6 +813,7 @@ def test_try_native_route_threads_table_kinds_into_run_native_streaming(
         captured.update(kwargs)
         return "RESULT_SENTINEL", "REPORT_SENTINEL"
 
+    _stub_utf8_only_classification(monkeypatch)
     monkeypatch.setattr(
         _exec_mod,
         "static_candidacy",
@@ -884,6 +899,7 @@ def test_try_native_route_explain_plan_and_execution_plan_decision_default(
         captured.update(kwargs)
         return "RESULT_SENTINEL", "REPORT_SENTINEL"
 
+    _stub_utf8_only_classification(monkeypatch)
     monkeypatch.setattr(
         _exec_mod,
         "static_candidacy",

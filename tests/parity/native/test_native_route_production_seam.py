@@ -362,13 +362,12 @@ def test_native_admitted_run_without_explain_plan_stamps_no_execution_plan(tmp_p
 _REJECTED_TYPES: list[tuple[str, pa.DataType, list[Any]]] = [
     ("large_utf8", pa.large_utf8(), ["a", None, "b"]),
     ("decimal128", pa.decimal128(10, 2), [1, None, 2]),
-    ("int64", pa.int64(), [1, None, 2]),
-    ("uint32", pa.uint32(), [1, None, 2]),
-    ("bool", pa.bool_(), [True, None, False]),
     ("float64", pa.float64(), [1.5, None, 2.5]),
-    ("timestamp", pa.timestamp("ns"), [0, None, 1]),
     ("binary", pa.binary(), [b"a", None, b"b"]),
 ]
+# int64/uint32/bool/timestamp moved to test_native_route_wider_types.py: Q3
+# slice 2 widens admission for these, so a partial-null passthrough column no
+# longer universally reroutes on schema alone (the matrix now decides).
 
 
 @pytest.mark.parametrize(

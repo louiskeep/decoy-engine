@@ -7,9 +7,8 @@ It returns `(ExecutionResult, report)` when the whole single pass masked and
 committed, `(None, report)` when the job reroutes to the ordinary oracle
 continuation (the caller falls through unchanged; the original `LazySource`
 was never exhausted, so `resolve_resident_sources` reads it fresh), and
-raises once the pass is actually underway -- 2.6's "no oracle fallback after
-the first native output" is not a special case here, it is the only
-behavior: everything past `peek_and_admit` either fully commits or raises.
+raises once the pass is actually underway: everything past admission either
+fully commits or raises -- there is no oracle fallback after that point.
 """
 
 from __future__ import annotations
@@ -28,6 +27,11 @@ from decoy_engine.execution._native_route import (
     NativeRouteReport,
     peek_and_admit,
     static_candidacy,
+)
+from decoy_engine.execution._native_route_preflight import (
+    ExecutionDigestState,
+    classify_and_preflight,
+    run_widened_execution,
 )
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -53,8 +57,12 @@ _NATIVE_BATCH_ROWS_DEFAULT = 50_000
 _STREAMING_EXECUTION_MODE = "native"
 
 
-def _rechain(first: pa.RecordBatch, rest: Iterator[pa.RecordBatch]) -> Iterator[pa.RecordBatch]:
-    yield first
+def _rechain(
+    first: pa.RecordBatch | None, rest: Iterator[pa.RecordBatch]
+) -> Iterator[pa.RecordBatch]:
+    # first=None only for a preflight-proved-empty widened table (0 batches).
+    if first is not None:
+        yield first
     yield from rest
 
 
@@ -271,7 +279,7 @@ def _validate_ledger(ledger: NativeRouteLedger, *, table: str) -> None:
 
 
 def _masked_batches(
-    first: pa.RecordBatch,
+    first: pa.RecordBatch | None,
     rest: Iterator[pa.RecordBatch],
     *,
     table: str,
@@ -282,23 +290,30 @@ def _masked_batches(
     timing_acc: dict[tuple[str, str], float],
     boundary_ms_box: list[float],
     mem_acc: dict[tuple[str, str], int] | None = None,
+    expected_schema: pa.Schema | None = None,
+    digest_state: ExecutionDigestState | None = None,
 ) -> Iterator[pa.RecordBatch]:
-    # Optional so the transactional-failure suite's direct calls (which only
-    # exercise timing/ledger behavior, not the memory measurement) need no
-    # change; a fresh dict is equivalent to "no caller-visible accumulation"
-    # for those callers since nothing reads it back.
+    # mem_acc/expected_schema default so old direct-call tests need no change;
+    # expected_schema defaults to first's schema (slice 1); widened passes the
+    # frozen preflight schema instead (first can be None there).
     if mem_acc is None:
         mem_acc = {}
-    expected_schema = first.schema
+    if expected_schema is not None:
+        schema_to_check = expected_schema
+    elif first is not None:
+        schema_to_check = first.schema
+    else:  # pragma: no cover - precondition
+        raise AssertionError("no schema to validate batches against")
     for i, batch in enumerate(_rechain(first, rest)):
-        if i > 0:
-            drift = _schema_drift_reason(expected_schema, batch.schema)
-            if drift is not None:
-                ledger.rejected_chunks += 1
-                raise ExecutionError(
-                    code="native_chunk_schema_drift",
-                    message=f"{table!r} chunk {i}: schema drift vs the admitted first batch ({drift})",
-                )
+        drift = _schema_drift_reason(schema_to_check, batch.schema)
+        if drift is not None:
+            ledger.rejected_chunks += 1
+            raise ExecutionError(
+                code="native_chunk_schema_drift",
+                message=f"{table!r} chunk {i}: schema drift vs the admitted schema ({drift})",
+            )
+        if digest_state is not None:
+            digest_state.observe_batch(batch)
         yield _mask_one_batch(
             batch,
             i,
@@ -311,6 +326,10 @@ def _masked_batches(
             mem_acc=mem_acc,
             boundary_ms_box=boundary_ms_box,
         )
+    # Verified only after the whole second read has streamed through, so a
+    # mismatch aborts rather than silently truncating emitted output.
+    if digest_state is not None:
+        digest_state.verify(table=table)
 
 
 def _execution_envelope(*, streaming: bool) -> dict[str, Any]:
@@ -358,7 +377,7 @@ def _run_native_streaming(
     plan: Plan,
     config: Mapping[str, Any],
     column_order: tuple[str, ...],
-    first_batch: pa.RecordBatch,
+    first_batch: pa.RecordBatch | None,
     rest_batches: Iterator[pa.RecordBatch],
     sink: TransactionalSink | None,
     streaming: bool,
@@ -366,10 +385,24 @@ def _run_native_streaming(
     resolved_substrate: str,
     explain_plan: bool,
     execution_plan_decision: ExecutionPlan | None,
+    source_schema: pa.Schema | None = None,
+    digest_state: ExecutionDigestState | None = None,
 ) -> tuple[ExecutionResult, NativeRouteReport]:
     del plan  # admission already resolved the declared-column set; unused here
     strategy_cfg = _resolve_strategy_cfg(config, table, column_order)
-    out_schema = pa.schema([pa.field(name, pa.utf8()) for name in column_order])
+    if source_schema is None:
+        if first_batch is None:  # pragma: no cover - precondition
+            raise AssertionError("no schema: first_batch and source_schema both None")
+        source_schema = first_batch.schema
+
+    # Passthrough keeps the source type (widened admission covers int/bool/
+    # timestamp, not just utf8); redact/truncate always emit a string.
+    def _col_type(name: str) -> pa.DataType:
+        if strategy_cfg[name][0] == "passthrough":
+            return source_schema.field(name).type
+        return pa.utf8()
+
+    out_schema = pa.schema([pa.field(name, _col_type(name)) for name in column_order])
     ledger = NativeRouteLedger()
     timing_acc: dict[tuple[str, str], float] = {}
     mem_acc: dict[tuple[str, str], int] = {}
@@ -387,6 +420,8 @@ def _run_native_streaming(
             timing_acc=timing_acc,
             mem_acc=mem_acc,
             boundary_ms_box=boundary_ms_box,
+            expected_schema=source_schema,
+            digest_state=digest_state,
         )
 
     out_table: pa.Table | None = None
@@ -486,11 +521,9 @@ def try_native_route(
     `(ExecutionResult, report)` once the whole pass committed. Raises past
     that point; see the module docstring.
 
-    `resolved_substrate` (default `"pandas"` so existing direct callers keep
-    admitting) is threaded straight to `static_candidacy`'s own substrate
-    gate. `explain_plan` / `execution_plan_decision` only affect the
-    committed result's telemetry (see `_run_native_streaming`), never
-    admission.
+    `resolved_substrate` (default `"pandas"`) is threaded straight to
+    `static_candidacy`'s own substrate gate. `explain_plan` / `execution_
+    plan_decision` only affect committed telemetry, never admission.
     """
     candidacy = static_candidacy(
         config=config,
@@ -517,27 +550,50 @@ def try_native_route(
     ):  # pragma: no cover - static_candidacy already proved this
         raise AssertionError(f"{table!r}: candidacy admitted a non-LazySource entry")
 
-    admission = peek_and_admit(source, table=table, plan=plan, batch_rows=batch_rows)
-    if not admission.admitted:
-        return None, NativeRouteReport(
-            attempted=True, admitted=False, table=table, reason=admission.reason, ledger=None
+    # Footer schema alone decides utf8-only (slice 1's path) vs widened.
+    classification = classify_and_preflight(
+        source, table=table, plan=plan, config=config, batch_rows=batch_rows
+    )
+    if classification.mode == "utf8_only":
+        admission = peek_and_admit(source, table=table, plan=plan, batch_rows=batch_rows)
+        if not admission.admitted:
+            return None, NativeRouteReport(
+                attempted=True, admitted=False, table=table, reason=admission.reason, ledger=None
+            )
+        if admission.first_batch is None or admission.rest is None:  # pragma: no cover
+            raise AssertionError(f"{table!r}: admitted with no batch/iterator")
+        return _run_native_streaming(
+            table=table,
+            plan=plan,
+            config=config,
+            column_order=admission.column_order,
+            first_batch=admission.first_batch,
+            rest_batches=admission.rest,
+            sink=sink,
+            streaming=candidacy.sink_mode == "streaming",
+            table_kinds=table_kinds,
+            resolved_substrate=resolved_substrate,
+            explain_plan=explain_plan,
+            execution_plan_decision=execution_plan_decision,
         )
 
-    if admission.first_batch is None or admission.rest is None:  # pragma: no cover - precondition
-        raise AssertionError(f"{table!r}: admission reported admitted=True with no batch/iterator")
-    return _run_native_streaming(
+    if not classification.admitted:
+        return None, NativeRouteReport(
+            attempted=True, admitted=False, table=table, reason=classification.reason, ledger=None
+        )
+    return run_widened_execution(
+        classification,
+        source=source,
         table=table,
         plan=plan,
         config=config,
-        column_order=admission.column_order,
-        first_batch=admission.first_batch,
-        rest_batches=admission.rest,
+        table_kinds=table_kinds,
         sink=sink,
         streaming=candidacy.sink_mode == "streaming",
-        table_kinds=table_kinds,
         resolved_substrate=resolved_substrate,
         explain_plan=explain_plan,
         execution_plan_decision=execution_plan_decision,
+        batch_rows=batch_rows,
     )
 
 
