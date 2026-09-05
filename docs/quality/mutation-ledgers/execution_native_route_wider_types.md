@@ -29,6 +29,18 @@ selection):
 - `tests/unit/execution/test_native_route_units.py`,
 - `tests/unit/execution/test_native_route_transactional_failures.py`.
 
+## Revision note (this pass)
+
+This ledger's prior version (404/435 = 92.87%, 31 survivors: "5 non-contract
+prose + 26 genuine equivalents") mislabeled FOUR real, distinguishable
+survivors as equivalents. A cross-model gate finding proved each one is
+killable with the right input, and the four are now covered by new tests (see
+"Killed by new tests" below). This revision also re-grades against the FINAL
+code, which now includes a P0 fix (`run_widened_execution`'s second-read
+schema-drift check, see `_native_route_preflight.py` around line 414) that
+grew the mutant population from 435 to 447. The corrected numbers below are
+graded fresh against that final code, not patched onto the old count.
+
 ## One mutation-only source change: `_row` excluded from mutation
 
 `_native_route_preflight._row` carries `# pragma: no mutate block`. It is the
@@ -47,16 +59,78 @@ was changed to move any mutant.
 
 ## Numbers
 
-**435 mutants total, 404 killed, 31 survived: 92.87% (404/435).** Of the 31
-survivors, 5 are non-contract diagnostic prose (an `ExecutionError` /
-`AssertionError` message changed while the `code` / branch stayed put) and 26
-are genuine equivalents (no test, however written, could distinguish the mutant
-from the real code). Each is listed below with its own one-line justification.
+**447 mutants total, 418 killed, 29 survived, as graded on this repo's test
+venv (Python 3.13): 93.51% (418/447).** Of the 29 survivors:
+
+- **7 are non-contract diagnostic prose** (an `ExecutionError` /
+  `AssertionError` message changed while the `.code` / branch stayed put).
+- **19 are genuine equivalents** (no test, however written, could distinguish
+  the mutant from the real code on ANY supported interpreter).
+- **3 are killed on Python 3.10** (this repo's `requires-python` floor) **but
+  not on the 3.13 venv this grade ran on** -- verified directly (see "Killed
+  only on the Python 3.10 floor" below), NOT genuine equivalents. Counting
+  these as killed (the honest floor-interpreter grade) gives **421/447 =
+  94.18%**. The 93.51% figure above is the number this specific grading run
+  produced and is reported as such rather than blended with the 3.10 proof;
+  neither figure is inflated by mislabeling.
 
 ## Killed by new tests (test-only; no source logic changed)
 
-The prior population had 118 survivors across these two files. The gap was
-closed by extending the two slice-2 unit/parity files:
+The prior population had 118 survivors across these two files before the first
+mutation pass; that gap was closed by extending the two slice-2 unit/parity
+files, described in the "byte-exact characterization", "PreflightResult
+contract", "RouteAdmission contract", "`_strategy_by_column` / `_find_table`",
+and "`run_widened_execution` wiring" paragraphs below. This revision adds four
+more kills, closing the four mislabeled-equivalent gap the cross-model gate
+found:
+
+**`table_kinds` / `explain_plan` / `execution_plan_decision` nulled in
+`run_widened_execution`.** These three parameters flow straight into the
+committed `ExecutionResult` (`table_kinds=table_kinds` on the result, and
+`quality_metrics["execution_plan"]` when `explain_plan and
+execution_plan_decision is not None`), so nulling any of them is externally
+observable -- the earlier "the native lane admits only a single non-foreign
+mask table" / "falsy, same as the default" reasoning conflated "the current
+tests don't check it" with "no test could". `test_widened_admit_threads_
+table_kinds_and_execution_plan_telemetry` (in the parity file) drives a
+widened admit with `explain_plan=True` and asserts `result.table_kinds ==
+{_TABLE: "mask"}` and `result.quality_metrics["execution_plan"]["mode"] ==
+"pandas_fallback"` (plus `reason` and `rejections`), killing the three
+argument-nulled mutants on `run_widened_execution`'s call into
+`_run_native_streaming`.
+
+**UTF-8 null-fill payload replaced with `None` in the digest codec.** The
+codec forces a null utf8 slot's payload to zero-length (`pc.fill_null(array,
+"")`) before hashing, precisely so a null contributes nothing beyond its
+already-hashed validity byte. Mutating the fill value to `None` makes
+`pc.fill_null` a no-op (`pc.fill_null(arr, None)` returns `arr` unchanged,
+confirmed directly against pyarrow 24), so the RAW offsets/data pass through
+instead of being normalized -- observable only when a null slot's underlying
+buffer holds a nonzero-length garbage span, which Arrow's spec permits (only
+the validity bitmap is authoritative; a null slot's offsets/data are
+otherwise unconstrained) and which pyarrow's own array builder never happens
+to produce, so no pre-existing test could see it.
+`test_digest_utf8_null_payload_is_zeroed_regardless_of_underlying_garbage`
+hand-builds such an array via `pa.Array.from_buffers` (validity marks index 1
+null; the offsets span 2 garbage bytes `"XX"` behind it) and asserts its
+digest equals a clean pyarrow-built null's digest -- true on real code (both
+zero the null payload), false on the mutant (confirmed by hand-patching the
+source and re-running: the two digests differ at byte 0).
+
+**`zero_copy_only=True` on the boolean value branch.** PyArrow bit-packs
+boolean arrays (1 bit per value vs. numpy's 1 byte), so
+`to_numpy(zero_copy_only=True)` raises `ArrowInvalid` unconditionally for
+`pa.bool_()` -- confirmed directly against pyarrow 24, null-bearing or not.
+This mutant is distinct from its int/timestamp siblings (where the flag is a
+true no-op, see "Digest codec, no observable byte change" below): those types
+ARE zero-copy-compatible once null-filled into a contiguous buffer, but
+boolean never is. `test_digest_boolean_column_to_numpy_never_zero_copy_only`
+accumulates a null-free and a null-bearing bool array and asserts no
+exception; hand-patching the flag to `True` on the bool branch reproduces the
+`ArrowInvalid` and fails both this test and the pre-existing
+`test_digest_golden_per_column_bytes` (whose `b_nb` golden entry already
+exercises a null-bearing bool column, so it was already capable of catching
+this -- the earlier ledger simply mis-triaged it).
 
 **The digest codec -- a byte-exact characterization (golden) test.** The
 equality-only mismatch tests (`test_digest_no_ambiguous_utf8_concatenation`,
@@ -110,10 +184,22 @@ file) drives a widened admit through a streaming sink and asserts
 `outputs_streamed is True` and `resolved_substrate == "pandas"`, killing the
 streaming (25) and resolved-substrate (27) argument mutants.
 
-## Non-contract diagnostic prose (accepted-not-killed) -- 5
+**The P0 fix's second-read schema-drift check.** `run_widened_execution`'s new
+`drift = schema_drift_reason(classification.schema, second_read_schema)` /
+`if drift is not None: raise ExecutionError(code="native_chunk_schema_drift",
+...)` block (added to close a Codex-final P0 on an empty widened source) is
+exercised by the PRE-EXISTING
+`test_empty_widened_source_schema_drift_aborts_before_commit` (5 parametrized
+variants: reorder/rename/drop/add/type_change) and
+`test_column_reorder_between_reads_aborts_before_commit`. Hand-flipping the
+guard's `is not None` to `is None` reproduces all 5 parametrized failures
+(`DID NOT RAISE ExecutionError`), confirming the branch itself is fully
+covered; only the raise's `message=` string (non-contract, see below) escapes.
+
+## Non-contract diagnostic prose (accepted-not-killed) -- 7
 
 Each changes an observable string (part of `str(exc)`) but not the
-`ExecutionError.code` or any branch; callers key off `.code` only. Three sit
+`ExecutionError.code` or any branch; callers key off `.code` only. Some sit
 behind `# pragma: no cover` invariants an upstream function already
 established, so the branch is unreachable in production, but the message change
 is still observable-in-principle, so these are prose, not equivalents.
@@ -126,49 +212,99 @@ is still observable-in-principle, so these are prose, not equivalents.
   (an unadmitted type never reaches them).
 - `run_widened_execution` 4: the `AssertionError` message on the
   `# pragma: no cover` schema/digest precondition guard.
+- `run_widened_execution` 14 (message forced to `None`), 16 (message kwarg
+  dropped): the NEW P0 second-read drift check's
+  `code="native_chunk_schema_drift"` is killed by the 5-variant
+  `test_empty_widened_source_schema_drift_aborts_before_commit` and by
+  `test_column_reorder_between_reads_aborts_before_commit` (both assert
+  `excinfo.value.code`, never the message text).
 
-## Genuine equivalents -- 26
+## Genuine equivalents -- 19
 
-No test, however written, could distinguish these from the real code.
+No test, however written, could distinguish these from the real code, on any
+supported interpreter. Each item below was individually re-verified against
+pyarrow 24.0.0 / pandas 2.3.3 for this revision (not carried over unchecked).
 
 **Dropped keyword equal to the dataclass default (3)** -- `classify_and_preflight`
 20/37/73 each drop `admitted=False` at a reroute return; `RouteAdmission.admitted`
 defaults to `False`, so the value is unchanged.
 
 **`run_widened_execution` pass-throughs the callee ignores or that are inert in
-this lane (6)** -- 1 (`or` -> `and` on the `# pragma: no cover` schema/digest
-guard, unreachable either way), 7 (`first = next(...)` -> `first = None`:
-`_rechain` then streams the full `rest` iterator, which still holds every batch,
-so the same batches are processed), 19 (`plan=None`: `_run_native_streaming`
-`del plan`s it), 26 (`table_kinds=None`: the native lane admits only a single
-non-foreign mask table, so the foreign-table ledger check never fires), 28
-(`explain_plan=None`: falsy, same as the default `False` through the explain
-gate), 29 (`execution_plan_decision=None`: the default).
+this lane (3)** -- 1 (`or` -> `and` on the `# pragma: no cover` schema/digest
+guard: both operands are always False in every real invocation, since a caller
+only reaches this function with `classification.admitted` already True, which
+requires schema and digest to be set together -- unreachable either way), 19
+(`first = next(execution_batches, None)` -> `first = None`: the generator is
+never advanced, so `_rechain(None, rest)` streams the FULL untouched `rest`
+iterator -- still every batch, in order), 31 (`plan=None`: `_run_native_
+streaming`'s first line is `del plan`, unused after that).
 
-**Digest codec, no observable byte change (17):**
+**Digest codec, no observable byte change (13):**
 
 - `_update_hashers_for_array` 1 (`no_nulls = None`): a null-free batch takes the
   else path, whose `is_valid` / `fill_null` results equal the all-true validity
-  string and the unchanged array (the module docstring notes exactly this).
-- `_update_hashers_for_array` 10/62/72/73/86/88 (`zero_copy_only` set to `None`
-  or `True`): `to_numpy` returns identical bytes regardless -- the flag only
-  gates whether a copy is ALLOWED, and since none of these raised on the covered
-  inputs the produced bytes are the same.
-- `_update_hashers_for_array` 16 (utf8 `fill_null(array, "")` -> `None`): a null
-  filled with `""` and a null left null both contribute a zero-length value
-  slot; validity is hashed separately, so the streams match.
+  string and the unchanged array (the module docstring notes exactly this;
+  re-verified: `pc.is_valid` on a null-free array returns an all-True boolean
+  array whose `.tobytes()` equals `b"\x01" * len(array)`).
+- `_update_hashers_for_array` 10/62/72/86 (`zero_copy_only` set to `None`):
+  `None` is falsy, identical to the real `False` at the C level (verified
+  directly: `arr.to_numpy(zero_copy_only=None)` behaves exactly like
+  `zero_copy_only=False` for a validity array, a bool array, an int array, and
+  a timestamp-cast-to-int64 array -- no raise, same bytes).
+- `_update_hashers_for_array` 73/88 (`zero_copy_only` set to `True` on the
+  INTEGER/TIMESTAMP branches, not boolean): re-verified directly against
+  pyarrow 24 -- a fixed-width, null-filled (hence contiguous, offset-0) int64
+  or timestamp-cast-to-int64 array IS always zero-copy convertible, so the
+  flag never raises and produces byte-identical output. This is the boolean
+  mutant's mirror-image case, not the same claim: boolean is bit-packed and
+  NEVER zero-copyable (see the newly-killed mutant above), while fixed-width
+  numeric types always are.
+- `_update_hashers_for_array` 81 (`pa.scalar(0, type=None)`) and 83
+  (`pa.scalar(0, )`): re-verified directly -- `pc.fill_null` auto-casts an
+  untyped scalar `0` to the target array's own type (timestamp included), so
+  the filled bytes are identical to the explicitly-typed scalar in both cases.
 - `_update_hashers_for_array` 49 (`and` -> `or`) and 51 (`>` -> `>=`) on the
   `data_buf is not None and end > start` value-slice guard: the only cases the
-  branch flips on (`data_buf is None`, or `end == start`) update the hasher with
-  a zero-length slice, identical to skipping it.
-- `_update_hashers_for_array` 81 (`pa.scalar(0, type=None)`) and 83
-  (`pa.scalar(0, )`): an untyped `0` fills the same 0 ticks as the typed
-  timestamp `0`.
+  branch flips on (`data_buf is None`, or `end == start`) update the hasher
+  with a zero-length slice, identical to skipping it (`memoryview(buf)[a:a]`
+  is always `b""`).
 - `_finalize_column_digest` 5/19 (`encode("UTF-8")` vs `"utf-8"`): Python
-  normalizes codec names, so the bytes are identical.
-- `_finalize_column_digest` 10/24/33 (`to_bytes(n, "big")` -> `to_bytes(n)`):
-  `int.to_bytes` defaults `byteorder="big"` on Python 3.11+, so the bytes are
-  identical.
+  normalizes codec names case-insensitively (re-verified: identical output for
+  both ASCII and non-ASCII names).
+
+## Killed only on the Python 3.10 floor -- 3 (NOT genuine equivalents)
+
+`_finalize_column_digest` 10/24/33 each drop the `"big"` argument from an
+`int.to_bytes(...)` call (the name-length, type-token-length, and row-count
+framing prefixes). The prior ledger filed these as equivalents ("`int.to_bytes`
+defaults `byteorder="big"` on Python 3.11+, so the bytes are identical") --
+true as far as it goes, but it silently assumed the grading interpreter IS
+3.11+. This repo's `pyproject.toml` declares `requires-python = ">=3.10"`, and
+on 3.10 `int.to_bytes` still REQUIRES `byteorder` positionally; omitting it
+raises `TypeError: to_bytes() missing required argument 'byteorder' (pos 2)`
+(confirmed directly: `python3.10 -c '(5).to_bytes(4)'`). That is a real,
+distinguishing failure a test on the floor interpreter observes -- these are
+not "no test could ever tell the difference" equivalents.
+
+Verified directly against the FINAL mutant tree (not simulated): the
+`mutants/` output from this grading run, re-executed under a Python 3.10
+interpreter with the SAME `test_digest_golden_per_column_bytes` /
+`test_digest_golden_combined_bytes` selection tq_mutate already uses, fails
+both tests with exactly that `TypeError` for all three mutant keys
+(`x__finalize_column_digest__mutmut_10/24/33`) -- a genuine kill, not a harness
+break (`rc=1`, a real test failure). On THIS repo's test venv (3.13, where
+`int.to_bytes` defaults to `byteorder="big"` since the 3.11 language change),
+the produced bytes are provably identical with or without the argument
+(re-verified: `(300).to_bytes(2) == (300).to_bytes(2, "big")`), so no
+assertion on this interpreter can distinguish them -- the golden test already
+pins the byte value and still cannot catch it here, and no new test can either.
+
+These 3 are reported as SURVIVED in the 93.51% headline number (that is what
+this grading run, on this venv, actually produced), but are listed here
+separately from "genuine equivalents" because they are not: grading the same
+selection on Python 3.10 kills them. 418 + 3 = 421 killed of 447 = **94.18%**
+is the honest floor-interpreter figure; neither number is inflated by
+mislabeling the other.
 
 ## Widened-admission additions to `_native_route_exec.py` (verified killed)
 

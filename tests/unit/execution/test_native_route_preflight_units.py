@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pyarrow as pa
 import pytest
 
@@ -344,6 +345,52 @@ def test_digest_null_fill_value_is_observable_per_type() -> None:
         # A digest that ignored the fill value would collapse these two
         # distinct value streams to the same bytes.
         assert _accumulate("c", other).digest() != _accumulate("c", with_null).digest()
+
+
+def _utf8_array_with_garbage_behind_null(*, null_span: int) -> pa.Array:
+    """A hand-built 3-row utf8 array (["a", null, "c"]) whose middle slot's
+    RAW offset span is `null_span` bytes wide over undefined payload bytes,
+    instead of pyarrow's own builder, which always zero-lengths a null slot's
+    span. Arrow's spec leaves a null slot's offsets/data unconstrained (only
+    the validity bitmap is authoritative), so a real producer -- a slice, a
+    take, a round-trip through another Arrow implementation -- can leave
+    nonzero garbage behind a null exactly like this."""
+    validity = pa.py_buffer(bytes([0b101]))  # row0 valid, row1 NULL, row2 valid
+    data = b"a" + b"X" * null_span + b"c"
+    offsets = np.array([0, 1, 1 + null_span, 1 + null_span + 1], dtype=np.int32)
+    return pa.Array.from_buffers(
+        pa.utf8(), 3, [validity, pa.py_buffer(offsets.tobytes()), pa.py_buffer(data)]
+    )
+
+
+def test_digest_utf8_null_payload_is_zeroed_regardless_of_underlying_garbage() -> None:
+    """Two arrays that are logically identical (same validity, same non-null
+    values) but whose null slot sits over different underlying garbage bytes
+    must digest EQUAL: the null-fill (`pc.fill_null(array, "")`) normalizes
+    the null slot to a zero-length span before it is hashed, so the garbage
+    behind it is never observed. A codec that skipped the fill (folding the
+    raw offsets/data straight through, e.g. `pc.fill_null(array, None)`,
+    which is a no-op) would let that garbage leak into the digest and these
+    two would diverge."""
+    clean = pa.array(["a", None, "c"], type=pa.utf8())  # pyarrow's own 0-length null span
+    garbage = _utf8_array_with_garbage_behind_null(null_span=2)  # "X"*2 behind the null
+    assert clean.null_count == garbage.null_count == 1
+    assert _accumulate("c", clean).digest() == _accumulate("c", garbage).digest()
+
+
+def test_digest_boolean_column_to_numpy_never_zero_copy_only() -> None:
+    """pyarrow bit-packs boolean arrays, so `to_numpy(zero_copy_only=True)`
+    raises `ArrowInvalid` unconditionally (null-free or not) -- unlike the
+    fixed-width int/timestamp branches, where zero-copy is possible and the
+    flag is inert on the covered inputs. The bool branch must keep
+    `zero_copy_only=False`, or every boolean column would crash the digest
+    rather than merely diverge from it."""
+    for arr in (
+        pa.array([True, False, True], type=pa.bool_()),
+        pa.array([True, None, False], type=pa.bool_()),
+    ):
+        acc = _accumulate("c", arr)  # must not raise ArrowInvalid
+        assert len(acc.digest()) == 32
 
 
 # ---------------------------------------------------------------------------

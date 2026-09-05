@@ -763,6 +763,37 @@ def test_widened_admit_streaming_sink_stamps_envelope_and_adapter(tmp_path: Path
     assert result.quality_metrics["execution_adapter"]["resolved_substrate"] == "pandas"
 
 
+def test_widened_admit_threads_table_kinds_and_execution_plan_telemetry(
+    tmp_path: Path,
+) -> None:
+    """`run_widened_execution`'s `table_kinds` / `explain_plan` /
+    `execution_plan_decision` are real, already-computed values the caller
+    passes through, not knobs the widened lane can silently drop: a caller
+    reading `result.table_kinds` (FC-1's per-table mask/generate stamp) or
+    `result.quality_metrics["execution_plan"]` (the `explain_plan=True`
+    classification) must see them survive a widened (int/bool) admit exactly
+    like they do on every other route."""
+    table = pa.table(
+        {
+            "pt_int": pa.array([1, 2, 3], type=pa.int64()),
+            "pt_bool": pa.array([True, False, True], type=pa.bool_()),
+        }
+    )
+    config, source_path = _config(tmp_path, [_pt("pt_int"), _pt("pt_bool")], table=table)
+    result = _run_native(config, source_path, explain_plan=True)
+    assert result.native_route is not None and result.native_route.admitted is True
+    # FC-1's per-table kind stamp: nulling it would surface as an empty/None
+    # table_kinds even though this config declares one mask table.
+    assert result.table_kinds == {_TABLE: "mask"}
+    # explain_plan=True + a real execution_plan_decision must populate the
+    # quality-metrics classification; nulling either argument silently drops it.
+    execution_plan = result.quality_metrics.get("execution_plan")
+    assert execution_plan is not None
+    assert execution_plan["mode"] == "pandas_fallback"
+    assert isinstance(execution_plan["reason"], str) and execution_plan["reason"]
+    assert "polars_native" in execution_plan["rejections"]
+
+
 def test_widened_reroute_report_marks_attempted_and_table(tmp_path: Path) -> None:
     """A widened reroute still reports through the production seam as attempted
     on the resolved table (the report the platform reads), not as an
