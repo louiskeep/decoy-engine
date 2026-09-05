@@ -392,7 +392,9 @@ def run_widened_execution(
     batch_rows: int,
 ) -> tuple[ExecutionResult, NativeRouteReport]:
     """The second (execution) read for a widened-admitted table: a fresh
-    `iter_batches` call, wired through a fresh `ExecutionDigestState` into
+    `open_batches` call (schema and iterator from one handle, so the schema
+    checked here is the one the batches are read under), wired through a fresh
+    `ExecutionDigestState` into
     `_run_native_streaming` (imported locally -- `_native_route_exec` imports
     THIS module at top level, so the reverse import needs a function body,
     matching `_native_route.maybe_run_native_route`'s same cycle-break).

@@ -176,15 +176,21 @@ def _bench_config(path: Path, out_path: Path) -> dict:
 def _counting_lazy_source(path: Path, counter: list[int]) -> LazySource:
     """A real `LazySource` subclass (so `isinstance` checks elsewhere in the
     routing machinery still treat it as lazy) that adds one whole file size
-    to `counter` per `iter_batches` call -- an honest, directly-measured
-    proxy for read amplification: this lane's two full sequential passes
-    cost exactly 2x a single-read baseline's bytes, by construction, not by
-    estimate."""
+    to `counter` per full read -- an honest, directly-measured proxy for read
+    amplification: this lane's two full sequential passes cost exactly 2x a
+    single-read baseline's bytes, by construction, not by estimate. The
+    widened lane's preflight reads via iter_batches and its execution reads via
+    open_batches, so BOTH are counted; counting only one would silently
+    under-report the amplification as 1x."""
 
     class _CountingLazySource(LazySource):
         def iter_batches(self, batch_rows: int):
             counter[0] += self.path.stat().st_size
             return super().iter_batches(batch_rows)
+
+        def open_batches(self, batch_rows: int):
+            counter[0] += self.path.stat().st_size
+            return super().open_batches(batch_rows)
 
     return _CountingLazySource(path=path)
 
@@ -253,6 +259,16 @@ def test_native_route_wider_types_two_read_benchmark(
     baseline_median, baseline_iqr = _median_iqr(baseline_times)
     wall_ratio = native_median / baseline_median
     read_amplification = native_bytes[0] / baseline_bytes[0]
+
+    # The lane does exactly two full sequential reads per rep (preflight +
+    # execution) against the baseline's one, so the amplification is byte-exact
+    # 2.0. Asserting equality, not just the ceiling below, catches a read that
+    # stops being counted -- the bug that let this report 1.0 when execution
+    # moved to open_batches while only iter_batches was counted.
+    assert read_amplification == 2.0, (
+        f"native lane must do exactly two full reads (got {read_amplification:.2f}); "
+        "a read is likely uncounted"
+    )
 
     detail = (
         f"[warm-cache, {_BENCH_REPS} reps] native median={native_median * 1000:.1f}ms "

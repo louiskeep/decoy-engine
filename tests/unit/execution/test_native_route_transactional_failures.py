@@ -124,6 +124,70 @@ def test_late_kernel_failure_aborts_no_artifact_no_oracle_retry(
     assert _oracle_spy["n"] == 0, "a failure past admission must never fall back to the oracle"
 
 
+def test_first_batch_read_failure_never_enters_the_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _oracle_spy: dict[str, int]
+) -> None:
+    """A widened (two-read) admit whose EXECUTION read raises while fetching its
+    first batch must fail before the sink is ever entered: the second-read
+    schema already matched, so no output is staged. This pins the ordering that
+    `first = next(execution_batches, None)` runs before `_run_native_streaming`.
+    Skipping that fetch (leaving `first = None`) would instead raise inside
+    `write_batches`, having already staged the sink and forcing an abort -- a
+    weaker guarantee, so the sink must record zero write_batches calls here.
+    The spy patches the class method (not a subclass) because admission's sink
+    predicate is an exact `type(sink) is ParquetTransactionalSink` check."""
+    source_path = _write_source(tmp_path, pa.table({"pt": pa.array([1, 2, 3], type=pa.int64())}))
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 1},
+        "sources": {_TABLE: {"type": "file", "format": "parquet", "path": str(source_path)}},
+        "targets": {
+            _TABLE: {"type": "file", "format": "parquet", "path": str(tmp_path / "out.parquet")}
+        },
+        "tables": [{"name": _TABLE, "columns": [{"name": "pt", "strategy": "passthrough"}]}],
+    }
+    config = PipelineConfig.model_validate(raw).model_dump()
+
+    class _FirstReadFailingSource(LazySource):
+        # Preflight reads the real data via iter_batches (admits); the execution
+        # read via open_batches returns the real footer schema (so the drift
+        # guard passes) paired with an iterator that raises on its first batch.
+        def open_batches(self, batch_rows: int):
+            schema, _batches = super().open_batches(batch_rows)
+
+            def _raise_on_first() -> Any:
+                raise RuntimeError("injected first-read failure")
+                yield  # pragma: no cover - only to make this a generator
+
+            return schema, _raise_on_first()
+
+    write_calls = {"n": 0}
+    orig_write = ParquetTransactionalSink.write_batches
+
+    def _counting_write(self: ParquetTransactionalSink, *args: Any, **kwargs: Any):
+        write_calls["n"] += 1
+        return orig_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(ParquetTransactionalSink, "write_batches", _counting_write)
+
+    sink_dir = tmp_path / "sink"
+    with pytest.raises(RuntimeError, match="injected first-read failure"):
+        run_pipeline(
+            config,
+            {_TABLE: _FirstReadFailingSource(path=source_path)},
+            engine_version=_ENGINE_VERSION,
+            native_route_enabled=True,
+            execution_mode="auto",
+            sink=ParquetTransactionalSink(sink_dir),
+            use_byte_estimate_routing=False,
+        )
+
+    assert write_calls["n"] == 0, "a first-read failure must raise before the sink is entered"
+    assert not sink_dir.exists(), "no artifact on a first-read failure"
+    assert not any(sink_dir.parent.glob("_decoy_stage_*")), "nothing staged on a first-read failure"
+    assert _oracle_spy["n"] == 0, "a failure past admission must never fall back to the oracle"
+
+
 def test_ledger_validation_failure_aborts_no_artifact_no_oracle_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _oracle_spy: dict[str, int]
 ) -> None:

@@ -59,20 +59,24 @@ was changed to move any mutant.
 
 ## Numbers
 
-**447 mutants total, 418 killed, 29 survived, as graded on this repo's test
-venv (Python 3.13): 93.51% (418/447).** Of the 29 survivors:
+**447 mutants total, 419 killed, 28 survived on this repo's test venv (Python
+3.13): 93.74% (419/447).** The grading run itself produced 418/447; the extra
+kill is `run_widened_execution` mutant 19, closed after the run by
+`test_first_batch_read_failure_never_enters_the_sink` and verified by applying
+that exact mutation directly (see the run_widened entry below). Of the 28
+survivors:
 
 - **7 are non-contract diagnostic prose** (an `ExecutionError` /
   `AssertionError` message changed while the `.code` / branch stayed put).
-- **19 are genuine equivalents** (no test, however written, could distinguish
+- **18 are genuine equivalents** (no test, however written, could distinguish
   the mutant from the real code on ANY supported interpreter).
 - **3 are killed on Python 3.10** (this repo's `requires-python` floor) **but
   not on the 3.13 venv this grade ran on** -- verified directly (see "Killed
   only on the Python 3.10 floor" below), NOT genuine equivalents. Counting
-  these as killed (the honest floor-interpreter grade) gives **421/447 =
-  94.18%**. The 93.51% figure above is the number this specific grading run
-  produced and is reported as such rather than blended with the 3.10 proof;
-  neither figure is inflated by mislabeling.
+  these as killed (the honest floor-interpreter grade) gives **422/447 =
+  94.41%**. The 93.74% figure above is the venv grade and is reported as such
+  rather than blended with the 3.10 proof; neither figure is inflated by
+  mislabeling.
 
 ## Killed by new tests (test-only; no source logic changed)
 
@@ -230,14 +234,25 @@ pyarrow 24.0.0 / pandas 2.3.3 for this revision (not carried over unchecked).
 defaults to `False`, so the value is unchanged.
 
 **`run_widened_execution` pass-throughs the callee ignores or that are inert in
-this lane (3)** -- 1 (`or` -> `and` on the `# pragma: no cover` schema/digest
+this lane (2)** -- 1 (`or` -> `and` on the `# pragma: no cover` schema/digest
 guard: both operands are always False in every real invocation, since a caller
 only reaches this function with `classification.admitted` already True, which
-requires schema and digest to be set together -- unreachable either way), 19
-(`first = next(execution_batches, None)` -> `first = None`: the generator is
-never advanced, so `_rechain(None, rest)` streams the FULL untouched `rest`
-iterator -- still every batch, in order), 31 (`plan=None`: `_run_native_
-streaming`'s first line is `del plan`, unused after that).
+requires schema and digest to be set together -- unreachable either way), 31
+(`plan=None`: `_run_native_streaming`'s first line is `del plan`, unused after
+that).
+
+**`run_widened_execution` mutant 19 (`first = next(execution_batches, None)` ->
+`first = None`) -- KILLED, not equivalent.** For a normal read the generator is
+never advanced, so `_rechain(None, rest)` streams the full untouched `rest`
+iterator, byte-identical output -- which is why an ordinary-input test cannot
+see it. On a FIRST-BATCH read failure the two diverge: real code raises at
+`next(...)` before `_run_native_streaming` and never enters the sink, while the
+mutant raises later inside `write_batches`, having already staged the sink and
+forcing an abort. `test_first_batch_read_failure_never_enters_the_sink`
+(transactional-failures file) pins that ordering by asserting zero
+`write_batches` calls; the kill was verified by applying the mutation directly
+(the test fails under it). Added after the grading run, hence the 419 vs the
+run's 418.
 
 **Digest codec, no observable byte change (13):**
 
@@ -323,10 +338,16 @@ re-adjudicated directly against the covering tests (fresh subprocess,
   resolved-substrate arguments and the `sink_mode == "streaming"` literal) --
   killed by `test_widened_admit_streaming_sink_stamps_envelope_and_adapter`.
 
-The remaining widened-dispatch argument mutants (`try_native_route`
-123 `plan=None`, 125 `table_kinds=None`, 129/130 `explain_plan` /
-`execution_plan_decision =None`) are equivalents for the same reasons as their
-`run_widened_execution` twins above. The `_masked_batches` digest-wiring
+Of the remaining widened-dispatch argument mutants (`try_native_route`
+123/125/129/130), only 123 (`plan=None`) is a genuine equivalent, for the same
+`del plan` reason as its run_widened twin 31. 125 (`table_kinds=None`) and
+129/130 (`explain_plan` / `execution_plan_decision=None`) are NOT equivalent:
+they change committed telemetry exactly as their run_widened twins (killed at
+line 91 above), and `test_widened_admit_threads_table_kinds_and_execution_plan_
+telemetry` observes it. They live in `_native_route_exec.py`, graded by the
+sibling seam ledger rather than re-counted here, so they are outside this file's
+tally; they are recorded as killable, not equivalent, correcting the earlier
+claim. The `_masked_batches` digest-wiring
 survivors are message-only prose (53 `verify(table=None)` changes only the
 mismatch message; 25/27 change only the `native_chunk_schema_drift` message,
 whose `code` is killed by `test_column_reorder_between_reads_aborts_before_commit`).

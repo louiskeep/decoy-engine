@@ -35,7 +35,7 @@ admitted only after a preflight pass has resolved that its global null/empty sta
 parity-safe matrix cell, and execution is gated on the source being byte-identical to the one
 the preflight read.
 
-New modules: the preflight state accumulator and matrix resolver live in `execution/_native_route_preflight.py` (445 LOC, target <= 600), and the source-snapshot digest codec lives in `execution/_native_route_digest.py` (221 LOC). `_native_route.py` (381) and
+New modules: the preflight state accumulator and matrix resolver live in `execution/_native_route_preflight.py` (461 LOC, target <= 600), and the source-snapshot digest codec lives in `execution/_native_route_digest.py` (221 LOC). `_native_route.py` (381) and
 `_native_route_exec.py` (593) gain small call sites, not the bulk;
 `_pipeline.py` (639, ceiling 645) receives no new logic.
 
@@ -124,7 +124,7 @@ specified so the encoding is injective (a cryptographic hash does not rescue amb
   type token (timestamp unit + timezone, integer signedness + width), then `total_rows`.
 - Values and validity are then folded across batch boundaries as one logical column: only each
   array's logical `offset:length` region is read; validity and boolean columns are accumulated
-  as one byte per row (not bit-packed) across batches, with trailing padding masked; payload bytes
+  as one byte per row (not bit-packed) across batches, so there are no padding bits to mask; payload bytes
   at null positions are zeroed (or omitted) so an undefined null slot cannot change the digest;
   UTF-8 (and any offset-buffer) values are emitted as length-prefixed logical value slices
   rebased from the local offsets, never the raw offset buffer.
@@ -139,12 +139,13 @@ null-free that presents a null at execution aborts rather than emitting a diverg
 
 A private spool of the source is a stronger anti-mutation guarantee but creates a
 raw-PII-at-rest, disk-budget, permission, and cleanup obligation; the digest is preferred. The
-finalized benchmark measured warm-cache wall at approximately 1.52x against the resident oracle-
-chunked baseline, well under the 2.8x ceiling. The owner accepted the two-read cost rather than
-switching to the spool: the lane is opt-in and default-off, exists for memory-boundedness not
-speed, its two-read + integrity-digest design is inherently >2x a single read, and the security
-review preferred the digest over a raw-PII-at-rest spool. The warm-wall ceiling is 2.8x as an
-accepted regression bound (not a tuning target); read amplification stays at 2.1x.
+finalized benchmark measured warm-cache wall at approximately 1.4x to 1.5x (run-dependent) against
+the resident oracle-chunked baseline, well under the 2.8x ceiling. The owner accepted the two-read
+cost rather than switching to the spool: the lane is opt-in and default-off, exists for
+memory-boundedness not speed, its two-read + integrity-digest design is inherently >2x a single
+read, and the security review preferred the digest over a raw-PII-at-rest spool. The warm-wall
+ceiling is 2.8x as an accepted regression bound (not a tuning target); read amplification is exactly
+2.0x by construction (two full reads vs one), with a 2.1x ceiling.
 
 ## 5. Failure modes
 
@@ -222,12 +223,13 @@ deliberately consuming that normalization says so.
    privileged access the test environment lacks, so both arms are measured warm and the docstring
    says so. Read amplification must stay at most 2.1x (two bounded reads plus digest overhead), and
    is measured directly: the native lane's two counted file reads over one file-size-per-rep
-   reference, so it is exactly 2.00x by construction. The warm-cache wall ratio measured ~1.4x the
-   resident chunked baseline (the chunked route's own per-chunk overhead makes it a closer wall
-   reference than full_frame, under which an earlier pass measured 2.54x). The accept ceiling is
-   2.8x as an owner-accepted regression bound (digest preferred over the private-spool alternative,
-   section 4; the two-read + integrity-digest design is inherently >2x a single read) with generous
-   headroom over the measured ~1.4x for cross-machine noise. A future breach past 2.8x reopens the
+   reference, so it is exactly 2.00x by construction (the test asserts the 2.0 equality, not just
+   the ceiling, so an uncounted read is caught). The warm-cache wall ratio measured approximately
+   1.4x to 1.5x (run-dependent) the resident chunked baseline (the chunked route's own per-chunk
+   overhead makes it a closer wall reference than full_frame, under which an earlier pass measured
+   2.54x). The accept ceiling is 2.8x as an owner-accepted regression bound (digest preferred over
+   the private-spool alternative, section 4; the two-read + integrity-digest design is inherently
+   >2x a single read) with generous headroom over the measured ~1.4x-1.5x for cross-machine noise. A future breach past 2.8x reopens the
    spool-vs-digest decision rather than shipping an unbounded cost silently; the ceiling is not
    loosened to pass a slow run.
 7. **Every slice-1 guarantee still holds**: `utf8` parity unchanged, the reject-before-output
