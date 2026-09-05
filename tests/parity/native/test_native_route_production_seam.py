@@ -22,6 +22,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ParquetTransactionalSink, _native_route_exec, run_pipeline
 from decoy_engine.execution import _pipeline_sources as _psrc
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._native_route import ALLOWED_STRATEGIES
 from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.profile._readers import LazySource
@@ -190,6 +191,167 @@ def test_parity_with_streaming_sink(tmp_path: Path) -> None:
     assert_logical_parity(
         LogicalResult(outputs={_TABLE: written}), LogicalResult.from_execution_result(oracle)
     )
+
+
+# ---------------------------------------------------------------------------
+# P0-1: `native_route_enabled` is validated, not merely tested for truthiness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_value", ["false", "true", 1, 0])
+def test_native_route_enabled_non_bool_raises_invalid_execution_knob(
+    tmp_path: Path, bad_value: Any
+) -> None:
+    """A string like `"false"` is truthy in Python; before this fix
+    `native_route_enabled` was only ever tested for truthiness (`if ...
+    and native_route_enabled:`), so a caller passing the STRING `"false"`
+    (an easy config-serialization mistake) would silently enable the native
+    lane instead of failing loudly. `1`/`0` are also rejected: `isinstance(1,
+    bool)` is False in Python, matching `require_bool`'s existing int-vs-bool
+    exclusion for every other routing knob."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    with pytest.raises(ExecutionError) as excinfo:
+        run_pipeline(
+            config,
+            {_TABLE: LazySource(path=source_path)},
+            engine_version=_ENGINE_VERSION,
+            execution_mode="auto",
+            native_route_enabled=bad_value,
+        )
+    assert excinfo.value.code == "invalid_execution_knob"
+
+
+def test_native_route_enabled_string_false_does_not_silently_enable_the_route(
+    tmp_path: Path,
+) -> None:
+    """The specific regression named in the finding: `"false"` must raise,
+    never quietly admit (which truthiness alone would have done, since a
+    non-empty string is always truthy)."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    with pytest.raises(ExecutionError) as excinfo:
+        run_pipeline(
+            config,
+            {_TABLE: LazySource(path=source_path)},
+            engine_version=_ENGINE_VERSION,
+            execution_mode="auto",
+            native_route_enabled="false",  # type: ignore[arg-type] # deliberate: proving the runtime guard, not the static type
+        )
+    assert excinfo.value.code == "invalid_execution_knob"
+
+
+# ---------------------------------------------------------------------------
+# P0-2: native admission requires the RESOLVED substrate to be pandas
+# ---------------------------------------------------------------------------
+
+
+def _iter_batches_boom(source: LazySource) -> None:
+    def _boom(batch_rows: int) -> Any:
+        raise AssertionError("iter_batches must not be called when substrate declines admission")
+
+    object.__setattr__(source, "iter_batches", _boom)
+
+
+def test_polars_substrate_declines_native_and_runs_polars(tmp_path: Path) -> None:
+    """`substrate="polars"` must not be silently overridden by native
+    execution: admission declines before any source peek, and the job
+    actually runs on the polars adapter (recorded as such)."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    source = LazySource(path=source_path)
+    _iter_batches_boom(source)
+
+    result = run_pipeline(
+        config,
+        {_TABLE: source},
+        engine_version=_ENGINE_VERSION,
+        native_route_enabled=True,
+        execution_mode="auto",
+        substrate="polars",
+    )
+    assert result.native_route is not None
+    assert result.native_route.attempted is False, "no source peek on a static decline"
+    assert result.native_route.admitted is False
+    assert result.native_route.reason == "non_pandas_substrate:polars"
+    assert result.quality_metrics["execution_adapter"]["adapter_name"] == "polars"
+    assert result.quality_metrics["execution_adapter"]["resolved_substrate"] == "polars"
+    assert result.outputs[_TABLE].num_rows == 3
+
+
+def test_env_resolved_polars_substrate_declines_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same gate applies when polars is chosen via `DECOY_SUBSTRATE`
+    rather than an explicit `substrate=` kwarg -- admission reads the
+    RESOLVED substrate, not the raw override."""
+    monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    source = LazySource(path=source_path)
+    _iter_batches_boom(source)
+
+    result = run_pipeline(
+        config,
+        {_TABLE: source},
+        engine_version=_ENGINE_VERSION,
+        native_route_enabled=True,
+        execution_mode="auto",
+        substrate=None,
+    )
+    assert result.native_route is not None
+    assert result.native_route.attempted is False
+    assert result.native_route.admitted is False
+    assert result.native_route.reason == "non_pandas_substrate:polars"
+    assert result.quality_metrics["execution_adapter"]["adapter_name"] == "polars"
+    assert result.outputs[_TABLE].num_rows == 3
+
+
+def test_pandas_substrate_still_admits_native(tmp_path: Path) -> None:
+    """Control case: an explicit `substrate="pandas"` (the only value the
+    lane is proven parity-correct against) still admits."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    result = _run_native(config, source_path, substrate="pandas")
+    assert result.native_route is not None and result.native_route.admitted is True
+
+
+# ---------------------------------------------------------------------------
+# P1-1: the native route stamps the same reproducibility telemetry the
+# chunked/full_frame continuation gets
+# ---------------------------------------------------------------------------
+
+
+def test_native_admitted_run_always_stamps_execution_adapter(tmp_path: Path) -> None:
+    """Native running at all is non-default (the caller had to opt in), so
+    -- unlike the pandas/polars stamp, which only fires on a non-default
+    knob -- this stamp is unconditional whenever the lane actually admitted,
+    even with every OTHER knob left at its default."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    result = _run_native(config, source_path)
+    assert result.native_route is not None and result.native_route.admitted is True
+    stamp = result.quality_metrics["execution_adapter"]
+    assert stamp["adapter_name"] == "native"
+    assert stamp["resolved_substrate"] == "pandas"
+    assert isinstance(stamp["adapter_version"], str) and stamp["adapter_version"]
+
+
+def test_native_admitted_run_with_explain_plan_stamps_execution_plan(tmp_path: Path) -> None:
+    """`explain_plan=True` on a native-admitted job must not go silent: the
+    finding was that the native early return bypassed the shared
+    finalization entirely, so no `execution_plan` metric ever appeared."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    result = _run_native(config, source_path, explain_plan=True)
+    assert result.native_route is not None and result.native_route.admitted is True
+    assert "execution_plan" in result.quality_metrics
+    plan_block = result.quality_metrics["execution_plan"]
+    assert set(plan_block) == {"mode", "reason", "rejections"}
+    assert isinstance(plan_block["mode"], str) and plan_block["mode"]
+    assert isinstance(plan_block["rejections"], dict)
+
+
+def test_native_admitted_run_without_explain_plan_stamps_no_execution_plan(tmp_path: Path) -> None:
+    """The default (`explain_plan=False`) must stay silent on this key,
+    matching the chunked/full_frame continuation's own default-off contract."""
+    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+    result = _run_native(config, source_path)
+    assert result.native_route is not None and result.native_route.admitted is True
+    assert "execution_plan" not in result.quality_metrics
 
 
 # ---------------------------------------------------------------------------

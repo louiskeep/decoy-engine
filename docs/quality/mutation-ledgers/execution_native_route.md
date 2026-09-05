@@ -20,13 +20,32 @@ configs never varied.
 `tests/unit/execution/test_native_route_units.py` (direct unit tests of the private
 helpers) plus one test extending `test_native_route_transactional_failures.py`:
 **641/674 killed = 95.10%.** 139 of the 172 original survivors are now killed by an
-assertion on the exact behavior the mutant broke; the remaining 33 are judged
-genuinely equivalent below, grouped by class, with no killable-and-undocumented
-residual among them (each was individually reproduced with `mutmut run
-<mutant-name>` against the updated test set before being accepted as equivalent,
-not left un-investigated because it was originally on the survivor list).
+assertion on the exact behavior the mutant broke; the remaining 33 are dispositioned
+below, grouped by class, with no killable-and-undocumented residual among them (each
+was individually reproduced with `mutmut run <mutant-name>` against the updated test
+set before being accepted, not left un-investigated because it was originally on the
+survivor list). Of those 33, 23 are genuinely equivalent (no test could ever
+distinguish them from the real code) and 10 are non-contract diagnostic prose,
+reclassified out of "equivalent" below -- accepted-not-killed for the same reason
+(nothing in the frozen contract reads the value that differs), but a materially
+different reason from true equivalence.
 
-## Equivalent survivors (33), by class
+**Stale after this pass.** The P0/P1/P2 native-route-production-seam remediation
+(substrate-gate admission, native-route reproducibility stamping, the boundary-time
+measurement fix, real RSS-delta measurement, and `_validate_ledger`'s three added
+invariant checks) changed `_native_route.py` and `_native_route_exec.py` materially
+enough that the mutant population above no longer matches the current source --
+`_validate_ledger` alone gained ~24 new lines of branching logic with their own
+mutant surface. The new P0/P1/P2 tests (`test_native_route_units.py`'s five
+`_validate_ledger` fault-injection tests, the boundary-time regression test, the
+substrate-gate tests, and the production-seam explain_plan/execution_adapter tests)
+kill the mutants on that new code, but the 502/674 and 641/674 counts above were not
+regenerated against it -- a fresh `mutmut run` against the current source is owed
+before this ledger's numbers can be trusted again for the changed functions
+(`_validate_ledger`, `_mask_one_batch`, `static_candidacy`, `try_native_route`,
+`_run_native_streaming`). Left un-regenerated here rather than hand-estimated.
+
+## Equivalent survivors (23), by class
 
 **Boolean-default collapse under `bool()` (2)** -- `static_candidacy`
 `x_static_candidacy__mutmut_101` (`col.get("vault", None)`),
@@ -47,19 +66,6 @@ real behavior change and is killed by
 `_schema_drift_reason(expected_schema, batch.schema)` compares `first.schema`
 against itself and always returns `None`. Running that comparison on the first
 batch too changes nothing observable.
-
-**Message-only prose, never branched on (8)** -- every one of these mutates or
-drops an `ExecutionError`'s `message=` argument (`ExecutionError.__init__` gives
-`message` a `""` default, so dropping the kwarg is legal, not a crash) while
-leaving `.code` untouched; no caller or test reads `.message`, only `.code`.
-`_masked_batches` `__mutmut_19` (message dropped), `__mutmut_21` (message dropped,
-alternate paren shape); `_validate_ledger` `__mutmut_3`, `__mutmut_5` (first raise,
-message dropped/reshaped), `__mutmut_12`, `__mutmut_14` (second raise, same),
-`__mutmut_17`, `__mutmut_18` (second raise, message text wrapped/upper-cased). The
-`.code` mutations on these same two raises (`"native_route_ledger_invalid"` case
-changes, dropped/`None` `code=`) ARE real and are killed by
-`test_validate_ledger_raises_on_attempted_completed_mismatch` and
-`test_validate_ledger_raises_on_any_single_nonzero_oracle_or_fallback_count`.
 
 **`try_native_route` precondition guards the source itself marks unreachable (6)**
 -- every one of these sits on a branch already commented
@@ -93,11 +99,6 @@ read only inside the `except BaseException:` clause, which is unreachable once
 block after it that can fail), so whatever it is set to at that point is never
 read.
 
-**`_run_native_streaming`'s diagnostic-only `table` param to `_validate_ledger` (2)**
--- `__mutmut_51`, `__mutmut_60` (`table=None` in both call sites): same class as
-the message-prose group above -- `_validate_ledger`'s `table` argument is used
-only inside its raised messages, never in a branch.
-
 **`_run_native_streaming`'s `pa.Table.from_batches(..., schema=None)` (2)** --
 `__mutmut_65`, `__mutmut_67`: every batch in `masked` was already constructed by
 `_mask_one_batch` with `schema=out_schema`, so pyarrow's schema-inference from the
@@ -110,6 +111,36 @@ default (2)** -- `__mutmut_105` (`warnings=()` dropped), `__mutmut_108`
 default to `()`, and this lane's real value for both is always `()` too (no
 strategy on the allowlist warns; no per-row failure mode exists here), so the
 explicit keyword and the default are the same value.
+
+## Accepted-not-killed, non-contract diagnostic prose (10)
+
+These are NOT genuinely equivalent mutants: each one DOES change an observable
+value (an exception's `.message` string, part of `str(exc)`), so a test reading
+that string would catch it. They are accepted anyway because `.message` is
+diagnostic prose outside this lane's frozen contract -- callers and every
+existing test key off `ExecutionError.code` only, never `.message` -- not
+because the mutant is inert. Mislabeling these as "equivalent" (an earlier
+version of this ledger did) overstates the case: an equivalent mutant cannot be
+killed by ANY test; a non-contract-prose mutant merely isn't, because nothing
+in the contract reads the field it changed.
+
+**`ExecutionError.message`-only mutations (8)** -- every one of these mutates or
+drops an `ExecutionError`'s `message=` argument (`ExecutionError.__init__` gives
+`message` a `""` default, so dropping the kwarg is legal, not a crash) while
+leaving `.code` untouched. `_masked_batches` `__mutmut_19` (message dropped),
+`__mutmut_21` (message dropped, alternate paren shape); `_validate_ledger`
+`__mutmut_3`, `__mutmut_5` (first raise, message dropped/reshaped), `__mutmut_12`,
+`__mutmut_14` (second raise, same), `__mutmut_17`, `__mutmut_18` (second raise,
+message text wrapped/upper-cased). The `.code` mutations on these same two raises
+(`"native_route_ledger_invalid"` case changes, dropped/`None` `code=`) ARE on the
+contract and are killed by `test_validate_ledger_raises_on_attempted_completed_mismatch`
+and `test_validate_ledger_raises_on_any_single_nonzero_oracle_or_fallback_count`.
+
+**`_run_native_streaming`'s diagnostic-only `table` param to `_validate_ledger` (2)**
+-- `__mutmut_51`, `__mutmut_60` (`table=None` in both call sites): same class as
+the group above -- `_validate_ledger`'s `table` argument is threaded only into its
+raised messages, never branched on, so mutating what gets passed only changes
+prose, never `.code` or commit/raise behavior.
 
 ## What's now pinned that wasn't before
 
@@ -143,6 +174,29 @@ explicit keyword and the default are the same value.
   triggering on any ONE of the four oracle/fallback counts independently (an
   `or`->`and` regression would require two counts nonzero at once before
   refusing to commit).
+
+Added by the P0/P1/P2 native-route-production-seam remediation pass (mutant
+population not yet regenerated against these -- see the Numbers section):
+
+- `static_candidacy`: the `resolved_substrate != "pandas"` gate fires before the
+  multi-table/FK/vault checks, with the exact `non_pandas_substrate:{substrate}`
+  reason, and defaults to `"pandas"` for callers that predate the parameter.
+- `_mask_one_batch`: the real (not fabricated) RSS delta per column, floored at
+  zero, pinned with a fixed `rss_kb` sequence the same way the clock is pinned;
+  and the `batch_total` read landing AFTER `pa.RecordBatch.from_arrays` rather
+  than before it, pinned with a real (unmocked) wall-clock sleep injected into a
+  stand-in `RecordBatch.from_arrays` (pyarrow's own type refuses class-attribute
+  patching).
+- `_validate_ledger`: three added invariants, each proven independently by a
+  fault-injection test that corrupts exactly one field -- rows-attempted-vs-
+  completed (independent of the call counters), a nonzero `rejected_chunks`,
+  the record count matching `native_completed`, no duplicate `(table, node,
+  chunk_index)` identity, and no record attributed to a foreign table.
+- `try_native_route` / `_run_native_streaming`: the native-admitted result's
+  `quality_metrics["execution_adapter"]` stamp (unconditional, unlike the
+  pandas/polars stamp's non-default gate) and `quality_metrics["execution_plan"]`
+  (only under `explain_plan=True`, using the SAME `execution_plan_decision`
+  `run_pipeline` already computed for every other route).
 
 ## Regenerate
 

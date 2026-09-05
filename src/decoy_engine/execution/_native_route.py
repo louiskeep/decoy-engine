@@ -16,12 +16,15 @@ masking pass -- never a separate probe read.
 Scope (docs/plans/2026-09-04-native-route-production-seam.md 2.1-2.5): the
 three pure-kernel strategies (`passthrough`, `redact`, `truncate`) over an
 EXACT `pa.utf8()` column, on a single non-FK mask table whose source is a
-`LazySource` with no `source_loader` in play, and only under
-`execution_mode="auto"`. Every other shape -- FK, `vault: true`, a validator,
-a fidelity request, quarantine, a non-streaming sink, multi-table, a
-generate table, a non-`LazySource`/loader-driven source, an off-allowlist
-strategy, or a redact/truncate config the shared `_requirements.py` gates
-would reject -- reroutes to the oracle with a coded reason, closed-world.
+`LazySource` with no `source_loader` in play, only under
+`execution_mode="auto"`, and only when the caller's resolved substrate is
+`"pandas"` (the kernels are proven byte-identical to the pandas oracle, not
+polars). Every other shape -- FK, `vault: true`, a validator, a fidelity
+request, quarantine, a non-streaming sink, multi-table, a generate table, a
+non-`LazySource`/loader-driven source, an off-allowlist strategy, a
+non-pandas substrate, or a redact/truncate config the shared
+`_requirements.py` gates would reject -- reroutes to the oracle with a coded
+reason, closed-world.
 """
 
 from __future__ import annotations
@@ -108,6 +111,7 @@ def static_candidacy(
     sink: TransactionalSink | None,
     fidelity_report: bool,
     graph: RelationshipGraph,
+    resolved_substrate: str = "pandas",
 ) -> NativeStaticCandidacy:
     """The config/plan/schema-only admission gate -- no I/O, no source touch.
 
@@ -117,6 +121,14 @@ def static_candidacy(
     by a check here); the `execution_mode` guard below is the second,
     independent gate an explicit override cannot bypass regardless of call
     order.
+
+    `resolved_substrate` gates the same way: the native kernels are proven
+    byte-identical to the PANDAS oracle only (`_kernels_scalar.py`'s parity
+    contract), so an explicit `substrate="polars"` (or an env-resolved one)
+    must fall through to the caller's requested substrate rather than have
+    native silently override it. Defaults to `"pandas"` so every existing
+    direct caller of this function (unit tests that predate the substrate
+    thread-through) keeps admitting exactly as before.
     """
 
     def _decline(reason: str) -> NativeStaticCandidacy:
@@ -124,6 +136,9 @@ def static_candidacy(
 
     if execution_mode != "auto":
         return _decline("execution_mode_not_auto")
+
+    if resolved_substrate != "pandas":
+        return _decline(f"non_pandas_substrate:{resolved_substrate}")
 
     mask_tables = [name for name, kind in table_kinds.items() if kind == "mask"]
     if any(kind == "generate" for kind in table_kinds.values()):

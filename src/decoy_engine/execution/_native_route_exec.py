@@ -34,10 +34,11 @@ from decoy_engine.execution.native._kernels_scalar import (
     native_redact,
     native_truncate,
 )
-from decoy_engine.instrumentation.timing import StrategyTimingRecord
+from decoy_engine.instrumentation.timing import StrategyTimingRecord, rss_kb
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships import RelationshipGraph
@@ -140,10 +141,11 @@ def _mask_one_batch(
     out_schema: pa.Schema,
     ledger: NativeRouteLedger,
     timing_acc: dict[tuple[str, str], float],
+    mem_acc: dict[tuple[str, str], int],
     boundary_ms_box: list[float],
 ) -> pa.RecordBatch:
     """Mask one batch column-by-column, updating the ledger and per-column
-    timing as each kernel call actually completes -- never in advance."""
+    timing/memory as each kernel call actually completes -- never in advance."""
     t_batch0 = time.perf_counter()
     arrays: list[pa.Array] = []
     col_time_total = 0.0
@@ -153,6 +155,7 @@ def _mask_one_batch(
         source = batch.column(name)
         ledger.native_attempted += 1
         ledger.native_rows_attempted += n
+        rss_before = rss_kb()
         t0 = time.perf_counter()
         if strategy == "passthrough":
             arr = native_passthrough(source)
@@ -163,25 +166,50 @@ def _mask_one_batch(
                 source, length=kwargs["length"], keep=kwargs["keep"], mask_char=kwargs["mask_char"]
             )
         elapsed = time.perf_counter() - t0
+        # Same before/after RSS-delta bracket `timed_strategy` uses elsewhere
+        # (`instrumentation/timing.py`); floored at zero because a negative
+        # reading means the allocator gave memory back, not that the kernel
+        # call itself shrank the process.
+        delta_kb = max(0, rss_kb() - rss_before)
         col_time_total += elapsed
         key = (strategy, name)
         timing_acc[key] = timing_acc.get(key, 0.0) + elapsed * 1000.0
+        mem_acc[key] = max(mem_acc.get(key, 0), delta_kb)
         arrays.append(arr)
         ledger.native_completed += 1
         ledger.native_rows_completed += n
         ledger.records.append(LedgerEntry(table=table, node=name, chunk_index=chunk_index))
+    result_batch = pa.RecordBatch.from_arrays(arrays, schema=out_schema)
+    # Read AFTER the Arrow construction above so the assembly/schema-binding
+    # time this box measures actually includes the work it is named for --
+    # reading it before `from_arrays` would silently exclude that call.
     batch_total = time.perf_counter() - t_batch0
-    # Assembly/schema-binding time, not attributed to any one column's kernel.
     boundary_ms_box[0] += max(0.0, batch_total - col_time_total) * 1000.0
-    return pa.RecordBatch.from_arrays(arrays, schema=out_schema)
+    return result_batch
 
 
 def _validate_ledger(ledger: NativeRouteLedger, *, table: str) -> None:
-    """Fail closed before any commit if the ledger does not prove a clean
-    single pass: an attempted call with no matching completion (a partial
-    kernel failure the caller somehow swallowed), or a stray oracle/fallback
-    call (there is no code path to one on this lane, so a non-zero count
-    here means something else corrupted the ledger object)."""
+    """Fail closed before any commit unless every frozen Part-1 invariant
+    holds, checked independently so a corrupted single field can never hide
+    behind another field that still looks fine:
+
+    - attempted/completed CALLS match (a partial kernel failure the caller
+      somehow swallowed would leave these apart);
+    - attempted/completed ROWS match (the per-call counters could agree
+      while the row counts a call actually claimed to process silently
+      diverge, e.g. a batch mutated between the attempt and completion
+      bump);
+    - no chunk was rejected for schema drift (`_masked_batches` already
+      raises before yielding a drifted chunk, so this is a second,
+      independent guard against a ledger built by some other path);
+    - no oracle/fallback call ever happened (there is no code path to one
+      on this lane, so a non-zero count means something else corrupted the
+      ledger object);
+    - every record identifies THIS table, the record count matches the
+      completed-call count, and no `(table, work-node, chunk index)`
+      identity repeats -- the three-way proof that every native call that
+      actually completed left exactly one, correctly-attributed trace.
+    """
     if ledger.native_attempted != ledger.native_completed:
         raise ExecutionError(
             code="native_route_ledger_invalid",
@@ -190,12 +218,54 @@ def _validate_ledger(ledger: NativeRouteLedger, *, table: str) -> None:
                 f"vs {ledger.native_completed} completed calls; refusing to commit."
             ),
         )
+    if ledger.native_rows_attempted != ledger.native_rows_completed:
+        raise ExecutionError(
+            code="native_route_ledger_invalid",
+            message=(
+                f"{table!r}: native route ledger shows {ledger.native_rows_attempted} rows "
+                f"attempted vs {ledger.native_rows_completed} rows completed; refusing to commit."
+            ),
+        )
+    if ledger.rejected_chunks:
+        raise ExecutionError(
+            code="native_route_ledger_invalid",
+            message=(
+                f"{table!r}: native route ledger shows {ledger.rejected_chunks} rejected "
+                "chunk(s); refusing to commit."
+            ),
+        )
     if ledger.oracle_calls or ledger.oracle_rows or ledger.fallback_calls or ledger.fallback_rows:
         raise ExecutionError(
             code="native_route_ledger_invalid",
             message=(
                 f"{table!r}: native route ledger shows a non-zero oracle/fallback count "
                 "on a lane with no call site for either; refusing to commit."
+            ),
+        )
+    if len(ledger.records) != ledger.native_completed:
+        raise ExecutionError(
+            code="native_route_ledger_invalid",
+            message=(
+                f"{table!r}: native route ledger holds {len(ledger.records)} record(s) but "
+                f"{ledger.native_completed} completed call(s); refusing to commit."
+            ),
+        )
+    identities = [(r.table, r.node, r.chunk_index) for r in ledger.records]
+    if len(set(identities)) != len(identities):
+        raise ExecutionError(
+            code="native_route_ledger_invalid",
+            message=(
+                f"{table!r}: native route ledger records are not unique per "
+                "(table, work-node, chunk index); refusing to commit."
+            ),
+        )
+    foreign = [r for r in ledger.records if r.table != table]
+    if foreign:
+        raise ExecutionError(
+            code="native_route_ledger_invalid",
+            message=(
+                f"{table!r}: native route ledger holds {len(foreign)} record(s) attributed "
+                "to a different table; refusing to commit."
             ),
         )
 
@@ -211,7 +281,14 @@ def _masked_batches(
     ledger: NativeRouteLedger,
     timing_acc: dict[tuple[str, str], float],
     boundary_ms_box: list[float],
+    mem_acc: dict[tuple[str, str], int] | None = None,
 ) -> Iterator[pa.RecordBatch]:
+    # Optional so the transactional-failure suite's direct calls (which only
+    # exercise timing/ledger behavior, not the memory measurement) need no
+    # change; a fresh dict is equivalent to "no caller-visible accumulation"
+    # for those callers since nothing reads it back.
+    if mem_acc is None:
+        mem_acc = {}
     expected_schema = first.schema
     for i, batch in enumerate(_rechain(first, rest)):
         if i > 0:
@@ -231,6 +308,7 @@ def _masked_batches(
             out_schema=out_schema,
             ledger=ledger,
             timing_acc=timing_acc,
+            mem_acc=mem_acc,
             boundary_ms_box=boundary_ms_box,
         )
 
@@ -251,6 +329,29 @@ def _execution_envelope(*, streaming: bool) -> dict[str, Any]:
     }
 
 
+def _execution_adapter_stamp(*, resolved_substrate: str) -> dict[str, Any]:
+    """The `quality_metrics["execution_adapter"]` reproducibility stamp for
+    an admitted native run. The native lane always runs non-default (the
+    caller had to opt in with `native_route_enabled=True`), so -- unlike
+    `_pipeline_finalize.stamp_execution_metrics`'s pandas/polars stamp,
+    which only fires when a knob differs from its default -- this one is
+    unconditional whenever the lane actually admitted.
+
+    Only fields with a real, measured value are included: the lane has no
+    FPE/worker/fallback knobs, so `fpe_chunk_count` / `max_workers` /
+    `fallback_to_pandas` would be fabricated placeholders here and are
+    omitted rather than copied from the pandas/polars schema. `adapter_
+    version` is pyarrow's, since the kernels are pyarrow-array functions
+    (`decoy_engine.execution.native._kernels_scalar`), not pandas' or
+    polars'.
+    """
+    return {
+        "adapter_name": "native",
+        "adapter_version": pa.__version__,
+        "resolved_substrate": resolved_substrate,
+    }
+
+
 def _run_native_streaming(
     *,
     table: str,
@@ -262,12 +363,16 @@ def _run_native_streaming(
     sink: TransactionalSink | None,
     streaming: bool,
     table_kinds: dict[str, str],
+    resolved_substrate: str,
+    explain_plan: bool,
+    execution_plan_decision: ExecutionPlan | None,
 ) -> tuple[ExecutionResult, NativeRouteReport]:
     del plan  # admission already resolved the declared-column set; unused here
     strategy_cfg = _resolve_strategy_cfg(config, table, column_order)
     out_schema = pa.schema([pa.field(name, pa.utf8()) for name in column_order])
     ledger = NativeRouteLedger()
     timing_acc: dict[tuple[str, str], float] = {}
+    mem_acc: dict[tuple[str, str], int] = {}
     boundary_ms_box = [0.0]
 
     def batches() -> Iterator[pa.RecordBatch]:
@@ -280,6 +385,7 @@ def _run_native_streaming(
             out_schema=out_schema,
             ledger=ledger,
             timing_acc=timing_acc,
+            mem_acc=mem_acc,
             boundary_ms_box=boundary_ms_box,
         )
 
@@ -311,7 +417,10 @@ def _run_native_streaming(
 
     timings = tuple(
         StrategyTimingRecord(
-            strategy_type=strategy, column=name, elapsed_ms=ms, peak_memory_delta_kb=0
+            strategy_type=strategy,
+            column=name,
+            elapsed_ms=ms,
+            peak_memory_delta_kb=mem_acc.get((strategy, name), 0),
         )
         for (strategy, name), ms in timing_acc.items()
     )
@@ -319,12 +428,31 @@ def _run_native_streaming(
         attempted=True, admitted=True, table=table, reason=None, ledger=ledger
     )
     outputs: dict[str, pa.Table] = {} if out_table is None else {table: out_table}
+    # Route the native result through the same two reproducibility stamps
+    # the chunked/full_frame continuation gets (`_pipeline_finalize.
+    # stamp_execution_metrics` + `_pipeline.py`'s `explain_plan` block), so
+    # `explain_plan=True` on a native-admitted job is not silently blind --
+    # the values here are the lane's real, already-computed parameters
+    # (never fabricated): `resolved_substrate` is what admission itself
+    # required to be `"pandas"`, and `execution_plan_decision` is the SAME
+    # classification `run_pipeline` computed once, before this call, for
+    # every route (see `_pipeline.py`'s `decide_chunk_route` call site).
+    quality_metrics: dict[str, Any] = {
+        "execution": _execution_envelope(streaming=streaming),
+        "execution_adapter": _execution_adapter_stamp(resolved_substrate=resolved_substrate),
+    }
+    if explain_plan and execution_plan_decision is not None:
+        quality_metrics["execution_plan"] = {
+            "mode": execution_plan_decision.mode,
+            "reason": execution_plan_decision.reason,
+            "rejections": dict(execution_plan_decision.rejections),
+        }
     result = ExecutionResult(
         outputs=outputs,
         timings=timings,
         boundary_conversion_ms=boundary_ms_box[0],
         warnings=(),  # oracle-equivalent: none of the three strategies warn
-        quality_metrics={"execution": _execution_envelope(streaming=streaming)},
+        quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=(),
         native_route=report,
@@ -343,6 +471,9 @@ def try_native_route(
     fidelity_report: bool,
     execution_mode: str,
     graph: RelationshipGraph,
+    resolved_substrate: str = "pandas",
+    explain_plan: bool = False,
+    execution_plan_decision: ExecutionPlan | None = None,
     batch_rows: int = _NATIVE_BATCH_ROWS_DEFAULT,
 ) -> tuple[ExecutionResult | None, NativeRouteReport]:
     """Try the native lane for this invocation; called only when the caller
@@ -354,6 +485,12 @@ def try_native_route(
     ordinary continuation re-opens the same `LazySource` fresh). Returns
     `(ExecutionResult, report)` once the whole pass committed. Raises past
     that point; see the module docstring.
+
+    `resolved_substrate` (default `"pandas"` so existing direct callers keep
+    admitting) is threaded straight to `static_candidacy`'s own substrate
+    gate. `explain_plan` / `execution_plan_decision` only affect the
+    committed result's telemetry (see `_run_native_streaming`), never
+    admission.
     """
     candidacy = static_candidacy(
         config=config,
@@ -364,6 +501,7 @@ def try_native_route(
         sink=sink,
         fidelity_report=fidelity_report,
         graph=graph,
+        resolved_substrate=resolved_substrate,
     )
     if not candidacy.candidate:
         return None, NativeRouteReport(
@@ -397,6 +535,9 @@ def try_native_route(
         sink=sink,
         streaming=candidacy.sink_mode == "streaming",
         table_kinds=table_kinds,
+        resolved_substrate=resolved_substrate,
+        explain_plan=explain_plan,
+        execution_plan_decision=execution_plan_decision,
     )
 
 

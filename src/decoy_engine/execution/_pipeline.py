@@ -262,13 +262,17 @@ def run_pipeline(
 
     `native_route_enabled` (Q3 slice 1, default False -- a runtime routing
     control, not a `GlobalSettings` field, matching `execution_mode`'s own
-    reasoning above): when True and `execution_mode == "auto"`, a single-
-    table non-FK mask job over `passthrough` / `redact` / `truncate` on
-    exact `pa.utf8()` columns may run the dedicated single-pass streaming
-    native lane instead of the pandas oracle. Every other shape reroutes to
-    the unchanged oracle path; see `_native_route` and `_native_route_exec`
-    for the admission contract and `ExecutionResult.native_route` for the
-    evidence this stamps.
+    reasoning above): when True, `execution_mode == "auto"`, AND the
+    resolved substrate is `"pandas"` (an explicit non-pandas `substrate`
+    reroutes with reason `non_pandas_substrate:{substrate}` before any
+    source peek -- the native kernels are pandas-oracle-equivalent, not
+    polars-equivalent, so admitting under another substrate would silently
+    override the caller's choice), a single-table non-FK mask job over
+    `passthrough` / `redact` / `truncate` on exact `pa.utf8()` columns may
+    run the dedicated single-pass streaming native lane instead of the
+    pandas oracle. Every other shape reroutes to the unchanged oracle path;
+    see `_native_route` and `_native_route_exec` for the admission contract
+    and `ExecutionResult.native_route` for the evidence this stamps.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -312,6 +316,10 @@ def run_pipeline(
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
+    # A string like "false" is truthy, so an untyped caller would silently
+    # enable the route it meant to keep off; fail fast alongside the other
+    # routing-knob validations rather than let truthiness decide admission.
+    require_bool("native_route_enabled", native_route_enabled)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
@@ -500,6 +508,9 @@ def run_pipeline(
             fidelity_report=fidelity_report,
             execution_mode=execution_mode,
             graph=graph,
+            resolved_substrate=resolved_substrate,
+            explain_plan=explain_plan,
+            execution_plan_decision=execution_plan_decision,
         )
         if native_result is not None:
             return native_result

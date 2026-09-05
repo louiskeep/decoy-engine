@@ -13,6 +13,7 @@ distinguish from its mutated neighbor.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ import pytest
 
 from decoy_engine.execution import _native_route as _route_mod
 from decoy_engine.execution import _native_route_exec as _exec_mod
-from decoy_engine.execution._native_route import NativeRouteLedger
+from decoy_engine.execution._native_route import LedgerEntry, NativeRouteLedger
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.relationships import RelationshipGraph
 
@@ -298,7 +299,11 @@ def test_run_native_streaming_field_integrity_and_timing_arithmetic(
     directly with a fixed clock: real wall-clock timing on a two-row batch is
     too fast to reliably tell a dropped `+=` or a swapped `0.0`/`1.0` initial
     value apart from a genuine near-zero measurement, so the clock is pinned
-    instead of measured.
+    instead of measured. `rss_kb` is pinned the same way (P1-3): the real
+    RSS delta around a two-row kernel call is too small and noisy to
+    reliably distinguish a wired-up measurement from a stray fabricated
+    constant, so a fixed before/after sequence proves the arithmetic
+    (including the floor-at-zero for the column whose "memory" shrank).
     """
     config = {
         "tables": [
@@ -327,9 +332,14 @@ def test_run_native_streaming_field_integrity_and_timing_arithmetic(
     table_kinds = {_TABLE: "mask"}
 
     # One perf_counter() call for t_batch0, then (t0, elapsed) per column
-    # (pt, rd, tr), then one for batch_total: 8 calls total.
+    # (pt, rd, tr), then one for batch_total (read AFTER RecordBatch.from_
+    # arrays, per the P1-2 fix): 8 calls total.
     clock_values = [0.0, 10.0, 12.0, 20.0, 25.0, 30.0, 34.0, 100.0]
     monkeypatch.setattr(_exec_mod.time, "perf_counter", _fake_clock(clock_values))
+    # rss_kb() called (before, after) per column: pt grows 50kb, rd grows
+    # 80kb, tr "shrinks" 10kb (must floor to 0, not go negative).
+    rss_values = [1_000, 1_050, 2_000, 2_080, 3_000, 2_990]
+    monkeypatch.setattr(_exec_mod, "rss_kb", _fake_clock([float(v) for v in rss_values]))
 
     result, report = _exec_mod._run_native_streaming(
         table=_TABLE,
@@ -341,6 +351,9 @@ def test_run_native_streaming_field_integrity_and_timing_arithmetic(
         sink=None,
         streaming=False,
         table_kinds=table_kinds,
+        resolved_substrate="pandas",
+        explain_plan=False,
+        execution_plan_decision=None,
     )
 
     assert report.attempted is True
@@ -365,7 +378,9 @@ def test_run_native_streaming_field_integrity_and_timing_arithmetic(
     assert timing_by_column["rd"].elapsed_ms == 5000.0
     assert timing_by_column["tr"].strategy_type == "truncate"
     assert timing_by_column["tr"].elapsed_ms == 4000.0
-    assert all(r.peak_memory_delta_kb == 0 for r in result.timings)
+    assert timing_by_column["pt"].peak_memory_delta_kb == 50
+    assert timing_by_column["rd"].peak_memory_delta_kb == 80
+    assert timing_by_column["tr"].peak_memory_delta_kb == 0  # real delta -10, floored
 
     # batch_total (100 - 0) minus the summed per-column elapsed (2+5+4=11),
     # scaled to ms: (100 - 11) * 1000.0.
@@ -384,7 +399,12 @@ def test_run_native_streaming_field_integrity_and_timing_arithmetic(
             "eviction": "per_batch",
             "outputs_streamed": False,
             "loaded_fully_in_memory": False,
-        }
+        },
+        "execution_adapter": {
+            "adapter_name": "native",
+            "adapter_version": pa.__version__,
+            "resolved_substrate": "pandas",
+        },
     }
 
 
@@ -403,6 +423,7 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
     strategy_cfg: dict[str, tuple[str, dict[str, Any]]] = {"pt": ("passthrough", {})}
     ledger = NativeRouteLedger()
     timing_acc: dict[tuple[str, str], float] = {}
+    mem_acc: dict[tuple[str, str], int] = {}
     boundary_ms_box = [0.0]
 
     # Call 1: t_batch0=1000.0, t0=1000.0, elapsed-read=1000.5 (elapsed=0.5),
@@ -421,6 +442,7 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
         out_schema=out_schema,
         ledger=ledger,
         timing_acc=timing_acc,
+        mem_acc=mem_acc,
         boundary_ms_box=boundary_ms_box,
     )
     assert timing_acc[("passthrough", "pt")] == 500.0
@@ -441,6 +463,7 @@ def test_mask_one_batch_accumulates_across_calls_and_floors_at_zero(
         out_schema=out_schema,
         ledger=ledger,
         timing_acc=timing_acc,
+        mem_acc=mem_acc,
         boundary_ms_box=boundary_ms_box,
     )
     assert timing_acc[("passthrough", "pt")] == 750.0
@@ -473,6 +496,149 @@ def test_validate_ledger_raises_on_any_single_nonzero_oracle_or_fallback_count(
     with pytest.raises(_exec_mod.ExecutionError) as excinfo:
         _exec_mod._validate_ledger(ledger, table=_TABLE)
     assert excinfo.value.code == "native_route_ledger_invalid"
+
+
+def test_validate_ledger_raises_on_rows_attempted_completed_mismatch() -> None:
+    """The per-CALL counters can agree (3 attempted, 3 completed) while the
+    ROW counts a call actually claimed diverge -- a corruption the call
+    counters alone cannot see. This is the P2-1 strengthening: attempted-
+    vs-completed native ROWS, not just calls."""
+    ledger = NativeRouteLedger(
+        native_attempted=3, native_completed=3, native_rows_attempted=10, native_rows_completed=7
+    )
+    with pytest.raises(_exec_mod.ExecutionError) as excinfo:
+        _exec_mod._validate_ledger(ledger, table=_TABLE)
+    assert excinfo.value.code == "native_route_ledger_invalid"
+
+
+def test_validate_ledger_raises_on_nonzero_rejected_chunks() -> None:
+    """`_masked_batches` already raises the instant a chunk is rejected, so
+    this is a second, independent guard: a ledger built any other way that
+    still shows a rejected chunk must never be allowed to commit."""
+    ledger = NativeRouteLedger(rejected_chunks=1)
+    with pytest.raises(_exec_mod.ExecutionError) as excinfo:
+        _exec_mod._validate_ledger(ledger, table=_TABLE)
+    assert excinfo.value.code == "native_route_ledger_invalid"
+
+
+def test_validate_ledger_raises_on_record_count_mismatch() -> None:
+    """Every completed call must leave exactly one record; a ledger with
+    fewer (or more) records than completed calls proves some call's trace
+    was dropped (or duplicated) without the call counters themselves moving."""
+    ledger = NativeRouteLedger(native_attempted=2, native_completed=2)
+    ledger.records.append(LedgerEntry(table=_TABLE, node="pt", chunk_index=0))
+    with pytest.raises(_exec_mod.ExecutionError) as excinfo:
+        _exec_mod._validate_ledger(ledger, table=_TABLE)
+    assert excinfo.value.code == "native_route_ledger_invalid"
+
+
+def test_validate_ledger_raises_on_duplicate_record_identity() -> None:
+    """Two records claiming the SAME (table, work-node, chunk index) mean a
+    column was double-counted within one chunk -- the record-count check
+    alone cannot see this if a different identity was simultaneously lost."""
+    ledger = NativeRouteLedger(native_attempted=2, native_completed=2)
+    ledger.records.append(LedgerEntry(table=_TABLE, node="pt", chunk_index=0))
+    ledger.records.append(LedgerEntry(table=_TABLE, node="pt", chunk_index=0))
+    with pytest.raises(_exec_mod.ExecutionError) as excinfo:
+        _exec_mod._validate_ledger(ledger, table=_TABLE)
+    assert excinfo.value.code == "native_route_ledger_invalid"
+
+
+def test_validate_ledger_raises_on_foreign_table_record() -> None:
+    """A record attributed to a table other than the one being committed
+    proves the ledger was built for (or contaminated by) a different job's
+    run -- unique-identity and record-count checks alone would not catch a
+    swapped-but-still-well-formed table name."""
+    ledger = NativeRouteLedger(native_attempted=1, native_completed=1)
+    ledger.records.append(LedgerEntry(table="other_table", node="pt", chunk_index=0))
+    with pytest.raises(_exec_mod.ExecutionError) as excinfo:
+        _exec_mod._validate_ledger(ledger, table=_TABLE)
+    assert excinfo.value.code == "native_route_ledger_invalid"
+
+
+# ---------------------------------------------------------------------------
+# _mask_one_batch boundary-conversion timing (P1-2)
+# ---------------------------------------------------------------------------
+
+
+def test_mask_one_batch_boundary_time_includes_arrow_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-2 regression: `batch_total` must be measured AFTER
+    `pa.RecordBatch.from_arrays` returns, not before it -- a read taken
+    before that call would silently exclude the real work it claims to
+    measure. `pa.RecordBatch` is an immutable extension type (cannot set a
+    class attribute on it directly), so the module's own `pa` name is
+    swapped for a stand-in whose `RecordBatch.from_arrays` sleeps a real,
+    measurable amount before delegating to the genuine implementation."""
+    _SLEEP_S = 0.05
+
+    class _SlowRecordBatch:
+        @staticmethod
+        def from_arrays(arrays: list[pa.Array], schema: pa.Schema) -> pa.RecordBatch:
+            time.sleep(_SLEEP_S)
+            return pa.RecordBatch.from_arrays(arrays, schema=schema)
+
+    class _FakePyarrow:
+        RecordBatch = _SlowRecordBatch
+
+    monkeypatch.setattr(_exec_mod, "pa", _FakePyarrow())
+
+    out_schema = pa.schema([pa.field("pt", pa.utf8())])
+    ledger = NativeRouteLedger()
+    boundary_ms_box = [0.0]
+    _exec_mod._mask_one_batch(
+        pa.record_batch({"pt": pa.array(["a"], type=pa.utf8())}),
+        0,
+        table=_TABLE,
+        column_order=("pt",),
+        strategy_cfg={"pt": ("passthrough", {})},
+        out_schema=out_schema,
+        ledger=ledger,
+        timing_acc={},
+        mem_acc={},
+        boundary_ms_box=boundary_ms_box,
+    )
+    # A `batch_total` read taken BEFORE `from_arrays` (the bug) would never
+    # see the sleep; asserting most of it shows up is the fix's proof
+    # (a loose lower bound absorbs scheduler jitter, not measurement error).
+    assert boundary_ms_box[0] >= _SLEEP_S * 1000 * 0.5
+
+
+# ---------------------------------------------------------------------------
+# static_candidacy substrate gate (P0-2)
+# ---------------------------------------------------------------------------
+
+
+def test_static_candidacy_declines_non_pandas_substrate_reason_exact(tmp_path: Path) -> None:
+    """The native kernels are proven byte-identical to the PANDAS oracle
+    only; an explicit non-pandas resolved substrate must decline before any
+    other check, with a reason that names the substrate that lost."""
+    source = _lazy_source(tmp_path)
+    config = {"tables": [{"name": _TABLE, "columns": [{"name": "c", "strategy": "passthrough"}]}]}
+    result = _route_mod.static_candidacy(
+        config=config,
+        execution_mode="auto",
+        table_kinds={_TABLE: "mask"},
+        caller_sources={_TABLE: source},
+        source_loader=None,
+        sink=None,
+        fidelity_report=False,
+        graph=_EMPTY_GRAPH,
+        resolved_substrate="polars",
+    )
+    assert result.candidate is False
+    assert result.table is None
+    assert result.reason == "non_pandas_substrate:polars"
+    assert result.sink_mode is None
+
+
+def test_static_candidacy_defaults_to_pandas_substrate_when_unspecified(tmp_path: Path) -> None:
+    """Existing direct callers (this test file's own `_candidacy` helper,
+    predating the substrate thread-through) must keep admitting exactly as
+    before: the default resolves to `"pandas"`, not to a decline."""
+    result = _candidacy(tmp_path, [{"name": "c", "strategy": "passthrough"}])
+    assert result.candidate is True
 
 
 # ---------------------------------------------------------------------------
