@@ -226,3 +226,29 @@ def test_schema_drift_batch_aborts_ledger_reflects_partial_state(tmp_path: Path)
     # the ledger never claims work it did not do.
     assert ledger.native_attempted == 1
     assert ledger.native_completed == 1
+
+
+def test_masked_batches_rejected_chunks_increments_not_overwrites() -> None:
+    """`rejected_chunks` is an invocation-scoped counter (see
+    `NativeRouteLedger`'s docstring): a drift must add to whatever count the
+    ledger already carries, never reset it to 1."""
+    first = pa.record_batch({"pt": pa.array(["a"], type=pa.utf8())})
+    drifted = pa.record_batch({"pt": pa.array([1], type=pa.int64())})
+    ledger = NativeRouteLedger(rejected_chunks=5)
+    out_schema = pa.schema([pa.field("pt", pa.utf8())])
+
+    gen = _exec_mod._masked_batches(
+        first,
+        iter([drifted]),
+        table=_TABLE,
+        column_order=("pt",),
+        strategy_cfg={"pt": ("passthrough", {})},
+        out_schema=out_schema,
+        ledger=ledger,
+        timing_acc={},
+        boundary_ms_box=[0.0],
+    )
+    next(gen)
+    with pytest.raises(ExecutionError):
+        next(gen)
+    assert ledger.rejected_chunks == 6
