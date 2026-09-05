@@ -924,19 +924,21 @@ def test_closed_world_admission_sentry() -> None:
         assert caps.quarantine_required is False, f"{strategy}: quarantine_required"
 
 
-def test_no_get_default_registry_on_native_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config, source_path = _config(tmp_path, _parity_columns(), table=_parity_source())
+def test_no_get_default_registry_on_native_path() -> None:
+    # The native path must reuse the resolved registry, never fetch the default.
+    # A runtime monkeypatch of `get_default_registry` guards nothing here,
+    # because neither native module references the symbol at all -- so the
+    # invariant holds by construction, and that is what we assert: the source of
+    # both native modules is free of any `get_default_registry` call path.
+    import inspect
 
-    from decoy_engine.execution import _native_route_exec as _exec_mod
+    from decoy_engine.execution import _native_route, _native_route_exec
 
-    def _boom() -> None:
-        raise AssertionError("get_default_registry() was called on the native path")
-
-    monkeypatch.setattr(_exec_mod, "get_default_registry", _boom, raising=False)
-    result = _run_native(config, source_path)
-    assert result.native_route is not None and result.native_route.admitted is True
+    for module in (_native_route, _native_route_exec):
+        assert "get_default_registry" not in inspect.getsource(module), (
+            f"{module.__name__} references get_default_registry; the native path "
+            "must reuse the resolved registry threaded into it"
+        )
 
 
 def test_compiled_plan_reused_not_recompiled(

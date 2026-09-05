@@ -249,13 +249,18 @@ def assert_logical_parity(
     *,
     allowed_physical_diffs: tuple[PhysicalDiff, ...] = DEFAULT_ALLOWED_PHYSICAL_DIFFS,
 ) -> None:
-    """Assert `candidate` is LOGICALLY identical to the pinned `oracle`.
+    """Assert `candidate` is identical to the pinned `oracle`.
+
+    Despite the "logical" name, this enforces the EXACT physical Arrow type of
+    every column by default: a width drift (string vs large_string, int vs
+    double, dictionary index widths) fails unless explicitly named in
+    `allowed_physical_diffs`, whose default is the single null-typed
+    normalization only. Do not weaken the physical check on the assumption the
+    name implies logical-only equality.
 
     Compares EXACTLY: output-table set, per-column values, null positions, row
     order, diagnostics (warnings AND row errors), and the logical schema
-    (column names + order). Physical Arrow-type differences are rejected unless
-    named in `allowed_physical_diffs`. Raises `AssertionError` on any
-    divergence.
+    (column names + order). Raises `AssertionError` on any divergence.
     """
     candidate_tables, oracle_tables = set(candidate.outputs), set(oracle.outputs)
     if candidate_tables != oracle_tables:
