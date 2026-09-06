@@ -9,18 +9,17 @@ counts toward the measured run's peak RSS:
 
 `run` drives the PRODUCTION entry (`run_pipeline` with `native_route_enabled=
 True`, `execution_mode="auto"`) over a `LazySource`-backed input and a
-`ParquetTransactionalSink` output, then reports its own peak RSS via
-`resource.getrusage(RUSAGE_SELF).ru_maxrss` -- on Linux this IS the kernel's
-VmHWM high-water mark, available synchronously with no external polling
-needed (unlike `scripts/native-baseline/bench_driver.py`'s multi-rep driver,
-this probe measures one rep per process invocation, so a caller wanting
-several reps just spawns this script several times).
+`ParquetTransactionalSink` output, then reports its own peak RSS from `/proc`
+VmHWM (not `ru_maxrss`: this script is spawned via subprocess fork+exec, and
+`ru_maxrss` survives the execve, so a child forked from a large parent carries
+the parent's fork-time high-water and over-reports when the probe runs after a
+heavy suite; VmHWM resets on execve). One rep per process invocation, so a
+caller wanting several reps just spawns this script several times.
 """
 
 from __future__ import annotations
 
 import json
-import resource
 import sys
 from pathlib import Path
 
@@ -28,6 +27,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 _WRITE_BATCH_ROWS = 50_000
+
+
+def _peak_rss_kb() -> int:
+    """Peak RSS from /proc VmHWM, in kB -- see the module docstring for why not
+    `ru_maxrss`. Matches the OOC memory sentinel
+    (tests/perf/test_ooc_external_sort_memory.py)."""
+    for line in Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("VmHWM:"):
+            return int(line.split()[1])
+    raise RuntimeError("VmHWM not found in /proc/self/status")
 
 
 def _row_values(start: int, n: int) -> dict[str, list[str]]:
@@ -108,7 +117,7 @@ def run(parquet_path: str, target_dir: str, batch_rows: int) -> None:
         execution_mode="auto",
         sink=sink,
     )
-    peak_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_rss_kb = _peak_rss_kb()
     rec = {
         "n_rows": n_rows,
         "native_admitted": result.native_route is not None and result.native_route.admitted,

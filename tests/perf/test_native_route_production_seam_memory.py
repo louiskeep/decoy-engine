@@ -2,14 +2,14 @@
 section 4): flat peak RSS through the PRODUCTION entry with the streaming
 Parquet sink, over row tiers, with lazy input and incremental output.
 
-Each rep runs `scripts/native_route_seam_probe.py` in a fresh process (peak
-RSS is the process's own `resource.getrusage(RUSAGE_SELF).ru_maxrss`, which
-on Linux IS the kernel's VmHWM high-water mark -- no external polling
-needed, matching the reasoning `test_out_of_core_memory_sentinel.py` uses
-for its own subprocess isolation, just without that test's external-poll
-step since a single-rep self-report is sufficient here). The fixture Parquet
-file is built in a SEPARATE process invocation so building it never counts
-toward the measured run's peak.
+Each rep runs `scripts/native_route_seam_probe.py` in a fresh process, which
+self-reports peak RSS from `/proc` VmHWM (VmHWM, not `ru_maxrss`: the probe is
+spawned via subprocess fork+exec, and ru_maxrss survives the execve, so when
+this test runs after a heavy suite the child inherits the parent's fork-time
+high-water and over-reports; VmHWM resets on execve). This matches the OOC
+memory sentinel (test_ooc_external_sort_memory.py). The fixture Parquet file is
+built in a SEPARATE process invocation so building it never counts toward the
+measured run's peak.
 """
 
 from __future__ import annotations

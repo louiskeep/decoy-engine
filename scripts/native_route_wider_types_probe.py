@@ -16,7 +16,6 @@ costs two full streaming passes instead of one.
 from __future__ import annotations
 
 import json
-import resource
 import sys
 from pathlib import Path
 
@@ -24,6 +23,18 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 _WRITE_BATCH_ROWS = 50_000
+
+
+def _peak_rss_kb() -> int:
+    """Peak RSS from /proc VmHWM, in kB. VmHWM (not `ru_maxrss`): this script is
+    spawned via subprocess fork+exec, and ru_maxrss survives the execve, so a
+    child forked from a large parent carries the parent's fork-time high-water
+    and over-reports when the probe runs after a heavy suite. VmHWM resets on
+    execve. Matches the OOC memory sentinel (test_ooc_external_sort_memory.py)."""
+    for line in Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("VmHWM:"):
+            return int(line.split()[1])
+    raise RuntimeError("VmHWM not found in /proc/self/status")
 
 
 def _row_values(start: int, n: int) -> dict[str, list[object]]:
@@ -104,7 +115,7 @@ def run(parquet_path: str, target_dir: str) -> None:
         execution_mode="auto",
         sink=sink,
     )
-    peak_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_rss_kb = _peak_rss_kb()
     rec = {
         "n_rows": n_rows,
         "native_admitted": result.native_route is not None and result.native_route.admitted,
