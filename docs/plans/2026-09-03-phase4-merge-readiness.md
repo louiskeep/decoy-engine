@@ -2,6 +2,8 @@
 
 Status: record
 
+SUPERSEDED: All six Phase-4 slices plus the native-route lane (Q3 slices 1 and 2) are complete and double-gated as of 2026-09-04/09-06. Task 7 (route seam live wiring) included. See CHANGELOG.md [Unreleased] section for consolidated Phase-4 entry and native-lane slices. This document records the historical "5 of 6" checkpoint.
+
 Point-in-time consolidation for the Phase-4 merge decision. Everything below is
 HELD on `feat/native-phase3`; nothing has merged. Phase 4 merges once, at the
 end, on Cam's explicit go.
