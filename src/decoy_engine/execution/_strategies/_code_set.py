@@ -253,5 +253,15 @@ class CodeSetHandler:
                 "column": evidence_column,
             }
 
-        df[column] = out
+        if out:
+            df[column] = out
+        else:
+            # An empty `out` (a zero-row chunk, or a genuinely empty
+            # full-frame table) assigned as a plain `[]` infers pandas
+            # float64 -> Arrow `double`, diverging from a non-empty chunk's
+            # object/string output and breaking chunk concatenation (a
+            # code_set column's output is always a string, at any row
+            # count). Force the empty case to the same string type instead
+            # of leaving pandas to guess.
+            df[column] = pd.array([], dtype="string")
         return df, []

@@ -21,7 +21,7 @@ import pytest
 
 from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.errors import RowErrorsFailedError
-from decoy_engine.execution import _chunked, run_pipeline
+from decoy_engine.execution import _chunked_dgrn, run_pipeline
 from tests.unit.execution.test_chunked import _chunks, _config
 
 _ENGINE_VERSION = "phase1-admitted-set-test"
@@ -86,14 +86,17 @@ class TestBaseRowOffsetCounter:
         chunks = _chunks(df, 2)  # row counts: 2, 2, 1
 
         seen_offsets: list[int] = []
-        real_advance = _chunked._advance_row_offset
+        real_advance = _chunked_dgrn.advance_row_offset
 
         def _spy(offset: int, chunk: pa.Table) -> int:
             result = real_advance(offset, chunk)
             seen_offsets.append(result)
             return result
 
-        monkeypatch.setattr(_chunked, "_advance_row_offset", _spy)
+        # `_chunked` calls this via the shared `_chunked_dgrn` module object
+        # (`from . import _chunked_dgrn as dgrn`), so patching the sibling here
+        # is seen at the call site.
+        monkeypatch.setattr(_chunked_dgrn, "advance_row_offset", _spy)
 
         out = list(
             run_mask_pipeline_chunked(
@@ -168,13 +171,13 @@ class TestFailClosedUnchangedWithOffset:
         chunk = pa.table({"age": pa.array(["23", "not-a-number"], type=pa.string())})
 
         advance_calls: list[int] = []
-        real_advance = _chunked._advance_row_offset
+        real_advance = _chunked_dgrn.advance_row_offset
 
         def _spy(offset: int, chunk: pa.Table) -> int:
             advance_calls.append(offset)
             return real_advance(offset, chunk)
 
-        monkeypatch.setattr(_chunked, "_advance_row_offset", _spy)
+        monkeypatch.setattr(_chunked_dgrn, "advance_row_offset", _spy)
 
         with pytest.raises(RowErrorsFailedError) as exc_info:
             list(
@@ -188,6 +191,6 @@ class TestFailClosedUnchangedWithOffset:
             )
         assert exc_info.value.records[0].trigger == "format_error"
         # The rejected chunk never advances the counter: the row-error gate
-        # raises before _advance_row_offset runs. If that order ever flips,
+        # raises before advance_row_offset runs. If that order ever flips,
         # advance_calls becomes [50] and this test fails.
         assert advance_calls == []

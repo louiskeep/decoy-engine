@@ -1,0 +1,408 @@
+"""T12 (`docs/plans/2026-09-03-p4-task7-route-seam.md` section 5): the
+multi-edge phase-3 head-admission proof, at the ADMITTED MAXIMUM fan-in
+(`N = 2 * merge_fan_in`) -- the shape `_route_policy.decide_route` falls
+back to `_batch_join` for above (`4.2`).
+
+Codex-final round 3 P2 (this test's prior form): a direct
+`_stream_driver.stream_table` call with hand-duplicated `F_DUCKDB`/`F_SORT`
+budget fractions proves the reorder driver alone is memory-bounded, but not
+that PRODUCTION (`_runner.run_fk_out_of_core` -> `_route_policy.decide_route`
+-> `stream_table`, with budgets resolved by `resolve_reorder_budgets` inside
+the route seam) is memory-bounded and actually SELECTS the reorder route for
+a multi-edge child. This version drives the worker through
+`run_fk_out_of_core` itself, with a `ParquetTransactionalSink` and
+path-backed `LazySource` sources, `out_of_core_reorder_threshold_rows=0`
+forcing reorder SELECTION, and `budget_bytes` / `temp_disk_budget_bytes` so
+every budget (DuckDB `memory_limit`, `run_bytes_cap`, `merge_fan_in`) is
+resolved by the production helpers inside the run -- no hand-duplicated
+fractions and no manually constructed `ReorderCaps`. Route selection is
+asserted two ways: `ChildFkBatchJoiner.__init__` is patched to raise if
+called at all (the child table must never fall back to the batch-join
+driver), and `StreamFkJoiner.__init__` is counted (must construct exactly
+`_N_EDGES` times, one per incoming edge).
+
+FAN-IN. The aggregate phase-3 head residency `_reorder_budget.
+phase3_head_fit` prices is `N * run_bytes_cap // (2 * merge_fan_in)`, which
+collapses to `run_bytes_cap` at the admitted maximum (`N = 2 *
+merge_fan_in`) REGARDLESS of `merge_fan_in`'s own value -- dennis and Codex
+both confirmed this fan-in invariance in earlier plan-review rounds. So the
+bound this test proves does not depend on which `merge_fan_in` is used;
+what does depend on it is wall-clock and disk: at production's actual
+default (`_route_policy._MERGE_FAN_IN_DEFAULT = 16`, so N=32), each of the
+32 edges needs the same per-edge child-row volume the single-edge proof
+uses to force a real (>1-run) sorter spill, so total data volume -- and
+runtime -- scales with N. Measured empirically on this box: the harness-scale
+fan-in (4, N=8) this test used to run at completes in ~95s; the same per-edge
+row volume at production fan-in (16, N=32) is roughly 4x that data and blew
+well past a practical perf-test budget (multi-minute, disk-heavy on a shared
+devbox) for a bound already proven fan-in-invariant. So this test stays at
+the harness-scale fan-in (4, N=8) -- proving the SAME bound, at N=32's
+computational cost -- while still driving every table through
+`run_fk_out_of_core` with production-resolved budgets and asserted route
+selection.
+
+`run_fk_out_of_core` does not expose `merge_fan_in` as a parameter (only
+`_route_policy.decide_route`'s own default does, `_MERGE_FAN_IN_DEFAULT`);
+the worker pins it to `_MERGE_FAN_IN` by wrapping the runner module's
+`decide_route` reference to pass `merge_fan_in` explicitly on every call --
+every other production computation `run_fk_out_of_core` performs (the
+compatibility gate, work ordering, the threshold check, `resolve_
+reorder_budgets`, `ReorderCaps` construction, and the sink-incremental
+per-table streaming) runs completely unmodified.
+
+Every edge's sorter produces its ordered run, and all N edges' phase-3 readers
+are open concurrently while payload batches drain -- the exact residency phase
+3's memory model prices. (Multi-run spill per edge is the single-edge proof's
+job: the slim sort no longer carries the raw child columns, so at the modest row
+count that keeps DuckDB's per-edge join RSS inside the envelope each edge's
+sorter fits a single bounded run.) Peak RSS must stay within the SAME envelope
+(`_ENVELOPE_FACTOR`, 1.35x) the single-edge proof uses, without relaxing it.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import textwrap
+
+import pytest
+
+pytestmark = pytest.mark.perf
+
+_CAPPED_ENV = {
+    "ARROW_DEFAULT_MEMORY_POOL": "system",
+    "MALLOC_ARENA_MAX": "2",
+}
+
+# 1024 MiB so the fixed Python / pyarrow / DuckDB baseline stays a small
+# fraction of the ceiling (a smaller ceiling lets that baseline alone crowd the
+# 1.35x envelope at N=8). The child source is written to parquet in STREAMED
+# row-group batches (see `main`), so its multi-million-row, 8-column build is
+# never fully resident -- only the reorder path's own residency reaches VmHWM.
+_CEILING_MIB = 1024
+_MERGE_FAN_IN = 4
+_N_EDGES = 2 * _MERGE_FAN_IN  # the admitted maximum -- one more falls back to _batch_join
+_PARENT_ROWS = 300
+# The child row count is held modest: the slim sort carries only row_nr + match
+# token + masked key (the raw child columns no longer ride through it), so
+# forcing a per-edge MULTI-run spill would need ~4x more rows than the pre-slim
+# raw path did, and that many rows inflates DuckDB's own per-edge join-phase RSS
+# past the envelope (a DuckDB-scaling artifact, not the reorder residency under
+# test). Multi-run-spill RSS is proven by the single-edge proof; THIS test
+# proves the N concurrently-open phase-3 head residency at the admitted maximum
+# fan-in, where each edge's sorter produces a single bounded run. Sized so the
+# per-edge join-phase peak plus the N concurrent phase-3 heads stay comfortably
+# inside the envelope with margin for run-to-run allocator variance.
+_CHILD_ROWS = 800_000
+_KEY_WIDTH = 24
+_BATCH_ROWS = 20_000
+_SEED = 20260903
+
+_ENVELOPE_FACTOR = 1.35
+
+_TIMEOUT_S = 600
+
+_WORKER_SCRIPT = textwrap.dedent(
+    '''
+    """Fresh-subprocess worker: streams an N-incoming-edge job through the
+    PRODUCTION `_runner.run_fk_out_of_core` entry point (sink + LazySource
+    sources, budgets resolved by the production helpers) and reports peak
+    RSS plus per-edge spill and route-selection proof facts as one JSON line
+    on stdout."""
+
+    import argparse
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from decoy_engine.execution import ParquetTransactionalSink
+    from decoy_engine.execution.out_of_core import run_fk_out_of_core
+    from decoy_engine.execution.out_of_core import _runner as runner_mod
+    from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
+    from decoy_engine.execution.out_of_core._source import LazySource
+    from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
+    from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+    from decoy_engine.providers_v2 import get_default_registry
+    from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
+
+    _JOB_SEED = b"\\x66" * 8
+
+
+    def _peak_rss_mb() -> float:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) / 1024.0
+        raise RuntimeError("VmHWM not found in /proc/self/status")
+
+
+    def _seed() -> ColumnSeed:
+        return ColumnSeed(
+            namespace=None,
+            strategy="passthrough",
+            provider="passthrough",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=False,
+            provider_config=(),
+            coherent_with=(),
+        )
+
+
+    def main() -> None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--ceiling-mib", type=int, required=True)
+        parser.add_argument("--n-edges", type=int, required=True)
+        parser.add_argument("--merge-fan-in", type=int, required=True)
+        parser.add_argument("--parent-rows", type=int, required=True)
+        parser.add_argument("--child-rows", type=int, required=True)
+        parser.add_argument("--key-width", type=int, required=True)
+        parser.add_argument("--batch-rows", type=int, required=True)
+        parser.add_argument("--temp-dir", type=str, required=True)
+        args = parser.parse_args()
+
+        ceiling_bytes = args.ceiling_mib * 1024 * 1024
+        big_disk_bytes = 200 * 1024 * 1024 * 1024  # disk is not under test here
+
+        temp_dir = Path(args.temp_dir)
+        seed = _seed()
+        parent_names = [f"p{i}" for i in range(args.n_edges)]
+        fk_columns = [f"fk{i}" for i in range(args.n_edges)]
+        edges = [
+            RelationshipEdge(
+                parent_table=parent_names[i],
+                parent_columns=("key",),
+                child_table="child",
+                child_columns=(fk_columns[i],),
+                namespace=f"ns{i}",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            )
+            for i in range(args.n_edges)
+        ]
+        per_table = [
+            (name, TableSeed(per_column=(("key", seed),), per_group=())) for name in parent_names
+        ]
+        per_table.append(
+            ("child", TableSeed(per_column=tuple((c, seed) for c in fk_columns), per_group=()))
+        )
+        plan = SimpleNamespace(seed_envelope=SeedEnvelope(job_seed=_JOB_SEED, per_table=tuple(per_table)))
+        graph = RelationshipGraph(edges=tuple(edges), ordering=())
+
+        sources_dir = temp_dir / "sources"
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        parent_keys: dict[str, list[str]] = {}
+        sources: dict[str, object] = {}
+        for i, name in enumerate(parent_names):
+            keys = [f"p{i}_{j:0{args.key_width}d}" for j in range(args.parent_rows)]
+            parent_keys[name] = keys
+            table = pa.table({"key": pa.array(keys, type=pa.string())})
+            path = sources_dir / f"{name}.parquet"
+            pq.write_table(table, path)
+            sources[name] = LazySource(path)
+
+        # Each fk column: mostly matched (forcing real spill via row count),
+        # 1/6 null, 1/6 a genuine orphan -- never fails the PRESERVE policy.
+        # STREAMED to parquet in row-group batches so the whole 8-column,
+        # multi-million-row table is never resident at once -- that resident
+        # spike (not the reorder path) would otherwise dominate VmHWM.
+        child_path = sources_dir / "child.parquet"
+        child_schema = pa.schema([(col, pa.string()) for col in fk_columns])
+        writer = pq.ParquetWriter(child_path, child_schema)
+        try:
+            for start in range(0, args.child_rows, args.batch_rows):
+                stop = min(start + args.batch_rows, args.child_rows)
+                cols = {}
+                for i, col in enumerate(fk_columns):
+                    keys = parent_keys[parent_names[i]]
+                    vals = []
+                    for row in range(start, stop):
+                        r = row % 6
+                        if r == 0:
+                            vals.append(None)
+                        elif r == 1:
+                            vals.append(f"orphan{i}_{row:0{args.key_width}d}")
+                        else:
+                            vals.append(keys[row % len(keys)])
+                    cols[col] = pa.array(vals, type=pa.string())
+                writer.write_batch(pa.record_batch(cols, schema=child_schema))
+                del cols
+        finally:
+            writer.close()
+        sources["child"] = LazySource(child_path)
+
+        # Route evidence #1: the reorder driver must be the one running for
+        # the multi-edge child, never ChildFkBatchJoiner (T16's own witness
+        # pattern, reused here) -- proves PRODUCTION route SELECTION
+        # (`_route_policy.decide_route`), not just that stream_table can be
+        # called directly.
+        real_batch_init = ChildFkBatchJoiner.__init__
+
+        def _forbidden_batch_init(self, *a, **kw):
+            raise AssertionError("multi-edge RSS proof must drive the reorder route only")
+
+        ChildFkBatchJoiner.__init__ = _forbidden_batch_init
+
+        # Route evidence #2 (positive): every edge must construct a real
+        # StreamFkJoiner -- counted, not just "not ChildFkBatchJoiner".
+        real_stream_init = StreamFkJoiner.__init__
+        stream_init_count = {"n": 0}
+
+        def _counting_stream_init(self, *a, **kw):
+            stream_init_count["n"] += 1
+            return real_stream_init(self, *a, **kw)
+
+        StreamFkJoiner.__init__ = _counting_stream_init
+
+        run_count_by_edge: dict[str, int] = {}
+        join_row_bytes_by_edge: dict[str, int] = {}
+        real_run_ordered_join = StreamFkJoiner.run_ordered_join
+        real_iter_unordered = StreamFkJoiner._iter_unordered_join_rows
+
+        def _counting_iter(self, batch_rows):
+            total = 0
+            for batch in real_iter_unordered(self, batch_rows):
+                total += batch.nbytes
+                join_row_bytes_by_edge[self._edge.namespace] = total
+                yield batch
+
+        def _spy_run_ordered_join(self, *a, **kw):
+            self._iter_unordered_join_rows = _counting_iter.__get__(self)
+            rows = real_run_ordered_join(self, *a, **kw)
+            run_count_by_edge[self._edge.namespace] = len(rows._sorter._run_paths)
+            return rows
+
+        StreamFkJoiner.run_ordered_join = _spy_run_ordered_join
+
+        # `run_fk_out_of_core` does not expose `merge_fan_in` (only
+        # `decide_route`'s own default does); pin it explicitly here so this
+        # worker can prove the bound at a chosen fan-in without touching any
+        # other production computation the runner performs.
+        real_decide_route = runner_mod.decide_route
+        captured_caps: dict[str, int] = {}
+
+        def _pinned_decide_route(*a, **kw):
+            decision = real_decide_route(*a, merge_fan_in=args.merge_fan_in, **kw)
+            if decision.reorder_caps is not None:
+                captured_caps["run_bytes_cap"] = decision.reorder_caps.run_bytes_cap
+                captured_caps["merge_fan_in"] = decision.reorder_caps.merge_fan_in
+            return decision
+
+        runner_mod.decide_route = _pinned_decide_route
+
+        sink_target = temp_dir / "out"
+        sink = ParquetTransactionalSink(sink_target)
+        registry = get_default_registry()
+
+        run_fk_out_of_core(
+            plan,
+            sources,
+            registry=registry,
+            relationship_graph=graph,
+            sink=sink,
+            temp_dir=temp_dir / "work",
+            batch_rows=args.batch_rows,
+            budget_bytes=ceiling_bytes,
+            temp_disk_budget_bytes=big_disk_bytes,
+            out_of_core_reorder_threshold_rows=0,
+        )
+
+        child_out = pq.read_table(sink_target / "child.parquet")
+
+        print(
+            json.dumps(
+                {
+                    "ceiling_mib": args.ceiling_mib,
+                    "n_edges": args.n_edges,
+                    "merge_fan_in": args.merge_fan_in,
+                    "resolved_run_bytes_cap": captured_caps.get("run_bytes_cap"),
+                    "resolved_merge_fan_in": captured_caps.get("merge_fan_in"),
+                    "stream_joiner_init_count": stream_init_count["n"],
+                    "child_rows_out": child_out.num_rows,
+                    "child_rows_expected": args.child_rows,
+                    "edges_with_multi_run_spill": sum(
+                        1 for n in run_count_by_edge.values() if n > 1
+                    ),
+                    "run_counts_by_edge": run_count_by_edge,
+                    "join_row_bytes_by_edge": join_row_bytes_by_edge,
+                    "peak_rss_mb": _peak_rss_mb(),
+                }
+            )
+        )
+
+
+    if __name__ == "__main__":
+        main()
+    '''
+)
+
+
+def _run_worker(tmp_path):
+    worker_path = tmp_path / "_ooc_reorder_multi_edge_worker.py"
+    worker_path.write_text(_WORKER_SCRIPT)
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    env = {**os.environ, **_CAPPED_ENV}
+    cmd = [
+        sys.executable,
+        str(worker_path),
+        "--ceiling-mib",
+        str(_CEILING_MIB),
+        "--n-edges",
+        str(_N_EDGES),
+        "--merge-fan-in",
+        str(_MERGE_FAN_IN),
+        "--parent-rows",
+        str(_PARENT_ROWS),
+        "--child-rows",
+        str(_CHILD_ROWS),
+        "--key-width",
+        str(_KEY_WIDTH),
+        "--batch-rows",
+        str(_BATCH_ROWS),
+        "--temp-dir",
+        str(work_dir),
+    ]
+    proc = subprocess.run(  # noqa: S603
+        cmd, capture_output=True, text=True, timeout=_TIMEOUT_S, env=env
+    )
+    assert proc.returncode == 0, (
+        f"worker subprocess failed (code {proc.returncode}):\n{proc.stderr}"
+    )
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_multi_edge_admitted_max_fan_in_peak_rss_within_envelope(tmp_path):
+    rec = _run_worker(tmp_path)
+
+    assert rec["n_edges"] == _N_EDGES
+    assert rec["merge_fan_in"] == _MERGE_FAN_IN
+    # Route selection, positive + negative: every edge built a real
+    # StreamFkJoiner (never ChildFkBatchJoiner -- the worker raises if one is
+    # constructed), proving `run_fk_out_of_core` -> `decide_route` actually
+    # SELECTED the reorder route for this multi-edge child, not merely that
+    # stream_table can be called directly.
+    assert rec["stream_joiner_init_count"] == _N_EDGES, rec
+    assert rec["resolved_run_bytes_cap"] is not None, "decide_route never returned reorder_caps"
+    assert rec["resolved_merge_fan_in"] == _MERGE_FAN_IN
+
+    assert rec["child_rows_out"] == rec["child_rows_expected"]
+    # Every edge's sorter ran and produced its ordered run (>= 1 run each). The
+    # slim sort no longer spills MULTIPLE runs at this modest row count -- the
+    # raw child columns it used to carry are gone -- so multi-run-spill RSS is
+    # proven separately by the single-edge proof. What THIS test prices is the N
+    # concurrently-open phase-3 head residency: all N final runs are read back
+    # at once while payload batches drain.
+    assert all(n >= 1 for n in rec["run_counts_by_edge"].values()), rec["run_counts_by_edge"]
+    assert len(rec["run_counts_by_edge"]) == _N_EDGES, rec["run_counts_by_edge"]
+
+    envelope_mb = _CEILING_MIB * _ENVELOPE_FACTOR
+    assert rec["peak_rss_mb"] <= envelope_mb, (
+        f"peak RSS {rec['peak_rss_mb']:.1f} MB exceeds the {envelope_mb:.1f} MB "
+        f"envelope ({_ENVELOPE_FACTOR}x the {_CEILING_MIB} MiB process ceiling) "
+        f"at N={_N_EDGES} concurrently-open phase-3 heads"
+    )

@@ -201,7 +201,7 @@ def check_out_of_core_compatibility(
         _check_edge(edge, plan, rejections)
 
     if _table_graph_has_cycle(relationship_graph):
-        # `_table_order` (out_of_core/_runner.py) sequences whole TABLES, so any
+        # `_table_order` (out_of_core/_route_policy.py) sequences whole TABLES, so any
         # table-level FK cycle across two or more tables (A.id->B.x, B.id->A.y)
         # makes `_table_order` raise `out_of_core_relationship_cycle` at run
         # time -- even when the COLUMN-level dependency the full-frame oracle
@@ -364,7 +364,7 @@ def _is_deterministic(plan_slice: object) -> bool:
 def _table_graph_has_cycle(relationship_graph: RelationshipGraph) -> bool:
     """True if the child->parent TABLE dependency graph has a multi-table cycle.
 
-    Mirrors `_table_order`'s Kahn topological sort (out_of_core/_runner.py) at
+    Mirrors `_table_order`'s Kahn topological sort (out_of_core/_route_policy.py) at
     gate time, so a cycle the runner would crash on is rejected before it runs.
     Self-edges (parent_table == child_table) are excluded: those are reported
     separately by `_check_edge`'s self-referential rejection, and a self-loop is
@@ -420,7 +420,7 @@ def _check_edge(
             )
         )
     if edge.parent_table == edge.child_table:
-        # `_table_order` (out_of_core/_runner.py) sequences whole TABLES, so a
+        # `_table_order` (out_of_core/_route_policy.py) sequences whole TABLES, so a
         # self-referential edge makes a table depend on itself and always
         # raises `out_of_core_relationship_cycle` -- even though the column-
         # level dependency (parent column masked before the FK column resolves

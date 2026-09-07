@@ -25,20 +25,21 @@ path:
 
 Re-reading a source once per pass trades bounded RAM for disk IO, the
 standard external-memory discipline (DuckDB's larger-than-memory hash join
-re-reads its spilled partitions the same way); a resident `pa.Table` source
-re-iterates for free. Without a sink, the streamed batches are reassembled in
-memory column-wise under the whole-child chunk-merge rules (`_join.py`), so
-the returned tables keep the value-derived column types the pandas-oracle
-parity suite pins.
+re-reads its spilled partitions the same way). A resident `pa.Table` source
+re-iterates without extra disk IO, but holds the WHOLE input resident -- free
+for CPU, not for memory; the residency bound (bounded peak residency w.r.t. row
+cardinality) holds only for `LazySource` sources plus an incrementally-consuming
+sink (others get a residency `QualityWarning`). Without a sink, the streamed batches
+are reassembled in memory column-wise under the whole-child chunk-merge rules
+(`_join.py`), so the returned tables keep the value-derived column types the
+pandas-oracle parity suite pins.
 """
 
 from __future__ import annotations
 
-import heapq
 import os
 import shutil
 import tempfile
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -73,7 +74,15 @@ from decoy_engine.execution.out_of_core._mask import (
 )
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+from decoy_engine.execution.out_of_core._route_policy import (
+    _edge_indexes,
+    _table_order,
+    decide_route,
+    resolve_reorder_threshold_rows,
+    validate_outgoing_parent_columns,
+)
 from decoy_engine.execution.out_of_core._source import LazySource
+from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -115,6 +124,7 @@ def run_fk_out_of_core(
     temp_disk_budget_bytes: int | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    out_of_core_reorder_threshold_rows: int | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -129,6 +139,14 @@ def run_fk_out_of_core(
     (never whole-table resident); without one, the streamed batches are
     reassembled into in-memory tables with whole-column type semantics.
 
+    Residency precondition (caller-managed; P4-A). This exported primitive does
+    not enforce boundedness: its peak residency is bounded w.r.t. row cardinality
+    only when every `sources` value is a `LazySource` and `sink` consumes
+    `write_batches` incrementally without retaining the stream
+    (`ParquetTransactionalSink`). A resident source or `sink=None` holds a whole
+    table in RAM; a direct caller of this primitive owns that memory risk (the
+    managed `run_pipeline` route warns for those shapes, this primitive does not).
+
     `batch_rows` bounds every streamed pass (default: the pinned module
     constant); any legal value is byte-transparent on the output.
     `budget_bytes` (the UNDIVIDED per-run budget) is preferred over the flat
@@ -142,12 +160,23 @@ def run_fk_out_of_core(
     `temp_disk_budget_bytes` bounds the spill footprint under this run's
     temp root, checked at each table boundary; exceeding it aborts the sink
     and fails closed.
+
+    `out_of_core_reorder_threshold_rows` (P4-A Task 7): the sink-path
+    per-table route seam auto-selects `_stream_driver.stream_table` (the
+    reorder driver) over this module's own `_stream_table` (`_batch_join`)
+    once a table's largest incoming edge's deduped parent-key count reaches
+    this threshold; see `_route_policy.decide_route` for the full predicate
+    and `resolve_reorder_threshold_rows` for the override's `None`/`0`/
+    negative/`bool` semantics. Route choice changes timing and memory, never
+    output (`_route_policy.py`'s module docstring).
     """
     if batch_rows is not None and batch_rows < 1:
         raise ExecutionError(
             code="out_of_core_batch_rows_invalid",
             message=f"batch_rows must be a positive row count, got {batch_rows}.",
         )
+    # Validate the override before creating the temp root: an invalid value must not leak a scratch dir.
+    reorder_threshold_rows = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
     # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST -- before any admissibility
     # or source checks -- so a keyed out-of-core job can never run off job_seed at
     # GA regardless of entry point.
@@ -188,26 +217,51 @@ def run_fk_out_of_core(
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
-            _stream_table(
-                plan,
-                table_name,
-                sources[table_name],
-                incoming_edges=tuple(incoming[table_name]),
-                outgoing_edges=tuple(outgoing[table_name]),
-                parent_relations=parent_relations,
-                temp_dir=root / "joins" / table_name,
-                relation_dir=root / "relations" / table_name,
-                staging_path=root / "staged" / table_name / "masked_keys.parquet",
-                memory_limit=memory_limit,
-                batch_rows=batch_rows,
-                budget_bytes=budget_bytes,
+            table_incoming_edges = tuple(incoming[table_name])
+            table_outgoing_edges = tuple(outgoing[table_name])
+            # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
+            validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
+            route = decide_route(
+                table_incoming_edges,
+                parent_relations,
                 sink=sink,
-                outputs=outputs,
-                warnings=warnings,
-                unconfigured_column_policy=unconfigured_column_policy,
-                mask_key=mask_key,
-                code_set_corpora=code_set_corpora,
+                budget_bytes=budget_bytes,
+                temp_disk_budget_bytes=temp_disk_budget_bytes,
+                threshold_rows=reorder_threshold_rows,
             )
+            # Shared by both drivers; the reorder branch adds only memory-sizing kwargs.
+            table_kwargs: dict[str, Any] = {
+                "plan": plan,
+                "table_name": table_name,
+                "raw": sources[table_name],
+                "incoming_edges": table_incoming_edges,
+                "outgoing_edges": table_outgoing_edges,
+                "parent_relations": parent_relations,
+                "temp_dir": root / "joins" / table_name,
+                "relation_dir": root / "relations" / table_name,
+                "staging_path": root / "staged" / table_name / "masked_keys.parquet",
+                "memory_limit": memory_limit,
+                "batch_rows": batch_rows,
+                "budget_bytes": budget_bytes,
+                "sink": sink,
+                "outputs": outputs,
+                "warnings": warnings,
+                "unconfigured_column_policy": unconfigured_column_policy,
+                "mask_key": mask_key,
+                "code_set_corpora": code_set_corpora,
+            }
+            # `reorder_caps is not None` (not `route.use_reorder`) is the branch
+            # condition so this narrows for mypy directly, matching `RouteDecision`'s
+            # own invariant that the two fields never disagree.
+            if route.reorder_caps is not None:
+                stream_table(
+                    **table_kwargs,
+                    run_bytes_cap=route.reorder_caps.run_bytes_cap,
+                    merge_fan_in=route.reorder_caps.merge_fan_in,
+                    reorder_caps=route.reorder_caps,
+                )
+            else:
+                _stream_table(**table_kwargs)
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and
@@ -607,49 +661,6 @@ def _remap_values(
         ]
         remapped.append(mask_column(pa.array(normalized, from_pandas=True), parent_seed, key))
     return tuple(remapped)
-
-
-def _edge_indexes(
-    relationship_graph: RelationshipGraph,
-) -> tuple[dict[str, list[RelationshipEdge]], dict[str, list[RelationshipEdge]]]:
-    incoming: dict[str, list[RelationshipEdge]] = defaultdict(list)
-    outgoing: dict[str, list[RelationshipEdge]] = defaultdict(list)
-    for edge in relationship_graph.edges:
-        incoming[edge.child_table].append(edge)
-        outgoing[edge.parent_table].append(edge)
-    return incoming, outgoing
-
-
-def _table_order(
-    plan: Plan,
-    relationship_graph: RelationshipGraph,
-    sources: Mapping[str, pa.Table | LazySource],
-) -> list[str]:
-    tables = {table for table, _seed in plan.seed_envelope.per_table} | set(sources)
-    deps: dict[str, set[str]] = {table: set() for table in tables}
-    children: dict[str, set[str]] = defaultdict(set)
-    for edge in relationship_graph.edges:
-        tables.add(edge.parent_table)
-        tables.add(edge.child_table)
-        deps.setdefault(edge.parent_table, set())
-        deps.setdefault(edge.child_table, set()).add(edge.parent_table)
-        children[edge.parent_table].add(edge.child_table)
-    ready = [table for table in tables if not deps.get(table)]
-    heapq.heapify(ready)
-    ordered: list[str] = []
-    while ready:
-        table = heapq.heappop(ready)
-        ordered.append(table)
-        for child in sorted(children[table]):
-            deps[child].discard(table)
-            if not deps[child]:
-                heapq.heappush(ready, child)
-    if len(ordered) != len(tables):
-        raise ExecutionError(
-            code="out_of_core_relationship_cycle",
-            message="out-of-core route requires an acyclic table graph.",
-        )
-    return ordered
 
 
 def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:

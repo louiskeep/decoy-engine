@@ -25,6 +25,12 @@ Two independent routing layers compose here, in a fixed decision order
         graph, no `when` predicate, single-parent-per-child) AND the
         largest mask table is at/above `out_of_core_threshold_rows`.
         `_pipeline_route_exec.run_out_of_core_route` executes + packages it.
+        Inside that route, a sink-path table auto-selects the reorder driver
+        over `_batch_join` once its largest incoming edge's deduped
+        parent-key count reaches `out_of_core_reorder_threshold_rows`
+        (default 2M; `0` forces every eligible table, per-run override) --
+        an independent, narrower-scoped threshold from this layer's own
+        `out_of_core_threshold_rows` (see `_route_policy.decide_route`).
      b. **sequential** -- the bounded-memory (but O(cardinality), so still
         OOM-able at extreme scale) `run_sequential` path -- for a
         pure-mask FK job that is NOT out-of-core-eligible (an unsupported

@@ -466,8 +466,11 @@ class TestOutputFilesystemGate:
         assert spill_mod._output_shares_temp_filesystem({}, tmp_path) is True
 
     def test_same_device_includes_output(self, tmp_path: Path, monkeypatch) -> None:
+        # Accept *args/**kwargs: patching spill_mod.os.stat replaces the global
+        # os.stat, and on Python 3.13 internal callers pass follow_symlinks=..., so
+        # a single-arg fake raises TypeError and crashes the session.
         monkeypatch.setattr(
-            spill_mod.os, "stat", lambda p: SimpleNamespace(st_dev=42), raising=True
+            spill_mod.os, "stat", lambda p, *a, **k: SimpleNamespace(st_dev=42), raising=True
         )
         config = {"targets": {"t": {"type": "file", "path": str(tmp_path / "out.parquet")}}}
         assert spill_mod._output_shares_temp_filesystem(config, tmp_path) is True
@@ -476,8 +479,11 @@ class TestOutputFilesystemGate:
         target_dir = tmp_path / "othervol"
         target_dir.mkdir()
 
-        def fake_stat(path: object) -> SimpleNamespace:
-            # temp root on device 1, the target dir on device 2.
+        def fake_stat(path: object, *args: object, **kwargs: object) -> SimpleNamespace:
+            # temp root on device 1, the target dir on device 2. Accept
+            # *args/**kwargs: this replaces the global os.stat, and Python 3.13
+            # internal callers pass follow_symlinks=..., which a single-arg fake
+            # would reject with TypeError, crashing the session.
             return SimpleNamespace(st_dev=2 if str(target_dir) in str(path) else 1)
 
         monkeypatch.setattr(spill_mod.os, "stat", fake_stat, raising=True)

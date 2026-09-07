@@ -58,6 +58,7 @@ from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
     date_shift_group_columns,
+    group_key_group_by_columns,
     order_work,
     top_code_columns,
 )
@@ -179,6 +180,8 @@ class PandasExecutionAdapter:
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
         key_provider: KeyProvider | None = None,
+        row_offset: int = 0,
+        code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
@@ -201,12 +204,16 @@ class PandasExecutionAdapter:
         # value >= 2**53 rounds and the masked output becomes chunk-boundary
         # dependent (whether a chunk widens turns on whether it carries a null).
         top_code_cols = top_code_columns(plan, registry)
+        # Phase 4 slice 2: a group_key `group_by` sibling has the identical
+        # lossless-typing need (see `group_key_group_by_columns`'s docstring).
+        group_key_cols = group_key_group_by_columns(plan, registry)
         frames: dict[str, pd.DataFrame] = {
             t: to_pandas_fk_safe(
                 tbl,
                 fk_columns_for_table(relationship_graph.edges, t)
                 | group_anchor_cols.get(t, set())
-                | top_code_cols.get(t, set()),
+                | top_code_cols.get(t, set())
+                | group_key_cols.get(t, set()),
             )
             for t, tbl in sources.items()
         }
@@ -231,6 +238,14 @@ class PandasExecutionAdapter:
             job_seed=plan.seed_envelope.job_seed,
             mask_key=require_mask_key(plan, key_provider),
             group_anchor_snapshots=group_anchor_snapshots,
+            row_offset=row_offset,
+            # Phase 4 slice 4: a caller (the chunked route) that resolved one
+            # corpus record per code_set column up front seeds it here so
+            # every per-chunk StrategyContext masks against the identical
+            # record instead of each independently re-resolving (see
+            # `_chunked_code_set.py`'s corpus-pinning contract). Empty dict
+            # (the field default) for every pre-existing caller.
+            code_set_records=dict(code_set_records) if code_set_records else {},
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)

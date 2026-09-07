@@ -10,11 +10,10 @@ chunked` (`_chunked.py`) always threads an EMPTY `RelationshipGraph` into
 the pandas adapter (self-masking has no parent-map join), so `_fk_keys.
 to_pandas_fk_safe`'s ingestion protection -- keyed off that same runtime
 graph -- protects NOTHING on this route. Every OTHER chunk-safe strategy
-(hash, fpe, redact, truncate, text_redact, date_shift, bucketize, top_code) re-derives
-its output rather than preserving the raw key, so an unprotected
+(hash, fpe, redact, truncate, text_redact, date_shift, bucketize, top_code,
+text_mask) re-derives its output rather than preserving the raw key, so an unprotected
 float64-on-null ingestion widening never survives to the output for them --
-but `passthrough` (identity) IS admitted here (`CHUNK_SAFE_STRATEGIES`
-above) and DOES preserve the raw key verbatim, so a null-bearing
+but `passthrough` (identity) preserves the raw key verbatim, so a null-bearing
 `passthrough` FK column carrying a value beyond `2**53` silently rounds
 through this route's unprotected ingestion, exactly like the pre-DE-10
 full-frame/sequential bug. These two functions add a TARGETED runtime guard
@@ -22,7 +21,13 @@ full-frame/sequential bug. These two functions add a TARGETED runtime guard
 small-int passthrough jobs): reject only when a `passthrough` FK column here
 is null-bearing AND carries a value beyond `2**53`, with the same
 `out_of_core_fk_key_dtype_unsupported` code every other unrepresentable-key
-shape raises.
+shape raises. This guard is INDEPENDENT of `gate_fk_child_edges`'s strategy
+allowlist below: it reads FK-participant columns straight off `config.
+relationships`/`config.tables`, both parent- and child-role, so it still
+protects a `passthrough` PARENT key column even after the 2026-09-02
+cascade-safety fix narrows the CHILD-edge admission gate to `hash` only (a
+`passthrough` FK CHILD column is now rejected earlier still, at that gate,
+before this guard ever runs for it).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.execution._chunked_fk_dtype_safety import declared_fk_hash_dtype_is_safe
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.plan._errors import PlanCompileError
@@ -82,6 +88,9 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
         "bucketize",
         "top_code",
         "passthrough",
+        # Phase 4 slice 3 (2026-09-01): value-own-keyed per-cell deterministic
+        # span masking; NOT namespace-requiring (below).
+        "text_mask",
     }
 )
 
@@ -92,9 +101,11 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
 #   fpe        -- fpe_requires_namespace
 #   date_shift -- date_shift_requires_namespace
 # The remaining CHUNK_SAFE strategies (redact, truncate, text_redact, bucketize,
-# top_code, passthrough) do not read plan.namespace and produce byte-identical
-# output regardless of whether a namespace is declared; the namespace sub-checks
-# in the FK gate are skipped for them.
+# top_code, passthrough, text_mask) do not read plan.namespace and produce
+# byte-identical output regardless of whether a namespace is declared; the
+# namespace sub-checks in the FK gate are skipped for them. text_mask keys its
+# spans on ctx.mask_key globally (RFC 2104 HMAC per span), not a per-column
+# namespace, so it belongs in this group despite its richer dispatch.
 NAMESPACE_REQUIRING_STRATEGIES: frozenset[str] = frozenset({"hash", "fpe", "date_shift"})
 
 # Strategies whose masked output does NOT depend on the key's value (only on
@@ -204,13 +215,50 @@ def _col_index_from_config(config: dict[str, Any]) -> dict[tuple[str, str], dict
     return idx
 
 
+def _child_endpoints_from_config(
+    config: dict[str, Any],
+) -> set[tuple[str, tuple[str, ...]]]:
+    """Every `(child_table, child_columns)` key node across ALL relationships
+    in `config`, regardless of which table is currently being gated.
+
+    Predicate 8 needs this global view -- a parent key node is rejected when
+    IT is itself a child endpoint SOMEWHERE in the config (a same-key cascade
+    A -> B -> C), not just within the edge(s) into the table `gate_fk_child_
+    edges` was called for. Precomputing it once here (rather than checking
+    per-edge against only the CURRENT relationship entry) makes the predicate
+    order-independent: it gives the same answer no matter which table in the
+    chain gets gated first.
+    """
+    endpoints: set[tuple[str, tuple[str, ...]]] = set()
+    for rel_entry in config.get("relationships") or []:
+        if not isinstance(rel_entry, dict):
+            continue
+        for child_info in rel_entry.get("children") or []:
+            if not isinstance(child_info, dict):
+                continue
+            child_table = child_info.get("table")
+            child_cols = child_info.get("columns") or []
+            if isinstance(child_table, str):
+                endpoints.add((child_table, tuple(str(c) for c in child_cols)))
+    return endpoints
+
+
 def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
     """Gate each FK edge where `table` is the child against the self-mask conditions.
 
     Walks config.relationships and checks every edge whose child_table matches
-    `table`. An edge is ADMITTED only when all four conditions hold:
+    `table`. An edge is ADMITTED only when every condition below holds:
 
-    (a) Parent key strategy is in CHUNK_SAFE_STRATEGIES.
+    (a) Parent key strategy is EXACTLY `hash`. Every other CHUNK_SAFE_STRATEGIES
+        member (passthrough, fpe, redact, truncate, text_redact, date_shift,
+        bucketize, top_code, text_mask) is a strategy x representation x
+        substrate hole for FK self-masking specifically (2026-09-02 cascade-
+        safety plan): each either depends on cascade/`when` state, whole-column
+        state, or value representation/execution substrate in a way that makes
+        the child's independent self-mask diverge from the join oracle's output
+        for the SAME logical key. hash is the one strategy proven cross-adapter
+        byte-identical (via the shared kernel canonicalizer), and only for the
+        exact dtype set predicate 12 (below) admits.
     (b) Child FK column explicitly declares the same value-keyed strategy.
     (c) ONLY when parent strategy is in NAMESPACE_REQUIRING_STRATEGIES (hash,
         fpe, date_shift): child FK column explicitly declares the same namespace
@@ -223,20 +271,62 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
         (chunked_fk_parent_namespace_missing), consistent with the per-strategy
         namespace-required error at execution time.
         For namespace-agnostic strategies (redact, truncate, text_redact,
-        bucketize, top_code, passthrough), namespace sub-checks are skipped entirely:
+        bucketize, top_code, passthrough, text_mask), namespace sub-checks are skipped
+        entirely:
         their output is pure(value, config) and byte-identical regardless of
-        whether a namespace is declared.
+        whether a namespace is declared. (After (a)'s narrowing, only hash ever
+        reaches this point, so these strategies never actually exercise this
+        sub-check on the FK route anymore -- retained for the general
+        namespace-requiring-strategy contract this predicate documents.)
     (d) orphan_policy is 'remap'.
+    (8) The parent KEY NODE `(parent_table, (parent_col,))` is not ITSELF an FK
+        child endpoint anywhere in `config.relationships` (e.g. a same-key
+        chain A -> B -> C). If it were, the oracle FK-RESOLVES the parent key
+        (possibly to None on an upstream cascade failure) instead of masking it
+        by its declared strategy, so self-masking the grandchild would compute
+        `hash(value)` where the oracle computes `hash(resolved_parent_value)` --
+        a silent divergence. Checked against every `(child_table, child_columns)`
+        endpoint across the WHOLE config (not just edges into `table`), so the
+        result is independent of which table happens to be gated first. A
+        distinct-column self-FK on the same table (`employees.id ->
+        employees.manager_id`) is NOT caught by this -- the key NODE
+        `(employees, ("id",))` differs from `(employees, ("manager_id",))`, so
+        `id` stays a root key even though `manager_id` on the same table is a
+        child column.
+    (9/10) Neither the parent nor the child FK key column has an EFFECTIVE
+        `when` (a non-blank string, mirroring the compiler's own normalization
+        at `plan/_seed_envelope.py:245`). A row-gated key is masked
+        conditionally by the oracle (some rows stay raw); self-masking ignores
+        `when` entirely and always masks, so a `when`-bearing FK key silently
+        diverges on the gated rows.
+    (11) Neither FK endpoint declares a `provider`. A provider can route even a
+        hash-declared key through composite bundle generation
+        (`_runner.py`/`_pandas_adapter.py`) instead of the plain hash handler;
+        this gate has no registry to check which providers are safe, so any
+        provider on an FK key is rejected conservatively.
+    (12) The FK key dtype is in the EXACT cross-adapter-safe set (declared
+        stage; see `_chunked_fk_dtype_safety.py`). This is intentionally
+        NARROWER than the existing dtype-family comparison in the block below
+        (which admits `date64`-as-`date32`, `decimal256`-as-`decimal128`, and a
+        fixed-offset tz as IANA) -- hash is cross-adapter byte-identical only
+        for the precise dtype set that module defines. This is the DECLARED
+        half of a two-stage check; the per-chunk runtime guard
+        (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_dtype`)
+        re-validates the REAL Arrow type at each chunk boundary, since this
+        declared check -- like the family check beside it -- only ever runs
+        when `table` is the CHILD of the edge being walked.
 
     First cut: single-column edges only; composite FK rejected.
-    Tables that are FK parents but not children are not gated here.
+    Tables that are FK parents but not children are not gated here (except
+    predicate 8, which reads their child-endpoint identity from the config
+    directly rather than requiring them to be the currently-gated table).
 
     Raises:
         PlanCompileError: if any condition fails (fail closed).
             chunked_fk_orphan_policy_not_remap: orphan_policy is not 'remap'.
             chunked_fk_composite_unsupported: FK edge has more than one column.
-            chunked_fk_parent_strategy_not_safe: parent strategy is not in
-                CHUNK_SAFE_STRATEGIES.
+            chunked_fk_parent_strategy_not_self_mask_safe: parent strategy is
+                not exactly 'hash'.
             chunked_fk_parent_namespace_missing: parent strategy is in
                 NAMESPACE_REQUIRING_STRATEGIES and parent column has no namespace.
             chunked_fk_parent_namespace_mismatch: parent strategy is in
@@ -265,8 +355,29 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 so identical masked values cannot be proven. Fail closed: an
                 undeclared dtype is not knowable, and the child's chunked run
                 never sees the parent's data to check at runtime.
+            chunked_fk_parent_not_root: predicate 8 (parent key node is itself
+                an FK child endpoint elsewhere).
+            chunked_fk_parent_when_unsupported / chunked_fk_child_when_unsupported:
+                predicates 9/10 (an effective `when` on the parent/child key).
+            chunked_fk_endpoint_not_scalar: predicate 11 (a `provider` on either
+                FK key endpoint).
+            chunked_fk_key_dtype_not_cross_adapter_safe: predicate 12, declared
+                stage (an FK key dtype outside the exact cross-adapter-safe
+                set).
     """
     col_index = _col_index_from_config(config)
+    child_endpoints = _child_endpoints_from_config(config)
+    # Decompose every child endpoint to its component (table, column) pairs.
+    # Predicate 8 matches on components, not whole tuples: composite FK
+    # resolution rewrites EVERY participating child column, so a scalar parent
+    # that is ANY component of an upstream composite child endpoint is NOT a
+    # root and must be rejected. A scalar child endpoint decomposes to itself,
+    # so this also subsumes the same-key scalar cascade.
+    child_endpoint_columns = {
+        (child_table, child_col)
+        for child_table, child_cols in child_endpoints
+        for child_col in child_cols
+    }
 
     for rel_entry in config.get("relationships") or []:
         if not isinstance(rel_entry, dict):
@@ -320,19 +431,27 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             parent_col = str(parent_cols[0])
             child_col = str(child_cols[0])
 
-            # Condition (a): parent strategy must be value-keyed and chunk-safe.
+            # Condition (a): parent strategy must be EXACTLY hash (2026-09-02
+            # cascade-safety fix). Every other CHUNK_SAFE_STRATEGIES member is
+            # a proven strategy x representation x substrate hole for FK self-
+            # masking (see this function's docstring); a minimal single-
+            # strategy allowlist closes that whole hole class by construction
+            # and fails closed against any future CHUNK_SAFE_STRATEGIES
+            # addition.
             parent_cfg = col_index.get((str(parent_table), parent_col), {})
             parent_strategy = parent_cfg.get("strategy")
-            if parent_strategy not in CHUNK_SAFE_STRATEGIES:
+            if parent_strategy != "hash":
                 raise PlanCompileError(
-                    code="chunked_fk_parent_strategy_not_safe",
+                    code="chunked_fk_parent_strategy_not_self_mask_safe",
                     path=f"tables.{parent_table}.columns.{parent_col}.strategy",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
                         f"->{child_table}.{child_col}: "
-                        f"parent key strategy {parent_strategy!r} is not chunk-safe. "
-                        "Self-masking requires a value-keyed deterministic strategy. "
-                        f"Chunk-safe: {', '.join(sorted(CHUNK_SAFE_STRATEGIES))}."
+                        f"parent key strategy {parent_strategy!r} is not self-mask "
+                        "safe. Chunked FK self-masking admits exactly one strategy: "
+                        "'hash' (proven cross-adapter byte-identical for the exact "
+                        "dtype set predicate 12 restricts FK keys to). Use "
+                        "run_pipeline or run_sequential for any other strategy."
                     ),
                 )
 
@@ -340,8 +459,9 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # strategy is in NAMESPACE_REQUIRING_STRATEGIES (hash, fpe, date_shift).
             # Those handlers call derive(job_seed, namespace, ...) and raise at
             # execution when plan.namespace is None.  Namespace-agnostic strategies
-            # (redact, truncate, text_redact, bucketize, top_code, passthrough) do not read
-            # plan.namespace; their output is pure(value, config) and byte-identical
+            # (redact, truncate, text_redact, bucketize, top_code, passthrough,
+            # text_mask) do not read plan.namespace; their output is pure(value,
+            # config) and byte-identical
             # regardless of whether a namespace is declared, so no namespace
             # sub-checks are needed and imposing them would over-reject configs that
             # the full-frame path accepts.
@@ -354,6 +474,8 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             #       a disagreement flags a mis-wiring (edge ns != masking ns).
             #   c3. Child namespace must equal the parent-column namespace;
             #       otherwise derive() uses a different key and output diverges.
+            # text_mask is namespace-agnostic (keys on ctx.mask_key, not a
+            # per-column namespace), so it never reaches these sub-checks.
             parent_ns: str | None = parent_cfg.get("namespace")
             child_cfg = col_index.get((str(child_table), child_col), {})
             if parent_strategy in NAMESPACE_REQUIRING_STRATEGIES:
@@ -443,6 +565,121 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                         f"child strategy {child_strategy!r} != parent strategy "
                         f"{parent_strategy!r}. Self-masking requires identical strategies. "
                         f"Update the child strategy to {parent_strategy!r}."
+                    ),
+                )
+
+            # Predicate 8: the parent key COLUMN must not itself be resolved by
+            # any FK edge -- i.e. it must not be a component of any child
+            # endpoint in the config. If it were, the oracle FK-RESOLVES it via
+            # its own parent map (and an upstream cascade failure can null it
+            # out) instead of masking it by the declared strategy, so
+            # self-masking the grandchild computes hash(raw_value) where the
+            # oracle computes hash(resolved_value) -- a silent divergence. The
+            # test is scalar `(table, column)` membership in the globally
+            # decomposed child-component set (`child_endpoint_columns`), so it
+            # catches both the same-key scalar cascade (A.id -> B.id -> C.id)
+            # and the composite case where the parent is ONE column of an
+            # upstream composite child (A.(x,y) -> B.(id,z) then B.id -> C.id):
+            # composite FK resolution rewrites every participating column, and
+            # gating C never gates B's incoming composite edge, so only a
+            # component test -- not per-table gating -- closes it. A
+            # distinct-column self-FK (`employees.id -> employees.manager_id`)
+            # is correctly NOT caught: `id` is never a child-endpoint component,
+            # so it is never resolved. Membership is keyed on (table, column),
+            # so a same-named column on an unrelated table does not collide.
+            parent_component = (str(parent_table), str(parent_col))
+            if parent_component in child_endpoint_columns:
+                raise PlanCompileError(
+                    code="chunked_fk_parent_not_root",
+                    path=f"tables.{parent_table}.columns.{parent_col}",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"{parent_table}.{parent_col} is itself an FK child "
+                        "column elsewhere (a same-key cascade). The oracle FK-"
+                        "resolves it via its own parent map rather than masking "
+                        "it directly, so self-masking this edge's child would "
+                        "diverge from the resolved value. Use run_pipeline or "
+                        "run_sequential for a multi-hop same-key cascade."
+                    ),
+                )
+
+            # Predicates 9/10: neither the parent nor the child FK key column
+            # may have an EFFECTIVE `when` (a non-blank string). `when`
+            # normalization mirrors the compiler's own
+            # (`plan/_seed_envelope.py:245`): a row-gated key is masked
+            # CONDITIONALLY by the oracle (rows failing `when` stay raw), but
+            # self-masking has no concept of `when` and always masks every
+            # row, so a `when`-bearing FK key would diverge on the gated rows.
+            def _has_effective_when(col_entry: dict[str, Any]) -> bool:
+                when_raw = col_entry.get("when")
+                return isinstance(when_raw, str) and bool(when_raw.strip())
+
+            if _has_effective_when(parent_cfg):
+                raise PlanCompileError(
+                    code="chunked_fk_parent_when_unsupported",
+                    path=f"tables.{parent_table}.columns.{parent_col}.when",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"parent key column {parent_table}.{parent_col} has an "
+                        "effective 'when'. The oracle masks this key "
+                        "conditionally (rows failing 'when' stay raw); self-"
+                        "masking has no 'when' and always masks, so the child "
+                        "would diverge on the gated rows. Remove 'when' from the "
+                        "parent key column, or use run_pipeline / run_sequential."
+                    ),
+                )
+            if _has_effective_when(child_cfg):
+                raise PlanCompileError(
+                    code="chunked_fk_child_when_unsupported",
+                    path=f"tables.{child_table}.columns.{child_col}.when",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"child key column {child_table}.{child_col} has an "
+                        "effective 'when'. The oracle ignores 'when' on an FK-"
+                        "resolved child column, but self-masking would honor it "
+                        "and mask only the rows that pass, diverging from the "
+                        "oracle on the gated rows. Remove 'when' from the child "
+                        "key column, or use run_pipeline / run_sequential."
+                    ),
+                )
+
+            # Predicate 11: neither FK endpoint may declare a `provider`. A
+            # provider can route even a hash-declared key through composite
+            # bundle generation (`_runner.py` / `_pandas_adapter.py`) instead
+            # of the plain hash handler; this gate has no provider registry to
+            # check which providers are safe for FK self-masking, so any
+            # provider on either endpoint is rejected conservatively.
+            if parent_cfg.get("provider") is not None:
+                raise PlanCompileError(
+                    code="chunked_fk_endpoint_not_scalar",
+                    path=f"tables.{parent_table}.columns.{parent_col}.provider",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"parent key column {parent_table}.{parent_col} declares "
+                        "a provider. A provider can route a hash-declared key "
+                        "through composite bundle generation instead of the "
+                        "plain hash handler, which this gate cannot verify is "
+                        "safe. Remove the provider from the parent key column, "
+                        "or use run_pipeline / run_sequential."
+                    ),
+                )
+            if child_cfg.get("provider") is not None:
+                raise PlanCompileError(
+                    code="chunked_fk_endpoint_not_scalar",
+                    path=f"tables.{child_table}.columns.{child_col}.provider",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"child key column {child_table}.{child_col} declares a "
+                        "provider. A provider can route a hash-declared key "
+                        "through composite bundle generation instead of the "
+                        "plain hash handler, which this gate cannot verify is "
+                        "safe. Remove the provider from the child key column, or "
+                        "use run_pipeline / run_sequential."
                     ),
                 )
 
@@ -544,6 +781,87 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                             "normalize both columns to the same dtype before masking."
                         ),
                     )
+
+                # Predicate 12 (declared stage): hash is cross-adapter byte-
+                # identical only for the EXACT dtype set
+                # `_chunked_fk_dtype_safety` defines -- narrower than the
+                # family match just above, which collapses date32/date64,
+                # every timestamp unit/tz, and every decimal width/scale into
+                # one family string (so it would admit date64-as-date32,
+                # decimal256-as-decimal128, and a fixed-offset tz as IANA).
+                # Both endpoints are checked independently: sharing a family
+                # does not mean either one is individually safe (e.g. both
+                # declared "date64" share a family but neither is safe). This
+                # is a TRUSTED declared-string check, like the family check
+                # beside it; the per-chunk runtime guard
+                # (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_
+                # dtype`) re-validates the REAL Arrow type for the same reason
+                # the family check's runtime companion exists.
+                for endpoint_table, endpoint_col, endpoint_dtype in (
+                    (parent_table, parent_col, parent_dtype),
+                    (child_table, child_col, child_dtype),
+                ):
+                    if not declared_fk_hash_dtype_is_safe(str(endpoint_dtype)):
+                        raise PlanCompileError(
+                            code="chunked_fk_key_dtype_not_cross_adapter_safe",
+                            path=f"tables.{endpoint_table}.columns.{endpoint_col}.dtype",
+                            message=(
+                                f"FK edge {parent_table}.{parent_col}"
+                                f"->{child_table}.{child_col}: "
+                                f"{endpoint_table}.{endpoint_col} declares FK key "
+                                f"dtype {endpoint_dtype!r}, which is not in the "
+                                "exact cross-adapter-safe set for hash-only FK "
+                                "self-masking (string, large_string, any integer "
+                                "width, bool, date32, an IANA-tz timestamp, or a "
+                                "32/64/128-bit decimal with scale >= 0). hash is "
+                                "only proven cross-adapter byte-identical for "
+                                "these dtypes. Declare one of them, or use "
+                                "run_pipeline / run_sequential."
+                            ),
+                        )
+
+
+def fk_hash_strategy_columns_for_table(config: dict[str, Any], table: str) -> set[str]:
+    """Every FK-participant column on `table` (either endpoint role) declared
+    with EXACTLY the `hash` strategy.
+
+    Scopes predicate 12's exact cross-adapter-safe dtype restriction to the
+    population the hash-only FK self-mask allowlist (condition (a)) actually
+    admits, for the per-chunk REAL-type stage of the check
+    (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_dtype`). Mirrors
+    `fk_passthrough_columns_for_table`'s both-sides scan. A `truncate`/`fpe`/
+    `passthrough` FK column elsewhere on the same table still gets the
+    (unchanged) coarse family-level guard via `fk_declared_dtypes_for_table`,
+    but is NOT held to this narrower exact-dtype rule: predicate 12 is specific
+    to the hash-only cascade-safety fix, not every chunk-safe strategy.
+    """
+    fk_columns: set[str] = set()
+    for rel_entry in config.get("relationships") or []:
+        if not isinstance(rel_entry, dict):
+            continue
+        parent_info = rel_entry.get("parent") or {}
+        if isinstance(parent_info, dict) and parent_info.get("table") == table:
+            fk_columns.update(c for c in parent_info.get("columns") or [] if isinstance(c, str))
+        for child_info in rel_entry.get("children") or []:
+            if not isinstance(child_info, dict) or child_info.get("table") != table:
+                continue
+            fk_columns.update(c for c in child_info.get("columns") or [] if isinstance(c, str))
+    if not fk_columns:
+        return set()
+    table_cfg = next(
+        (t for t in config.get("tables") or [] if isinstance(t, dict) and t.get("name") == table),
+        None,
+    )
+    if table_cfg is None:
+        return set()
+    hash_columns: set[str] = set()
+    for col in table_cfg.get("columns") or []:
+        if not isinstance(col, dict) or col.get("strategy") != "hash":
+            continue
+        col_name = col.get("name")
+        if isinstance(col_name, str) and col_name in fk_columns:
+            hash_columns.add(col_name)
+    return hash_columns
 
 
 def fk_passthrough_columns_for_table(config: dict[str, Any], table: str) -> set[str]:

@@ -176,6 +176,36 @@ def top_code_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[st
     return out
 
 
+def group_key_group_by_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[str]]:
+    """Per-table set of sibling columns named by a `group_key` `group_by` (Trap B).
+
+    A group_by column needs the same lossless-ingest treatment as an FK
+    parent key or a `date_shift`/`top_code` column: `apply_group_key` calls
+    `str(raw_val)` on the group_by cell, so an int+null column that widens
+    to float64 on a null-bearing chunk but stays int64 on a null-free one
+    stringifies "5" vs "5.0" for the SAME value depending purely on which
+    OTHER rows share its chunk -- a chunk-boundary-dependent key, breaking
+    the sibling-keyed byte-identity contract. Both the pandas adapter and
+    the sequential runner union this set into `fk_columns_for_table(...)`
+    (lossless ingestion only -- NOT a pre-mask snapshot: unlike date_shift's
+    group anchors, group_key reads the group_by column at its own position
+    in the work order on every route, so a masked group_by column is read
+    post-mask consistently everywhere).
+    """
+    from decoy_engine.execution._adapter import provider_config_to_dict
+
+    out: dict[str, set[str]] = {}
+    for node in build_work_list(plan, registry):
+        if node.kind != "scalar" or node.strategy != "group_key":
+            continue
+        if not isinstance(node.plan_slice, ColumnSeed):
+            continue
+        group_by = provider_config_to_dict(node.plan_slice.provider_config).get("group_by")
+        if isinstance(group_by, str) and group_by:
+            out.setdefault(node.table, set()).add(group_by)
+    return out
+
+
 def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> list[WorkNode]:
     """Order the work list (S9 spec §6.2).
 

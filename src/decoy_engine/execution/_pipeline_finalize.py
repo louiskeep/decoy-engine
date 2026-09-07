@@ -29,11 +29,43 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+
 __all__ = [
     "compute_fidelity_reports",
     "finalize_validators_and_quarantine",
     "stamp_execution_metrics",
 ]
+
+# `run_pipeline`'s execution-knob defaults. Owned here (not `_pipeline.py`,
+# which imports them back for its own signature defaults) so the single
+# source of truth lives next to the one place that reads it to decide
+# non-default-ness -- the original split (defaults in `_pipeline.py`,
+# non-default booleans computed there too) needed no cross-module import,
+# but computing the booleans here instead does, and importing a bare literal
+# back across that boundary would create exactly the drift risk the old
+# comment warned against. `substrate` pins "pandas" (NOT None):
+# resolve_substrate(None) follows DECOY_SUBSTRATE and its S13 default flip to
+# polars, and run_pipeline's default route must stay byte-identical to the
+# original hardcoded pandas path.
+SUBSTRATE_DEFAULT = "pandas"
+FPE_CHUNK_COUNT_DEFAULT = 4
+MAX_WORKERS_DEFAULT = 4
+FALLBACK_TO_PANDAS_DEFAULT = True
+# Auto-chunk defaults. Default-ON is safe because identity is enforced
+# twice: the planner's fail-closed gates admit only jobs whose every
+# per-column output is a pure function of (value, config, seed) with all
+# whole-column inputs pinned (date_shift needs an explicit date_format,
+# bucketize a null-free numeric source, `when` predicates never route),
+# and the strict chunk concat refuses to merge chunks whose schemas
+# disagree (a gate miss raises rather than silently promoting); the
+# fixture matrix in tests/unit/execution/test_auto_chunk_routing.py is
+# regression evidence for that contract, not its proof. 50k-row chunks
+# bound the per-chunk pandas working set at negligible per-chunk
+# plan/adapter overhead (P0 showed wall-clock parity at 10k rows).
+AUTO_CHUNK_DEFAULT = True
+CHUNK_SIZE_ROWS_DEFAULT = 50_000
+AUTO_CHUNK_THRESHOLD_DEFAULT = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 
 
 def stamp_execution_metrics(
@@ -45,12 +77,10 @@ def stamp_execution_metrics(
     fpe_chunk_count: int,
     max_workers: int,
     fallback_to_pandas: bool,
-    adapter_non_default: bool,
     route_chunked: bool,
     auto_chunk: bool,
     chunk_size_rows: int,
     auto_chunk_threshold_rows: int,
-    auto_chunk_non_default: bool,
     table_kinds: dict[str, str],
     caller_sources: dict[str, pa.Table],
     execution_plan_decision: Any,
@@ -61,16 +91,27 @@ def stamp_execution_metrics(
     Performance-mode reproducibility: any non-default knob stamps the
     selected adapter identity + every knob value into the job metadata.
     The all-default path stamps nothing so golden and compat-corpus
-    fixtures stay byte-identical. `adapter_non_default` /
-    `auto_chunk_non_default` are pre-computed by the caller (a plain
-    tuple-equality check against `run_pipeline`'s own default constants)
-    so this module does not need to import or duplicate them.
+    fixtures stay byte-identical. `adapter_non_default` / `auto_chunk_
+    non_default` are computed here (against this module's own default
+    constants above) rather than by the caller, so `run_pipeline` threads
+    only the raw knob values through, not a pre-computed comparison.
 
     Auto-chunk reproducibility stamp: a routed run is non-default by
     definition; a non-routed run stamps only when an auto-chunk knob is
     non-default. All-default full-frame runs stamp nothing (the P1
     golden `quality_metrics == {}` contract).
     """
+    adapter_non_default = (substrate, fpe_chunk_count, max_workers, fallback_to_pandas) != (
+        SUBSTRATE_DEFAULT,
+        FPE_CHUNK_COUNT_DEFAULT,
+        MAX_WORKERS_DEFAULT,
+        FALLBACK_TO_PANDAS_DEFAULT,
+    )
+    auto_chunk_non_default = (auto_chunk, chunk_size_rows, auto_chunk_threshold_rows) != (
+        AUTO_CHUNK_DEFAULT,
+        CHUNK_SIZE_ROWS_DEFAULT,
+        AUTO_CHUNK_THRESHOLD_DEFAULT,
+    )
     if adapter_non_default:
         mask_quality_metrics["execution_adapter"] = {
             "adapter_name": adapter.adapter_name,

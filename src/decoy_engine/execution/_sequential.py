@@ -153,6 +153,7 @@ from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
     date_shift_group_columns,
+    group_key_group_by_columns,
     order_work,
     top_code_columns,
 )
@@ -288,6 +289,11 @@ def run_sequential(
     # HC-3b (Codex R2): top_code columns need the same lossless int+null typing
     # so a value >= 2**53 is not rounded by a float64 widen (chunk-safety).
     top_code_cols = top_code_columns(plan, registry)
+    # Phase 4 slice 2: a group_key `group_by` sibling has the identical
+    # lossless-typing need. group_key is not FK-key-eligible itself, but it
+    # can mask an ordinary column on any table in an FK job, so this route
+    # needs the same union the single-table pandas adapter uses.
+    group_key_cols = group_key_group_by_columns(plan, registry)
 
     # A parent key map is retained until every child table that references it has
     # been processed; this makes multi-parent and diamond graphs safe.
@@ -370,7 +376,8 @@ def run_sequential(
                     src,
                     fk_columns_for_table(graph.edges, table)
                     | group_anchor_cols.get(table, set())
-                    | top_code_cols.get(table, set()),
+                    | top_code_cols.get(table, set())
+                    | group_key_cols.get(table, set()),
                 )
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df

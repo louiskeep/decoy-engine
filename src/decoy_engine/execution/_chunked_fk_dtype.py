@@ -18,6 +18,16 @@ trusted, and `reject_mismatched_chunked_fk_declared_dtype` validates each
 against the chunk's real Arrow dtype family and fails closed on a cross-family
 disagreement. Extracted into this sibling (rather than growing `_chunked_fk.py`
 past the orchestration LOC cap) alongside the module it guards.
+
+`reject_mismatched_chunked_fk_declared_dtype` also carries predicate 12's REAL
+stage (2026-09-02 cascade-safety fix, hash-only FK self-masking): the family
+match above is too coarse a byte-parity proof for hash (it folds date32/
+date64, every timestamp unit/tz, and every decimal width/scale into one family
+string), so for hash-strategy FK columns specifically it additionally checks
+the real Arrow type against `_chunked_fk_dtype_safety.arrow_type_is_fk_hash_
+safe` -- the same predicate the compile-time declared check
+(`_chunked_fk.gate_fk_child_edges`) uses, so declared and real can never
+silently disagree on what counts as safe.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ from decoy_engine.execution._chunked_fk import (
     DTYPE_INVARIANT_STRATEGIES,
     _dtype_family,
 )
+from decoy_engine.execution._chunked_fk_dtype_safety import arrow_type_is_fk_hash_safe
 from decoy_engine.execution._errors import ExecutionError
 
 
@@ -102,11 +113,40 @@ def fk_declared_dtypes_for_table(config: dict[str, Any], table: str) -> dict[str
     return declared
 
 
+def _reject_unsafe_hash_fk_key_real_type(table: str, column: str, real_type: pa.DataType) -> None:
+    """Raise predicate 12's cross-adapter-safety error if a hash FK key's REAL
+    Arrow type is outside the exact safe set. Shared by both the declared-dtype
+    loop and the undeclared-hash loop so the two paths raise identically."""
+    if arrow_type_is_fk_hash_safe(real_type):
+        return
+    raise ExecutionError(
+        code="chunked_fk_key_dtype_not_cross_adapter_safe",
+        message=(
+            f"Column {table}.{column} is a hash-strategy FK key whose "
+            f"REAL chunk dtype is {real_type}, which is outside predicate "
+            "12's exact cross-adapter-safe set (string, large_string, any "
+            "integer width, bool, date32, an IANA-tz timestamp, or a "
+            "32/64/128-bit decimal with scale >= 0). hash is only proven "
+            "cross-adapter byte-identical for these dtypes -- a dictionary-"
+            "wrapped, date64, 256-bit/negative-scale decimal, fixed-offset-"
+            "tz, or tz-naive real value voids that guarantee. Use "
+            "run_pipeline / run_sequential instead."
+        ),
+    )
+
+
 def reject_mismatched_chunked_fk_declared_dtype(
-    chunk: pa.Table, *, table: str, declared_fk_dtypes: dict[str, str]
+    chunk: pa.Table,
+    *,
+    table: str,
+    declared_fk_dtypes: dict[str, str],
+    hash_fk_key_columns: frozenset[str] | set[str] = frozenset(),
 ) -> None:
     """Fail closed when a chunk's REAL FK key dtype family disagrees with the
-    dtype the config DECLARED for that column (DE-10 residual, LOW).
+    dtype the config DECLARED for that column (DE-10 residual, LOW), and --
+    for columns in `hash_fk_key_columns` -- when the REAL dtype itself falls
+    outside predicate 12's exact cross-adapter-safe set (2026-09-02
+    cascade-safety fix).
 
     A MISdeclaration (declared int64, real data string/float) passes the
     compile-time gate yet makes the child self-mask a different byte sequence
@@ -118,6 +158,19 @@ def reject_mismatched_chunked_fk_declared_dtype(
     trusting a config string. Family granularity (not exact dtype) matches the
     gate's own tolerance: int32 vs int64 reproduce identical masked bytes, so
     only a cross-FAMILY disagreement (int declared, string/float real) breaks RI.
+
+    `hash_fk_key_columns` (from `_chunked_fk.fk_hash_strategy_columns_for_table`)
+    additionally gates the EXACT real-type check for hash-strategy FK columns
+    specifically: predicate 12's declared-side check
+    (`_chunked_fk.gate_fk_child_edges`) only ever runs for the table currently
+    on the CHILD side of an edge (same asymmetry the family check above
+    already has), so a misdeclared-but-family-matching column -- or a real
+    type that a misdeclaration cannot even express, like a dictionary wrapper
+    -- needs this per-chunk, per-table-symmetric check to close the gap. A
+    column not in `hash_fk_key_columns` (e.g. a `truncate`/`fpe`/`passthrough`
+    FK key elsewhere on the same table) still gets the family check above, just
+    not this narrower exact-dtype rule -- predicate 12 is specific to the
+    hash-only cascade-safety fix, not every chunk-safe strategy.
     """
     for column, declared_dtype in declared_fk_dtypes.items():
         if column not in chunk.column_names:
@@ -168,3 +221,25 @@ def reject_mismatched_chunked_fk_declared_dtype(
                     "normalize FK key equality via the parent map)."
                 ),
             )
+        # Predicate 12 (real stage): the family match above is not enough for
+        # hash-only cascade safety -- it would admit a real date64 under a
+        # declared date64 (same family, same misdeclaration-free agreement),
+        # yet date64 is not in hash's proven cross-adapter-safe set. Scoped to
+        # `hash_fk_key_columns` (see docstring); a column outside that set
+        # relies on the family check above only, unchanged.
+        if column in hash_fk_key_columns:
+            _reject_unsafe_hash_fk_key_real_type(table, column, real_type)
+
+    # Predicate 12 also runs for hash FK keys with NO declared dtype: `dtype`
+    # is optional in config, so those never enter the loop above, yet an unsafe
+    # real type (date64/decimal256/tz-naive/...) on such a key still reaches the
+    # hash kernel and diverges cross-adapter. The real
+    # stage is exact-type, so it needs no declaration to run -- it judges the
+    # chunk's actual Arrow type directly. Same `pa.null()` carveout applies.
+    for column in hash_fk_key_columns:
+        if column in declared_fk_dtypes or column not in chunk.column_names:
+            continue
+        real_type = chunk.schema.field(column).type
+        if pa.types.is_null(real_type):
+            continue
+        _reject_unsafe_hash_fk_key_real_type(table, column, real_type)

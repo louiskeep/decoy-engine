@@ -1,0 +1,74 @@
+[
+  {
+    "parent_rows": 2000000,
+    "reorder": {
+      "route": "reorder",
+      "parent_rows": 2000000,
+      "child_rows": 10000000,
+      "duckdb_memory_limit_bytes": 590558003,
+      "count": 10000000,
+      "wall_time_s": 78.15133611799683,
+      "peak_rss_mb": 1751.94921875
+    },
+    "batchjoin": {
+      "route": "batchjoin",
+      "parent_rows": 2000000,
+      "child_rows": 10000000,
+      "duckdb_memory_limit_bytes": 590558003,
+      "count": 10000000,
+      "wall_time_s": 86.28294889302924,
+      "peak_rss_mb": 988.8125
+    },
+    "parity_ok": true,
+    "peak_ratio": 1.7717709057581694,
+    "wall_ratio": 0.9057564341581126
+  },
+  {
+    "parent_rows": 6000000,
+    "reorder": {
+      "route": "reorder",
+      "parent_rows": 6000000,
+      "child_rows": 10000000,
+      "duckdb_memory_limit_bytes": 590558003,
+      "count": 10000000,
+      "wall_time_s": 78.9390021879226,
+      "peak_rss_mb": 2456.203125
+    },
+    "batchjoin": {
+      "route": "batchjoin",
+      "parent_rows": 6000000,
+      "child_rows": 10000000,
+      "duckdb_memory_limit_bytes": 590558003,
+      "count": 10000000,
+      "wall_time_s": 141.4774566080887,
+      "peak_rss_mb": 2057.3046875
+    },
+    "parity_ok": true,
+    "peak_ratio": 1.193893709533484,
+    "wall_ratio": 0.5579616999095064
+  },
+  {
+    "parent_rows": 10000000,
+    "reorder": {
+      "route": "reorder",
+      "parent_rows": 10000000,
+      "child_rows": 10000000,
+      "duckdb_memory_limit_bytes": 590558003,
+      "count": 10000000,
+      "wall_time_s": 82.99874438496772,
+      "peak_rss_mb": 3256.07421875
+    },
+    "batchjoin": {
+      "route": "batchjoin",
+      "parent_rows": 10000000,
+      "child_rows": 10000000,
+      "duckdb_memory_limit_bytes": 590558003,
+      "count": 10000000,
+      "wall_time_s": 369.0219192910008,
+      "peak_rss_mb": 3211.7421875
+    },
+    "parity_ok": true,
+    "peak_ratio": 1.013803110169471,
+    "wall_ratio": 0.224915486170666
+  }
+]

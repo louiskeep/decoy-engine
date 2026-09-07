@@ -12,6 +12,31 @@ pipeline tests are not counted).
 **76 mutants: 75 killed, 1 survived.** Baseline was 65 killed (86%); this pass
 killed the 10 LOGIC survivors, leaving 1 equivalent. LOGIC-mutant score 100%.
 
+## Phase 4 slice 1 re-grade (2026-08-31, DGRN -> `windowed_date`)
+
+`apply_windowed_date` gained a `row_offset: int = 0` param
+(`docs/plans/2026-08-31-p4-slice1-dgrn-windowed-date.md`): the enumeration line changed from
+`enumerate(anchor_series)` to `enumerate(anchor_series, start=row_offset)`, the single
+semantic change the slice makes. Re-graded via
+`scripts/native-testing/python_mutation_pilot.py` + `scripts/tq_mutate.py` (standalone-
+pytest-per-mutant), selection extended to also include
+`tests/unit/execution/test_dgrn_windowed_date.py` (the offset-boundary + DGRN-domain-oracle
+suite).
+
+**80 mutants (up from 76 with the new param): 77 killed, 3 proven equivalent. LOGIC-100%,
+0 unresolved.** The pre-existing `_sample_offset` equivalent (`span = None`, see above) is
+still equivalent under the new selection. Two NEW equivalents are Python-version artifacts
+of the same call sites the offset threading touches:
+`int.from_bytes(derive(...)[:8], "big")` -> dropped second positional arg, and
+`i.to_bytes(8, "big")` -> dropped second positional arg. Both are equivalent only because
+Python 3.11+ defaults `byteorder` to `"big"` for both `int.from_bytes`/`int.to_bytes` (this
+repo's pinned interpreter is 3.13); on an earlier Python the dropped argument would raise
+`TypeError` rather than pass silently, so this equivalence is environment-pinned -- re-verify
+if the minimum supported Python version ever drops below 3.11.
+
+Regenerate: extend the selection above to
+`tests/unit/transforms/test_windowed_date.py tests/unit/execution/test_dgrn_windowed_date.py`.
+
 ## LOGIC killed this pass (6 new tests)
 
 All in `test_windowed_date.py::TestWindowedDateBounds`.

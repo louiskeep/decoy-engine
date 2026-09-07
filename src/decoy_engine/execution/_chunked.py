@@ -20,6 +20,7 @@ set is exactly those:
 | date_shift   | offset derived from the value (derive(seed, ns, value)) |
 | bucketize    | bin of the value |
 | passthrough  | identity |
+| text_mask    | per-span HMAC-keyed dispatch (fpe/faker/date_shift/redact) |
 
 Two of those rows carry whole-column caveats the per-value story hides:
 date_shift's offset is value-keyed, but its date FORMAT is detected from
@@ -52,6 +53,34 @@ than derived from the data:
   `provider_config.categories`, and NOT `from_profile` (profile-derived
   categories would come from the first chunk only).
 
+DGRN-admitted (Phase 4 slice 1): `windowed_date`, position-keyed on the durable
+global row number via `CHUNK_DGRN_STRATEGIES` (kept SEPARATE from CHUNK_SAFE so
+the FK gate still rejects it). See `_chunked_dgrn.py` for the full design.
+
+Sibling-keyed (Phase 4 slice 2): `group_key`, keyed on a SIBLING `group_by`
+column's value via `CHUNK_SIBLING_KEYED_STRATEGIES` (also SEPARATE from
+CHUNK_SAFE for the FK reason). See `_chunked_group_key.py`.
+
+Own-value-keyed (Phase 4 slice 3): `text_mask` joins `CHUNK_SAFE_STRATEGIES`
+directly (each span masked by its OWN text under `ctx.mask_key`; FK-self-mask
+eligible). Its only new gate is the `when:` rejection in `_chunked_text_mask.py`.
+
+Conditionally admitted, non-key (Phase 4 slice 4): `code_set` mask mode
+(no `chapter_preserve`, chunk-stable string source, no `when:`, and no
+participation as an FK key column in either orientation). Stays OUT of
+CHUNK_SAFE_STRATEGIES -- it is a CONDITIONAL strategy like faker/categorical,
+gated on config shape rather than admitted unconditionally -- and one corpus
+record is resolved per column BEFORE any chunk streams and pinned into every
+chunk's context so masking cannot drift across a mid-run corpus file swap.
+See `_chunked_code_set.py`.
+
+Conditionally admitted, non-key (Phase 4 slice 5): `bucket_perturb` with an
+explicit `date_format` (chunk-stable string source, no `when:`, and no
+participation as an FK key column in either orientation). Same CONDITIONAL
+treatment as code_set -- autodetect is a whole-column reduction, so it stays
+OUT of CHUNK_SAFE_STRATEGIES -- but simpler: no corpus, no evidence, so
+there is no pinning/aggregation counterpart. See `_chunked_bucket_perturb.py`.
+
 Rejected at compile time (`check_chunked_compatibility`):
 
 - shuffle (whole-column permutation), composite/nested (bundle state):
@@ -66,11 +95,15 @@ FK child self-masking (SC1 port, Option 1, docs/relationships-memory-scaling.md
 
 An FK edge where the current table is the child is ADMITTED for chunked
 execution -- the child self-masks via its own value-keyed strategy under the
-shared namespace rather than resolving by parent-map lookup -- ONLY WHEN all
-four gate conditions hold (`_chunked_fk.gate_fk_child_edges`). Any failure
+shared namespace rather than resolving by parent-map lookup -- ONLY WHEN
+every gate condition holds (`_chunked_fk.gate_fk_child_edges`). Any failure
 raises PlanCompileError (fail closed):
 
-  (a) Parent key strategy is in CHUNK_SAFE_STRATEGIES.
+  (a) Parent key strategy is EXACTLY `hash` (2026-09-02 cascade-safety fix:
+      every other CHUNK_SAFE_STRATEGIES member is a proven strategy x
+      representation x substrate divergence hole for FK self-masking
+      specifically, even though each is safe as an ordinary chunked
+      strategy).
   (b) Child FK column explicitly declares the same value-keyed strategy
       (no 'by-reference' model; the child must own its masking).
   (c) Child FK column explicitly declares the same namespace as the parent
@@ -88,6 +121,14 @@ raises PlanCompileError (fail closed):
       masking the orphan key under the same strategy and namespace.
       WARN/FAIL/PRESERVE all require the parent key set resident and are
       rejected with chunked_fk_orphan_policy_not_remap.
+  (8-12) The parent key node is not itself an FK child endpoint elsewhere
+      (a same-key cascade); neither FK key column has an effective `when`;
+      neither FK key column declares a `provider`; and the FK key dtype is
+      in the exact cross-adapter-safe set hash is proven byte-identical
+      for, validated at BOTH compile time (the declared dtype) and per
+      chunk (the real dtype) -- see `_chunked_fk.gate_fk_child_edges`'s
+      docstring for the full rationale and `_chunked_fk_dtype_safety.py`
+      for the exact dtype set.
 
 First cut: single-column FK edges only (composite FK rejected with
 chunked_fk_composite_unsupported). Tables that are FK parents but not
@@ -121,9 +162,15 @@ import pyarrow as pa
 
 from decoy_engine.plan._errors import PlanCompileError
 
+from . import _chunked_bucket_perturb as bucket_perturb_gate
+from . import _chunked_code_set as code_set_gate
+from . import _chunked_dgrn as dgrn
+from . import _chunked_group_key as group_key
+from . import _chunked_text_mask as text_mask_gate
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
+    fk_hash_strategy_columns_for_table,
     fk_passthrough_columns_for_table,
     gate_fk_child_edges,
     reject_lossy_chunked_fk_passthrough,
@@ -135,7 +182,16 @@ from ._chunked_fk_dtype import (
 
 # Admitted only when the column's config pins the deterministic
 # value-keyed path (see module docstring for the per-strategy rules).
-CHUNK_CONDITIONAL_STRATEGIES: frozenset[str] = frozenset({"faker", "categorical"})
+CHUNK_CONDITIONAL_STRATEGIES: frozenset[str] = frozenset(
+    {"faker", "categorical", "code_set", "bucket_perturb"}
+)
+
+# Strategies admitted onto the chunked route: value-keyed (CHUNK_SAFE), the
+# position-keyed DGRN set (`_chunked_dgrn.py`), and the sibling-keyed set
+# (`_chunked_group_key.py`).
+_CHUNK_ADMITTED_STRATEGIES: frozenset[str] = (
+    CHUNK_SAFE_STRATEGIES | dgrn.CHUNK_DGRN_STRATEGIES | group_key.CHUNK_SIBLING_KEYED_STRATEGIES
+)
 
 
 def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
@@ -145,6 +201,18 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
     list means the column is admitted.
     """
     strategy = col_entry.get("strategy")
+    if strategy == "code_set":
+        # code_set's admission conditions (mask mode, no chapter_preserve) do
+        # not involve `deterministic`/`namespace` at all -- unlike faker/
+        # categorical below, mask mode is deterministic by construction and
+        # namespace is optional (defaults to "code_set"). See _chunked_code_set.py.
+        return code_set_gate.code_set_conditional_failures(col_entry)
+    if strategy == "bucket_perturb":
+        # bucket_perturb's only admission condition is an explicit date_format;
+        # deterministic/namespace do not apply (namespace is REQUIRED but
+        # already fails closed identically on both routes -- see
+        # _chunked_bucket_perturb.py).
+        return bucket_perturb_gate.bucket_perturb_conditional_failures(col_entry)
     cfg = col_entry.get("provider_config") or {}
     failures: list[str] = []
     if not col_entry.get("deterministic"):
@@ -189,7 +257,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         chunked_generate_unsupported: `table` is a generate-kind table.
         chunked_fk_orphan_policy_not_remap: FK child edge with non-REMAP policy.
         chunked_fk_composite_unsupported: FK child edge with a composite key.
-        chunked_fk_parent_strategy_not_safe: parent key strategy not chunk-safe.
+        chunked_fk_parent_strategy_not_self_mask_safe: parent key strategy is not exactly `hash`.
         chunked_fk_child_namespace_missing: child column has no explicit namespace.
         chunked_fk_child_namespace_mismatch: child namespace != parent namespace.
         chunked_fk_child_strategy_missing: child column has no explicit strategy.
@@ -197,6 +265,14 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         strategy_not_chunk_safe: a non-FK column uses a non-chunk-safe strategy.
         chunked_strategy_conditions_unmet: faker/categorical admission conditions
             are not met; message names each unmet condition.
+        chunked_windowed_date_when_not_supported: `windowed_date` + `when:`.
+        chunked_text_mask_when_not_supported: `text_mask` + `when:`.
+        chunked_code_set_when_not_supported: `code_set` + `when:`.
+        chunked_code_set_fk_key_unsupported: `code_set` used as an FK key
+            column, as parent or child.
+        chunked_bucket_perturb_when_not_supported: `bucket_perturb` + `when:`.
+        chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` used as
+            an FK key column, as parent or child.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -223,13 +299,30 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     # are not constrained here; the parent chunks normally.
     if config.get("relationships"):
         gate_fk_child_edges(config, table=table)
+        # code_set as an FK key (either orientation) is rejected here because
+        # gate_fk_child_edges above only inspects CHILD-side edges (see
+        # _chunked_code_set.py point 4).
+        code_set_gate.reject_code_set_fk_keys(config, table=table)
+        # Same both-orientation gap for bucket_perturb (see
+        # _chunked_bucket_perturb.py point 3).
+        bucket_perturb_gate.reject_bucket_perturb_fk_keys(config, table=table)
+    # `windowed_date` + `when:` inadmissible here (public entry; see `_chunked_dgrn.py`).
+    dgrn.reject_windowed_date_when(table_cfg, table=table)
+    # `group_key` + `when:` inadmissible here too (see `_chunked_group_key.py`).
+    group_key.reject_group_key_when(table_cfg, table=table)
+    # `text_mask` + `when:` inadmissible here too (see `_chunked_text_mask.py`).
+    text_mask_gate.reject_text_mask_when(table_cfg, table=table)
+    # `code_set` + `when:` inadmissible here too (see `_chunked_code_set.py`).
+    code_set_gate.reject_code_set_when(table_cfg, table=table)
+    # `bucket_perturb` + `when:` inadmissible here too (see `_chunked_bucket_perturb.py`).
+    bucket_perturb_gate.reject_bucket_perturb_when(table_cfg, table=table)
     offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:
         if not isinstance(col_entry, dict):
             continue
         strategy = col_entry.get("strategy")
-        if strategy is None or strategy in CHUNK_SAFE_STRATEGIES:
+        if strategy is None or strategy in _CHUNK_ADMITTED_STRATEGIES:
             continue
         if strategy in CHUNK_CONDITIONAL_STRATEGIES:
             failures = _conditional_admission_failures(col_entry)
@@ -282,8 +375,18 @@ def run_mask_pipeline_chunked(
     `config` is the validated pipeline config dump; `chunks` yields
     pyarrow Tables of the table's rows in order. Returns an iterator of
     masked chunks in the same order; concatenating them is byte-identical
-    to a full-frame `run_pipeline` of the same rows (the value-keyed
-    contract, enforced by `check_chunked_compatibility` up front).
+    to a full-frame `run_pipeline` of the same rows. `check_chunked_
+    compatibility` enforces the CONFIG-level value-keyed contract up front,
+    but it does not see the data: for some strategies runtime dtype stability
+    is the caller's precondition. A string-converting strategy on an
+    int-with-nulls source diverges by chunk boundary (a null-free chunk stays
+    int64 -> "1"; a null-bearing one widens to float64 -> "1.0"). `text_mask`
+    now enforces a chunk-stable-string-source gate at admission below (both
+    this entry and the auto route); the OTHER string-converting strategies
+    (`text_redact` / `hash`) still rely on this caller precondition at this
+    low-level entry (the auto route gates them via
+    `_planner._runtime_source_rejections`). Carry-forward: extend the
+    text_mask gate to that whole class.
 
     `adapter` selects the execution substrate; None keeps the pandas
     adapter (the byte-stable default this mode shipped with). Pass a
@@ -303,14 +406,14 @@ def run_mask_pipeline_chunked(
     type. The auto-chunk route in `run_pipeline` uses it to keep
     warnings and timings from being dropped on routed jobs.
 
-    `base_row_offset` seeds a running row-position counter that advances
-    by each chunk's row count; it is inert here (the Phase 1 admitted set
-    is diagnostics-free) and exists so a later phase can globalize
-    per-chunk diagnostic indices from a caller-supplied starting position.
+    `base_row_offset` is the durable global row number the position-keyed
+    `windowed_date` strategy consumes (Phase 4 slice 1); inert for every
+    value-keyed strategy. See `_chunked_dgrn.py` for the domain contract.
 
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
+    dgrn.validate_base_row_offset(base_row_offset)
     from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -355,6 +458,22 @@ def run_mask_pipeline_chunked(
         from decoy_engine.vault import assert_vault_writer_keyed
 
         assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
+    resolved_registry = registry if registry is not None else get_default_registry()
+    graph = RelationshipGraph(edges=(), ordering=())
+    # Corpus pinning (Phase 4 slice 4): resolved BEFORE the empty-input return
+    # below, so a zero-row job with an invalid/version-mismatched corpus fails
+    # closed like the oracle instead of "succeeding" with no code_set column
+    # ever dispatched. See _chunked_code_set.py.
+    code_set_records = code_set_gate.resolve_pinned_code_set_records(
+        plan, resolved_registry, graph, table=table
+    )
+    # bucket_perturb's namespace requirement is data-independent (the handler
+    # raises before touching data), so validate it BEFORE the empty-input return
+    # -- a namespace-less config with a zero-chunk input must fail closed like
+    # the oracle, not return empty.
+    bucket_perturb_gate.reject_bucket_perturb_missing_namespace(
+        plan, resolved_registry, graph, table=table
+    )
     if first is None:
         # Gate cleared (or the plan is unkeyed / pre-GA); there is genuinely
         # nothing to mask, so skip pool warming and adapter setup below --
@@ -366,9 +485,37 @@ def run_mask_pipeline_chunked(
     # per-chunk enforcement IS whole-table enforcement). Single mask table, no
     # generate echo on this route, so no table is exempted.
     projection_policy = resolve_unconfigured_column_policy(config)
-    resolved_registry = registry if registry is not None else get_default_registry()
     ns_registry = build_namespace_registry(config, profile)
-    graph = RelationshipGraph(edges=(), ordering=())
+    # Trap E group_by effective-type guard: needs the plan + source schema
+    # (absent at the config-only check_chunked_compatibility above); once, pre-stream.
+    group_key.reject_unsafe_group_key_group_by_dtype(
+        plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
+    )
+    # text_mask requires a chunk-stable string source (Trap: a non-string int+null
+    # source widens by chunk boundary under the handler's str()-conversion). This
+    # entry takes an arbitrary chunk iterable whose dtype could DRIFT across
+    # chunks, so resolve the text_mask columns once and validate the first chunk
+    # here + EVERY chunk in the masking loop below. The config-only compat gate
+    # cannot see the data.
+    text_mask_cols = text_mask_gate.text_mask_source_columns(
+        plan, resolved_registry, graph, table=table
+    )
+    text_mask_gate.reject_unsafe_text_mask_chunk_schema(first.schema, text_mask_cols, table=table)
+    # code_set has the identical chunk-stable-string-source requirement (same
+    # str()-conversion hazard); same once-resolved / per-chunk validation split.
+    code_set_cols = code_set_gate.code_set_source_columns(
+        plan, resolved_registry, graph, table=table
+    )
+    code_set_gate.reject_unsafe_code_set_chunk_schema(first.schema, code_set_cols, table=table)
+    # bucket_perturb has the identical chunk-stable-string-source requirement
+    # (same date-parsing hazard on a non-string source); same once-resolved /
+    # per-chunk validation split.
+    bucket_perturb_cols = bucket_perturb_gate.bucket_perturb_source_columns(
+        plan, resolved_registry, graph, table=table
+    )
+    bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
+        first.schema, bucket_perturb_cols, table=table
+    )
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
     # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK
     # key dtype (it never sees the data). Read those declarations so the per-chunk
@@ -376,6 +523,11 @@ def run_mask_pipeline_chunked(
     # misdeclaration (which would else silently void RI). Substrate-independent,
     # so unlike the passthrough magnitude guard it is not adapter-gated.
     declared_fk_dtypes = fk_declared_dtypes_for_table(config, table)
+    # Predicate 12's REAL stage (cascade-safety fix) is scoped to hash-
+    # strategy FK columns specifically, not every chunk-safe strategy the
+    # family guard above covers -- see `reject_mismatched_chunked_fk_declared_
+    # dtype`'s docstring.
+    hash_fk_key_columns = fk_hash_strategy_columns_for_table(config, table)
     if adapter is None:
         adapter = PandasExecutionAdapter()
     # MEDIUM (DE-10 reland): only pay the guard's cost -- and only reject --
@@ -402,18 +554,42 @@ def run_mask_pipeline_chunked(
     )
 
     def _masked() -> Iterator[pa.Table]:
-        # Foundation-only counter (no later-phase globalizer consumes it yet):
-        # tracked here so the plumbing exists before it is needed.
-        row_offset = base_row_offset
+        row_offset = base_row_offset  # DGRN counter; inert for value-keyed strategies.
         for chunk in _chain_first(first, chunk_iter):
             if guard_passthrough_fk_columns:
                 reject_lossy_chunked_fk_passthrough(
                     chunk, table=table, passthrough_fk_columns=guard_passthrough_fk_columns
                 )
-            if declared_fk_dtypes:
+            # `hash_fk_key_columns` triggers the guard INDEPENDENTLY of
+            # `declared_fk_dtypes`: `dtype` is optional in config, so a hash FK
+            # key with no declared dtype leaves `declared_fk_dtypes` empty yet
+            # still needs predicate 12's real-type check (else an unsafe real
+            # date64/decimal256 reaches the kernel unchecked).
+            if declared_fk_dtypes or hash_fk_key_columns:
                 reject_mismatched_chunked_fk_declared_dtype(
-                    chunk, table=table, declared_fk_dtypes=declared_fk_dtypes
+                    chunk,
+                    table=table,
+                    declared_fk_dtypes=declared_fk_dtypes,
+                    hash_fk_key_columns=hash_fk_key_columns,
                 )
+            # text_mask source must stay a chunk-stable string on EVERY chunk, not
+            # just the first (the iterable's dtype can drift); see `_chunked_text_mask.py`.
+            if text_mask_cols:
+                text_mask_gate.reject_unsafe_text_mask_chunk_schema(
+                    chunk.schema, text_mask_cols, table=table
+                )
+            # Same per-chunk check for code_set (see `_chunked_code_set.py`).
+            if code_set_cols:
+                code_set_gate.reject_unsafe_code_set_chunk_schema(
+                    chunk.schema, code_set_cols, table=table
+                )
+            # Same per-chunk check for bucket_perturb (see `_chunked_bucket_perturb.py`).
+            if bucket_perturb_cols:
+                bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
+                    chunk.schema, bucket_perturb_cols, table=table
+                )
+            # Per-chunk DGRN domain guard (no whole-stream row count); see `_chunked_dgrn.py`.
+            dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             result = adapter.run(
                 plan,
                 {table: chunk},
@@ -423,13 +599,17 @@ def run_mask_pipeline_chunked(
                 namespace_registry=ns_registry,
                 unconfigured_column_policy=projection_policy,
                 key_provider=key_provider,
+                row_offset=row_offset,
+                code_set_records=code_set_records,
             )
             if chunk_result_sink is not None:
                 chunk_result_sink.append(result)
             # Sprint 2 honesty pack H1 (dennis review 2026-07-04): the
             # chunked/streaming path has no quarantine machinery, so a
             # per-row strategy error (bucketize/date_shift format_error,
-            # code_set mask_error -- though code_set is not chunk-admitted)
+            # code_set mask_error -- unreachable for an admitted code_set
+            # column here, since its per-value errors are chapter_preserve-
+            # only and chapter_preserve is excluded from admission)
             # cannot be routed anywhere. Discarding it would silently keep
             # the raw source value in the streamed output (the exact leak the
             # full-frame path closes). Fail CLOSED: raise the moment any chunk
@@ -446,7 +626,7 @@ def run_mask_pipeline_chunked(
                 from decoy_engine.errors import RowErrorsFailedError
 
                 raise RowErrorsFailedError(result.row_errors)
-            row_offset = _advance_row_offset(row_offset, chunk)
+            row_offset = dgrn.advance_row_offset(row_offset, chunk)
             masked = result.outputs[table]
             if vault_writer is not None:
                 from decoy_engine.vault import collect_vault_entries
@@ -633,12 +813,3 @@ def aggregate_chunk_timings(chunk_results: list[Any]) -> tuple[Any, ...]:
 def _chain_first(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:
     yield first
     yield from rest
-
-
-def _advance_row_offset(offset: int, chunk: pa.Table) -> int:
-    """Advance the running row-position counter past one chunk.
-
-    Its own function, not inlined arithmetic, so a later phase's
-    diagnostic-index globalizer has one call site to extend.
-    """
-    return offset + chunk.num_rows

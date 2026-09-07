@@ -31,6 +31,7 @@ from decoy_engine import run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._chunked_fk import fk_passthrough_columns_for_table
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
+from decoy_engine.plan import PlanCompileError
 
 _ENGINE = "test-de10-chunked-fk-passthrough"
 
@@ -167,27 +168,60 @@ def test_bare_ingestion_without_fk_protection_still_rounds_a_big_int_null_column
 # ---------------------------------------------------------------------------
 
 
-def test_chunked_passthrough_null_bearing_big_int_fk_raises_coded_error() -> None:
+def test_chunked_passthrough_child_now_gate_killed_before_ingestion_guard_runs() -> None:
+    """Was `test_chunked_passthrough_null_bearing_big_int_fk_raises_coded_
+    error`: `passthrough` is no longer admitted for an FK CHILD edge at all
+    (2026-09-02 cascade-safety plan narrows `gate_fk_child_edges` condition
+    (a) to `hash` only), so `check_chunked_compatibility` -- which runs
+    eagerly, before any chunk is read -- now rejects this config with the
+    ALLOWLIST code, before the passthrough-ingestion guard this file is about
+    ever gets a chance to run. A strict improvement: the whole vulnerability
+    class (a passthrough CHILD FK column at all) is now unreachable, not just
+    its lossy-big-int-null special case. The underlying guard functions
+    (`fk_passthrough_columns_for_table` / `reject_lossy_chunked_fk_
+    passthrough`) stay directly unit-tested in test_chunked_fk_helper_
+    kills.py, and the PARENT-role scenario below is untouched by this fix
+    (`gate_fk_child_edges` never gates a parent-only table)."""
     config = _passthrough_fk_config()
     chunk = pa.table({"customer_id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
 
-    with pytest.raises(ExecutionError) as exc:
+    with pytest.raises(PlanCompileError) as exc:
         list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
-    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+    assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
-def test_chunked_passthrough_null_bearing_big_int_fk_raises_on_second_chunk_too() -> None:
-    """The guard runs PER CHUNK (chunks stream lazily); a big key arriving in
-    a later chunk must still fail closed, not just the first."""
+def test_chunked_passthrough_child_gate_kill_fires_before_any_chunk_read() -> None:
+    """Was `test_chunked_passthrough_null_bearing_big_int_fk_raises_on_
+    second_chunk_too`: the per-chunk distinction this test used to pin (does
+    the guard still fire on a LATER chunk, not just the first) no longer
+    differentiates anything -- `check_chunked_compatibility` now rejects the
+    whole config eagerly, before the first chunk is ever pulled from the
+    iterator, so it does not matter which chunk would have carried the big
+    key."""
     config = _passthrough_fk_config()
-    chunks = [
-        pa.table({"customer_id": pa.array([1, 2, None], type=pa.int64())}),
-        pa.table({"customer_id": pa.array([3, None, _BIG_KEY], type=pa.int64())}),
-    ]
 
-    with pytest.raises(ExecutionError) as exc:
-        list(run_mask_pipeline_chunked(config, chunks, table="orders", engine_version=_ENGINE))
-    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+    class _LazyTracker:
+        def __init__(self) -> None:
+            self._items: list[pa.Table] = [
+                pa.table({"customer_id": pa.array([1, 2, None], type=pa.int64())}),
+                pa.table({"customer_id": pa.array([3, None, _BIG_KEY], type=pa.int64())}),
+            ]
+            self.consumed = 0
+
+        def __iter__(self) -> _LazyTracker:
+            return self
+
+        def __next__(self) -> pa.Table:
+            if not self._items:
+                raise StopIteration
+            self.consumed += 1
+            return self._items.pop(0)
+
+    tracker = _LazyTracker()
+    with pytest.raises(PlanCompileError) as exc:
+        list(run_mask_pipeline_chunked(config, tracker, table="orders", engine_version=_ENGINE))
+    assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
+    assert tracker.consumed == 0
 
 
 # ---------------------------------------------------------------------------
@@ -196,29 +230,36 @@ def test_chunked_passthrough_null_bearing_big_int_fk_raises_on_second_chunk_too(
 # ---------------------------------------------------------------------------
 
 
-def test_chunked_passthrough_small_int_null_bearing_fk_still_admitted() -> None:
-    """The guard is magnitude-aware: a null-bearing passthrough FK column
-    whose every value stays within exact float64 precision must NOT be
-    rejected -- rejecting it too would break legitimate small-int passthrough
-    FK jobs for no correctness reason."""
+def test_chunked_passthrough_child_small_int_now_gate_killed_too() -> None:
+    """Was `test_chunked_passthrough_small_int_null_bearing_fk_still_
+    admitted`: the magnitude-aware distinction this test proved (a small-int
+    null-bearing passthrough FK column is safe from the LOSSY-ingestion
+    guard, unlike a big-int one) no longer matters for a CHILD FK edge --
+    `passthrough` itself is rejected outright now, regardless of the data's
+    magnitude. The magnitude-aware distinction is still real and still
+    tested for the PARENT role below (`gate_fk_child_edges` never gates a
+    parent-only table) and directly at the unit level in
+    test_chunked_fk_helper_kills.py."""
     config = _passthrough_fk_config()
     chunk = pa.table({"customer_id": pa.array([1, None, 42], type=pa.int64())})
 
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
-    vals = pa.concat_tables(out).column("customer_id").to_pylist()
-    assert vals == [1, None, 42]
+    with pytest.raises(PlanCompileError) as exc:
+        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
-def test_chunked_passthrough_big_int_without_null_still_admitted() -> None:
-    """int64 has no float64 fallback without a null in the column; a
-    null-free big-int passthrough FK column was never at risk and must stay
-    admitted."""
+def test_chunked_passthrough_child_big_int_without_null_now_gate_killed_too() -> None:
+    """Was `test_chunked_passthrough_big_int_without_null_still_admitted`:
+    same story as the small-int case above -- a null-free big-int passthrough
+    FK column was never at lossy-ingestion risk, but it is STILL rejected now
+    for the CHILD role, at the allowlist, before the ingestion guard is ever
+    consulted."""
     config = _passthrough_fk_config()
     chunk = pa.table({"customer_id": pa.array([1, _BIG_KEY], type=pa.int64())})
 
-    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
-    vals = pa.concat_tables(out).column("customer_id").to_pylist()
-    assert vals == [1, _BIG_KEY]
+    with pytest.raises(PlanCompileError) as exc:
+        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
 # ---------------------------------------------------------------------------
@@ -303,29 +344,32 @@ def test_chunked_adapter_touches_pandas_ingestion_gates_correctly() -> None:
     )
 
 
-def test_chunked_passthrough_polars_adapter_preserves_big_int_without_false_positive_reject() -> (
-    None
-):
-    """A fully polars-native chunked run (only `passthrough` on this table,
-    no FK edges threaded -- the chunked route always passes an empty
-    `RelationshipGraph`) must NOT be rejected by the pandas-only guard: it
-    preserves nullable int64 losslessly without ever touching pandas."""
+def test_chunked_passthrough_child_polars_adapter_also_gate_killed_first() -> None:
+    """Was `test_chunked_passthrough_polars_adapter_preserves_big_int_
+    without_false_positive_reject`: the adapter-gating distinction this test
+    proved (the pandas-only ingestion guard must not false-positive-reject a
+    fully polars-native run) is now moot for the CHILD role -- the compile-
+    time allowlist gate is adapter-agnostic and fires before ANY adapter is
+    even selected, for either adapter. `test_chunked_adapter_touches_pandas_
+    ingestion_gates_correctly` above (unaffected by this fix -- it calls the
+    adapter-gating helper directly, not through the full FK gate) keeps the
+    adapter-distinction coverage."""
     from decoy_engine.execution.polars import PolarsExecutionAdapter
 
     config = _passthrough_fk_config()
     chunk = pa.table({"customer_id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
 
-    out = list(
-        run_mask_pipeline_chunked(
-            config,
-            [chunk],
-            table="orders",
-            engine_version=_ENGINE,
-            adapter=PolarsExecutionAdapter(),
+    with pytest.raises(PlanCompileError) as exc:
+        list(
+            run_mask_pipeline_chunked(
+                config,
+                [chunk],
+                table="orders",
+                engine_version=_ENGINE,
+                adapter=PolarsExecutionAdapter(),
+            )
         )
-    )
-    vals = pa.concat_tables(out).column("customer_id").to_pylist()
-    assert vals == [1, None, _BIG_KEY]
+    assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 
 # ---------------------------------------------------------------------------
