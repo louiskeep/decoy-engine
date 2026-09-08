@@ -71,11 +71,14 @@ TWO THINGS LIVE HERE, ONE ROOT CAUSE EACH FIXES:
    exceeded the real decimal cap through, then OOM inside DuckDB (round-2's
    remediation closes this denomination mismatch, on top of item 1's
    phase-liveness one). `declared_minimum_ceiling_bytes` inverts that same
-   actual-cap model to report a truthful minimum ceiling, never a
-   raw-ceiling approximation -- see its own docstring for why this preflight
-   is a HARD gate where the sibling `_spill_estimate.enforce_ooc_disk_
-   preflight` is advisory-only (disk spill has a soft failure mode; a
-   resident-memory floor above the cap does not).
+   actual-cap model to report a truthful minimum ceiling for the build-floor
+   advisory, never a raw-ceiling approximation -- see item 2 above for why
+   this preflight's build-floor check is advisory (warn + recommend) like
+   the sibling `_spill_estimate.enforce_ooc_disk_preflight`, while fan-in
+   stays the one HARD refusal: a co-live DuckDB instance that cannot even
+   fit the 1 MB minimum `memory_limit` has no runtime backstop, unlike a
+   build floor that measurement showed often completes past its predicted
+   cap, or a disk spill that has its own soft failure mode.
 """
 
 from __future__ import annotations

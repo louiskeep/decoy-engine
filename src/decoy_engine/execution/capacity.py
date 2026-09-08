@@ -6,9 +6,15 @@ R4 (Codex plan-review, docs/plans/2026-07-24-oom-checker-cli-v1.md): this is an
 fully loads every source into memory BEFORE it calls the engine at all, so an
 ingestion `MemoryError` or OS OOM-kill happens before this gate ever runs, and
 the resident-floor estimate below excludes that ingestion peak entirely. What
-this DOES check honestly: would `run_pipeline`'s out-of-core-FK route (the one
-route with a resident-memory floor that has no runtime spill backstop) refuse
-this job, using the SAME evaluator (`evaluate_capacity`) the mid-run gate uses.
+this DOES check honestly: how `run_pipeline`'s out-of-core-FK route (the one
+route with a resident-memory floor that has no runtime spill backstop) prices
+this job, using the SAME evaluator (`evaluate_capacity`) the mid-run gate
+uses. ROUND-4: the build-floor prediction is advisory -- a floor above its
+build's cap still returns `FIT`, now carrying `warned=True` plus a recommended
+host size, and the job is NOT refused for it. The one refusal this checker
+still reports is a fan-in impossibility (co-live DuckDB instances that cannot
+each fit even a 1 MB `memory_limit` under the budget), which prices as
+`INSUFFICIENT`.
 
 R1 anti-drift: this module derives its inputs by calling the SAME engine
 primitives `run_pipeline` calls, in the same order, up through the routing

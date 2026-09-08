@@ -219,20 +219,24 @@ def run_out_of_core_route(
     completed; a caller that needs a hard cap passes an explicit `budget_bytes`
     (which never falls back).
 
-    Memory preflight (SPRINT-1 Part B, the never-crash guarantee): before any
-    DuckDB work, `enforce_ooc_memory_preflight` predicts each build-phase
-    table's relation-build resident floor (`_parent_table_row_counts`) and
-    gates it against the EXACT cap that table's build connection will
-    receive -- `resolved_budget_bytes` undivided on the sink path, `//
-    (incoming_edges + 1)` on the resident path, the SAME `resolve_ooc_memory_
-    limit` call and the SAME arithmetic `resolve_phase_memory_limits` uses to
-    size the real connection, reused rather than re-derived. Either warns
-    (near a table's own cap) or HARD-FAILS (`out_of_core_insufficient_
-    memory`, a table's floor exceeding its own cap) -- unlike the disk
-    preflight below, this one actually rejects, because a resident-memory
-    floor above its cap has no runtime backstop (DuckDB's own allocator
-    raises an uncatchable-at-a-clean-boundary "bad allocation", not a coded
-    error at a table boundary). Gating against a fraction of the raw
+    Memory preflight (SPRINT-1 Part B, ROUND-4: advisory build floor plus a
+    hard fan-in guard, not a never-crash guarantee): before any DuckDB work,
+    `enforce_ooc_memory_preflight` predicts each build-phase table's
+    relation-build resident floor (`_parent_table_row_counts`) and compares
+    it against the EXACT cap that table's build connection will receive --
+    `resolved_budget_bytes` undivided on the sink path, `// (incoming_edges +
+    1)` on the resident path, the SAME `resolve_ooc_memory_limit` call and
+    the SAME arithmetic `resolve_phase_memory_limits` uses to size the real
+    connection, reused rather than re-derived. A floor above its cap no
+    longer hard-fails: it returns FIT with `warned=True` and a recommended
+    host size, because the measured completion caps showed the old flat
+    refusal over-rejected jobs that would have completed. The one refusal
+    this preflight still raises is fan-in (`out_of_core_fanin_exceeds_
+    budget`, co-live DuckDB instances that cannot each fit even a 1 MB
+    `memory_limit` under the budget) -- unlike the build floor, an
+    un-satisfiable fan-in split has no runtime backstop (DuckDB's own
+    allocator raises an uncatchable-at-a-clean-boundary "bad allocation", not
+    a coded error at a table boundary). Gating against a fraction of the raw
     detected ceiling instead of this exact cap is the denomination mismatch
     this sprint's remediation closes (a preflight fraction and Part A's real
     per-table cap were never guaranteed to be the same number, so a job could
@@ -370,16 +374,18 @@ def run_out_of_core_route(
         # advisory (warn-only) and never blocks a job.
         pass
 
-    # SPRINT-1 Part B: the hybrid memory capacity preflight -- the never-crash
-    # guarantee underneath Part A's phase-aware caps above. Wired HERE rather
-    # than at `_pipeline_routing_signals.resolve_execution_route` (the disk
+    # SPRINT-1 Part B: the hybrid memory capacity preflight, an advisory
+    # build-floor check plus a hard fan-in guard underneath Part A's
+    # phase-aware caps above. Wired HERE rather than at
+    # `_pipeline_routing_signals.resolve_execution_route` (the disk
     # preflight's site): that module sits at its own LOC cap with no headroom,
     # and this site already has per-table row counts in hand via
     # `resolved_sources` (both `pa.Table` and `LazySource` expose `.num_rows`
     # in O(1), so no source is materialized just to count it) -- the same
     # "site with row counts already in hand" precedent the disk preflight
     # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
-    # a job whose predicted floor cannot fit is refused before any DuckDB work.
+    # a job whose fan-in cannot fit is refused before any DuckDB work; a job
+    # whose build floor cannot fit its cap only warns and proceeds.
     #
     # Gated against `resolved_budget_bytes` -- THE SAME `OutOfCoreBudget.
     # budget_bytes` resolved above at the ONE `resolve_ooc_memory_limit` call
