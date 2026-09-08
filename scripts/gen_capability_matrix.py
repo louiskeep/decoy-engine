@@ -45,7 +45,11 @@ def _mask_strategies() -> list[tuple[str, str, str]]:
     rows = []
     for name in sorted(SCALAR_HANDLERS):
         if name == "nested":
-            continue  # wrapper, not a user-facing strategy
+            # A wrapper, not a leaf strategy: it requires a child strategy and is
+            # excluded from the counted strategy surface (the proof manifest and
+            # its guard use the same convention). Documented in the note below so
+            # it is not forgotten when surfacing capabilities.
+            continue
         gdpr = str(TECHNIQUE_CLASS_BY_STRATEGY.get(name, "-"))
         accel = "yes" if name in polars else "no"
         rows.append((name, gdpr, accel))
@@ -161,6 +165,37 @@ def _disguises() -> list[tuple[str, str, int]]:
     return sorted(rows)
 
 
+def _checksum_schemes() -> list[str]:
+    # FPE `checksum:` re-derives one of these after masking so the output
+    # stays a valid identifier. Read from the validator registry.
+    from decoy_engine.checksums import _KNOWN_SCHEMES
+
+    return sorted(_KNOWN_SCHEMES)
+
+
+def _execution_architecture() -> dict[str, object]:
+    # The routing/substrate surface a caller can select or that the planner
+    # picks. Read from the live constants so this stays correct as routes are
+    # added. The native-route and OOC-reorder rows are what a Platform
+    # "route taken" indicator or a job-time estimator would surface.
+    from decoy_engine.execution._planner import EXECUTION_MODES
+    from decoy_engine.execution._substrate import _DEFAULT_SUBSTRATE, VALID_SUBSTRATES
+    from decoy_engine.execution.native._requirements import (
+        NATIVE_KERNEL_STRATEGIES,
+        NATIVE_POOL_STRATEGIES,
+    )
+    from decoy_engine.execution.out_of_core._route_policy import REORDER_PARENT_KEY_THRESHOLD
+
+    return {
+        "substrates": list(VALID_SUBSTRATES),
+        "default_substrate": _DEFAULT_SUBSTRATE,
+        "modes": list(EXECUTION_MODES),
+        "native_kernel": sorted(NATIVE_KERNEL_STRATEGIES),
+        "native_pool": sorted(NATIVE_POOL_STRATEGIES),
+        "reorder_threshold": int(REORDER_PARENT_KEY_THRESHOLD),
+    }
+
+
 def render() -> str:
     out = io.StringIO()
     w = out.write
@@ -172,7 +207,11 @@ def render() -> str:
     w("| --- | --- | --- |\n")
     for name, gdpr, accel in mask:
         w(f"| `{name}` | {gdpr} | {accel} |\n")
-    w("\n`nested` is an internal wrapper, not a user-facing strategy.\n")
+    w(
+        "\n`nested` is a wrapper strategy: it walks JSON in each cell and applies "
+        "a child strategy to the leaf values a JSONPath matches, then reassembles "
+        "the JSON. Configure it with a nested child strategy.\n"
+    )
 
     gen = _generation_strategies()
     w(f"\n## Generation strategies ({len(gen)})\n\n")
@@ -204,6 +243,63 @@ def render() -> str:
     w("| ID | Name | Field rules |\n| --- | --- | --- |\n")
     for did, name, n in dis:
         w(f"| `{did}` | {name} | {n} |\n")
+
+    schemes = _checksum_schemes()
+    w(f"\n## Checksum / FPE schemes ({len(schemes)})\n\n")
+    w(
+        "The `fpe` strategy's `checksum:` parameter re-derives a valid check "
+        "digit after masking so the output stays a well-formed identifier.\n\n"
+    )
+    w(", ".join(f"`{s}`" for s in schemes) + "\n")
+
+    arch = _execution_architecture()
+    w("\n## Execution architecture\n\n")
+    w(
+        "How a job runs: which substrate computes it and which route the planner "
+        "takes. Everything here is a real, user-visible knob or an automatic route "
+        "the engine selects.\n\n"
+    )
+    w("| Surface | Values | Notes |\n| --- | --- | --- |\n")
+    subs = ", ".join(f"`{s}`" for s in arch["substrates"])  # type: ignore[union-attr]
+    w(
+        f"| Substrate (`substrate=` / `DECOY_SUBSTRATE`) | {subs} | "
+        f"default `{arch['default_substrate']}` |\n"
+    )
+    modes = ", ".join(f"`{m}`" for m in arch["modes"])  # type: ignore[union-attr]
+    w(
+        f"| Execution modes (planner ladder, `explain_plan=True`) | {modes} | "
+        "fastest-first; the planner picks and reports the route |\n"
+    )
+    nk = ", ".join(f"`{s}`" for s in arch["native_kernel"])  # type: ignore[union-attr]
+    npool = ", ".join(f"`{s}`" for s in arch["native_pool"])  # type: ignore[union-attr]
+    w(
+        f"| Native columnar route (`native_route_enabled=True`, default off) | "
+        f"kernels: {nk}; pool: {npool} | single-table non-FK lane; never "
+        "materializes the source; byte-parity to the oracle |\n"
+    )
+    w(
+        f"| Out-of-core FK route | batch-join (default) vs reorder | reorder auto-"
+        f"selected per table when the deduped parent-key count >= "
+        f"{arch['reorder_threshold']:,} (override `out_of_core_reorder_threshold_rows`) |\n"
+    )
+
+    w("\n## Extensibility and formats\n\n")
+    w(
+        "- **Custom providers**: drop-in Python modules register new synthetic "
+        "providers at process start via `providers_v2` `register()`; the planner "
+        "closed-checks them (see `custom_providers/README.md`).\n"
+    )
+    w(
+        "- **Fixed-width sources**: fixed-width flat files are a first-class source "
+        "format (`config._fixed_width` layout + `profile._fixed_width_reader`), "
+        "alongside Parquet / CSV and the S3 / GCS / SFTP connectors above.\n"
+    )
+    w(
+        "- **Rust companion (`decoy-engine-native`)**: an optional compiled `native` "
+        "extra shipping a keyed-derivation kernel (HKDF-SHA256 + HMAC-SHA256 over "
+        "Arrow) that reproduces the `hash` strategy byte-for-byte. Built and "
+        "fuzz-tested; the production loader is not yet wired (a separate slice).\n"
+    )
 
     return out.getvalue()
 

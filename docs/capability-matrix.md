@@ -35,7 +35,7 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `truncate` | anonymisation | yes |
 | `windowed_date` | pseudonymisation | no |
 
-`nested` is an internal wrapper, not a user-facing strategy.
+`nested` is a wrapper strategy: it walks JSON in each cell and applies a child strategy to the leaf values a JSONPath matches, then reassembles the JSON. Configure it with a nested child strategy.
 
 ## Generation strategies (12)
 
@@ -135,3 +135,26 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `pc` | P&C Insurance | 12 |
 | `pci` | PCI DSS Disguise | 10 |
 | `sox` | SOX Disguise | 9 |
+
+## Checksum / FPE schemes (7)
+
+The `fpe` strategy's `checksum:` parameter re-derives a valid check digit after masking so the output stays a well-formed identifier.
+
+`ean13`, `gtin`, `iban`, `isbn13`, `luhn`, `npi`, `vin`
+
+## Execution architecture
+
+How a job runs: which substrate computes it and which route the planner takes. Everything here is a real, user-visible knob or an automatic route the engine selects.
+
+| Surface | Values | Notes |
+| --- | --- | --- |
+| Substrate (`substrate=` / `DECOY_SUBSTRATE`) | `pandas`, `polars` | default `polars` |
+| Execution modes (planner ladder, `explain_plan=True`) | `polars_native`, `chunked`, `sequential_relationship`, `out_of_core_relationship`, `pandas_fallback` | fastest-first; the planner picks and reports the route |
+| Native columnar route (`native_route_enabled=True`, default off) | kernels: `hash`, `passthrough`, `redact`, `truncate`; pool: `faker` | single-table non-FK lane; never materializes the source; byte-parity to the oracle |
+| Out-of-core FK route | batch-join (default) vs reorder | reorder auto-selected per table when the deduped parent-key count >= 2,000,000 (override `out_of_core_reorder_threshold_rows`) |
+
+## Extensibility and formats
+
+- **Custom providers**: drop-in Python modules register new synthetic providers at process start via `providers_v2` `register()`; the planner closed-checks them (see `custom_providers/README.md`).
+- **Fixed-width sources**: fixed-width flat files are a first-class source format (`config._fixed_width` layout + `profile._fixed_width_reader`), alongside Parquet / CSV and the S3 / GCS / SFTP connectors above.
+- **Rust companion (`decoy-engine-native`)**: an optional compiled `native` extra shipping a keyed-derivation kernel (HKDF-SHA256 + HMAC-SHA256 over Arrow) that reproduces the `hash` strategy byte-for-byte. Built and fuzz-tested; the production loader is not yet wired (a separate slice).
