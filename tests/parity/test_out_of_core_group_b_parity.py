@@ -313,11 +313,14 @@ def test_text_redact_non_string_token_passthrough_parity() -> None:
         _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"nonstr_token:{table}")
 
 
-def test_text_redact_ner_path_parity() -> None:
+@pytest.mark.parametrize("batch_rows", [None, 2, 1])
+def test_text_redact_ner_path_parity(batch_rows: int | None) -> None:
     """SC4 carry-forward (SC3 MEDIUM): the NER-augmented text_redact path. Skipped
     unless spaCy + the model are installed (the model is not pip-resolvable, so this
     is environment-gated); when present, the out-of-core kernel reuses the same
-    `iter_ner_spans` the oracle does, so parity must hold."""
+    `iter_ner_spans_batch` the oracle does (Phase 5), so parity must hold --
+    including at small batch sizes, which is where a non-batch-local port would
+    diverge (mirrors `test_out_of_core_group_c_parity.test_text_mask_ner_path_parity`)."""
     from decoy_engine.storm.ner import model_installed, spacy_installed
 
     if not (spacy_installed() and model_installed()):
@@ -332,9 +335,13 @@ def test_text_redact_ner_path_parity() -> None:
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
-    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
     for table in oracle.outputs:
-        _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"ner:{table}")
+        _assert_value_equal(
+            oracle.outputs[table], ooc.outputs[table], f"ner/batch={batch_rows}:{table}"
+        )
 
 
 # ---------------------------------------------------------------------------

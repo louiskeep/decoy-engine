@@ -9,6 +9,8 @@ everywhere.
 
 from __future__ import annotations
 
+import unicodedata
+
 import pandas as pd
 import pytest
 
@@ -318,3 +320,134 @@ class TestModelVersionStamp:
         )
         plan = compile_plan(cfg, profile, decoy_engine_version="x", no_profile=True)
         assert any("ner_model_version_unavailable" in w for w in plan.plan_compile.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): `iter_ner_spans_batch`
+# batches NER inference through `nlp.pipe` instead of one `nlp(text)` call per
+# cell, with NO change to the observable span contract. `iter_ner_spans`'s
+# single-cell body stays untouched (the independent oracle the differential
+# test below compares against). The spaCy-free characterization/guard/scatter
+# tests for the batch helper's own logic live in
+# `test_ner_batch_fake_pipeline.py` -- a separate module so they collect
+# without this file's module-level `spacy_installed()`/`model_installed()`
+# call, which a mutation harness that trampoline-wraps `storm/ner.py` turns
+# into a collection error rather than a test result.
+# ---------------------------------------------------------------------------
+
+
+@needs_ner
+class TestBatchDifferentialIdentity:
+    """Primary gate: `iter_ner_spans_batch(corpus) == [iter_ner_spans(t) for t
+    in corpus]`, element for element, against the REAL installed model."""
+
+    def _corpus(self) -> list[object]:
+        astral_emoji = "\U0001f600 Marie Curie visited Zurich."
+        nfc = "Café Müller lived in Söderköping."
+        nfd = unicodedata.normalize("NFD", nfc)
+        curly_apostrophe = "O’Brien traveled to O’Fallon."  # noqa: RUF001 - deliberate test unicode
+        nonascii_location = "she moved to São Paulo for work"
+        duplicate = "John Smith met John Smith in Boston."
+        oversized_adjacent = ("word " * 5000).strip()  # long, still under max_length
+        return [
+            astral_emoji,
+            nfc,
+            nfd,
+            curly_apostrophe,
+            nonascii_location,
+            duplicate,
+            duplicate,
+            "",
+            "   ",
+            12345,
+            oversized_adjacent,
+            "plain text with no entities at all",
+        ]
+
+    def test_differential_identity_over_unicode_corpus(self) -> None:
+        from decoy_engine.storm.ner import iter_ner_spans, iter_ner_spans_batch
+
+        corpus = self._corpus()
+        assert iter_ner_spans_batch(corpus) == [iter_ner_spans(t) for t in corpus]
+
+    def test_differential_identity_with_entities_filter(self) -> None:
+        from decoy_engine.storm.ner import iter_ner_spans, iter_ner_spans_batch
+
+        corpus = self._corpus()
+        assert iter_ner_spans_batch(corpus, entities=["location"]) == [
+            iter_ner_spans(t, entities=["location"]) for t in corpus
+        ]
+
+    def test_all_empty_batch(self) -> None:
+        from decoy_engine.storm.ner import iter_ner_spans_batch
+
+        assert iter_ner_spans_batch([]) == []
+        assert iter_ner_spans_batch(["", "   " * 0, None]) == [[], [], []]
+
+
+@needs_ner
+class TestBatchSizeInvariance:
+    def test_batch_size_invariant_over_a_mixed_corpus(self) -> None:
+        from decoy_engine.storm.ner import iter_ner_spans_batch
+
+        corpus = [
+            "Marie Curie visited Paris.",
+            "no entities in this filler row",
+            "",
+            "   ",
+            "John Smith flew to São Paulo.",
+        ] * 3
+        results = {bs: iter_ner_spans_batch(corpus, batch_size=bs) for bs in (1, 3, 256)}
+        assert results[1] == results[3] == results[256]
+
+
+@needs_ner
+class TestMaxLengthRaiseParity:
+    def test_oversized_cell_raises_same_error_class_from_batch_helper(self) -> None:
+        from decoy_engine.storm.ner import (
+            DEFAULT_NER_MODEL,
+            _pipeline,
+            iter_ner_spans,
+            iter_ner_spans_batch,
+        )
+
+        nlp = _pipeline(DEFAULT_NER_MODEL)
+        oversized = "a" * (nlp.max_length + 1)
+        with pytest.raises(ValueError) as single_exc:
+            iter_ner_spans(oversized)
+        with pytest.raises(ValueError) as batch_exc:
+            iter_ner_spans_batch([oversized])
+        assert type(single_exc.value) is type(batch_exc.value)
+
+
+@needs_ner
+class TestPeakMemoryCharacterization:
+    """P2: a wide column processed in `_NER_APPLY_WINDOW`-sized windows (the
+    oracle caller's actual pattern, see `_text_mask.py` / `_text_redact.py`)
+    keeps peak memory close to ONE window's footprint, the same bounded
+    profile a per-cell loop has, rather than growing with the column's total
+    width. A characterization test (generous headroom), not a tight
+    regression trip-wire -- `nlp.pipe`'s own internal batch buffering makes a
+    tight per-call comparison against `iter_ner_spans` noisy and misleading."""
+
+    def test_windowed_apply_bounds_peak_memory_independent_of_column_width(self) -> None:
+        import tracemalloc
+
+        from decoy_engine.storm.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
+
+        def _peak_processing_windowed(n_rows: int) -> int:
+            texts = [f"plain filler row {i} with no entities" for i in range(n_rows)]
+            tracemalloc.start()
+            for start in range(0, len(texts), _NER_APPLY_WINDOW):
+                iter_ner_spans_batch(texts[start : start + _NER_APPLY_WINDOW])
+            _, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            return peak
+
+        one_window_peak = _peak_processing_windowed(_NER_APPLY_WINDOW)
+        four_windows_peak = _peak_processing_windowed(_NER_APPLY_WINDOW * 4)
+        # Each window's span lists are discarded before the next window
+        # starts, so processing 4x the rows through 4x the windows must not
+        # cost ~4x the peak: that would mean the window bound isn't doing its
+        # job and peak RSS is tracking the WHOLE column instead of one window.
+        assert four_windows_peak <= one_window_peak * 2 + 1_000_000

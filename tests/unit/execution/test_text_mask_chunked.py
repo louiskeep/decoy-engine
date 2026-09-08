@@ -145,11 +145,13 @@ def _install_fake_ner(monkeypatch, spans_by_marker: dict[str, str]) -> None:
     maps a literal substring to the detector_id its Span should carry; the
     stub finds each marker in the cell text and returns a Span covering it,
     merged into `iter_spans`'s overlap resolution exactly like a real NER
-    hit would be."""
+    hit would be. Patches BOTH `iter_ner_spans` (the single-cell oracle,
+    unused by the production handler but kept for any direct caller) and
+    `iter_ner_spans_batch` (what `_text_mask.py` actually calls, Phase 5)."""
     monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: True)
     monkeypatch.setattr("decoy_engine.storm.ner.model_installed", lambda model=None: True)
 
-    def _fake_iter_ner_spans(text, *, model=None, entities=None):
+    def _find_spans(text: str) -> list[Span]:
         found = []
         for marker, detector_id in spans_by_marker.items():
             idx = text.find(marker)
@@ -157,7 +159,14 @@ def _install_fake_ner(monkeypatch, spans_by_marker: dict[str, str]) -> None:
                 found.append(Span(detector_id, idx, idx + len(marker), marker))
         return found
 
+    def _fake_iter_ner_spans(text, *, model=None, entities=None):
+        return _find_spans(text)
+
+    def _fake_iter_ner_spans_batch(texts, *, model=None, entities=None):
+        return [_find_spans(text) for text in texts]
+
     monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans", _fake_iter_ner_spans)
+    monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans_batch", _fake_iter_ner_spans_batch)
 
 
 def _extract_span(masked_cell: str) -> str:
@@ -668,6 +677,10 @@ class TestNerDefaultAndVersionGuard:
         monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: True)
         monkeypatch.setattr("decoy_engine.storm.ner.model_installed", lambda model=None: True)
         monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans", lambda *a, **k: [])
+        monkeypatch.setattr(
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
+        )
         calls = {"n": 0}
 
         def _fake_installed_model_version(model=None):
@@ -711,6 +724,10 @@ class TestNerDefaultAndVersionGuard:
             "decoy_engine.storm.ner.installed_model_version", lambda model=None: None
         )
         monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans", lambda *a, **k: [])
+        monkeypatch.setattr(
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
+        )
         df = pd.DataFrame({"cell": ["hello there"]})
         seed = ColumnSeed(
             namespace=None,

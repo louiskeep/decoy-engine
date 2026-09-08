@@ -50,6 +50,37 @@ class _FakeCtx:
         self.mask_key = mask_key
 
 
+class TestCallerWindowsTheBatch:
+    """The oracle (full-frame) caller must feed NER through the batch helper in
+    `_NER_APPLY_WINDOW`-row windows, not the whole column at once. That bound is
+    a caller property the helper-level peak-memory characterization cannot see,
+    so spy on the batch-call count: dropping the caller's window loop (one call
+    over every cell) makes this fail. Needs no spaCy (the spy returns no spans)."""
+
+    def test_oracle_text_mask_windows_the_ner_batch(self, monkeypatch) -> None:
+        import math
+
+        from decoy_engine.storm.ner import _NER_APPLY_WINDOW
+
+        window_sizes: list[int] = []
+
+        def _spy(texts, *, model=None, entities=None):
+            window_sizes.append(len(texts))
+            return [[] for _ in texts]
+
+        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans_batch", _spy)
+        n_rows = _NER_APPLY_WINDOW * 2 + 5  # two full windows plus a partial
+        df = pd.DataFrame({"notes": [f"row {i} plain text" for i in range(n_rows)]})
+        TextMaskHandler().run(df.copy(), "notes", _seed({"ner": True}), _FakeCtx())
+
+        assert len(window_sizes) == math.ceil(n_rows / _NER_APPLY_WINDOW), (
+            f"caller must window the batch: expected "
+            f"{math.ceil(n_rows / _NER_APPLY_WINDOW)} calls, got {len(window_sizes)}"
+        )
+        assert all(size <= _NER_APPLY_WINDOW for size in window_sizes), window_sizes
+        assert sum(window_sizes) == n_rows  # every non-null cell fed exactly once
+
+
 # ── routing: NER spans reach mask_cell's extra_spans ──────────────────
 
 
@@ -60,8 +91,8 @@ class TestNerRouting:
             Span("person_name", text.index("Jane Doe"), text.index("Jane Doe") + 8, "Jane Doe")
         ]
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans",
-            lambda *a, **k: fake_span,
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [fake_span for _ in texts],
         )
         df = pd.DataFrame({"notes": [text]})
         handler = TextMaskHandler()
@@ -76,8 +107,8 @@ class TestNerRouting:
         text = "Seen in Chicago last week."
         fake_span = [Span("location", text.index("Chicago"), text.index("Chicago") + 7, "Chicago")]
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans",
-            lambda *a, **k: fake_span,
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [fake_span for _ in texts],
         )
         df = pd.DataFrame({"notes": [text]})
         handler = TextMaskHandler()
@@ -95,8 +126,8 @@ class TestNerRouting:
     def test_no_ner_config_never_calls_iter_ner_spans(self, monkeypatch) -> None:
         calls: list[object] = []
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans",
-            lambda *a, **k: calls.append(1) or [],
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: calls.append(1) or [[] for _ in texts],
         )
         df = pd.DataFrame({"notes": ["ssn 123-45-6789 on file"]})
         handler = TextMaskHandler()
@@ -106,14 +137,14 @@ class TestNerRouting:
     def test_ner_dict_config_resolves_model_and_entities(self, monkeypatch) -> None:
         seen: dict[str, object] = {}
 
-        def _fake_iter_ner_spans(text, *, model=None, entities=None):
+        def _fake_iter_ner_spans_batch(texts, *, model=None, entities=None):
             seen["model"] = model
             seen["entities"] = entities
-            return []
+            return [[] for _ in texts]
 
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans",
-            _fake_iter_ner_spans,
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            _fake_iter_ner_spans_batch,
         )
         df = pd.DataFrame({"notes": ["hello"]})
         handler = TextMaskHandler()
@@ -129,13 +160,13 @@ class TestNerRouting:
     def _capture_ner(self, monkeypatch):
         seen: dict[str, object] = {}
 
-        def _fake(text, *, model=None, entities=None):
-            seen["text"] = text
+        def _fake(texts, *, model=None, entities=None):
+            seen["texts"] = list(texts)
             seen["model"] = model
             seen["entities"] = entities
-            return []
+            return [[] for _ in texts]
 
-        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans", _fake)
+        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans_batch", _fake)
         return seen
 
     def test_ner_dict_nondefault_model_is_forwarded(self, monkeypatch) -> None:
@@ -175,7 +206,7 @@ class TestNerRouting:
         assert seen["entities"] is None
 
     def test_ner_spans_receive_the_cell_text(self, monkeypatch) -> None:
-        # iter_ner_spans must be called with the cell value, not None.
+        # iter_ner_spans_batch must be called with the cell value, not None.
         seen = self._capture_ner(monkeypatch)
         TextMaskHandler().run(
             pd.DataFrame({"notes": ["Contact Jane Doe"]}),
@@ -183,7 +214,7 @@ class TestNerRouting:
             _seed({"ner": {"model": "custom_model_xyz"}}),
             _FakeCtx(),
         )
-        assert seen["text"] == "Contact Jane Doe"
+        assert seen["texts"] == ["Contact Jane Doe"]
 
 
 # ── determinism: model-version drift guard ─────────────────────────────
@@ -233,8 +264,8 @@ class TestNerVersionGuard:
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "1.0.0")
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans",
-            lambda *a, **k: [],
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
         )
         df = pd.DataFrame({"notes": ["ssn 123-45-6789"]})
         handler = TextMaskHandler()
@@ -249,8 +280,8 @@ class TestNerVersionGuard:
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "9.9.9")
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans",
-            lambda *a, **k: [],
+            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
         )
         df = pd.DataFrame({"notes": ["ssn 123-45-6789"]})
         handler = TextMaskHandler()
@@ -512,3 +543,60 @@ class TestOutputSeries:
         out, _ = TextMaskHandler().run(df, "notes", _seed({}), _FakeCtx())
         assert not out["notes"].isna().any()
         assert "123-45-6789" not in out["notes"].loc[10]
+
+
+# ── Phase 5: caller-side NER batching (docs/plans/2026-09-08-p5-ner-batch- ──
+# ── helper.md) -- collect-batch-zip-back through iter_ner_spans_batch,     ──
+# ── windowed at _NER_APPLY_WINDOW rows so a wide column's peak memory stays──
+# ── bounded rather than growing with the column's full width.             ──
+
+
+class TestNerBatchWindowing:
+    def test_wide_column_calls_batch_helper_once_per_window(self, monkeypatch) -> None:
+        import decoy_engine.storm.ner as ner_mod
+
+        window = ner_mod._NER_APPLY_WINDOW
+        call_sizes: list[int] = []
+
+        def _fake_batch(texts, *, model=None, entities=None):
+            call_sizes.append(len(texts))
+            return [[] for _ in texts]
+
+        monkeypatch.setattr(ner_mod, "iter_ner_spans_batch", _fake_batch)
+        n_rows = window * 2 + 5
+        df = pd.DataFrame({"notes": [f"row {i}" for i in range(n_rows)]})
+        TextMaskHandler().run(df, "notes", _seed({"ner": True}), _FakeCtx())
+        assert call_sizes == [window, window, 5]
+
+    def test_null_rows_excluded_from_windows_and_stay_null(self, monkeypatch) -> None:
+        import decoy_engine.storm.ner as ner_mod
+
+        seen_texts: list[list[str]] = []
+
+        def _fake_batch(texts, *, model=None, entities=None):
+            seen_texts.append(list(texts))
+            return [[] for _ in texts]
+
+        monkeypatch.setattr(ner_mod, "iter_ner_spans_batch", _fake_batch)
+        df = pd.DataFrame({"notes": [None, "hello", None, "world"]})
+        out, _ = TextMaskHandler().run(df, "notes", _seed({"ner": True}), _FakeCtx())
+        assert pd.isna(out["notes"].iloc[0])
+        assert pd.isna(out["notes"].iloc[2])
+        assert seen_texts == [["hello", "world"]]  # nulls never reach the batch call
+
+    def test_non_str_cells_are_coerced_once_before_the_batch_call(self, monkeypatch) -> None:
+        # The SAME coerced string must reach both iter_ner_spans_batch and
+        # mask_cell -- a second, independent str() call risks disagreeing for
+        # a value whose repr is not idempotent-looking.
+        import decoy_engine.storm.ner as ner_mod
+
+        seen_texts: list[str] = []
+
+        def _fake_batch(texts, *, model=None, entities=None):
+            seen_texts.extend(texts)
+            return [[] for _ in texts]
+
+        monkeypatch.setattr(ner_mod, "iter_ner_spans_batch", _fake_batch)
+        df = pd.DataFrame({"notes": [123, "plain"]})
+        TextMaskHandler().run(df, "notes", _seed({"ner": True}), _FakeCtx())
+        assert seen_texts == ["123", "plain"]

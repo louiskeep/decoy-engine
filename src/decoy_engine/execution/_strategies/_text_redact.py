@@ -145,21 +145,44 @@ class TextRedactHandler:
         # the literal '<NA>'/'NaT' into masked output. Series.isna also
         # sidesteps pd.isna's ambiguous result on array-like cells.
         null_mask = col.isna().to_list()
-        for pos, text in enumerate(col_values):
-            if null_mask[pos]:
-                continue
-            if not isinstance(text, str):
-                text = str(text)
-            extra: list[Span] | None = None
-            if ner_model is not None:
-                from decoy_engine.storm.ner import iter_ner_spans
 
-                extra = iter_ner_spans(text, model=ner_model, entities=ner_entities)
-            spans = iter_spans(text, detector_ids, extra_spans=extra)
-            if not spans:
-                col_values[pos] = text
-                continue
-            col_values[pos] = _splice(text, spans, token, label_token)
+        if ner_model is None:
+            for pos, text in enumerate(col_values):
+                if null_mask[pos]:
+                    continue
+                if not isinstance(text, str):
+                    text = str(text)
+                spans = iter_spans(text, detector_ids, extra_spans=None)
+                col_values[pos] = text if not spans else _splice(text, spans, token, label_token)
+        else:
+            # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): batch the
+            # NER inference through `nlp.pipe` instead of one `nlp(text)` call
+            # per cell. Coerce once up front so the SAME string reaches both
+            # the NER batch and `iter_spans`, then infer + apply
+            # `_NER_APPLY_WINDOW` rows at a time -- this route is full-frame
+            # (the whole column is already in memory), so a bounded window
+            # keeps peak RSS from rising materially above the per-cell loop on
+            # a wide column, rather than collecting every span list at once.
+            from decoy_engine.storm.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
+
+            non_null_positions = [pos for pos, is_null in enumerate(null_mask) if not is_null]
+            for pos in non_null_positions:
+                if not isinstance(col_values[pos], str):
+                    col_values[pos] = str(col_values[pos])
+
+            for start in range(0, len(non_null_positions), _NER_APPLY_WINDOW):
+                window = non_null_positions[start : start + _NER_APPLY_WINDOW]
+                window_spans: list[list[Span]] = iter_ner_spans_batch(
+                    [col_values[pos] for pos in window],
+                    model=ner_model,
+                    entities=ner_entities,
+                )
+                for pos, extra in zip(window, window_spans, strict=True):
+                    text = col_values[pos]
+                    spans = iter_spans(text, detector_ids, extra_spans=extra)
+                    col_values[pos] = (
+                        text if not spans else _splice(text, spans, token, label_token)
+                    )
 
         df[column] = pd.Series(col_values, index=df.index, dtype=object)
         return df, []
