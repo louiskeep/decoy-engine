@@ -23,7 +23,10 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     enforce_ooc_memory_preflight,
     evaluate_capacity,
 )
-from decoy_engine.execution.out_of_core._memory_estimate import predict_ooc_build_floor_bytes
+from decoy_engine.execution.out_of_core._memory_estimate import (
+    predict_ooc_build_floor_bytes,
+    resolve_phase_memory_limits,
+)
 
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
@@ -219,49 +222,51 @@ def test_warn_band_still_reports_fit_with_a_warned_flag(caplog) -> None:
     assert "resident floor" in est.message
 
 
-class TestResidentFanInMatchesRuntimeLiveness:
-    """P1 regression: the resident fan-in liveness must equal the runtime
-    `_max_concurrent_ooc_instances` peak (`incoming + has_build`). A pure leaf
-    (no outgoing edge, so no relation build, has_build=0) is `incoming` co-live
-    joiners, NOT `incoming + 1`; only a table that also builds adds its own
-    instance. The pre-fix `incoming + 1` refused a resident 67-FK leaf the
-    runtime seats fine -- a false EXIT_CAPACITY. 67 * 1e6 = 67_000_000 <=
-    67_108_864 (64 MiB); 68 * 1e6 > it. This topology is reachable: the compat
-    gate rejects only multiple parents into the same child column tuple, not
-    many distinct FK columns into one child."""
+class TestResidentFanInMatchesThePhaseSizer:
+    """The evaluator's resident fan-in refusal must match the runtime PHASE
+    sizer (`resolve_phase_memory_limits`), the code that actually raises at run
+    time -- NOT the coarser `_max_concurrent_ooc_instances` budget peak. The
+    phase sizer opens a resident joiner at `incoming_edges + 1` regardless of
+    whether the table also builds, so on a 64 MiB budget (67_108_864 bytes) it
+    admits resident fan-in up to incoming=66 (live 67, 67e6 <= budget) and
+    raises at incoming=67 (live 68, 68e6 > budget). The evaluator must draw the
+    boundary at the SAME place, or preflight and run disagree. Pinning both the
+    admit and the refuse sides against the phase sizer directly."""
 
-    def test_resident_pure_leaf_at_67_incoming_is_admitted(self) -> None:
-        inputs = CapacityInputs(
-            route="out_of_core",
-            parent_table_rows={},
-            incoming_edge_counts={"leaf": 67},
-            sink=False,
-        )
-        est = evaluate_capacity(inputs, 64 * _MIB)
-        assert est.verdict is CapacityVerdict.FIT
-        assert est.code is None
+    def test_resident_66_admits_and_67_refuses_in_lockstep_with_the_phase_sizer(self) -> None:
+        budget = 64 * _MIB
 
-    def test_resident_pure_leaf_at_68_incoming_is_refused(self) -> None:
-        inputs = CapacityInputs(
-            route="out_of_core",
-            parent_table_rows={},
-            incoming_edge_counts={"leaf": 68},
-            sink=False,
+        # incoming = 66 -> resident live 67 -> both admit.
+        resolve_phase_memory_limits(
+            budget_bytes=budget, memory_limit=None, incoming_edges=66, sink=False
+        )  # does not raise
+        est_66 = evaluate_capacity(
+            CapacityInputs(
+                route="out_of_core",
+                parent_table_rows={},
+                incoming_edge_counts={"leaf": 66},
+                sink=False,
+            ),
+            budget,
         )
-        est = evaluate_capacity(inputs, 64 * _MIB)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
-        assert est.code == "out_of_core_fanin_exceeds_budget"
+        assert est_66.verdict is CapacityVerdict.FIT
+        assert est_66.code is None
 
-    def test_resident_building_table_refuses_one_incoming_edge_earlier(self) -> None:
-        # A table that ALSO builds a relation (in parent_table_rows) is
-        # `incoming + 1` live, so 67 incoming + its own build = 68 refuses
-        # where a pure leaf at 67 is admitted -- proves the has_build term.
-        inputs = CapacityInputs(
-            route="out_of_core",
-            parent_table_rows={"mid": 1_000},
-            incoming_edge_counts={"mid": 67},
-            sink=False,
+        # incoming = 67 -> resident live 68 -> the phase sizer raises, so the
+        # evaluator must refuse too (preflight/run parity).
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_phase_memory_limits(
+                budget_bytes=budget, memory_limit=None, incoming_edges=67, sink=False
+            )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
+        est_67 = evaluate_capacity(
+            CapacityInputs(
+                route="out_of_core",
+                parent_table_rows={},
+                incoming_edge_counts={"leaf": 67},
+                sink=False,
+            ),
+            budget,
         )
-        est = evaluate_capacity(inputs, 64 * _MIB)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
-        assert est.code == "out_of_core_fanin_exceeds_budget"
+        assert est_67.verdict is CapacityVerdict.INSUFFICIENT
+        assert est_67.code == "out_of_core_fanin_exceeds_budget"
