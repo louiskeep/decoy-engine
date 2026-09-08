@@ -1,214 +1,192 @@
-# OOC capacity preflight: recalibrate the build-floor slope and make it advisory
+# OOC capacity preflight: advisory build-floor, hard fan-in end-to-end, completion-cap recalibration
 
-Status: plan v5 (Opus, 2026-09-08). The measure-first step falsified the premise of
-v1-v4 (that the streaming build is row-INDEPENDENT). Measurement shows the build's
-memory is row-LINEAR on every path, so the over-rejection is a MISCALIBRATED SLOPE,
-not a shape error. This collapses the fix to: recalibrate the slope from measured
-data and make the prediction advisory (stop hard-blocking). No shape classifier, no
-job-level model. Cam's advisory scope decision stands; only the model detail changed
-(row-linear, not flat), which makes the slice smaller. Risk R1: the gate no longer
-blocks on the prediction; the slope stays conservative (never under-predicts a
-measured completion requirement). Cross-repo: decoy-engine + the decoy CLI. Not
-started; build proceeds under the two build-phase gates (dennis, Codex-final); merge
-on Cam's go.
+Status: plan v6 (Opus, 2026-09-08). Risk R2 (changes a public verdict contract +
+cross-repo CLI behavior + capacity control flow). The measure-first step falsified
+the row-independence premise of v1-v4; v5 established the correct row-linear,
+advisory, no-classifier direction (Codex validated it); v6 folds in v5's gate
+findings: calibrate in DuckDB-completion-cap units (not peak RSS), make the fan-in
+refusal hard end-to-end (it is not today), and declare the public FIT semantic
+change. Cross-repo: decoy-engine + the decoy CLI. Not started; build proceeds under
+the two build-phase gates (dennis, Codex-final); merge on Cam's go.
 
 ## Frame
 
-The preflight prices each parent table's out-of-core relation-build memory with a
-row-linear floor (`predict_ooc_build_floor_bytes = 24 MiB + 190 B/row`,
-`_memory_estimate.py:327`) and REFUSES the job when the floor exceeds the DuckDB cap
-(`_capacity_eval.py:269`). Its value is failing fast with "you need ~N GB" instead
-of a mid-run OOM crash; its defect is over-rejection.
+The preflight prices each parent table's out-of-core relation-build with a row-linear
+floor (`predict_ooc_build_floor_bytes = 24 MiB + 190 B/row`) and REFUSES when the
+floor exceeds the DuckDB cap. Value: fail fast with "you need ~N GB" instead of a
+mid-run OOM. Defect: over-rejection.
 
-Two plan-gate rounds pushed toward a "streaming shape is bounded / row-independent"
-model. The mandatory measure-first step (`build_floor_probe`, which drives the real
-`_build_relation` that EVERY build entrypoint funnels through, including the
-streaming `emit_to_sink` path, with `preserve_insertion_order=False` set) refuted
-that premise:
+The mandatory measurement (`build_floor_probe`, driving the one `_build_relation`
+every build entrypoint including streaming `emit_to_sink` funnels through) showed the
+build is row-LINEAR on every path, not the flat envelope v1-v4 assumed. Completion
+caps (the DuckDB `memory_limit` a row count needs to finish, not peak RSS):
 
-| DuckDB memory_limit | 1M | 5M | 10M | 20M |
-|---|---|---|---|---|
-| 512 MiB  | ~407 MB | ~818 MB | ~870 MB | OOM (fails inside DuckDB) |
-| 1024 MiB | ~413 MB | ~789 MB | ~1330 MB | ~1461 MB (passes) |
+| rows | completes at | fails at | peak RSS at a passing tier |
+|---|---|---|---|
+| 5M  | <= 256 MiB | -       | 578 MB @256 |
+| 10M | <= 256 MiB | -       | 607 MB @256 |
+| 20M | ~768 MiB   | 512 MiB | 1217 MB @768 |
 
-Two facts, both row-DEPENDENT:
-1. The **memory_limit needed to complete** grows with rows: 10M completes at 512 MiB;
-   20M OOMs at 512 MiB and needs ~1024 MiB. Extrapolating (~50 MB per million rows)
-   matches the GCP data (33.3M/table completed only at a ~3.3 GB per-instance limit;
-   at ~1 GB it OOMed).
-2. **Peak RSS** saturates at ~1.4-1.6x the memory_limit once the working set exceeds
-   it (10M/512 MiB -> 870 MB = 1.6x; 20M/1024 MiB -> 1461 MB = 1.36x).
+Plus GCP: 33.3M/table completed only at a ~3.3 GB per-instance limit (OOMed near
+1 GB). So the split-dedup removed the pre-Phase-4 `arg_max` O(distinct-key) RESIDENT
+blowup (the retired 33.3M cloud anchor was that old operator), but a real
+row-dependent DuckDB working set remains on all paths (the staged GROUP BY + join-back
+over distinct keys). The over-rejection is a MISCALIBRATED SLOPE: `190 B/row`
+over-predicts the measured completion-cap need by ~2-4x. No shape classifier is
+needed (Codex confirmed): there is no separate bounded builder.
 
-The split-dedup DID remove the pre-Phase-4 `arg_max(struct)` O(distinct-key)
-RESIDENT blowup (the retired 33.3M cloud OOM anchor). But a real row-dependent floor
-remains, shared by all build paths. So the plateau proof's "flat 10M->20M" was
-measuring an isolated operator that bypasses the real Python/Arrow staging loop
-(Codex flagged this in P2); it is not the full build.
+## The fix
 
-Therefore the over-rejection is NOT "we priced a bounded streaming job as
-row-linear." The build IS row-linear on every path. The over-rejection is that the
-`190 B/row` slope over-predicts the measured peak (~73 B/row-equiv on this devbox at
-saturation, ~114 B/row-equiv on the July cloud run) by roughly 2-4x. The gate refuses
-jobs that would complete because its slope is too steep.
-
-## The fix (small, data-matched)
-
-Two changes, keeping the existing structure:
-
-1. **Recalibrate the slope** from `190 B/row` to a measured, still-conservative value.
-   The slope must never under-predict a measured COMPLETION requirement (an
-   under-prediction in advisory mode would recommend a too-small host that then OOMs),
-   so it covers the highest measured peak-per-row across environments (the July cloud
-   ~114 B/row) with margin. Target ~130-150 B/row, finalized from the build-step
-   repeated measurements (below); `_BUILD_FLOOR_BASE_BYTES` (24 MiB) is unchanged (it
-   still must keep tiny-fixture floors under the 32 MB routing-knob cap).
-2. **Make the build-floor prediction advisory.** The hard-fail branch
-   (`_capacity_eval.py:269-293`) stops returning INSUFFICIENT; it returns FIT with
-   `warned=True` and the recommended host size, and the job proceeds. The real OOM
-   backstop is caller-side and conditional (the isolated worker's RLIMIT when
-   `mem_cap_bytes` is set, `_isolated_worker._run` -> `apply_mem_cap`; the direct
-   in-process path is caller-managed via the residency warning). The advisory states
-   the expected size up front, so a too-small host stops cleanly (at the RLIMIT) or
-   is the caller's declared risk, not a mystery crash.
-
-The **fan-in guards stay HARD** (`out_of_core_fanin_exceeds_budget`, both the
-build-phase split and the pure-joiner-leaf guard): exact arithmetic impossibilities,
-decidable from the budget alone, that run regardless of host-ceiling detectability.
-
-### Why no shape classifier (dissolving the prior blocker)
-
-Codex's BLOCKER-1 ("`sink is not None` is not the bounded shape") applied to the
-FLAT-envelope model, which would have mispriced a resident job with a
-cardinality-independent number. v5 has no flat model and no separate bounded model:
-one row-linear advisory prices every shape. So there is nothing to misclassify. The
-resident path's ADDITIONAL whole-output residency (`outputs[table_name]` accumulated
-across the topological loop) stays UNPRICED, exactly as today; the advisory does not
-claim to catch it, and the existing residency warning covers that shape. Deferring it
-is unchanged behavior, not a new gap.
+1. **Recalibrate the slope in DuckDB-completion-cap units** (Codex BLOCKER). `floor_bytes`
+   is compared to `actual_duckdb_cap_bytes` and inverted through the reserve model, so
+   it must represent the `memory_limit` REQUIRED FOR COMPLETION, NOT peak RSS. Fit
+   `24 MiB + slope * rows` over the measured stable COMPLETION tiers using
+   `slope = max((stable_pass_cap_bytes - base) / rows)` across row counts and key
+   widths; failed tiers are lower-bound sanity checks. The devbox gives ~40-50 B/row;
+   the GCP 33.3M point implies up to ~98 B/row (cross-environment fragmentation), so
+   the slope covers the cloud completion need with margin (target ~110-120 B/row,
+   FINALIZED from the build-step bracketing, never pre-committed). The claim is
+   "conservative over the measured domain" (typical key widths), NOT an unconditional
+   "never under-predicts any requirement". SEPARATELY verify the final whole-GiB host
+   recommendation covers observed VmHWM; never feed VmHWM into `floor_bytes`.
+   `_BUILD_FLOOR_BASE_BYTES` (24 MiB) unchanged.
+2. **Make the build-floor prediction advisory.** The build-floor branch
+   (`_capacity_eval.py:269-293`) returns FIT + `warned=True` + a relation-build-only
+   recommended size, not INSUFFICIENT. The job proceeds. Backstops are caller-side and
+   CONDITIONAL: the isolated worker's RLIMIT only when `mem_cap_bytes` is set
+   (`apply_mem_cap`); the direct in-process path has none, and its only IMMEDIATE
+   advisory is the pre-execution logger warning (the residency `QualityWarning` is
+   attached AFTER a successful return, so it cannot warn before an OOM -- do not call
+   it a backstop).
+3. **Keep fan-in HARD, and make it hard END-TO-END** (Codex BLOCKER). Demoting the
+   build-floor makes fan-in the only hard refusal, exposing three gaps where it is
+   currently NOT hard end-to-end:
+   - `evaluate_capacity` returns UNKNOWN for `unresolved_parent_tables` BEFORE the
+     fan-in loop. Fan-in needs only `incoming_edge_counts` + budget, so RUN THE FAN-IN
+     GUARDS FIRST when a usable budget exists; only then return UNKNOWN for unpriceable
+     rows. No usable budget at all -> UNKNOWN (nothing budget-relative to compute).
+   - `run_out_of_core_route`'s `except ExecutionError:` (budget resolution) swallows
+     `out_of_core_fanin_exceeds_budget` as "detection failed". NARROW the catch to the
+     RAM-detection-failed code; always re-raise fan-in.
+   - `estimate_job_capacity` re-raises a fan-in from budget resolution, but the CLI
+     preflight catches only `capacity_source_unprofilable`. Make the CLI render a
+     propagated fan-in as an INSUFFICIENT capacity failure (EXIT_CAPACITY), or
+     normalize it to `CapacityEstimate.INSUFFICIENT` before it reaches the CLI.
+4. **Declare the public contract change** (Codex MEDIUM). Redefining `FIT` from "clears
+   the budget" to "no hard impossibility detected" (with `warned` marking an adverse
+   prediction) DOES change a public field's meaning. Pre-GA permits it, but declare it:
+   engine + CLI changelogs, `CapacityVerdict`/`estimate_job_capacity` docstrings,
+   `capacity.py`, CLI preflight help, and `exit_codes.py`. Retain `decoy run`
+   recognition of a legacy `out_of_core_insufficient_memory` build-floor code as
+   documented older-engine compatibility.
+5. **Companion decoy CLI change.** `cli/preflight.py:459` maps every FIT to a green PASS
+   ignoring `warned`. Render `FIT && warned` as a WARNING (status="warn", recommended
+   size shown) via `add_warn`, honoring `--fail-on-warning`; default execution proceeds.
+   Re-anchor the parity test (`test_run_preflight_capacity_parity.py`): its
+   `test_insufficient_agrees` 300k build-floor case becomes mutual-advisory, so switch
+   the mutual-refusal assertion to a FAN-IN case (many incoming edges over a tiny
+   budget) -- which the fan-in-end-to-end fix (item 3) makes actually refuse on both
+   sides -- and add a case asserting the 300k build-floor case WARNS on both.
 
 ## Non-goals
 
-- No shape classifier, no `CapacityInputs` change, no job-level topological live-set,
-  no leaf-table pricing, no whole-output residency model, no ceiling-resource
-  redesign, no DuckDB-cap re-sizing. All deferred; the gate becomes honest advice,
-  not a proof.
+- No shape classifier, no `CapacityInputs` row/width expansion, no job-level
+  topological live-set, no leaf-table pricing, no whole-output residency model, no
+  ceiling-resource redesign, no DuckDB-cap re-sizing. The resident path's whole-output
+  accumulation stays UNPRICED as today; the advisory is explicitly relation-build-only
+  and excludes resident inputs, accumulated outputs, and ingestion peak.
 - No change to the FK drivers, the split-dedup, the route policy, the reserve model,
-  or budget resolution.
+  or budget-resolution ARITHMETIC (only the fan-in error PROPAGATION is narrowed).
 
-## Measurement (finalizes the slope)
+## Measurement (finalizes the slope; completion-cap, not RSS)
 
-Repeat the `build_floor_probe` sweep already run (rows {1M,5M,10M,20M} x memory_limit
-{512,1024 MiB}, plus finer memory_limit tiers to bracket the "needed to complete"
-edge at 5M/10M/20M), REPEATED per point with variance recorded (Codex build
-verification). Record the DuckDB `"NNMB"` setting and `actual_duckdb_cap_bytes`
-SEPARATELY (never relabel the decimal setting as MiB). Fit the slope as the max
-peak-per-row across the swept points AND the retained July cloud ~114 B/row, then add
-margin. Confirm the chosen slope's floor exceeds every measured peak at its tested
-(rows, memory_limit). The 512/1024 MiB points share the low-thread regime; broader
-thread-transition and >100M characterization stay DEFERRED to the separate benchmark.
-Record all points in the sprint-testing ledger.
-
-## Design
-
-1. **Recalibrate `_BUILD_FLOOR_BYTES_PER_ROW`** (190 -> measured, ~130-150). Rewrite
-   its derivation comment: the current split-dedup build IS row-linear (all paths via
-   `_build_relation`); the slope covers the measured peak-per-row with margin; the
-   retired 33.3M `arg_max` cloud anchor is recorded as historical (a different,
-   removed operator), not a binding point.
-2. **Advisory verdict.** Replace the build-floor INSUFFICIENT branch with FIT +
-   `warned=True` + the recommended-size message. `enforce_ooc_memory_preflight` then
-   raises ONLY on the two fan-in codes (assert this). Redefine the `FIT` enum
-   docstring to "no hard impossibility detected"; `warned` marks an adverse
-   prediction. Other validation failures outside this estimator (invalid budget,
-   missing source, schema) stay hard.
-3. **Recommendation number.** Keep `declared_minimum_ceiling_bytes` as the advisory
-   "you need ~N GB", now fed by the recalibrated floor. Correct the one factual error
-   the gate surfaced: the asymptotic cap/host ratio above the 10 GiB reserve knee is
-   `1 / (0.8 * 1e6 / 1_048_576) = 1.31072`, not 1.25. It is advice, so no proven
-   minimality is required; describe it as provisional within the measured domain.
-4. **Public result contract.** Reuse FIT + `warned` + `needed_bytes` (documented
-   meanings hold); document that a formerly-INSUFFICIENT build-floor case is now
-   FIT-with-advisory and that `estimate_job_capacity` is a build-feasibility ADVISORY,
-   not an OOM guarantee (docstring, CLI help, changelog).
-5. **Companion decoy CLI change** (separate repo). `cli/preflight.py:459` maps every
-   FIT to a green "within budget" PASS, ignoring `warned`. Change `FIT && warned` to
-   render as a WARNING/advisory (recommended size shown) via `add_warn`, honoring
-   `--fail-on-warning` for the exit code; default execution proceeds. Re-anchor the
-   preflight/runtime parity test (`test_run_preflight_capacity_parity.py`): its
-   `test_insufficient_agrees` currently uses a 300k build-floor case, which now
-   becomes mutual-advisory; switch that mutual-refusal assertion to a FAN-IN case
-   (many incoming edges over a tiny budget) so both sides still hard-refuse, and add
-   a case asserting the build-floor 300k case now WARNS (not PASS, not FAIL) on both.
-6. **Docstrings**: state the advisory contract, the conditional backstops, and that
-   the build is row-linear on all paths.
+Repeat `build_floor_probe` per point with variance recorded. For each row count in
+{1M,5M,10M,20M}, BRACKET the stable completing `"NNMB"` tier (account for DuckDB's
+non-monotonic tier behavior: a larger limit can fail where a smaller passed, so
+confirm a STABLE pass). Fit the slope as `max((stable_pass_cap_bytes - base) / rows)`;
+failed tiers are lower-bound checks. Include at least one distinct-single-string and
+one composite/wider key point (key width changes the per-row need; without them the
+claim is limited to the tested int64-key width). Record the DuckDB setting and
+`actual_duckdb_cap_bytes` SEPARATELY. Separately record peak VmHWM per point and
+verify the host recommendation covers it. Thread-transition and >100M characterization
+stay DEFERRED to the separate benchmark. Log all points in the sprint-testing ledger.
 
 ## Acceptance tests (define behavior before build; no later contributor weakens)
 
-1. **Recalibrated slope never under-predicts a measured peak.** For each measured
-   (rows, memory_limit, peak_rss) point in the sweep, `predict_ooc_build_floor_bytes(
-   rows) >= measured peak_rss`. The floor stays a conservative upper bound of the
-   real build memory.
-2. **Slope is meaningfully gentler than 190.** `predict_ooc_build_floor_bytes(20M)` is
-   materially below the old `24 MiB + 190*20M`, matching the recalibrated constant
-   (the loosening that fixes over-recommendation).
-3. **Build-floor prediction no longer blocks.** A case that previously returned
-   INSUFFICIENT on the build-floor (e.g. 20M on a 4 GiB host) now returns FIT with
-   `warned=True` and a recommended-size message; `enforce_ooc_memory_preflight` does
-   NOT raise for it.
-4. **Fan-in still refuses, and runs regardless of ceiling.** `(64 MiB, 67 live)`
-   admits / `(68 live)` raises; the pure-joiner-leaf guard still raises; with an
-   explicit budget and UNKNOWN host ceiling the fan-in guards still run and raise; no
-   usable budget -> UNKNOWN.
-5. **`enforce` raises only for fan-in codes** (assert the raised code set).
-6. **Advisory never claims a guarantee.** `estimate_job_capacity` docstring/result +
-   CLI help state build-feasibility advice; a formerly-INSUFFICIENT case is
-   FIT-with-advisory; no public field changes meaning; FIT enum redefined.
-7. **CLI renders advisory as a warning, not a PASS.** `FIT && warned` prints the
-   advisory + recommended size and is NOT a green "within budget" PASS;
-   `--fail-on-warning` governs the exit code; default run proceeds. The parity test's
-   mutual-refusal case is a FAN-IN impossibility; the 300k build-floor case is
-   mutual-advisory on both sides.
-8. **Recommendation number sane, units distinct.** `declared_minimum_ceiling_bytes`
-   returns a whole GiB covering the advisory floor at the tested points, using the
-   corrected `~1.311` cap->ceiling conversion.
-9. **Fail-open / NOT_APPLICABLE unchanged.** `budget_bytes is None` -> UNKNOWN; CSV /
-   non-OOC route -> NOT_APPLICABLE / UNKNOWN.
-10. **evaluate/enforce parity** on the new boundary points (only the build-floor
-    case's code flips from INSUFFICIENT to FIT-with-advisory, in both).
-11. **Resident whole-output residency stays as today** (unpriced by the estimator;
-    the residency warning still fires for the caller-managed shape) -- no regression.
+1. **Floor is conservative over the measured completion domain.** For each measured
+   stable-completing (rows, memory_limit) tier, `predict_ooc_build_floor_bytes(rows) <=`
+   the actual cap that completed AND `>=` the largest FAILING tier's cap for that row
+   count (it brackets the real completion need). Stated in DuckDB-cap bytes, NOT peak
+   RSS. (Replaces v5's mathematically-impossible peak-RSS criterion.)
+2. **Slope meaningfully gentler than 190** at 20M (the loosening that fixes
+   over-recommendation), matching the recalibrated constant.
+3. **Host recommendation covers observed VmHWM.** For each measured point,
+   `declared_minimum_ceiling_bytes(floor)` implies a host >= the measured peak VmHWM
+   (the RSS check lives here, separate from `floor_bytes`).
+4. **Build-floor no longer blocks.** A former build-floor INSUFFICIENT case (e.g. 20M
+   on 4 GiB) returns FIT + `warned=True` + recommended size; `enforce` does NOT raise.
+5. **Fan-in hard END-TO-END.** (a) `(64 MiB, 67 live)` admits / `(68 live)` raises;
+   pure-joiner-leaf raises. (b) unresolved rows + fan-in-exceeds + usable budget ->
+   INSUFFICIENT (NOT UNKNOWN). (c) auto-detected budget whose fan-in exceeds it ->
+   the runtime does NOT swallow it as detection-failed. (d) no usable budget at all ->
+   UNKNOWN. (e) CLI: a fan-in job -> EXIT_CAPACITY with INSUFFICIENT rendered, not a
+   raw traceback.
+6. **`enforce` raises only fan-in codes** (assert the raised code set).
+7. **Advisory is relation-build-only.** `estimate_job_capacity` docstring/result + CLI
+   help state the recommendation excludes resident inputs, accumulated outputs, and
+   ingestion; a formerly-INSUFFICIENT case is FIT-with-advisory; FIT enum redefined and
+   the change declared in changelogs/exit_codes docs.
+8. **CLI renders advisory as status="warn"** in BOTH human and JSON output, under
+   default execution and under `--fail-on-warning` (the latter governs the exit code);
+   the parity test's mutual-refusal case is a FAN-IN impossibility; the 300k build-floor
+   case is mutual-advisory.
+9. **Recommendation units distinct** (`~1.311` cap->host conversion, not 1.25;
+   completion-cap floor vs VmHWM check kept separate).
+10. **Fail-open / NOT_APPLICABLE unchanged** (`budget None` -> UNKNOWN; CSV / non-OOC ->
+    NOT_APPLICABLE / UNKNOWN), except that fan-in now precedes the unresolved-rows UNKNOWN
+    when a usable budget exists.
+11. **evaluate/enforce parity** on the new boundary points.
+12. **Resident whole-output residency unchanged** (unpriced; residency warning still
+    fires for the caller-managed shape) -- no regression.
 
 ## Steps
 
-1. Finalize the slope from repeated `build_floor_probe` measurements (variance
-   recorded; floor >= every measured peak); record in the ledger.
+1. Finalize the slope from repeated completion-cap bracketing (+ key-width points);
+   record in the ledger; confirm acceptance test 1 holds with the chosen slope.
 2. Recalibrate `_BUILD_FLOOR_BYTES_PER_ROW` + rewrite its derivation comment
-   (row-linear, measured anchors, retired arg_max anchor as historical).
-3. Demote the build-floor branch to advisory FIT-with-warning; keep fan-in hard,
-   running regardless of ceiling; redefine the FIT enum docstring; correct the
-   `~1.311` factor.
-4. Companion decoy CLI change: render `FIT && warned` as a warning honoring
-   `--fail-on-warning`; update CLI help + changelog; re-anchor the parity test on a
-   fan-in impossibility + add the build-floor-warns-both-sides case.
-5. Update every engine test asserting build-floor INSUFFICIENT to the advisory
-   behavior; add fan-in-runs-regardless, enforce-raises-only-fan-in, no-budget->UNKNOWN.
-6. Verify: ruff + format + mypy on every changed file (both repos); full `execution`
-   unit suite + OOC parity suites (engine) + CLI preflight/parity suites; mutation
-   grade on the recalibrated floor, the advisory-vs-hard-fail branch split, and the
-   fan-in guards.
-7. dennis gate, then Codex final gate (both repos' diffs). Merge only on Cam's go,
-   after green CI. Then run the separate >100M streaming benchmark.
+   (completion-cap units, row-linear all paths, retired arg_max anchor as historical).
+3. Demote the build-floor branch to advisory FIT-with-warning; reorder so fan-in guards
+   run before the unresolved-rows UNKNOWN when a usable budget exists; redefine the FIT
+   enum docstring; correct the `~1.311` factor.
+4. Narrow `run_out_of_core_route`'s budget-resolution catch to the RAM-detection-failed
+   code (re-raise fan-in); make `estimate_job_capacity`/CLI render a propagated fan-in
+   as INSUFFICIENT/EXIT_CAPACITY.
+5. Companion decoy CLI: render `FIT && warned` as status="warn" honoring
+   `--fail-on-warning`; update CLI help + changelog + exit_codes doc; re-anchor the
+   parity test on a fan-in impossibility + add the build-floor-warns-both-sides case;
+   retain legacy `out_of_core_insufficient_memory` recognition.
+6. Update every engine test asserting build-floor INSUFFICIENT to advisory; add the
+   fan-in-end-to-end cases (5b-5e) and enforce-raises-only-fan-in.
+7. Verify: ruff + format + mypy on every changed file (both repos); full `execution`
+   unit suite + OOC parity suites (engine) + CLI preflight/parity suites; mutation grade
+   on the recalibrated floor, the advisory branch split, and the fan-in guards +
+   propagation.
+8. dennis gate, then Codex final gate (both repos' diffs). Merge only on Cam's go, after
+   green CI. Then run the separate >100M streaming benchmark.
 
 ## Risks
 
-- **A gentler slope under-predicts and advises a too-small host.** Central risk;
-  mitigated by test 1 (floor >= every measured peak, across devbox + the retained
-  cloud anchor) and by keeping margin. In advisory mode a wrong-low recommendation is
-  bounded by the caller's RLIMIT where set; the direct path is caller-managed.
-- **Advisory lets a job start that then overflows.** Accepted by scope (Cam):
-  clean stop at the RLIMIT where set; caller-managed otherwise; the advisory states
-  the size up front.
-- **CLI drift turning a refusal into a silent PASS.** Mitigated by the companion CLI
-  change + the parity-test re-anchor (test 7), landed with the engine change.
-- **Fan-in regression.** Mitigated by keeping those guards byte-for-byte hard and
-  testing they run even when the ceiling is unknown (tests 4, 5).
+- **A gentler slope under-predicts the completion need.** Central risk; mitigated by
+  test 1 (floor brackets the measured completion tiers, covers the cloud 33.3M point)
+  and the "conservative over the measured domain / typical key widths" claim (not
+  unconditional). In advisory mode a wrong-low recommendation is bounded by the RLIMIT
+  where set; the direct path is caller-managed.
+- **Fan-in end-to-end control-flow change.** A real production change, bounded to error
+  propagation (narrow a catch, reorder two returns, render one CLI error); mitigated by
+  the explicit boundary tests 5b-5e.
+- **Advisory lets a job start that then overflows.** Accepted by scope (Cam): clean stop
+  at the RLIMIT where set; caller-managed otherwise; the advisory states the size up
+  front. The direct-run pre-execution logger warning is the only immediate heads-up
+  there.
+- **CLI drift turning a refusal into a silent PASS.** Mitigated by the companion change +
+  the parity re-anchor (test 8), landed with the engine change.
