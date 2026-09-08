@@ -86,13 +86,52 @@ def test_unknown_when_a_parent_table_is_unresolved() -> None:
     assert "parent" in est.message
 
 
+class TestFanInPrecedesUnresolvedRows:
+    """ROUND-4 REORDER (acceptance test 5b/5d): fan-in is row-independent, so
+    it must fire before the unresolved-rows `UNKNOWN` whenever a usable
+    budget exists -- an unpriceable job that ALSO has a fan-in impossibility
+    is a real, actionable refusal, not a masked "no verdict"."""
+
+    def test_unresolved_rows_plus_fanin_exceeds_plus_usable_budget_is_insufficient(self) -> None:
+        # 68 co-live joiners on a 64 MiB budget (the same pinned fan-in case
+        # elsewhere in this module) PLUS an unresolved CSV parent table: the
+        # fan-in refusal must win, not the unresolved-rows UNKNOWN.
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={},
+            incoming_edge_counts={"leaf": 68},
+            sink=True,
+            unresolved_parent_tables=frozenset({"csv_parent"}),
+        )
+        est = evaluate_capacity(inputs, 64 * _MIB)
+        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.code == "out_of_core_fanin_exceeds_budget"
+
+    def test_unresolved_rows_alone_with_no_usable_budget_is_unknown(self) -> None:
+        # No usable budget at all: nothing budget-relative to compute, so
+        # fan-in is skipped and the unresolved-rows UNKNOWN still applies.
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={},
+            incoming_edge_counts={"leaf": 68},
+            sink=True,
+            unresolved_parent_tables=frozenset({"csv_parent"}),
+        )
+        est = evaluate_capacity(inputs, None)
+        assert est.verdict is CapacityVerdict.UNKNOWN
+        assert est.code is None
+
+
 class TestParityWithMidRunGate:
     """T4: `evaluate_capacity` INSUFFICIENT on typed inputs must match the
     mid-run gate's raise on the SAME inputs -- not just the same verdict, the
     identical code AND message, since `enforce_ooc_memory_preflight` now
     raises `ExecutionError(code=est.code, message=est.message)` verbatim."""
 
-    def test_insufficient_matches_the_mid_run_raise(self) -> None:
+    def test_build_floor_advisory_matches_the_mid_run_result(self) -> None:
+        # ROUND-4: a build-floor-over-cap case no longer raises anywhere --
+        # both the evaluator and the mid-run gate must agree on FIT +
+        # warned=True + the same recommended size, not just the same code.
         parent_table_rows = {"parent": 20_000_000}
         budget = 64 * _MIB
         inputs = CapacityInputs(
@@ -102,15 +141,18 @@ class TestParityWithMidRunGate:
             sink=True,
         )
         est = evaluate_capacity(inputs, budget)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
-        assert est.code == "out_of_core_insufficient_memory"
+        assert est.verdict is CapacityVerdict.FIT
+        assert est.warned is True
+        assert est.code is None
 
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                parent_table_rows, budget_bytes=budget, sink=True, incoming_edge_counts={}
-            )
-        assert excinfo.value.code == est.code
-        assert excinfo.value.message == est.message
+        result = enforce_ooc_memory_preflight(
+            parent_table_rows, budget_bytes=budget, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True
+        assert result.warned is True
+        assert result.binding_table == est.binding_table
+        assert result.floor_bytes == est.floor_bytes
+        assert result.cap_bytes == est.cap_bytes
         assert est.needed_bytes is not None
         assert est.needed_bytes % _GIB == 0  # declared_minimum_ceiling_bytes rounds to whole GiB
 

@@ -340,10 +340,18 @@ def run_out_of_core_route(
         # together with `memory_limit`/`batch_rows` above so the three never
         # disagree about whether resolution succeeded.
         resolved_budget_bytes = budget.budget_bytes
-    except ExecutionError:
-        # Host-RAM detection failed and no explicit budget was given: fall back
-        # to the route's pinned batch default + DuckDB's default limit rather
-        # than rejecting a job the in-memory path would have run.
+    except ExecutionError as exc:
+        # Only "host-RAM detection failed, no explicit budget given" falls
+        # back to the route's pinned batch default + DuckDB's default limit
+        # rather than rejecting a job the in-memory path would have run.
+        # Round-4: this catch used to swallow EVERY `ExecutionError` here,
+        # including `out_of_core_fanin_exceeds_budget` -- a real, hard
+        # capacity refusal masqueraded as "detection failed" and silently
+        # fell back to running the job anyway. Narrowed to the one code that
+        # is genuinely a fallback case; any other code (fan-in included)
+        # re-raises.
+        if exc.code != "out_of_core_memory_detection_failed":
+            raise
         if budget_bytes is not None:
             raise
 

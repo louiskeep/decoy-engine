@@ -207,9 +207,15 @@ class TestResolvePhaseMemoryLimits:
 
 
 class TestPredictOocBuildFloorBytes:
-    # FIX 3 recalibration: a conservative envelope over the clean fixed-rlimit
-    # devbox sweep AND the real-route cloud measurement (see the
-    # `_BUILD_FLOOR_BYTES_PER_ROW` docstring for both datasets).
+    # ROUND-4 recalibration: the slope moved from 190 to 120 B/row, fit in
+    # DuckDB completion-cap units against the measured devbox tiers (see the
+    # `_BUILD_FLOOR_BYTES_PER_ROW` docstring for the full derivation). The
+    # OLD fail-tier brackets below predate this recalibration; they still
+    # hold as a sanity floor (120 B/row still clears every one of them, just
+    # with less margin than 190 did), so they stay as a regression check,
+    # not the calibration target itself -- that target is the plan's own
+    # measured-tier bracketing, not a unit-test assertion (see the plan's
+    # acceptance tests for why that stays a measured claim, not a hard test).
 
     # Clean fixed-rlimit (RLIMIT_DATA 8000 MiB) devbox floor brackets: the
     # (highest FAIL, lowest PASS] memory_limit MiB per row count. The SAFETY
@@ -236,11 +242,14 @@ class TestPredictOocBuildFloorBytes:
             floor = predict_ooc_build_floor_bytes(rows)
             assert floor > highest_fail_mib * _MIB, rows
 
-    def test_never_under_predicts_the_real_route_cloud_floor(self) -> None:
-        # The motivating failure: the real-route 33.3M-row BUILD OOMed at
-        # memory_limit ~1638 MiB and completed at 2457 MiB. The model must
-        # predict at or above the 2457 MiB completion level (never under the
-        # observed floor), and over-predicts it with margin here.
+    def test_clears_the_historical_cloud_completion_point_with_margin(self) -> None:
+        # The old 33.3M-row cloud measurement (~2457 MiB completion cap) is
+        # HISTORICAL now -- it was measured against the retired pre-Phase-4
+        # `arg_max` operator, not the current split-dedup build (see
+        # `_BUILD_FLOOR_BYTES_PER_ROW`'s docstring). It still informed the
+        # recalibrated slope's margin (cross-environment fragmentation), so
+        # this checks the new model still clears it, not that it is the
+        # binding calibration anchor.
         floor_33m = predict_ooc_build_floor_bytes(33_300_000)
         assert floor_33m >= 2457 * _MIB
 
@@ -264,6 +273,18 @@ class TestPredictOocBuildFloorBytes:
 
     def test_negative_row_count_does_not_shrink_the_floor(self) -> None:
         assert predict_ooc_build_floor_bytes(-1) == predict_ooc_build_floor_bytes(0)
+
+    def test_recalibrated_slope_constant_is_120(self) -> None:
+        assert mem_mod._BUILD_FLOOR_BYTES_PER_ROW == 120.0
+
+    def test_20m_floor_uses_the_recalibrated_slope_and_is_materially_below_190(self) -> None:
+        floor_20m = predict_ooc_build_floor_bytes(20_000_000)
+        assert floor_20m == 24 * _MIB + 120 * 20_000_000
+        old_floor_20m = 24 * _MIB + 190 * 20_000_000
+        assert floor_20m < old_floor_20m
+        # "Materially" below, not a rounding-error gap: the recalibration
+        # halves the effective slope, so the loosening should be large.
+        assert floor_20m < 0.7 * old_floor_20m
 
 
 class TestEnforceOocMemoryPreflight:
@@ -299,31 +320,33 @@ class TestEnforceOocMemoryPreflight:
         assert "resident floor" in message
         assert "recommend" in message
 
-    def test_hard_fail_raises_typed_error_before_any_run(self) -> None:
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                {"parent": 20_000_000},
-                budget_bytes=64 * _MIB,
-                sink=True,
-                incoming_edge_counts={},
-            )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
-        message = excinfo.value.message
-        assert "resident floor" in message
-        assert "actual build cap" in message
-        assert "GB of memory" in message
+    def test_build_floor_over_cap_is_now_advisory_not_a_raise(self) -> None:
+        # ROUND-4 DEMOTION: this used to hard-fail (`out_of_core_insufficient_
+        # memory`) for a build-floor prediction over the build cap; it now
+        # returns FIT + warned=True with the same recommended-size math,
+        # never raising.
+        result = enforce_ooc_memory_preflight(
+            {"parent": 20_000_000},
+            budget_bytes=64 * _MIB,
+            sink=True,
+            incoming_edge_counts={},
+        )
+        assert result.ok is True
+        assert result.warned is True
+        assert result.binding_table == "parent"
 
-    def test_hard_fail_boundary_is_the_cap_itself_not_a_fraction_of_it(self, monkeypatch) -> None:
+    def test_advisory_boundary_is_the_cap_itself_not_a_fraction_of_it(self, monkeypatch) -> None:
         # Pin the exact boundary against the ACTUAL DuckDB decimal cap
-        # (round-2 Fix B): the invariant is `floor(t) <= cap(t)`, so
-        # floor == cap FITS (admitted) and floor == cap + 1 FAILS. There is
-        # no additional safety fraction baked into the hard-fail bound -- it
-        # is the full actual cap, not a fraction of it (that fractional SAFE
-        # bound is what round 1's remediation removed). `cap` is quantized to
-        # whole decimal megabytes (`actual_duckdb_cap_bytes`), which does not
-        # land on every value `predict_ooc_build_floor_bytes`'s base+slope
-        # model can produce, so the floor is monkeypatched to the EXACT cap
-        # value to pin this boundary independent of that model's own grid.
+        # (round-2 Fix B): floor == cap still fits inside the warn band
+        # (`_OOC_MEM_WARN_FRACTION` is 0.6, and floor/cap = 1.0 clears it),
+        # and floor == cap + 1 crosses into the demoted advisory branch --
+        # round-4 turned that branch into a warning, not a raise, so both
+        # sides of this boundary now return FIT with `warned=True`, only the
+        # message differs. `cap` is quantized to whole decimal megabytes
+        # (`actual_duckdb_cap_bytes`), which does not land on every value
+        # `predict_ooc_build_floor_bytes`'s base+slope model can produce, so
+        # the floor is monkeypatched to the EXACT cap value to pin this
+        # boundary independent of that model's own grid.
         budget = 100 * _MIB
         cap = actual_duckdb_cap_bytes(budget, 1)
         monkeypatch.setattr(mem_mod, "predict_ooc_build_floor_bytes", lambda rows: cap)
@@ -331,12 +354,14 @@ class TestEnforceOocMemoryPreflight:
             {"parent": 0}, budget_bytes=budget, sink=True, incoming_edge_counts={}
         )
         assert result.ok is True  # floor == cap fits exactly
+        assert result.warned is True  # still inside the warn band at floor/cap == 1.0
 
         monkeypatch.setattr(mem_mod, "predict_ooc_build_floor_bytes", lambda rows: cap + 1)
-        with pytest.raises(ExecutionError):
-            enforce_ooc_memory_preflight(
-                {"parent": 0}, budget_bytes=budget, sink=True, incoming_edge_counts={}
-            )
+        result = enforce_ooc_memory_preflight(
+            {"parent": 0}, budget_bytes=budget, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True  # round-4: no longer raises
+        assert result.warned is True
 
     def test_fails_open_when_budget_bytes_is_none(self) -> None:
         # Mirrors `resolve_ooc_memory_limit`'s own fall-through (host-RAM
@@ -359,9 +384,14 @@ class TestEnforceOocMemoryPreflight:
 
     def test_resident_path_uses_incoming_plus_one_as_the_cap_divisor(self) -> None:
         # A resident-path table with 3 incoming edges: cap = budget // 4. A
-        # floor that fits budget // 1 but not budget // 4 must still fail --
-        # this is the exact BLOCKER shape (a preflight that checked the
-        # undivided budget instead of the real resident cap).
+        # floor that fits budget // 1 but not budget // 4 must still be
+        # PRICED against the divided cap, not the undivided budget -- this is
+        # the exact BLOCKER shape (a preflight that checked the undivided
+        # budget instead of the real resident cap). Round-4: the outcome for
+        # an over-cap build floor is now advisory (warned=True), not a raise,
+        # but the divisor must still be the one that actually catches this
+        # case -- i.e. the SAME row count must NOT warn against the
+        # undivided budget but DOES warn once divided by incoming + 1.
         budget = 4 * _GIB
         cap = budget // 4
         floor = predict_ooc_build_floor_bytes(0)
@@ -370,13 +400,39 @@ class TestEnforceOocMemoryPreflight:
         rows = 1
         while predict_ooc_build_floor_bytes(rows) <= cap:
             rows *= 2
-        with pytest.raises(ExecutionError):
+        result = enforce_ooc_memory_preflight(
+            {"hub": rows},
+            budget_bytes=budget,
+            sink=False,
+            incoming_edge_counts={"hub": 3},
+        )
+        assert result.ok is True  # round-4: advisory, never raises
+        assert result.warned is True
+        assert result.binding_table == "hub"
+
+    def test_enforce_raises_only_fanin_codes(self) -> None:
+        # Acceptance test 6: whatever `enforce_ooc_memory_preflight` raises,
+        # it is always a fan-in code -- the build-floor case never raises
+        # anymore, even alongside a real fan-in on the SAME call.
+        result = enforce_ooc_memory_preflight(
+            {"parent": 100_000_000}, budget_bytes=64 * _MIB, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True  # build-floor-only: never raises
+
+        with pytest.raises(ExecutionError) as excinfo:
             enforce_ooc_memory_preflight(
-                {"hub": rows},
-                budget_bytes=budget,
-                sink=False,
-                incoming_edge_counts={"hub": 3},
+                {}, budget_bytes=64 * _MIB, sink=True, incoming_edge_counts={"leaf": 68}
             )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"  # fan-in-only: raises
+
+        with pytest.raises(ExecutionError) as excinfo:
+            enforce_ooc_memory_preflight(
+                {"parent": 100_000_000},
+                budget_bytes=64 * _MIB,
+                sink=True,
+                incoming_edge_counts={"leaf": 68},
+            )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"  # both: fan-in still wins
 
     def test_no_parent_tables_is_always_clean(self) -> None:
         result = enforce_ooc_memory_preflight(
@@ -407,21 +463,27 @@ class TestEnforceOocMemoryPreflight:
             )
         assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
 
-    def test_binding_table_is_the_argmax_of_floor_minus_cap(self) -> None:
-        # Two failing tables at different budgets: the reported binding
+    def test_binding_table_is_the_argmax_of_floor_minus_cap(self, caplog) -> None:
+        # Two over-cap tables at different budgets: the reported binding
         # table must be the WORSE one (larger floor - cap margin), not
-        # merely the first/last one iterated.
+        # merely the first/last one iterated. Round-4: this is now an
+        # advisory (warned=True), so the assertion moves from the raised
+        # exception's message to the result's `binding_table` field and the
+        # logged advisory message.
         budget = 4 * _GIB
         small_rows = 1_000
         large_rows = 10_000_000_000
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
+        with caplog.at_level(logging.WARNING, logger=capacity_eval_mod.__name__):
+            result = enforce_ooc_memory_preflight(
                 {"small": small_rows, "huge": large_rows},
                 budget_bytes=budget,
                 sink=True,
                 incoming_edge_counts={},
             )
-        assert "'huge'" in excinfo.value.message
+        assert result.ok is True
+        assert result.warned is True
+        assert result.binding_table == "huge"
+        assert any("'huge'" in r.getMessage() for r in caplog.records)
 
 
 class TestDeclaredMinimumCeiling:
@@ -469,30 +531,33 @@ class TestDeclaredMinimumCeiling:
 class TestCodexRound2BoundaryCases:
     """The two admitted-then-OOM cases Codex's round-2 gate reproduced: a
     floor that fit the OLD binary `budget // live` cap but exceeded the true
-    ACTUAL decimal DuckDB cap. Both must now be REFUSED before any DuckDB
-    work, with a truthful declared minimum (see `TestDeclaredMinimumCeiling`
-    for the general self-consistency property; these pin the exact reported
-    rows/topology)."""
+    ACTUAL decimal DuckDB cap. Round-2 made both HARD REFUSALS; round-4
+    demotes the build-floor half of this gate to advisory, so both now
+    return FIT + warned=True with a truthful declared minimum instead of
+    raising (see `TestDeclaredMinimumCeiling` for the general
+    self-consistency property; these pin the exact reported rows/topology)."""
 
     def _resolved_host_budget(self, ceiling_bytes: int) -> int:
         with patch.object(budget_mod, "detect_effective_memory_bytes", lambda: ceiling_bytes):
             return budget_mod.resolve_ooc_memory_limit(budget_bytes=None).budget_bytes
 
-    def test_18_5m_rows_sink_on_4gib_host_is_refused(self) -> None:
+    def test_18_5m_rows_sink_on_4gib_host_is_now_advisory(self) -> None:
         budget = self._resolved_host_budget(4 * _GIB)
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                {"parent": 18_500_000}, budget_bytes=budget, sink=True, incoming_edge_counts={}
-            )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
+        result = enforce_ooc_memory_preflight(
+            {"parent": 18_500_000}, budget_bytes=budget, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True
+        assert result.warned is True
+        assert result.binding_table == "parent"
 
-    def test_9_2m_rows_resident_fanin_1_on_4gib_host_is_refused(self) -> None:
+    def test_9_2m_rows_resident_fanin_1_on_4gib_host_is_now_advisory(self) -> None:
         budget = self._resolved_host_budget(4 * _GIB)
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                {"hub": 9_200_000},
-                budget_bytes=budget,
-                sink=False,
-                incoming_edge_counts={"hub": 1},
-            )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
+        result = enforce_ooc_memory_preflight(
+            {"hub": 9_200_000},
+            budget_bytes=budget,
+            sink=False,
+            incoming_edge_counts={"hub": 1},
+        )
+        assert result.ok is True
+        assert result.warned is True
+        assert result.binding_table == "hub"

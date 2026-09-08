@@ -41,13 +41,17 @@ TWO THINGS LIVE HERE, ONE ROOT CAUSE EACH FIXES:
    cannot always eliminate it: a big enough parent table's relation-build
    dedup still needs real non-spillable resident state that DuckDB cannot
    push to `temp_directory` no matter how generous the `memory_limit`.
-   Cam's governing decision is a HYBRID gate: warn near that floor,
-   hard-fail beyond it, so a job that cannot fit is refused BEFORE any
-   DuckDB work runs rather than left to OOM mid-job -- the never-crash
-   guarantee, with item 1 above as the floor-lowering fix underneath it. The
-   gate's own mechanics (thresholds, the per-table loop, warn/fail
-   fractions) live in `_capacity_eval.py`; this module keeps only the row-
-   based floor model and the ceiling math that gate calls.
+   ROUND-4: the build-floor gate is now ADVISORY, not hard-fail -- the
+   measured completion caps showed the old flat refusal over-rejected jobs
+   that would have completed, so a floor that exceeds the build's cap now
+   returns FIT with a warning and a recommended host size instead of
+   refusing the job. The one remaining HARD refusal in this preflight is
+   fan-in (co-live DuckDB instances that cannot each fit even a 1 MB
+   `memory_limit` under the budget); see `_capacity_eval.py`'s module and
+   `CapacityVerdict` docstrings for the current gate order. The gate's own
+   mechanics (thresholds, the per-table loop, warn fractions) live in
+   `_capacity_eval.py`; this module keeps only the row-based floor model and
+   the ceiling math that gate calls.
 
    `predict_ooc_build_floor_bytes` MUST BE COMPARED AGAINST THE EXACT CAP
    THE BUILD WILL GET, NOT A FRACTION OF THE RAW MEMORY CEILING.
@@ -229,78 +233,60 @@ def resolve_phase_memory_limits(
 # --- Part B: the build-floor model and its ceiling inverse ------------------
 
 # The relation-build dedup's non-spillable floor, per row of the largest
-# parent table (see `predict_ooc_build_floor_bytes`'s docstring for the
-# derivation). This model is a CONSERVATIVE UPPER ENVELOPE over two datasets
-# that disagree by ~4x, fit so it never under-predicts EITHER (the module's
-# governing rule: an under-prediction admits a job that then OOMs).
+# parent table (see `predict_ooc_build_floor_bytes`'s docstring for how this
+# is used). ROUND-4 RECALIBRATION (this constant): the mandatory measurement
+# (`build_floor_probe`) established that every build entrypoint -- resident,
+# sink-streamed, all of them -- funnels through the ONE `_relation.py::
+# _build_relation`, and that relation build is ROW-LINEAR on every path. It
+# is NOT the pre-Phase-4 `arg_max` O(distinct-key) RESIDENT-blowup operator
+# the 190 B/row constant this replaces was calibrated against; that operator
+# was REMOVED when the split-dedup landed, and the 33.3M-row cloud OOM it
+# produced is retired as HISTORICAL context, not a binding anchor for the
+# CURRENT model (see below for why the cloud point still informs the slope,
+# just not as "the same operator, uncorrected").
 #
-# UNIT NOTE (round-2 remediation): both `scripts/build_floor_probe.py` and
-# `memory_limit_for` hand DuckDB a decimal `"NNMB"` string, which DuckDB reads
-# as base-10 megabytes (`NN * 1_000_000` bytes), NOT `NN * 1024 * 1024`
-# (mebibytes). Every bracket below is therefore in DECIMAL-byte tiers -- an
-# `--memory-limit-mib 44` probe run is a 44_000_000-byte cap, not a
-# 46_137_344-byte one. Round 1's calibration comment labeled these tiers
-# "MiB" and treated "above the highest tested failure" as the safe threshold;
-# that conflated the two units and left the 100k floor BELOW the true decimal
-# pass edge (a BLOCKER: `floor(100k)` at slope 110 was 36_165_824 B, under the
-# real 44_000_000 B pass edge). This comment and the slope below are stated
-# in actual bytes throughout to close that gap.
+# UNITS: `floor_bytes` is measured and compared in DuckDB `memory_limit`
+# COMPLETION-CAP bytes -- the smallest cap a build COMPLETES under, per
+# `build_floor_probe` -- NOT peak RSS. This is the number `evaluate_capacity`
+# compares against `actual_duckdb_cap_bytes`, and the number
+# `declared_minimum_ceiling_bytes` inverts through the reserve model to a
+# host recommendation; feeding a peak-RSS figure into either would compare
+# two different quantities against the same threshold. VmHWM (peak RSS) is
+# checked SEPARATELY, as a "does the recommended host cover observed peak
+# residency" sanity check, never folded into `floor_bytes` itself.
 #
-# Dataset 1 -- CLEAN isolated devbox sweep (`scripts/build_floor_probe.py`,
-# `build_parent_key_relation` run directly on int64-keyed parent.parquet,
-# RLIMIT_DATA FIXED at 8000 MiB across EVERY tier so a failure is
-# attributable to `memory_limit` alone, never the rlimit). This removes the
-# prior calibration's confound: its 2048 MiB-FAIL anchor used RLIMIT_DATA
-# 3000 MiB and bad_alloc'd at peak_total_mem 1329 MiB -- BELOW its own cap,
-# an rlimit/fragmentation artifact, not a memory_limit floor. The clean
-# per-row-count floor bracket (highest FAIL, lowest PASS] in DECIMAL BYTES,
-# scanned across a WIDE tier range because DuckDB's memory_limit does not
-# always fail monotonically -- a larger limit can pick a worse partition
-# count and fail where a smaller limit passed, e.g. 1M below):
-#   100k rows -> (40e6, 44e6]    20M rows -> (256e6, 384e6]
-#   1M rows   -> (96e6, 128e6]   40M rows -> FAILS at 512e6 (floor > 512e6 B;
-#   5M rows   -> (64e6, 80e6]                the pass edge was not cleanly narrowed)
-#   10M rows  -> (128e6, 192e6]
-# The 100k bracket is RE-REPRODUCED at this commit (round-2 remediation,
-# fixed RLIMIT_DATA 8000 MiB): 34/35/36/37/40 MB -> fail, 44/48 MB -> pass,
-# confirming (40e6, 44e6] as the true floor. The other row counts' brackets
-# are carried forward from the round-1 sweep (not re-run this round -- see
-# the module's report-back for what WAS re-verified). The clean isolated
-# floor is roughly linear at only ~1.3-1.9 bytes per row.
+# MEASURED COMPLETION CAPS (`build_floor_probe`, this devbox, int64-ish
+# keys, DuckDB's non-monotonic memory_limit behavior bracketed by confirming
+# a STABLE pass, not just one lucky tier):
+#   5M rows  -> completes at <= 256 MiB
+#   10M rows -> completes at <= 256 MiB
+#   20M rows -> completes at ~768 MiB (fails at 512 MiB)
+# These three points alone imply a per-row need far below the old 190 B/row
+# -- the 20M point is the tightest devbox anchor and sits at roughly
+# (768 MiB - 256 MiB) / 15M rows =~ 36 B/row above the 5M/10M floor, i.e. tens
+# of bytes per row, not hundreds.
 #
-# Dataset 2 -- REAL-ROUTE cloud measurement (fk_memory_probe out_of_core, GCP
-# n2-standard-8, 33.3M-row parent per table). The 33.3M-row BUILD phase OOMed
-# at memory_limit ~1638 MB and COMPLETED at 2457 MB (decimal, same unit note
-# above): floor(33.3M) in (~1638e6, 2457e6]. This is ~4x higher per-row than
-# the isolated devbox sweep predicts, because the isolated probe strips away
-# everything the real route's build coexists with (the streamed sink
-# pipeline, orphan handling, wider staged payloads, cross-environment
-# allocator fragmentation). The 33.3M/4GB real-route OOM is THE motivating
-# failure this whole preflight exists to refuse; it is a valid observed floor
-# (a real memory_limit OOM, NOT an rlimit artifact), so "never under-predict
-# any observed floor" FORCES the model to clear it. The isolated sweep is
-# therefore a LOWER witness (the model must over-predict it, which it does by
-# ~4-10x); the cloud point is the BINDING upper anchor.
+# CROSS-ENVIRONMENT ANCHOR: the GCP n2-standard-8 33.3M-row/table run
+# (`fk_memory_probe out_of_core`) completed only at a ~3.3 GB per-instance
+# memory_limit (it OOMed near 1 GB). Read as a completion-cap point rather
+# than the old resident-blowup framing, that implies up to ~98 B/row once
+# cross-environment allocator fragmentation and the real route's wider
+# staged payloads (streamed sink, orphan handling) are accounted for -- a
+# real, still-row-linear cost the isolated devbox sweep alone would not
+# surface at smaller row counts.
 #
-# FIT: base + slope, in actual (decimal) bytes throughout. SLOPE must clear
-# TWO binding points at once: the cloud passing edge (2457e6 B at 33.3M rows)
-# AND the reproduced 100k decimal-byte floor (44e6 B) -- round 1's slope (110
-# B/row) cleared the former but not the latter (a slope fit only to the cloud
-# anchor is too shallow to lift the SMALL-row chord above its own, much
-# tighter per-row, decimal pass edge). **PINNED: 190 B/row.** `floor(100k) =
-# 24*1024*1024 + 190*100_000 = 44_165_824 B`, clearing the 44_000_000 B pass
-# edge by 165_824 B (tight by construction: the chord is fit to this exact
-# point). The never-OOM guarantee still rests on the SLOPE where real OOMs
-# occur, and 190 B/row over-predicts every other anchor with WIDER margin as
-# rows grow: floor(1M) ~= 215 MB >= 128e6; floor(5M) ~= 975 MB >= 80e6;
-# floor(10M) ~= 1.925 GB >= 192e6; floor(20M) ~= 3.825 GB >= 384e6; floor(40M)
-# ~= 7.625 GB > 512e6; floor(33.3M) ~= 6.35 GB >= 2457e6 (a ~2.6x envelope
-# over the cloud completion level, heavier over-refusal than round 1's ~1.5x
-# -- the SAFE direction per the never-under-predict rule; a DOCUMENTED KNOWN
-# carry-forward, not a new blocker). Two acceptance points stay REFUSED at a
-# 4 GiB host (2048 MiB cap after reserve): floor(20M) ~= 3.825 GB and
-# floor(100M) ~= 19.02 GB, both > 2.048 GB.
-_BUILD_FLOOR_BYTES_PER_ROW = 190.0
+# **PINNED: 120 B/row.** This clears the GCP cloud completion need
+# (~98 B/row) with margin while sitting far below the retired 190 B/row
+# slope that was fit to the old, removed `arg_max` operator and so
+# systematically over-recommended host memory for every job it priced. The
+# claim this constant supports is "conservative over the MEASURED completion
+# domain, at typical (int64-ish) key widths" -- NOT an unconditional "never
+# under-predicts any requirement at any key width"; a materially wider
+# composite key would need its own measured point before this slope could be
+# trusted for it (tracked as follow-on measurement work, not blocking this
+# recalibration -- see the plan's acceptance tests for the domain this
+# constant is asserted over).
+_BUILD_FLOOR_BYTES_PER_ROW = 120.0
 
 # BASE is the fixed DuckDB relation-build overhead at ~zero rows, and unlike
 # the slope it does NOT carry the never-OOM guarantee (real OOMs are a
@@ -314,13 +300,17 @@ _BUILD_FLOOR_BYTES_PER_ROW = 190.0
 # 32_000_000 B`. A larger base would refuse a genuinely tiny job (tens of
 # rows) whose real floor is a few MB -- and byte-transparency for those jobs
 # is a hard requirement (`tests/parity/test_out_of_core_*_routing.py`, 40-row
-# fixtures under the 64 MiB knob). UNCHANGED at 24 MiB by round-2's remediation
-# (only the slope moved): `floor(40 rows) = 25_165_824 + 190*40 =
-# 25_173_424 B`, still ~6.8 MB under the 32_000_000 B routing-knob cap, while
-# the SLOPE alone lifts `floor(100k) = 44_165_824 B` above 100k's own
-# 44_000_000 B pass edge (see `_BUILD_FLOOR_BYTES_PER_ROW`'s comment). A
-# near-zero parent still opens one real DuckDB instance, so the floor never
-# predicts near zero.
+# fixtures under the 64 MiB knob). UNCHANGED at 24 MiB by the round-4
+# recalibration (only the slope moved): `floor(40 rows) = 25_165_824 +
+# 120*40 = 25_170_624 B`, still ~6.9 MB under the 32_000_000 B routing-knob
+# cap, while the SLOPE alone still lifts `floor(100k) = 24*1024*1024 +
+# 120*100_000 = 37_165_824 B` -- now BELOW the old 44_000_000 B reproduced
+# pass edge at that row count (an intended loosening: the advisory demotion
+# means a floor that no longer clears every historical pass edge is no
+# longer a wrong hard refusal, just a smaller recommendation; see
+# `_BUILD_FLOOR_BYTES_PER_ROW`'s own comment for the completion-cap domain
+# this recalibration is asserted over). A near-zero parent still opens one
+# real DuckDB instance, so the floor never predicts near zero.
 _BUILD_FLOOR_BASE_BYTES = 24 * 1024 * 1024
 
 
@@ -348,9 +338,13 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
     slope/base here, and only with new measured data).
 
     Bias to over-predict throughout (module docstring, item 2): an
-    under-prediction lets a job through that then OOMs mid-run, which is the
-    one outcome the hybrid preflight exists to prevent; an over-prediction
-    only refuses a job that might have completed. `max(0, max_parent_rows)`
+    under-prediction understates the recommended host size for a job that
+    then OOMs mid-run, which the advisory exists to warn about before it
+    happens; an over-prediction only recommends more memory than the job
+    strictly needed. Round-4: this bias no longer costs a wrongly-refused
+    job either way -- the build-floor gate is advisory (FIT + `warned`), so
+    an over-prediction cannot refuse a job that would have completed; only
+    fan-in still hard-refuses (`_capacity_eval.py`). `max(0, max_parent_rows)`
     guards a caller-supplied negative row count from producing a smaller
     (wrong-direction) floor.
     """
@@ -361,8 +355,9 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
 def declared_minimum_ceiling_bytes(floor_bytes: int, *, incoming_edges: int, sink: bool) -> int:
     """The smallest whole-GiB memory ceiling that, fed back through
     `resolve_ooc_memory_limit` then `actual_duckdb_cap_bytes`, yields a build
-    cap >= `floor_bytes` -- the truthful "you need approximately N GB" a
-    hard-fail or warning reports.
+    cap >= `floor_bytes` -- the truthful "you need approximately N GB" the
+    build-floor advisory reports (round-4: this is now always a warning,
+    never a refusal -- see `_capacity_eval.py`).
 
     Round-2 Fix B: this must target the ACTUAL decimal DuckDB cap, not the
     binary `budget // live` round 1 inverted. `actual_duckdb_cap_bytes(budget,

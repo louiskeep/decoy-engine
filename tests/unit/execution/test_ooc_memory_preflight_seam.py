@@ -31,12 +31,13 @@ budget, which is why a 20M-row parent is refused there.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pytest
 
-from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core import _budget as budget_mod
+from decoy_engine.execution.out_of_core import _capacity_eval as capacity_eval_mod
 from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
 from decoy_engine.execution.out_of_core._memory_estimate import (
     actual_duckdb_cap_bytes,
@@ -95,15 +96,18 @@ class TestSeamSinkPath:
         assert result.ok is True
         assert predict_ooc_build_floor_bytes(rows) <= cap
 
-    def test_one_row_past_the_boundary_is_refused(self, ceiling_gib: int) -> None:
+    def test_one_row_past_the_boundary_is_now_advisory_not_refused(self, ceiling_gib: int) -> None:
+        # ROUND-4: the build-floor gate is advisory, so crossing this
+        # boundary no longer raises -- it returns FIT + warned=True with a
+        # recommended size.
         budget = _resolved_host_budget(ceiling_gib * _GIB)
         cap = actual_duckdb_cap_bytes(budget, 1)
         rows = _max_admitted_rows(cap) + 1
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                {"parent": rows}, budget_bytes=budget, sink=True, incoming_edge_counts={}
-            )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
+        result = enforce_ooc_memory_preflight(
+            {"parent": rows}, budget_bytes=budget, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True
+        assert result.warned is True
 
 
 @pytest.mark.parametrize("ceiling_gib", [4, 8, 16, 32])
@@ -127,18 +131,19 @@ class TestSeamResidentFanIn:
         assert result.ok is True
         assert predict_ooc_build_floor_bytes(rows) <= cap
 
-    def test_one_row_past_the_boundary_is_refused(self, ceiling_gib: int) -> None:
+    def test_one_row_past_the_boundary_is_now_advisory_not_refused(self, ceiling_gib: int) -> None:
+        # ROUND-4: advisory, not a refusal -- see the sink-path test above.
         budget = _resolved_host_budget(ceiling_gib * _GIB)
         cap = actual_duckdb_cap_bytes(budget, self._INCOMING + 1)
         rows = _max_admitted_rows(cap) + 1
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                {"hub": rows},
-                budget_bytes=budget,
-                sink=False,
-                incoming_edge_counts={"hub": self._INCOMING},
-            )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
+        result = enforce_ooc_memory_preflight(
+            {"hub": rows},
+            budget_bytes=budget,
+            sink=False,
+            incoming_edge_counts={"hub": self._INCOMING},
+        )
+        assert result.ok is True
+        assert result.warned is True
 
 
 class TestKnownOperatingPoints:
@@ -149,24 +154,29 @@ class TestKnownOperatingPoints:
     2 GiB build cap. Both must now be REFUSED, and a job whose floor genuinely
     fits its cap must still be ADMITTED."""
 
-    def test_100m_rows_refused_on_a_4gib_host_sink(self) -> None:
+    def test_100m_rows_is_advisory_not_refused_on_a_4gib_host_sink(self) -> None:
+        # ROUND-4: previously refused; now FIT + warned=True with a
+        # recommended size, and the job proceeds.
         budget = _resolved_host_budget(4 * _GIB)
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                {"parent": 100_000_000}, budget_bytes=budget, sink=True, incoming_edge_counts={}
-            )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
+        result = enforce_ooc_memory_preflight(
+            {"parent": 100_000_000}, budget_bytes=budget, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True
+        assert result.warned is True
 
-    def test_20m_rows_refused_on_a_4gib_host_sink(self) -> None:
-        # floor(20M) ~= 2226 MiB > the 2048 MiB build cap a 4 GiB host yields.
+    def test_20m_rows_is_advisory_not_refused_on_a_4gib_host_sink(self, caplog) -> None:
+        # ROUND-4: previously refused (floor(20M) exceeds the 2048 MiB build
+        # cap a 4 GiB host yields); now advisory, and the recommended size
+        # still shows up, just in the logged warning, not a raised error.
         budget = _resolved_host_budget(4 * _GIB)
         assert budget == 2 * _GIB  # 4 GiB ceiling minus the 2 GiB reserve
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
+        with caplog.at_level(logging.WARNING, logger=capacity_eval_mod.__name__):
+            result = enforce_ooc_memory_preflight(
                 {"parent": 20_000_000}, budget_bytes=budget, sink=True, incoming_edge_counts={}
             )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
-        assert "GB of memory" in excinfo.value.message
+        assert result.ok is True
+        assert result.warned is True
+        assert any("GB" in r.getMessage() for r in caplog.records)
 
     def test_a_job_that_genuinely_fits_is_still_admitted(self) -> None:
         # A 20M-row parent on a generous 64 GiB host: floor ~2.2 GiB fits the
