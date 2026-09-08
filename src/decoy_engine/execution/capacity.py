@@ -194,8 +194,16 @@ def estimate_job_capacity(
     *,
     budget_bytes: int | None = None,
 ) -> CapacityEstimate:
-    """Estimate whether `config_dump` would clear the out-of-core-FK route's
-    memory gate, WITHOUT running the pipeline.
+    """Estimate the out-of-core-FK route's memory feasibility for `config_dump`,
+    WITHOUT running the pipeline.
+
+    The build-floor prediction is ADVISORY: a `FIT` verdict may carry
+    `warned=True` and a recommended host size when the predicted relation-build
+    floor exceeds the cap it would receive (relation-build only -- it excludes
+    resident inputs, accumulated outputs, and ingestion peak), and the job is
+    NOT refused for that. `INSUFFICIENT` is returned only for a fan-in
+    impossibility (more co-live DuckDB joiners than the budget can seat a 1 MB
+    minimum apiece).
 
     `config_dump` MUST be `PipelineConfig.model_validate(raw).model_dump()`
     (the same normalized shape `run_pipeline` takes) -- no re-validation

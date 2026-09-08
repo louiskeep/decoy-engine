@@ -305,12 +305,12 @@ class TestParquetFooterOnly:
 
     def test_advisory_on_a_tiny_budget(self, tmp_path: Path, low_threshold) -> None:
         # `resolve_ooc_memory_limit` floors any explicit budget at
-        # `_MIN_BUDGET_BYTES` (64 MiB), so a large-enough parent table is
-        # needed to push its floor past even that minimum cap -- a 300k-row
-        # parent's floor (~58 MiB) clears the ~32 MB cap a 64 MiB budget
-        # resolves to for this table's resident fan-in-1 build (1 incoming
-        # edge). ROUND-4: this no longer hard-refuses -- it is now FIT with
-        # `warned=True` and a real recommended size.
+        # `_MIN_BUDGET_BYTES` (64 MiB), so a large-enough parent is needed to
+        # push its floor near that minimum cap. This 300k-row parent is a ROOT
+        # (no incoming edge), so it receives the full ~64 MB cap (not a divided
+        # one); its floor (~58 MiB) sits just under that cap, inside the warn
+        # band. The build-floor estimate is now advisory, so this is FIT with
+        # `warned=True` and a real recommended size, not a hard refusal.
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)

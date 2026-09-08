@@ -217,3 +217,51 @@ def test_warn_band_still_reports_fit_with_a_warned_flag(caplog) -> None:
     assert est.verdict is CapacityVerdict.FIT
     assert est.warned is True
     assert "resident floor" in est.message
+
+
+class TestResidentFanInMatchesRuntimeLiveness:
+    """P1 regression: the resident fan-in liveness must equal the runtime
+    `_max_concurrent_ooc_instances` peak (`incoming + has_build`). A pure leaf
+    (no outgoing edge, so no relation build, has_build=0) is `incoming` co-live
+    joiners, NOT `incoming + 1`; only a table that also builds adds its own
+    instance. The pre-fix `incoming + 1` refused a resident 67-FK leaf the
+    runtime seats fine -- a false EXIT_CAPACITY. 67 * 1e6 = 67_000_000 <=
+    67_108_864 (64 MiB); 68 * 1e6 > it. This topology is reachable: the compat
+    gate rejects only multiple parents into the same child column tuple, not
+    many distinct FK columns into one child."""
+
+    def test_resident_pure_leaf_at_67_incoming_is_admitted(self) -> None:
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={},
+            incoming_edge_counts={"leaf": 67},
+            sink=False,
+        )
+        est = evaluate_capacity(inputs, 64 * _MIB)
+        assert est.verdict is CapacityVerdict.FIT
+        assert est.code is None
+
+    def test_resident_pure_leaf_at_68_incoming_is_refused(self) -> None:
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={},
+            incoming_edge_counts={"leaf": 68},
+            sink=False,
+        )
+        est = evaluate_capacity(inputs, 64 * _MIB)
+        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.code == "out_of_core_fanin_exceeds_budget"
+
+    def test_resident_building_table_refuses_one_incoming_edge_earlier(self) -> None:
+        # A table that ALSO builds a relation (in parent_table_rows) is
+        # `incoming + 1` live, so 67 incoming + its own build = 68 refuses
+        # where a pure leaf at 67 is admitted -- proves the has_build term.
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={"mid": 1_000},
+            incoming_edge_counts={"mid": 67},
+            sink=False,
+        )
+        est = evaluate_capacity(inputs, 64 * _MIB)
+        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.code == "out_of_core_fanin_exceeds_budget"

@@ -219,14 +219,21 @@ def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> Capac
         )
 
     if budget_bytes is not None:
-        # Pure-joiner-leaf fan-in guard, row-independent, so it runs even
-        # for tables never priced below (a table with incoming edges only,
-        # no build of its own, is never in `parent_table_rows`). Same JOINER
-        # split the pre-round-4 gate used, just moved ahead of the
-        # unresolved-rows / budget-None returns -- see this function's own
-        # docstring for why.
+        # Fan-in guard, row-independent, so it runs even for tables never
+        # priced below (a table with incoming edges only, no build of its own,
+        # is never in `parent_table_rows`), moved ahead of the unresolved-rows
+        # / budget-None returns -- see this function's own docstring for why.
+        # Liveness MUST equal the runtime's `_max_concurrent_ooc_instances`
+        # peak, or the boundary refuses a table the runtime seats: a pure leaf
+        # (no outgoing edge, hence no relation build) is `incoming` co-live
+        # joiners, NOT `incoming + 1` -- only a table that also builds a
+        # relation adds its own instance. A table builds iff it has an outgoing
+        # edge, i.e. this caller was asked to price it (`parent_table_rows`) or
+        # could not price it exactly (`unresolved_parent_tables`).
+        parents = set(inputs.parent_table_rows) | inputs.unresolved_parent_tables
         for table, incoming in inputs.incoming_edge_counts.items():
-            live = incoming if inputs.sink else incoming + 1
+            has_build = int(table in parents)
+            live = max(incoming, has_build) if inputs.sink else incoming + has_build
             try:
                 _mem.actual_duckdb_cap_bytes(budget_bytes, live)
             except ExecutionError as exc:

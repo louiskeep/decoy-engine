@@ -207,15 +207,18 @@ class TestResolvePhaseMemoryLimits:
 
 
 class TestPredictOocBuildFloorBytes:
-    # ROUND-4 recalibration: the slope moved from 190 to 120 B/row, fit in
-    # DuckDB completion-cap units against the measured devbox tiers (see the
-    # `_BUILD_FLOOR_BYTES_PER_ROW` docstring for the full derivation). The
-    # OLD fail-tier brackets below predate this recalibration; they still
-    # hold as a sanity floor (120 B/row still clears every one of them, just
-    # with less margin than 190 did), so they stay as a regression check,
-    # not the calibration target itself -- that target is the plan's own
-    # measured-tier bracketing, not a unit-test assertion (see the plan's
-    # acceptance tests for why that stays a measured claim, not a hard test).
+    # The slope moved from 190 to 120 B/row, fit in DuckDB completion-cap
+    # units (see the `_BUILD_FLOOR_BYTES_PER_ROW` docstring for the full
+    # derivation). The model is a CONSERVATIVE UPPER ENVELOPE, not a tight
+    # bracket: the load-bearing property is `floor > every measured FAILING
+    # tier` (it never hands a job a cap already known to OOM at that row
+    # count), asserted below against both the historical fail brackets and
+    # the round-4 measured completion tiers. Over-predicting the lowest
+    # PASSING tier is intended conservatism -- 120 B/row covers cross-
+    # environment fragmentation (the cloud 33.3M point needs ~98 B/row-equiv,
+    # far above the ~40-50 this devbox needs), so the devbox floor sits 2-4x
+    # above the devbox pass edge on purpose. The advisory demotion means an
+    # over-prediction over-recommends memory but never blocks.
 
     # Clean fixed-rlimit (RLIMIT_DATA 8000 MiB) devbox floor brackets: the
     # (highest FAIL, lowest PASS] memory_limit MiB per row count. The SAFETY
@@ -241,6 +244,16 @@ class TestPredictOocBuildFloorBytes:
         for rows, (highest_fail_mib, _lowest_pass) in self._CLEAN_DEVBOX_BRACKET_MIB.items():
             floor = predict_ooc_build_floor_bytes(rows)
             assert floor > highest_fail_mib * _MIB, rows
+
+    # Round-4 measured completion tiers (build_floor_probe, this devbox, the
+    # current split-dedup build): 5M and 10M complete at <= 256 MiB; 20M FAILS
+    # inside DuckDB at 512 MiB and completes at 768 MiB. Only the observed
+    # FAIL edge is load-bearing (the floor must sit strictly above it).
+    _ROUND4_COMPLETION_FAIL_MIB = {20_000_000: 512}
+
+    def test_floor_exceeds_the_round4_measured_fail_tiers(self) -> None:
+        for rows, fail_mib in self._ROUND4_COMPLETION_FAIL_MIB.items():
+            assert predict_ooc_build_floor_bytes(rows) > fail_mib * _MIB, rows
 
     def test_clears_the_historical_cloud_completion_point_with_margin(self) -> None:
         # The old 33.3M-row cloud measurement (~2457 MiB completion cap) is
@@ -282,8 +295,9 @@ class TestPredictOocBuildFloorBytes:
         assert floor_20m == 24 * _MIB + 120 * 20_000_000
         old_floor_20m = 24 * _MIB + 190 * 20_000_000
         assert floor_20m < old_floor_20m
-        # "Materially" below, not a rounding-error gap: the recalibration
-        # halves the effective slope, so the loosening should be large.
+        # "Materially" below, not a rounding-error gap: the recalibration cuts
+        # the effective slope by ~37% (190 -> 120 B/row), so the loosening is
+        # large enough to clear a 0.7x bound.
         assert floor_20m < 0.7 * old_floor_20m
 
 
