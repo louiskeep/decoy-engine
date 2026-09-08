@@ -1,6 +1,10 @@
 # Phase 5 slice: batched NER inference helper (`iter_ner_spans_batch`)
 
-Status: plan (Phase 5 exploration, held on `feat/phase5-hard-tail`; nothing merges)
+Status: built + double-gated + HELD (Phase 5 exploration, `feat/phase5-hard-tail`
+at 70ba92bd; nothing merged or activated). Risk R2 (behavior change gated behind
+the existing NER config; no route/default change). dennis GO (0 blocker/high,
+1 medium + 2 low remediated); Codex-final GO (0 P0/P1). Activation stays a Cam
+call pending a measured large non-FK NER workload.
 Author: Opus, 2026-09-08.
 
 ## Frame
