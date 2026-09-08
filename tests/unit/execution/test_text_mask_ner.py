@@ -50,6 +50,37 @@ class _FakeCtx:
         self.mask_key = mask_key
 
 
+class TestCallerWindowsTheBatch:
+    """The oracle (full-frame) caller must feed NER through the batch helper in
+    `_NER_APPLY_WINDOW`-row windows, not the whole column at once. That bound is
+    a caller property the helper-level peak-memory characterization cannot see,
+    so spy on the batch-call count: dropping the caller's window loop (one call
+    over every cell) makes this fail. Needs no spaCy (the spy returns no spans)."""
+
+    def test_oracle_text_mask_windows_the_ner_batch(self, monkeypatch) -> None:
+        import math
+
+        from decoy_engine.storm.ner import _NER_APPLY_WINDOW
+
+        window_sizes: list[int] = []
+
+        def _spy(texts, *, model=None, entities=None):
+            window_sizes.append(len(texts))
+            return [[] for _ in texts]
+
+        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans_batch", _spy)
+        n_rows = _NER_APPLY_WINDOW * 2 + 5  # two full windows plus a partial
+        df = pd.DataFrame({"notes": [f"row {i} plain text" for i in range(n_rows)]})
+        TextMaskHandler().run(df.copy(), "notes", _seed({"ner": True}), _FakeCtx())
+
+        assert len(window_sizes) == math.ceil(n_rows / _NER_APPLY_WINDOW), (
+            f"caller must window the batch: expected "
+            f"{math.ceil(n_rows / _NER_APPLY_WINDOW)} calls, got {len(window_sizes)}"
+        )
+        assert all(size <= _NER_APPLY_WINDOW for size in window_sizes), window_sizes
+        assert sum(window_sizes) == n_rows  # every non-null cell fed exactly once
+
+
 # ── routing: NER spans reach mask_cell's extra_spans ──────────────────
 
 

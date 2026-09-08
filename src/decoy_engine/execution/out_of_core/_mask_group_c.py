@@ -19,10 +19,11 @@ out-of-core output is byte-identical rather than merely similar.
   TX-2 (2026-07-20): the `ner` opt-in mirrors `text_redact`'s OOC NER handling
   (`_text_redact_ner` above) -- resolve model/entities from cfg, enforce the
   same `ner_model_version_mismatch` fail-closed drift guard against
-  `ColumnSeed.ner_model_version`, then call `storm.ner.iter_ner_spans` per
-  cell and forward the result as `mask_cell`'s `extra_spans`. `iter_ner_spans`
-  is a pure per-value function of (text, model, entities) with no cross-row
-  state, so it chunks cleanly the same way the rest of this kernel does.
+  `ColumnSeed.ner_model_version`, then call `storm.ner.iter_ner_spans_batch`
+  once per record batch and forward each cell's spans as `mask_cell`'s
+  `extra_spans`. NER is a pure per-value function of (text, model, entities)
+  with no cross-row state, so a batch's spans are identical to per-cell calls
+  and the kernel chunks cleanly the same way the rest of this module does.
 - code_set (mask mode, no chapter_preserve): reuses
   `transforms.code_set.apply_code_set` (HMAC-SHA256-keyed modular selection over
   the code-sorted corpus). Mask mode is `HMAC(salt, value) % candidate_count`, a

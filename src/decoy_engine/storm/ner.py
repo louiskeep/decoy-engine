@@ -128,8 +128,11 @@ _NER_PIPE_BATCH_SIZE = 256
 # do not need this window.
 _NER_APPLY_WINDOW = 2048
 
-# One loaded pipeline per model name per process. Model load is ~1s; the
-# handler calls iter_ner_spans per cell.
+# One loaded pipeline per model name per process. Model load is ~1s. Handlers
+# call iter_ner_spans_batch (nlp.pipe over a batch of cells); iter_ner_spans is
+# the single-cell path. The two reproduce the same per-doc span logic
+# independently (iter_ner_spans is kept as the batch helper's differential
+# oracle), so a change to one must be mirrored in the other.
 _PIPELINES: dict[str, Any] = {}
 
 
