@@ -160,28 +160,37 @@ def _text_mask_array(
 
     ner_model, ner_entities = _text_mask_ner(cfg, plan)
 
-    out: list[Any] = []
-    for value in _array_to_pylist(values):
+    # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): collect the
+    # batch's non-null cells and run ONE `iter_ner_spans_batch` call over them
+    # instead of one `nlp(text)` call per cell. This kernel already runs on a
+    # single (bounded) record batch, so no extra windowing is needed here --
+    # the batch itself is the bound.
+    pylist = _array_to_pylist(values)
+    out: list[Any] = [None] * len(pylist)
+    non_null_positions: list[int] = []
+    texts: list[str] = []
+    for pos, value in enumerate(pylist):
         if _is_missing(value):
-            out.append(None)
             continue
-        text = value if isinstance(value, str) else str(value)
-        ner_spans: list[Span] | None = None
-        if ner_model is not None:
-            from decoy_engine.storm.ner import iter_ner_spans
+        texts.append(value if isinstance(value, str) else str(value))
+        non_null_positions.append(pos)
 
-            ner_spans = iter_ner_spans(text, model=ner_model, entities=ner_entities)
-        out.append(
-            mask_cell(
-                text,
-                job_seed,
-                detector_ids=detector_ids,
-                extra_spans=ner_spans,
-                strategy_map=per_detector or None,
-                unmatched_span_policy=policy,
-                token=token,
-                cfg=extra or None,
-            )
+    ner_spans_by_pos: list[list[Span]] | None = None
+    if ner_model is not None:
+        from decoy_engine.storm.ner import iter_ner_spans_batch
+
+        ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
+
+    for i, pos in enumerate(non_null_positions):
+        out[pos] = mask_cell(
+            texts[i],
+            job_seed,
+            detector_ids=detector_ids,
+            extra_spans=ner_spans_by_pos[i] if ner_spans_by_pos is not None else None,
+            strategy_map=per_detector or None,
+            unmatched_span_policy=policy,
+            token=token,
+            cfg=extra or None,
         )
     return pa.array(out, type=pa.string())
 

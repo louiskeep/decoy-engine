@@ -258,12 +258,16 @@ class TestF14bNerVersionGuard:
         assert exc.value.strategy == "text_redact"
 
     def test_version_match_does_not_fire_guard(self, monkeypatch):
-        # Same installed version as stamped -> guard passes; stub iter_ner_spans
-        # (no real spaCy) so the rest of the handler runs without error.
+        # Same installed version as stamped -> guard passes; stub the NER batch
+        # call (no real spaCy) so the rest of the handler runs without error.
         import decoy_engine.storm.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "1.0.0")
-        monkeypatch.setattr(ner_mod, "iter_ner_spans", lambda *a, **k: [])
+        monkeypatch.setattr(
+            ner_mod,
+            "iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
+        )
         df = pd.DataFrame({"notes": ["Contact alice@example.com"]})
         handler = TextRedactHandler()
         out, _ = handler.run(df.copy(), "notes", _ner_seed("1.0.0"), _FakeCtx())
@@ -276,7 +280,11 @@ class TestF14bNerVersionGuard:
         import decoy_engine.storm.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "9.9.9")
-        monkeypatch.setattr(ner_mod, "iter_ner_spans", lambda *a, **k: [])
+        monkeypatch.setattr(
+            ner_mod,
+            "iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
+        )
         df = pd.DataFrame({"notes": ["Contact alice@example.com"]})
         handler = TextRedactHandler()
         out, _ = handler.run(df.copy(), "notes", _ner_seed(None), _FakeCtx())
@@ -366,22 +374,23 @@ class TestExtraSpansForwarding:
 
 class TestNerConfigResolution:
     """Dict NER config (`ner: {model, entities}`) must resolve and forward the
-    exact model + entities to iter_ner_spans. iter_ner_spans is a monkeypatch
-    boundary, so this is fully gradeable off-spaCy (see F14b class)."""
+    exact model + entities to iter_ner_spans_batch. iter_ner_spans_batch is a
+    monkeypatch boundary, so this is fully gradeable off-spaCy (see F14b
+    class)."""
 
     def _run_with_ner_spy(self, monkeypatch, ner_cfg):
         import decoy_engine.storm.ner as ner_mod
 
         captured: dict = {}
 
-        def ner_spy(*args, **kwargs):
+        def ner_spy(texts, *, model=None, entities=None):
             captured["called"] = True
-            captured["text"] = args[0] if args else None
-            captured["model"] = kwargs.get("model")
-            captured["entities"] = kwargs.get("entities")
-            return []
+            captured["texts"] = list(texts)
+            captured["model"] = model
+            captured["entities"] = entities
+            return [[] for _ in texts]
 
-        monkeypatch.setattr(ner_mod, "iter_ner_spans", ner_spy)
+        monkeypatch.setattr(ner_mod, "iter_ner_spans_batch", ner_spy)
         df = pd.DataFrame({"notes": ["Alice went home"]})
         handler = TextRedactHandler()
         handler.run(df.copy(), "notes", _seed_v({"ner": ner_cfg}), _FakeCtx())
@@ -421,17 +430,17 @@ class TestNerCallSiteForwarding:
         expected_span = Span("person_name", 0, 5, "Alice")
         captured: dict = {}
 
-        def ner_spy(*args, **kwargs):
-            captured["ner_text"] = args[0] if args else None
-            captured["ner_model"] = kwargs.get("model")
-            captured["ner_entities"] = kwargs.get("entities")
-            return [expected_span]
+        def ner_spy(texts, *, model=None, entities=None):
+            captured["ner_texts"] = list(texts)
+            captured["ner_model"] = model
+            captured["ner_entities"] = entities
+            return [[expected_span] for _ in texts]
 
         def spans_spy(*args, **kwargs):
             captured["extra_spans"] = kwargs.get("extra_spans")
             return []
 
-        monkeypatch.setattr(ner_mod, "iter_ner_spans", ner_spy)
+        monkeypatch.setattr(ner_mod, "iter_ner_spans_batch", ner_spy)
         monkeypatch.setattr(txr_mod, "iter_spans", spans_spy)
         df = pd.DataFrame({"notes": ["Alice went home"]})
         handler = TextRedactHandler()
@@ -441,8 +450,8 @@ class TestNerCallSiteForwarding:
             _seed_v({"ner": {"model": "custom_test_model", "entities": ["person_name"]}}),
             _FakeCtx(),
         )
-        # iter_ner_spans call-site args.
-        assert captured["ner_text"] == "Alice went home"
+        # iter_ner_spans_batch call-site args.
+        assert captured["ner_texts"] == ["Alice went home"]
         assert captured["ner_model"] == "custom_test_model"
         assert captured["ner_entities"] == ["person_name"]
         # The NER spans must flow into iter_spans' overlap resolution.
@@ -458,7 +467,11 @@ class TestNerCallSiteForwarding:
             "installed_model_version",
             lambda model=None: "2.0.0" if model == "custom_test_model" else None,
         )
-        monkeypatch.setattr(ner_mod, "iter_ner_spans", lambda *a, **k: [])
+        monkeypatch.setattr(
+            ner_mod,
+            "iter_ner_spans_batch",
+            lambda texts, *, model=None, entities=None: [[] for _ in texts],
+        )
         df = pd.DataFrame({"notes": ["Alice went home"]})
         handler = TextRedactHandler()
         with pytest.raises(StrategyError) as exc:

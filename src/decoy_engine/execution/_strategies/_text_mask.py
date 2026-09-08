@@ -121,26 +121,56 @@ class TextMaskHandler:
         null_mask = col.isna().to_list()
         col_values = col.to_list()
 
-        for pos, value in enumerate(col_values):
-            if null_mask[pos]:
-                continue
-            if not isinstance(value, str):
-                value = str(value)
-            ner_spans: list[Span] | None = None
-            if ner_model is not None:
-                from decoy_engine.storm.ner import iter_ner_spans
+        if ner_model is None:
+            for pos, value in enumerate(col_values):
+                if null_mask[pos]:
+                    continue
+                if not isinstance(value, str):
+                    value = str(value)
+                col_values[pos] = mask_cell(
+                    value,
+                    ctx.mask_key,
+                    detector_ids=detector_ids,
+                    extra_spans=None,
+                    strategy_map=per_detector or None,
+                    unmatched_span_policy=policy,
+                    token=token,
+                    cfg=extra or None,
+                )
+        else:
+            # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): batch the
+            # NER inference through `nlp.pipe` instead of one `nlp(text)` call
+            # per cell. Coerce once up front so the SAME string reaches both
+            # the NER batch and mask_cell, then infer + apply
+            # `_NER_APPLY_WINDOW` rows at a time -- this route is full-frame
+            # (the whole column is already in memory), so a bounded window
+            # keeps peak RSS from rising materially above the per-cell loop on
+            # a wide column, rather than collecting every span list at once.
+            from decoy_engine.storm.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
 
-                ner_spans = iter_ner_spans(value, model=ner_model, entities=ner_entities)
-            col_values[pos] = mask_cell(
-                value,
-                ctx.mask_key,
-                detector_ids=detector_ids,
-                extra_spans=ner_spans,
-                strategy_map=per_detector or None,
-                unmatched_span_policy=policy,
-                token=token,
-                cfg=extra or None,
-            )
+            non_null_positions = [pos for pos, is_null in enumerate(null_mask) if not is_null]
+            for pos in non_null_positions:
+                if not isinstance(col_values[pos], str):
+                    col_values[pos] = str(col_values[pos])
+
+            for start in range(0, len(non_null_positions), _NER_APPLY_WINDOW):
+                window = non_null_positions[start : start + _NER_APPLY_WINDOW]
+                window_spans: list[list[Span]] = iter_ner_spans_batch(
+                    [col_values[pos] for pos in window],
+                    model=ner_model,
+                    entities=ner_entities,
+                )
+                for pos, ner_spans in zip(window, window_spans, strict=True):
+                    col_values[pos] = mask_cell(
+                        col_values[pos],
+                        ctx.mask_key,
+                        detector_ids=detector_ids,
+                        extra_spans=ner_spans,
+                        strategy_map=per_detector or None,
+                        unmatched_span_policy=policy,
+                        token=token,
+                        cfg=extra or None,
+                    )
 
         df[column] = pd.Series(col_values, index=df.index, dtype=object)
         return df, []
