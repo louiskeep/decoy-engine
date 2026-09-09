@@ -96,6 +96,18 @@ def run_rep(n_rows: int, worker: Path, worker_args: list[str]) -> dict:
     if not m:
         raise RuntimeError(f"no BENCH_JSON in worker stdout:\n{stdout}")
     rec = json.loads(m.group(1))
+    # Fail-closed: a native worker that silently rerouted to the oracle must NOT be
+    # recorded as a native result. This harness certifies the Phase 1 perf gate, and
+    # plan §6.6 requires a native-call counter (not just a route tag) to prove native
+    # execution. The oracle worker emits no `native_admitted` key, so this fires only
+    # on a genuine native reroute, never on an intended oracle run.
+    if "native_admitted" in rec and not rec.get("compiled_kernel_executed"):
+        raise RuntimeError(
+            "native worker did not execute the compiled kernel "
+            f"(native_admitted={rec.get('native_admitted')}, "
+            f"reroute_reason={rec.get('reroute_reason')}); refusing to record a "
+            "silent oracle-fallback under a native result file"
+        )
     rec["peak_rss_kb"] = peak_rss_kb or None
     rec["wall_outer_s"] = wall_outer
     return rec
