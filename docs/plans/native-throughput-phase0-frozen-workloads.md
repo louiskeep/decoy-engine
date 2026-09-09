@@ -89,19 +89,36 @@ definition (§1), the committed harness (§1.1), the host image (§2), the metho
 records the exact image, CPU model, kernel, and lock hash alongside the numbers.
 
 ## 7. Approval decisions (Phase 0 exit gate; the plan's §15)
-1. Reference host: **GCP n2-standard-8** (recommended). [ ] approve / [ ] other
-2. Throughput target: **600 s at 100M** on that host. [ ] approve / [ ] other
-3. Peak RSS + spill limits: **<= 6.5 GiB, flat**. [ ] keep / [ ] tighten
-4. Deterministic Faker workload + its Task 2.4 target. [ ] approve the §1.2 scope
-5. Official production OS/arch matrix: recommend **Linux x86-64 container first,
-   ARM64 second, portable Python fallback elsewhere**. [ ] approve / [ ] adjust
-6. Large-job policy for arbitrary Python providers (oracle-or-reject above a cap).
-   [ ] approve the plan §6.5 / §7.6 policy
-7. Freeze new Polars work during consolidation. [ ] approve
-8. Defer FPE until a fresh profile identifies it as the next dominant cost; preserve
-   the current HMAC-Feistel construction (no silent FF1 switch). [ ] approve
+Status as of Cam review 2026-09-09:
 
-Until §7.1 (host) and §7.2 (target) are approved, Task 0.2's authoritative baseline
-cannot run. Host-independent Phase 0 work (Task 0.3 route inventory, Task 0.4
-acceptance matrix, and a devbox harness-sanity re-baseline on current main)
-proceeds in parallel.
+1. Reference host: **GCP n2-standard-8** (8 vCPU / 32 GiB). **APPROVED (Cam).** More
+   cores would be faster (the crypto is embarrassingly parallel); 8-core is chosen
+   as a conservative floor so the "10 min" claim over-delivers on larger hardware.
+2. Throughput target: **600 s at 100M** on that host. **APPROVED (Cam).**
+3. Peak RSS + spill limits: **<= 6.5 GiB, flat.** **APPROVED as recommended (Cam).**
+4. Deterministic Faker workload (§1.2 C1 reuse-only scope) + Task 2.4 target.
+   **APPROVED as recommended (Cam).**
+5. OS/arch matrix. **APPROVED (Cam).** Resolution: (a) PLATFORM Docker image is one
+   controlled Linux container (x86-64 primary; ARM64 later if ARM-server support is
+   wanted) with the native companion BUNDLED and REQUIRED (worker refuses to start
+   if absent, no silent slow mode). (b) CLI runs on ANY Python platform via the
+   fail-closed pure-Python fallback; prebuilt native wheels ship for a four-target
+   starter pack for the compiled speedup: **Linux x86-64, Windows x86-64, macOS
+   arm64, Linux ARM64** (Windows included: CLI users run Windows laptops). Intel Mac
+   and others fall back to Python or source-build. Exact wheel list locked at Task 3.1.
+6. Large-job policy for arbitrary Python providers. **PENDING** a Codex options
+   consult (Cam requested options before deciding). Consult launched 2026-09-09.
+7. Freeze new Polars work during consolidation, with a keep/deprecate/REMOVE
+   decision made on merit at Phase 6 (Task 6.1). **APPROVED (Cam):** freeze now,
+   likely remove later. Rationale: Polars has no primitive for our keyed crypto (the
+   bottleneck), so it cannot vectorize it, only relocate the per-row Python loop; its
+   one strength (a parallel relational engine) is already filled by DuckDB; and it is
+   a standing pandas-parity risk. Not a low-usage shortcut: it is the wrong tool for
+   this bottleneck even with zero users.
+8. Defer FPE until a fresh profile identifies it as the next dominant cost; preserve
+   the current HMAC-Feistel construction (no silent FF1 switch). **APPROVED as
+   recommended (Cam).**
+
+Remaining before Phase 0 exit: (6) Codex large-job options -> Cam pick; then Task
+0.2 authoritative baseline on n2-standard-8; then dennis + Codex plan-review GO on
+the full Phase 0 package.
