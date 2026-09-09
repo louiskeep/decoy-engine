@@ -291,30 +291,31 @@ def resolve_phase_memory_limits(
 # constant is asserted over).
 _BUILD_FLOOR_BYTES_PER_ROW = 120.0
 
-# BASE is the fixed DuckDB relation-build overhead at ~zero rows, and unlike
-# the slope it does NOT carry the never-OOM guarantee (real OOMs are a
-# large-row, slope-dominated regime). It is deliberately SMALL -- 24 MiB
-# (25_165_824 B), below the reproduced 40_000_000 B highest-FAIL tier at 100k
-# rows -- for one structural reason: the preflight gates `floor(t)` against
-# the ACTUAL DuckDB decimal cap (`actual_duckdb_cap_bytes`, round-2's Fix B),
-# and the smallest real cap is `_MIN_BUDGET_BYTES` (64 MiB) divided by phase
-# liveness: on a resident fan-in-1 build under the route's 64 MiB
-# byte-estimate routing knob that is `(64 MiB // 2) // 1 MiB * 1_000_000 =
-# 32_000_000 B`. A larger base would refuse a genuinely tiny job (tens of
-# rows) whose real floor is a few MB -- and byte-transparency for those jobs
-# is a hard requirement (`tests/parity/test_out_of_core_*_routing.py`, 40-row
-# fixtures under the 64 MiB knob). UNCHANGED at 24 MiB by the round-4
-# recalibration (only the slope moved): `floor(40 rows) = 25_165_824 +
-# 120*40 = 25_170_624 B`, still ~6.9 MB under the 32_000_000 B routing-knob
-# cap, while the SLOPE alone still lifts `floor(100k) = 24*1024*1024 +
-# 120*100_000 = 37_165_824 B` -- now BELOW the old 44_000_000 B reproduced
-# pass edge at that row count (an intended loosening: the advisory demotion
-# means a floor that no longer clears every historical pass edge is no
-# longer a wrong hard refusal, just a smaller recommendation; see
-# `_BUILD_FLOOR_BYTES_PER_ROW`'s own comment for the completion-cap domain
-# this recalibration is asserted over). A near-zero parent still opens one
+# BASE is the fixed DuckDB relation-build overhead at ~zero rows. It is kept
+# SMALL for one structural reason: the preflight gates `floor(t)` against the
+# ACTUAL DuckDB decimal cap (`actual_duckdb_cap_bytes`), and the smallest real
+# cap is `_MIN_BUDGET_BYTES` (64 MiB) divided by phase liveness: on a resident
+# fan-in-1 build under the route's 64 MiB byte-estimate routing knob that is
+# `(64 MiB // 2) // 1 MiB * 1_000_000 = 32_000_000 B`. A base large enough to
+# push `floor(40 rows)` past that cap would make a genuinely tiny job's floor
+# exceed the knob and lose byte-transparency, a hard requirement (40-row
+# fixtures, `tests/parity/test_out_of_core_*_routing.py`).
+#
+# Set to 28 MiB by the round-4 recalibration, up from 24 MiB. The 24 MiB base
+# paired with the recalibrated 120 B/row slope put `floor(100k) = 37_165_824 B`
+# BELOW the reproduced 40_000_000 B FAILING tier at 100k rows -- i.e. it
+# under-predicted a memory_limit KNOWN to OOM, breaking the "conservative over
+# every measured failing tier" property. The small end is base-dominated, so
+# the base (not the slope) is the right lever there: 28 MiB
+# (29_360_128 B) makes `floor(100k) = 29_360_128 + 120*100_000 = 41_360_128 B`,
+# which sits inside the measured (40_000_000, 44_000_000] bracket (above the
+# fail edge, at or below the pass edge) -- a proper bracket, not an
+# under-prediction. It stays byte-transparent: `floor(40 rows) = 29_360_128 +
+# 120*40 = 29_364_928 B`, ~2.6 MB under the 32_000_000 B routing-knob cap. The
+# large end barely moves (the base is negligible against 120*20M), so the
+# recalibration's loosening is preserved. A near-zero parent still opens one
 # real DuckDB instance, so the floor never predicts near zero.
-_BUILD_FLOOR_BASE_BYTES = 24 * 1024 * 1024
+_BUILD_FLOOR_BASE_BYTES = 28 * 1024 * 1024
 
 
 def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:

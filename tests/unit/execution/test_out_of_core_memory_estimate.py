@@ -255,6 +255,17 @@ class TestPredictOocBuildFloorBytes:
         for rows, fail_mib in self._ROUND4_COMPLETION_FAIL_MIB.items():
             assert predict_ooc_build_floor_bytes(rows) > fail_mib * _MIB, rows
 
+    def test_100k_floor_brackets_the_reproduced_decimal_completion_edge(self) -> None:
+        # The 100k reproduced tier is DECIMAL-byte: 40_000_000 B fails,
+        # 44_000_000 B passes (see `_BUILD_FLOOR_BYTES_PER_ROW` / base comments).
+        # The base bump to 28 MiB puts the floor INSIDE that bracket -- strictly
+        # above the fail edge (the load-bearing conservative property) and at or
+        # below the pass edge -- rather than the pre-bump 37_165_824 B that sat
+        # below the 40 MB fail and under-predicted a known OOM.
+        floor_100k = predict_ooc_build_floor_bytes(100_000)
+        assert floor_100k > 40_000_000
+        assert floor_100k <= 44_000_000
+
     def test_clears_the_historical_cloud_completion_point_with_margin(self) -> None:
         # The old 33.3M-row cloud measurement (~2457 MiB completion cap) is
         # HISTORICAL now -- it was measured against the retired pre-Phase-4
@@ -292,7 +303,7 @@ class TestPredictOocBuildFloorBytes:
 
     def test_20m_floor_uses_the_recalibrated_slope_and_is_materially_below_190(self) -> None:
         floor_20m = predict_ooc_build_floor_bytes(20_000_000)
-        assert floor_20m == 24 * _MIB + 120 * 20_000_000
+        assert floor_20m == 28 * _MIB + 120 * 20_000_000
         old_floor_20m = 24 * _MIB + 190 * 20_000_000
         assert floor_20m < old_floor_20m
         # "Materially" below, not a rounding-error gap: the recalibration cuts
