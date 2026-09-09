@@ -1,0 +1,107 @@
+Status: draft for Cam approval
+
+# Phase 0 Task 0.1: Frozen reference workloads, host, and targets
+
+This freezes the benchmarks, host, and acceptance targets for the Execution
+Consolidation and Native Throughput program (`docs/plans/2026-09-09-execution-consolidation-and-native-throughput.md`)
+before any code is written. It reuses the workload and harness already proven in
+the Phase 2 native certification rather than inventing new ones. The exit gate is
+Cam's approval of the eight items in §7 (which are the plan's §15 decisions).
+
+## 1. Reference workloads
+
+### 1.1 W2 keyed-hash workload (the throughput target workload)
+Reused verbatim from `PHASE2-BASELINE.md` and the committed harness. One mask
+table, 10 columns, fixed 32-byte `mask_key`, fixed seed `20260828`,
+`post_validation=False`:
+
+- 3 keyed-`hash` (dominant cost): `h_email` (utf8), `h_token` (utf8), `h_uid`
+  (int64), each with its own namespace.
+- 3 `passthrough`: `pt_amount` (int64), `pt_flag` (bool), `pt_ts` (timestamp-tz, us, UTC).
+- 2 `redact`: `rd_ssn`, `rd_notes` (utf8).
+- 2 `truncate`: `tr_phone` (len 3, head), `tr_card` (len 4, tail) (utf8).
+
+Harness (committed, reused unchanged): `scripts/native-baseline/build_w2_parquet.py`
+(out-of-band generation, 50k rows/group), `bench_worker_native.py` (native route,
+lazy `ParquetFile.iter_batches`), `bench_worker.py` (pandas oracle), `bench_driver.py`
+(fresh process per rep, external `VmHWM` sampling).
+
+### 1.2 Deterministic Faker workload (the Phase 2 target workload)
+One mask table with deterministic-`faker` columns in the C1 reuse-only scope (a
+registry-backed value pool, bounded `pool_size`, deterministic per-row selection
+via `derive_index`). To be pinned exactly in Task 0.2 from the existing Phase 3
+C1 faker fixture (`tests/parity/native/` C1 harness): column set, `pool_size`,
+seed, mask-key shape, null fraction, and the admitted cardinality mode. Recorded
+here as a required Task 0.2 artifact; its numeric target is set at the Task 2.4 gate.
+
+### 1.3 Row tiers, batch size, sink
+- Tiers: 1M, 4M, 16M, 100M (the 100M tier is the product's conservative cap and
+  the 600s-target tier). Phase 1 Task 1.6 additionally sweeps native thread counts
+  1/2/4/8 at the 100M tier.
+- Batch size: 50,000 rows per group (matches the certified harness).
+- Sink: transactional Parquet, output batches dropped after row-count (never
+  accumulating the full output), per the certified worker.
+
+## 2. Reference host  (DECISION NEEDED, see §7.1)
+
+The plan requires an eight-core reference host and forbids treating a different
+host as equivalent evidence (§4.1). This devbox is **4-core / 12 GiB**, so it
+cannot be the reference host. The existing 100M native cert (1,563.39s) is a
+**4-core, single-threaded** number and is NOT a valid baseline for an 8-thread
+600s target.
+
+Recommendation: **GCP `n2-standard-8` (8 vCPU / 32 GiB / local or pd-ssd scratch)**,
+the node the bench harness (`decoy-platform/scripts/gcp-bench`) already provisions.
+Rationale: it is 8-core (matches the plan's Rayon thread sweep), has ample RAM and
+disk for spill, is reproducible from a clean image, and is already wired into the
+authorized bench budget. The authoritative Task 0.2 baseline runs on this host.
+
+## 3. Targets  (DECISION NEEDED, see §7)
+
+- Throughput: frozen 100M W2 workload in **<= 600 s** on the approved 8-core host
+  at the approved batch size and 8 native threads. (Implies the hash kernel must
+  drop from ~1,219s to ~256s, ~4.8x, holding other measured work ~344s constant,
+  to be re-measured on the reference host in Task 0.2, not carried from the devbox.)
+- Peak RSS: **<= 6.5 GiB** and flat (native peak RSS at 4x/16x/100x <= 1.5x its 1x
+  value). The certified native route used only 398MB at 100M, so 6.5 GiB is a loose
+  ceiling with wide headroom; kept as-is unless Cam wants it tightened.
+- Non-regression floor: native wall <= oracle wall at every tier.
+- Per-batch Rust transient scratch <= 2x the input batch's Arrow byte size.
+
+## 4. Method (frozen, reused)
+1 discarded warmup + timed reps in fresh processes per tier; wall reported as
+median / IQR / p95-of-reps; peak RSS from an external `VmHWM` sampler polling
+`/proc/<pid>/status` (never read inside the measured process); keyed-hash
+throughput as per-hash-column rows/sec from in-process strategy timing. For the
+100M tier, 1 rep with 0 warmup is the honest cold-read figure (a real deployment
+reads the file once); lower tiers carry >=3 reps for variance.
+
+## 5. Correctness reference (frozen)
+The pinned pandas full-frame path is the oracle. Byte/logical parity is asserted
+against it at every tier via the existing gate fixtures
+(`tests/parity/native/test_phase2_gate.py`, `test_e2e_certification.py`). No frozen
+target may be weakened to make a result pass (plan §6.7).
+
+## 6. Reproducibility
+Another worker can reproduce every baseline from a clean checkout: the workload
+definition (§1), the committed harness (§1.1), the host image (§2), the method
+(§4), the seed/mask-key (§1.1), and the dependency lock (`uv.lock`). Task 0.2
+records the exact image, CPU model, kernel, and lock hash alongside the numbers.
+
+## 7. Approval decisions (Phase 0 exit gate; the plan's §15)
+1. Reference host: **GCP n2-standard-8** (recommended). [ ] approve / [ ] other
+2. Throughput target: **600 s at 100M** on that host. [ ] approve / [ ] other
+3. Peak RSS + spill limits: **<= 6.5 GiB, flat**. [ ] keep / [ ] tighten
+4. Deterministic Faker workload + its Task 2.4 target. [ ] approve the §1.2 scope
+5. Official production OS/arch matrix: recommend **Linux x86-64 container first,
+   ARM64 second, portable Python fallback elsewhere**. [ ] approve / [ ] adjust
+6. Large-job policy for arbitrary Python providers (oracle-or-reject above a cap).
+   [ ] approve the plan §6.5 / §7.6 policy
+7. Freeze new Polars work during consolidation. [ ] approve
+8. Defer FPE until a fresh profile identifies it as the next dominant cost; preserve
+   the current HMAC-Feistel construction (no silent FF1 switch). [ ] approve
+
+Until §7.1 (host) and §7.2 (target) are approved, Task 0.2's authoritative baseline
+cannot run. Host-independent Phase 0 work (Task 0.3 route inventory, Task 0.4
+acceptance matrix, and a devbox harness-sanity re-baseline on current main)
+proceeds in parallel.
