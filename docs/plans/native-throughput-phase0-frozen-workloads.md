@@ -35,12 +35,19 @@ seed, mask-key shape, null fraction, and the admitted cardinality mode. Recorded
 here as a required Task 0.2 artifact; its numeric target is set at the Task 2.4 gate.
 
 ### 1.3 Row tiers, batch size, sink
-- Tiers: 1M, 4M, 16M, 100M (the 100M tier is the product's conservative cap and
-  the 600s-target tier). Phase 1 Task 1.6 additionally sweeps native thread counts
-  1/2/4/8 at the 100M tier.
+- Tiers: 1M, 4M, 100M (the 100M tier is the product's conservative cap and the
+  600s-target tier). 16M is DROPPED from the frozen set (Phase 0 gate): the
+  1M/4M/100M points already establish flat RSS (344 -> 358 -> 463 MB), and the
+  scaling question 16M would have answered is covered by Phase 1 Task 1.1's
+  1/2/4/8-thread sweep and Task 1.6's 100M thread sweep, on the reference host.
 - Batch size: 50,000 rows per group (matches the certified harness).
-- Sink: transactional Parquet, output batches dropped after row-count (never
-  accumulating the full output), per the certified worker.
+- Sink is MASK-ONLY (count/drop): the harness reads batches, masks each, counts its
+  rows, and drops it, never accumulating output and never writing a Parquet file.
+  This is deliberate: the 600s throughput contract measures the mask compute path,
+  and the baseline and every Phase 1 perf gate use this same count/drop sink so they
+  compare on equal terms. Publication cost (the transactional Parquet sink) is a
+  SEPARATE Phase-4 concern, explicitly OUTSIDE the 600s number; a future gate must
+  not compare a count/drop run against a Parquet-writing run.
 
 ## 2. Reference host  (DECISION NEEDED, see §7.1)
 

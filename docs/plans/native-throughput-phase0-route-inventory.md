@@ -267,3 +267,27 @@ Error contracts (code -> raised where):
 5. **`estimate_job_capacity` (CLI) vs `check_out_of_core_compatibility` (engine) coupling.** CLI preflight calls an engine attr `estimate_job_capacity` (`preflight.py:449`) that degrades to "not checked" if absent (`:403-410`). Its relationship to the engine's actual OOC admission (`enforce_ooc_memory_preflight`) was not confirmed to be the same code path - a CLI PASS may not guarantee the engine admits. Advisory-only today, but a consolidation that promises "one admission decision" must reconcile them.
 
 No other unknown production caller was found: engine, platform, and CLI route invocations all trace to named entrypoints above. The two native routes are the only public execution surfaces with no production caller.
+
+## Phase 0 gate dispositions (2026-09-09, dennis + Codex)
+
+- **E1 (stale admission_fk doc) CLOSED-as-corrected.** The `admission_fk.py` docstring
+  claiming the OOC route unreachable now carries a superseding note (the route is
+  wired via `v2_out_of_core.py` at `v2_orchestrator.py:303`). Two follow-ups are OWED
+  and flagged in that docstring: a platform reachability test, and re-verification of
+  the sequential-eviction discount premise against the now-live OOC path. Both are
+  separate-lane platform work, not native-throughput Phase 1 blockers.
+- **HIGH-1 (hash production on-ramp) RESOLVED in the plan.** The optimized keyed-hash
+  kernel runs on native route 4b (no production caller today); route 4a excludes hash.
+  Plan Phase 1 header now states Phase 4's unified coordinator becomes the production
+  owner of the keyed-hash operator (promoting 4b's kernel set with the deferred
+  keyed-secret handling + ABI probe); hash reaches production at Phase 4, not Phase 3.
+- **E2 (split publication atomicity)** and **E3 (native 4b public-but-orphan surface):**
+  named Phase-4 exceptions. The unified coordinator (§8.3) absorbs both publication
+  owners; 4b's disposition is "promoted to production owner of keyed-hash at Phase 4"
+  (see HIGH-1). The acceptance matrix already commits the crash-before-commit test on
+  both prior owners.
+- **E4 (cloud-publication atomicity untraced):** documented as a named Phase-4 exit
+  exception (the one genuinely-incomplete publication path); the coordinator must
+  confirm the s3/gcs spool+move atomicity guarantee before claiming a single contract.
+- **E5 (CLI estimate_job_capacity vs engine admission):** advisory-only today; the
+  Phase-4 "one admission decision" work reconciles them. Not a Phase 1 blocker.

@@ -82,6 +82,26 @@ The route inventory surfaced contract risks the matrix must also pin:
   compiler's shadow-mode gate (Task 4.3/4.4) must match every current route decision
   in the acceptance corpus before it owns the decision.
 
+## 9. Phase 1 parallel-execution criteria (Phase 0 gate additions, Codex)
+
+Binding on Tasks 1.4-1.6 (GIL release + Rayon), beyond the batch x thread parity
+matrix in §2:
+
+| Criterion | Case | Expected |
+|---|---|---|
+| GIL-release proof | a Python sentinel thread runs while the native kernel computes a large batch | the sentinel makes observable progress during the compute interval (proves `Python::detach`; concurrent-call tests alone do not) |
+| Multi-error arbitration | failures placed in DIFFERENT Rayon ranges and batches | the reported first error is the minimum global row index, never task-completion order |
+| Worker panic | panic injected INSIDE a Rayon worker | coded engine error, no partial array crosses the boundary |
+| Threaded scratch | per-batch transient scratch at threads {1,2,4,8}, frozen 50k batch | <= 2x input Arrow bytes, excluding the returned output buffer, at every thread count |
+| Precedence x threads | empty / all-null / wrong-key / empty-namespace (Task 1.2) re-run across thread counts | identical coded behavior regardless of thread count |
+| Pool ownership | one long-lived Rayon pool, explicit lifetime, aggregate bound across concurrent jobs | no pool constructed per 50k batch; thread count never exceeds the approved budget |
+| Small-batch non-regression | batches {1,5,11} x threads {1,2,4,8} | native wall does not regress vs 1-thread (thread-pool spin-up must not dominate tiny batches) |
+| Per-tier non-regression floor | every W2 tier, native vs oracle | native wall <= oracle wall at that tier (Task 1.6 asserts this, not just the absolute 600 s) |
+
+Mutation bar (crypto + routing units): "zero non-equivalent value / type / error /
+arbitration survivors"; each equivalent or unreachable mutant is documented
+individually, not left as an unreviewed survivor.
+
 ## 8. Exit gate
 This matrix passes plan-review GO with all BLOCKER/HIGH findings closed (dennis +
 Codex). It is the correctness contract Phases 1-6 build against.

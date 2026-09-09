@@ -53,15 +53,48 @@ Masking is the measured bottleneck. Additional relational engines do not remove 
 
 The target is a 6x to 8x throughput increase. The target converts 100 million rows from approximately 65 minutes to 10 minutes.
 
-### 3.2 Current native result
+### 3.2 Current native result (authoritative reference-host baseline)
 
-The Phase 2 certification ran 100 million rows in 1,563.39 seconds. Peak RSS was 398.4 MB.
+The authoritative anchor is the Task 0.2 baseline on the frozen reference host
+(GCP n2-standard-8), NOT the 4-core devbox cert. See
+`docs/plans/native-throughput-phase0-baseline.md`.
 
-The keyed-hash kernels consumed 1,218.96 seconds. Other kernel and process work consumed approximately 344 seconds.
+Measured 100M native on n2-standard-8: **1,571.77 s** wall, peak RSS 463.3 MB
+(flat). Per-strategy split from the raw run: keyed-hash **1,280.11 s** (3 cols),
+redact 124.5 s, truncate 155.5 s, passthrough 0.3 s. So the non-hash serial floor
+is **~291.7 s** and the available hash budget to hit 600 s is ~308 s, requiring
+**~4.15x** on the hash kernel (or ~2.6x on total wall).
 
-The hash portion must decrease by approximately 4.8x to reach 600 seconds. This calculation holds other measured work constant.
+TWO risks this creates, both gated in Phase 1:
 
-Source: `docs/plans/native-testing-T6-e2e.md`, section 3.
+1. **Serial floor.** redact + truncate (~280 s) and IO sit OUTSIDE Phase 1's
+   keyed-derivation scope and stay serial. Driving hash to ~308 s leaves total
+   ~600 s with near-zero margin. Hitting 600 s may therefore also require
+   parallelizing or overlapping redact + truncate; that follow-on is pre-planned,
+   not assumed away.
+2. **Core topology.** n2-standard-8 is **4 physical cores + hyperthreading (8
+   vCPUs)**, so 8-thread Rayon likely yields ~4-5x, not 8x. At perfect 8-way
+   scaling the projection is ~452 s; at only 4x it is ~612 s, already a miss.
+   Effective scaling is therefore the single biggest risk to 600 s.
+
+Because 600 s is a frozen Cam-approved target, Task 1.1 is a **feasibility gate**
+(see below): measured cached-HMAC cost plus a conservative scaling model must
+project <= 600 s on the reference host BEFORE Tasks 1.2-1.6 build; if it does not,
+STOP and bring the host/scope decision (bigger host, or parallelize redact+truncate)
+to Cam rather than building the full kernel and discovering the miss at Task 1.6.
+
+Corroboration: the 4-core devbox Phase 2 cert (1,563.39 s / hash 1,218.96 s;
+`native-testing-T6-e2e.md` §3) is within 0.5% of the reference-host wall, so the
+single-core speeds are close.
+
+### 3.2.1 Throughput contract scope (mask-only)
+
+The 600 s contract is **mask-only throughput**: the baseline and every Phase 1
+perf gate count and drop returned Arrow batches (no publication write), so they
+measure the mask compute path on equal terms. Publication cost (the transactional
+Parquet sink) is a SEPARATE, Phase-4 concern and is explicitly NOT inside the 600 s
+number. A future gate must not silently compare a count/drop baseline against a
+Parquet-writing run.
 
 ### 3.3 Immediate kernel defect in the performance design
 
@@ -410,12 +443,22 @@ Work:
 
 1. Run the oracle and native W2 tiers in fresh processes.
 2. Run the deterministic Faker workload in fresh processes.
-3. Record time for HKDF, HMAC, canonicalization, Arrow conversion, pool selection, and output construction.
-4. Record CPU use, RSS, spill, and route evidence.
+3. Record PIPELINE-LEVEL per-strategy timing (hash / redact / truncate /
+   passthrough), wall, peak RSS, and route evidence. The finer INTRA-KERNEL
+   decomposition (HKDF vs HMAC vs canonicalization vs Arrow conversion vs output
+   construction) is measured at Rust level in Task 1.1, not here: Task 0.2
+   establishes the pipeline starting line, Task 1.1 decomposes the kernel on the
+   same reference host.
+4. Record exact host identity: CPU model AND physical-core/thread topology (not
+   just vCPU count), RAM, kernel, base-image family+version, and the `uv.lock`
+   hash, so the baseline is reproducible.
 
-Expected behavior: the result identifies the current dominant cost for each workload.
+Expected behavior: the result identifies the current dominant cost per workload
+and pins the exact host.
 
-Exit gate: the baseline includes raw result files and a reviewed summary. No implementation starts from an extrapolated-only bottleneck.
+Exit gate: the baseline includes raw result files, the host identity, and a
+reviewed summary. No implementation starts from an extrapolated-only bottleneck.
+DONE: see `docs/plans/native-throughput-phase0-baseline.md` (run p0base3).
 
 #### Task 0.3: Inventory route and contract ownership
 
@@ -453,20 +496,73 @@ Exit gate: the plan review returns GO. All BLOCKER and HIGH findings are closed.
 
 This phase changes the existing narrow Rust companion. It does not change route scope.
 
-#### Task 1.1: Add kernel cost measurements
+**Production on-ramp for the optimized hash kernel (Phase 0 gate, dennis HIGH-1).**
+The optimized keyed-hash kernel lives on native route 4b (the
+`run_native_or_oracle_chunked` path whose kernel set `NATIVE_KERNEL_STRATEGIES`
+includes `hash`), which today has NO production caller. The default-off route 4a
+(`maybe_run_native_route`) deliberately EXCLUDES hash (its `ALLOWED_STRATEGIES` is
+passthrough/redact/truncate only, pending keyed-secret handling + an ABI probe on
+that lane). So Phases 1-2 optimize a kernel whose production on-ramp does not yet
+exist. This is resolved as follows and MUST hold for the throughput work to reach
+customers: **Phase 4's unified physical-plan coordinator (Tasks 4.5-4.6) becomes
+the production owner of the keyed-hash operator, promoting route 4b's kernel set
+(with the keyed-secret handling and ABI probe that route 4a defers) onto the
+production path.** Phase 3 enables the passthrough/redact/truncate lane (4a) as the
+first controlled production step; hash reaches production at Phase 4, not Phase 3.
+Until then the 100M throughput result is a benchmarked capability, and the plan
+says so rather than implying hash ships fast in Phase 3.
 
-Purpose: separate derivation work from canonicalization and output allocation.
+**Phase 1 parallel-execution acceptance criteria (Phase 0 gate, Codex).** These are
+binding gates on Tasks 1.4-1.6, recorded in the acceptance matrix (§5-6 of
+`native-throughput-phase0-acceptance-matrix.md`):
+- GIL-release PROOF: a Python sentinel thread must observably make progress during
+  the native compute interval (concurrent-call tests alone do not prove `Python::detach`).
+- Rayon pool ownership: Task 1.3 defines one long-lived pool with explicit lifetime
+  and an aggregate thread bound across concurrent jobs; NO pool constructed per 50k batch.
+- Multi-error under parallelism: an executable case placing failures in DIFFERENT
+  Rayon ranges/batches, asserting the first error is selected by minimum global row
+  index, never by task-completion order.
+- Worker-panic: the panic case injects the panic INSIDE a Rayon worker, and it
+  surfaces as a coded engine error with no partial array.
+- Threaded scratch: the per-batch transient scratch bound (<= 2x input Arrow bytes,
+  excluding the returned output buffer) holds at thread counts 1/2/4/8 at the frozen 50k batch.
+- Precedence x threads: empty/all-null behavior and seed-length-vs-namespace error
+  precedence (pinned in Task 1.2) are re-crossed with thread counts.
+- Mutation bar phrased as "zero non-equivalent value/type/error/arbitration
+  survivors"; equivalent/unreachable mutants documented individually.
+- Non-regression: native wall <= oracle wall at every tier (Task 1.6), and a
+  small-batch {1,5,11} x thread {1,2,4,8} perf non-regression check (Task 1.5) so
+  thread-pool spin-up does not regress tiny batches.
+- Sequencing: after Task 1.2, a 1-thread 4M W2 checkpoint before adding concurrency;
+  before the costly 100M run (1.6), an observed 1/2/4/8 scaling sweep at a smaller tier.
+
+#### Task 1.1: Kernel cost decomposition AND reference-host feasibility gate
+
+Purpose: separate derivation from canonicalization and output allocation, AND
+decide, on the reference host and BEFORE any concurrency work, whether the 600 s
+target is credibly reachable. This is the go/no-go feasibility gate the baseline
+alone could not settle (the 4-physical-core topology makes 600 s margin-thin).
 
 Work:
 
-1. Add a Rust benchmark for namespace-key derivation.
-2. Add a benchmark for one per-row HMAC with a cached key.
-3. Add a benchmark for current `derive_array` behavior.
+1. Add a Rust benchmark for namespace-key derivation (HKDF).
+2. Add a benchmark for one per-row HMAC with a cached key (the post-1.2 cost).
+3. Add a benchmark for current `derive_array` behavior (the per-row-HKDF cost).
 4. Add per-type measurements for UTF-8, integer, Boolean, and timestamp arrays.
+5. Record physical-core topology and measure a small-tier 1/2/4/8-thread scaling
+   sample of the cached-HMAC path (a cheap proxy for Rayon efficiency; NOT the full
+   100M run), to estimate effective scaling on this host's 4 cores + HT.
 
-Expected behavior: the measurements quantify the gain available from cached key state.
+Expected behavior: the measurements quantify (a) the cache gain (per-row HKDF ->
+one HKDF per batch) and (b) the effective multi-core scaling, so a conservative
+model can project the 100M wall.
 
-Exit gate: the benchmark produces stable results with recorded variance.
+Exit gate (FEASIBILITY): measured cached-HMAC per-row cost, times 300M rows over
+3 cols, divided by the measured effective scaling, PLUS the frozen ~292 s non-hash
+serial floor, must project **<= 600 s** with margin. If the projection exceeds
+600 s, STOP: do not build Tasks 1.2-1.6; bring the decision to Cam (a
+higher-physical-core host, or bringing redact+truncate into scope so they
+parallelize too). Record the benchmark with variance.
 
 #### Task 1.2: Compute the namespace key once
 
