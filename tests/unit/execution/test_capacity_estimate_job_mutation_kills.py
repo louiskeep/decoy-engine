@@ -491,8 +491,9 @@ class TestPricedVerdicts:
 
     def test_warned_fields(self, tmp_path: Path, low_threshold) -> None:
         # ROUND-4: this 300k-row/1 MiB-budget shape used to be INSUFFICIENT;
-        # the recalibrated slope now puts it in the warn band instead (see
-        # `TestRouteKwargFullStructKills.test_warned_out_of_core_full_struct`
+        # the recalibrated slope + 28 MiB base now put its ~65 MB floor just
+        # OVER the ~64 MB cap, so it is a FIT + warned over-cap advisory instead
+        # (see `TestRouteKwargFullStructKills.test_warned_out_of_core_full_struct`
         # for the exact byte-level derivation).
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))

@@ -308,8 +308,9 @@ class TestParquetFooterOnly:
         # `_MIN_BUDGET_BYTES` (64 MiB), so a large-enough parent is needed to
         # push its floor near that minimum cap. This 300k-row parent is a ROOT
         # (no incoming edge), so it receives the full ~64 MB cap (not a divided
-        # one); its floor (~65 MiB with the 28 MiB base) sits just OVER that
-        # cap, so it takes the over-cap advisory branch. The build-floor
+        # one); its floor (65_360_128 B = ~65 MB decimal, with the 28 MiB base)
+        # sits just OVER that cap, so it takes the over-cap advisory branch.
+        # The build-floor
         # estimate is advisory, so this is FIT with `warned=True` and a real
         # recommended size, not a hard refusal.
         big_parent, big_child = _parent_child_tables(300_000)
