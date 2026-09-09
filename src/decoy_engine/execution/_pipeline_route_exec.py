@@ -220,27 +220,18 @@ def run_out_of_core_route(
     (which never falls back).
 
     Memory preflight (SPRINT-1 Part B, ROUND-4: advisory build floor plus a
-    hard fan-in guard, not a never-crash guarantee): before any DuckDB work,
-    `enforce_ooc_memory_preflight` predicts each build-phase table's
-    relation-build resident floor (`_parent_table_row_counts`) and compares
-    it against the EXACT cap that table's build connection will receive --
-    `resolved_budget_bytes` undivided on the sink path, `// (incoming_edges +
-    1)` on the resident path, the SAME `resolve_ooc_memory_limit` call and
-    the SAME arithmetic `resolve_phase_memory_limits` uses to size the real
-    connection, reused rather than re-derived. A floor above its cap no
-    longer hard-fails: it returns FIT with `warned=True` and a recommended
-    host size, because the measured completion caps showed the old flat
-    refusal over-rejected jobs that would have completed. The one refusal
-    this preflight still raises is fan-in (`out_of_core_fanin_exceeds_
-    budget`, co-live DuckDB instances that cannot each fit even a 1 MB
-    `memory_limit` under the budget) -- unlike the build floor, an
-    un-satisfiable fan-in split has no runtime backstop (DuckDB's own
-    allocator raises an uncatchable-at-a-clean-boundary "bad allocation", not
-    a coded error at a table boundary). Gating against a fraction of the raw
-    detected ceiling instead of this exact cap is the denomination mismatch
-    this sprint's remediation closes (a preflight fraction and Part A's real
-    per-table cap were never guaranteed to be the same number, so a job could
-    be admitted then starved). See `_memory_estimate.py`'s module docstring.
+    hard fan-in guard, not a never-crash guarantee). Before any DuckDB work,
+    `enforce_ooc_memory_preflight` prices each build-phase table's
+    relation-build floor (`_parent_table_row_counts`) against the EXACT cap
+    that table's connection receives -- the SAME `resolve_ooc_memory_limit` /
+    `resolve_phase_memory_limits` numbers, reused not re-derived. A floor over
+    its cap no longer hard-fails: it returns FIT + `warned=True` + a
+    recommended size (the measured completion caps showed the old flat refusal
+    over-rejected jobs that complete). The one refusal left is fan-in
+    (`out_of_core_fanin_exceeds_budget`): unlike the build floor, an
+    un-sizeable fan-in split has no runtime backstop. Gating a fraction of the
+    raw ceiling instead of this exact cap was the denomination mismatch this
+    remediation closed. See `_memory_estimate.py`'s module docstring.
 
     Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
     as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
@@ -345,15 +336,11 @@ def run_out_of_core_route(
         # disagree about whether resolution succeeded.
         resolved_budget_bytes = budget.budget_bytes
     except ExecutionError as exc:
-        # Only "host-RAM detection failed, no explicit budget given" falls
-        # back to the route's pinned batch default + DuckDB's default limit
-        # rather than rejecting a job the in-memory path would have run.
-        # Round-4: this catch used to swallow EVERY `ExecutionError` here,
-        # including `out_of_core_fanin_exceeds_budget` -- a real, hard
-        # capacity refusal masqueraded as "detection failed" and silently
-        # fell back to running the job anyway. Narrowed to the one code that
-        # is genuinely a fallback case; any other code (fan-in included)
-        # re-raises.
+        # Only "host-RAM detection failed, no explicit budget" falls back to
+        # the pinned batch default + DuckDB's default limit rather than
+        # rejecting a job the in-memory path would have run. Narrowed from
+        # swallowing EVERY `ExecutionError` (which masked a real fan-in refusal
+        # as "detection failed"); any other code (fan-in included) re-raises.
         if exc.code != "out_of_core_memory_detection_failed":
             raise
         if budget_bytes is not None:
@@ -519,15 +506,11 @@ def _parent_table_row_counts(
     attribute, or a Parquet footer read that never scans row-group data).
 
     FAIL-CLOSED, not a silent under-count: a graph parent table absent from
-    `sources` used to simply contribute 0 rows, which UNDER-predicts the
-    floor -- understating a memory recommendation (and, before the round-4
-    advisory demotion, wrongly admitting a job the then-hard gate should have
-    refused) is the wrong direction for a check whose value is flagging a
-    likely OOM before the run (LOW remediation). `run_fk_out_of_core` does raise its own coded
+    `sources` used to contribute 0 rows, which under-predicts the floor --
+    understating the recommendation (and, pre-advisory, wrongly admitting a
+    job the then-hard gate should have refused). `run_fk_out_of_core` raises
     `out_of_core_source_missing` for the same gap, but only AFTER this
-    preflight would have already (wrongly) admitted the job on a stale
-    ordering guarantee; this function raises fail-closed itself instead of
-    depending on that.
+    preflight would have admitted the job; this function fails closed itself.
     """
     parent_tables = {edge.parent_table for edge in graph.edges}
     rows: dict[str, int] = {}
