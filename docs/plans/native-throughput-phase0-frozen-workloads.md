@@ -66,9 +66,11 @@ authorized bench budget. The authoritative Task 0.2 baseline runs on this host.
 ## 3. Targets  (DECISION NEEDED, see §7)
 
 - Throughput: frozen 100M W2 workload in **<= 600 s** on the approved 8-core host
-  at the approved batch size and 8 native threads. (Implies the hash kernel must
-  drop from ~1,219s to ~256s, ~4.8x, holding other measured work ~344s constant,
-  to be re-measured on the reference host in Task 0.2, not carried from the devbox.)
+  at the approved batch size and 8 native threads. AUTHORITATIVE (Task 0.2, run
+  p0base3): the reference-host baseline is 1,571.77s total / 1,280s hash / ~292s
+  non-hash, so the hash kernel must drop ~1,280s -> ~308s, **~4.15x** (~2.6x on total
+  wall). (The earlier devbox estimate ~1,219s -> ~256s / 4.8x is superseded; see
+  native-throughput-phase0-baseline.md.)
 - Peak RSS: **<= 6.5 GiB** and flat (native peak RSS at 4x/16x/100x <= 1.5x its 1x
   value). The certified native route used only 398MB at 100M, so 6.5 GiB is a loose
   ceiling with wide headroom; kept as-is unless Cam wants it tightened.

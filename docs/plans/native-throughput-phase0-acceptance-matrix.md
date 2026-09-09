@@ -82,7 +82,7 @@ The route inventory surfaced contract risks the matrix must also pin:
   compiler's shadow-mode gate (Task 4.3/4.4) must match every current route decision
   in the acceptance corpus before it owns the decision.
 
-## 9. Phase 1 parallel-execution criteria (Phase 0 gate additions, Codex)
+## 8. Phase 1 parallel-execution criteria (Phase 0 gate additions, Codex)
 
 Binding on Tasks 1.4-1.6 (GIL release + Rayon), beyond the batch x thread parity
 matrix in §2:
@@ -102,6 +102,6 @@ Mutation bar (crypto + routing units): "zero non-equivalent value / type / error
 arbitration survivors"; each equivalent or unreachable mutant is documented
 individually, not left as an unreviewed survivor.
 
-## 8. Exit gate
+## 9. Exit gate
 This matrix passes plan-review GO with all BLOCKER/HIGH findings closed (dennis +
 Codex). It is the correctness contract Phases 1-6 build against.
