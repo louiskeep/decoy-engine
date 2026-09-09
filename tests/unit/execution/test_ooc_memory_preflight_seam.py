@@ -28,7 +28,8 @@ The budget is resolved via the SAME auto-detect path a real host takes
 (`resolve_ooc_memory_limit(budget_bytes=None)` against the detected ceiling),
 so the reserve subtraction -- the exact term the BLOCKER's raw-ceiling
 fraction ignored -- is in the loop. A 4 GiB host resolves to a 2 GiB build
-budget, which is why a 20M-row parent is refused there.
+budget, which is why a 20M-row parent's floor exceeds its cap there
+(round-4: now an advisory FIT + warned, formerly a hard refusal).
 """
 
 from __future__ import annotations

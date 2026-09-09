@@ -59,7 +59,7 @@ Two deliberate, documented simplifications versus a real `decoy run`:
    trust ONLY an exact per-table count (`TableProfile.row_count_exact`):
    Parquet/fixed_width footer counts, never a CSV byte-size estimate. A
    parent table priced only by estimate makes the whole verdict `UNKNOWN`
-   (R6) -- this checker refuses to gate a memory hard-fail on a guess.
+   (R6) -- this checker refuses to price a capacity verdict on a guess.
 
 Source-path resolution matches `decoy run`'s own convention (R2): relative
 `sources[*].path` entries resolve against the caller-supplied `base_dir` (the

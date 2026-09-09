@@ -1,7 +1,8 @@
 """The out-of-core FK route's capacity verdict layer: the row-based build-
-floor model in `_memory_estimate.py` fed through the hybrid warn/hard-fail
-gate (`evaluate_capacity` / `enforce_ooc_memory_preflight`), shared by the
-mid-run preflight and the CLI's estimate-only `estimate_job_capacity` path.
+floor model in `_memory_estimate.py` fed through the warn/advisory gate
+(`evaluate_capacity` / `enforce_ooc_memory_preflight`), where a fan-in
+impossibility is the only hard-fail. Shared by the mid-run preflight and the
+CLI's estimate-only `estimate_job_capacity` path.
 """
 
 from __future__ import annotations
@@ -395,7 +396,8 @@ class MemoryPreflight:
 
     Covers every parent table `enforce_ooc_memory_preflight` was given, not
     one row count: `binding_table` names whichever table drove the
-    `ok`/`warned` outcome (the argmax of `floor(t) - cap(t)` on a hard-fail;
+    `ok`/`warned` outcome (the argmax of `floor(t) - cap(t)` on an over-cap
+    advisory;
     the tightest warn-band table otherwise), and `floor_bytes` / `cap_bytes`
     are THAT table's own numbers, not a job-wide aggregate -- the invariant
     this gate enforces is per-table (`_memory_estimate` module docstring).

@@ -59,8 +59,9 @@ class TestParentTableRowCounts:
 
     def test_missing_source_fails_closed_instead_of_under_counting(self) -> None:
         # LOW remediation: a graph parent table absent from `sources` must
-        # NOT silently contribute 0 rows (an under-count admits a job the
-        # preflight should have refused) -- it must fail closed instead.
+        # NOT silently contribute 0 rows (an under-count understates the memory
+        # recommendation, and pre-advisory wrongly admitted a job the then-hard
+        # gate should have refused) -- it must fail closed instead.
         graph = _graph(_edge("parent", "child"))
         with pytest.raises(ExecutionError) as excinfo:
             _parent_table_row_counts({}, graph)
