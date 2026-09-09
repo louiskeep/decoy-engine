@@ -36,7 +36,11 @@ HERE = Path(__file__).resolve().parent
 # THAT worktree's code, not whichever worktree the venv's editable install
 # last pointed at.
 ENGINE = HERE.parent.parent
-VENV_PY = Path("/home/cam/vscode/decoy-engine/.venv/bin/python")
+# Spawn workers with the SAME interpreter running this driver (self-locating),
+# not a hardcoded base-checkout venv path: a run on a fresh host (a bench node,
+# a different worktree) has no such path and would die with PermissionError on
+# the first worker spawn. Matches how the c1 drivers resolve python.
+VENV_PY = Path(sys.executable)
 _WORKER_ENV = {**os.environ, "PYTHONPATH": str(ENGINE / "src")}
 
 _JSON_RE = re.compile(r"^BENCH_JSON (.*)$", re.MULTILINE)
