@@ -308,9 +308,10 @@ class TestParquetFooterOnly:
         # `_MIN_BUDGET_BYTES` (64 MiB), so a large-enough parent is needed to
         # push its floor near that minimum cap. This 300k-row parent is a ROOT
         # (no incoming edge), so it receives the full ~64 MB cap (not a divided
-        # one); its floor (~58 MiB) sits just under that cap, inside the warn
-        # band. The build-floor estimate is now advisory, so this is FIT with
-        # `warned=True` and a real recommended size, not a hard refusal.
+        # one); its floor (~65 MiB with the 28 MiB base) sits just OVER that
+        # cap, so it takes the over-cap advisory branch. The build-floor
+        # estimate is advisory, so this is FIT with `warned=True` and a real
+        # recommended size, not a hard refusal.
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)

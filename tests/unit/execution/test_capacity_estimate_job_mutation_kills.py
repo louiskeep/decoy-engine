@@ -519,9 +519,9 @@ class TestSinkFalseInBuildFloor:
         self, tmp_path: Path, low_threshold
     ) -> None:
         # grandparent<-parent<-child; `parent` has 300k rows AND one incoming
-        # edge. At a 128 MiB budget the parent's ~58 MB build floor (ROUND-4
-        # recalibrated slope) sits in the WARN band against the sink=False
-        # build cap (~64 MB, live=incoming+1=2, floor >= 0.6 * cap) but clears
+        # edge. At a 128 MiB budget the parent's ~65 MB build floor (ROUND-4
+        # recalibrated 120 B/row slope + 28 MiB base) exceeds the sink=False
+        # build cap (~64 MB, live=incoming+1=2), so it warns there, but clears
         # the warn band entirely against a sink=True cap (~128 MB, live=1,
         # floor < 0.6 * cap). estimate_job_capacity ALWAYS passes sink=False
         # (decoy run never streams to a sink), so the honest outcome here is

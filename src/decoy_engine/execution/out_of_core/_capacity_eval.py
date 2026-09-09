@@ -113,8 +113,10 @@ class CapacityInputs:
       Always empty on the mid-run path (every source there is a real
       `pa.Table` or `LazySource`, always exact); populated only by
       `estimate_job_capacity` when a parent table's source format has no
-      cheap exact count. Non-empty forces `UNKNOWN` -- never refuse on an
-      approximation (R6).
+      cheap exact count. Non-empty forces `UNKNOWN` (never refuse on an
+      approximation, R6) -- UNLESS a fan-in impossibility, which needs only
+      `incoming_edge_counts` + the budget, is detected first and returns
+      `INSUFFICIENT`.
     """
 
     route: str

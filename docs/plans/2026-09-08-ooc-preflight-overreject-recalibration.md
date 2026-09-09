@@ -40,7 +40,8 @@ needed (Codex confirmed): there is no separate bounded builder.
 1. **Recalibrate the slope in DuckDB-completion-cap units** (Codex BLOCKER). `floor_bytes`
    is compared to `actual_duckdb_cap_bytes` and inverted through the reserve model, so
    it must represent the `memory_limit` REQUIRED FOR COMPLETION, NOT peak RSS. Fit
-   `24 MiB + slope * rows` over the measured stable COMPLETION tiers using
+   `base + slope * rows` (base finalized at 28 MiB, below) over the measured stable
+   COMPLETION tiers using
    `slope = max((stable_pass_cap_bytes - base) / rows)` across row counts and key
    widths; failed tiers are lower-bound sanity checks. The devbox gives ~40-50 B/row;
    the GCP 33.3M point implies up to ~98 B/row (cross-environment fragmentation), so
