@@ -548,8 +548,14 @@ Work:
 1. Add a Rust benchmark for namespace-key derivation (HKDF).
 2. Add a benchmark for one per-row HMAC with a cached key (the post-1.2 cost).
 3. Add a benchmark for current `derive_array` behavior (the per-row-HKDF cost).
-4. Add per-type measurements for UTF-8, integer, Boolean, and timestamp arrays.
-5. Record physical-core topology and measure a small-tier 1/2/4/8-thread scaling
+4. Add benchmarks for the non-derivation per-batch costs the pipeline baseline
+   could not isolate: source **canonicalization**, **Arrow-array conversion** (input
+   decode + output encode across the FFI boundary), and **output-array construction**.
+   Together with 1-3 this completes the plan's full kernel-cost component list
+   (HKDF, HMAC, canonicalization, Arrow conversion, pool selection, output
+   construction) on the reference host.
+5. Add per-type measurements for UTF-8, integer, Boolean, and timestamp arrays.
+6. Record physical-core topology and measure a small-tier 1/2/4/8-thread scaling
    sample of the cached-HMAC path (a cheap proxy for Rayon efficiency; NOT the full
    100M run), to estimate effective scaling on this host's 4 cores + HT.
 

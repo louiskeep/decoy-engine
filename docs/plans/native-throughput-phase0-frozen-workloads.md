@@ -57,11 +57,14 @@ cannot be the reference host. The existing 100M native cert (1,563.39s) is a
 **4-core, single-threaded** number and is NOT a valid baseline for an 8-thread
 600s target.
 
-Recommendation: **GCP `n2-standard-8` (8 vCPU / 32 GiB / local or pd-ssd scratch)**,
-the node the bench harness (`decoy-platform/scripts/gcp-bench`) already provisions.
-Rationale: it is 8-core (matches the plan's Rayon thread sweep), has ample RAM and
-disk for spill, is reproducible from a clean image, and is already wired into the
-authorized bench budget. The authoritative Task 0.2 baseline runs on this host.
+Recommendation: **GCP `n2-standard-8` (8 vCPU = 4 physical cores + HT, 32 GiB /
+local or pd-ssd scratch)**, the node the bench harness
+(`decoy-platform/scripts/gcp-bench`) already provisions. Rationale: 8 vCPUs feed the
+Rayon thread sweep, ample RAM and disk for spill, reproducible from a clean image,
+already wired into the authorized bench budget. NOTE: it is 4 PHYSICAL cores plus
+hyperthreading, so effective Rayon scaling is ~4-5x, not 8x, which makes the 600s
+target margin-thin (see the Task 1.1 feasibility gate). The authoritative Task 0.2
+baseline runs on this host.
 
 ## 3. Targets  (DECISION NEEDED, see §7)
 
@@ -100,9 +103,13 @@ records the exact image, CPU model, kernel, and lock hash alongside the numbers.
 ## 7. Approval decisions (Phase 0 exit gate; the plan's §15)
 Status as of Cam review 2026-09-09:
 
-1. Reference host: **GCP n2-standard-8** (8 vCPU / 32 GiB). **APPROVED (Cam).** More
-   cores would be faster (the crypto is embarrassingly parallel); 8-core is chosen
-   as a conservative floor so the "10 min" claim over-delivers on larger hardware.
+1. Reference host: **GCP n2-standard-8** (8 vCPU = **4 physical cores + HT**, 32 GiB).
+   **APPROVED (Cam).** CORRECTION (post-baseline): this is a 4-physical-core host, so
+   8-thread Rayon scales against 4 cores + hyperthreading (~4-5x, not 8x). That makes
+   the 600s target margin-thin rather than over-delivering; Task 0.2's baseline and
+   Task 1.1's feasibility gate quantify it, and Task 1.1 STOPS for a Cam host/scope
+   decision if the projection exceeds 600s. A higher-physical-core host would raise
+   the margin.
 2. Throughput target: **600 s at 100M** on that host. **APPROVED (Cam).**
 3. Peak RSS + spill limits: **<= 6.5 GiB, flat.** **APPROVED as recommended (Cam).**
 4. Deterministic Faker workload (§1.2 C1 reuse-only scope) + Task 2.4 target.
