@@ -221,29 +221,49 @@ class TestUnderRefusalAntiProof:
     would pick `sequential`), under a budget too tiny for its real
     `out_of_core` build floor. A real `decoy run` (byte-estimate routing on
     by default) routes this exact job to `out_of_core` regardless of its
-    size and refuses it there (`out_of_core_insufficient_memory`). Before the
-    P1-1 fix, `estimate_job_capacity` reported NOT_APPLICABLE/`sequential` on
-    this job -- a false "fine" on a job `decoy run` actually refuses. It must
-    now report INSUFFICIENT or UNKNOWN, NEVER NOT_APPLICABLE or FIT.
+    size.
+
+    ROUND-4: the build-floor gate is now advisory, so this exact job no
+    longer hard-refuses on a current engine -- a real `decoy run` PROCEEDS
+    on it, with the pre-run logger warning as its only heads-up. The
+    under-refusal risk this proof guards against shifts accordingly: before
+    the P1-1 fix, `estimate_job_capacity` reported a silent
+    NOT_APPLICABLE/`sequential` on this job -- a false "fine" that hid the
+    real run's behavior entirely. It must never report that; and if it
+    reports FIT (the real outcome now), that FIT must carry `warned=True`
+    and a real recommended size, never a silent clean pass.
     """
 
-    def test_below_threshold_ooc_compatible_tiny_budget_never_fit_or_not_applicable(
+    def test_below_threshold_ooc_compatible_tiny_budget_never_not_applicable(
         self, tmp_path: Path
     ) -> None:
         # No low_threshold fixture: 300k rows is genuinely below the real
         # 5,000,000-row out_of_core_threshold_rows default, so the row-count-
-        # only decision (byte-estimate routing OFF) picks `sequential` here.
+        # only decision (byte-estimate routing OFF) picks `sequential` here,
+        # and the worst-case byte-estimate probe promotes it to `out_of_core`
+        # (`ooc_route_uncertain=True`).
+        #
+        # ROUND-4 SURFACING NOTE: `capacity.py`'s `ooc_route_uncertain`
+        # downgrade only exempts `INSUFFICIENT`/`UNKNOWN` from being forced
+        # to `UNKNOWN` -- an underlying `INSUFFICIENT` (the old build-floor
+        # hard-fail) used to survive that downgrade and surface confidently.
+        # Since the build-floor gate is now advisory (`FIT` + `warned=True`,
+        # never `INSUFFICIENT`), this exact case now DOES get forced to
+        # `UNKNOWN` by that same downgrade -- `capacity.py` was not changed
+        # for this (out of this recalibration's scope), so the underlying
+        # advisory's `warned`/`needed_bytes` survive on the returned object
+        # (dataclasses.replace only overrides verdict/message), just wrapped
+        # in an `UNKNOWN` verdict rather than surfaced as `FIT` directly.
+        # This still satisfies the anti-under-refusal guarantee (UNKNOWN is
+        # never treated as a pass), so it is not treated as a regression here.
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
-        assert est.verdict in {CapacityVerdict.INSUFFICIENT, CapacityVerdict.UNKNOWN}
         assert est.verdict is not CapacityVerdict.NOT_APPLICABLE
-        assert est.verdict is not CapacityVerdict.FIT
-        # The 1 MiB budget is far below this parent's real build floor -- the
-        # promoted out-of-core pricing (not a mere "can't tell") should reach
-        # a definite INSUFFICIENT, matching the real gate's own refusal.
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
-        assert est.code in {"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"}
+        assert est.verdict is CapacityVerdict.UNKNOWN
+        # The underlying advisory finding still rides along on the object.
+        assert est.warned is True
+        assert est.needed_bytes is not None and est.needed_bytes > 0
 
 
 class TestParquetFooterOnly:
@@ -283,18 +303,22 @@ class TestParquetFooterOnly:
         assert sample_batch_sizes, "expected a bounded iter_batches sample per source"
         assert all(size <= 10_000 for size in sample_batch_sizes)
 
-    def test_insufficient_on_a_tiny_budget(self, tmp_path: Path, low_threshold) -> None:
+    def test_advisory_on_a_tiny_budget(self, tmp_path: Path, low_threshold) -> None:
         # `resolve_ooc_memory_limit` floors any explicit budget at
-        # `_MIN_BUDGET_BYTES` (64 MiB), so a large-enough parent table is
-        # needed to push its floor past even that minimum cap -- a 300k-row
-        # parent's floor (~81 MB) comfortably clears the ~64 MB cap a 64 MiB
-        # budget resolves to for a single live instance.
+        # `_MIN_BUDGET_BYTES` (64 MiB), so a large-enough parent is needed to
+        # push its floor near that minimum cap. This 300k-row parent is a ROOT
+        # (no incoming edge), so it receives the full ~64 MB cap (not a divided
+        # one); its floor (65_360_128 B = ~65 MB decimal, with the 28 MiB base)
+        # sits just OVER that cap, so it takes the over-cap advisory branch.
+        # The build-floor
+        # estimate is advisory, so this is FIT with `warned=True` and a real
+        # recommended size, not a hard refusal.
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
-        assert est.code in {"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"}
-        assert est.needed_bytes is None or est.needed_bytes > 0
+        assert est.verdict is CapacityVerdict.FIT
+        assert est.warned is True
+        assert est.needed_bytes is not None and est.needed_bytes > 0
 
 
 class TestCsvParentForcesUnknown:

@@ -23,7 +23,10 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     enforce_ooc_memory_preflight,
     evaluate_capacity,
 )
-from decoy_engine.execution.out_of_core._memory_estimate import predict_ooc_build_floor_bytes
+from decoy_engine.execution.out_of_core._memory_estimate import (
+    predict_ooc_build_floor_bytes,
+    resolve_phase_memory_limits,
+)
 
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
@@ -86,13 +89,52 @@ def test_unknown_when_a_parent_table_is_unresolved() -> None:
     assert "parent" in est.message
 
 
+class TestFanInPrecedesUnresolvedRows:
+    """ROUND-4 REORDER (acceptance test 5b/5d): fan-in is row-independent, so
+    it must fire before the unresolved-rows `UNKNOWN` whenever a usable
+    budget exists -- an unpriceable job that ALSO has a fan-in impossibility
+    is a real, actionable refusal, not a masked "no verdict"."""
+
+    def test_unresolved_rows_plus_fanin_exceeds_plus_usable_budget_is_insufficient(self) -> None:
+        # 68 co-live joiners on a 64 MiB budget (the same pinned fan-in case
+        # elsewhere in this module) PLUS an unresolved CSV parent table: the
+        # fan-in refusal must win, not the unresolved-rows UNKNOWN.
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={},
+            incoming_edge_counts={"leaf": 68},
+            sink=True,
+            unresolved_parent_tables=frozenset({"csv_parent"}),
+        )
+        est = evaluate_capacity(inputs, 64 * _MIB)
+        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.code == "out_of_core_fanin_exceeds_budget"
+
+    def test_unresolved_rows_alone_with_no_usable_budget_is_unknown(self) -> None:
+        # No usable budget at all: nothing budget-relative to compute, so
+        # fan-in is skipped and the unresolved-rows UNKNOWN still applies.
+        inputs = CapacityInputs(
+            route="out_of_core",
+            parent_table_rows={},
+            incoming_edge_counts={"leaf": 68},
+            sink=True,
+            unresolved_parent_tables=frozenset({"csv_parent"}),
+        )
+        est = evaluate_capacity(inputs, None)
+        assert est.verdict is CapacityVerdict.UNKNOWN
+        assert est.code is None
+
+
 class TestParityWithMidRunGate:
     """T4: `evaluate_capacity` INSUFFICIENT on typed inputs must match the
     mid-run gate's raise on the SAME inputs -- not just the same verdict, the
     identical code AND message, since `enforce_ooc_memory_preflight` now
     raises `ExecutionError(code=est.code, message=est.message)` verbatim."""
 
-    def test_insufficient_matches_the_mid_run_raise(self) -> None:
+    def test_build_floor_advisory_matches_the_mid_run_result(self) -> None:
+        # ROUND-4: a build-floor-over-cap case no longer raises anywhere --
+        # both the evaluator and the mid-run gate must agree on FIT +
+        # warned=True + the same recommended size, not just the same code.
         parent_table_rows = {"parent": 20_000_000}
         budget = 64 * _MIB
         inputs = CapacityInputs(
@@ -102,15 +144,18 @@ class TestParityWithMidRunGate:
             sink=True,
         )
         est = evaluate_capacity(inputs, budget)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
-        assert est.code == "out_of_core_insufficient_memory"
+        assert est.verdict is CapacityVerdict.FIT
+        assert est.warned is True
+        assert est.code is None
 
-        with pytest.raises(ExecutionError) as excinfo:
-            enforce_ooc_memory_preflight(
-                parent_table_rows, budget_bytes=budget, sink=True, incoming_edge_counts={}
-            )
-        assert excinfo.value.code == est.code
-        assert excinfo.value.message == est.message
+        result = enforce_ooc_memory_preflight(
+            parent_table_rows, budget_bytes=budget, sink=True, incoming_edge_counts={}
+        )
+        assert result.ok is True
+        assert result.warned is True
+        assert result.binding_table == est.binding_table
+        assert result.floor_bytes == est.floor_bytes
+        assert result.cap_bytes == est.cap_bytes
         assert est.needed_bytes is not None
         assert est.needed_bytes % _GIB == 0  # declared_minimum_ceiling_bytes rounds to whole GiB
 
@@ -175,3 +220,53 @@ def test_warn_band_still_reports_fit_with_a_warned_flag(caplog) -> None:
     assert est.verdict is CapacityVerdict.FIT
     assert est.warned is True
     assert "resident floor" in est.message
+
+
+class TestResidentFanInMatchesThePhaseSizer:
+    """The evaluator's resident fan-in refusal must match the runtime PHASE
+    sizer (`resolve_phase_memory_limits`), the code that actually raises at run
+    time -- NOT the coarser `_max_concurrent_ooc_instances` budget peak. The
+    phase sizer opens a resident joiner at `incoming_edges + 1` regardless of
+    whether the table also builds, so on a 64 MiB budget (67_108_864 bytes) it
+    admits resident fan-in up to incoming=66 (live 67, 67e6 <= budget) and
+    raises at incoming=67 (live 68, 68e6 > budget). The evaluator must draw the
+    boundary at the SAME place, or preflight and run disagree. Pinning both the
+    admit and the refuse sides against the phase sizer directly."""
+
+    def test_resident_66_admits_and_67_refuses_in_lockstep_with_the_phase_sizer(self) -> None:
+        budget = 64 * _MIB
+
+        # incoming = 66 -> resident live 67 -> both admit.
+        resolve_phase_memory_limits(
+            budget_bytes=budget, memory_limit=None, incoming_edges=66, sink=False
+        )  # does not raise
+        est_66 = evaluate_capacity(
+            CapacityInputs(
+                route="out_of_core",
+                parent_table_rows={},
+                incoming_edge_counts={"leaf": 66},
+                sink=False,
+            ),
+            budget,
+        )
+        assert est_66.verdict is CapacityVerdict.FIT
+        assert est_66.code is None
+
+        # incoming = 67 -> resident live 68 -> the phase sizer raises, so the
+        # evaluator must refuse too (preflight/run parity).
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_phase_memory_limits(
+                budget_bytes=budget, memory_limit=None, incoming_edges=67, sink=False
+            )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
+        est_67 = evaluate_capacity(
+            CapacityInputs(
+                route="out_of_core",
+                parent_table_rows={},
+                incoming_edge_counts={"leaf": 67},
+                sink=False,
+            ),
+            budget,
+        )
+        assert est_67.verdict is CapacityVerdict.INSUFFICIENT
+        assert est_67.code == "out_of_core_fanin_exceeds_budget"

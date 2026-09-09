@@ -489,14 +489,20 @@ class TestPricedVerdicts:
         assert est.route == "out_of_core"
         assert est.code is None
 
-    def test_insufficient_fields(self, tmp_path: Path, low_threshold) -> None:
+    def test_warned_fields(self, tmp_path: Path, low_threshold) -> None:
+        # ROUND-4: this 300k-row/1 MiB-budget shape used to be INSUFFICIENT;
+        # the recalibrated slope + 28 MiB base now put its ~65 MB floor just
+        # OVER the ~64 MB cap, so it is a FIT + warned over-cap advisory instead
+        # (see `TestRouteKwargFullStructKills.test_warned_out_of_core_full_struct`
+        # for the exact byte-level derivation).
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.verdict is CapacityVerdict.FIT
+        assert est.warned is True
         assert est.route == "out_of_core"
-        assert est.code in {"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"}
-        assert est.needed_bytes is None or est.needed_bytes > 0
+        assert est.code is None
+        assert est.needed_bytes is not None and est.needed_bytes > 0
 
     def test_csv_parent_forces_unknown(self, tmp_path: Path, low_threshold) -> None:
         config = _ooc_config(tmp_path, parent_fmt="csv", child_fmt="csv")
@@ -514,17 +520,22 @@ class TestSinkFalseInBuildFloor:
         self, tmp_path: Path, low_threshold
     ) -> None:
         # grandparent<-parent<-child; `parent` has 300k rows AND one incoming
-        # edge. At a 128 MiB budget the parent's ~82 MB build floor exceeds
-        # the sink=False build cap (~64 MB, live=incoming+1=2) but would clear
-        # a sink=True cap (~128 MB, live=1). estimate_job_capacity ALWAYS
-        # passes sink=False (decoy run never streams to a sink), so the honest
-        # verdict here is INSUFFICIENT; a sink=True mutation (mut_250) flips it
-        # to FIT.
+        # edge. At a 128 MiB budget the parent's ~65 MB build floor (ROUND-4
+        # recalibrated 120 B/row slope + 28 MiB base) exceeds the sink=False
+        # build cap (~64 MB, live=incoming+1=2), so it warns there, but clears
+        # the warn band entirely against a sink=True cap (~128 MB, live=1,
+        # floor < 0.6 * cap). estimate_job_capacity ALWAYS passes sink=False
+        # (decoy run never streams to a sink), so the honest outcome here is
+        # FIT + warned=True; a sink=True mutation (mut_250) flips `warned` to
+        # False (both stay FIT verdict since round-4 demoted the build-floor
+        # refusal, so `warned` -- not `verdict` -- is what catches this
+        # mutation now).
         config = _three_level_config(tmp_path, parent_rows=300_000)
         est = estimate_job_capacity(config, tmp_path, budget_bytes=128 * _MIB)
-        assert est.verdict is CapacityVerdict.INSUFFICIENT
+        assert est.verdict is CapacityVerdict.FIT
+        assert est.warned is True
         assert est.binding_table == "parent"
-        assert est.code == "out_of_core_insufficient_memory"
+        assert est.code is None
 
 
 # --------------------------------------------------------------------------
@@ -621,33 +632,40 @@ class TestRouteKwargFullStructKills:
             message="capacity check passes; no table nears its build cap.",
             warned=False,
             binding_table="parent",
-            floor_bytes=25173424,
+            floor_bytes=29364928,  # ROUND-4: 28 MiB base + 120 B/row * 40 rows
             cap_bytes=65536000000,
         )
 
-    def test_insufficient_out_of_core_full_struct(self, tmp_path: Path, low_threshold) -> None:
-        # out_of_core route, INSUFFICIENT (300k-row parent, 1 MiB budget floored
-        # to the 64 MiB minimum). Same route-carrying kwargs are load-bearing;
-        # this shape additionally pins the INSUFFICIENT code / needed_bytes /
-        # floor_bytes / cap_bytes / binding_table the FIT shape cannot.
+    def test_warned_out_of_core_full_struct(self, tmp_path: Path, low_threshold) -> None:
+        # out_of_core route, FIT + warned=True (300k-row parent, 1 MiB budget
+        # floored to the 64 MiB minimum). ROUND-4: the recalibrated 120 B/row
+        # slope with the 28 MiB base puts this table's floor just ABOVE its
+        # build cap (65.36 MB vs a 64 MB cap), so it takes the OVER-cap advisory
+        # branch (an accurate over-cap heads-up: a real 300k run genuinely OOMs
+        # at a 64 MiB budget). The old 190 B/row slope hard-REFUSED this same
+        # case; it is now FIT + warned, not INSUFFICIENT. Same route-carrying
+        # kwargs are load-bearing; this shape additionally pins the advisory
+        # message / needed_bytes / floor_bytes / cap_bytes / binding_table the
+        # clean-FIT shape cannot.
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
         assert est == CapacityEstimate(
-            verdict=CapacityVerdict.INSUFFICIENT,
-            code="out_of_core_insufficient_memory",
+            verdict=CapacityVerdict.FIT,
+            code=None,
             needed_bytes=3221225472,
             available_bytes=67108864,
             route="out_of_core",
             message=(
-                "predicted resident floor ~0.08 GiB for table 'parent' exceeds the "
-                "actual build cap ~0.06 GiB it would receive; this job needs "
-                "approximately 3 GB of memory (a host/cgroup ceiling that size). "
-                "Increase host/cgroup memory or reduce table size."
+                "predicted relation-build floor ~0.06 GiB for table 'parent' exceeds "
+                "the build cap ~0.06 GiB it would receive; recommend a host/cgroup "
+                "ceiling of >= 3 GB. This is an advisory (relation-build only; excludes "
+                "resident inputs, accumulated outputs, and ingestion peak); the job is "
+                "not refused."
             ),
-            warned=False,
+            warned=True,
             binding_table="parent",
-            floor_bytes=82165824,
+            floor_bytes=65360128,
             cap_bytes=64000000,
         )
 
@@ -682,7 +700,7 @@ class TestRouteKwargFullStructKills:
             ),
             warned=False,
             binding_table="parent",
-            floor_bytes=25173424,
+            floor_bytes=29364928,  # ROUND-4: 28 MiB base + 120 B/row * 40 rows
             cap_bytes=65536000000,
         )
 

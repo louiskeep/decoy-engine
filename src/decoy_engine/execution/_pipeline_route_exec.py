@@ -219,24 +219,19 @@ def run_out_of_core_route(
     completed; a caller that needs a hard cap passes an explicit `budget_bytes`
     (which never falls back).
 
-    Memory preflight (SPRINT-1 Part B, the never-crash guarantee): before any
-    DuckDB work, `enforce_ooc_memory_preflight` predicts each build-phase
-    table's relation-build resident floor (`_parent_table_row_counts`) and
-    gates it against the EXACT cap that table's build connection will
-    receive -- `resolved_budget_bytes` undivided on the sink path, `//
-    (incoming_edges + 1)` on the resident path, the SAME `resolve_ooc_memory_
-    limit` call and the SAME arithmetic `resolve_phase_memory_limits` uses to
-    size the real connection, reused rather than re-derived. Either warns
-    (near a table's own cap) or HARD-FAILS (`out_of_core_insufficient_
-    memory`, a table's floor exceeding its own cap) -- unlike the disk
-    preflight below, this one actually rejects, because a resident-memory
-    floor above its cap has no runtime backstop (DuckDB's own allocator
-    raises an uncatchable-at-a-clean-boundary "bad allocation", not a coded
-    error at a table boundary). Gating against a fraction of the raw
-    detected ceiling instead of this exact cap is the denomination mismatch
-    this sprint's remediation closes (a preflight fraction and Part A's real
-    per-table cap were never guaranteed to be the same number, so a job could
-    be admitted then starved). See `_memory_estimate.py`'s module docstring.
+    Memory preflight (SPRINT-1 Part B, ROUND-4: advisory build floor plus a
+    hard fan-in guard, not a never-crash guarantee). Before any DuckDB work,
+    `enforce_ooc_memory_preflight` prices each build-phase table's
+    relation-build floor (`_parent_table_row_counts`) against the EXACT cap
+    that table's connection receives -- the SAME `resolve_ooc_memory_limit` /
+    `resolve_phase_memory_limits` numbers, reused not re-derived. A floor over
+    its cap no longer hard-fails: it returns FIT + `warned=True` + a
+    recommended size (the measured completion caps showed the old flat refusal
+    over-rejected jobs that complete). The one refusal left is fan-in
+    (`out_of_core_fanin_exceeds_budget`): unlike the build floor, an
+    un-sizeable fan-in split has no runtime backstop. Gating a fraction of the
+    raw ceiling instead of this exact cap was the denomination mismatch this
+    remediation closed. See `_memory_estimate.py`'s module docstring.
 
     Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
     as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
@@ -340,10 +335,14 @@ def run_out_of_core_route(
         # together with `memory_limit`/`batch_rows` above so the three never
         # disagree about whether resolution succeeded.
         resolved_budget_bytes = budget.budget_bytes
-    except ExecutionError:
-        # Host-RAM detection failed and no explicit budget was given: fall back
-        # to the route's pinned batch default + DuckDB's default limit rather
-        # than rejecting a job the in-memory path would have run.
+    except ExecutionError as exc:
+        # Only "host-RAM detection failed, no explicit budget" falls back to
+        # the pinned batch default + DuckDB's default limit rather than
+        # rejecting a job the in-memory path would have run. Narrowed from
+        # swallowing EVERY `ExecutionError` (which masked a real fan-in refusal
+        # as "detection failed"); any other code (fan-in included) re-raises.
+        if exc.code != "out_of_core_memory_detection_failed":
+            raise
         if budget_bytes is not None:
             raise
 
@@ -362,16 +361,18 @@ def run_out_of_core_route(
         # advisory (warn-only) and never blocks a job.
         pass
 
-    # SPRINT-1 Part B: the hybrid memory capacity preflight -- the never-crash
-    # guarantee underneath Part A's phase-aware caps above. Wired HERE rather
-    # than at `_pipeline_routing_signals.resolve_execution_route` (the disk
+    # SPRINT-1 Part B: the hybrid memory capacity preflight, an advisory
+    # build-floor check plus a hard fan-in guard underneath Part A's
+    # phase-aware caps above. Wired HERE rather than at
+    # `_pipeline_routing_signals.resolve_execution_route` (the disk
     # preflight's site): that module sits at its own LOC cap with no headroom,
     # and this site already has per-table row counts in hand via
     # `resolved_sources` (both `pa.Table` and `LazySource` expose `.num_rows`
     # in O(1), so no source is materialized just to count it) -- the same
     # "site with row counts already in hand" precedent the disk preflight
     # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
-    # a job whose predicted floor cannot fit is refused before any DuckDB work.
+    # a job whose fan-in cannot fit is refused before any DuckDB work; a job
+    # whose build floor cannot fit its cap only warns and proceeds.
     #
     # Gated against `resolved_budget_bytes` -- THE SAME `OutOfCoreBudget.
     # budget_bytes` resolved above at the ONE `resolve_ooc_memory_limit` call
@@ -505,14 +506,11 @@ def _parent_table_row_counts(
     attribute, or a Parquet footer read that never scans row-group data).
 
     FAIL-CLOSED, not a silent under-count: a graph parent table absent from
-    `sources` used to simply contribute 0 rows, which UNDER-predicts the
-    floor -- admitting a job the preflight should have refused is exactly
-    the wrong direction for a gate whose only job is refusing before an OOM
-    (LOW remediation). `run_fk_out_of_core` does raise its own coded
+    `sources` used to contribute 0 rows, which under-predicts the floor --
+    understating the recommendation (and, pre-advisory, wrongly admitting a
+    job the then-hard gate should have refused). `run_fk_out_of_core` raises
     `out_of_core_source_missing` for the same gap, but only AFTER this
-    preflight would have already (wrongly) admitted the job on a stale
-    ordering guarantee; this function raises fail-closed itself instead of
-    depending on that.
+    preflight would have admitted the job; this function fails closed itself.
     """
     parent_tables = {edge.parent_table for edge in graph.edges}
     rows: dict[str, int] = {}

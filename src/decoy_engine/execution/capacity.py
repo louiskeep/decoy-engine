@@ -6,9 +6,15 @@ R4 (Codex plan-review, docs/plans/2026-07-24-oom-checker-cli-v1.md): this is an
 fully loads every source into memory BEFORE it calls the engine at all, so an
 ingestion `MemoryError` or OS OOM-kill happens before this gate ever runs, and
 the resident-floor estimate below excludes that ingestion peak entirely. What
-this DOES check honestly: would `run_pipeline`'s out-of-core-FK route (the one
-route with a resident-memory floor that has no runtime spill backstop) refuse
-this job, using the SAME evaluator (`evaluate_capacity`) the mid-run gate uses.
+this DOES check honestly: how `run_pipeline`'s out-of-core-FK route (the one
+route with a resident-memory floor that has no runtime spill backstop) prices
+this job, using the SAME evaluator (`evaluate_capacity`) the mid-run gate
+uses. ROUND-4: the build-floor prediction is advisory -- a floor above its
+build's cap still returns `FIT`, now carrying `warned=True` plus a recommended
+host size, and the job is NOT refused for it. The one refusal this checker
+still reports is a fan-in impossibility (co-live DuckDB instances that cannot
+each fit even a 1 MB `memory_limit` under the budget), which prices as
+`INSUFFICIENT`.
 
 R1 anti-drift: this module derives its inputs by calling the SAME engine
 primitives `run_pipeline` calls, in the same order, up through the routing
@@ -46,13 +52,14 @@ Two deliberate, documented simplifications versus a real `decoy run`:
    actually confirm a real run would reach), the verdict downgrades to
    `UNKNOWN` rather than the `FIT`/`NOT_APPLICABLE` the first, byte-routing-
    off decision alone would have reported. This keeps the one direction a
-   capacity gate must never take off the table: reporting "fine" on a job a
-   real run refuses.
+   capacity check must never take off the table: reporting a confident `FIT`
+   on a job a real run would instead flag (an advisory build-floor warning) or
+   refuse (a fan-in impossibility).
 2. Row counts for the capacity floor itself (not the routing size signal)
    trust ONLY an exact per-table count (`TableProfile.row_count_exact`):
    Parquet/fixed_width footer counts, never a CSV byte-size estimate. A
    parent table priced only by estimate makes the whole verdict `UNKNOWN`
-   (R6) -- this checker refuses to gate a memory hard-fail on a guess.
+   (R6) -- this checker refuses to price a capacity verdict on a guess.
 
 Source-path resolution matches `decoy run`'s own convention (R2): relative
 `sources[*].path` entries resolve against the caller-supplied `base_dir` (the
@@ -194,8 +201,16 @@ def estimate_job_capacity(
     *,
     budget_bytes: int | None = None,
 ) -> CapacityEstimate:
-    """Estimate whether `config_dump` would clear the out-of-core-FK route's
-    memory gate, WITHOUT running the pipeline.
+    """Estimate the out-of-core-FK route's memory feasibility for `config_dump`,
+    WITHOUT running the pipeline.
+
+    The build-floor prediction is ADVISORY: a `FIT` verdict may carry
+    `warned=True` and a recommended host size when the predicted relation-build
+    floor exceeds the cap it would receive (relation-build only -- it excludes
+    resident inputs, accumulated outputs, and ingestion peak), and the job is
+    NOT refused for that. `INSUFFICIENT` is returned only for a fan-in
+    impossibility (more co-live DuckDB joiners than the budget can seat a 1 MB
+    minimum apiece).
 
     `config_dump` MUST be `PipelineConfig.model_validate(raw).model_dump()`
     (the same normalized shape `run_pipeline` takes) -- no re-validation

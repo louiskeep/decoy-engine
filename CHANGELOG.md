@@ -9,6 +9,51 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (out-of-core preflight recalibration: build-floor advisory, fan-in hard end-to-end, 2026-09-08)
+
+Public contract change: `CapacityVerdict.FIT` no longer means "clears the
+out-of-core-FK build-floor budget" -- it means "no hard impossibility
+detected." The build-floor completion-cap probe (`build_floor_probe`) showed
+the prior flat `190 B/row` model was over-rejecting jobs that would have
+completed; the model is recalibrated to `120 B/row` and its refusal is now
+advisory, not a hard fail.
+
+- **`predict_ooc_build_floor_bytes`'s per-row constant drops from 190 to
+  120 bytes/row**, calibrated against measured DuckDB completion caps
+  (`_memory_estimate.py`'s `_BUILD_FLOOR_BYTES_PER_ROW`) rather than the
+  retired pre-Phase-4 `arg_max` operator's resident-blowup anchor. This is
+  a completion-cap-domain claim (typical int64-ish key widths), not an
+  unconditional lower bound at every key width.
+- **`evaluate_capacity` no longer refuses a job on a build-floor
+  prediction.** A table whose predicted relation-build floor exceeds its
+  build cap now returns `FIT` with `warned=True` and a recommended
+  host/cgroup ceiling, and the job proceeds; it never returns
+  `INSUFFICIENT` for this case anymore. `INSUFFICIENT` is now reached ONLY
+  through the fan-in guards (a co-live DuckDB instance split that cannot
+  fit even a 1 MB `memory_limit` under the budget) -- unchanged from
+  before, and now made hard END-TO-END: fan-in checks run before the
+  unresolved-parent-rows / undetectable-budget `UNKNOWN` returns whenever a
+  usable budget exists, and a fan-in error discovered while the pipeline
+  route resolves its memory budget (`run_out_of_core_route`) now
+  propagates instead of being swallowed as "detection failed."
+- **`enforce_ooc_memory_preflight` now raises only for a fan-in
+  impossibility.** The build-floor case it used to hard-fail on is logged
+  as a warning instead; callers that assumed a build-floor
+  `out_of_core_insufficient_memory` refusal from THIS engine version
+  should treat that outcome as advisory going forward (an older engine
+  still on the pre-recalibration gate can still raise it).
+- Companion change in the `decoy` CLI (`fix/ooc-preflight-advisory-
+  rendering`): `decoy preflight` renders `FIT && warned` as a warning
+  (`status: "warn"`) instead of a silent pass, and a propagated fan-in
+  error now reliably exits `EXIT_CAPACITY` instead of surfacing as a raw
+  traceback.
+- No shape classifier, no row/width expansion to `CapacityInputs`, no
+  change to the FK drivers, the split-dedup, the route policy, or the
+  reserve/budget-resolution arithmetic (only the fan-in error's
+  propagation is narrowed). The resident path's whole-output accumulation
+  stays unpriced, as before; this advisory is relation-build-only and
+  excludes resident inputs, accumulated outputs, and ingestion peak.
+
 ### Added (Q3 slice 1: single-pass streaming native lane for passthrough/redact/truncate on utf8 string columns, 2026-09-04)
 
 The native columnar execution kernel was proven byte-identical to the pandas oracle but had no production entry point. This slice routes single-table non-FK pure-mask jobs on the three pure-kernel strategies (`passthrough`, `redact`, `truncate`) through a dedicated single-pass streaming lane that never materializes the source. Memory claim holds only for `LazySource` inputs and exact `pa.utf8()` string columns; every other shape (FK-bearing jobs, multi-table, validators/fidelity-reports/quarantine, non-string columns, non-`LazySource` sources, `vault: true`) reroutes to the pandas oracle cleanly before any output. Enablement is a validated runtime option defaulting OFF; flipping the default and adding `hash`, `faker`, and the wider type surface are later slices.

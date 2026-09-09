@@ -59,8 +59,9 @@ class TestParentTableRowCounts:
 
     def test_missing_source_fails_closed_instead_of_under_counting(self) -> None:
         # LOW remediation: a graph parent table absent from `sources` must
-        # NOT silently contribute 0 rows (an under-count admits a job the
-        # preflight should have refused) -- it must fail closed instead.
+        # NOT silently contribute 0 rows (an under-count understates the memory
+        # recommendation, and pre-advisory wrongly admitted a job the then-hard
+        # gate should have refused) -- it must fail closed instead.
         graph = _graph(_edge("parent", "child"))
         with pytest.raises(ExecutionError) as excinfo:
             _parent_table_row_counts({}, graph)
@@ -84,17 +85,21 @@ class TestIncomingEdgeCounts:
 
 
 class TestMemoryPreflightWiring:
-    def test_hard_fail_raises_before_the_ooc_runner_is_ever_called(
+    def test_advisory_build_floor_reaches_the_ooc_runner_not_refused(
         self, tmp_path, monkeypatch
     ) -> None:
+        # ROUND-4: the build-floor gate is advisory now, so a job whose
+        # predicted floor exceeds its cap is no longer refused before
+        # dispatch -- it reaches `run_fk_out_of_core` like any other job.
+        # This test used to prove the OPPOSITE (a hard refusal before
+        # dispatch, `called["run_fk_out_of_core"] is False`); the spy is
+        # inverted to prove dispatch IS now reached, matching the sink
+        # high-fan-in test below's `_ReachedDispatchError` pattern.
         from decoy_engine.execution import _pipeline_route_exec as route_exec_mod
         from decoy_engine.execution import out_of_core as ooc_pkg
 
-        called = {"run_fk_out_of_core": False}
-
         def spy(*args, **kwargs):
-            called["run_fk_out_of_core"] = True
-            raise AssertionError("run_fk_out_of_core must not run past a hard-fail preflight")
+            raise _ReachedDispatchError
 
         monkeypatch.setattr(ooc_pkg, "run_fk_out_of_core", spy)
 
@@ -108,7 +113,7 @@ class TestMemoryPreflightWiring:
             "child": pa.table({"parent_id": ["p1"]}),
         }
 
-        with pytest.raises(ExecutionError) as excinfo:
+        with pytest.raises(_ReachedDispatchError):
             route_exec_mod.run_out_of_core_route(
                 plan=object(),
                 sources=sources,
@@ -119,10 +124,8 @@ class TestMemoryPreflightWiring:
                 table_kinds={},
                 source_loader=None,
                 sources_resident=True,
-                budget_bytes=64 * 1024 * 1024,  # 64 MiB: far below any real floor
+                budget_bytes=64 * 1024 * 1024,  # 64 MiB: far below the build-floor cap
             )
-        assert excinfo.value.code == "out_of_core_insufficient_memory"
-        assert called["run_fk_out_of_core"] is False
 
     def test_admits_a_job_whose_floor_fits_its_actual_cap(self, tmp_path, monkeypatch) -> None:
         from decoy_engine.execution import _pipeline_route_exec as route_exec_mod
@@ -148,6 +151,46 @@ class TestMemoryPreflightWiring:
             budget_bytes=512 * 1024 * 1024,
         )
         assert result.outputs["parent"].num_rows == 2
+
+    def test_fanin_during_budget_resolution_propagates_not_swallowed(self, monkeypatch) -> None:
+        # ROUND-4: the route's `except ExecutionError:` around budget
+        # resolution used to catch EVERY code there, including a fan-in
+        # discovered while resolving the memory budget, and silently fall
+        # back to "detection failed" -- a real capacity refusal masqueraded
+        # as an expected fallback. Narrowed to re-raise anything that is not
+        # `out_of_core_memory_detection_failed`; this proves a fan-in code
+        # specifically propagates rather than being swallowed.
+        from decoy_engine.execution import _pipeline_route_exec as route_exec_mod
+        from decoy_engine.execution import out_of_core as ooc_pkg
+
+        def _boom(*args, **kwargs):
+            raise ExecutionError(
+                code="out_of_core_fanin_exceeds_budget",
+                message="fan-in exceeds budget (test double).",
+            )
+
+        monkeypatch.setattr(ooc_pkg, "resolve_ooc_memory_limit", _boom)
+
+        graph = _graph(_edge("parent", "child"))
+        sources = {
+            "parent": pa.table({"id": ["p1"]}),
+            "child": pa.table({"parent_id": ["p1"]}),
+        }
+
+        with pytest.raises(ExecutionError) as excinfo:
+            route_exec_mod.run_out_of_core_route(
+                plan=object(),
+                sources=sources,
+                registry=object(),
+                graph=graph,
+                sink=None,
+                route_reason="test",
+                table_kinds={},
+                source_loader=None,
+                sources_resident=True,
+                budget_bytes=None,
+            )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
 
     def test_sink_high_fanin_admits_to_runner_not_falsely_refused(self, monkeypatch) -> None:
         # 67 tiny parents -> hub -> leaf under a 64 MiB budget, WITH a sink.

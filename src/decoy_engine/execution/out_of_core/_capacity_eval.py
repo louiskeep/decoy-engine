@@ -1,7 +1,8 @@
 """The out-of-core FK route's capacity verdict layer: the row-based build-
-floor model in `_memory_estimate.py` fed through the hybrid warn/hard-fail
-gate (`evaluate_capacity` / `enforce_ooc_memory_preflight`), shared by the
-mid-run preflight and the CLI's estimate-only `estimate_job_capacity` path.
+floor model in `_memory_estimate.py` fed through the warn/advisory gate
+(`evaluate_capacity` / `enforce_ooc_memory_preflight`), where a fan-in
+impossibility is the only hard-fail. Shared by the mid-run preflight and the
+CLI's estimate-only `estimate_job_capacity` path.
 """
 
 from __future__ import annotations
@@ -46,22 +47,36 @@ _FANIN_EXCEEDS_BUDGET_CODE = "out_of_core_fanin_exceeds_budget"
 # `resolve_phase_memory_limits` hands the real DuckDB connection, so a floor
 # at or below it should, in principle, complete; the WARN band exists only
 # because `predict_ooc_build_floor_bytes` is itself a conservative model, not
-# because `cap(t)` carries slack of its own -- the HARD-FAIL bound is the
-# full cap (fraction 1.0: `floor(t) > cap(t)`, no additional margin), since
-# `cap(t)` IS the number that will starve the build, not an estimate of it.
+# because `cap(t)` carries slack of its own. ROUND-4: the build-floor is now
+# ADVISORY, so `floor(t) > cap(t)` (fraction 1.0, the full cap) is no longer a
+# hard refusal -- it escalates the advisory from "nears" to "exceeds" its cap;
+# both are warnings, neither blocks. Only a fan-in impossibility hard-refuses.
 _OOC_MEM_WARN_FRACTION = 0.6
 
 
 class CapacityVerdict(str, Enum):
     """The tri-plus-one state `evaluate_capacity` returns.
 
-    Only `INSUFFICIENT` may ever cause a caller to refuse a job or exit a
-    distinct capacity code -- `UNKNOWN` and `NOT_APPLICABLE` are both "no
-    verdict", for different reasons, and neither is a refusal:
+    ROUND-4 CONTRACT CHANGE: `FIT` no longer means "clears the build-floor
+    budget" -- it means "no hard impossibility detected". The build-floor
+    prediction (`predict_ooc_build_floor_bytes`) is now advisory only: a
+    table whose predicted floor exceeds its build cap still returns `FIT`,
+    with `warned=True` and a recommended host size, never `INSUFFICIENT`.
+    `INSUFFICIENT` is reached ONLY through the fan-in guards (a co-live
+    DuckDB instance split that cannot fit even a 1 MB `memory_limit` under
+    the budget) -- the one impossibility this preflight still treats as
+    hard, because unlike the build-floor prediction, which recommends a
+    size that may or may not turn out to matter, an un-sizeable fan-in split
+    cannot be provisioned around at all. Only `INSUFFICIENT` may ever cause
+    a caller to refuse a job or exit a distinct capacity code -- `UNKNOWN`
+    and `NOT_APPLICABLE` are both "no verdict", for different reasons, and
+    neither is a refusal:
 
-    - `FIT`: priced and clears the budget.
-    - `INSUFFICIENT`: priced and does not clear the budget -- `code` names
-      which of the two refusal codes fired.
+    - `FIT`: no hard impossibility detected. `warned=True` marks an adverse
+      build-floor prediction -- a recommendation, not a refusal; the job is
+      not blocked either way.
+    - `INSUFFICIENT`: a fan-in split that cannot be sized at all -- `code`
+      names the refusal (`out_of_core_fanin_exceeds_budget`).
     - `UNKNOWN`: EXPECTED indeterminacy -- the budget is undetectable, or a
       parent table's row count cannot be priced exactly (e.g. a CSV source,
       whose count is a byte-size estimate). Never treat this as a pass; also
@@ -98,8 +113,10 @@ class CapacityInputs:
       Always empty on the mid-run path (every source there is a real
       `pa.Table` or `LazySource`, always exact); populated only by
       `estimate_job_capacity` when a parent table's source format has no
-      cheap exact count. Non-empty forces `UNKNOWN` -- never refuse on an
-      approximation (R6).
+      cheap exact count. Non-empty forces `UNKNOWN` (never refuse on an
+      approximation, R6) -- UNLESS a fan-in impossibility, which needs only
+      `incoming_edge_counts` + the budget, is detected first and returns
+      `INSUFFICIENT`.
     """
 
     route: str
@@ -154,21 +171,34 @@ def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> Capac
     only when the verdict is `INSUFFICIENT`; the estimate-only path just
     returns whatever this function returns.
 
-    Route and priceability gate first, before any budget math: a job whose
-    route is not `out_of_core`, or that pins a parent table this caller
-    could not price exactly, has nothing here to evaluate -- returning early
-    keeps those two "no verdict" reasons from ever reaching the floor/cap
-    loop below (which assumes every input is real and priceable).
+    Route gate first: a job whose route is not `out_of_core` has nothing
+    here to evaluate.
+
+    ROUND-4 REORDER: fan-in is checked NEXT, before the unresolved-rows and
+    budget-None "no verdict" returns, whenever a usable `budget_bytes`
+    exists -- fan-in only needs `incoming_edge_counts` and the budget, not a
+    priced row count, so it is INDEPENDENT of the reasons those two returns
+    exist for. Checking it first means a job with both unpriceable rows AND
+    a fan-in impossibility still reports `INSUFFICIENT` (a real, actionable
+    refusal) instead of being masked by `UNKNOWN` (acceptance test 5b). With
+    no usable budget at all there is nothing budget-relative to compute, so
+    fan-in is skipped and the existing `unresolved_parent_tables` /
+    `budget_bytes is None` returns apply as before (test 5d).
 
     An un-sizeable fan-in split (`actual_duckdb_cap_bytes` raising
     `out_of_core_fanin_exceeds_budget`) is the ONE `ExecutionError` this
-    function catches and folds into `INSUFFICIENT` -- it is a second,
-    equally real refusal shape (a co-live joiner/build split that cannot fit
-    even DuckDB's 1 MB minimum), not a defect. Any OTHER `ExecutionError`
-    (e.g. `out_of_core_concurrency_invalid`, a caller passing a malformed
-    `live_instances`) is a genuine usage bug and propagates unchanged -- R3's
-    rule that an unexpected estimator exception is never swallowed into a
-    verdict.
+    function catches and folds into `INSUFFICIENT` -- it is the one
+    refusal this evaluator still treats as hard (a co-live joiner/build
+    split that cannot fit even DuckDB's 1 MB minimum), not a defect. Any
+    OTHER `ExecutionError` (e.g. `out_of_core_concurrency_invalid`, a caller
+    passing a malformed `live_instances`) is a genuine usage bug and
+    propagates unchanged -- R3's rule that an unexpected estimator exception
+    is never swallowed into a verdict.
+
+    The build-floor prediction (the per-table loop below) is ADVISORY only
+    (round-4): a table whose floor exceeds its build cap no longer returns
+    `INSUFFICIENT`, only `FIT` with `warned=True` and a recommended host
+    size. See `CapacityVerdict`'s docstring for the full contract change.
 
     Sizing primitives (`actual_duckdb_cap_bytes`, `predict_ooc_build_floor_
     bytes`, `declared_minimum_ceiling_bytes`) are called through `_mem`, the
@@ -191,6 +221,40 @@ def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> Capac
                 "the out-of-core-FK capacity check does not apply to it."
             ),
         )
+
+    if budget_bytes is not None:
+        # Fan-in guard, row-independent, so it runs even for tables never
+        # priced below (a table with incoming edges only is never in
+        # `parent_table_rows`), moved ahead of the unresolved-rows / budget-None
+        # returns -- see this function's own docstring for why. Liveness MUST
+        # match the runtime's per-table PHASE sizer (`resolve_phase_memory_
+        # limits`, the code that actually raises at run time), NOT the coarser
+        # `_max_concurrent_ooc_instances` budget-sizing peak: the phase sizer
+        # opens a resident joiner at `incoming_edges + 1` regardless of whether
+        # this table also builds (it is passed `incoming_edges` and `sink`
+        # only), and its raise is fatal. Matching it keeps preflight and run in
+        # lockstep -- `test_sink_true_fanin_67_does_not_raise_but_resident_does`
+        # pins that resident fan-in 67 raises there. (The phase sizer's `+1` for
+        # a build-less pure leaf is a shared over-count in runtime memory
+        # sizing, out of scope here; a fix must move both together or preflight
+        # and run diverge.)
+        for table, incoming in inputs.incoming_edge_counts.items():
+            live = incoming if inputs.sink else incoming + 1
+            try:
+                _mem.actual_duckdb_cap_bytes(budget_bytes, live)
+            except ExecutionError as exc:
+                if exc.code != _FANIN_EXCEEDS_BUDGET_CODE:
+                    raise
+                return CapacityEstimate(
+                    verdict=CapacityVerdict.INSUFFICIENT,
+                    code=exc.code,
+                    needed_bytes=None,
+                    available_bytes=budget_bytes,
+                    route=inputs.route,
+                    message=exc.message,
+                    binding_table=table,
+                )
+
     if inputs.unresolved_parent_tables:
         names = ", ".join(sorted(inputs.unresolved_parent_tables))
         return CapacityEstimate(
@@ -225,6 +289,10 @@ def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> Capac
         incoming = inputs.incoming_edge_counts.get(table, 0)
         live = 1 if inputs.sink else incoming + 1
         try:
+            # Redundant safety: the pure-joiner-leaf loop above already
+            # covers every table's fan-in split, but the build-phase `live`
+            # here can differ from the joiner split on the sink path (1 vs
+            # incoming), so this catch stays as its own guard.
             cap_bytes = _mem.actual_duckdb_cap_bytes(budget_bytes, live)
         except ExecutionError as exc:
             if exc.code != _FANIN_EXCEEDS_BUDGET_CODE:
@@ -245,28 +313,13 @@ def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> Capac
             if worst_warn is None or margin > worst_warn[0]:
                 worst_warn = (margin, table, floor_bytes, cap_bytes)
 
-    # A pure-joiner leaf (incoming edges only, no build) has no floor(t), so
-    # it is never in `parent_table_rows` -- its OWN fan-in is guarded here,
-    # up front, at the JOINER split (a different number than build-phase
-    # `live` above on the sink path), same as the pre-extraction gate did.
-    for table, incoming in inputs.incoming_edge_counts.items():
-        live = incoming if inputs.sink else incoming + 1
-        try:
-            _mem.actual_duckdb_cap_bytes(budget_bytes, live)
-        except ExecutionError as exc:
-            if exc.code != _FANIN_EXCEEDS_BUDGET_CODE:
-                raise
-            return CapacityEstimate(
-                verdict=CapacityVerdict.INSUFFICIENT,
-                code=exc.code,
-                needed_bytes=None,
-                available_bytes=budget_bytes,
-                route=inputs.route,
-                message=exc.message,
-                binding_table=table,
-            )
-
     if worst_fail is not None and worst_fail[0] > 0:
+        # ROUND-4 DEMOTION: a build-floor prediction that exceeds the build
+        # cap no longer refuses the job -- it returns FIT with `warned=True`
+        # and the same recommended-size math the old hard-fail used, now
+        # framed as advice rather than a refusal. `binding_table`/
+        # `floor_bytes`/`cap_bytes` stay populated so a caller can still
+        # report which table drove the recommendation.
         _, table, floor_bytes, cap_bytes = worst_fail
         incoming = inputs.incoming_edge_counts.get(table, 0)
         floor_gib = floor_bytes / (1024**3)
@@ -276,17 +329,19 @@ def evaluate_capacity(inputs: CapacityInputs, budget_bytes: int | None) -> Capac
         )
         needed_gib = needed_bytes / (1024**3)
         return CapacityEstimate(
-            verdict=CapacityVerdict.INSUFFICIENT,
-            code="out_of_core_insufficient_memory",
+            verdict=CapacityVerdict.FIT,
+            code=None,
             needed_bytes=needed_bytes,
             available_bytes=budget_bytes,
             route=inputs.route,
             message=(
-                f"predicted resident floor ~{floor_gib:.2f} GiB for table {table!r} exceeds "
-                f"the actual build cap ~{cap_gib:.2f} GiB it would receive; this job needs "
-                f"approximately {needed_gib:.0f} GB of memory (a host/cgroup ceiling that size). "
-                "Increase host/cgroup memory or reduce table size."
+                f"predicted relation-build floor ~{floor_gib:.2f} GiB for table {table!r} "
+                f"exceeds the build cap ~{cap_gib:.2f} GiB it would receive; recommend a "
+                f"host/cgroup ceiling of >= {needed_gib:.0f} GB. This is an advisory "
+                "(relation-build only; excludes resident inputs, accumulated outputs, and "
+                "ingestion peak); the job is not refused."
             ),
+            warned=True,
             binding_table=table,
             floor_bytes=floor_bytes,
             cap_bytes=cap_bytes,
@@ -343,7 +398,8 @@ class MemoryPreflight:
 
     Covers every parent table `enforce_ooc_memory_preflight` was given, not
     one row count: `binding_table` names whichever table drove the
-    `ok`/`warned` outcome (the argmax of `floor(t) - cap(t)` on a hard-fail;
+    `ok`/`warned` outcome (the argmax of `floor(t) - cap(t)` on an over-cap
+    advisory;
     the tightest warn-band table otherwise), and `floor_bytes` / `cap_bytes`
     are THAT table's own numbers, not a job-wide aggregate -- the invariant
     this gate enforces is per-table (`_memory_estimate` module docstring).
@@ -372,17 +428,22 @@ def enforce_ooc_memory_preflight(
     sink: bool,
     incoming_edge_counts: Mapping[str, int],
 ) -> MemoryPreflight:
-    """The out-of-core route's HYBRID (warn near the floor, hard-fail beyond
-    it) memory capacity gate -- Cam's governing decision (`_memory_estimate`
-    module docstring item 2): "never OOM, or declare minimums so the user
-    knows what power they need."
+    """The out-of-core route's memory capacity gate -- HARD-FAILS on an
+    un-sizeable fan-in split, WARNS (never blocks) on an adverse build-floor
+    prediction. Round-4: the build-floor half of this gate is advisory, not
+    hard-fail (`_memory_estimate` module docstring item 2) -- the measured
+    completion caps showed the prior flat refusal over-rejected jobs that
+    would have completed, so Cam's governing decision changed from "never
+    OOM, or declare minimums" to "declare minimums, refuse only what truly
+    cannot be sized". Fan-in stays hard: there is nothing to recommend
+    around it, only a smaller job or a bigger budget.
 
     Deliberately asymmetric with the sibling disk preflight (advisory-only,
-    `_spill_estimate.enforce_ooc_disk_preflight`): an under-predicted disk
-    estimate still hits the runtime `check_temp_disk_budget` backstop and
-    aborts cleanly, but a resident-memory floor above its cap has no such
-    backstop -- DuckDB's allocator raises a raw, uncatchable "bad
-    allocation" mid-query -- so THIS preflight must actually reject.
+    `_spill_estimate.enforce_ooc_disk_preflight`) in its FAN-IN half only:
+    an under-predicted disk estimate still hits the runtime
+    `check_temp_disk_budget` backstop and aborts cleanly, and a fan-in split
+    that cannot fit even DuckDB's 1 MB minimum has no such backstop -- so
+    fan-in must actually reject before any DuckDB work opens.
 
     `parent_table_rows` prices one row count per build-phase (outgoing-FK)
     table; `budget_bytes` is the SAME `OutOfCoreBudget.budget_bytes`
@@ -401,23 +462,29 @@ def enforce_ooc_memory_preflight(
     `budget_bytes // live(t)` alone is a larger number that would admit a
     floor exceeding the true decimal cap). `cap(t)`'s own sizing can raise
     `out_of_core_fanin_exceeds_budget` (round-2 Fix C) on an un-sizeable
-    split, before any DuckDB work, same as an insufficient-memory hard-fail.
-    Otherwise HARD-FAILS (`out_of_core_insufficient_memory`, before any
-    DuckDB work) if `floor(t) > cap(t)` for ANY `t` (binding table =
-    `argmax_t (floor(t) - cap(t))`); otherwise WARNS (never blocks) if
-    `floor(t) >= _OOC_MEM_WARN_FRACTION * cap(t)` for the tightest such
-    table. `budget_bytes=None` (host-RAM detection failed, no explicit
-    budget, mirroring `resolve_ooc_memory_limit`) fails OPEN: Part A's caps
-    fall back to the flat `memory_limit` here too, so no real per-table cap
-    is left to gate a floor against.
+    split, before any DuckDB work -- the ONE case this still HARD-FAILS.
+    `floor(t) > cap(t)` for any `t` (binding table = `argmax_t (floor(t) -
+    cap(t))`) no longer hard-fails (round-4): it WARNS with the same
+    recommended-size math, and the job proceeds. Below that, it WARNS
+    (never blocks) if `floor(t) >= _OOC_MEM_WARN_FRACTION * cap(t)` for the
+    tightest such table -- both bands now share the same "warn, never
+    block" outcome, differing only in message. `budget_bytes=None`
+    (host-RAM detection failed, no explicit budget, mirroring
+    `resolve_ooc_memory_limit`) fails OPEN: Part A's caps fall back to the
+    flat `memory_limit` here too, so no real per-table cap is left to gate
+    a floor against.
 
     A pure-joiner leaf (incoming edges only, no build) has no `floor(t)`,
-    so it is not in `parent_table_rows`; its OWN fan-in is still guarded
-    HERE, up front (round-3 Fix C, SUB-FIX 3): after the build-phase loop,
-    every table in `incoming_edge_counts` (leaves included) has its
-    joiner's `actual_duckdb_cap_bytes` called to trigger the shared guard,
-    at the JOINER split -- a DIFFERENT number than build-phase `live(t)`
-    above on the sink path (`1`), so this is a distinct check.
+    so it is not in `parent_table_rows`; its OWN fan-in is still guarded --
+    round-4 moved this guard to run FIRST inside `evaluate_capacity`, ahead
+    of the build-phase loop (see that function's own docstring for why: it
+    needs only the budget, not a priced row count, so it runs before the
+    unresolved-rows / budget-None checks too). Every table in
+    `incoming_edge_counts` (leaves included) has its joiner's
+    `actual_duckdb_cap_bytes` called to trigger the shared guard, at the
+    JOINER split -- a DIFFERENT number than build-phase `live(t)` above on
+    the sink path (`1`), so this is a distinct check from the build loop's
+    own redundant fan-in catch.
 
     R1 anti-drift: the floor/cap loop above is no longer inline here -- it
     is `evaluate_capacity`, a pure function this gate and the estimate-only
