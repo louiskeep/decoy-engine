@@ -106,8 +106,20 @@ Status as of Cam review 2026-09-09:
    starter pack for the compiled speedup: **Linux x86-64, Windows x86-64, macOS
    arm64, Linux ARM64** (Windows included: CLI users run Windows laptops). Intel Mac
    and others fall back to Python or source-build. Exact wheel list locked at Task 3.1.
-6. Large-job policy for arbitrary Python providers. **PENDING** a Codex options
-   consult (Cam requested options before deciding). Consult launched 2026-09-09.
+6. Large-job policy for arbitrary Python providers. **APPROVED (Cam): Codex's
+   hybrid.** Classify a job as large when work reaching UNPROVEN Python operators
+   exceeds 100,000 rows OR 64 MiB decoded input (summed across such nodes; unknown
+   metadata = large). Bounded/streaming request: reject every unproven Python
+   operator regardless of size. Below both caps: permit the pandas oracle only if
+   the non-callable working set is <= 50% of the job memory budget, behind an
+   explicit `allow_unbounded_python_small_jobs` deployment setting, reported
+   `memory_assurance: not_guaranteed`. Above either cap: reject before staging with
+   code `unprovable_python_large_job`. NO measure-then-admit, NO `bounded:true`
+   trust flag. Future escape hatch = a real `StreamingProviderAdapter` contract
+   (fixed schemas, max output bytes/batch, declared state, batch-invariance tests),
+   labeled `trusted_bounded` until an OS memory-limited worker exists. Matches the
+   engine's existing `pool_native|python_only|reject_large` model. Consult:
+   scratchpad/largejob-policy-consult.out.
 7. Freeze new Polars work during consolidation, with a keep/deprecate/REMOVE
    decision made on merit at Phase 6 (Task 6.1). **APPROVED (Cam):** freeze now,
    likely remove later. Rationale: Polars has no primitive for our keyed crypto (the
@@ -119,6 +131,6 @@ Status as of Cam review 2026-09-09:
    the current HMAC-Feistel construction (no silent FF1 switch). **APPROVED as
    recommended (Cam).**
 
-Remaining before Phase 0 exit: (6) Codex large-job options -> Cam pick; then Task
-0.2 authoritative baseline on n2-standard-8; then dennis + Codex plan-review GO on
-the full Phase 0 package.
+All 8 §15 decisions APPROVED by Cam 2026-09-09. Remaining before Phase 0 exit:
+Task 0.2 authoritative baseline on n2-standard-8; then dennis + Codex plan-review
+GO on the full Phase 0 package (0.1 + 0.2 + 0.3 + 0.4).
