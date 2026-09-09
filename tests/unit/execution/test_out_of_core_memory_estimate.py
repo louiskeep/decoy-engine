@@ -4,10 +4,10 @@ capacity preflight (Part B), `out_of_core/_memory_estimate.py`.
 `memory_limit_for` / `resolve_phase_memory_limits` must give every DuckDB
 connection a cap sized to its own phase-local liveness, with the invariant
 the gate checks: the SUM of every live instance's cap never exceeds
-`budget_bytes`. `enforce_ooc_memory_preflight` must WARN (never block) in
-the warn band, HARD-FAIL with a typed, coded error beyond the safe bound
-BEFORE any DuckDB work, and fail OPEN only when the ceiling itself is
-undetectable.
+`budget_bytes`. Round-4: `enforce_ooc_memory_preflight`'s build-floor
+prediction is ADVISORY -- it WARNS (never blocks) when a floor is over its
+cap. The only HARD-FAIL (a typed, coded error before any DuckDB work) is a
+fan-in impossibility; it fails OPEN when the ceiling itself is undetectable.
 """
 
 from __future__ import annotations

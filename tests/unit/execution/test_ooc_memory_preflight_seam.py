@@ -147,12 +147,13 @@ class TestSeamResidentFanIn:
 
 
 class TestKnownOperatingPoints:
-    """The exact operating points behind the BLOCKER: on a 4 GiB HOST the
-    build budget resolves to 2 GiB (ceiling minus the 2 GiB reserve). A
-    100M-row job was ADMITTED by the pre-fix ceiling-fraction check, then
-    OOMed inside DuckDB; a 20M-row job has a floor already past its real
-    2 GiB build cap. Both must now be REFUSED, and a job whose floor genuinely
-    fits its cap must still be ADMITTED."""
+    """The exact operating points behind the original BLOCKER: on a 4 GiB HOST
+    the build budget resolves to 2 GiB (ceiling minus the 2 GiB reserve). A
+    100M-row job's floor, and a 20M-row job's floor, both sit past their real
+    2 GiB build cap. Round-4: the build-floor prediction is ADVISORY, so these
+    are now FIT + warned (a recommendation), NOT refused -- only a fan-in
+    impossibility hard-refuses. A job whose floor genuinely fits its cap is
+    admitted clean, with no warning."""
 
     def test_100m_rows_is_advisory_not_refused_on_a_4gib_host_sink(self) -> None:
         # ROUND-4: previously refused; now FIT + warned=True with a
