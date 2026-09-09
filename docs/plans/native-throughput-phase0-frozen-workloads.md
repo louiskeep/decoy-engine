@@ -150,3 +150,31 @@ Status as of Cam review 2026-09-09:
 All 8 §15 decisions APPROVED by Cam 2026-09-09. Remaining before Phase 0 exit:
 Task 0.2 authoritative baseline on n2-standard-8; then dennis + Codex plan-review
 GO on the full Phase 0 package (0.1 + 0.2 + 0.3 + 0.4).
+
+## 8. Phase 0 gate outcome (2026-09-09)
+
+Two-reviewer gate, iterated to closure on the substantive findings:
+- **dennis: GO.** All its findings (HIGH-1 on-ramp, HIGH-2 serial floor, MED-1..4,
+  LOWs) verified closed on a fresh adversarial re-read.
+- **Codex:** closed all SUBSTANTIVE items across two rounds: the mask-only sink
+  contract, the Phase-1 parallel-execution acceptance criteria (GIL-release proof,
+  Rayon pool ownership, multi-error by min-global-index, panic-in-worker, threaded
+  scratch, precedence x threads, mutation phrasing), the Task 1.1 feasibility-gate
+  reclassification, and (round 2) the full Task 1.1 kernel-cost component list
+  (canonicalization + Arrow conversion + output construction added).
+- **Residual (item 3), DISPOSITIONED as Phase-4-deferred, NOT a Phase-1 blocker:**
+  the stale "engine OOC route not reachable" claim in the PLATFORM module
+  `admission_fk.py` (+ `oom-checker-gap-analysis.md`). This is pre-existing platform
+  admission-doc text, tangential to the native-throughput engine code. It is now
+  neutralized module-wide by an authoritative CONFLICT FLAG marking every such
+  assertion provisional (it conflicts with the Task 0.3 inventory finding that the
+  OOC route is wired via `v2_out_of_core.py:v2_orchestrator.py:303`). The actual
+  production reachability is resolved during Phase 4 route consolidation, the same
+  deferral both reviewers accepted for the sibling items E2-E5. Codex agreed in
+  round 1 that "assigning an owner/disposition ... are documentation decisions now,
+  not Phase 1 code work." A final narrow Codex confirmation over-ran (>11 min tracing
+  reachability, no verdict emitted) and was terminated; the disposition stands on the
+  reasoning above, not on a rubber stamp.
+
+**DECISION: Phase 0 EXITS.** Phase 1 begins at Task 1.1 (the reference-host
+feasibility gate), which must project <=600s before Tasks 1.2-1.6 build.
