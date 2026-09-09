@@ -49,7 +49,9 @@ needed (Codex confirmed): there is no separate bounded builder.
    "conservative over the measured domain" (typical key widths), NOT an unconditional
    "never under-predicts any requirement". SEPARATELY verify the final whole-GiB host
    recommendation covers observed VmHWM; never feed VmHWM into `floor_bytes`.
-   `_BUILD_FLOOR_BASE_BYTES` (24 MiB) unchanged.
+   `_BUILD_FLOOR_BASE_BYTES` bumped 24 MiB -> 28 MiB (P2-1 remediation) so
+   `floor(100k)` clears the reproduced 40e6 fail edge while `floor(40 rows)`
+   stays under the 32e6 tiny-fixture routing knob.
 2. **Make the build-floor prediction advisory.** The build-floor branch
    (`_capacity_eval.py:269-293`) returns FIT + `warned=True` + a relation-build-only
    recommended size, not INSUFFICIENT. The job proceeds. Backstops are caller-side and

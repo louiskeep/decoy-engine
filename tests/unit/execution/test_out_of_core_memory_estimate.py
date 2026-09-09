@@ -279,11 +279,14 @@ class TestPredictOocBuildFloorBytes:
 
     def test_tiny_fixture_floor_fits_the_routing_knob_cap(self) -> None:
         # The out-of-core byte-estimate routing knob is a 64 MiB budget; on a
-        # resident fan-in-1 build that resolves to a 32 MiB cap. A genuinely
-        # tiny fixture (the parity suite uses 40 rows) MUST fit it, or every
+        # resident fan-in-1 build that resolves to a 32_000_000 B DECIMAL cap
+        # (`(64 MiB // 2) // 1 MiB * 1_000_000`), NOT 32 MiB -- assert the real
+        # decimal cap so the test cannot pass on a floor that would actually
+        # exceed the cap by up to 1.55 MB. A genuinely tiny fixture (the parity
+        # suite uses 40 rows) MUST fit it, or every
         # `tests/parity/test_out_of_core_*_routing.py` case regresses -- this
-        # is the constraint that pins the base SMALL (FIX 5).
-        assert predict_ooc_build_floor_bytes(40) <= 32 * _MIB
+        # is the constraint that pins the base SMALL.
+        assert predict_ooc_build_floor_bytes(40) <= 32_000_000
 
     def test_monotonic_in_row_count(self) -> None:
         assert predict_ooc_build_floor_bytes(0) < predict_ooc_build_floor_bytes(1_000_000)

@@ -8,11 +8,13 @@ divided again by phase-local liveness. A job could clear the preflight's
 fraction-of-ceiling check and still be starved by the real, smaller cap.
 
 This module asserts the two are now structurally the same number: for every
-HOST ceiling tested, the LARGEST row count the preflight admits genuinely
-fits under the cap `resolve_ooc_memory_limit` + `resolve_phase_memory_limits`
-would hand the real connection, on both the sink path (cap = ACTUAL decimal
-DuckDB cap for 1 live instance) and a resident fan-in path (cap = ACTUAL
-decimal DuckDB cap for incoming_edges + 1 live instances).
+HOST ceiling tested, the LARGEST row count whose floor still fits (ROUND-4:
+the build-floor is advisory, so this is the warn/no-warn boundary, not an
+admit/refuse one) genuinely sits under the cap `resolve_ooc_memory_limit` +
+`resolve_phase_memory_limits` would hand the real connection, on both the sink
+path (cap = ACTUAL decimal DuckDB cap for 1 live instance) and a resident
+fan-in path (cap = ACTUAL decimal DuckDB cap for incoming_edges + 1 live
+instances).
 
 ROUND-2 NOTE: this file's own helpers originally modeled that cap as the
 BINARY `budget // live` -- the same denomination mismatch round 2's Fix B

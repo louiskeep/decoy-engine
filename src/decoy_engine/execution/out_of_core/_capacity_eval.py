@@ -46,9 +46,10 @@ _FANIN_EXCEEDS_BUDGET_CODE = "out_of_core_fanin_exceeds_budget"
 # `resolve_phase_memory_limits` hands the real DuckDB connection, so a floor
 # at or below it should, in principle, complete; the WARN band exists only
 # because `predict_ooc_build_floor_bytes` is itself a conservative model, not
-# because `cap(t)` carries slack of its own -- the HARD-FAIL bound is the
-# full cap (fraction 1.0: `floor(t) > cap(t)`, no additional margin), since
-# `cap(t)` IS the number that will starve the build, not an estimate of it.
+# because `cap(t)` carries slack of its own. ROUND-4: the build-floor is now
+# ADVISORY, so `floor(t) > cap(t)` (fraction 1.0, the full cap) is no longer a
+# hard refusal -- it escalates the advisory from "nears" to "exceeds" its cap;
+# both are warnings, neither blocks. Only a fan-in impossibility hard-refuses.
 _OOC_MEM_WARN_FRACTION = 0.6
 
 

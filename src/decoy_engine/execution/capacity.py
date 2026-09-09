@@ -52,8 +52,9 @@ Two deliberate, documented simplifications versus a real `decoy run`:
    actually confirm a real run would reach), the verdict downgrades to
    `UNKNOWN` rather than the `FIT`/`NOT_APPLICABLE` the first, byte-routing-
    off decision alone would have reported. This keeps the one direction a
-   capacity gate must never take off the table: reporting "fine" on a job a
-   real run refuses.
+   capacity check must never take off the table: reporting a confident `FIT`
+   on a job a real run would instead flag (an advisory build-floor warning) or
+   refuse (a fan-in impossibility).
 2. Row counts for the capacity floor itself (not the routing size signal)
    trust ONLY an exact per-table count (`TableProfile.row_count_exact`):
    Parquet/fixed_width footer counts, never a CSV byte-size estimate. A

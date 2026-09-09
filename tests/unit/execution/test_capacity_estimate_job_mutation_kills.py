@@ -631,19 +631,21 @@ class TestRouteKwargFullStructKills:
             message="capacity check passes; no table nears its build cap.",
             warned=False,
             binding_table="parent",
-            floor_bytes=25170624,  # ROUND-4: 24 MiB + 120 B/row * 40 rows (was 190 B/row)
+            floor_bytes=29364928,  # ROUND-4: 28 MiB base + 120 B/row * 40 rows
             cap_bytes=65536000000,
         )
 
     def test_warned_out_of_core_full_struct(self, tmp_path: Path, low_threshold) -> None:
         # out_of_core route, FIT + warned=True (300k-row parent, 1 MiB budget
         # floored to the 64 MiB minimum). ROUND-4: the recalibrated 120 B/row
-        # slope puts this table's floor just BELOW its build cap (61.17 MB vs
-        # a 64 MB cap), inside the warn band (>= 0.6 * cap) -- the old 190
-        # B/row slope put it just ABOVE the cap instead (a hard refusal, the
-        # golden this replaces). Same route-carrying kwargs are load-bearing;
-        # this shape additionally pins the advisory message / needed_bytes /
-        # floor_bytes / cap_bytes / binding_table the clean-FIT shape cannot.
+        # slope with the 28 MiB base puts this table's floor just ABOVE its
+        # build cap (65.36 MB vs a 64 MB cap), so it takes the OVER-cap advisory
+        # branch (an accurate over-cap heads-up: a real 300k run genuinely OOMs
+        # at a 64 MiB budget). The old 190 B/row slope hard-REFUSED this same
+        # case; it is now FIT + warned, not INSUFFICIENT. Same route-carrying
+        # kwargs are load-bearing; this shape additionally pins the advisory
+        # message / needed_bytes / floor_bytes / cap_bytes / binding_table the
+        # clean-FIT shape cannot.
         big_parent, big_child = _parent_child_tables(300_000)
         config = _ooc_config(tmp_path, tables=(big_parent, big_child))
         est = estimate_job_capacity(config, tmp_path, budget_bytes=1 * _MIB)
@@ -654,13 +656,15 @@ class TestRouteKwargFullStructKills:
             available_bytes=67108864,
             route="out_of_core",
             message=(
-                "out-of-core memory advisory: predicted resident floor ~0.06 GiB for "
-                "table 'parent' (actual build cap ~0.06 GiB); recommend a host/cgroup "
-                "ceiling of >= 3 GB for margin."
+                "predicted relation-build floor ~0.06 GiB for table 'parent' exceeds "
+                "the build cap ~0.06 GiB it would receive; recommend a host/cgroup "
+                "ceiling of >= 3 GB. This is an advisory (relation-build only; excludes "
+                "resident inputs, accumulated outputs, and ingestion peak); the job is "
+                "not refused."
             ),
             warned=True,
             binding_table="parent",
-            floor_bytes=61165824,
+            floor_bytes=65360128,
             cap_bytes=64000000,
         )
 
@@ -695,7 +699,7 @@ class TestRouteKwargFullStructKills:
             ),
             warned=False,
             binding_table="parent",
-            floor_bytes=25170624,  # ROUND-4: 24 MiB + 120 B/row * 40 rows (was 190 B/row)
+            floor_bytes=29364928,  # ROUND-4: 28 MiB base + 120 B/row * 40 rows
             cap_bytes=65536000000,
         )
 

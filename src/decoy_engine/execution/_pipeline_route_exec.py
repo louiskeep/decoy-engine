@@ -520,9 +520,10 @@ def _parent_table_row_counts(
 
     FAIL-CLOSED, not a silent under-count: a graph parent table absent from
     `sources` used to simply contribute 0 rows, which UNDER-predicts the
-    floor -- admitting a job the preflight should have refused is exactly
-    the wrong direction for a gate whose only job is refusing before an OOM
-    (LOW remediation). `run_fk_out_of_core` does raise its own coded
+    floor -- understating a memory recommendation (and, before the round-4
+    advisory demotion, wrongly admitting a job the then-hard gate should have
+    refused) is the wrong direction for a check whose value is flagging a
+    likely OOM before the run (LOW remediation). `run_fk_out_of_core` does raise its own coded
     `out_of_core_source_missing` for the same gap, but only AFTER this
     preflight would have already (wrongly) admitted the job on a stale
     ordering guarantee; this function raises fail-closed itself instead of
