@@ -555,22 +555,14 @@ ALLOWLIST: dict[str, int] = {
     # _ROW_ERROR_MESSAGES) moved into the `_crypto_reference.py` sibling, bringing
     # this module back to 530 -- under the 600 cap, so it is no longer allowlisted.
     # Do not re-add it without cause.
-    # Phase 3 C1 slice (2026-08-31): crossed the 600 cap (434 -> 689) as the
-    # native-route dispatcher grew the faker-pool masking branch
-    # (`_sample_faker_chunk`/`_mask_chunk_native`/`_resolve_faker_pools`), the
-    # preflight string-type scope-lock, the pool_select counters, and the
-    # later-chunk schema-drift sentry. This module is THE native route
-    # orchestrator (route decision + chunk masking + route evidence + drift
-    # guard), so a sound decomposition needs its own design pass, not a
-    # merge-time hack: extract the schema-drift concern into a `_chunk_schema.py`
-    # sibling and the faker-chunk sampling/masking into a `_chunk_masking.py`
-    # sibling (both split with no import cycle) when the native route is touched.
-    # 2026-09-10 (native-throughput program): the schema-drift half is done
-    # (`NativeChunkSchemaDriftError` / `_check_chunk_schema_drift` moved to
-    # `_chunk_schema.py`), bringing 702 -> 653; ceiling ratcheted down. The
-    # faker-masking half is still owed and lands with the Task 2.3 route rewrite,
-    # which drops this module further (extracting `_chunk_masking.py`).
-    "src/decoy_engine/execution/native/_dispatch.py": 653,
+    # NOTE: execution/native/_dispatch.py was allowlisted at 653 through the
+    # Phase 3 C1 slice and the schema-drift extraction (`_chunk_schema.py`).
+    # Task 2.3 Phase 0 (2026-09-10) finished the prescribed decomposition:
+    # the faker-chunk sampling/masking (`_sample_faker_chunk` /
+    # `_mask_chunk_native` / `_resolve_faker_pools` / `_resolve_truncate_keep`)
+    # moved into the `_chunk_masking.py` sibling, bringing this module back to
+    # 454 -- under the 600 cap, so it is no longer allowlisted here. Do not
+    # re-add it without cause.
     # Phase 4 slice 2 (2026-08-31): crossed the 600 cap (590 -> 613) wiring
     # the group_key group_by effective-type gate (Trap E) into the
     # auto-chunk classifier: `classify_job` now computes `ordered_work`
