@@ -1,23 +1,24 @@
 """GIL-release proof for the compiled ``derive_batch`` (Phase 1 Task 1.4).
 
-The acceptance matrix requires PROOF that the native compute releases the GIL, not merely
-that concurrent calls agree: a pure-Python sentinel thread must observably make progress
-DURING a ``derive_batch`` call. A native extension that holds the GIL for the whole call
-blocks every Python thread for its full duration (the interpreter's GIL-switch interval does
-not preempt a native frame that never yields), so a held-GIL kernel would leave the sentinel
-at ~0 increments; a kernel that detaches for the compute lets the sentinel run on its own OS
-thread and advance by many thousands.
+The acceptance matrix requires PROOF that the native compute releases the GIL, not merely that
+concurrent calls agree. The proof is wall-clock parallel speedup: two native computes overlap in
+real time ONLY if the GIL is released for the compute, and (unlike counter/timestamp sampling) no
+``sys.setswitchinterval`` tuning or boundary GIL handoff can manufacture wall-clock overlap out of
+a GIL-serialized workload. A pure-Python CPU loop, which provably holds the GIL, is run through the
+same harness in-test to calibrate "no overlap" on the live machine.
 
-The sentinel proof assumes a GIL build: on a free-threaded interpreter (3.13t) the sentinel's
-``counter += 1`` would itself be a data race and "blocked sentinel implies held GIL" no longer
-holds, so this test would need rework before trusting it on a free-threaded port.
+This proof assumes a GIL build. On a free-threaded interpreter (3.13t) pure-Python threads run in
+parallel too, so the control would also show speedup and the discriminator would need rework before
+trusting it on a free-threaded port.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 import threading
 import time
+from collections.abc import Callable
 
 import pyarrow as pa
 import pytest
@@ -54,63 +55,94 @@ def test_panic_in_detached_region_becomes_coded_error(
     assert len(out) == 3
 
 
-@_NEEDS_COMPANION
-def test_sentinel_thread_progresses_during_native_compute() -> None:
-    """Discriminating GIL-release proof.
+def _elapsed(fn: Callable[[], object], workers: int, concurrent: bool) -> float:
+    """Wall-clock to run ``fn`` ``workers`` times, either back-to-back or on ``workers`` threads."""
+    if not concurrent:
+        t0 = time.monotonic()
+        for _ in range(workers):
+            fn()
+        return time.monotonic() - t0
+    threads = [threading.Thread(target=fn) for _ in range(workers)]
+    t0 = time.monotonic()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return time.monotonic() - t0
 
-    A naive "did the counter advance across the call?" check is NOT discriminating: when the
-    native call returns, CPython hands the GIL to the waiting sentinel, so the counter advances
-    at the boundary even for a GIL-HOLDING kernel (a 200ms GIL-retaining ctypes call still shows
-    tens of thousands of increments). So instead the sentinel timestamps its own activity, and we
-    require samples STRICTLY INSIDE the compute window, excluding a margin at each boundary where
-    the entry/return GIL handoff happens. Under a held GIL the sentinel is blocked for the whole
-    interior (zero interior samples); under a released GIL it runs throughout.
+
+@_NEEDS_COMPANION
+@pytest.mark.skipif(
+    (os.cpu_count() or 1) < 2,
+    reason="wall-clock parallelism proof needs >=2 cores; single-core cannot overlap threads",
+)
+def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
+    """Discriminating GIL-release proof by wall-clock parallel speedup, self-calibrated.
+
+    Timestamp/counter-sampling proofs are defeatable: with the GIL held for the whole native
+    call, boundary handoffs plus a tuned ``sys.setswitchinterval`` can still sprinkle a waiting
+    sentinel's activity into any fixed "interior" window (Codex's committed counterexample:
+    ``PyDLL.usleep(1s)`` + ``setswitchinterval(0.25)`` produced dozens of interior samples). So
+    those approaches are abandoned.
+
+    This proof instead measures whether two native computes OVERLAP in wall-clock, which no
+    switch-interval tuning can manufacture. Run ``W`` copies of the compute back-to-back
+    (serial), then on ``W`` threads (concurrent), and take ``speedup = serial / concurrent``:
+
+    * GIL held for the compute  -> the W threads serialize -> concurrent ~= serial -> speedup ~1.
+    * GIL released for the compute -> the W computes run on W cores -> concurrent << serial ->
+      speedup grows toward min(W, cores).
+
+    A pure-Python CPU loop (which provably holds the GIL) is run through the SAME harness as an
+    in-test control: it pins what "GIL-held, no overlap" measures on THIS machine right now, so
+    the threshold is a margin over a live baseline rather than a hard-coded constant that a slow
+    or loaded box could trip. The kernel must clear both an absolute floor and a clear margin over
+    that control.
     """
     from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 
     kernel = load_compiled_crypto_kernel()
-    # Long enough (~seconds) that the compute interior, after trimming the boundary margins, is a
-    # real window; the payload value is constant so building it is cheap.
-    n = 3_000_000
+    workers = min(4, os.cpu_count() or 1)
+
+    # Control: pure-Python accumulate holds the GIL, so it cannot overlap. Sized to a few hundred
+    # ms so thread-startup overhead is negligible against per-call work; the ratio is what counts.
+    def busy() -> None:
+        x = 0
+        for i in range(12_000_000):
+            x += i
+
+    # Warm up (import/JIT-free, but primes allocator + branch predictors) then measure the control
+    # both ways. A single serial pass of each so the two measurements see the same machine state.
+    busy()
+    control_serial = _elapsed(busy, workers, concurrent=False)
+    control_concurrent = _elapsed(busy, workers, concurrent=True)
+    control_speedup = control_serial / control_concurrent
+
+    n = 2_000_000
     values = pa.array(["user@example.com"] * n, type=pa.string())
     mask_key = b"\x11" * 32
 
-    samples: list[
-        float
-    ] = []  # monotonic timestamps of sentinel activity (list.append needs the GIL)
-    stop = threading.Event()
-
-    def spin() -> None:
-        i = 0
-        while not stop.is_set():
-            i += 1
-            if i % 20_000 == 0:
-                samples.append(time.monotonic())
-
-    sentinel = threading.Thread(target=spin)
-    sentinel.start()
-    try:
-        time.sleep(0.05)  # let the sentinel warm up while the main thread yields the GIL
-        t0 = time.monotonic()
+    def derive() -> None:
         kernel.derive_batch(values, mask_key=mask_key, namespace="h_email", truncate=None)
-        t1 = time.monotonic()
-    finally:
-        stop.set()
-        sentinel.join()
 
-    duration = t1 - t0
-    assert duration > 0.4, (
-        f"compute took only {duration:.3f}s; too short for a discriminating interior window "
-        "(raise n)"
+    derive()  # warm up
+    kernel_serial = _elapsed(derive, workers, concurrent=False)
+    kernel_concurrent = _elapsed(derive, workers, concurrent=True)
+    kernel_speedup = kernel_serial / kernel_concurrent
+
+    # The control confirms the harness measures ~no overlap for GIL-held work on this box. Allow it
+    # some slack (>1.3 would itself be suspicious), but the real discriminator is the kernel
+    # clearing both an absolute floor and a clear margin over the live control.
+    assert control_speedup < 1.3, (
+        f"pure-Python control showed speedup {control_speedup:.2f} (serial {control_serial:.3f}s, "
+        f"concurrent {control_concurrent:.3f}s); the harness is not measuring GIL-held work as "
+        "serial, so the kernel comparison would be meaningless"
     )
-    # Interior of the compute window, trimming a 0.15s margin at each boundary where CPython
-    # hands the GIL off at call entry / return. The sentinel can only append here (list.append
-    # needs the GIL) if the GIL was released DURING the row loop, not merely at the boundaries.
-    margin = 0.15
-    interior = [t for t in samples if t0 + margin < t < t1 - margin]
-    assert len(interior) > 5, (
-        f"sentinel recorded only {len(interior)} activity samples in the compute interior "
-        f"(duration {duration:.3f}s); the GIL appears not to have been released for the row loop"
+    assert kernel_speedup > 1.5 and kernel_speedup > control_speedup * 1.8, (
+        f"native derive_batch showed wall-clock speedup {kernel_speedup:.2f} across {workers} "
+        f"threads (serial {kernel_serial:.3f}s, concurrent {kernel_concurrent:.3f}s) vs a "
+        f"GIL-held control of {control_speedup:.2f}; the compute does not appear to run in "
+        "parallel, so the GIL was not released for the row loop"
     )
 
 
