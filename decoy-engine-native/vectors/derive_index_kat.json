@@ -229,6 +229,28 @@
       ]
     },
     {
+      "name": "utf8_unicode_namespace_high_bit_digest",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "caf\u00e9.\u5730\u533a",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "616c696365"
+      ],
+      "expected_index": [
+        88
+      ]
+    },
+    {
       "name": "utf8_job_seed_8_byte",
       "arrow_type": {
         "kind": "utf8",

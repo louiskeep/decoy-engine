@@ -7,9 +7,11 @@
 //! Per-type rules, pinned to the shipped Python behavior (not re-derived here):
 //!
 //! - utf8 / large_utf8: Unicode NFC normalization, then UTF-8 bytes. No length prefix.
-//! - int (any admitted width, signed or unsigned): a 4-byte big-endian length prefix around
-//!   the minimal-width two's-complement big-endian body, following the ASN.1 DER INTEGER
-//!   convention (X.690 SS8.3) the Python side cites. The prefix is INSIDE the canonical source
+//! - int (any admitted width, signed or unsigned): a 4-byte big-endian length prefix around a
+//!   signed two's-complement big-endian body of `(bit_length + 8) // 8` bytes. The `+ 8`
+//!   reserves a sign byte, so this is NOT strictly minimal (a negative power of two is one byte
+//!   wider than DER-minimal: -128 is `ff80`, not `80`); match `_canonicalize.py::_encode_int`
+//!   exactly, not a minimal encoder. The prefix is INSIDE the canonical source
 //!   bytes (the source-length prefix the HMAC frame applies in `derive.rs` is a second, outer
 //!   layer).
 //! - bool: exactly one byte, `0x01` for true or `0x00` for false. No length prefix.
@@ -67,8 +69,9 @@ impl std::fmt::Display for CanonError {
 impl std::error::Error for CanonError {}
 
 /// Encode a Python-equivalent arbitrary-magnitude integer as
-/// `_canonicalize.py::_encode_int` does: a 4-byte big-endian length prefix around the
-/// minimal-width two's-complement big-endian body.
+/// `_canonicalize.py::_encode_int` does: a 4-byte big-endian length prefix around a signed
+/// two's-complement big-endian body of `(bit_length + 8) // 8` bytes (the `+ 8` reserves a sign
+/// byte, so it is NOT strictly minimal: -128 is `ff80`, not `80`).
 ///
 /// `n` is an `i128` container for any admitted Arrow int width (up to 64-bit signed or
 /// unsigned); the widest admitted value (`u64::MAX`, `i64::MIN`) needs at most 9 body bytes,

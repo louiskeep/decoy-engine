@@ -42,16 +42,19 @@ from decoy_engine.generation.pool._errors import GenerationError
 
 
 def _encode_int(n: int) -> bytes:
-    """Length-prefixed minimal-width two's-complement big-endian encoding.
+    """Length-prefixed signed-two's-complement big-endian encoding.
 
-    Source pattern: ASN.1 DER INTEGER (X.690 §8.3) encodes integers as the
-    minimal number of two's-complement big-endian octets. We frame those
-    octets with a 4-byte big-endian length so the encoding is injective and
-    unambiguous for arbitrary magnitude (Python ints are unbounded; numpy
-    integer scalars coerce losslessly via `int()`). This replaces the prior
-    fixed 8-byte form, which raised OverflowError for |value| >= 2**63.
+    Body width is `(n.bit_length() + 8) // 8` bytes. The `+ 8` always reserves a
+    full sign byte, so this is NOT strictly minimal: a negative power of two is one
+    byte wider than a DER-minimal encoding (`-128` -> `ff80`, not `80`). The exact
+    sizing is the frozen contract; a compiled port must reproduce it, not substitute
+    a DER-minimal encoder (see docs/native/derive-index-contract.md). The 4-byte
+    big-endian length frame keeps the encoding injective for arbitrary magnitude
+    (Python ints are unbounded; numpy integer scalars coerce losslessly via `int()`),
+    replacing the prior fixed 8-byte form that raised OverflowError for
+    |value| >= 2**63.
     """
-    nbytes = (n.bit_length() + 8) // 8  # +8 leaves room for the sign bit; >=1
+    nbytes = (n.bit_length() + 8) // 8  # +8 reserves a sign byte; >=1
     body = n.to_bytes(nbytes, "big", signed=True)
     return len(body).to_bytes(4, "big") + body
 

@@ -217,6 +217,21 @@ def build_cases() -> list[dict[str, Any]]:
             pool_size=100000,
         )
     )
+    # Multi-byte UTF-8 namespace ("café.地区": Latin accent + CJK) whose source ALSO derives a
+    # digest whose first 8 bytes have the high bit set (uint64 >= 2**63). One vector, two
+    # discriminators: (1) the frame's namespace length prefix must be the UTF-8 BYTE length, not
+    # the character count, so a port that mis-measures a non-ASCII namespace fails; (2) the digest
+    # slice must be read as an UNSIGNED uint64, not a signed int64 -- for "alice" here the unsigned
+    # index is 88 while a signed reading would give 472.
+    cases.append(
+        build_case(
+            "utf8_unicode_namespace_high_bit_digest",
+            arrow_type={"kind": "utf8"},
+            logical_values=["alice"],
+            namespace="café.地区",
+            pool_size=1000,
+        )
+    )
     # 8-byte job_seed (no-secret path) alongside the 32-byte mask_key default: both
     # admitted seed lengths must derive an index, proving seed-length parity.
     cases.append(

@@ -40,6 +40,18 @@ _CASES = _fixture()["cases"]
 _ERROR_CASES = _fixture()["error_cases"]
 
 
+def test_fixture_seed_protocol_version_matches_the_live_constant() -> None:
+    """The fixture header pins the seed_protocol_version its indices were generated under. If the
+    live constant is bumped, the expected indices are stale and the fixture must be regenerated;
+    this fails loudly at that point instead of trusting the numbers silently."""
+    from decoy_engine.determinism._derive import SEED_PROTOCOL_VERSION
+
+    assert _fixture()["seed_protocol_version"] == SEED_PROTOCOL_VERSION, (
+        "derive_index_kat.json was generated under a different SEED_PROTOCOL_VERSION; regenerate it "
+        "with vectors/generate_derive_index_kat.py"
+    )
+
+
 @pytest.mark.parametrize("case", _CASES, ids=[c["name"] for c in _CASES])
 def test_derive_index_reproduces_every_kat_index(case: dict[str, Any]) -> None:
     """Every non-null row's derived index must equal the frozen expected index, computed

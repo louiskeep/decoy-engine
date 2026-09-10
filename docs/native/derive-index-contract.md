@@ -46,8 +46,12 @@ bytes:
 
 - utf8 / large_utf8: NFC-normalized UTF-8, no length prefix (the HMAC frame supplies it).
 - bool: `b"\x01"` / `b"\x00"` (checked before integer).
-- integer (any width, signed or unsigned): `u32be(len(body)) ++ body`, where `body` is the
-  minimal-width big-endian two's-complement encoding.
+- integer (any width, signed or unsigned): `u32be(len(body)) ++ body`, where
+  `body = n.to_bytes((n.bit_length() + 8) // 8, "big", signed=True)`. This is NOT strictly
+  minimal: the `+ 8` always reserves a full sign byte, so a negative power of two is one byte
+  wider than a DER-minimal encoding would be. Example: `-128` (bit length 8) encodes as
+  `00000002 ff80` (two body bytes), not `00000001 80`. A port must use this exact sizing, not
+  a minimal encoder.
 - timestamp with timezone: the UTC instant as an ISO-8601 string with a `+00:00` offset,
   UTF-8. Timezone-naive timestamps are rejected (`timezone_naive_datetime`).
 
@@ -119,7 +123,10 @@ all four error codes, and two combined-fault vectors pinning the guard order.
 
 `derive_index_batch` reuses the existing `canonicalize_row` and the frozen `derive` envelope,
 adds only the `digest[:8]` big-endian reduction and the pool-size guards, preserves null
-positions, and returns an Arrow unsigned-integer array of indices. Arbitrary pool values
+positions, and returns an Arrow `uint64` array of indices. The reduction reads `digest[:8]` as
+an UNSIGNED 64-bit integer (a signed reading diverges for any digest with the high bit set; the
+`utf8_unicode_namespace_high_bit_digest` vector pins this), and the pool-size guards run BEFORE
+the derive so a bad `pool_size` outranks a bad seed or namespace. Arbitrary pool values
 stay outside Rust: the caller uses Arrow `take` to select the pool entries. The exit gate is
 this fixture reproduced index-for-index, plus the property, mutation, fuzz, sanitizer, and
 allocation gates the keyed-hash kernel already carries.
