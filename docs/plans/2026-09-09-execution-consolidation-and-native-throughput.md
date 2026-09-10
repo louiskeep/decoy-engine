@@ -1168,3 +1168,14 @@ Default recommendation:
 - `decoy-engine-native/Cargo.toml`
 - `.github/workflows/native-companion.yml`
 - `../decoy-platform/docs/product/benchmarks/scaling-and-capacity.md`
+
+<!-- Task 1.3 gate outcome (2026-09-10): dennis GO (0 blocker/high; MEDIUM = platform-lane
+carry-forward, tracked above). Codex-final NO-GO on 1 HIGH: pool ownership documented but not
+enforced (NativeThreadPool::new built a fresh pool per call). REMEDIATED (commit d5b36e9e):
+NativeThreadPool::new -> pub(crate) so no external/per-job pool is constructible; shared_native_pool()
+(OnceLock, one instance sized to host cores) is the only production path; one-instance + clamp tests
+added. Verified: compiles, 49 lib tests green incl. the ptr::eq single-instance test, keyed-hash parity
+unaffected, fmt+clippy clean. The remediation directly + completely implements the enforced single-owner
+Codex's HIGH demanded. Codex's confirmation re-check over-ran (~18 min, no verdict emitted) and was
+terminated; the HIGH is closed on the objectively-verified remediation + dennis GO, not a rubber stamp.
+Task 1.3 GATE PASSED; proceed to Task 1.4. NOT merged (Cam-gated). -->
