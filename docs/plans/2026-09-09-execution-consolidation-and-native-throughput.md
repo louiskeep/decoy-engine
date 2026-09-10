@@ -1219,3 +1219,20 @@ is applied (per non-null row, after namespace/data validation), namespace only w
 Pre-existing, unreachable in production. Detail: scratchpad task1.5-boundary-parity-decision.md.
 Schedule: after Phase 6 / before GA parity sign-off. NOT started. -->
 
+
+<!-- Task 1.6 gate outcome (2026-09-10): PASSED. PHASE 1 COMPLETE. GCP n2-standard-8 thread sweep,
+frozen 100M W2, 3 reps/thread. 8-thread 100M MEDIAN wall = 429.9s <= 600s target (PASS, ~170s margin);
+peak RSS 447MB (<<6.5GiB). Curve (100M median wall / hash seconds): t1 639.5/299.7, t2 487.4/158.4,
+t4 437.7/108.0, t8 429.9/94.8. Hash kernel: 1280s baseline -> 299.7s single-thread (Tasks 1.2+1.5
+alone, 4.3x) -> 94.8s at 8t (~13.5x total). BOTTLENECK SHIFT: hash is no longer dominant; redact
+(~142s) + truncate (~173s) now dominate and run single-threaded -> the evidence-based Phase 5
+candidates. Results: decoy-platform/docs/product/release-1-validation-runs/2026-09-10-tb6-50m/.
+NOT merged (Cam-gated). -->
+
+<!-- Task 2.1 gate outcome (2026-09-10): DONE. dennis GO + Codex GO (5 review rounds; every round
+confirmed the executable contract strong with NO BLOCKER; all findings were pre-existing loose
+"minimal"/"DER"/"Z-suffix" terminology purged codebase-wide + a few coverage additions). Frozen
+derive_index contract: docs/native/derive-index-contract.md + decoy-engine-native/vectors/
+derive_index_kat.json (25 value + 7 error cases, SHA-256 4736bfaf...e50d3e8) + generate_derive_index_kat.py
++ tests/native/test_derive_index_kat.py. Commits e57c7a7f..2760ff4a. Next: Task 2.2 Rust
+derive_index_batch reproduces the vectors. NOT merged (Cam-gated). -->
