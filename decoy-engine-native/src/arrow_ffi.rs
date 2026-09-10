@@ -165,11 +165,11 @@ fn derive_batch_checked(
     let host_available = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    let _budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
-    // Task 1.5 parallelizes here: the resolved budget will build/select the shared
-    // `NativeThreadPool` and `derive_array` will run its row loop on it. In Task 1.3 execution
-    // stays sequential and the output is byte-identical, so the budget is validated and threaded
-    // through but does not yet change the call below.
+    let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    let threads = budget.threads();
+    // Task 1.5: `derive_array` runs its row loop on the one shared host-sized `NativeThreadPool`,
+    // with `threads` bounding the number of row ranges (and thus the parallelism) within it. The
+    // output is byte-identical at every thread count.
 
     // Import + validate the Arrow array while the GIL is held (this touches PyO3 / the Python
     // FFI capsule). The imported `array` is an owned arrow-rs `ArrayRef` with no Python object
@@ -194,7 +194,7 @@ fn derive_batch_checked(
             if std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH").is_some() {
                 panic!("test-only forced panic in the GIL-released region");
             }
-            crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate)
+            crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate, threads)
         })
         .map_err(KernelError::from)?;
 

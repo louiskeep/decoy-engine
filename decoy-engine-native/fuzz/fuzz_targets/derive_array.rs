@@ -75,6 +75,10 @@ struct FuzzInput {
     /// tests against the live reference cover that layer instead (see
     /// tests/native/test_keyed_derivation_kernel_parity.py).
     truncate: Option<isize>,
+    /// A bounded native-thread budget so the fuzzer actually drives the Task 1.5 parallel path
+    /// (partitioning, disjoint-slice fill, multi-range error reduction), not only the 1-thread
+    /// case. Clamped to 1..=8 at the call site; the corpus explores the small counts that matter.
+    threads: u8,
 }
 
 fn apply_shape_bias<T>(mut values: Vec<Option<T>>, shape: &ArrayShapeBias) -> Vec<Option<T>> {
@@ -134,8 +138,11 @@ fuzz_target!(|input: FuzzInput| {
         Some(input.mask_key.as_slice())
     };
     let truncate = input.truncate;
+    // Clamp the fuzz-chosen budget into the kernel's supported 1..=8 range; 0 would be rejected by
+    // the PyO3-boundary budget resolver one layer up, which this PyO3-free target does not cross.
+    let threads = (input.threads % 8 + 1) as usize;
     // The return value is intentionally ignored: every `Err` variant (missing key, wrong seed
     // length, empty namespace, an admitted type this particular corner case still rejects) is
     // a normal fail-closed outcome. Only a panic or a sanitizer-flagged fault is a finding here.
-    let _ = derive_array(array.as_ref(), mask_key, &input.namespace, truncate);
+    let _ = derive_array(array.as_ref(), mask_key, &input.namespace, truncate, threads);
 });

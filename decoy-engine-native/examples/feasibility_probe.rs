@@ -142,7 +142,7 @@ fn bench_derive_array(rows: usize, mask_key: &[u8]) -> f64 {
         .collect();
     let array = StringArray::from(vals);
     let t = Instant::now();
-    let out = derive_array(&array as &dyn Array, Some(mask_key), "h_email", None)
+    let out = derive_array(&array as &dyn Array, Some(mask_key), "h_email", None, 1)
         .expect("derive_array over a valid utf8 array succeeds");
     let ns = t.elapsed().as_nanos() as f64 / rows as f64;
     std::hint::black_box(out.len());

@@ -25,6 +25,9 @@ pub enum KernelError {
     Derive(DeriveError),
     /// Missing or empty mask key (fail-before-output; no row has been touched yet).
     MaskKeyRequired,
+    /// The batch output would exceed the i32 `StringArray` offset ceiling (~2GB); fail closed
+    /// rather than wrap. Carries `batch::BatchError::OffsetOverflow`.
+    OffsetOverflow,
     /// The `__arrow_c_array__` protocol failed or returned an unexpected shape.
     ProtocolError(String),
 }
@@ -35,6 +38,7 @@ impl KernelError {
             KernelError::Canon(e) => e.code,
             KernelError::Derive(e) => e.code,
             KernelError::MaskKeyRequired => "mask_key_required",
+            KernelError::OffsetOverflow => "native_offset_overflow",
             KernelError::ProtocolError(_) => "mixed_object_not_native",
         }
     }
@@ -45,6 +49,10 @@ impl KernelError {
             KernelError::Derive(e) => e.detail.clone(),
             KernelError::MaskKeyRequired => {
                 "mask_key is required and must be non-empty; refusing to emit unkeyed output"
+                    .to_string()
+            }
+            KernelError::OffsetOverflow => {
+                "batch output exceeds the i32 StringArray offset limit (~2GB); split the batch"
                     .to_string()
             }
             KernelError::ProtocolError(msg) => msg.clone(),
@@ -74,6 +82,7 @@ impl From<crate::batch::BatchError> for KernelError {
             crate::batch::BatchError::Canon(c) => KernelError::Canon(c),
             crate::batch::BatchError::Derive(d) => KernelError::Derive(d),
             crate::batch::BatchError::MaskKeyRequired => KernelError::MaskKeyRequired,
+            crate::batch::BatchError::OffsetOverflow => KernelError::OffsetOverflow,
         }
     }
 }
@@ -242,6 +251,7 @@ mod tests {
             Some(sentinel_key),
             SENTINEL_NAMESPACE_MARKER,
             None,
+            1,
         )
         .unwrap_err();
         messages.push(format!("{}: {}", err.code(), err.detail()));
@@ -249,7 +259,8 @@ mod tests {
         // Empty namespace over a sentinel-content string array.
         let strings =
             arrow_array::StringArray::from(vec![Some(SENTINEL_SOURCE_MARKER.to_string())]);
-        let err = crate::batch::derive_array(&strings, Some(sentinel_key), "", None).unwrap_err();
+        let err =
+            crate::batch::derive_array(&strings, Some(sentinel_key), "", None, 1).unwrap_err();
         messages.push(format!("{}: {}", err.code(), err.detail()));
 
         // Wrong-length key (16 bytes, neither 8 nor 32): the error must report the LENGTH,
@@ -260,6 +271,7 @@ mod tests {
             Some(wrong_len_key),
             SENTINEL_NAMESPACE_MARKER,
             None,
+            1,
         )
         .unwrap_err();
         messages.push(format!("{}: {}", err.code(), err.detail()));

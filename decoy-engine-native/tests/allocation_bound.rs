@@ -129,13 +129,24 @@ fn timestamp_tz_fixture() -> ArrayRef {
     )
 }
 
-/// Run one `derive_array` call under the peak tracker and assert the transient-scratch bound.
-fn assert_scratch_bound(label: &str, array: ArrayRef) {
+/// Run one `derive_array` call at `threads` under the peak tracker and assert the transient-scratch
+/// bound. The bound must hold at EVERY thread count (Task 1.5 exit gate): parallelism must not
+/// introduce an output-sized scratch buffer. The offset/values buffers move into the returned
+/// StringArray (zero-copy), so they count as output, not scratch; only the small per-range task
+/// vector and the transient per-row canonical bytes remain.
+fn assert_scratch_bound(label: &str, array: ArrayRef, threads: usize) {
     let input_bytes = array.get_buffer_memory_size();
 
     let baseline = mark_baseline();
-    let output = _kernel::batch::derive_array(array.as_ref(), Some(&MASK_KEY), NAMESPACE, None)
-        .unwrap_or_else(|e| panic!("{label}: derive_array failed: {}: {}", e.code(), e.detail()));
+    let output =
+        _kernel::batch::derive_array(array.as_ref(), Some(&MASK_KEY), NAMESPACE, None, threads)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{label} t={threads}: derive_array failed: {}: {}",
+                    e.code(),
+                    e.detail()
+                )
+            });
     let peak_outstanding = peak_since(baseline);
 
     let output_bytes = output.get_buffer_memory_size();
@@ -145,24 +156,30 @@ fn assert_scratch_bound(label: &str, array: ArrayRef) {
     assert_eq!(
         output.len(),
         ROWS,
-        "{label}: output row count must match input"
+        "{label} t={threads}: output row count must match input"
     );
     assert!(
         scratch <= bound,
-        "{label}: transient scratch {scratch} bytes exceeds 2x input bound {bound} bytes \
-         (input={input_bytes}, peak_outstanding={peak_outstanding}, output={output_bytes})"
+        "{label} t={threads}: transient scratch {scratch} bytes exceeds 2x input bound {bound} \
+         bytes (input={input_bytes}, peak_outstanding={peak_outstanding}, output={output_bytes})"
     );
 
     eprintln!(
-        "{label}: input={input_bytes}B output={output_bytes}B peak_outstanding={peak_outstanding}B \
-         scratch={scratch}B bound={bound}B"
+        "{label} t={threads}: input={input_bytes}B output={output_bytes}B \
+         peak_outstanding={peak_outstanding}B scratch={scratch}B bound={bound}B"
     );
 }
 
 #[test]
 fn scratch_allocation_stays_within_2x_input_for_every_admitted_type() {
-    assert_scratch_bound("utf8", utf8_fixture());
-    assert_scratch_bound("int64", int64_fixture());
-    assert_scratch_bound("bool", bool_fixture());
-    assert_scratch_bound("timestamp_tz", timestamp_tz_fixture());
+    // Warm up the shared pool once so its one-time thread-spawn allocation is not charged to the
+    // first measured call's baseline.
+    let _ =
+        _kernel::batch::derive_array(utf8_fixture().as_ref(), Some(&MASK_KEY), NAMESPACE, None, 8);
+    for threads in [1usize, 2, 4, 8] {
+        assert_scratch_bound("utf8", utf8_fixture(), threads);
+        assert_scratch_bound("int64", int64_fixture(), threads);
+        assert_scratch_bound("bool", bool_fixture(), threads);
+        assert_scratch_bound("timestamp_tz", timestamp_tz_fixture(), threads);
+    }
 }

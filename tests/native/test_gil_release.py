@@ -205,6 +205,36 @@ def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
 
 
 @_NEEDS_COMPANION
+def test_panic_in_a_rayon_worker_becomes_coded_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A panic raised INSIDE a Rayon worker (Task 1.5's parallel fill) must propagate out of the
+    pool, unwind through the GIL-released region, and surface as the coded ``internal_panic`` error
+    rather than aborting. Driven by the ``DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER`` hook, which
+    fires only when ``rayon::current_thread_index()`` is set: observing the coded error therefore
+    also proves the range ran on a pool worker, not inline. ``native_threads=2`` over a 2-row batch
+    forces two non-empty ranges."""
+    import decoy_engine_native._kernel as kernel
+
+    values = pa.array(["a", "b"], type=pa.string())
+    mask_key = b"\x44" * 32
+
+    monkeypatch.setenv("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER", "1")
+    with pytest.raises(ValueError, match="internal_panic"):
+        kernel.derive_batch(
+            values, mask_key=mask_key, namespace="h_email", truncate=None, native_threads=2
+        )
+
+    # The GIL was restored on unwind and the pool is reusable: a clean call succeeds in the same
+    # process rather than deadlocking or aborting.
+    monkeypatch.delenv("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER")
+    out = kernel.derive_batch(
+        values, mask_key=mask_key, namespace="h_email", truncate=None, native_threads=2
+    )
+    assert len(out) == 2
+
+
+@_NEEDS_COMPANION
 def test_concurrent_derive_batch_calls_agree() -> None:
     """Four threads deriving concurrently (GIL released for each compute) must all produce the
     correct, identical result. `derive_array` uses only per-call owned data (the imported array

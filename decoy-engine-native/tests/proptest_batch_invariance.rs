@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use _kernel::batch::derive_array;
 use _kernel::canonicalize::canonicalize_row;
 use _kernel::derive::{derive, hex_token};
 use arrow_array::{Array, ArrayRef, StringArray};
@@ -86,6 +87,22 @@ proptest! {
         let cuts: Vec<usize> = std::iter::repeat_n(batch_size, values.len() / batch_size + 1).collect();
         let partitioned = derive_partitioned(&values, &cuts);
         prop_assert_eq!(whole, partitioned);
+    }
+
+    /// Task 1.5 thread invariance over RANDOM inputs: the parallel `derive_array` at any thread
+    /// count must be byte-identical to the 1-thread run for the same array and truncate. Random
+    /// null patterns + varied truncates stress the offset pre-pass and range boundaries the fixed
+    /// unit test cannot enumerate.
+    #[test]
+    fn derive_array_is_thread_invariant(
+        values in proptest::collection::vec(proptest::option::of("[a-zA-Z0-9]{0,12}"), 0..120),
+        threads in prop_oneof![Just(2usize), Just(3), Just(4), Just(8), Just(16)],
+        truncate in prop_oneof![Just(None), Just(Some(0isize)), Just(Some(7)), Just(Some(64)), Just(Some(-3))],
+    ) {
+        let array = StringArray::from(values);
+        let baseline = derive_array(&array, Some(&MASK_KEY), NAMESPACE, truncate, 1).unwrap();
+        let parallel = derive_array(&array, Some(&MASK_KEY), NAMESPACE, truncate, threads).unwrap();
+        prop_assert_eq!(parallel, baseline);
     }
 }
 
