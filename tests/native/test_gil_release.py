@@ -59,3 +59,36 @@ def test_sentinel_thread_progresses_during_native_compute() -> None:
         f"sentinel advanced only {advanced} increments during native compute; the GIL "
         "appears not to have been released for the row loop"
     )
+
+
+@_NEEDS_COMPANION
+def test_concurrent_derive_batch_calls_agree() -> None:
+    """Two threads deriving concurrently (GIL released for each compute) must both produce the
+    correct, identical result. `derive_array` uses only per-call owned data (the imported array
+    + a per-batch DeriveContext) and the shared pool is a `Sync` OnceLock, so overlapping calls
+    have no shared mutable state to race."""
+    from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
+
+    kernel = load_compiled_crypto_kernel()
+    values = pa.array([f"user{i}@example.com" for i in range(50_000)], type=pa.string())
+    mask_key = b"\x22" * 32
+
+    expected = kernel.derive_batch(values, mask_key=mask_key, namespace="h_email", truncate=None)
+
+    results: list[pa.Array] = []
+    lock = threading.Lock()
+
+    def run() -> None:
+        out = kernel.derive_batch(values, mask_key=mask_key, namespace="h_email", truncate=None)
+        with lock:
+            results.append(out)
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(results) == 4
+    for out in results:
+        assert out.equals(expected), "a concurrent derive_batch call diverged from the reference"
