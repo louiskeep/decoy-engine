@@ -29,7 +29,11 @@ pub mod threads;
 /// A mismatch or absence is treated as an incompatible extension: the core reroutes to the
 /// pandas oracle rather than running against a stale binary.
 #[cfg(feature = "extension-module")]
-const ABI_VERSION: &str = "decoy-native-abi-1";
+// abi-2 (was abi-1): the keyed-derivation contract now REQUIRES the `native_threads`
+// keyword on `derive_batch` (the core's wrapper always passes it, Task 1.6). A pre-1.3
+// abi-1 binary lacks the parameter, so the loader must reject it at load-time by tag
+// rather than let it crash on the first hash call.
+const ABI_VERSION: &str = "decoy-native-abi-2";
 
 #[cfg(feature = "extension-module")]
 #[pyfunction]

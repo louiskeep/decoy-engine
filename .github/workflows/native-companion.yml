@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
           python -m pip install "$wheel"
-          python -c "import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-1', got; print('x86_64 cp${{ matrix.python-version }} wheel imports; abi', got)"
+          python -c "import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-2', got; print('x86_64 cp${{ matrix.python-version }} wheel imports; abi', got)"
       - name: Set up QEMU (aarch64 emulation)
         if: matrix.target == 'aarch64'
         uses: docker/setup-qemu-action@v3
@@ -94,7 +94,7 @@ jobs:
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
           docker run --rm --platform linux/arm64 -v "$PWD/decoy-engine-native/dist:/w" \
             python:${{ matrix.python-version }}-slim-bookworm bash -c \
-            "python -m pip install /w/$(basename "$wheel") && python -c \"import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-1', got; print('aarch64 cp${{ matrix.python-version }} wheel imports; abi', got)\""
+            "python -m pip install /w/$(basename "$wheel") && python -c \"import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-2', got; print('aarch64 cp${{ matrix.python-version }} wheel imports; abi', got)\""
       - uses: actions/upload-artifact@v7
         with:
           name: companion-wheel-${{ matrix.python-version }}-${{ matrix.target }}

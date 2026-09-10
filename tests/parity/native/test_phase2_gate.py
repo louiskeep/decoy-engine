@@ -266,6 +266,40 @@ def test_native_route_output_is_thread_invariant_and_matches_oracle(native_threa
 
 
 @_NEEDS_COMPANION
+def test_native_threads_reaches_the_compiled_kernel_through_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Byte-parity alone cannot prove the plumbing stays intact: since serial and parallel output
+    are identical, a broken forwarding hop (native_threads silently -> None) still passes every
+    parity assertion, just running serial. So record what the compiled derive_batch actually
+    receives and assert the requested budget arrives at every hash call. Guards against a dropped
+    forwarding hop anywhere in run_native_or_oracle_chunked -> ... -> derive_batch (dennis/Codex)."""
+    from decoy_engine.execution.native import _kernels_keyed
+    from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
+
+    seen: list[object] = []
+    real_kernel = load_compiled_crypto_kernel()
+
+    class _RecordingKernel:
+        def derive_batch(self, values, *, native_threads=None, **kwargs):  # type: ignore[no-untyped-def]
+            seen.append(native_threads)
+            return real_kernel.derive_batch(values, native_threads=native_threads, **kwargs)
+
+    monkeypatch.setattr(_kernels_keyed, "load_compiled_crypto_kernel", lambda: _RecordingKernel())
+
+    source = _build_source(_THREAD_INVARIANCE_ROWS)
+    config = _build_config(source, key="threads_reach_kernel")
+    _table, evidence = _run_native(config, source, _THREAD_INVARIANCE_BATCH, native_threads=6)
+
+    assert evidence.native_admitted is True
+    # Three hash columns x (six 32-row chunks + one 8-row chunk) = 21 hash calls, every one at 6.
+    assert seen, "no compiled derive_batch call was recorded; the hash route did not run"
+    assert all(nt == 6 for nt in seen), (
+        f"native_threads did not reach every kernel call: saw {sorted(set(map(repr, seen)))}"
+    )
+
+
+@_NEEDS_COMPANION
 def test_native_route_parity_on_all_null_column() -> None:
     # Degenerate whole-column shape #1: every value null (pandas infers
     # null-type; the NULL_TYPED_NORMALIZATION reconciles it).

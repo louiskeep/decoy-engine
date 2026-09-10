@@ -541,7 +541,7 @@ def reference_fpe() -> FpeKernel:
 # CryptoExtensionUnavailableError rather than run a binary whose framing this core
 # did not pin. Whether to fall back to the reference kernel is the caller's
 # preflight decision, not this loader's.
-_EXPECTED_ABI_VERSION = "decoy-native-abi-1"
+_EXPECTED_ABI_VERSION = "decoy-native-abi-2"
 
 
 def _translate_compiled_kernel_error(exc: ValueError) -> Exception:
@@ -662,11 +662,15 @@ def load_compiled_crypto_kernel() -> KeyedDerivationKernel:
     try:
         derive_batch_fn = _kernel.derive_batch
         probe = HASH_KAT[0]
+        # Pass native_threads (abi-2 requirement) in the load-time self-test too: an old-signature
+        # binary that somehow reports abi-2 but lacks the parameter fails HERE, at load, rather than
+        # on the first real hash call. Belt-and-suspenders with the abi-2 tag check above.
         probe_out = derive_batch_fn(
             pa.array([probe.value]),
             mask_key=probe.mask_key,
             namespace=probe.namespace,
             truncate=probe.truncate,
+            native_threads=1,
         )
         # Require the exact Arrow type the reference emits, not just matching Python
         # values: a large_string array or a non-Arrow object that merely spoofs

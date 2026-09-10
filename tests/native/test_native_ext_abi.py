@@ -24,7 +24,7 @@ import importlib.util
 
 import pytest
 
-PINNED_ABI_TAG = "decoy-native-abi-1"
+PINNED_ABI_TAG = "decoy-native-abi-2"
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 
