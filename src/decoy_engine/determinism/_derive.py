@@ -10,9 +10,10 @@ The envelope (per spec §2):
 
     HMAC_key   = HKDF-SHA256(IKM=seed, salt=b"decoy-engine/determinism/v1",
                              info=namespace.encode("utf-8"), length=32)
+    ns_bytes   = namespace.encode("utf-8")
     HMAC_input = (
         bytes([SEED_PROTOCOL_VERSION])               # 1 byte; current SEED_PROTOCOL_VERSION
-        + len(namespace).to_bytes(4, "big") + namespace.encode("utf-8")
+        + len(ns_bytes).to_bytes(4, "big") + ns_bytes  # UTF-8 BYTE length, not character count
         + len(source).to_bytes(4, "big") + source
     )
     output     = HMAC-SHA256(HMAC_key, HMAC_input)   # 32 bytes

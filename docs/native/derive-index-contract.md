@@ -99,7 +99,7 @@ forward-vs-reversed order explicitly.
 
 ## 6. Vectors and evidence
 
-- Fixture: `decoy-engine-native/vectors/derive_index_kat.json` (24 value cases + 7 error
+- Fixture: `decoy-engine-native/vectors/derive_index_kat.json` (25 value cases + 7 error
   cases), the cross-language known-answer set the compiled `derive_index_batch` must
   reproduce index-for-index. Its header records the `seed_protocol_version` (6) the indices
   were generated under, so a post-bump fixture is self-identifying, not silently stale.

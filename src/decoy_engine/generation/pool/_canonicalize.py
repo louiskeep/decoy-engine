@@ -14,7 +14,7 @@ Per-dtype rules (S5 spec §5.1, stabilised at v2; unchanged through v3):
 | dtype family | canonical encoding |
 |--------------|--------------------|
 | str / object | UTF-8 with Unicode NFC normalization |
-| int (any width, incl. numpy) | length-prefixed minimal two's complement |
+| int (any width, incl. numpy) | length-prefixed signed two's complement, `(bit_length+8)//8` bytes (reserves a sign byte; NOT minimal, see `_encode_int`) |
 | bool | b"\\x00" / b"\\x01" |
 | datetime (tz-aware) | ISO 8601 UTC with "Z" suffix, UTF-8 |
 | datetime (tz-naive) | HARD ERROR (timezone_naive_datetime) |
