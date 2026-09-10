@@ -242,6 +242,11 @@ _ALLOWLIST = frozenset(
         # sibling by the 2026-09-10 module-size remediation; _crypto_ext.py no longer
         # carries the derive calls, so only this module needs the allowlist entry.)
         "execution/native/_crypto_reference.py",
+        # Task 2.3 index-kernel contract: the loader's KAT self-test and the
+        # `_ReferenceIndexDerivation` oracle both call the already-catalogued
+        # `derive_index` primitive to reproduce/verify deterministic pool selection.
+        # Not a new draw site (mirrors the _crypto_reference.py entry above).
+        "execution/native/_index_ext.py",
     }
 )
 
