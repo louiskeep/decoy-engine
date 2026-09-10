@@ -89,7 +89,7 @@ matrix in §2:
 
 | Criterion | Case | Expected |
 |---|---|---|
-| GIL-release proof | a Python sentinel thread runs while the native kernel computes a large batch | the sentinel makes observable progress during the compute interval (proves `Python::detach`; concurrent-call tests alone do not) |
+| GIL-release proof | run W copies of a fixed-work native batch serially then on W threads; a pure-Python GIL-held loop is the in-test control | median kernel wall-clock speedup clears an absolute floor AND a margin over the live control (proves `Python::detach`; concurrent-call agreement alone does not). NOTE: superseded the original sentinel-progress criterion, which Codex showed non-discriminating (a GIL-holding call with a tuned `sys.setswitchinterval` sprinkles sentinel activity into any fixed interior window); wall-clock overlap of fixed work cannot be faked by switch-interval tuning. See task 1.4 record. |
 | Multi-error arbitration | failures placed in DIFFERENT Rayon ranges and batches | the reported first error is the minimum global row index, never task-completion order |
 | Worker panic | panic injected INSIDE a Rayon worker | coded engine error, no partial array crosses the boundary |
 | Threaded scratch | per-batch transient scratch at threads {1,2,4,8}, frozen 50k batch | <= 2x input Arrow bytes, excluding the returned output buffer, at every thread count |

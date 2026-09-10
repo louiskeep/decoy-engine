@@ -147,11 +147,13 @@ def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
     A pure-Python CPU loop (which provably holds the GIL) is run through the SAME harness as an
     in-test control: it pins what "GIL-held, no overlap" measures on THIS machine right now, so
     the threshold is a margin over a live baseline rather than a hard-coded constant that a slow
-    or loaded box could trip. To blunt shared-runner scheduling noise, each side is measured over
-    several trials: the control takes the median (its typical no-overlap behavior) and the kernel
-    takes its best trial (a transient contention spike only ever depresses a concurrent sample, so
-    the best trial is the one least corrupted by unrelated load). The kernel must clear both an
-    absolute floor and a clear margin over the live control.
+    or loaded box could trip. To blunt shared-runner scheduling noise BOTH sides take the MEDIAN
+    of several trials. Median, not max: contention during a trial's serial numerator inflates that
+    trial's ratio, so `max` would preserve exactly the spurious favorable outlier and stop being
+    fail-closed (a serialized kernel measuring [1.0, 1.0, 1.9] would pass on the 1.9). Median-of-N
+    over the floor means a majority of trials cleared it, and a lone bad trial in either direction
+    cannot move it. The kernel must clear both an absolute floor and a clear margin over the live
+    control.
     """
     from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 
@@ -179,10 +181,12 @@ def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
     busy()  # warm up allocator/branch predictors before timing
     derive()
     control_speedups = sorted(speedup(busy) for _ in range(trials))
-    kernel_speedups = [speedup(derive) for _ in range(trials)]
+    kernel_speedups = sorted(speedup(derive) for _ in range(trials))
 
-    control_speedup = control_speedups[len(control_speedups) // 2]  # median
-    kernel_speedup = max(kernel_speedups)  # best trial: least corrupted by transient load
+    # Median of both: fail-closed against a lone inflated trial, robust against a lone depressed
+    # one. median-of-3 over the floor <=> at least 2 of 3 trials cleared the floor.
+    control_speedup = control_speedups[len(control_speedups) // 2]
+    kernel_speedup = kernel_speedups[len(kernel_speedups) // 2]
 
     # The control confirms the harness measures ~no overlap for GIL-held work on this box. Allow it
     # some slack (>1.3 would itself be suspicious), but the real discriminator is the kernel
@@ -193,7 +197,7 @@ def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
         "as serial, so the kernel comparison would be meaningless"
     )
     assert kernel_speedup > 1.5 and kernel_speedup > control_speedup * 1.8, (
-        f"native derive_batch best wall-clock speedup {kernel_speedup:.2f} across {workers} "
+        f"native derive_batch median wall-clock speedup {kernel_speedup:.2f} across {workers} "
         f"threads / {trials} trials ({[f'{s:.2f}' for s in kernel_speedups]}) vs a GIL-held "
         f"control of {control_speedup:.2f}; the compute does not appear to run in parallel, so "
         "the GIL was not released for the row loop"
@@ -202,7 +206,7 @@ def test_native_compute_releases_gil_for_wallclock_parallelism() -> None:
 
 @_NEEDS_COMPANION
 def test_concurrent_derive_batch_calls_agree() -> None:
-    """Two threads deriving concurrently (GIL released for each compute) must both produce the
+    """Four threads deriving concurrently (GIL released for each compute) must all produce the
     correct, identical result. `derive_array` uses only per-call owned data (the imported array
     + a per-batch DeriveContext) and the shared pool is a `Sync` OnceLock, so overlapping calls
     have no shared mutable state to race."""
