@@ -8,7 +8,7 @@ use arrow_array::builder::StringBuilder;
 use arrow_array::{Array, StringArray};
 
 use crate::canonicalize::{canonicalize_row, is_admitted_type, CanonError};
-use crate::derive::{derive, hex_token_into, DeriveError, HEX_LEN};
+use crate::derive::{hex_token_into, DeriveContext, DeriveError, HEX_LEN};
 
 /// Everything that can go wrong deriving a batch, independent of how the array arrived (Python
 /// FFI import or a Rust-constructed array in a test).
@@ -92,14 +92,24 @@ pub fn derive_array(
     // row on top of that (see `hex_token_into`'s doc comment for why this shape matters).
     let mut builder = StringBuilder::with_capacity(array.len(), array.len() * HEX_LEN);
     let mut hex_buf = [0u8; HEX_LEN];
+    // The context (HKDF key + frame prefix) is built lazily, on the FIRST non-null row, so an
+    // empty or all-null array never validates seed length / namespace and never raises,
+    // exactly like the scalar `derive()` the reference calls per non-null value. Building it
+    // once and reusing it (rather than re-deriving the key every row) is the whole point of
+    // Task 1.2: mask_key and namespace are constant across the batch, so if the first non-null
+    // row validates the rest do too, and the per-row cost drops to one HMAC clone + finalize.
+    let mut ctx: Option<DeriveContext> = None;
     for i in 0..array.len() {
         match canonicalize_row(array, i)? {
             None => builder.append_null(),
             Some(canonical) => {
-                // `derive()` validates seed length and namespace HERE, only when a non-null
-                // row is actually reached -- an empty or all-null array never gets here, so it
-                // never raises, matching the reference exactly.
-                let digest = derive(mask_key, namespace, &canonical)?;
+                if ctx.is_none() {
+                    ctx = Some(DeriveContext::new(mask_key, namespace)?);
+                }
+                let digest = ctx
+                    .as_ref()
+                    .expect("ctx was just set on the first non-null row")
+                    .derive_row(&canonical)?;
                 builder.append_value(hex_token_into(&digest, truncate, &mut hex_buf));
             }
         }

@@ -165,6 +165,80 @@ pub fn derive(
     Ok(mac.finalize().into_bytes().into())
 }
 
+/// A per-batch derivation context that hoists the constant-per-batch work out of the
+/// per-row loop: the HKDF-derived namespace key (the dominant per-row cost the scalar
+/// `derive()` recomputes on every call, per `hkdf_key`'s own note above) and the constant
+/// frame prefix (version byte | namespace length | namespace). `derive_row` then costs one
+/// HMAC-SHA256 clone + update + finalize per row.
+///
+/// `derive_row(canonical_source)` is byte-identical to
+/// `derive(mask_key, namespace, canonical_source)` for the same triple: HMAC is a streaming
+/// MAC, so keying once and feeding `prefix | src_len | source` in three `update` calls yields
+/// the same tag as keying per row and feeding the one contiguous `build_frame` buffer.
+///
+/// `new` validates the mask-key length and namespace in the SAME order as `derive()`
+/// (seed length, then namespace emptiness, then namespace-length overflow), so a caller that
+/// constructs the context only after the batch's first non-null row reproduces the reference's
+/// "validate when a non-null value is reached" behavior exactly. The per-row source-length
+/// overflow check stays in `derive_row`, preserving the full precedence
+/// seed > namespace-empty > namespace-overflow > source-overflow.
+/// `Debug` is the RustCrypto key-redacted form (it never prints the HMAC key bytes); `prefix`
+/// carries only the version byte + namespace, no secret.
+#[derive(Debug, Clone)]
+pub struct DeriveContext {
+    /// HMAC-SHA256 keyed with the HKDF-derived namespace key; cloned (not re-keyed) per row.
+    keyed_mac: Hmac<Sha256>,
+    /// The constant frame prefix: version byte | 4-byte BE namespace length | namespace UTF-8.
+    prefix: Vec<u8>,
+}
+
+impl DeriveContext {
+    /// Build the context for one `(mask_key, namespace)`. Validation order matches `derive()`.
+    pub fn new(mask_key: &[u8], namespace: &str) -> Result<Self, DeriveError> {
+        if !SEED_LENGTHS.contains(&mask_key.len()) {
+            return Err(DeriveError::new(
+                "seed_wrong_length",
+                format!(
+                    "mask_key must be 8 (job_seed) or 32 (mask_key) bytes; got {}",
+                    mask_key.len()
+                ),
+            ));
+        }
+        if namespace.is_empty() {
+            return Err(DeriveError::new(
+                "namespace_empty",
+                "namespace must be non-empty",
+            ));
+        }
+        let namespace_bytes = namespace.as_bytes();
+        let ns_len =
+            checked_frame_length(namespace_bytes.len(), "namespace_length_overflow", "namespace")?;
+        let key = hkdf_key(mask_key, namespace);
+        let keyed_mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&key)
+            .expect("HMAC-SHA256 accepts a key of any length, including this fixed 32-byte one");
+        let mut prefix = Vec::with_capacity(1 + 4 + namespace_bytes.len());
+        prefix.push(SEED_PROTOCOL_VERSION);
+        prefix.extend_from_slice(&ns_len.to_be_bytes());
+        prefix.extend_from_slice(namespace_bytes);
+        Ok(Self { keyed_mac, prefix })
+    }
+
+    /// Derive one row, byte-identical to `derive(mask_key, namespace, canonical_source)`.
+    #[inline]
+    pub fn derive_row(&self, canonical_source: &[u8]) -> Result<[u8; 32], DeriveError> {
+        let src_len = checked_frame_length(
+            canonical_source.len(),
+            "source_length_overflow",
+            "canonical source",
+        )?;
+        let mut mac = self.keyed_mac.clone();
+        mac.update(&self.prefix);
+        mac.update(&src_len.to_be_bytes());
+        mac.update(canonical_source);
+        Ok(mac.finalize().into_bytes().into())
+    }
+}
+
 /// The number of hex characters a 32-byte digest produces, unrounded (`HEX_LEN` bytes of
 /// scratch always suffice for `hex_token_into`, whatever `truncate` is).
 pub const HEX_LEN: usize = 64;
@@ -489,5 +563,51 @@ mod tests {
         let mut okm = vec![0u8; 42];
         hk.expand(info, &mut okm).unwrap();
         assert_eq!(okm, expected);
+    }
+
+    #[test]
+    fn derive_context_row_matches_scalar_derive() {
+        // The cached per-batch path must be byte-identical to the scalar reference for every
+        // triple: one keyed HMAC fed three streamed frame segments vs a fresh keyed HMAC fed
+        // the one contiguous `build_frame` buffer.
+        let keys: [&[u8]; 2] = [&[0x11u8; 8], &[0x22u8; 32]];
+        let namespaces = ["h_email", "n", "a-longer-namespace-with-dashes"];
+        let sources: [&[u8]; 4] = [b"", b"x", b"user@example.com", &[0xffu8; 300]];
+        for key in keys {
+            for ns in namespaces {
+                let ctx = DeriveContext::new(key, ns).unwrap();
+                for src in sources {
+                    assert_eq!(
+                        ctx.derive_row(src).unwrap(),
+                        derive(key, ns, src).unwrap(),
+                        "context row must equal scalar derive: ns={ns} src_len={}",
+                        src.len()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn derive_context_new_validation_matches_derive_precedence() {
+        // new() rejects the same inputs with the same codes and the same order as derive():
+        // seed length first, then namespace emptiness.
+        assert_eq!(
+            DeriveContext::new(&[0u8; 7], "").unwrap_err().code,
+            "seed_wrong_length"
+        );
+        assert_eq!(
+            derive(&[0u8; 7], "", b"x").unwrap_err().code,
+            "seed_wrong_length"
+        );
+        assert_eq!(
+            DeriveContext::new(&[0u8; 8], "").unwrap_err().code,
+            "namespace_empty"
+        );
+        assert_eq!(
+            derive(&[0u8; 8], "", b"x").unwrap_err().code,
+            "namespace_empty"
+        );
+        assert!(DeriveContext::new(&[0u8; 32], "ns").is_ok());
     }
 }
