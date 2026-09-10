@@ -31,10 +31,10 @@ const ARROW_ARRAY_CAPSULE_NAME: &CStr = c"arrow_array";
 
 fn to_py_err(err: KernelError) -> PyErr {
     // A non-int `pool_size` is the one case that raises `TypeError` rather than a coded
-    // `ValueError`: the reference's non-int rejection is Python's own `pool_size > MAX` comparison
-    // raising `TypeError`, and `batch` defers it to the pool-guard slot (after canon(first
-    // non-null), skipped for an all-null batch) rather than raising eagerly at extraction. The
-    // fixed message carries no row/key content, same redaction property as every other variant.
+    // `ValueError` (see `BatchError::PoolSizeType` for the reference correspondence and the
+    // deliberate strictness on out-of-contract numerics). `batch` defers it to the pool-guard slot
+    // (after canon(first non-null), skipped for an all-null batch) rather than raising eagerly at
+    // extraction. The fixed message carries no row/key content, same redaction as every variant.
     if matches!(err, KernelError::PoolSizeType) {
         return PyTypeError::new_err(err.detail());
     }

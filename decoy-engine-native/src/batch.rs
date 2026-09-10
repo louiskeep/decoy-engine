@@ -41,12 +41,15 @@ pub enum BatchError {
     /// `pool_size > 2**56` for `derive_index_batch` (the modulo-bias ceiling; `2**56` is accepted).
     /// Mirrors the Python `derive_index`'s `pool_size_overflow`.
     PoolSizeOverflow,
-    /// `pool_size` was not a Python int. The reference's non-int rejection is Python's own
-    /// `pool_size > _POOL_SIZE_MAX` comparison raising `TypeError`, which sits INSIDE `derive_index`
-    /// -- called per non-null row, after that row is canonicalized, and never for an all-null batch.
-    /// So the rejection must be ordered exactly where the numeric pool guards are (after
-    /// canon(first non-null), skipped when nothing is non-null), NOT eagerly at the PyO3 boundary;
-    /// the boundary maps this to `TypeError` rather than a coded `ValueError`.
+    /// `pool_size` was not a Python `int`. For a non-COMPARABLE non-int (a `str`, an object), the
+    /// reference raises `TypeError` from its own `pool_size > _POOL_SIZE_MAX` comparison INSIDE
+    /// `derive_index` -- called per non-null row, after that row is canonicalized, and never for an
+    /// all-null batch. The boundary is deliberately STRICTER for an out-of-contract non-int NUMERIC
+    /// (e.g. `1.5`, which the reference would compare and then modulo): it requires an actual int.
+    /// That is sound under the frozen `pool_size: int` contract; what matters for parity is the
+    /// ORDERING, which this variant fixes -- the rejection lands exactly where the numeric pool
+    /// guards are (after canon(first non-null), skipped when nothing is non-null), NOT eagerly at
+    /// the PyO3 boundary, and the boundary maps it to `TypeError` rather than a coded `ValueError`.
     PoolSizeType,
 }
 
