@@ -657,6 +657,12 @@ Work:
 2. Record median, variance, tail, CPU use, RSS, and operator time.
 3. Run the sampled oracle parity proof.
 4. Record exact native-call evidence.
+5. Measure the BUILT kernel's real 8-thread scaling here (Task 1.1 feasibility
+   review, dennis MEDIUM-1): the Task 1.1 feasibility projection used a 3.89x
+   HMAC-only scaling proxy that omits per-row `build_frame` allocation and the Arrow
+   output path. This gate must NOT reuse that proxy; it measures scaling on the real
+   `derive_array` under Rayon (with the per-row allocation + `StringBuilder`/Arrow
+   output), and confirms the actual global-allocator behavior under 8-way fan-out.
 
 Expected behavior: the eight-thread run finishes in 600 seconds or less on the frozen host.
 
