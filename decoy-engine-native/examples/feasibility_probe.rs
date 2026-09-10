@@ -21,9 +21,14 @@
 use std::thread;
 use std::time::Instant;
 
+use arrow_array::{Array, StringArray};
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
+
+// The crate's real full-pipeline batch kernel (canonicalize + derive + hex + output
+// construction), so the probe can isolate the non-HMAC per-row costs Task 1.1 lists.
+use _kernel::batch::derive_array;
 
 const SALT: &[u8] = b"decoy-engine/keyed-derivation/v1"; // representative 32-byte salt (timing only)
 const NAMESPACE: &[u8] = b"h_email";
@@ -126,6 +131,23 @@ fn wall_threaded(rows: u64, threads: u64, key: [u8; 32]) -> f64 {
     t.elapsed().as_secs_f64()
 }
 
+/// Full-pipeline cost per row via the crate's real `derive_array` (canonicalize +
+/// per-row HKDF + HMAC + hex + output construction). Isolates the non-HMAC costs when
+/// compared to `current_ns` (HKDF+HMAC only): derive_array_ns - current_ns ~= the
+/// canonicalization + hex + Arrow output-construction per-row cost.
+fn bench_derive_array(rows: usize, mask_key: &[u8]) -> f64 {
+    let vals: Vec<Option<String>> = (0..rows)
+        .map(|r| Some(format!("user{r:012}@example.com")))
+        .collect();
+    let array = StringArray::from(vals);
+    let t = Instant::now();
+    let out = derive_array(&array as &dyn Array, Some(mask_key), "h_email", None)
+        .expect("derive_array over a valid utf8 array succeeds");
+    let ns = t.elapsed().as_nanos() as f64 / rows as f64;
+    std::hint::black_box(out.len());
+    ns
+}
+
 fn main() {
     let mask_key = [0x11u8; 32];
     let key = hkdf_key(&mask_key);
@@ -137,6 +159,10 @@ fn main() {
     let (cached_ns, _a) = bench_cached(single_rows, &key);
     let (current_ns, _b) = bench_current(single_rows, &mask_key);
     let cache_gain = current_ns / cached_ns;
+    // Full crate pipeline per row (validates the baseline ~4267 ns/row on this host);
+    // the delta over current_ns isolates canonicalization + hex + Arrow output.
+    let derive_array_ns = bench_derive_array(1_000_000, &mask_key);
+    let non_hmac_ns = (derive_array_ns - current_ns).max(0.0);
 
     // Scaling: same total work over 1/2/4/8 threads.
     let scale_rows = 8_000_000u64; // divisible by 1,2,4,8
@@ -167,6 +193,8 @@ fn main() {
     print!("\"cached_hmac_ns_per_row\":{cached_ns:.2},");
     print!("\"current_ns_per_row\":{current_ns:.2},");
     print!("\"cache_gain_x\":{cache_gain:.2},");
+    print!("\"derive_array_ns_per_row\":{derive_array_ns:.2},");
+    print!("\"non_hmac_canon_hex_arrow_ns_per_row\":{non_hmac_ns:.2},");
     print!("\"scaling\":[");
     for (i, (t, w, s)) in scaling.iter().enumerate() {
         if i > 0 {
