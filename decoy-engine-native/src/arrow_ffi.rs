@@ -171,10 +171,22 @@ fn derive_batch_checked(
     // stays sequential and the output is byte-identical, so the budget is validated and threaded
     // through but does not yet change the call below.
 
+    // Import + validate the Arrow array while the GIL is held (this touches PyO3 / the Python
+    // FFI capsule). The imported `array` is an owned arrow-rs `ArrayRef` with no Python object
+    // inside it, so the derivation below is pure Rust.
     let array = import_array(values)?;
-    let result_array = crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate)
+
+    // Release the GIL for the pure-Rust compute (Task 1.4). `derive_array` is PyO3-free: it
+    // operates only on the owned arrow-rs array + the borrowed key/namespace, so other Python
+    // threads run during the row loop. The `py.detach` closure captures nothing GIL-bound (no
+    // `py`, no Python objects), and runs on THIS thread with the GIL released; the outer
+    // `catch_unwind` in `derive_batch` still covers it, so a panic inside still becomes a coded
+    // error. Task 1.5's Rayon parallelism runs inside this same detached region.
+    let result_array = py
+        .detach(|| crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate))
         .map_err(KernelError::from)?;
 
+    // GIL reacquired here: exporting the result back to a `pa.Array` touches PyO3 again.
     export_string_array(py, &result_array).map_err(|e| {
         KernelError::ProtocolError(format!("failed to export the derived string array: {e}"))
     })
