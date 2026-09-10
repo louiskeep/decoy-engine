@@ -211,8 +211,11 @@ impl DeriveContext {
             ));
         }
         let namespace_bytes = namespace.as_bytes();
-        let ns_len =
-            checked_frame_length(namespace_bytes.len(), "namespace_length_overflow", "namespace")?;
+        let ns_len = checked_frame_length(
+            namespace_bytes.len(),
+            "namespace_length_overflow",
+            "namespace",
+        )?;
         let key = hkdf_key(mask_key, namespace);
         let keyed_mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&key)
             .expect("HMAC-SHA256 accepts a key of any length, including this fixed 32-byte one");

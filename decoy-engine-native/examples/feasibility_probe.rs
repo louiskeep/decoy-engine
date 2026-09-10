@@ -35,11 +35,11 @@ const NAMESPACE: &[u8] = b"h_email";
 const NON_HASH_SERIAL_FLOOR_S: f64 = 292.0; // measured redact+truncate+passthrough+IO (Task 0.2)
 const TARGET_S: f64 = 600.0;
 const HASH_OPS_100M: u64 = 300_000_000; // 3 hash cols x 100M rows
-// Task 0.2 authoritative baseline: hash single-thread = 1,280.11s over 300M ops.
-// This is the FULL per-row hash cost (HKDF-per-row + HMAC + canonicalization + hex +
-// Arrow), not just the HMAC. The projection subtracts only the MEASURED per-row HKDF
-// savings from it (caching keeps everything else per-row), so it does not understate
-// the cached hash cost the way an HMAC-only microbench would.
+                                        // Task 0.2 authoritative baseline: hash single-thread = 1,280.11s over 300M ops.
+                                        // This is the FULL per-row hash cost (HKDF-per-row + HMAC + canonicalization + hex +
+                                        // Arrow), not just the HMAC. The projection subtracts only the MEASURED per-row HKDF
+                                        // savings from it (caching keeps everything else per-row), so it does not understate
+                                        // the cached hash cost the way an HMAC-only microbench would.
 const BASELINE_HASH_1T_S: f64 = 1280.11;
 
 /// One representative canonical source (a ~16-byte utf8 email-ish value).
@@ -60,7 +60,8 @@ fn sample_frame(row: u64) -> Vec<u8> {
 fn hkdf_key(mask_key: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(Some(SALT), mask_key);
     let mut okm = [0u8; 32];
-    hk.expand(NAMESPACE, &mut okm).expect("32-byte OKM is in range");
+    hk.expand(NAMESPACE, &mut okm)
+        .expect("32-byte OKM is in range");
     okm
 }
 
@@ -187,7 +188,9 @@ fn main() {
     // Also expose the raw microbench single-thread hash wall for reference.
     let hash_wall_1t = cached_hash_1t;
 
-    let ncpu = thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
+    let ncpu = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(0);
     print!("FEASIBILITY_JSON {{");
     print!("\"ncpu\":{ncpu},");
     print!("\"cached_hmac_ns_per_row\":{cached_ns:.2},");
