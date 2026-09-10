@@ -13,9 +13,23 @@ same detached region.
 
 ## Evidence (local, rustup 1.98.0 + nightly for TSan)
 - **GIL-release PROOF** (acceptance-matrix requirement, not just concurrent-call agreement):
-  `tests/native/test_gil_release.py::test_sentinel_thread_progresses_during_native_compute` spins
-  a pure-Python sentinel thread during a 1M-row `derive_batch` and asserts it advances. Measured
-  **8.7M increments** during the compute (a held-GIL kernel leaves it at ~0).
+  `tests/native/test_gil_release.py::test_native_compute_releases_gil_for_wallclock_parallelism`
+  measures wall-clock parallel speedup. An earlier interior-window sentinel proof was DROPPED:
+  Codex committed a counterexample where a GIL-holding `PyDLL.usleep(1s)` with
+  `sys.setswitchinterval(0.25)` sprinkled activity into the sentinel's interior window and passed
+  it, so timestamp/counter sampling is not discriminating. The replacement runs W copies of the
+  compute serially then on W threads and takes `speedup = serial/concurrent`: wall-clock overlap
+  of a fixed-work callable cannot be manufactured by switch-interval tuning. A pure-Python CPU
+  loop (provably GIL-held) runs through the same harness as a live in-test negative control.
+  Measured on the 4-core devbox: **control 0.99x, kernel ~3.3x**; Codex's exact `PyDLL.usleep`
+  attack measures **1.00x and fails closed** against the committed control. Hardening: effective
+  CPU affinity (`sched_getaffinity`) drives the >=2-CPU skip so a `taskset -c 0` run skips rather
+  than false-fails; best-of-3 kernel trials + median control blunt shared-runner noise; worker
+  exceptions are captured and re-raised so a concurrent-only crash cannot shorten the interval
+  into a false pass; a free-threaded (no-GIL) build skips (the control would be invalid there).
+- **CI coverage**: `.github/workflows/native-companion.yml` triggers on the whole `tests/native/**`
+  tree (was an enumerated file list that silently excluded this file) and runs
+  `test_gil_release.py` in the `core-companion-present` job, so the proof actually executes in CI.
 - **Concurrent-call correctness**: `test_concurrent_derive_batch_calls_agree` (4 threads deriving
   concurrently, all byte-identical to the reference; no shared mutable state to race).
 - **Byte-parity**: keyed-hash + parity-matrix differential (47 passed, 0 failed), unchanged output.
@@ -28,5 +42,9 @@ same detached region.
 
 ## Exit-gate status
 ABI, panic, concurrent-call, and ThreadSanitizer all PASS, plus the GIL-release proof and
-byte-parity. Pending: dennis + Codex-final gate. NOT merged (Cam-gated). Next: Task 1.5 wires the
-shared pool into `derive_array`'s row loop inside this detached region (the multi-core speedup).
+byte-parity. Codex final-gate: the original "proof is non-discriminating" BLOCKER is CLOSED (Codex
+confirmed the wall-clock-speedup proof discriminates and its own attack fails closed). Codex's
+follow-up findings are remediated in the same pass: the CI-coverage BLOCKER (proof never ran in
+CI), the affinity-vs-cpu_count skip, shared-runner noise (trials), worker-exception propagation,
+and the free-threaded caveat. NOT merged (Cam-gated). Next: Task 1.5 wires the shared pool into
+`derive_array`'s row loop inside this detached region (the multi-core speedup).

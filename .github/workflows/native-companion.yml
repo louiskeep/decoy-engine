@@ -27,16 +27,17 @@ on:
     paths:
       - "decoy-engine-native/**"
       - "src/decoy_engine/execution/native/**"
-      - "tests/native/test_native_ext_abi.py"
-      - "tests/native/test_keyed_derivation_kernel_parity.py"
+      # Whole native test tree, not an enumerated file list: a per-file list
+      # silently failed to trigger (and failed to run) new native tests once
+      # before, which is exactly the gap that let an unrun proof through.
+      - "tests/native/**"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
   pull_request:
     paths:
       - "decoy-engine-native/**"
       - "src/decoy_engine/execution/native/**"
-      - "tests/native/test_native_ext_abi.py"
-      - "tests/native/test_keyed_derivation_kernel_parity.py"
+      - "tests/native/**"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
 
@@ -143,6 +144,11 @@ jobs:
         run: pytest tests/native/test_native_ext_abi.py -v --tb=short
       - name: Compiled-kernel-vs-live-reference parity harness
         run: pytest tests/native/test_keyed_derivation_kernel_parity.py -v --tb=short
+      # The GIL-release proof (panic-safety, wall-clock parallel speedup, concurrent
+      # agreement) only has signal with the compiled companion present; without it all
+      # three tests skip. This is the one job that installs it, so it must run them.
+      - name: GIL-release proof (companion-present case)
+        run: pytest tests/native/test_gil_release.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A
