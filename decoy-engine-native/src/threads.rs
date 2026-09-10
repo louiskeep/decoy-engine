@@ -23,6 +23,8 @@
 //! are a separate platform-side lane. `resolve` deliberately takes only the caller's requested
 //! value and the host's available parallelism; it does not read any platform budget.
 
+use std::sync::OnceLock;
+
 use crate::derive::DeriveError;
 
 /// Absolute ceiling on a requested native thread count, independent of host topology.
@@ -98,6 +100,18 @@ impl NativeThreadBudget {
         Ok(NativeThreadBudget { threads })
     }
 
+    /// The process-capacity budget: `host_available` clamped to `1..=MAX_NATIVE_THREADS`.
+    ///
+    /// This sizes the single shared pool ([`shared_native_pool`]), and is deliberately distinct
+    /// from [`resolve`](Self::resolve)'s `None` default of 1: the shared pool is the whole
+    /// process's parallel capacity (so a large job can actually use the cores), while a per-job
+    /// `native_threads` request stays opt-in. Lowering this to a platform-worker budget is the
+    /// carried-forward platform-precedence lane.
+    pub fn for_host(host_available: usize) -> NativeThreadBudget {
+        let threads = host_available.clamp(1, MAX_NATIVE_THREADS as usize);
+        NativeThreadBudget { threads }
+    }
+
     /// The approved worker-thread count. Always `>= 1`.
     pub fn threads(&self) -> usize {
         self.threads
@@ -117,10 +131,15 @@ pub struct NativeThreadPool {
 impl NativeThreadPool {
     /// Build the pool with exactly `budget.threads()` worker threads.
     ///
+    /// `pub(crate)` on purpose: the ONLY production path to a pool is [`shared_native_pool`],
+    /// which builds one shared instance. Keeping the constructor crate-internal makes it
+    /// structurally impossible for a caller (or Task 1.5) to build a per-batch or per-job pool
+    /// that would multiply the native-thread count across concurrent jobs.
+    ///
     /// Returns a coded `native_thread_pool_build` [`DeriveError`] if Rayon cannot build the pool
     /// (e.g. the OS refuses the thread allocation), so a pool-construction failure surfaces on
     /// the same coded-error path as budget validation rather than panicking.
-    pub fn new(budget: &NativeThreadBudget) -> Result<NativeThreadPool, DeriveError> {
+    pub(crate) fn new(budget: &NativeThreadBudget) -> Result<NativeThreadPool, DeriveError> {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(budget.threads())
             .build()
@@ -147,6 +166,36 @@ impl NativeThreadPool {
     {
         self.pool.install(op)
     }
+}
+
+/// The one process-wide native thread pool, built once and shared by every native job.
+static SHARED_POOL: OnceLock<Result<NativeThreadPool, DeriveError>> = OnceLock::new();
+
+/// Return the single shared native thread pool, building it on first call.
+///
+/// This is the ONLY production path to a `NativeThreadPool` (its constructor is crate-internal),
+/// so the aggregate native-thread count is bounded across concurrent jobs by construction: there
+/// is exactly one pool, sized once to the host's available parallelism (the process capacity).
+/// Task 1.5 drives the parallel row loop by calling [`NativeThreadPool::install`] on this
+/// instance; a per-job `native_threads` budget caps the work WITHIN the shared pool, it never
+/// sizes a separate pool.
+///
+/// Sizing note: rayon pools are fixed-size at build, so the first call fixes the size for the
+/// process lifetime. Sizing to host cores here (not the first job's per-job argument) avoids a
+/// small first job pinning the whole process to one thread. Lowering this to a platform-worker
+/// budget is the carried-forward platform-precedence lane. A build failure is cached and
+/// returned as the coded `native_thread_pool_build` error on every call (rather than retried),
+/// so the failure is deterministic.
+pub fn shared_native_pool() -> Result<&'static NativeThreadPool, DeriveError> {
+    SHARED_POOL
+        .get_or_init(|| {
+            let host = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
+            NativeThreadPool::new(&NativeThreadBudget::for_host(host))
+        })
+        .as_ref()
+        .map_err(|e| e.clone())
 }
 
 #[cfg(test)]
@@ -220,5 +269,28 @@ mod tests {
         // Smoke: the owned pool executes a closure and reports its own thread count from inside.
         let inside = pool.install(rayon::current_num_threads);
         assert_eq!(inside, 2);
+    }
+
+    #[test]
+    fn for_host_clamps_to_the_budget_range() {
+        assert_eq!(NativeThreadBudget::for_host(0).threads(), 1);
+        assert_eq!(NativeThreadBudget::for_host(4).threads(), 4);
+        assert_eq!(
+            NativeThreadBudget::for_host(usize::MAX).threads(),
+            MAX_NATIVE_THREADS as usize
+        );
+    }
+
+    #[test]
+    fn shared_native_pool_is_one_instance_across_calls() {
+        // The enforced single-owner: every call returns the same pool, so concurrent jobs share
+        // one pool and the aggregate native-thread count is bounded by construction.
+        let a = shared_native_pool().expect("shared pool builds");
+        let b = shared_native_pool().expect("shared pool builds");
+        assert!(
+            std::ptr::eq(a, b),
+            "shared_native_pool must return the same instance"
+        );
+        assert!(a.current_num_threads() >= 1);
     }
 }
