@@ -608,6 +608,19 @@ Expected behavior: a job never creates more Rust worker threads than its approve
 
 Exit gate: unit tests cover precedence, invalid values, concurrent jobs, and report output.
 
+**STATUS (2026-09-10): engine-native half DONE + gated (dennis GO); cross-repo remainder
+CARRIED FORWARD, NOT complete.** The engine crate ships `NativeThreadBudget` (validates
+invalid values: `native_threads_zero`/`negative`/`excessive`) + `NativeThreadPool` (one
+long-lived rayon pool) + the `native_threads` PyO3 arg, with the invalid-value tests. OWED
+before Task 1.3 is closed as a whole (platform lane, tracked here so the green engine commit
+does not imply completion, dennis MEDIUM):
+- Item #2 precedence between the platform per-worker budget and this engine argument
+  (`resolve` already accepts `host_available` for this; the platform must consume it).
+- Item #4 record the resolved thread count in the job report.
+- The exit-gate PRECEDENCE + REPORT-OUTPUT tests, and the CONCURRENT-JOBS aggregate-bound
+  test (not satisfiable until Task 1.5 wires the shared pool into an entry point).
+These land with the platform native-enablement work (Task 3.3 era), not in this engine slice.
+
 #### Task 1.4: Release the GIL around pure Rust work
 
 Purpose: let Rust use the approved cores without blocking unrelated Python threads.
