@@ -900,6 +900,16 @@ mod tests {
         assert_eq!(code(&bad_later, &key_ok, 0), "pool_size_invalid");
     }
 
+    /// A present-but-empty mask key (`Some(&[])`) must fail closed with `mask_key_required`, exactly
+    /// like the string path -- the guard checks non-emptiness, not just presence.
+    #[test]
+    fn derive_index_present_but_empty_mask_key_fails_closed() {
+        let array = StringArray::from(vec![Some("alice")]);
+        let empty: &[u8] = &[];
+        let err = derive_index_array(&array, Some(empty), "ns", 1000, 4).unwrap_err();
+        assert_eq!(err.code(), "mask_key_required");
+    }
+
     /// Type-agnostic: the parallel index path is byte-identical at threads {1,8} for int64 and bool,
     /// same argument as the string case (the machinery branches only on the null mask).
     #[test]

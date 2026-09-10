@@ -112,6 +112,11 @@ fn export_uint64_array(py: Python<'_>, array: &UInt64Array) -> PyResult<Py<PyAny
 /// `i64::MIN` clamps to `i64::MIN` (caught as `pool_size_invalid`). The `< 1` / `> 2**56` guards
 /// live in `derive_index_array`, so the Rust-only test path enforces them too.
 fn extract_pool_size(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    // The sign-clamp below is exact only where `isize` is at least 64-bit: on a hypothetical 32-bit
+    // target a valid pool_size in `(2**31, 2**56]` would truncate to `i32::MAX` and be WRONGLY
+    // ACCEPTED with a corrupted value. Fail the build closed rather than trust the wheel matrix.
+    const _: () = assert!(std::mem::size_of::<isize>() >= 8);
+
     let value = value
         .cast::<PyInt>()
         .map_err(|_| PyTypeError::new_err("pool_size must be an int"))?;

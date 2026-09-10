@@ -254,3 +254,31 @@ def test_compiled_matches_live_python_over_random_inputs(native_threads: int) ->
                 seed, namespace, _canonicalize_source(value), pool_size=pool_size
             )
             assert got == expected, f"pool={pool_size} value={value!r}: {got} != {expected}"
+
+
+@_NEEDS_COMPANION
+def test_panic_in_a_derive_index_worker_becomes_coded_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A panic inside a Rayon worker on the derive_index parallel fill must propagate out of the
+    pool, unwind through the GIL-released region, and surface as the coded internal_panic error, not
+    abort. Driven by DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER (fires only on a pool worker);
+    native_threads=2 over a 2-row batch forces two non-empty ranges."""
+    import decoy_engine_native._kernel as kernel
+    import pyarrow as pa
+
+    values = pa.array(["a", "b"], type=pa.string())
+    mask_key = b"\x44" * 32
+
+    monkeypatch.setenv("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER", "1")
+    with pytest.raises(ValueError, match="internal_panic"):
+        kernel.derive_index_batch(
+            values, mask_key=mask_key, namespace="pool.city", pool_size=1000, native_threads=2
+        )
+
+    # The GIL was restored and the pool is reusable: a clean call succeeds in the same process.
+    monkeypatch.delenv("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER")
+    out = kernel.derive_index_batch(
+        values, mask_key=mask_key, namespace="pool.city", pool_size=1000, native_threads=2
+    )
+    assert len(out) == 2
