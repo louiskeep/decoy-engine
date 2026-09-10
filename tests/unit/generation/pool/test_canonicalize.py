@@ -39,10 +39,11 @@ class TestStringNFC:
 
 class TestInteger:
     """Current envelope (stabilised at v2 F-series NF1/NF2; unchanged
-    through v3): length-prefixed minimal-width two's
-    complement big-endian (4-byte length prefix + minimal body). Replaces the
-    fixed 8-byte form, which overflowed for |value| >= 2**63 and missed numpy
-    integer scalars."""
+    through v3): length-prefixed signed two's complement big-endian, a
+    `(bit_length+8)//8`-byte body (a reserved sign byte, so NOT strictly minimal:
+    -128 is `ff80`, not `80`) behind a 4-byte length prefix. Replaces the fixed
+    8-byte form, which overflowed for |value| >= 2**63 and missed numpy integer
+    scalars."""
 
     def test_zero(self) -> None:
         # length 1, body 0x00

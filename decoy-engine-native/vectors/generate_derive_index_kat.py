@@ -12,8 +12,10 @@ mismatch: a bump invalidates every expected index here, exactly like the hash KA
 
 Index reduction under test: `int.from_bytes(derive(seed, namespace, source)[:8], "big")
 % pool_size`, where `derive` is the frozen HMAC-SHA256 envelope
-(`byte(SEED_PROTOCOL_VERSION) ++ u32be(len(ns)) ++ ns ++ u32be(len(source)) ++ source`,
-keyed by HKDF-SHA256(seed, salt=b"decoy-engine/determinism/v1", info=ns, len=32)).
+(`byte(SEED_PROTOCOL_VERSION) ++ u32be(len(ns_bytes)) ++ ns_bytes ++ u32be(len(source)) ++ source`,
+where `ns_bytes = namespace.encode("utf-8")` so the length prefix is the UTF-8 BYTE length, not
+the character count, keyed by HKDF-SHA256(seed, salt=b"decoy-engine/determinism/v1", info=ns_bytes,
+len=32)).
 """
 
 from __future__ import annotations
