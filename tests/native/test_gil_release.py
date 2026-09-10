@@ -235,6 +235,19 @@ def test_panic_in_a_rayon_worker_becomes_coded_error(
 
 
 @_NEEDS_COMPANION
+def test_missing_mask_key_outranks_bad_truncate() -> None:
+    """The reference validates the mask key FIRST (`_require_mask_key`), before it ever inspects
+    `truncate`. So a missing key combined with an invalid `truncate` must raise the coded
+    `mask_key_required` error, not the `TypeError` that `extract_truncate` would raise for the bad
+    truncate. Guards the exported-boundary ordering, which `derive_array` alone did not cover."""
+    import decoy_engine_native._kernel as kernel
+
+    values = pa.array(["a"], type=pa.string())
+    with pytest.raises(ValueError, match="mask_key_required"):
+        kernel.derive_batch(values, mask_key=None, namespace="h_email", truncate="bad-truncate")
+
+
+@_NEEDS_COMPANION
 def test_output_does_not_retain_source_input_buffers() -> None:
     """The returned output must NOT keep the source input's Arrow buffers alive. A PyArrow array
     imported over the C Data interface shares ONE owner across all its buffers, so cloning the input

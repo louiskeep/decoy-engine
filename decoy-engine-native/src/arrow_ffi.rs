@@ -240,6 +240,14 @@ fn derive_batch(
     truncate: Option<Bound<'_, PyAny>>,
     native_threads: Option<i64>,
 ) -> PyResult<Py<PyAny>> {
+    // `_require_mask_key` is the reference's FIRST check, before it touches the array or `truncate`.
+    // Mirror that ordering at this exported boundary: a missing or empty key must raise the coded
+    // `mask_key_required` error even when `truncate` is also invalid (which `extract_truncate`
+    // would otherwise reject first with a `TypeError`). `derive_batch_checked` repeats the guard,
+    // so the invariant holds on every path, not only this one.
+    if mask_key.as_deref().map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(to_py_err(KernelError::MaskKeyRequired));
+    }
     let truncate = extract_truncate(truncate.as_ref())?;
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         derive_batch_checked(
