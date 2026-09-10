@@ -210,10 +210,11 @@ def fk_join_key(value: object) -> str:
 def fk_join_key_tuple(values: tuple[object, ...]) -> str:
     """Encode a full FK key tuple for relational joins.
 
-    Same injective length-prefixed framing idea as `_encode_int`'s ASN.1 DER
-    (X.690 §8.3) length-prefix lineage (kernel/_canonicalize.py): prefixing
-    each component with its own length keeps two differently-shaped key
-    tuples from concatenating into the same joined string.
+    Same injective length-prefixed framing idea as `_encode_int`
+    (kernel/_canonicalize.py): prefixing each component with its own length keeps
+    two differently-shaped key tuples from concatenating into the same joined
+    string. (Only the length-PREFIX idea is shared; `_encode_int`'s integer body
+    is not DER-minimal, but that is irrelevant to this tuple framing.)
     """
     parts = [fk_join_key(value) for value in values]
     return "".join(f"{len(part)}:{part}" for part in parts)

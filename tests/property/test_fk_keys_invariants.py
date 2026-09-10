@@ -36,8 +36,8 @@ function's docstring (cited per test):
   mechanisms, both tested directly: `fk_join_key`'s per-type tag prefix
   (`\\x00INT:`/`\\x00STR:`/`\\x00DEC:`/...) keeps different Python types from
   colliding, and `fk_join_key_tuple`'s length-prefixed framing (cited in its
-  own docstring as the same idea as the kernel's ASN.1 DER length-prefix
-  encoding) keeps differently-shaped key tuples from colliding under naive
+  own docstring as the same length-prefix idea as the kernel's `_encode_int`)
+  keeps differently-shaped key tuples from colliding under naive
   concatenation. `fk_columns_for_table` has its own, simpler table-scoped
   isolation: a table's protected FK columns never include a column that
   belongs only to a DIFFERENT table's edge.
