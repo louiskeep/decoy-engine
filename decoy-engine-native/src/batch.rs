@@ -130,11 +130,34 @@ pub fn derive_array(
     let non_null = len - array.null_count();
     let width = constant_output_width(truncate);
 
+    // Output validity == input validity (null in <-> null out). Cloning the input `NullBuffer` is
+    // an Arc bump over a Rust-owned buffer (the array was moved in over the C Data interface), so
+    // it neither copies nor retains the whole input array across the boundary.
+    let nulls = array.nulls().cloned();
+
+    // The ONLY derivation-free short-circuit is "no non-null row": then the reference never calls
+    // `derive()`, so seed/namespace are never validated and an empty or all-null batch must NOT
+    // raise even under a wrong-length key. (A zero-`width` truncate is NOT this case: its non-null
+    // rows are empty strings that still go through `derive()`, so a bad seed there must surface.)
+    // Every offset is 0 (no valid row adds width), so no pre-pass is needed here.
+    if non_null == 0 {
+        let offsets_buf = OffsetBuffer::new(ScalarBuffer::from(vec![0i32; len + 1]));
+        return StringArray::try_new(offsets_buf, Buffer::from_vec(Vec::<u8>::new()), nulls)
+            .map_err(assembly_error);
+    }
+
+    // Build the per-batch key ONCE, up front (Task 1.2), BEFORE sizing the output. This fires
+    // seed-length / namespace validation with the reference's own coded errors -- and it must
+    // precede the offset pre-pass so that on an (out-of-contract) >2GB batch with a wrong-length
+    // key the error is still the reference's `seed_wrong_length`, not `native_offset_overflow`:
+    // the reference validates the key on its first non-null row before it ever sizes output.
+    let ctx = DeriveContext::new(mask_key, namespace)?;
+
     // Serial pre-pass: the full i32 offset layout from the null mask alone (no derivation yet).
     // `offsets[i+1] = offsets[i] + (valid ? width : 0)`; a null row keeps the previous offset
-    // (0-width) and is marked null in the output validity below. Fail closed on i32 overflow
-    // rather than wrap: the pre-1.5 `StringBuilder` had the same i32 ceiling, and a >2GB batch is
-    // outside this kernel's per-batch contract (the engine chunks far under it).
+    // (0-width). Fail closed on i32 overflow rather than wrap: the pre-1.5 `StringBuilder` had the
+    // same i32 ceiling, and a >2GB batch is outside this kernel's per-batch contract (the engine
+    // chunks far under it).
     let mut offsets: Vec<i32> = Vec::with_capacity(len + 1);
     offsets.push(0);
     let mut acc: i32 = 0;
@@ -147,26 +170,6 @@ pub fn derive_array(
         offsets.push(acc);
     }
     let total_bytes = acc as usize;
-
-    // Output validity == input validity (null in <-> null out). Cloning the input `NullBuffer` is
-    // an Arc bump over a Rust-owned buffer (the array was moved in over the C Data interface), so
-    // it neither copies nor retains the whole input array across the boundary.
-    let nulls = array.nulls().cloned();
-
-    // The ONLY derivation-free short-circuit is "no non-null row": then the reference never calls
-    // `derive()`, so seed/namespace are never validated and an empty or all-null batch must NOT
-    // raise even under a wrong-length key. (A zero-`width` truncate is NOT this case: its non-null
-    // rows are empty strings that still go through `derive()`, so a bad seed there must surface.)
-    if non_null == 0 {
-        let offsets_buf = OffsetBuffer::new(ScalarBuffer::from(offsets));
-        return StringArray::try_new(offsets_buf, Buffer::from_vec(Vec::<u8>::new()), nulls)
-            .map_err(assembly_error);
-    }
-
-    // Build the per-batch key ONCE, up front (Task 1.2). This fires seed-length / namespace
-    // validation with the reference's own coded errors before any row is filled -- the same errors
-    // the scalar path raised on its first non-null row, since the key is constant across the batch.
-    let ctx = DeriveContext::new(mask_key, namespace)?;
 
     // One initialized values buffer, carved into disjoint per-range windows. `vec![0u8; ..]` (not
     // just capacity) so the slices have real length to split; each worker overwrites its window.
@@ -532,6 +535,54 @@ mod tests {
         let baseline = derive_array(&array, Some(&key), "ns", None, 1).unwrap();
         let parallel = derive_array(&array, Some(&key), "ns", None, 8).unwrap();
         assert_eq!(parallel, baseline);
+    }
+
+    /// Thread invariance is TYPE-AGNOSTIC (the parallel machinery branches only on the null mask,
+    /// never on the input Arrow type), but the string tests alone leave that unasserted for the
+    /// other admitted types. Assert parallel == 1-thread for int64, bool, and LargeUtf8 with nulls,
+    /// which -- combined with the Python live-reference parity suite proving 1-thread == oracle --
+    /// seals parallel == oracle for every admitted type.
+    #[test]
+    fn thread_invariance_holds_for_non_string_admitted_types() {
+        use arrow_array::{BooleanArray, Int64Array, LargeStringArray};
+        let key = [3u8; 32];
+
+        let int64: Vec<Option<i64>> = (0..60)
+            .map(|i| {
+                if i % 4 == 0 {
+                    None
+                } else {
+                    Some(i as i64 * 7 - 3)
+                }
+            })
+            .collect();
+        let int64 = Int64Array::from(int64);
+        assert_eq!(
+            derive_array(&int64, Some(&key), "ns", None, 8).unwrap(),
+            derive_array(&int64, Some(&key), "ns", None, 1).unwrap(),
+        );
+
+        let boolean: Vec<Option<bool>> = (0..60)
+            .map(|i| if i % 3 == 0 { None } else { Some(i % 2 == 0) })
+            .collect();
+        let boolean = BooleanArray::from(boolean);
+        assert_eq!(
+            derive_array(&boolean, Some(&key), "ns", None, 8).unwrap(),
+            derive_array(&boolean, Some(&key), "ns", None, 1).unwrap(),
+        );
+
+        let large: Vec<Option<String>> = (0..60)
+            .map(|i| match i % 5 {
+                0 => None,
+                1 => Some(String::new()),
+                n => Some(format!("large-{i}-{}", "y".repeat(n))),
+            })
+            .collect();
+        let large = LargeStringArray::from(large);
+        assert_eq!(
+            derive_array(&large, Some(&key), "ns", None, 8).unwrap(),
+            derive_array(&large, Some(&key), "ns", None, 1).unwrap(),
+        );
     }
 
     /// A `truncate` of 0 makes every non-null row an EMPTY string, but the reference still calls
