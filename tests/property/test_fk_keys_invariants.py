@@ -359,10 +359,10 @@ def test_join_key_tuple_agrees_with_normalized_equality(t1, t2) -> None:
 
 def test_join_key_tuple_framing_prevents_concatenation_collision() -> None:
     """Regression pin for the exact adversarial shape `fk_join_key_tuple`'s
-    own docstring cites (the ASN.1 DER length-prefix framing idea,
-    `kernel/_canonicalize.py::_encode_int`'s lineage): two differently-shaped
-    key tuples whose components would concatenate to the same joined text
-    under a NAIVE (unframed) join must still encode to different tokens."""
+    own docstring cites (the same length-prefix framing idea as
+    `kernel/_canonicalize.py::_encode_int`): two differently-shaped key tuples
+    whose components would concatenate to the same joined text under a NAIVE
+    (unframed) join must still encode to different tokens."""
     assert fk_join_key_tuple(("ab", "c")) != fk_join_key_tuple(("a", "bc"))
 
 

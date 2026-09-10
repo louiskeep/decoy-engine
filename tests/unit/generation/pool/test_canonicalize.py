@@ -99,7 +99,10 @@ class TestDatetime:
         dt = datetime(2026, 5, 27, 14, 0, 0, tzinfo=timezone.utc)
         out = _canonicalize_source(dt)
         assert out.startswith(b"2026-05-27")
-        assert b"+00:00" in out or b"Z" in out
+        # The frozen form is the "+00:00" offset, not a "Z" suffix (the derive_index / keyed-hash
+        # KATs pin "+00:00"); assert it exactly rather than accepting either.
+        assert b"+00:00" in out
+        assert b"Z" not in out
 
     def test_timezone_naive_raises(self) -> None:
         dt = datetime(2026, 5, 27, 14, 0, 0)  # no tz
