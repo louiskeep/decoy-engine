@@ -151,12 +151,25 @@ fn derive_batch_checked(
     mask_key: Option<&[u8]>,
     namespace: &str,
     truncate: Option<isize>,
+    native_threads: Option<i64>,
 ) -> Result<Py<PyAny>, KernelError> {
     // Fail before any FFI import when the key is missing: the fail-before-output contract
     // applies before we even touch the caller's array.
     if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
         return Err(KernelError::MaskKeyRequired);
     }
+
+    // Resolve and validate the caller's native thread budget on the same coded-error path as
+    // every other kernel error (`DeriveError` -> `KernelError` via `From`). A bad value
+    // (0 / negative / excessive) fails here before any row is touched.
+    let host_available = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let _budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    // Task 1.5 parallelizes here: the resolved budget will build/select the shared
+    // `NativeThreadPool` and `derive_array` will run its row loop on it. In Task 1.3 execution
+    // stays sequential and the output is byte-identical, so the budget is validated and threaded
+    // through but does not yet change the call below.
 
     let array = import_array(values)?;
     let result_array = crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate)
@@ -167,12 +180,23 @@ fn derive_batch_checked(
     })
 }
 
-/// `derive_batch(values, *, mask_key, namespace, truncate=None) -> pa.Array`
+/// `derive_batch(values, *, mask_key, namespace, truncate=None, native_threads=None) -> pa.Array`
 ///
 /// Matches the `KeyedDerivationKernel` Protocol in `decoy_engine.execution.native._crypto_ext`
 /// exactly (`mask_key` named, not `seed`). Accepts only a typed `pa.Array` over an admitted
 /// Arrow type; rejects everything else (including the mixed-object Python list form the
 /// pure-Python reference also accepts) with `mixed_object_not_native`.
+///
+/// `native_threads` is the caller's native thread budget (Task 1.3): a Python `int` or `None`,
+/// keyword-only and defaulting to `None` so every existing caller is unaffected (the pre-1.3
+/// keyword-only signature admits no positional argument here to shadow). `None` resolves to the
+/// one-thread deterministic default; `0`, negatives, and values above the cap raise the coded
+/// `native_threads_zero` / `native_threads_negative` / `native_threads_excessive` errors
+/// through the same path as other kernel errors. In Task 1.3 the resolved budget is validated
+/// and threaded through but execution stays sequential and the output is byte-identical; Task
+/// 1.5 wires it into a shared `NativeThreadPool`. Precedence against the platform's per-worker
+/// budget and recording the resolved value in the job report are a separate platform lane and
+/// are not handled here.
 ///
 /// `truncate` is a Python-style slice stop matching the reference's `token[:truncate]` on the
 /// 64-character hex string exactly: `None` keeps everything, and any genuine `int` (`bool`
@@ -183,17 +207,25 @@ fn derive_batch_checked(
 /// before any row is touched, the same way the reference's own slicing refuses it. See
 /// `derive::hex_token_into` for the slice-semantics implementation this delegates to.
 #[pyfunction]
-#[pyo3(signature = (values, *, mask_key, namespace, truncate=None))]
+#[pyo3(signature = (values, *, mask_key, namespace, truncate=None, native_threads=None))]
 fn derive_batch(
     py: Python<'_>,
     values: &Bound<'_, PyAny>,
     mask_key: Option<Vec<u8>>,
     namespace: String,
     truncate: Option<Bound<'_, PyAny>>,
+    native_threads: Option<i64>,
 ) -> PyResult<Py<PyAny>> {
     let truncate = extract_truncate(truncate.as_ref())?;
     let outcome = catch_unwind(AssertUnwindSafe(|| {
-        derive_batch_checked(py, values, mask_key.as_deref(), &namespace, truncate)
+        derive_batch_checked(
+            py,
+            values,
+            mask_key.as_deref(),
+            &namespace,
+            truncate,
+            native_threads,
+        )
     }));
     match outcome {
         Ok(Ok(result)) => Ok(result),

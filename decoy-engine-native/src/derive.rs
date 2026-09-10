@@ -53,7 +53,7 @@ pub struct DeriveError {
 }
 
 impl DeriveError {
-    fn new(code: &'static str, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, detail: impl Into<String>) -> Self {
         Self {
             code,
             detail: detail.into(),

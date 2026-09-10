@@ -22,6 +22,7 @@ pub mod batch;
 pub mod canonicalize;
 pub mod derive;
 pub mod ffi_import;
+pub mod threads;
 
 /// The ABI tag the core's loader checks on every load (`load_compiled_crypto_kernel`).
 ///

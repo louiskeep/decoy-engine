@@ -40,6 +40,7 @@ chrono = "0.4.45"
 hkdf = "0.13.0"
 hmac = "0.13.0"
 pyo3 = { version = "0.29", features = ["extension-module"], optional = true }
+rayon = "1.10.0"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
 unicode-normalization = "0.1.25"
