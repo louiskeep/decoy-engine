@@ -396,6 +396,7 @@ def _mask_chunk_native(
     mask_key: bytes | None,
     evidence: NativeRouteEvidence,
     pool_by_column: dict[str, ValuePool],
+    native_threads: int | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -435,6 +436,7 @@ def _mask_chunk_native(
                 mask_key=mask_key,
                 namespace=col_seed.namespace,
                 truncate=cfg.get("truncate"),
+                native_threads=native_threads,
             )
             # native_keyed_hash never falls back to the pure-Python reference
             # (see _kernels_keyed.py); a successful call IS the compiled kernel.
@@ -524,6 +526,7 @@ def _mask_native(
     key_provider: Any,
     evidence: NativeRouteEvidence,
     pool_cache: PoolCache | None = None,
+    native_threads: int | None = None,
 ) -> Iterator[pa.Table]:
     """Eagerly resolve the plan + mask key, then return the lazy per-chunk
     native masking generator (mirrors `run_mask_pipeline_chunked`'s own
@@ -569,6 +572,7 @@ def _mask_native(
                 mask_key=mask_key,
                 evidence=evidence,
                 pool_by_column=pool_by_column,
+                native_threads=native_threads,
             )
 
     return _masked()
@@ -583,6 +587,7 @@ def run_native_or_oracle_chunked(
     key_provider: Any = None,
     route_evidence_sink: list[NativeRouteEvidence] | None = None,
     pool_cache: PoolCache | None = None,
+    native_threads: int | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table` chunk-by-chunk, routing every node to the native kernels
     when the WHOLE table admits (Task 2.7), or to the pinned pandas oracle
@@ -605,6 +610,13 @@ def run_native_or_oracle_chunked(
     invocations in the same job) so a faker pool built for one call is warm
     for the next; omitted, each call gets its own fresh cache (Task 3.1's
     per-invocation default, mirroring `_chunked.py`'s `run_mask_pipeline_chunked`).
+
+    `native_threads` is the per-job native thread budget passed down to the compiled
+    keyed-hash kernel (`derive_batch`). `None` (the default) means one thread, so
+    output is byte-identical to the serial path and every existing caller is
+    unaffected; an explicit count lets the kernel derive rows in parallel within the
+    one shared pool. It changes only throughput, never output bytes (the compiled
+    kernel is thread-invariant), and only the `hash` node consumes it.
     """
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
@@ -677,6 +689,7 @@ def run_native_or_oracle_chunked(
         key_provider=key_provider,
         evidence=decision,
         pool_cache=pool_cache,
+        native_threads=native_threads,
     )
 
 

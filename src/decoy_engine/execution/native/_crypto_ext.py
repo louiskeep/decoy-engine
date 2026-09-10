@@ -302,6 +302,7 @@ class KeyedDerivationKernel(Protocol):
         mask_key: bytes | None,
         namespace: str,
         truncate: int | None,
+        native_threads: int | None = None,
     ) -> pa.Array: ...
 
 
@@ -361,7 +362,13 @@ class _ReferenceKeyedDerivation:
         mask_key: bytes | None,
         namespace: str,
         truncate: int | None,
+        native_threads: int | None = None,
     ) -> pa.Array:
+        # `native_threads` is accepted for Protocol conformance but IGNORED: this
+        # single-threaded Python reference is the parity oracle, and the compiled
+        # kernel's output is thread-invariant (proven at every thread count), so the
+        # thread count never changes bytes on either side.
+        del native_threads
         key = _require_mask_key(mask_key, "keyed_derivation")
         out: list[str | None] = []
         for value in _array_to_pylist(values):
@@ -576,6 +583,7 @@ class _CompiledKeyedDerivationKernel:
         mask_key: bytes | None,
         namespace: str,
         truncate: int | None,
+        native_threads: int | None = None,
     ) -> pa.Array:
         # Fail before the compiled kernel is even called, matching
         # `_ReferenceKeyedDerivation.derive_batch`'s unconditional pre-loop guard
@@ -591,7 +599,11 @@ class _CompiledKeyedDerivationKernel:
         array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
         try:
             return self._derive_batch_fn(
-                array, mask_key=key, namespace=namespace, truncate=truncate
+                array,
+                mask_key=key,
+                namespace=namespace,
+                truncate=truncate,
+                native_threads=native_threads,
             )
         except ValueError as exc:
             raise _translate_compiled_kernel_error(exc) from exc

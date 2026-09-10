@@ -104,6 +104,12 @@ def main() -> None:
     n_rows = int(sys.argv[1])
     parquet_path = sys.argv[2]
     batch_rows = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_BATCH_ROWS
+    # Task 1.6 thread sweep: DECOY_BENCH_NATIVE_THREADS sets the native keyed-hash
+    # thread budget for this run. Unset -> None -> the serial (1-thread) kernel, so
+    # the pre-Task-1.5 baseline reproduces unchanged; an explicit count drives the
+    # parallel path. Output is byte-identical either way (the kernel is thread-invariant).
+    _nt_env = os.environ.get("DECOY_BENCH_NATIVE_THREADS")
+    native_threads = int(_nt_env) if _nt_env else None
     key_provider = SecretKeyProvider(secret=FIXED_MASK_KEY, key_version="v1")
 
     # A small representative CSV satisfies the "mask tables require a declared
@@ -127,6 +133,7 @@ def main() -> None:
         engine_version="phase2-gate-bench",
         key_provider=key_provider,
         route_evidence_sink=sink,
+        native_threads=native_threads,
     ):
         out_rows += masked.num_rows  # drop the batch immediately; never accumulate
     t1 = time.perf_counter()
@@ -136,6 +143,7 @@ def main() -> None:
     rec = {
         "n_rows": n_rows,
         "batch_rows": batch_rows,
+        "native_threads": native_threads if native_threads is not None else 1,
         "wall_s": t1 - t0,
         "out_rows": out_rows,
         "native_admitted": evidence.native_admitted,

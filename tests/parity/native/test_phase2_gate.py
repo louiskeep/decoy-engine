@@ -136,7 +136,10 @@ def _chunk(table: pa.Table, batch_size: int) -> list[pa.Table]:
 
 
 def _run_native(
-    config: dict, source: pa.Table, batch_size: int
+    config: dict,
+    source: pa.Table,
+    batch_size: int,
+    native_threads: int | None = None,
 ) -> tuple[pa.Table, NativeRouteEvidence]:
     sink: list[NativeRouteEvidence] = []
     chunks = list(
@@ -147,6 +150,7 @@ def _run_native(
             engine_version=_ENGINE_VERSION,
             key_provider=_key_provider(),
             route_evidence_sink=sink,
+            native_threads=native_threads,
         )
     )
     return pa.concat_tables(chunks).combine_chunks(), sink[0]
@@ -225,6 +229,30 @@ def test_native_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> 
 
     assert evidence.native_admitted is True
     _assert_gate_parity(native_table, oracle)
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("native_threads", [1, 2, 4, 8], ids=lambda t: f"threads_{t}")
+def test_native_route_output_is_thread_invariant_and_matches_oracle(native_threads: int) -> None:
+    """The Task 1.6 thread plumbing must not change any output byte: the whole W2 native route at
+    any native_threads count must equal both the 1-thread run and the pinned pandas oracle. This
+    exercises the full Python dispatch chain (run_native_or_oracle_chunked -> _mask_chunk_native ->
+    native_keyed_hash -> compiled derive_batch with the thread budget), not just the Rust kernel."""
+    source = _build_source(_N_ROWS)
+    config = _build_config(source, key="thread_invariance")
+    oracle = _run_oracle(config, source)
+
+    serial, serial_ev = _run_native(config, source, _BATCH_SIZES[0], native_threads=1)
+    parallel, parallel_ev = _run_native(
+        config, source, _BATCH_SIZES[0], native_threads=native_threads
+    )
+
+    assert serial_ev.native_admitted is True
+    assert parallel_ev.native_admitted is True
+    assert parallel.equals(serial), (
+        f"native_threads={native_threads} diverged from the 1-thread run"
+    )
+    _assert_gate_parity(parallel, oracle)
 
 
 @_NEEDS_COMPANION
