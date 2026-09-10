@@ -56,37 +56,61 @@ def test_panic_in_detached_region_becomes_coded_error(
 
 @_NEEDS_COMPANION
 def test_sentinel_thread_progresses_during_native_compute() -> None:
+    """Discriminating GIL-release proof.
+
+    A naive "did the counter advance across the call?" check is NOT discriminating: when the
+    native call returns, CPython hands the GIL to the waiting sentinel, so the counter advances
+    at the boundary even for a GIL-HOLDING kernel (a 200ms GIL-retaining ctypes call still shows
+    tens of thousands of increments). So instead the sentinel timestamps its own activity, and we
+    require samples STRICTLY INSIDE the compute window, excluding a margin at each boundary where
+    the entry/return GIL handoff happens. Under a held GIL the sentinel is blocked for the whole
+    interior (zero interior samples); under a released GIL it runs throughout.
+    """
     from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 
     kernel = load_compiled_crypto_kernel()
-    # Large enough that the released-GIL compute window is clearly measurable (~1s on the
-    # reference-class host); the payload value is constant so building it is cheap.
-    n = 1_000_000
+    # Long enough (~seconds) that the compute interior, after trimming the boundary margins, is a
+    # real window; the payload value is constant so building it is cheap.
+    n = 3_000_000
     values = pa.array(["user@example.com"] * n, type=pa.string())
     mask_key = b"\x11" * 32
 
-    counter = 0
+    samples: list[
+        float
+    ] = []  # monotonic timestamps of sentinel activity (list.append needs the GIL)
     stop = threading.Event()
 
     def spin() -> None:
-        nonlocal counter
+        i = 0
         while not stop.is_set():
-            counter += 1
+            i += 1
+            if i % 20_000 == 0:
+                samples.append(time.monotonic())
 
     sentinel = threading.Thread(target=spin)
     sentinel.start()
     try:
         time.sleep(0.05)  # let the sentinel warm up while the main thread yields the GIL
-        before = counter
+        t0 = time.monotonic()
         kernel.derive_batch(values, mask_key=mask_key, namespace="h_email", truncate=None)
-        advanced = counter - before
+        t1 = time.monotonic()
     finally:
         stop.set()
         sentinel.join()
 
-    assert advanced > 1000, (
-        f"sentinel advanced only {advanced} increments during native compute; the GIL "
-        "appears not to have been released for the row loop"
+    duration = t1 - t0
+    assert duration > 0.4, (
+        f"compute took only {duration:.3f}s; too short for a discriminating interior window "
+        "(raise n)"
+    )
+    # Interior of the compute window, trimming a 0.15s margin at each boundary where CPython
+    # hands the GIL off at call entry / return. The sentinel can only append here (list.append
+    # needs the GIL) if the GIL was released DURING the row loop, not merely at the boundaries.
+    margin = 0.15
+    interior = [t for t in samples if t0 + margin < t < t1 - margin]
+    assert len(interior) > 5, (
+        f"sentinel recorded only {len(interior)} activity samples in the compute interior "
+        f"(duration {duration:.3f}s); the GIL appears not to have been released for the row loop"
     )
 
 
