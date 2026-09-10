@@ -37,3 +37,15 @@ branch feat/native-throughput-consolidation.
 Correctness (KAT + differential + equivalence), empty/all-null/mixed/wrong-key/empty-
 namespace precedence, 1-thread no-regression, and mutation grading all PASS. Pending:
 dennis independent review + Codex-final gate (this record + the diff). No merge (Cam-gated).
+
+## Gate outcome (2026-09-10)
+- **Codex-final: GO**, no blocking findings. Verified the streaming HMAC message is
+  byte-for-byte `0x06|BE32(ns_len)|namespace|BE32(src_len)|source` matching build_frame,
+  clone safety, precedence, lazy construction, and no security regression. Noted residual
+  (non-zeroized HMAC key state lives for the batch lifetime; pre-existing, not a regression).
+- **dennis: crypto substance VERIFIED correct** (byte-parity 4 ways + a 933-test cross-
+  language differential, 0 failed). Sole NO-GO reason was a `cargo fmt --check` CI-gate
+  failure (derive.rs ns_len binding + the Task 1.1 probe). REMEDIATED: `cargo fmt` run,
+  check clean, all 45 tests still green (behavior-neutral). Both findings closed.
+- **Task 1.2 GATE PASSED.** Branch fmt-clean + clippy-clean. Proceed to Task 1.3
+  (native thread budget). NOT merged (Cam-gated).
