@@ -28,6 +28,10 @@ pub enum KernelError {
     /// The batch output would exceed the i32 `StringArray` offset ceiling (~2GB); fail closed
     /// rather than wrap. Carries `batch::BatchError::OffsetOverflow`.
     OffsetOverflow,
+    /// `derive_index_batch` pool_size < 1. Carries `batch::BatchError::PoolSizeInvalid`.
+    PoolSizeInvalid,
+    /// `derive_index_batch` pool_size > 2**56. Carries `batch::BatchError::PoolSizeOverflow`.
+    PoolSizeOverflow,
     /// The `__arrow_c_array__` protocol failed or returned an unexpected shape.
     ProtocolError(String),
 }
@@ -39,6 +43,8 @@ impl KernelError {
             KernelError::Derive(e) => e.code,
             KernelError::MaskKeyRequired => "mask_key_required",
             KernelError::OffsetOverflow => "native_offset_overflow",
+            KernelError::PoolSizeInvalid => "pool_size_invalid",
+            KernelError::PoolSizeOverflow => "pool_size_overflow",
             KernelError::ProtocolError(_) => "mixed_object_not_native",
         }
     }
@@ -55,6 +61,8 @@ impl KernelError {
                 "batch output exceeds the i32 StringArray offset limit (~2GB); split the batch"
                     .to_string()
             }
+            KernelError::PoolSizeInvalid => "pool_size must be >= 1".to_string(),
+            KernelError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
             KernelError::ProtocolError(msg) => msg.clone(),
         }
     }
@@ -83,6 +91,8 @@ impl From<crate::batch::BatchError> for KernelError {
             crate::batch::BatchError::Derive(d) => KernelError::Derive(d),
             crate::batch::BatchError::MaskKeyRequired => KernelError::MaskKeyRequired,
             crate::batch::BatchError::OffsetOverflow => KernelError::OffsetOverflow,
+            crate::batch::BatchError::PoolSizeInvalid => KernelError::PoolSizeInvalid,
+            crate::batch::BatchError::PoolSizeOverflow => KernelError::PoolSizeOverflow,
         }
     }
 }

@@ -4,7 +4,7 @@
 //! (`tests/allocation_bound.rs`) and any other Rust-only harness calls this directly, over a
 //! real arrow-rs array, with no Python interpreter involved.
 
-use arrow_array::{Array, StringArray};
+use arrow_array::{Array, StringArray, UInt64Array};
 use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use rayon::prelude::*;
 
@@ -34,6 +34,13 @@ pub enum BatchError {
     /// (a >2GB batch is already outside this kernel's per-batch contract; the engine chunks well
     /// under it), but silent wrapping would corrupt offsets, so we fail closed instead.
     OffsetOverflow,
+    /// `pool_size < 1` (zero or negative) for `derive_index_batch`. Mirrors the Python
+    /// `derive_index`'s `pool_size_invalid`, kept distinct from overflow so a caller inspecting the
+    /// code can tell underflow from overflow.
+    PoolSizeInvalid,
+    /// `pool_size > 2**56` for `derive_index_batch` (the modulo-bias ceiling; `2**56` is accepted).
+    /// Mirrors the Python `derive_index`'s `pool_size_overflow`.
+    PoolSizeOverflow,
 }
 
 impl From<CanonError> for BatchError {
@@ -55,6 +62,8 @@ impl BatchError {
             BatchError::Derive(e) => e.code,
             BatchError::MaskKeyRequired => "mask_key_required",
             BatchError::OffsetOverflow => "native_offset_overflow",
+            BatchError::PoolSizeInvalid => "pool_size_invalid",
+            BatchError::PoolSizeOverflow => "pool_size_overflow",
         }
     }
 
@@ -70,6 +79,8 @@ impl BatchError {
                 "batch output exceeds the i32 StringArray offset limit (~2GB); split the batch"
                     .to_string()
             }
+            BatchError::PoolSizeInvalid => "pool_size must be >= 1".to_string(),
+            BatchError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
         }
     }
 }
@@ -243,21 +254,16 @@ fn assembly_error(e: arrow_schema::ArrowError) -> BatchError {
 /// equal-row-count split would then starve some workers. Boundaries are deterministic (a forward
 /// scan closing each range once it holds its target non-null quota), so the partition -- and thus
 /// nothing about the output -- depends on the thread count.
-fn partition_into_tasks<'a>(
-    array: &dyn Array,
-    offsets: &[i32],
-    values: &'a mut [u8],
-    threads: usize,
-    non_null: usize,
-) -> Vec<RangeTask<'a>> {
+/// Deterministic contiguous `(row_lo, row_hi)` ranges balanced by NON-NULL count (the actual
+/// per-row work), `min(threads, non_null)` of them. Nulls can cluster, so an equal-row-count split
+/// would starve some workers; this closes each range once it holds its non-null quota. Shared by
+/// the string (byte-window) and index (u64-slot) parallel fills so both partition identically and
+/// the partition -- and thus nothing about the output -- depends on the thread count.
+fn balanced_row_ranges(array: &dyn Array, threads: usize, non_null: usize) -> Vec<(usize, usize)> {
     let len = array.len();
     let nranges = threads.clamp(1, non_null);
-    // Ceil-divide the non-null quota so earlier ranges take the remainder; the last range absorbs
-    // whatever is left (including any trailing null rows).
     let per_range = non_null.div_ceil(nranges);
-
-    let mut tasks: Vec<RangeTask<'a>> = Vec::with_capacity(nranges);
-    let mut remaining: &'a mut [u8] = values;
+    let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(nranges);
     let mut row_lo = 0usize;
     let mut seen_non_null = 0usize;
     let mut quota = per_range;
@@ -265,29 +271,37 @@ fn partition_into_tasks<'a>(
         if array.is_valid(i) {
             seen_non_null += 1;
         }
-        // Close a range at row i+1 once it has met its non-null quota, unless this is the final
-        // range (let the last one run to the end so no rows are dropped).
-        let is_last_range = tasks.len() == nranges - 1;
+        let is_last_range = ranges.len() == nranges - 1;
         if !is_last_range && seen_non_null >= quota {
-            let row_hi = i + 1;
-            let byte_len = (offsets[row_hi] - offsets[row_lo]) as usize;
-            let (head, tail) = remaining.split_at_mut(byte_len);
-            tasks.push(RangeTask {
-                row_lo,
-                row_hi,
-                out: head,
-            });
-            remaining = tail;
-            row_lo = row_hi;
+            ranges.push((row_lo, i + 1));
+            row_lo = i + 1;
             quota += per_range;
         }
     }
-    // The final range covers row_lo..len and the rest of the buffer.
-    tasks.push(RangeTask {
-        row_lo,
-        row_hi: len,
-        out: remaining,
-    });
+    // The final range absorbs the rest (including any trailing null rows).
+    ranges.push((row_lo, len));
+    ranges
+}
+
+fn partition_into_tasks<'a>(
+    array: &dyn Array,
+    offsets: &[i32],
+    values: &'a mut [u8],
+    threads: usize,
+    non_null: usize,
+) -> Vec<RangeTask<'a>> {
+    let mut tasks: Vec<RangeTask<'a>> = Vec::new();
+    let mut remaining: &'a mut [u8] = values;
+    for (row_lo, row_hi) in balanced_row_ranges(array, threads, non_null) {
+        let byte_len = (offsets[row_hi] - offsets[row_lo]) as usize;
+        let (head, tail) = remaining.split_at_mut(byte_len);
+        tasks.push(RangeTask {
+            row_lo,
+            row_hi,
+            out: head,
+        });
+        remaining = tail;
+    }
     tasks
 }
 
@@ -332,6 +346,152 @@ fn fill_range(
         }
     }
     Ok(())
+}
+
+/// One contiguous row range and the disjoint `u64` output slots it fills (`derive_index_array`).
+/// Unlike the string `RangeTask` (variable-width byte windows), every row owns exactly one fixed
+/// `u64` slot, so the slice length is the row span and a row `i` writes `out[i - row_lo]` directly.
+struct IndexRangeTask<'a> {
+    row_lo: usize,
+    row_hi: usize,
+    out: &'a mut [u64],
+}
+
+fn partition_index_tasks<'a>(
+    array: &dyn Array,
+    values: &'a mut [u64],
+    threads: usize,
+    non_null: usize,
+) -> Vec<IndexRangeTask<'a>> {
+    let mut tasks: Vec<IndexRangeTask<'a>> = Vec::new();
+    let mut remaining: &'a mut [u64] = values;
+    for (row_lo, row_hi) in balanced_row_ranges(array, threads, non_null) {
+        let (head, tail) = remaining.split_at_mut(row_hi - row_lo);
+        tasks.push(IndexRangeTask {
+            row_lo,
+            row_hi,
+            out: head,
+        });
+        remaining = tail;
+    }
+    tasks
+}
+
+fn fill_index_range(
+    ctx: &DeriveContext,
+    array: &dyn Array,
+    pool_size: u64,
+    task: IndexRangeTask<'_>,
+) -> Result<(), (usize, BatchError)> {
+    // Same worker-panic injection as `fill_range`: fires only on a Rayon pool worker.
+    if task.row_hi > task.row_lo
+        && std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER").is_some()
+        && rayon::current_thread_index().is_some()
+    {
+        panic!("test-only forced panic inside a Rayon worker");
+    }
+
+    for i in task.row_lo..task.row_hi {
+        match canonicalize_row(array, i).map_err(|e| (i, BatchError::from(e)))? {
+            // Null row: leave the pre-zeroed slot; the output null buffer masks it.
+            None => {}
+            Some(canonical) => {
+                let digest = ctx
+                    .derive_row(&canonical)
+                    .map_err(|e| (i, BatchError::from(e)))?;
+                // First 8 bytes of the 32-byte digest as a big-endian u64, then mod pool_size:
+                // byte-identical to Python's `int.from_bytes(digest[:8], "big") % pool_size`.
+                let head = u64::from_be_bytes(
+                    digest[..8]
+                        .try_into()
+                        .expect("derive_row always returns 32 bytes"),
+                );
+                task.out[i - task.row_lo] = head % pool_size;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Deterministic pool index per row: `u64_be(derive(mask_key, namespace, canonical(value))[:8]) %
+/// pool_size`, reproducing the frozen `derive_index` contract (see the derive-index-contract doc
+/// and the `derive_index_kat.json` vectors). Output is a `UInt64Array`, null in -> null out. The
+/// row loop runs across up to `threads` Rayon workers on the shared pool, byte-identical at every
+/// thread count (each index depends only on its own row).
+///
+/// `pool_size` is a signed `i64` so the guards can report the reference's coded errors directly; the
+/// PyO3 boundary maps an out-of-`i64` Python int to `pool_size_overflow` before it reaches here.
+pub fn derive_index_array(
+    array: &dyn Array,
+    mask_key: Option<&[u8]>,
+    namespace: &str,
+    pool_size: i64,
+    threads: usize,
+) -> Result<UInt64Array, BatchError> {
+    let mask_key = match mask_key {
+        Some(k) if !k.is_empty() => k,
+        _ => return Err(BatchError::MaskKeyRequired),
+    };
+
+    let data_type = array.data_type();
+    if !is_admitted_type(data_type) {
+        return Err(BatchError::Canon(CanonError::unsupported(format!(
+            "Arrow type {data_type:?} is not in the native keyed-hash admitted set"
+        ))));
+    }
+
+    let len = array.len();
+    let non_null = len - array.null_count();
+    // Output validity == input validity; materialize a FRESH bitmap (never `array.nulls().cloned()`,
+    // which would pin the whole imported `Arc<FFI_ArrowArray>` -- Task 1.5 lesson).
+    let nulls = array
+        .nulls()
+        .map(|nb| NullBuffer::new(BooleanBuffer::from_iter(nb.iter())));
+
+    // No non-null row: the reference sampler never calls `derive_index` for a null row, so an empty
+    // or all-null batch validates NOTHING (not pool_size, seed, or namespace) and returns all-null.
+    if non_null == 0 {
+        return UInt64Array::try_new(ScalarBuffer::from(vec![0u64; len]), nulls)
+            .map_err(assembly_error);
+    }
+
+    // Reference precedence: the sampler canonicalizes a row BEFORE that row's `derive_index` runs
+    // its pool-size check, so a canonicalization failure on the FIRST non-null row outranks a bad
+    // pool_size (which in turn outranks a bad seed/namespace). Canonicalize the first non-null row
+    // here so canon(first) precedes the pool guard; only the first non-null row matters, since the
+    // pool check happens at that row. The parallel fill re-canonicalizes it (one row, negligible).
+    let first_non_null = (0..len)
+        .find(|&i| array.is_valid(i))
+        .expect("non_null > 0 guarantees a valid row");
+    canonicalize_row(array, first_non_null)?;
+
+    // Pool-size guards, AFTER the first-row canonicalization and BEFORE the derive context. `2**56`
+    // is INCLUSIVE (the guard is strictly greater-than), matching the frozen contract.
+    if pool_size < 1 {
+        return Err(BatchError::PoolSizeInvalid);
+    }
+    if pool_size > (1i64 << 56) {
+        return Err(BatchError::PoolSizeOverflow);
+    }
+    let pool_size = pool_size as u64;
+
+    let ctx = DeriveContext::new(mask_key, namespace)?;
+
+    let mut values = vec![0u64; len];
+    let tasks = partition_index_tasks(array, &mut values, threads, non_null);
+
+    let pool = shared_native_pool()?;
+    let results: Vec<Result<(), (usize, BatchError)>> = pool.install(|| {
+        tasks
+            .into_par_iter()
+            .map(|task| fill_index_range(&ctx, array, pool_size, task))
+            .collect()
+    });
+    if let Some(err) = first_error_by_row_index(results) {
+        return Err(err);
+    }
+
+    UInt64Array::try_new(ScalarBuffer::from(values), nulls).map_err(assembly_error)
 }
 
 #[cfg(test)]
@@ -642,5 +802,133 @@ mod tests {
         assert_eq!(out.null_count(), 0);
         assert_eq!(out.value(0), "");
         assert_eq!(out.value(1), "");
+    }
+
+    // --- derive_index_array (Task 2.2) ---
+
+    /// EXIT GATE: the index output is byte-identical at every thread count and pool size.
+    #[test]
+    fn derive_index_thread_count_never_changes_output() {
+        let array = mixed_string_fixture(97);
+        let key = [7u8; 32];
+        for pool in [1i64, 2, 1000, 1 << 56] {
+            let baseline = derive_index_array(&array, Some(&key), "ns", pool, 1).unwrap();
+            for threads in [2usize, 3, 4, 8, 16] {
+                let out = derive_index_array(&array, Some(&key), "ns", pool, threads).unwrap();
+                assert_eq!(out, baseline, "diverged at threads={threads} pool={pool}");
+            }
+        }
+    }
+
+    /// The reduction is exactly `u64_be(derive(...)[:8]) % pool_size` and every index is in range;
+    /// null in -> null out.
+    #[test]
+    fn derive_index_matches_manual_reduction_and_is_in_range() {
+        use crate::canonicalize::canonicalize_row;
+        use crate::derive::derive;
+        let array = StringArray::from(vec![Some("alice"), None, Some("bob")]);
+        let key = [3u8; 32];
+        let pool: i64 = 1000;
+        let out = derive_index_array(&array, Some(&key), "ns", pool, 4).unwrap();
+        assert!(out.is_null(1));
+        for row in [0usize, 2] {
+            let canonical = canonicalize_row(&array, row).unwrap().unwrap();
+            let digest = derive(&key, "ns", &canonical).unwrap();
+            let manual = u64::from_be_bytes(digest[..8].try_into().unwrap()) % pool as u64;
+            assert_eq!(out.value(row), manual);
+            assert!(out.value(row) < pool as u64);
+        }
+    }
+
+    #[test]
+    fn derive_index_pool_size_guards_with_inclusive_2_56_boundary() {
+        let array = StringArray::from(vec![Some("alice")]);
+        let key = [0u8; 32];
+        let code = |p: i64| {
+            derive_index_array(&array, Some(&key), "ns", p, 1)
+                .unwrap_err()
+                .code()
+                .to_string()
+        };
+        assert_eq!(code(0), "pool_size_invalid");
+        assert_eq!(code(-5), "pool_size_invalid");
+        assert_eq!(code((1 << 56) + 1), "pool_size_overflow");
+        // 2**56 is INCLUSIVE (the guard is strictly greater-than).
+        assert!(derive_index_array(&array, Some(&key), "ns", 1 << 56, 1).is_ok());
+    }
+
+    /// An empty or all-null batch validates NOTHING (no derive_index is called), so a wrong-length
+    /// key AND a bad pool_size must both be tolerated (mirrors the reference sampler).
+    #[test]
+    fn derive_index_all_null_and_empty_validate_nothing() {
+        let all_null = StringArray::from(vec![None::<&str>, None, None]);
+        let out = derive_index_array(&all_null, Some(&[0u8; 20]), "", 0, 4).unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(out.null_count(), 3);
+
+        let empty = StringArray::from(Vec::<Option<&str>>::new());
+        let out = derive_index_array(&empty, Some(&[0u8; 20]), "", -1, 4).unwrap();
+        assert_eq!(out.len(), 0);
+    }
+
+    /// Precedence (frozen contract + reference): canon(first non-null row) > pool_size > seed/ns.
+    #[test]
+    fn derive_index_precedence_canon_then_pool_then_seed() {
+        let key_ok = [0u8; 32];
+        let key_bad = [0u8; 20];
+        let clean = StringArray::from(vec![Some("alice"), Some("bob")]);
+        let code = |a: &dyn Array, k: &[u8], p: i64| {
+            derive_index_array(a, Some(k), "ns", p, 4)
+                .unwrap_err()
+                .code()
+                .to_string()
+        };
+
+        // clean + bad pool -> pool; clean + bad seed -> seed; bad pool + bad seed -> pool wins.
+        assert_eq!(code(&clean, &key_ok, 0), "pool_size_invalid");
+        assert_eq!(code(&clean, &key_bad, 1000), "seed_wrong_length");
+        assert_eq!(code(&clean, &key_bad, 0), "pool_size_invalid");
+
+        // bad-data FIRST non-null row (tz overflow) + bad pool -> CANON wins.
+        let bad_first = arrow_array::TimestampSecondArray::from(vec![Some(i64::MAX), Some(0)])
+            .with_timezone("UTC");
+        assert_eq!(code(&bad_first, &key_ok, 0), "mixed_object_not_native");
+        // bad-data at a LATER row + bad pool -> POOL wins (pool is checked at the first non-null row,
+        // whose canon succeeds, before the later bad row is reached).
+        let bad_later = arrow_array::TimestampSecondArray::from(vec![Some(0), Some(i64::MAX)])
+            .with_timezone("UTC");
+        assert_eq!(code(&bad_later, &key_ok, 0), "pool_size_invalid");
+    }
+
+    /// Type-agnostic: the parallel index path is byte-identical at threads {1,8} for int64 and bool,
+    /// same argument as the string case (the machinery branches only on the null mask).
+    #[test]
+    fn derive_index_thread_invariance_for_non_string_types() {
+        use arrow_array::{BooleanArray, Int64Array};
+        let key = [3u8; 32];
+        let int64 = Int64Array::from(
+            (0..60)
+                .map(|i| {
+                    if i % 4 == 0 {
+                        None
+                    } else {
+                        Some(i as i64 * 7 - 3)
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            derive_index_array(&int64, Some(&key), "ns", 997, 8).unwrap(),
+            derive_index_array(&int64, Some(&key), "ns", 997, 1).unwrap(),
+        );
+        let boolean = BooleanArray::from(
+            (0..60)
+                .map(|i| if i % 3 == 0 { None } else { Some(i % 2 == 0) })
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            derive_index_array(&boolean, Some(&key), "ns", 64, 8).unwrap(),
+            derive_index_array(&boolean, Some(&key), "ns", 64, 1).unwrap(),
+        );
     }
 }

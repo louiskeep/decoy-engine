@@ -5,12 +5,14 @@ Phase 2 Task 2.1 freezes the deterministic-Faker pool-selection contract. The fi
 `vectors/generate_derive_index_kat.py`) is the cross-language known-answer set that the
 eventual compiled `derive_index_batch` (Task 2.2) must reproduce index-for-index. This
 test proves the fixture is faithful to the shipped `derive_index` + `_canonicalize_source`
-right now, so a later Rust mismatch is a Rust bug, not a stale fixture. It is pure Python
-(no compiled companion), so it runs in the ordinary suite as well as the native CI job.
+right now, so a later Rust mismatch is a Rust bug, not a stale fixture. The pure-Python checks
+run in the ordinary suite; the companion-present tests exercise the compiled derive_index_batch
+against the same fixture + a live differential.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,12 @@ import pytest
 
 from decoy_engine.determinism import DeterminismError, derive_index
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
+)
 
 _FIXTURE_PATH = (
     Path(__file__).resolve().parents[2]
@@ -34,6 +42,49 @@ def _fixture() -> dict[str, Any]:
 
 def _canonical_from_hex(hex_or_none: str | None) -> bytes | None:
     return None if hex_or_none is None else bytes.fromhex(hex_or_none)
+
+
+def _build_case_array(case: dict[str, Any]) -> Any:
+    """Reconstruct the exact pyarrow Array a fixture value case describes (same construction as
+    the generator: logical values -> native -> pa.array with the pinned arrow type)."""
+    import pandas as pd
+    import pyarrow as pa
+
+    at = case["arrow_type"]
+    kind = at["kind"]
+    if kind == "utf8":
+        dtype = pa.string()
+    elif kind == "large_utf8":
+        dtype = pa.large_string()
+    elif kind == "bool":
+        dtype = pa.bool_()
+    elif kind == "int":
+        widths = {
+            (8, True): pa.int8(),
+            (8, False): pa.uint8(),
+            (16, True): pa.int16(),
+            (16, False): pa.uint16(),
+            (32, True): pa.int32(),
+            (32, False): pa.uint32(),
+            (64, True): pa.int64(),
+            (64, False): pa.uint64(),
+        }
+        dtype = widths[(at["bits"], at["signed"])]
+    elif kind == "timestamp":
+        dtype = pa.timestamp(at["unit"], tz=at["tz"])
+    else:  # pragma: no cover - fixture only carries admitted kinds
+        raise AssertionError(f"unhandled kind {kind!r}")
+
+    def _to_native(value: Any) -> Any:
+        if value is None:
+            return None
+        if kind == "int":
+            return int(value)
+        if kind == "timestamp":
+            return pd.Timestamp(value)
+        return value
+
+    return pa.array([_to_native(v) for v in case["logical_values"]], type=dtype)
 
 
 _CASES = _fixture()["cases"]
@@ -81,45 +132,8 @@ def test_canonicalization_matches_the_pinned_bytes() -> None:
     """The canonical source bytes the fixture pins must match what the live
     `_canonicalize_source` produces for the same logical values, so the index contract
     is anchored to a stable canonicalization, not just stable digests."""
-    import pandas as pd
-    import pyarrow as pa
-
-    def _to_native(kind: str, value: Any) -> Any:
-        if value is None:
-            return None
-        if kind == "int":
-            return int(value)
-        if kind == "timestamp":
-            return pd.Timestamp(value)
-        return value
-
     for case in _CASES:
-        at = case["arrow_type"]
-        kind = at["kind"]
-        if kind == "utf8":
-            dtype = pa.string()
-        elif kind == "large_utf8":
-            dtype = pa.large_string()
-        elif kind == "bool":
-            dtype = pa.bool_()
-        elif kind == "int":
-            widths = {
-                (8, True): pa.int8(),
-                (8, False): pa.uint8(),
-                (16, True): pa.int16(),
-                (16, False): pa.uint16(),
-                (32, True): pa.int32(),
-                (32, False): pa.uint32(),
-                (64, True): pa.int64(),
-                (64, False): pa.uint64(),
-            }
-            dtype = widths[(at["bits"], at["signed"])]
-        elif kind == "timestamp":
-            dtype = pa.timestamp(at["unit"], tz=at["tz"])
-        else:  # pragma: no cover - fixture only carries admitted kinds
-            raise AssertionError(f"unhandled kind {kind!r}")
-
-        array = pa.array([_to_native(kind, v) for v in case["logical_values"]], type=dtype)
+        array = _build_case_array(case)
         for value, expected_hex in zip(
             array.to_pylist(), case["expected_canonical_source_hex"], strict=True
         ):
@@ -165,3 +179,78 @@ def test_index_is_partition_and_thread_invariant() -> None:
         ]
         assert forward == [idx for _, idx in pairs]
         assert list(reversed(reverse)) == forward
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("case", _CASES, ids=[c["name"] for c in _CASES])
+def test_compiled_derive_index_batch_reproduces_the_kat(case: dict[str, Any]) -> None:
+    """The compiled derive_index_batch must reproduce every frozen expected index per row (null in
+    -> null out) through the real PyO3 boundary + kernel, at several thread counts."""
+    import decoy_engine_native._kernel as kernel
+
+    array = _build_case_array(case)
+    seed = bytes.fromhex(case["seed_hex"])
+    for threads in (1, 4):
+        out = kernel.derive_index_batch(
+            array,
+            mask_key=seed,
+            namespace=case["namespace"],
+            pool_size=case["pool_size"],
+            native_threads=threads,
+        )
+        assert out.type == __import__("pyarrow").uint64()
+        assert out.to_pylist() == case["expected_index"], (
+            f"{case['name']} threads={threads}: compiled index diverged from the frozen KAT"
+        )
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("case", _ERROR_CASES, ids=[c["name"] for c in _ERROR_CASES])
+def test_compiled_derive_index_batch_error_cases(case: dict[str, Any]) -> None:
+    """Pool-size / seed / namespace rejections must raise the pinned coded error from the compiled
+    kernel too. Every error case uses the canonical "alice" source, so a one-row string array
+    reproduces it."""
+    import decoy_engine_native._kernel as kernel
+    import pyarrow as pa
+
+    assert bytes.fromhex(case["source_hex"]) == _canonicalize_source("alice")
+    array = pa.array(["alice"], type=pa.string())
+    seed = bytes.fromhex(case["seed_hex"])
+    with pytest.raises(ValueError, match=case["expected_error_code"]):
+        kernel.derive_index_batch(
+            array,
+            mask_key=seed,
+            namespace=case["namespace"],
+            pool_size=case["pool_size"],
+            native_threads=1,
+        )
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("native_threads", [1, 2, 4, 8], ids=lambda t: f"threads_{t}")
+def test_compiled_matches_live_python_over_random_inputs(native_threads: int) -> None:
+    """Differential: the compiled derive_index_batch equals the shipped Python derive_index per
+    non-null row over varied inputs, at every thread count."""
+    import decoy_engine_native._kernel as kernel
+    import pyarrow as pa
+
+    seed = bytes(range(32))
+    namespace = "pool.city"
+    values = [None if i % 6 == 0 else f"user-{i}-{'z' * (i % 4)}" for i in range(500)]
+    array = pa.array(values, type=pa.string())
+    for pool_size in (1, 2, 97, 100003):
+        out = kernel.derive_index_batch(
+            array,
+            mask_key=seed,
+            namespace=namespace,
+            pool_size=pool_size,
+            native_threads=native_threads,
+        ).to_pylist()
+        for value, got in zip(values, out, strict=True):
+            if value is None:
+                assert got is None
+                continue
+            expected = derive_index(
+                seed, namespace, _canonicalize_source(value), pool_size=pool_size
+            )
+            assert got == expected, f"pool={pool_size} value={value!r}: {got} != {expected}"

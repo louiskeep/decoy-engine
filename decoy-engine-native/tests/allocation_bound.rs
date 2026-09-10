@@ -182,4 +182,50 @@ fn scratch_allocation_stays_within_2x_input_for_every_admitted_type() {
         assert_scratch_bound("bool", bool_fixture(), threads);
         assert_scratch_bound("timestamp_tz", timestamp_tz_fixture(), threads);
     }
+    // The u64 index path shares this ONE test (not a separate `#[test]`): the peak-tracking
+    // allocator is process-global, so two concurrent test functions (cargo runs them on parallel
+    // threads) would corrupt each other's high-water mark. Keeping it sequential here is honest.
+    for threads in [1usize, 2, 4, 8] {
+        assert_index_scratch_bound("utf8", utf8_fixture(), threads);
+        assert_index_scratch_bound("int64", int64_fixture(), threads);
+        assert_index_scratch_bound("bool", bool_fixture(), threads);
+        assert_index_scratch_bound("timestamp_tz", timestamp_tz_fixture(), threads);
+    }
+}
+
+/// Same transient-scratch bound for the `derive_index_array` (u64 index) path. Its output is a
+/// fixed-width `UInt64Array` (the values buffer moves out zero-copy), so scratch is only the small
+/// per-range task vector plus the per-row canonical bytes. Bool is the tightest input (1 bit/row in,
+/// 8 bytes/row out), which Codex called out to measure explicitly.
+fn assert_index_scratch_bound(label: &str, array: ArrayRef, threads: usize) {
+    let input_bytes = array.get_buffer_memory_size();
+    let baseline = mark_baseline();
+    let output = _kernel::batch::derive_index_array(
+        array.as_ref(),
+        Some(&MASK_KEY),
+        NAMESPACE,
+        1000,
+        threads,
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "{label} t={threads}: derive_index_array failed: {}: {}",
+            e.code(),
+            e.detail()
+        )
+    });
+    let peak_outstanding = peak_since(baseline);
+    let output_bytes = output.get_buffer_memory_size();
+    let scratch = peak_outstanding.saturating_sub(output_bytes);
+    let bound = 2 * input_bytes;
+    assert_eq!(
+        output.len(),
+        ROWS,
+        "{label} t={threads}: index row count must match input"
+    );
+    assert!(
+        scratch <= bound,
+        "{label} t={threads}: index transient scratch {scratch} bytes exceeds 2x input {bound} \
+         (input={input_bytes}, peak={peak_outstanding}, output={output_bytes})"
+    );
 }

@@ -158,6 +158,10 @@ jobs:
       # must run in this job too.
       - name: Loader + native-route parity/plumbing (companion-present case)
         run: pytest tests/native/test_crypto_ext_loader.py tests/parity/native/test_phase2_gate.py -v --tb=short
+      # The derive_index KAT + differential (Task 2.2) exercise the compiled derive_index_batch
+      # against the frozen vectors + the live Python reference; companion-present only.
+      - name: derive_index KAT + differential (companion-present case)
+        run: pytest tests/native/test_derive_index_kat.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A
@@ -194,11 +198,15 @@ jobs:
       # Filter on "concurrent" so BOTH the cross-call Send/Sync test and the Task 1.5 intra-call
       # multi-range parallel-fill test run under TSan (the split_at_mut disjoint windows are the
       # thing that must be race-free). A name-specific filter silently dropped the newer test.
-      - name: Concurrent + parallel-fill tests under ThreadSanitizer
+      # Run the WHOLE unit-test suite under TSan (not a name filter): both parallel fills
+      # (derive_array byte windows + derive_index u64 slots) and every concurrency test live in
+      # `--lib`, so a filter would silently miss a newly added parallel test. The unit tests are
+      # fast even under `-Zbuild-std`.
+      - name: Unit tests under ThreadSanitizer
         working-directory: decoy-engine-native
         env:
           RUSTFLAGS: -Zsanitizer=thread
-        run: cargo +nightly test --lib --tests -Zbuild-std --target x86_64-unknown-linux-gnu concurrent
+        run: cargo +nightly test --lib -Zbuild-std --target x86_64-unknown-linux-gnu
       - name: Upload fuzz artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v7

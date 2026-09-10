@@ -18,7 +18,7 @@ use std::ffi::CStr;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use arrow_array::ffi::{to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
-use arrow_array::{Array, ArrayRef, StringArray};
+use arrow_array::{Array, ArrayRef, StringArray, UInt64Array};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyCapsuleMethods, PyInt, PyTuple};
@@ -83,10 +83,10 @@ fn import_array(obj: &Bound<'_, PyAny>) -> Result<ArrayRef, KernelError> {
     import_ffi(ffi_array, ffi_schema)
 }
 
-/// Export an arrow-rs `StringArray` back to Python as a `pa.Array`, over the same C Data
-/// Interface boundary, via `pa.Array._import_from_c_capsule`.
-fn export_string_array(py: Python<'_>, array: &StringArray) -> PyResult<Py<PyAny>> {
-    let (ffi_array, ffi_schema) = to_ffi(&array.to_data())
+/// Export arrow-rs array data back to Python as a `pa.Array`, over the same C Data Interface
+/// boundary, via `pa.Array._import_from_c_capsule`. Shared by the string and index kernels.
+fn export_array_data(py: Python<'_>, data: arrow_data::ArrayData) -> PyResult<Py<PyAny>> {
+    let (ffi_array, ffi_schema) = to_ffi(&data)
         .map_err(|e| PyValueError::new_err(format!("failed to export the derived column: {e}")))?;
     let schema_capsule = PyCapsule::new_with_value(py, ffi_schema, ARROW_SCHEMA_CAPSULE_NAME)?;
     let array_capsule = PyCapsule::new_with_value(py, ffi_array, ARROW_ARRAY_CAPSULE_NAME)?;
@@ -95,6 +95,34 @@ fn export_string_array(py: Python<'_>, array: &StringArray) -> PyResult<Py<PyAny
         .getattr("Array")?
         .call_method1("_import_from_c_capsule", (schema_capsule, array_capsule))?;
     Ok(out.unbind())
+}
+
+fn export_string_array(py: Python<'_>, array: &StringArray) -> PyResult<Py<PyAny>> {
+    export_array_data(py, array.to_data())
+}
+
+fn export_uint64_array(py: Python<'_>, array: &UInt64Array) -> PyResult<Py<PyAny>> {
+    export_array_data(py, array.to_data())
+}
+
+/// Extract a `pool_size` Python int for `derive_index_batch`. Mirrors `extract_truncate`: a non-int
+/// raises `TypeError`, and `PyNumber_AsSsize_t` with a null exception clamps an out-of-`isize`
+/// magnitude by SIGN rather than raising, so on the supported 64-bit targets a Python int above
+/// `i64::MAX` clamps to `i64::MAX` (caught downstream as `pool_size_overflow`) and one below
+/// `i64::MIN` clamps to `i64::MIN` (caught as `pool_size_invalid`). The `< 1` / `> 2**56` guards
+/// live in `derive_index_array`, so the Rust-only test path enforces them too.
+fn extract_pool_size(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    let value = value
+        .cast::<PyInt>()
+        .map_err(|_| PyTypeError::new_err("pool_size must be an int"))?;
+    let py = value.py();
+    // SAFETY: same contract as `extract_truncate` -- a GIL-held `PyInt` pointer, `exc = NULL`
+    // selects CPython's sign-correct clamp rather than the overflow-raising variant.
+    let n = unsafe { pyo3::ffi::PyNumber_AsSsize_t(value.as_ptr(), std::ptr::null_mut()) };
+    if let Some(err) = PyErr::take(py) {
+        return Err(err);
+    }
+    Ok(n as i64)
 }
 
 /// Convert the raw Python `truncate` argument to `Option<isize>`, tolerating an arbitrary-size
@@ -270,7 +298,91 @@ fn derive_batch(
     }
 }
 
+fn derive_index_batch_checked(
+    py: Python<'_>,
+    values: &Bound<'_, PyAny>,
+    mask_key: Option<&[u8]>,
+    namespace: &str,
+    pool_size: i64,
+    native_threads: Option<i64>,
+) -> Result<Py<PyAny>, KernelError> {
+    if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(KernelError::MaskKeyRequired);
+    }
+    let host_available = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    let threads = budget.threads();
+
+    // Import + validate the Arrow array with the GIL HELD, then run the PyO3-free index kernel with
+    // the GIL RELEASED (Task 1.4), then reacquire to export. Same structure as `derive_batch`.
+    let array = import_array(values)?;
+    let result_array = py
+        .detach(|| {
+            if std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH").is_some() {
+                panic!("test-only forced panic in the GIL-released region");
+            }
+            crate::batch::derive_index_array(
+                array.as_ref(),
+                mask_key,
+                namespace,
+                pool_size,
+                threads,
+            )
+        })
+        .map_err(KernelError::from)?;
+
+    export_uint64_array(py, &result_array).map_err(|e| {
+        KernelError::ProtocolError(format!("failed to export the derived index array: {e}"))
+    })
+}
+
+/// `derive_index_batch(values, *, mask_key, namespace, pool_size, native_threads=None) -> pa.Array`
+///
+/// Deterministic Faker pool selection: one `uint64` index per row (null in -> null out), matching
+/// the frozen `derive_index` contract (docs/native/derive-index-contract.md). `pool_size` is a
+/// required Python int; a non-int raises `TypeError`, `pool_size < 1` raises `pool_size_invalid`,
+/// and `pool_size > 2**56` raises `pool_size_overflow`. `native_threads` is the per-job thread
+/// budget (Task 1.3); `None` runs one thread.
+#[pyfunction]
+#[pyo3(signature = (values, *, mask_key, namespace, pool_size, native_threads=None))]
+fn derive_index_batch(
+    py: Python<'_>,
+    values: &Bound<'_, PyAny>,
+    mask_key: Option<Vec<u8>>,
+    namespace: String,
+    pool_size: Bound<'_, PyAny>,
+    native_threads: Option<i64>,
+) -> PyResult<Py<PyAny>> {
+    // `_require_mask_key` is the reference's FIRST check, before pool_size is even inspected.
+    if mask_key.as_deref().map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(to_py_err(KernelError::MaskKeyRequired));
+    }
+    let pool_size = extract_pool_size(&pool_size)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        derive_index_batch_checked(
+            py,
+            values,
+            mask_key.as_deref(),
+            &namespace,
+            pool_size,
+            native_threads,
+        )
+    }));
+    match outcome {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(kernel_err)) => Err(to_py_err(kernel_err)),
+        Err(_panic) => Err(PyValueError::new_err(
+            "internal_panic: the native kernel hit an unexpected internal error and stopped \
+             before producing output"
+                .to_string(),
+        )),
+    }
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(derive_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(derive_index_batch, m)?)?;
     Ok(())
 }
