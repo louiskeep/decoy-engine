@@ -183,7 +183,19 @@ fn derive_batch_checked(
     // `catch_unwind` in `derive_batch` still covers it, so a panic inside still becomes a coded
     // error. Task 1.5's Rayon parallelism runs inside this same detached region.
     let result_array = py
-        .detach(|| crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate))
+        .detach(|| {
+            // Test-only fault injection (the env var is never set in production): forces a panic
+            // INSIDE the GIL-released region so the panic-safety path is exercised end to end,
+            // that `Python::detach` restores the GIL on unwind and the outer `catch_unwind` in
+            // `derive_batch` maps it to the coded `internal_panic` error. There is no
+            // panic reachable from valid input (every `derive_array` path returns `Result`), so
+            // this hook is the only way to drive the detached-region panic in a real call. The
+            // single `var_os` per batch (one per 50k rows) is negligible.
+            if std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH").is_some() {
+                panic!("test-only forced panic in the GIL-released region");
+            }
+            crate::batch::derive_array(array.as_ref(), mask_key, namespace, truncate)
+        })
         .map_err(KernelError::from)?;
 
     // GIL reacquired here: exporting the result back to a `pa.Array` touches PyO3 again.

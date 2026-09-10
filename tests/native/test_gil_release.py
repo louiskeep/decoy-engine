@@ -7,6 +7,10 @@ blocks every Python thread for its full duration (the interpreter's GIL-switch i
 not preempt a native frame that never yields), so a held-GIL kernel would leave the sentinel
 at ~0 increments; a kernel that detaches for the compute lets the sentinel run on its own OS
 thread and advance by many thousands.
+
+The sentinel proof assumes a GIL build: on a free-threaded interpreter (3.13t) the sentinel's
+``counter += 1`` would itself be a data race and "blocked sentinel implies held GIL" no longer
+holds, so this test would need rework before trusting it on a free-threaded port.
 """
 
 from __future__ import annotations
@@ -23,6 +27,31 @@ _NEEDS_COMPANION = pytest.mark.skipif(
     not _COMPANION_PRESENT,
     reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
 )
+
+
+@_NEEDS_COMPANION
+def test_panic_in_detached_region_becomes_coded_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A panic INSIDE the GIL-released region must be caught, not abort, and the GIL must be
+    restored. Driven by the ``DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH`` test-only hook, since
+    no valid input reaches a panic (every ``derive_array`` path returns ``Result``). Proves both
+    layers: ``Python::detach`` restores the GIL on unwind, and the outer ``catch_unwind`` maps
+    the panic to the coded ``internal_panic`` error."""
+    import decoy_engine_native._kernel as kernel
+
+    values = pa.array(["a", "b", "c"], type=pa.string())
+    mask_key = b"\x33" * 32
+
+    monkeypatch.setenv("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH", "1")
+    with pytest.raises(ValueError, match="internal_panic"):
+        kernel.derive_batch(values, mask_key=mask_key, namespace="h_email", truncate=None)
+
+    # The GIL was restored on unwind: a clean call (hook now unset) succeeds in the same process
+    # rather than deadlocking, which is what a leaked GIL would cause.
+    monkeypatch.delenv("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH")
+    out = kernel.derive_batch(values, mask_key=mask_key, namespace="h_email", truncate=None)
+    assert len(out) == 3
 
 
 @_NEEDS_COMPANION
