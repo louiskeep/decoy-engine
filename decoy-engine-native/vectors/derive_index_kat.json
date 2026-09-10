@@ -1,6 +1,7 @@
 {
   "format_version": 1,
-  "seed_protocol_version_note": "expected_index values are valid only for the SEED_PROTOCOL_VERSION and canonicalization live when generated; a bump invalidates them all",
+  "seed_protocol_version": 6,
+  "seed_protocol_version_note": "expected_index values are valid only for this seed_protocol_version and the canonicalization live when generated; a bump invalidates them all",
   "cases": [
     {
       "name": "utf8_basic_with_nulls_pool1000",
@@ -113,6 +114,50 @@
         null,
         519
       ]
+    },
+    {
+      "name": "utf8_all_null",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        null,
+        null,
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        null,
+        null,
+        null
+      ],
+      "expected_index": [
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "name": "utf8_empty",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [],
+      "expected_index": []
     },
     {
       "name": "utf8_nfc_nfd_equivalence",
@@ -510,6 +555,31 @@
       ]
     },
     {
+      "name": "timestamp_ms_utc",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ms",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.120000+00:00",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.at",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3132303030302b30303a3030",
+        null
+      ],
+      "expected_index": [
+        117,
+        null
+      ]
+    },
+    {
       "name": "timestamp_us_utc_with_negative_epoch",
       "arrow_type": {
         "kind": "timestamp",
@@ -634,6 +704,22 @@
       "source_hex": "616c696365",
       "pool_size": 1000,
       "expected_error_code": "namespace_empty"
+    },
+    {
+      "name": "pool_invalid_beats_seed",
+      "seed_hex": "00000000000000000000000000000000",
+      "namespace": "pool.city",
+      "source_hex": "616c696365",
+      "pool_size": 0,
+      "expected_error_code": "pool_size_invalid"
+    },
+    {
+      "name": "pool_overflow_beats_namespace",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "",
+      "source_hex": "616c696365",
+      "pool_size": 72057594037927937,
+      "expected_error_code": "pool_size_overflow"
     }
   ]
 }

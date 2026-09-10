@@ -75,6 +75,12 @@ reproduce rather than accept or remap:
 - `seed_wrong_length`: the seed is neither 8 bytes (job seed) nor 32 bytes (mask key).
 - `namespace_empty`: an empty namespace.
 
+Guard order is part of the contract: `derive_index` checks the pool-size guards BEFORE it
+derives, so a bad `pool_size` reports its own code even when the seed or namespace is also
+invalid. A port that derives first and guards `pool_size` afterward would pass every
+single-fault case yet diverge on a combined fault; the `pool_invalid_beats_seed` and
+`pool_overflow_beats_namespace` error vectors pin the ordering.
+
 The `2**56` ceiling bounds modulo bias: for `pool_size <= 2**56` the most-favored index is
 at most `2**-8` more likely than the least-favored; for typical pool sizes (1k to 100k) the
 bias is below `2**-44`.
@@ -89,9 +95,10 @@ forward-vs-reversed order explicitly.
 
 ## 6. Vectors and evidence
 
-- Fixture: `decoy-engine-native/vectors/derive_index_kat.json` (21 value cases + 5 error
+- Fixture: `decoy-engine-native/vectors/derive_index_kat.json` (24 value cases + 7 error
   cases), the cross-language known-answer set the compiled `derive_index_batch` must
-  reproduce index-for-index.
+  reproduce index-for-index. Its header records the `seed_protocol_version` (6) the indices
+  were generated under, so a post-bump fixture is self-identifying, not silently stale.
 - Generator: `decoy-engine-native/vectors/generate_derive_index_kat.py`. Every expected
   index comes from running the shipped `derive_index` over the shipped canonicalization, so
   the fixture is correct by construction against Python behavior. Re-run it ONLY on a
@@ -102,10 +109,11 @@ forward-vs-reversed order explicitly.
   error codes, and order invariance). It is pure Python and needs no compiled companion.
 
 Coverage: every admitted arrow type (utf8, large_utf8, the eight integer widths, bool, and
-timestamp at s/ms/us/ns including a non-UTF timezone and a pre-epoch instant), null rows,
-both seed lengths (8-byte job seed and 32-byte mask key), NFC/NFD normalization equivalence,
-the namespace/source framing boundary, the degenerate `pool_size == 1` (all indices zero),
-the inclusive `pool_size == 2**56` boundary, and all five error codes.
+timestamp at s/ms/us/ns including a non-UTC timezone and a pre-epoch instant), null rows, an
+all-null column and an empty column, both seed lengths (8-byte job seed and 32-byte mask
+key), NFC/NFD normalization equivalence, the namespace/source framing boundary, the
+degenerate `pool_size == 1` (all indices zero), the inclusive `pool_size == 2**56` boundary,
+all four error codes, and two combined-fault vectors pinning the guard order.
 
 ## 7. What the compiled port owes (Task 2.2)
 

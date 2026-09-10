@@ -26,6 +26,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.determinism import DeterminismError, derive_index
+from decoy_engine.determinism._derive import SEED_PROTOCOL_VERSION
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 
 # Matches the hash KAT's shared 32-byte mask_key so cross-vector reasoning lines up
@@ -165,6 +166,27 @@ def build_cases() -> list[dict[str, Any]]:
             pool_size=997,
         )
     )
+    # A zero-non-null column (every row null) and an empty column: the sampler sizes draws
+    # on the non-null count, so a compiled null-only fast path must still produce null/empty
+    # without deriving or erroring.
+    cases.append(
+        build_case(
+            "utf8_all_null",
+            arrow_type={"kind": "utf8"},
+            logical_values=[None, None, None],
+            namespace="pool.city",
+            pool_size=1000,
+        )
+    )
+    cases.append(
+        build_case(
+            "utf8_empty",
+            arrow_type={"kind": "utf8"},
+            logical_values=[],
+            namespace="pool.city",
+            pool_size=1000,
+        )
+    )
     # NFC vs NFD forms of "café" must select the SAME index (normalization guard).
     cases.append(
         build_case(
@@ -254,6 +276,15 @@ def build_cases() -> list[dict[str, Any]]:
     )
     cases.append(
         build_case(
+            "timestamp_ms_utc",
+            arrow_type=_ts_type("ms", "UTC"),
+            logical_values=["2020-01-01T12:30:45.120000+00:00", None],
+            namespace="pool.at",
+            pool_size=1000,
+        )
+    )
+    cases.append(
+        build_case(
             "timestamp_us_utc_with_negative_epoch",
             arrow_type=_ts_type("us", "UTC"),
             logical_values=[
@@ -303,6 +334,13 @@ def build_error_cases() -> list[dict[str, Any]]:
         ("pool_size_above_max", _MASK_KEY, "pool.city", (1 << 56) + 1),
         ("seed_wrong_length_16", bytes(16), "pool.city", 1000),
         ("namespace_empty", _MASK_KEY, "", 1000),
+        # Combined-fault cases pin the guard ORDER: derive_index checks pool_size BEFORE
+        # deriving (so seed/namespace faults never surface when pool_size is also bad). A port
+        # that derives first and guards pool afterward would pass every single-fault case above
+        # yet diverge here. Both a bad seed AND a bad namespace paired with a bad pool_size must
+        # still report the pool_size code.
+        ("pool_invalid_beats_seed", bytes(16), "pool.city", 0),
+        ("pool_overflow_beats_namespace", _MASK_KEY, "", (1 << 56) + 1),
     ]
     out: list[dict[str, Any]] = []
     for name, seed, namespace, pool_size in specs:
@@ -330,8 +368,9 @@ def main() -> None:
     error_cases = build_error_cases()
     fixture = {
         "format_version": 1,
+        "seed_protocol_version": SEED_PROTOCOL_VERSION,
         "seed_protocol_version_note": (
-            "expected_index values are valid only for the SEED_PROTOCOL_VERSION and "
+            "expected_index values are valid only for this seed_protocol_version and the "
             "canonicalization live when generated; a bump invalidates them all"
         ),
         "cases": cases,
