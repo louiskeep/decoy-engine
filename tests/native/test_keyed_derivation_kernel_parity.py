@@ -24,7 +24,8 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.determinism._derive import DeterminismError
-from decoy_engine.execution.native._crypto_ext import HASH_KAT, reference_keyed_derivation
+from decoy_engine.execution.native._crypto_ext import HASH_KAT
+from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 

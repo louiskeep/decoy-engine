@@ -35,7 +35,8 @@ import pytest
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.determinism._derive import _SALT
 from decoy_engine.determinism._hkdf import hkdf_sha256
-from decoy_engine.execution.native._crypto_ext import HASH_KAT, reference_keyed_derivation
+from decoy_engine.execution.native._crypto_ext import HASH_KAT
+from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 

@@ -547,18 +547,14 @@ ALLOWLIST: dict[str, int] = {
     # registry when the next draw-site batch lands.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # Native program Task 2.3 (Phase 2 merge, 2026-08-30): the compiled-kernel
-    # loader gained a load-time known-answer self-test (fail-before-output
-    # hardening, the DE-08-style contract) that pushed the module to 702. It
-    # bundles the ABI/error/config/result types, the KAT vectors, the two
-    # Protocols, the two pure-Python reference kernels, and the compiled loader.
-    # Decomposition target: move the reference kernels + factories
-    # (_ReferenceKeyedDerivation / _ReferenceFpe / reference_keyed_derivation /
-    # reference_fpe / _row_error / _ROW_ERROR_MESSAGES) into a
-    # `_crypto_reference.py` sibling that imports the shared types + KATs from
-    # here. The loader does not depend on the reference kernels, so this splits
-    # with no import cycle and brings the module back under 600. Do it when the
-    # native crypto surface is next touched.
-    "src/decoy_engine/execution/native/_crypto_ext.py": 702,
+    # loader gained a load-time known-answer self-test that pushed the module to
+    # 702, and the 2026-09-09 native-throughput program's Task 1.6 native_threads
+    # plumbing pushed it further to 718. The prescribed decomposition then ran
+    # (2026-09-10): the reference kernels + factories (_ReferenceKeyedDerivation /
+    # _ReferenceFpe / reference_keyed_derivation / reference_fpe / _row_error /
+    # _ROW_ERROR_MESSAGES) moved into the `_crypto_reference.py` sibling, bringing
+    # this module back to 530 -- under the 600 cap, so it is no longer allowlisted.
+    # Do not re-add it without cause.
     # Phase 3 C1 slice (2026-08-31): crossed the 600 cap (434 -> 689) as the
     # native-route dispatcher grew the faker-pool masking branch
     # (`_sample_faker_chunk`/`_mask_chunk_native`/`_resolve_faker_pools`), the

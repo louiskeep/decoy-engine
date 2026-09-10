@@ -18,7 +18,8 @@ import pytest
 
 from decoy_engine.errors import MaskKeyRequiredError
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution.native._crypto_ext import HASH_KAT, reference_keyed_derivation
+from decoy_engine.execution.native._crypto_ext import HASH_KAT
+from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None

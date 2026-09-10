@@ -28,8 +28,8 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     _translate_compiled_kernel_error,
     load_compiled_crypto_kernel,
-    reference_keyed_derivation,
 )
+from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
 from decoy_engine.generation.pool._errors import GenerationError
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
