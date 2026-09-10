@@ -29,8 +29,10 @@ on:
       - "src/decoy_engine/execution/native/**"
       # Whole native test tree, not an enumerated file list: a per-file list
       # silently failed to trigger (and failed to run) new native tests once
-      # before, which is exactly the gap that let an unrun proof through.
+      # before, which is exactly the gap that let an unrun proof through. The
+      # companion-dependent route/parity tests live under tests/parity/native.
       - "tests/native/**"
+      - "tests/parity/native/**"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
   pull_request:
@@ -38,6 +40,7 @@ on:
       - "decoy-engine-native/**"
       - "src/decoy_engine/execution/native/**"
       - "tests/native/**"
+      - "tests/parity/native/**"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
 
@@ -149,6 +152,12 @@ jobs:
       # three tests skip. This is the one job that installs it, so it must run them.
       - name: GIL-release proof (companion-present case)
         run: pytest tests/native/test_gil_release.py -v --tb=short
+      # The loader self-test/ABI-contract tests and the native-route parity + thread
+      # plumbing tests (thread invariance, the native_threads route recorder) are also
+      # companion-present-only; without the compiled kernel installed they skip, so they
+      # must run in this job too.
+      - name: Loader + native-route parity/plumbing (companion-present case)
+        run: pytest tests/native/test_crypto_ext_loader.py tests/parity/native/test_phase2_gate.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A
