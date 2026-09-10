@@ -5,7 +5,7 @@
 //! real arrow-rs array, with no Python interpreter involved.
 
 use arrow_array::{Array, StringArray};
-use arrow_buffer::{Buffer, OffsetBuffer, ScalarBuffer};
+use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use rayon::prelude::*;
 
 use crate::canonicalize::{canonicalize_row, is_admitted_type, CanonError};
@@ -130,10 +130,14 @@ pub fn derive_array(
     let non_null = len - array.null_count();
     let width = constant_output_width(truncate);
 
-    // Output validity == input validity (null in <-> null out). Cloning the input `NullBuffer` is
-    // an Arc bump over a Rust-owned buffer (the array was moved in over the C Data interface), so
-    // it neither copies nor retains the whole input array across the boundary.
-    let nulls = array.nulls().cloned();
+    // Output validity == input validity (null in <-> null out). MATERIALIZE a fresh, Rust-owned
+    // null bitmap (one bit per row) rather than `array.nulls().cloned()`: an imported Arrow array
+    // shares an `Arc<FFI_ArrowArray>` owner across all its buffers, so a cloned validity buffer
+    // would keep the ENTIRE source C array -- including its large values buffers -- alive for as
+    // long as the returned output lives. `from_iter` copies only the bits, breaking that link.
+    let nulls = array
+        .nulls()
+        .map(|nb| NullBuffer::new(BooleanBuffer::from_iter(nb.iter())));
 
     // The ONLY derivation-free short-circuit is "no non-null row": then the reference never calls
     // `derive()`, so seed/namespace are never validated and an empty or all-null batch must NOT
@@ -146,12 +150,25 @@ pub fn derive_array(
             .map_err(assembly_error);
     }
 
-    // Build the per-batch key ONCE, up front (Task 1.2), BEFORE sizing the output. This fires
-    // seed-length / namespace validation with the reference's own coded errors -- and it must
-    // precede the offset pre-pass so that on an (out-of-contract) >2GB batch with a wrong-length
-    // key the error is still the reference's `seed_wrong_length`, not `native_offset_overflow`:
-    // the reference validates the key on its first non-null row before it ever sizes output.
-    let ctx = DeriveContext::new(mask_key, namespace)?;
+    // Build the per-batch key ONCE, up front (Task 1.2), BEFORE sizing the output, so an
+    // (out-of-contract) >2GB batch with a wrong-length key still reports `seed_wrong_length`
+    // rather than `native_offset_overflow`.
+    //
+    // Reference precedence, though, is: `_require_mask_key` (done above), then `_array_to_pylist`
+    // converts the WHOLE array, then the per-row loop validates the seed length inside `derive()`.
+    // So a per-row canonicalization failure (e.g. a timestamp tick out of range) OUTRANKS the
+    // seed-length error. Match that: on the bad-seed path only -- which is already an error path
+    // with no output -- scan every row for a canonicalization failure and surface it first. The
+    // happy path (valid seed) never runs this scan, so there is no throughput cost.
+    let ctx = match DeriveContext::new(mask_key, namespace) {
+        Ok(ctx) => ctx,
+        Err(seed_err) => {
+            for i in 0..len {
+                canonicalize_row(array, i)?;
+            }
+            return Err(BatchError::from(seed_err));
+        }
+    };
 
     // Serial pre-pass: the full i32 offset layout from the null mask alone (no derivation yet).
     // `offsets[i+1] = offsets[i] + (valid ? width : 0)`; a null row keeps the previous offset
@@ -494,6 +511,31 @@ mod tests {
                 "threads={threads}: a bad timestamp row must fail closed with its coded error"
             );
         }
+    }
+
+    /// Reference precedence (matched by the bad-seed canonicalization scan): `_array_to_pylist`
+    /// converts the whole array before the derive loop validates the seed length, so a per-row
+    /// canonicalization failure OUTRANKS a wrong-length seed. A batch with a bad timestamp row AND
+    /// a wrong-length key must report the DATA error, not `seed_wrong_length`, at every thread
+    /// count. (A clean array with a wrong-length key still reports `seed_wrong_length`.)
+    #[test]
+    fn canonicalization_error_outranks_wrong_seed_length() {
+        let bad = timestamp_with_bad_rows(); // rows 3 and 61 fail conversion
+        let wrong_len_key = [0u8; 20];
+        for threads in [1usize, 2, 4, 8] {
+            let err = derive_array(&bad, Some(&wrong_len_key), "ns", None, threads).unwrap_err();
+            assert_eq!(
+                err.code(),
+                "mixed_object_not_native",
+                "threads={threads}: a bad-data row must outrank the wrong-length seed"
+            );
+        }
+
+        // Control: a clean array with the same wrong-length key still surfaces the seed error.
+        let clean =
+            arrow_array::TimestampSecondArray::from(vec![Some(0i64), Some(1)]).with_timezone("UTC");
+        let err = derive_array(&clean, Some(&wrong_len_key), "ns", None, 4).unwrap_err();
+        assert_eq!(err.code(), "seed_wrong_length");
     }
 
     /// The arbitration reducer picks the MINIMUM global row index regardless of collection order,

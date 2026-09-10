@@ -235,6 +235,46 @@ def test_panic_in_a_rayon_worker_becomes_coded_error(
 
 
 @_NEEDS_COMPANION
+def test_output_does_not_retain_source_input_buffers() -> None:
+    """The returned output must NOT keep the source input's Arrow buffers alive. A PyArrow array
+    imported over the C Data interface shares ONE owner across all its buffers, so cloning the input
+    validity bitmap into the output would pin the (large) input VALUES buffer for as long as the
+    output lives. The kernel materializes a fresh null bitmap instead; this asserts that dropping a
+    large nullable input while still holding the output frees the input from PyArrow's pool."""
+    import gc
+
+    import decoy_engine_native._kernel as kernel
+
+    n = 300_000
+    values = pa.array(
+        [None if i % 7 == 0 else f"retention-probe-row-{i:08}" for i in range(n)],
+        type=pa.string(),
+    )
+    mask_key = b"\x55" * 32
+    input_bytes = values.nbytes
+
+    gc.collect()
+    before = pa.total_allocated_bytes()
+    out = kernel.derive_batch(
+        values, mask_key=mask_key, namespace="h_email", truncate=None, native_threads=4
+    )
+    del values
+    gc.collect()
+    after_drop = pa.total_allocated_bytes()
+
+    # The kernel's output is Rust-allocated (imported into PyArrow wrapping a Rust owner), so it does
+    # not sit in PyArrow's pool. With the fresh null bitmap, dropping the input frees ~input_bytes
+    # from the pool; a shared-owner leak would keep them live behind the still-alive output.
+    freed = before - after_drop
+    assert freed > input_bytes // 2, (
+        f"input buffers not freed after dropping the input while holding the output: pool "
+        f"before={before}B after_drop={after_drop}B freed={freed}B input~{input_bytes}B; the "
+        "output appears to retain the source array's buffers"
+    )
+    assert len(out) == n
+
+
+@_NEEDS_COMPANION
 def test_concurrent_derive_batch_calls_agree() -> None:
     """Four threads deriving concurrently (GIL released for each compute) must all produce the
     correct, identical result. `derive_array` uses only per-call owned data (the imported array
