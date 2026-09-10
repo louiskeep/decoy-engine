@@ -1183,3 +1183,39 @@ unaffected, fmt+clippy clean. The remediation directly + completely implements t
 Codex's HIGH demanded. Codex's confirmation re-check over-ran (~18 min, no verdict emitted) and was
 terminated; the HIGH is closed on the objectively-verified remediation + dennis GO, not a rubber stamp.
 Task 1.3 GATE PASSED; proceed to Task 1.4. NOT merged (Cam-gated). -->
+
+<!-- Task 1.4 gate outcome (2026-09-10): dennis GO + Codex GO (all 6 findings closed over 5 rounds).
+GIL-release proof: dropped the interior-window sentinel proof (Codex showed it non-discriminating -
+a GIL-holding PyDLL.usleep + tuned setswitchinterval fakes interior progress) for a MEDIAN wall-clock
+parallel-speedup proof vs a live pure-Python GIL-held control (fail-closed; Codex's exact attack
+measures 1.00x). CI gap fixed: native-companion.yml triggers on tests/native/** and runs the proof.
+Hardening: sched_getaffinity skip, best-of-3->median trials, worker-exception re-raise, free-threaded
+skip. Commits e0ba1569..e7c9d052. Task 1.4 GATE PASSED. NOT merged (Cam-gated). -->
+
+<!-- Task 1.5 gate outcome (2026-09-10): dennis GO (4 LOW, all remediated) + Codex confirmed the
+parallelism deliverable CORRECT across 4 rounds (byte-parity at threads {1,2,4,8,16}, disjoint
+split_at_mut fill ASan+TSan clean, scratch <=2x input every thread count, worker-panic->coded error,
+multi-error arbitration, 60s fuzz, 599 Python native tests, live-reference parity). Three findings
+raised + fixed + Codex-CLOSED: (1) data-error-outranks-wrong-seed precedence; (2) NullBuffer lifetime
+leak - a REAL bug where the output pinned the whole source input via the shared Arc<FFI_ArrowArray>,
+fixed with a freshly materialized null bitmap; (3) mask-key-first ordering at the exported boundary.
+Commits 2bcd253e..68b4e881.
+
+Codex re-gate 3 NO-GO on PRE-EXISTING exported-boundary parity nuances (native validates truncate
+type + namespace encoding EAGERLY; the reference reaches them LAZILY per non-null row), observable
+only on malformed-setting + empty/all-null/multi-error inputs the product cannot generate. Confirmed
+pre-existing at 2bcd253e~1 (namespace: String + eager extract_truncate predate Task 1.5); NOT
+introduced by the parallelism work. Escalated to Cam; Cam chose OPTION C (2026-09-10): DEFER the
+boundary lazy-validation parity fix to a dedicated FOLLOW-UP task after the native-throughput program
+(see FOLLOW-UP-BLV below). Task 1.5 GATE PASSED on its actual scope; proceed to Task 1.6. NOT merged
+(Cam-gated). -->
+
+<!-- FOLLOW-UP-BLV (deferred by Cam decision C, 2026-09-10): "Boundary lazy-validation parity."
+Make the native derive_batch PyO3 boundary validate `truncate` (type) and `namespace` (encoding)
+as LAZILY as the Python reference (_crypto_ext.py derive_batch): truncate only where token[:truncate]
+is applied (per non-null row, after namespace/data validation), namespace only where derive() uses it
+(per non-null row). Fixes four error-ordering divergences on unreachable inputs: bad-truncate +
+{empty-namespace | invalid-timestamp | empty/all-null}, and unencodable-namespace + empty/all-null.
+Pre-existing, unreachable in production. Detail: scratchpad task1.5-boundary-parity-decision.md.
+Schedule: after Phase 6 / before GA parity sign-off. NOT started. -->
+
