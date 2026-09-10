@@ -32,6 +32,10 @@ pub enum KernelError {
     PoolSizeInvalid,
     /// `derive_index_batch` pool_size > 2**56. Carries `batch::BatchError::PoolSizeOverflow`.
     PoolSizeOverflow,
+    /// `derive_index_batch` pool_size was not a Python int. Carries `batch::BatchError::PoolSizeType`.
+    /// Surfaces as a Python `TypeError` (not a coded `ValueError`) to match the reference's non-int
+    /// rejection; the deferral to the pool-guard slot happens in `batch`, see that variant's docs.
+    PoolSizeType,
     /// The `__arrow_c_array__` protocol failed or returned an unexpected shape.
     ProtocolError(String),
 }
@@ -45,6 +49,7 @@ impl KernelError {
             KernelError::OffsetOverflow => "native_offset_overflow",
             KernelError::PoolSizeInvalid => "pool_size_invalid",
             KernelError::PoolSizeOverflow => "pool_size_overflow",
+            KernelError::PoolSizeType => "pool_size_type",
             KernelError::ProtocolError(_) => "mixed_object_not_native",
         }
     }
@@ -63,6 +68,7 @@ impl KernelError {
             }
             KernelError::PoolSizeInvalid => "pool_size must be >= 1".to_string(),
             KernelError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
+            KernelError::PoolSizeType => "pool_size must be an int".to_string(),
             KernelError::ProtocolError(msg) => msg.clone(),
         }
     }
@@ -93,6 +99,7 @@ impl From<crate::batch::BatchError> for KernelError {
             crate::batch::BatchError::OffsetOverflow => KernelError::OffsetOverflow,
             crate::batch::BatchError::PoolSizeInvalid => KernelError::PoolSizeInvalid,
             crate::batch::BatchError::PoolSizeOverflow => KernelError::PoolSizeOverflow,
+            crate::batch::BatchError::PoolSizeType => KernelError::PoolSizeType,
         }
     }
 }

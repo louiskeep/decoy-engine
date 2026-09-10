@@ -257,6 +257,48 @@ def test_compiled_matches_live_python_over_random_inputs(native_threads: int) ->
 
 
 @_NEEDS_COMPANION
+def test_compiled_non_integer_pool_size_is_ordered_after_canonicalization() -> None:
+    """A non-int pool_size raises TypeError, but ONLY in the pool-guard slot: after the Arrow
+    import and the first non-null row's canonicalization, and skipped entirely for a batch that
+    validates nothing. So it must NOT short-circuit ahead of those, matching the reference (whose
+    non-int rejection is the in-`derive_index` `pool_size > _POOL_SIZE_MAX` comparison, fired per
+    non-null row after canonicalization, never for an all-null batch)."""
+    import decoy_engine_native._kernel as kernel
+    import pyarrow as pa
+
+    seed = bytes(range(32))
+    not_an_int = "not-an-int"
+
+    # A clean first non-null row -> the non-int is rejected as TypeError (not a coded ValueError).
+    clean = pa.array(["alice", "bob"], type=pa.string())
+    with pytest.raises(TypeError):
+        kernel.derive_index_batch(
+            clean, mask_key=seed, namespace="ns", pool_size=not_an_int, native_threads=1
+        )
+
+    # A canon fault on the FIRST non-null row outranks the non-int pool: the canonicalization
+    # ValueError wins, proving the non-int check did not fire ahead of the import + canon.
+    bad_first = pa.array([2**63 - 1, 0], type=pa.timestamp("s", tz="UTC"))
+    with pytest.raises(ValueError, match="mixed_object_not_native"):
+        kernel.derive_index_batch(
+            bad_first, mask_key=seed, namespace="ns", pool_size=not_an_int, native_threads=1
+        )
+
+    # All-null and empty batches validate NOTHING, so a non-int pool is tolerated (null/empty out).
+    all_null = pa.array([None, None], type=pa.string())
+    assert kernel.derive_index_batch(
+        all_null, mask_key=seed, namespace="ns", pool_size=not_an_int, native_threads=1
+    ).to_pylist() == [None, None]
+    empty = pa.array([], type=pa.string())
+    assert (
+        kernel.derive_index_batch(
+            empty, mask_key=seed, namespace="ns", pool_size=not_an_int, native_threads=1
+        ).to_pylist()
+        == []
+    )
+
+
+@_NEEDS_COMPANION
 def test_panic_in_a_derive_index_worker_becomes_coded_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

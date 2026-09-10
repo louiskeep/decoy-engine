@@ -23,12 +23,21 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyCapsuleMethods, PyInt, PyTuple};
 
+use crate::batch::PoolSize;
 use crate::ffi_import::{import_ffi, KernelError};
 
 const ARROW_SCHEMA_CAPSULE_NAME: &CStr = c"arrow_schema";
 const ARROW_ARRAY_CAPSULE_NAME: &CStr = c"arrow_array";
 
 fn to_py_err(err: KernelError) -> PyErr {
+    // A non-int `pool_size` is the one case that raises `TypeError` rather than a coded
+    // `ValueError`: the reference's non-int rejection is Python's own `pool_size > MAX` comparison
+    // raising `TypeError`, and `batch` defers it to the pool-guard slot (after canon(first
+    // non-null), skipped for an all-null batch) rather than raising eagerly at extraction. The
+    // fixed message carries no row/key content, same redaction property as every other variant.
+    if matches!(err, KernelError::PoolSizeType) {
+        return PyTypeError::new_err(err.detail());
+    }
     // Redacted by construction: every KernelError variant's detail is built from type names,
     // byte lengths, or fixed strings, never from row content, mask_key bytes, or canonical
     // source bytes (see CanonError / DeriveError doc comments). This crate has no dependency on
@@ -105,29 +114,35 @@ fn export_uint64_array(py: Python<'_>, array: &UInt64Array) -> PyResult<Py<PyAny
     export_array_data(py, array.to_data())
 }
 
-/// Extract a `pool_size` Python int for `derive_index_batch`. Mirrors `extract_truncate`: a non-int
-/// raises `TypeError`, and `PyNumber_AsSsize_t` with a null exception clamps an out-of-`isize`
-/// magnitude by SIGN rather than raising, so on the supported 64-bit targets a Python int above
-/// `i64::MAX` clamps to `i64::MAX` (caught downstream as `pool_size_overflow`) and one below
-/// `i64::MIN` clamps to `i64::MIN` (caught as `pool_size_invalid`). The `< 1` / `> 2**56` guards
-/// live in `derive_index_array`, so the Rust-only test path enforces them too.
-fn extract_pool_size(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+/// Extract a `pool_size` Python int for `derive_index_batch` as a `batch::PoolSize`. A non-int does
+/// NOT raise here: it returns `PoolSize::NotAnInteger`, which `derive_index_array_typed` rejects in
+/// the correct precedence slot (after the Arrow import and canon(first non-null), skipped for an
+/// all-null batch), mirroring where the reference's non-int `TypeError` actually fires. For a real
+/// int, `PyNumber_AsSsize_t` with a null exception clamps an out-of-`isize` magnitude by SIGN
+/// rather than raising, so on the supported 64-bit targets a Python int above `i64::MAX` clamps to
+/// `i64::MAX` (caught downstream as `pool_size_overflow`) and one below `i64::MIN` clamps to
+/// `i64::MIN` (caught as `pool_size_invalid`). The `< 1` / `> 2**56` guards live in `batch`, so the
+/// Rust-only test path enforces them too.
+fn extract_pool_size(value: &Bound<'_, PyAny>) -> PoolSize {
     // The sign-clamp below is exact only where `isize` is at least 64-bit: on a hypothetical 32-bit
     // target a valid pool_size in `(2**31, 2**56]` would truncate to `i32::MAX` and be WRONGLY
     // ACCEPTED with a corrupted value. Fail the build closed rather than trust the wheel matrix.
     const _: () = assert!(std::mem::size_of::<isize>() >= 8);
 
-    let value = value
-        .cast::<PyInt>()
-        .map_err(|_| PyTypeError::new_err("pool_size must be an int"))?;
+    let Ok(value) = value.cast::<PyInt>() else {
+        return PoolSize::NotAnInteger;
+    };
     let py = value.py();
     // SAFETY: same contract as `extract_truncate` -- a GIL-held `PyInt` pointer, `exc = NULL`
     // selects CPython's sign-correct clamp rather than the overflow-raising variant.
     let n = unsafe { pyo3::ffi::PyNumber_AsSsize_t(value.as_ptr(), std::ptr::null_mut()) };
-    if let Some(err) = PyErr::take(py) {
-        return Err(err);
+    // A confirmed `PyInt` will not error here (overflow is clamped, not raised); if some exotic int
+    // subclass somehow does, treat it as a non-int rather than leaking that exception ahead of the
+    // precedence-ordered rejection.
+    if PyErr::take(py).is_some() {
+        return PoolSize::NotAnInteger;
     }
-    Ok(n as i64)
+    PoolSize::Int(n as i64)
 }
 
 /// Convert the raw Python `truncate` argument to `Option<isize>`, tolerating an arbitrary-size
@@ -308,7 +323,7 @@ fn derive_index_batch_checked(
     values: &Bound<'_, PyAny>,
     mask_key: Option<&[u8]>,
     namespace: &str,
-    pool_size: i64,
+    pool_size: PoolSize,
     native_threads: Option<i64>,
 ) -> Result<Py<PyAny>, KernelError> {
     if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
@@ -328,7 +343,7 @@ fn derive_index_batch_checked(
             if std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH").is_some() {
                 panic!("test-only forced panic in the GIL-released region");
             }
-            crate::batch::derive_index_array(
+            crate::batch::derive_index_array_typed(
                 array.as_ref(),
                 mask_key,
                 namespace,
@@ -364,7 +379,9 @@ fn derive_index_batch(
     if mask_key.as_deref().map(|k| k.is_empty()).unwrap_or(true) {
         return Err(to_py_err(KernelError::MaskKeyRequired));
     }
-    let pool_size = extract_pool_size(&pool_size)?;
+    // Does NOT raise on a non-int: a `PoolSize::NotAnInteger` is carried through and rejected in
+    // the pool-guard slot so canon(first non-null) and the all-null short-circuit outrank it.
+    let pool_size = extract_pool_size(&pool_size);
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         derive_index_batch_checked(
             py,

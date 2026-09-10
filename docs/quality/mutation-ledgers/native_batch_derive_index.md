@@ -4,7 +4,10 @@ Phase 2 Task 2.2, 2026-09-10. `cargo mutants` over the four new functions
 (`derive_index_array`, `fill_index_range`, `partition_index_tasks`,
 `balanced_row_ranges`): 48 mutants, 37 caught, 2 unviable, **9 missed** on the
 first pass. After hardening, `derive_index_array` alone re-runs at 15 mutants,
-14 caught, 1 unviable, **0 missed**.
+14 caught, 1 unviable, **0 missed**. Of the original 9 missed, **3 were real
+coverage gaps now killed** by new tests and **6 are genuine equivalent mutants**
+(5 in `balanced_row_ranges` + 1 in the `fill_index_range` panic guard), detailed
+below.
 
 Covering tests: `src/batch.rs` unit tests (`derive_index_thread_count_never_changes_output`,
 `derive_index_matches_manual_reduction_and_is_in_range`,
@@ -20,18 +23,32 @@ Bugs found: none.
 
 ## The 9 first-pass missed mutants
 
-Killed by hardening tests (real coverage gaps, now closed):
+Real coverage gaps now killed by new tests (plus the panic-guard breakdown, whose
+third comparison mutant is equivalent):
 
 - `derive_index_array:432` `replace match guard !k.is_empty() with true`: made
   the mask-key guard accept a present-but-EMPTY key. No Rust test passed
   `Some(&[])`. Killed by the new `derive_index_present_but_empty_mask_key_fails_closed`.
-- `fill_index_range:387` (3 mutants: `>` -> `==`/`<`/`>=`): the worker-panic
-  INJECTION guard `task.row_hi > task.row_lo`, active only under the test-only
-  `DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER` env var. `cargo mutants` runs
+- `fill_index_range:387` (the worker-panic INJECTION guard `task.row_hi >
+  task.row_lo`, active only under the test-only
+  `DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER` env var). `cargo mutants` runs
   `cargo test` (Rust) only, which never sets that env, so it cannot demonstrate
-  the kill; the Python `test_panic_in_a_derive_index_worker_becomes_coded_error`
-  DOES exercise this path (a broken guard would stop the panic and fail the
-  test). Same situation as the string kernel's `fill_range` panic guard.
+  a kill; the Python `test_panic_in_a_derive_index_worker_becomes_coded_error`
+  is what exercises this path (a broken guard that stops the panic fails the
+  test). Of the three comparison mutants, TWO are killed by that test and ONE
+  is equivalent, because every task the partitioner emits for that test is
+  NON-empty (`row_hi > row_lo`):
+    - `>` -> `==` and `>` -> `<`: both make the guard FALSE on a non-empty task,
+      so the injected panic never fires, the call returns a normal array, and the
+      test (which asserts `internal_panic`) FAILS -> mutant KILLED.
+    - `>` -> `>=`: TRUE on every non-empty task, identical to `>`, so the panic
+      still fires and the test still passes -> mutant SURVIVES. It is EQUIVALENT
+      for reachable tasks: the two guards differ only on a zero-width task
+      (`row_hi == row_lo`), which does no work in the row loop either way and only
+      ever changes whether the TEST-ONLY panic injection fires on an empty range,
+      never any production index byte. Killing it would require a direct empty-task
+      injection test asserting an implementation detail (that empty ranges skip the
+      injected panic), which the mutation policy says not to pin.
 
 Equivalent (left unkilled, output-preserving):
 
@@ -45,5 +62,6 @@ Equivalent (left unkilled, output-preserving):
   would require asserting a specific parallelism degree, an implementation detail
   the mutation policy says not to pin. These are genuine equivalent mutants.
 
-Logic-mutant score (excluding the equivalent partition mutants and the
-Python-covered panic guard): **100%**.
+Logic-mutant score (excluding the 6 equivalent mutants -- 5 `balanced_row_ranges`
++ the 1 equivalent `>=` panic-guard mutant -- and counting the 2 Python-covered
+panic-guard kills): **100%**.

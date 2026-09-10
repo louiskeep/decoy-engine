@@ -41,6 +41,29 @@ pub enum BatchError {
     /// `pool_size > 2**56` for `derive_index_batch` (the modulo-bias ceiling; `2**56` is accepted).
     /// Mirrors the Python `derive_index`'s `pool_size_overflow`.
     PoolSizeOverflow,
+    /// `pool_size` was not a Python int. The reference's non-int rejection is Python's own
+    /// `pool_size > _POOL_SIZE_MAX` comparison raising `TypeError`, which sits INSIDE `derive_index`
+    /// -- called per non-null row, after that row is canonicalized, and never for an all-null batch.
+    /// So the rejection must be ordered exactly where the numeric pool guards are (after
+    /// canon(first non-null), skipped when nothing is non-null), NOT eagerly at the PyO3 boundary;
+    /// the boundary maps this to `TypeError` rather than a coded `ValueError`.
+    PoolSizeType,
+}
+
+/// The `pool_size` argument to `derive_index_array_typed`. `NotAnInteger` carries a DEFERRED
+/// rejection: a non-int `pool_size` must not short-circuit ahead of the Arrow import and the
+/// first-non-null canonicalization (see `BatchError::PoolSizeType`), so the boundary passes the
+/// non-int case through as data and lets the pool guard reject it in the correct precedence slot.
+#[derive(Clone, Copy, Debug)]
+pub enum PoolSize {
+    Int(i64),
+    NotAnInteger,
+}
+
+impl From<i64> for PoolSize {
+    fn from(n: i64) -> Self {
+        PoolSize::Int(n)
+    }
 }
 
 impl From<CanonError> for BatchError {
@@ -64,6 +87,7 @@ impl BatchError {
             BatchError::OffsetOverflow => "native_offset_overflow",
             BatchError::PoolSizeInvalid => "pool_size_invalid",
             BatchError::PoolSizeOverflow => "pool_size_overflow",
+            BatchError::PoolSizeType => "pool_size_type",
         }
     }
 
@@ -81,6 +105,7 @@ impl BatchError {
             }
             BatchError::PoolSizeInvalid => "pool_size must be >= 1".to_string(),
             BatchError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
+            BatchError::PoolSizeType => "pool_size must be an int".to_string(),
         }
     }
 }
@@ -421,11 +446,30 @@ fn fill_index_range(
 ///
 /// `pool_size` is a signed `i64` so the guards can report the reference's coded errors directly; the
 /// PyO3 boundary maps an out-of-`i64` Python int to `pool_size_overflow` before it reaches here.
+/// Ergonomic i64 entry point: an in-contract `pool_size` is always a Python int by the time the
+/// numeric guards run, so the whole Rust-only surface (tests, allocation bound, KAT) uses this.
+/// The PyO3 boundary uses `derive_index_array_typed` directly so it can defer a NON-int pool_size.
 pub fn derive_index_array(
     array: &dyn Array,
     mask_key: Option<&[u8]>,
     namespace: &str,
     pool_size: i64,
+    threads: usize,
+) -> Result<UInt64Array, BatchError> {
+    derive_index_array_typed(
+        array,
+        mask_key,
+        namespace,
+        PoolSize::Int(pool_size),
+        threads,
+    )
+}
+
+pub fn derive_index_array_typed(
+    array: &dyn Array,
+    mask_key: Option<&[u8]>,
+    namespace: &str,
+    pool_size: PoolSize,
     threads: usize,
 ) -> Result<UInt64Array, BatchError> {
     let mask_key = match mask_key {
@@ -465,15 +509,17 @@ pub fn derive_index_array(
         .expect("non_null > 0 guarantees a valid row");
     canonicalize_row(array, first_non_null)?;
 
-    // Pool-size guards, AFTER the first-row canonicalization and BEFORE the derive context. `2**56`
-    // is INCLUSIVE (the guard is strictly greater-than), matching the frozen contract.
-    if pool_size < 1 {
-        return Err(BatchError::PoolSizeInvalid);
-    }
-    if pool_size > (1i64 << 56) {
-        return Err(BatchError::PoolSizeOverflow);
-    }
-    let pool_size = pool_size as u64;
+    // Pool guards, AFTER the first-row canonicalization and BEFORE the derive context. This is the
+    // slot the reference's in-`derive_index` `pool_size > MAX` comparison occupies, so a non-int
+    // pool_size (`NotAnInteger`) is rejected HERE too -- after canon(first non-null) outranks it and
+    // after the all-null short-circuit above skips it entirely -- never eagerly at the boundary.
+    // `2**56` is INCLUSIVE (the guard is strictly greater-than), matching the frozen contract.
+    let pool_size = match pool_size {
+        PoolSize::NotAnInteger => return Err(BatchError::PoolSizeType),
+        PoolSize::Int(n) if n < 1 => return Err(BatchError::PoolSizeInvalid),
+        PoolSize::Int(n) if n > (1i64 << 56) => return Err(BatchError::PoolSizeOverflow),
+        PoolSize::Int(n) => n as u64,
+    };
 
     let ctx = DeriveContext::new(mask_key, namespace)?;
 
@@ -898,6 +944,58 @@ mod tests {
         let bad_later = arrow_array::TimestampSecondArray::from(vec![Some(0), Some(i64::MAX)])
             .with_timezone("UTC");
         assert_eq!(code(&bad_later, &key_ok, 0), "pool_size_invalid");
+    }
+
+    /// A NON-int pool_size (`PoolSize::NotAnInteger`) must be ordered exactly where the numeric
+    /// pool guards are: after the all-null short-circuit (which skips it), after canon(first
+    /// non-null) (which outranks it), and it surfaces as the distinct `pool_size_type` code. This is
+    /// the Rust-level proof of the precedence the PyO3 boundary defers; the compiled-boundary
+    /// equivalent (a real non-int Python object -> TypeError) lives in test_derive_index_kat.py.
+    #[test]
+    fn derive_index_non_integer_pool_is_ordered_after_canon() {
+        let key = [0u8; 32];
+        let typed =
+            |a: &dyn Array, p: PoolSize| derive_index_array_typed(a, Some(&key), "ns", p, 4);
+
+        // All-null / empty validate NOTHING: a non-int pool is tolerated, same as a bad numeric one.
+        let all_null = StringArray::from(vec![None::<&str>, None]);
+        assert_eq!(
+            typed(&all_null, PoolSize::NotAnInteger)
+                .unwrap()
+                .null_count(),
+            2
+        );
+        let empty = StringArray::from(Vec::<Option<&str>>::new());
+        assert_eq!(typed(&empty, PoolSize::NotAnInteger).unwrap().len(), 0);
+
+        // A clean first non-null row -> the non-int is rejected as pool_size_type (its own code,
+        // distinct from pool_size_invalid/overflow).
+        let clean = StringArray::from(vec![Some("alice"), Some("bob")]);
+        assert_eq!(
+            typed(&clean, PoolSize::NotAnInteger).unwrap_err().code(),
+            "pool_size_type"
+        );
+
+        // A canon fault on the FIRST non-null row outranks the non-int pool (canon > pool), exactly
+        // as it outranks a bad numeric pool in `derive_index_precedence_canon_then_pool_then_seed`.
+        let bad_first = arrow_array::TimestampSecondArray::from(vec![Some(i64::MAX), Some(0)])
+            .with_timezone("UTC");
+        assert_eq!(
+            typed(&bad_first, PoolSize::NotAnInteger)
+                .unwrap_err()
+                .code(),
+            "mixed_object_not_native"
+        );
+        // A canon fault at a LATER row does NOT outrank it: the pool is checked at the first
+        // non-null row (canon-clean), so the non-int rejection wins before the later bad row.
+        let bad_later = arrow_array::TimestampSecondArray::from(vec![Some(0), Some(i64::MAX)])
+            .with_timezone("UTC");
+        assert_eq!(
+            typed(&bad_later, PoolSize::NotAnInteger)
+                .unwrap_err()
+                .code(),
+            "pool_size_type"
+        );
     }
 
     /// A present-but-empty mask key (`Some(&[])`) must fail closed with `mask_key_required`, exactly
