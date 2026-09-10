@@ -515,8 +515,12 @@ says so rather than implying hash ships fast in Phase 3.
 **Phase 1 parallel-execution acceptance criteria (Phase 0 gate, Codex).** These are
 binding gates on Tasks 1.4-1.6, recorded in the acceptance matrix (§5-6 of
 `native-throughput-phase0-acceptance-matrix.md`):
-- GIL-release PROOF: a Python sentinel thread must observably make progress during
-  the native compute interval (concurrent-call tests alone do not prove `Python::detach`).
+- GIL-release PROOF: median wall-clock parallel speedup of a fixed-work native batch
+  (W copies serial vs on W threads) must clear an absolute floor and a margin over a
+  live pure-Python GIL-held control (concurrent-call tests alone do not prove
+  `Python::detach`). Supersedes the original sentinel-progress criterion, which Codex
+  showed non-discriminating (a GIL-holding call with a tuned `sys.setswitchinterval`
+  fakes interior sentinel progress); see the task 1.4 record.
 - Rayon pool ownership: Task 1.3 defines one long-lived pool with explicit lifetime
   and an aggregate thread bound across concurrent jobs; NO pool constructed per 50k batch.
 - Multi-error under parallelism: an executable case placing failures in DIFFERENT
