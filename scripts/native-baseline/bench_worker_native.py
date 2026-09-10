@@ -108,8 +108,16 @@ def main() -> None:
     # thread budget for this run. Unset -> None -> the serial (1-thread) kernel, so
     # the pre-Task-1.5 baseline reproduces unchanged; an explicit count drives the
     # parallel path. Output is byte-identical either way (the kernel is thread-invariant).
-    _nt_env = os.environ.get("DECOY_BENCH_NATIVE_THREADS")
-    native_threads = int(_nt_env) if _nt_env else None
+    _nt_env = os.environ.get("DECOY_BENCH_NATIVE_THREADS", "").strip()
+    if not _nt_env:
+        native_threads = None
+    else:
+        try:
+            native_threads = int(_nt_env)
+        except ValueError:
+            raise SystemExit(
+                f"DECOY_BENCH_NATIVE_THREADS must be an integer (or unset); got {_nt_env!r}"
+            ) from None
     key_provider = SecretKeyProvider(secret=FIXED_MASK_KEY, key_version="v1")
 
     # A small representative CSV satisfies the "mask tables require a declared

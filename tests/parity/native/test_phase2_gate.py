@@ -231,20 +231,30 @@ def test_native_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> 
     _assert_gate_parity(native_table, oracle)
 
 
+# Enough rows AND a batch >= the largest thread count under test so at least one chunk holds
+# >= 8 non-null rows: the kernel clamps nranges = min(threads, non_null), so a 1-row chunk would
+# collapse every thread count to a single range and never exercise the split_at_mut/rayon path
+# through the Python chain (dennis Task-1.6 MEDIUM). 200 rows / batch 32 => six 32-row chunks, each
+# split into 8 ranges at threads=8.
+_THREAD_INVARIANCE_ROWS = 200
+_THREAD_INVARIANCE_BATCH = 32
+
+
 @_NEEDS_COMPANION
 @pytest.mark.parametrize("native_threads", [1, 2, 4, 8], ids=lambda t: f"threads_{t}")
 def test_native_route_output_is_thread_invariant_and_matches_oracle(native_threads: int) -> None:
     """The Task 1.6 thread plumbing must not change any output byte: the whole W2 native route at
-    any native_threads count must equal both the 1-thread run and the pinned pandas oracle. This
-    exercises the full Python dispatch chain (run_native_or_oracle_chunked -> _mask_chunk_native ->
-    native_keyed_hash -> compiled derive_batch with the thread budget), not just the Rust kernel."""
-    source = _build_source(_N_ROWS)
+    any native_threads count must equal both the 1-thread run and the pinned pandas oracle. Uses a
+    batch large enough that the kernel really splits into `native_threads` ranges (see the row/batch
+    constants above), so this exercises the full Python dispatch chain AND the multi-range parallel
+    fill, not a collapsed single-range path."""
+    source = _build_source(_THREAD_INVARIANCE_ROWS)
     config = _build_config(source, key="thread_invariance")
     oracle = _run_oracle(config, source)
 
-    serial, serial_ev = _run_native(config, source, _BATCH_SIZES[0], native_threads=1)
+    serial, serial_ev = _run_native(config, source, _THREAD_INVARIANCE_BATCH, native_threads=1)
     parallel, parallel_ev = _run_native(
-        config, source, _BATCH_SIZES[0], native_threads=native_threads
+        config, source, _THREAD_INVARIANCE_BATCH, native_threads=native_threads
     )
 
     assert serial_ev.native_admitted is True
