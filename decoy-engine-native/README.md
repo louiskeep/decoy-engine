@@ -10,10 +10,13 @@ Python.
 ## Why a separate package
 
 `decoy-engine` installs and runs with no Rust toolchain, no compiler, and no platform wheel beyond
-`py3-none-any`. This package is optional: install it (the engine's `native` extra) to get the
-compiled kernel, or skip it and the engine reroutes keyed-hash columns to its pandas oracle at
-preflight. Neither path changes a masked value; the compiled kernel exists for throughput, not for
-correctness the pure-Python path lacks.
+`py3-none-any`. This package is optional: install it directly (a prebuilt wheel from
+`native-companion.yml`, or `uv pip install -e ./decoy-engine-native` / `maturin develop` for local
+dev) to get the compiled kernel, or skip it and the engine reroutes keyed-hash columns to its
+pandas oracle at preflight. There is no `decoy-engine[native]` extra yet; see the negative note in
+`decoy-engine/pyproject.toml` and `docs/native/supported-matrix.md` for why and what installing
+looks like today. Neither path changes a masked value; the compiled kernel exists for throughput,
+not for correctness the pure-Python path lacks.
 
 ## Build
 
@@ -83,6 +86,9 @@ RUSTFLAGS="-Zsanitizer=thread"  cargo +nightly test -Zbuild-std --target x86_64-
 
 ## Wheel mapping
 
-The engine's core `pyproject.toml` declares an optional `native` extra that names the compatible
-version of this package, released alongside it. Cutting a companion-only security release (a new
-wheel, same ABI tag) does not require rebuilding the core.
+The engine's core `pyproject.toml` does not yet declare a `native` extra (see the negative note
+there): no version of this package has been released to PyPI for a locker to resolve against. Until
+that first paired release, install this package directly rather than through an extra. The `native`
+extra is planned to land with that release, pinning the compatible companion version; once it
+exists, cutting a companion-only security release (a new wheel, same ABI tag) will not require
+rebuilding the core.

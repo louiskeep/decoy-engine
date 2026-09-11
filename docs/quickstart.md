@@ -13,7 +13,10 @@ pip install decoy-engine decoy-cli
 ```
 
 Python 3.10, 3.11, and 3.12 are supported. The heavy dependencies (pandas,
-Polars, PyArrow) are pulled in automatically.
+Polars, PyArrow) are pulled in automatically. See
+[Supported production matrix](native/supported-matrix.md) for the full
+supported OS/architecture/Python matrix, including the optional compiled native
+companion's prebuilt wheels.
 
 ## 1. A CSV to mask
 

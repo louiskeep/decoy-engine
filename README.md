@@ -17,7 +17,10 @@ pip install decoy-engine
 ```
 
 Python 3.10, 3.11, and 3.12 are supported. Heavy dependencies (pandas,
-Polars, PyArrow) are pulled in automatically.
+Polars, PyArrow) are pulled in automatically. See
+[docs/native/supported-matrix.md](docs/native/supported-matrix.md) for the full
+supported OS/architecture/Python matrix, including the optional compiled native
+companion's prebuilt wheels.
 
 ## Quickstart
 

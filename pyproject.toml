@@ -10,7 +10,7 @@ name = "decoy-engine"
 version = "0.5.0"
 description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs against pandas / polars substrates. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "louiskeep" }]
@@ -474,6 +474,10 @@ ignore = [
 # driving git / mutmut / pytest subprocesses with fully code-constructed args
 # (S603/S607 subprocess with a partial path are intentional and trusted).
 "scripts/native-testing/python_mutation_pilot.py" = ["S603", "S607"]
+# Task 3.1 D2: a CI wheel-smoke harness, not test-suite code, so it is outside
+# tests/**; asserts (S101) are the intended fail-fast mechanism for a script
+# every wheel job runs under plain `python` (no -O), never pytest.
+"decoy-engine-native/scripts/parity_smoke.py" = ["S101"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;
@@ -826,9 +830,10 @@ module = [
     # itself ships stubs and needs no override.
     "dp_accounting",
     "dp_accounting.*",
-    # decoy-engine-native is the OPTIONAL compiled companion (the core's
-    # `native` extra) and ships no py.typed marker; imported function-locally
-    # in execution.native._crypto_ext.load_compiled_crypto_kernel, not
+    # decoy-engine-native is the OPTIONAL compiled companion (installed
+    # directly; no `native` extra exists yet, see the negative note above)
+    # and ships no py.typed marker; imported function-locally in
+    # execution.native._crypto_ext.load_compiled_crypto_kernel, not
     # installed in default-extras CI.
     "decoy_engine_native",
     "decoy_engine_native.*",

@@ -1,9 +1,9 @@
-# Native masking hot path (engine-efficiency-plan Part 1 Phase 2).
+# Native masking hot path (engine-efficiency-plan Part 1 Phase 2) and the supported
+# production matrix (Task 3.1, Phase 3).
 #
 # Three concerns: the companion package is the only thing that needs a Rust
-# toolchain (matching the Option B split, docs/plans/
-# 2026-08-28-part1-phase2-detail-DRAFT.md section 5); the core must prove it
-# stays installable and importable with the companion both present and
+# toolchain (matching the Option B split, docs/native/supported-matrix.md); the core
+# must prove it stays installable and importable with the companion both present and
 # absent; and the one security-sensitive unit (the KeyedDerivationKernel)
 # gets fuzz and sanitizer evidence beyond ordinary tests. ci.yml's existing
 # jobs (ruff/mypy/regression-gate/...) already cover the companion-absent
@@ -12,12 +12,20 @@
 # companion-absent job scoped to exactly the two-state test file so a
 # reviewer can see every side of the split in one place.
 #
-# The wheel-build matrix and the QEMU-emulated aarch64 smoke test were NOT
-# run locally (this environment has no GitHub Actions runner or matching
-# hardware); those steps were verified by inspection against maturin-action's
-# documented behavior. The fuzz/sanitizer job's commands (nightly toolchain,
-# cargo-fuzz, `-Zbuild-std` ASan/TSan) WERE run locally against this exact
-# crate before being wired in here.
+# Task 3.1 widened the wheel matrix to the four approved companion targets (Linux
+# x86-64, Linux ARM64, Windows x86-64, macOS arm64) x cp310-cp312, all built with
+# PyO3/maturin-action (never cibuildwheel -- this repo does not use it) and all routed
+# through the shared decoy-engine-native/scripts/parity_smoke.py so every row checks
+# the same ABI + hash-KAT + index-KAT contract. The Linux smoke additionally runs
+# INSIDE the pinned manylinux_2_28 container (by digest, distinct per architecture),
+# which makes "oldest tested runtime" a real, pinned fact rather than a floating
+# `ubuntu-latest` claim -- see docs/native/supported-matrix.md for how this maps to
+# the three separately-stated facts (wheel-compat policy / tested runtime / production
+# base). The Windows and macOS jobs were NOT run locally (this environment has no
+# matching runner or hardware) and are verified by inspection against maturin-action's
+# documented behavior; they get real verification in CI on the PR. The fuzz/sanitizer
+# job's commands (nightly toolchain, cargo-fuzz, `-Zbuild-std` ASan/TSan) WERE run
+# locally against this exact crate before being wired in here.
 
 name: native-companion
 
@@ -45,30 +53,55 @@ on:
       - ".github/workflows/native-companion.yml"
 
 jobs:
-  # companion-wheel: builds the companion across the self-hosted single-org
-  # deployment's target matrix (manylinux x86_64 + aarch64, cp310-cp312 per
-  # the core's requires-python floor) and asserts the compiled `_kernel`
-  # extension actually landed in the wheel. A build that silently skips the
-  # Rust step (a misconfigured maturin invocation, a stale cache) would
-  # otherwise ship a companion wheel with no compiled module in it.
-  companion-wheel:
+  # companion-wheel-linux: builds the companion across the self-hosted single-org
+  # deployment's Linux target matrix (manylinux_2_28 x86_64 + aarch64, cp310-cp312 per
+  # the core's requires-python floor) and asserts the compiled `_kernel` extension
+  # actually landed in the wheel. A build that silently skips the Rust step (a
+  # misconfigured maturin invocation, a stale cache) would otherwise ship a companion
+  # wheel with no compiled module in it.
+  #
+  # Both the build container (`container:`) and the smoke container (`smoke-image`)
+  # are pinned by image digest, resolved live against the registries at authoring
+  # time (2026-09-11) -- not a placeholder tag. x86_64 builds and smokes against the
+  # same `quay.io/pypa/manylinux_2_28_x86_64` image. aarch64 builds via the
+  # `ghcr.io/rust-cross/manylinux_2_28-cross` cross-compilation image (the
+  # maturin-action default for this target; no QEMU needed to cross-compile) and
+  # smokes under QEMU against the official `quay.io/pypa/manylinux_2_28_aarch64`
+  # image, which is the one that actually enforces the glibc 2.28 floor at import
+  # time (the cross image is a build tool, not the compatibility baseline).
+  companion-wheel-linux:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
         target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            container: "quay.io/pypa/manylinux_2_28_x86_64@sha256:53390351aeb4688114b02c36a23b3e6ce1166ee9b7afc5df1a4f776354fc764c"
+            smoke-image: "quay.io/pypa/manylinux_2_28_x86_64@sha256:53390351aeb4688114b02c36a23b3e6ce1166ee9b7afc5df1a4f776354fc764c"
+            docker-platform: linux/amd64
+          - target: aarch64
+            container: "ghcr.io/rust-cross/manylinux_2_28-cross:aarch64@sha256:ca53fa07ecf1c3e6408c51fbca64c036d9d29af832d3f8bb954910e89097f275"
+            smoke-image: "quay.io/pypa/manylinux_2_28_aarch64@sha256:ad74e53b713f3b07d8c889c526dc0c6500da9827b45e38739570875fef52e28f"
+            docker-platform: linux/arm64
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Build companion wheel (manylinux, ${{ matrix.target }})
-        uses: PyO3/maturin-action@v1
+      - name: Set up QEMU (aarch64 emulation, smoke step only)
+        if: matrix.target == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+      - name: Build companion wheel (manylinux_2_28, ${{ matrix.target }})
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           working-directory: decoy-engine-native
           target: ${{ matrix.target }}
-          manylinux: auto
-          args: --release --out dist -i python${{ matrix.python-version }}
+          manylinux: "2_28"
+          container: ${{ matrix.container }}
+          maturin-version: v1.15.0
+          args: --release --out dist --locked --compatibility pypi -i python${{ matrix.python-version }}
       - name: Assert the compiled _kernel module is present in the wheel
         run: |
           set -euo pipefail
@@ -77,30 +110,118 @@ jobs:
           python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
             || { echo "MISSING: compiled decoy_engine_native/_kernel extension not in $wheel"; exit 1; }
           echo "OK: $wheel ships the compiled decoy_engine_native/_kernel extension"
-      # Every produced wheel is installed and imported, not just filename-checked,
-      # so a broken cp311/cp312 or aarch64 build cannot pass on the membership grep
-      # alone. x86_64 installs natively on this runner; aarch64 runs under QEMU.
-      - name: Smoke-test the wheel (x86_64 native install + import + ABI)
-        if: matrix.target == 'x86_64'
+      # Every produced wheel is installed, imported, and run through the shared parity
+      # smoke script (ABI + both typed KATs), not just filename-checked, so a broken
+      # cp311/cp312 or aarch64 build cannot pass on the membership grep alone. The
+      # smoke runs INSIDE the pinned manylinux_2_28 container (via the versioned
+      # interpreter under /opt/python, the standard manylinux image layout), so this
+      # is also the "oldest tested runtime" evidence for docs/native/supported-matrix.md.
+      - name: Smoke-test the wheel (install + import + ABI + parity KATs, inside manylinux_2_28)
         run: |
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
-          python -m pip install "$wheel"
-          python -c "import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-2', got; print('x86_64 cp${{ matrix.python-version }} wheel imports; abi', got)"
-      - name: Set up QEMU (aarch64 emulation)
-        if: matrix.target == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-      - name: Smoke-test the wheel (aarch64 import + ABI under emulation)
-        if: matrix.target == 'aarch64'
-        run: |
-          set -euo pipefail
-          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
-          docker run --rm --platform linux/arm64 -v "$PWD/decoy-engine-native/dist:/w" \
-            python:${{ matrix.python-version }}-slim-bookworm bash -c \
-            "python -m pip install /w/$(basename "$wheel") && python -c \"import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-2', got; print('aarch64 cp${{ matrix.python-version }} wheel imports; abi', got)\""
+          cptag="cp${python_version//./}"
+          docker run --rm --platform ${{ matrix.docker-platform }} \
+            -v "$PWD/decoy-engine-native:/w" \
+            "${{ matrix.smoke-image }}" bash -c "
+              set -euo pipefail
+              pybin=/opt/python/${cptag}-${cptag}/bin
+              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" 'pyarrow>=14'
+              \"\$pybin/python\" /w/scripts/parity_smoke.py
+            "
+        env:
+          python_version: ${{ matrix.python-version }}
       - uses: actions/upload-artifact@v7
         with:
-          name: companion-wheel-${{ matrix.python-version }}-${{ matrix.target }}
+          name: companion-wheel-linux-${{ matrix.python-version }}-${{ matrix.target }}
+          path: decoy-engine-native/dist/*.whl
+          retention-days: 14
+
+  # companion-wheel-windows: the Windows x86-64 row of the approved target matrix
+  # (Task 3.1). maturin-action runs natively on `windows-latest` (no manylinux/
+  # container arg -- that input is Linux-only); actions/setup-python puts the exact
+  # matrix interpreter first on PATH, so `-i python` resolves it without guessing a
+  # Windows-specific binary name. Same shared parity_smoke.py as every other target.
+  companion-wheel-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build companion wheel (Windows x86-64)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: decoy-engine-native
+          target: x86_64-pc-windows-msvc
+          maturin-version: v1.15.0
+          args: --release --out dist --locked -i python
+      - name: Assert the compiled _kernel module is present in the wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          test -n "$wheel" || { echo "no wheel produced"; exit 1; }
+          python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
+            || { echo "MISSING: compiled decoy_engine_native/_kernel extension not in $wheel"; exit 1; }
+          echo "OK: $wheel ships the compiled decoy_engine_native/_kernel extension"
+      - name: Smoke-test the wheel (install + import + ABI + parity KATs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          python -m pip install "$wheel" "pyarrow>=14"
+          python decoy-engine-native/scripts/parity_smoke.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-wheel-windows-${{ matrix.python-version }}
+          path: decoy-engine-native/dist/*.whl
+          retention-days: 14
+
+  # companion-wheel-macos: the macOS arm64 row of the approved target matrix (Task
+  # 3.1). `macos-15` is the current pinned Apple-Silicon runner label (`macos-14` is
+  # deprecated); `target: aarch64-apple-darwin` selects the arm64 architecture
+  # explicitly rather than relying on the runner's default. Same shared
+  # parity_smoke.py as every other target.
+  companion-wheel-macos:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build companion wheel (macOS arm64)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: decoy-engine-native
+          target: aarch64-apple-darwin
+          maturin-version: v1.15.0
+          args: --release --out dist --locked -i python
+      - name: Assert the compiled _kernel module is present in the wheel
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          test -n "$wheel" || { echo "no wheel produced"; exit 1; }
+          python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
+            || { echo "MISSING: compiled decoy_engine_native/_kernel extension not in $wheel"; exit 1; }
+          echo "OK: $wheel ships the compiled decoy_engine_native/_kernel extension"
+      - name: Smoke-test the wheel (install + import + ABI + parity KATs)
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          python -m pip install "$wheel" "pyarrow>=14"
+          python decoy-engine-native/scripts/parity_smoke.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: companion-wheel-macos-${{ matrix.python-version }}
           path: decoy-engine-native/dist/*.whl
           retention-days: 14
 
@@ -168,6 +289,11 @@ jobs:
       # ordering, malformed-result fail-closed); companion-present only.
       - name: Faker route integration (companion-present case)
         run: pytest tests/parity/native/test_c1_faker_parity.py tests/native/test_dispatch_faker.py tests/native/test_index_ext.py -v --tb=short
+      # Task 3.1 D3: decoy_engine_native.__version__ resolves via importlib.metadata and
+      # parses as PEP 440; companion-present only (the package must be installed for its
+      # own metadata to resolve).
+      - name: Companion __version__ test (companion-present case)
+        run: pytest tests/native/test_native_version.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A
@@ -228,7 +354,8 @@ jobs:
           retention-days: 14
 
   # core-companion-absent: the mirror state. No Rust, no companion; proves
-  # the `native` extra really is optional and the core stays importable and
+  # the compiled companion really is optional (no `native` extra exists yet;
+  # it is never installed via one) and the core stays importable and
   # runnable without it. ci.yml's regression-gate already installs `.[dev]`
   # only and runs the whole suite, so this job scopes to the one test file
   # that encodes the explicit guard (a full-suite run here would duplicate

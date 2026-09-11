@@ -434,7 +434,8 @@ def load_compiled_crypto_kernel() -> KeyedDerivationKernel:
     except Exception as exc:
         raise CryptoExtensionUnavailableError(
             "the decoy-engine-native companion is not installed or failed to load; "
-            "install the 'native' extra, or use the pure-Python reference kernels "
+            "install it directly (no 'native' extra exists yet, see "
+            "docs/native/supported-matrix.md), or use the pure-Python reference kernels "
             "(reference_keyed_derivation / reference_fpe) instead."
         ) from exc
 
