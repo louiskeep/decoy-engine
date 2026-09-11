@@ -1,11 +1,22 @@
 ---
-Status: plan
+Status: superseded (archived draft; Phase 2-5 shipped, see note below)
 Created: 2026-08-28
 Author: Opus (principal-engineer authoring), for Cam
 Primary target repo: decoy-engine (native kernels, Rust extension, route lowering)
 Parent plan: `docs/plans/2026-08-26-engine-efficiency-plan.md` (Part 1 Phase 2 row of A.3; Decision 4)
 Repos: decoy-engine, decoy-platform (eligibility consumer only)
 ---
+
+> **SUPERSEDED (Task 3.1, 2026-09-11).** This draft predates the built system and diverges from it
+> in two load-bearing ways: (1) the core's `native` extra this document describes throughout never
+> shipped -- `pyproject.toml` carries a deliberate negative note explaining why (no PyPI release to
+> pin), and the companion is installed directly, never through an extra; (2) the companion wheels
+> build via `PyO3/maturin-action`, not cibuildwheel, per `.github/workflows/native-companion.yml`.
+> Treat every present-tense `native`-extra and cibuildwheel reference below as historical planning
+> intent, not current behavior. The current supported-matrix reference lives at
+> `docs/native/supported-matrix.md`; the current CI build lives at
+> `.github/workflows/native-companion.yml`. This file is kept for its design rationale (Option B,
+> the ABI-tag compatibility contract, the fail-closed reroute policy) and is not maintained further.
 
 # Part 1 Phase 2 (Native Masking Hot Path) - Detailed Task-by-Task
 

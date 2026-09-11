@@ -1,6 +1,7 @@
 //! Compiled Rust companion for `decoy-engine`'s native masking hot path.
 //!
-//! `_kernel` is the canonical compiled module the engine's `native` extra ships and the
+//! `_kernel` is the canonical compiled module this companion package ships (installed directly;
+//! the core has no `native` extra yet, see `decoy-engine/pyproject.toml`) and the
 //! `load_compiled_crypto_kernel` / `load_compiled_index_kernel` loaders target. It exports
 //! `abi_version()` (the build-system stub from the companion scaffold), `derive_batch` (the
 //! security-sensitive `KeyedDerivationKernel`, see `arrow_ffi::derive_batch`), and

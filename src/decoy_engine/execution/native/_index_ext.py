@@ -182,7 +182,8 @@ def load_compiled_index_kernel() -> IndexDerivationKernel:
     except Exception as exc:
         raise CryptoExtensionUnavailableError(
             "the decoy-engine-native companion is not installed or failed to load; "
-            "install the 'native' extra, or use the pure-Python reference kernel "
+            "install it directly (no 'native' extra exists yet, see "
+            "docs/native/supported-matrix.md), or use the pure-Python reference kernel "
             "(reference_index_derivation) instead."
         ) from exc
 

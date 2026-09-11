@@ -49,6 +49,7 @@ link to GitHub rather than into the rendered API reference.
 
 - [Capability matrix](capability-matrix.md): what the engine can and cannot do, by strategy and route.
 - [Compatibility contract](compatibility-contract.md): the frozen public surface and what changing it means.
+- [Supported production matrix](native/supported-matrix.md): supported Python/OS/arch combinations for the core, the compiled native companion's prebuilt wheels, and the official production image.
 
 ## Development & planning
 
@@ -82,6 +83,7 @@ acceptance-test-flight
 
 capability-matrix
 compatibility-contract
+native/supported-matrix
 ```
 
 ```{toctree}
