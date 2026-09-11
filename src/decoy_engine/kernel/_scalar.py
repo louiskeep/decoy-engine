@@ -120,12 +120,14 @@ def redact_array(
                 missing = pc.is_null(v)  # type: ignore[attr-defined, unused-ignore]
                 all_missing = pc.all(missing).as_py()  # type: ignore[attr-defined, unused-ignore]
                 if len(v) == 0 or all_missing is True:
-                    result: pa.Array = pa.nulls(len(v))
+                    result = pa.nulls(len(v))
                 else:
                     result = pc.if_else(  # type: ignore[attr-defined, unused-ignore]
                         missing, pa.scalar(None, pa.string()), pa.scalar(redact_with, pa.string())
                     )
-                assert isinstance(result, pa.Array)  # noqa: S101 -- guard admits only pa.Array inputs
+                # -O-safe return-type guarantee without `assert` (see truncate_array).
+                if not isinstance(result, pa.Array):
+                    return _redact_array_reference(values, redact_with=redact_with)
                 return result
         except Exception:
             pass
@@ -236,7 +238,13 @@ def truncate_array(
                         )
                 if result.type != pa.string():
                     result = result.cast(pa.string())
-                assert isinstance(result, pa.Array)  # noqa: S101 -- guard admits only pa.Array inputs
+                # -O-safe return-type guarantee without `assert` (stripped under -O): pyarrow
+                # compute returns Array subclasses for Array input, so this never fires, but it
+                # makes the `-> pa.Array` contract hold even with assertions disabled.
+                if not isinstance(result, pa.Array):
+                    return _truncate_array_reference(
+                        values, length=length, keep=keep, mask_char=mask_char
+                    )
                 return result
         except Exception:
             pass
