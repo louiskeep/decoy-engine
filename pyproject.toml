@@ -196,7 +196,7 @@ lint = [
 # Upper bound: the adoption matrix was evaluated against 19.x (2026-06-12);
 # a major bump re-runs the parity evaluation before widening.
 mimesis = [
-    "mimesis>=19.0,<20",
+    "mimesis>=19.0,<22",
 ]
 # Capability-gaps WS2 (2026-06-12): spaCy NER backs text_redact's
 # person_name/location span detection (opt-in `ner` config key). The
