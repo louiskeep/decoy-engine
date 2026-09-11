@@ -1271,3 +1271,9 @@ The ~13x faker-selection speedup (single-thread; threading would push higher) cl
 6-8x target class by a wide margin. Results: scripts/native-baseline/results_c1_native_task24_{1m,3m}.
 json. RECOMMENDATION to Cam: approve the faker target as met; a GCP n2-standard-8 reference-host
 confirmation (8-thread, authorized) is optional given the local margin. NOT merged (Cam-gated). -->
+
+<!-- Task 2.4 target APPROVED (Cam, 2026-09-11): the ~13x single-thread Faker-selection speedup
+meets goal #4 ("yes it does"). Phase 2 exit-gate PASSED. PR #129 (Phase 1 + Phase 2) MERGED to main
+(merge commit 8d833c30), CI green. Design decision on companion-absent Faker: two-way
+native(with-companion)/oracle(without), NO pure-Python native-faker path (Cam "go with recommended").
+Proceeding to Phase 3 Task 3.1. -->
