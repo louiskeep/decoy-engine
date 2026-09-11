@@ -179,7 +179,7 @@ def test_non_c1_faker_variant_stays_on_oracle(columns: list[dict]) -> None:
     config = _config(*columns)
     decision = plan_native_route(
         config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
-    )
+    ).evidence
 
     assert decision.native_admitted is False
     assert decision.reroute_reason is not None
@@ -297,7 +297,7 @@ def test_one_non_c1_faker_column_reroutes_whole_table_not_just_that_column() -> 
     )
     decision = plan_native_route(
         config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
-    )
+    ).evidence
 
     assert decision.native_admitted is False
     assert all(r.route == "oracle" for r in decision.node_routes)
@@ -608,7 +608,9 @@ def test_job_seed_only_changes_pool_identity_and_build(cache_state: str) -> None
 def test_plan_native_route_agrees_with_run_native_or_oracle_chunked() -> None:
     config = _config(_faker_column())
     profile = _profile("FIRST")
-    decision = plan_native_route(config, profile, table="t", engine_version=_ENGINE_VERSION)
+    decision = plan_native_route(
+        config, profile, table="t", engine_version=_ENGINE_VERSION
+    ).evidence
     assert decision.native_admitted is True
 
     _, evidence = _run_native(config, _source(), batch_size=4)

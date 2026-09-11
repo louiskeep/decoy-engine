@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
+import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
@@ -26,18 +26,13 @@ from decoy_engine.execution.native._kernels_scalar import (
     native_redact,
     native_truncate,
 )
-from decoy_engine.generation.pool import (
-    CardinalityMode,
-    PoolBuilder,
-    PoolCache,
-    PoolSampler,
-    ValuePool,
-)
-from decoy_engine.generation.pool._identity import DEFAULT_POOL_SCALE, resolve_faker_pool_identity
+from decoy_engine.generation.pool import GenerationError, PoolBuilder, PoolCache, ValuePool
+from decoy_engine.generation.pool._identity import resolve_faker_pool_identity
 from decoy_engine.providers_v2 import get_default_registry
 
 if TYPE_CHECKING:
     from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+    from decoy_engine.execution.native._index_ext import IndexDerivationKernel
 
 
 def _resolve_truncate_keep(cfg: dict[str, Any]) -> str:
@@ -62,46 +57,81 @@ def _sample_faker_chunk(
     pool: ValuePool,
     col_seed: Any,
     mask_key: bytes | None,
+    index_kernel: IndexDerivationKernel,
+    native_threads: int | None,
 ) -> pa.Array:
-    """Select one chunk's faker values from the already-built `pool`.
+    """Select one chunk's faker values from the already-built `pool` via the
+    preflight-verified compiled index kernel (Task 2.3 Phase 3).
 
-    Mirrors `FakerStrategyHandler.run` exactly (Task 3.1 Step 3), scoped to
-    the ONE JC-5-admitted variant (`faker_pool_precondition_met` already
-    proved `deterministic=True`, `cardinality_mode=reuse`, a namespace, and a
-    pool_size before this table reached the native route): `select_seed` is
-    always `mask_key` (the DE-02 seam re-keys deterministic selection onto
-    the keyed IKM; pool BUILD stays on job_seed, resolved once before the
-    chunk loop by `_resolve_faker_pools`).
+    Reproduces `FakerStrategyHandler.run`'s deterministic-reuse selection
+    exactly, scoped to the ONE JC-5-admitted variant
+    (`faker_pool_precondition_met` already proved `deterministic=True`,
+    `cardinality_mode=reuse`, a namespace, and a pool_size before this table
+    reached the native route): `select_seed` is always `mask_key` (the DE-02
+    seam re-keys deterministic selection onto the keyed IKM; pool BUILD stays
+    on job_seed, resolved once before the chunk loop by `_resolve_faker_pools`).
+    `pool_size` is `pool.size` -- the pool as actually BUILT -- never
+    `col_seed.pool_size` (the compiled config value the build may have
+    resolved differently), matching the oracle's own `PoolSampler._deterministic`.
 
-    Null handling is POSITIONAL, never label-aligned: `chunk_source` is a
-    freshly built `pd.Series` with a plain 0..n-1 RangeIndex (an Arrow
-    column carries no label index to misalign with in the first place), and
-    the output is built as a plain Python list indexed by position, then
-    handed to `pa.array` -- the same shape `FakerStrategyHandler.run` uses to
-    avoid ever assigning an index-carrying Series onto a differently-indexed
-    frame.
+    One batch call derives every row's pool index; the gather is then a
+    null-safe NumPy lookup into `pool.values`, never a per-row Python loop.
+    Null handling is POSITIONAL: nulls in `source` restore to `None` at the
+    exact same position, never label-aligned (an Arrow column carries no
+    label index to misalign with in the first place).
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
             "faker pool selection reached with mask_key=None; require_mask_key "
             "always resolves a concrete key before the native route dispatches."
         )
-    n = len(source)
-    chunk_source = pd.Series(source.to_pandas())
-    scale = col_seed.scale if col_seed.scale is not None else DEFAULT_POOL_SCALE
-    sampled = PoolSampler().sample(
-        pool,
-        n,
-        mode=CardinalityMode(col_seed.cardinality_mode),
-        seed=mask_key,
-        source=chunk_source,
+    col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+    n = len(col)
+    idx = index_kernel.derive_index_batch(
+        col,
+        mask_key=mask_key,
         namespace=col_seed.namespace,
-        deterministic=True,
-        scale=scale,
+        pool_size=pool.size,
+        native_threads=native_threads,
     )
-    na_mask = chunk_source.isna().to_numpy()
-    values = list(sampled)
-    return pa.array([None if na_mask[i] else values[i] for i in range(n)], type=pa.string())
+
+    # Runtime invariants on the kernel's own result: a malformed compiled (or
+    # stub, in tests) kernel must fail HERE, coded and fail-closed, never as
+    # an uncoded NumPy/Arrow out-of-bounds exception from the gather below.
+    if len(idx) != n:
+        raise GenerationError(
+            code="index_batch_length_mismatch",
+            message=f"derive_index_batch returned {len(idx)} indices for {n} input rows",
+        )
+    if idx.type != pa.uint64():
+        raise GenerationError(
+            code="index_batch_type_mismatch",
+            message=f"derive_index_batch returned dtype {idx.type}, expected uint64",
+        )
+    idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
+    col_valid = col.is_valid().to_numpy(zero_copy_only=False)
+    if not np.array_equal(idx_valid, col_valid):
+        raise GenerationError(
+            code="index_batch_null_mask_mismatch",
+            message="derive_index_batch's null positions do not match the source column's",
+        )
+    idx_np = idx.fill_null(0).to_numpy(zero_copy_only=False)
+    if idx_valid.any() and int(idx_np[idx_valid].max()) >= pool.size:
+        raise GenerationError(
+            code="index_batch_out_of_bounds",
+            message=(
+                f"derive_index_batch returned an index >= pool_size {pool.size}; "
+                "refusing to gather from the pool with it"
+            ),
+        )
+
+    # Null-safe NumPy gather (no dedup, raw pool order preserved -- pool.values
+    # may be gathered with repeats): scatter valid selections positionally,
+    # leave null positions as None.
+    out = np.empty(n, dtype=object)
+    out[idx_valid] = pool.values[idx_np[idx_valid]]
+    out[~idx_valid] = None
+    return pa.array(out, type=pa.string())
 
 
 def _mask_chunk_native(
@@ -112,6 +142,7 @@ def _mask_chunk_native(
     evidence: NativeRouteEvidence,
     pool_by_column: dict[str, ValuePool],
     native_threads: int | None = None,
+    index_kernel: IndexDerivationKernel | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -121,7 +152,9 @@ def _mask_chunk_native(
     precondition violation, not a data-shape surprise. `pool_by_column` is
     populated once, before the chunk loop, for every admitted faker column
     (Task 3.1 Step 2); a faker column always has an entry by the same
-    precondition.
+    precondition. `index_kernel` is the preflight-verified compiled index
+    kernel (Task 2.3): non-`None` whenever the admitted table has a faker
+    column, since preflight's index probe already ran before this ever executes.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
@@ -157,11 +190,19 @@ def _mask_chunk_native(
             # (see _kernels_keyed.py); a successful call IS the compiled kernel.
             evidence.compiled_kernel_executed = True
         elif strategy == "faker":
+            if index_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+                raise AssertionError(
+                    f"native route admitted faker column {name!r} with no index_kernel; "
+                    "preflight's index probe should have loaded one for any admitted "
+                    "faker node."
+                )
             arrays[name] = _sample_faker_chunk(
                 source,
                 pool=pool_by_column[name],
                 col_seed=col_seed,
                 mask_key=mask_key,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
             )
             evidence.pool_select_executed = True
             evidence.pool_select_calls += 1

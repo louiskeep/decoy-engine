@@ -58,6 +58,10 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
 )
+from decoy_engine.execution.native._index_ext import (
+    IndexDerivationKernel,
+    load_compiled_index_kernel,
+)
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._requirements import (
     NATIVE_KERNEL_STRATEGIES,
@@ -243,25 +247,110 @@ def _static_route_decision(
     )
 
 
+@dataclass(frozen=True)
+class NativePreflight:
+    """The full PREFLIGHT result for `table`: the route evidence, plus the
+    index-derivation kernel wrapper (Task 2.3) verified for this decision.
+
+    `index_kernel` is `None` whenever the route is not native-admitted or
+    admits no faker node -- there is nothing to select, so nothing was loaded.
+    Loading + self-testing the kernel happens ONCE here, at preflight, never
+    per chunk; the verified wrapper is threaded through `_mask_native` ->
+    `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
+    makes exactly one real batch call.
+    """
+
+    evidence: NativeRouteEvidence
+    index_kernel: IndexDerivationKernel | None
+
+
 def plan_native_route(
-    config: dict[str, Any], profile: Any, *, table: str, engine_version: str
-) -> NativeRouteEvidence:
+    config: dict[str, Any],
+    profile: Any,
+    *,
+    table: str,
+    engine_version: str,
+    first_schema: pa.Schema | None = None,
+) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
-    (only when admitted AND a `hash` node is present) a probe that the compiled
-    crypto extension loads. A missing or ABI-incompatible extension downgrades
-    the WHOLE table to the oracle -- never just the hash column -- matching the
-    no-partial-native-output rule; the other admitted columns never touch a
-    native kernel either, since the route decision is atomic per table.
+    (when `first_schema` is given) the actual first-chunk coverage + faker
+    source-type guards, then (only when still admitted) the required companion
+    probes -- crypto (any `hash` node) and index (any admitted `faker` node) --
+    in that order. Guards run BEFORE probes so a schema-rejected table (an
+    uncovered column, or a faker node over a non-string source) keeps its own
+    reroute reason and never reaches either probe; each probe is itself gated
+    on the decision still being admitted, so a rejection from an earlier probe
+    (or guard) short-circuits the rest. A missing or ABI-incompatible companion
+    downgrades the WHOLE table to the oracle -- never just the offending column
+    -- matching the no-partial-native-output rule; the other admitted columns
+    never touch a native kernel either, since the route decision is atomic per
+    table.
+
+    `first_schema` is `None` for admission-only callers (e.g. tests probing
+    the static/config-level decision alone): they get static admission plus
+    the companion probes, with no schema-based guard applied -- exactly what
+    those callers assert.
     """
     decision = _static_route_decision(config, profile, table=table, engine_version=engine_version)
     if not decision.native_admitted:
-        return decision
-    if any(n.strategy == "hash" for n in decision.node_routes):
+        return NativePreflight(decision, None)
+
+    if first_schema is not None:
+        if decision.native_admitted:
+            covered = {n.column for n in decision.node_routes}
+            actual = set(first_schema.names)
+            if actual != covered:
+                # Narrower, never wider: a column the compiled plan does not cover
+                # (e.g. an unconfigured-column policy) is not something this phase's
+                # native path has reasoned about, so the whole table reroutes. Report
+                # BOTH sides of the symmetric difference: `actual - covered` (a column
+                # this chunk has that the plan does not cover) alone would silently
+                # read as "nothing extra" when the real drift is the OTHER direction --
+                # a configured column the compiled plan expects that this chunk is
+                # missing entirely (`covered - actual`). The `!=` check above already
+                # reroutes correctly on either side; only the diagnostic was one-sided.
+                decision = _downgrade_to_oracle(
+                    decision,
+                    "uncovered_columns:"
+                    f"{sorted(actual - covered)};missing_configured_columns:"
+                    f"{sorted(covered - actual)}",
+                )
+
+        if decision.native_admitted:
+            # Native faker selection converts the source column with per-chunk
+            # `source.to_pandas()` (_sample_faker_chunk), which diverges from the
+            # oracle's table-level `Table.to_pandas()` for non-string nullable
+            # extension types: a nullable Int64 source can materialize as float64 in
+            # a later chunk (3 -> 3.0), so deterministic canonicalization raises
+            # `float_canonicalization_unsupported` AFTER earlier chunks already
+            # yielded -- partial native output the whole-frame oracle never produces.
+            # C1's faker columns are string-typed; a faker column over a non-string
+            # source reroutes the WHOLE table to the oracle (narrower, never wider).
+            for node in decision.node_routes:
+                if node.strategy != "faker":
+                    continue
+                ftype = first_schema.field(node.column).type
+                if not (pa.types.is_string(ftype) or pa.types.is_large_string(ftype)):
+                    decision = _downgrade_to_oracle(
+                        decision, f"faker_source_type_not_string:{node.column}:{ftype}"
+                    )
+                    break
+
+    if decision.native_admitted and any(n.strategy == "hash" for n in decision.node_routes):
         try:
             load_compiled_crypto_kernel()
         except CryptoExtensionUnavailableError:
-            return _downgrade_to_oracle(decision, "crypto_extension_unavailable")
-    return decision
+            decision = _downgrade_to_oracle(decision, "crypto_extension_unavailable")
+
+    index_kernel: IndexDerivationKernel | None = None
+    if decision.native_admitted and any(n.strategy == "faker" for n in decision.node_routes):
+        try:
+            index_kernel = load_compiled_index_kernel()
+        except CryptoExtensionUnavailableError:
+            decision = _downgrade_to_oracle(decision, "index_extension_unavailable")
+            index_kernel = None
+
+    return NativePreflight(decision, index_kernel)
 
 
 def _rechain(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:
@@ -279,12 +368,17 @@ def _mask_native(
     evidence: NativeRouteEvidence,
     pool_cache: PoolCache | None = None,
     native_threads: int | None = None,
+    index_kernel: IndexDerivationKernel | None = None,
 ) -> Iterator[pa.Table]:
     """Eagerly resolve the plan + mask key, then return the lazy per-chunk
     native masking generator (mirrors `run_mask_pipeline_chunked`'s own
     eager-validation-then-lazy-masking contract). Every admitted faker
     column's pool is resolved here too (Task 3.1 Step 2), before any chunk
-    is masked, so the pool is built exactly once per invocation."""
+    is masked, so the pool is built exactly once per invocation. `index_kernel`
+    is the preflight-verified compiled index kernel (Task 2.3), threaded
+    through to `_mask_chunk_native` -> `_sample_faker_chunk` so every faker
+    column-chunk selection makes exactly one real batch call; it is `None`
+    whenever the admitted table has no faker node."""
     from decoy_engine.keyprovider import require_mask_key
     from decoy_engine.plan import compile_plan
 
@@ -325,6 +419,7 @@ def _mask_native(
                 evidence=evidence,
                 pool_by_column=pool_by_column,
                 native_threads=native_threads,
+                index_kernel=index_kernel,
             )
 
     return _masked()
@@ -364,11 +459,12 @@ def run_native_or_oracle_chunked(
     per-invocation default, mirroring `_chunked.py`'s `run_mask_pipeline_chunked`).
 
     `native_threads` is the per-job native thread budget passed down to the compiled
-    keyed-hash kernel (`derive_batch`). `None` (the default) means one thread, so
-    output is byte-identical to the serial path and every existing caller is
-    unaffected; an explicit count lets the kernel derive rows in parallel within the
-    one shared pool. It changes only throughput, never output bytes (the compiled
-    kernel is thread-invariant), and only the `hash` node consumes it.
+    keyed-hash kernel (`derive_batch`) and, since Task 2.3, the compiled index kernel
+    (`derive_index_batch`) a faker column's selection uses. `None` (the default)
+    means one thread, so output is byte-identical to the serial path and every
+    existing caller is unaffected; an explicit count lets either kernel derive rows
+    in parallel within the one shared pool. It changes only throughput, never
+    output bytes (both compiled kernels are thread-invariant).
     """
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
@@ -385,45 +481,14 @@ def run_native_or_oracle_chunked(
         )
 
     profile = first_chunk_profile(first, table=table, engine_version=engine_version)
-    decision = plan_native_route(config, profile, table=table, engine_version=engine_version)
-    if decision.native_admitted:
-        covered = {n.column for n in decision.node_routes}
-        actual = set(first.schema.names)
-        if actual != covered:
-            # Narrower, never wider: a column the compiled plan does not cover
-            # (e.g. an unconfigured-column policy) is not something this phase's
-            # native path has reasoned about, so the whole table reroutes. Report
-            # BOTH sides of the symmetric difference: `actual - covered` (a column
-            # this chunk has that the plan does not cover) alone would silently
-            # read as "nothing extra" when the real drift is the OTHER direction --
-            # a configured column the compiled plan expects that this chunk is
-            # missing entirely (`covered - actual`). The `!=` check above already
-            # reroutes correctly on either side; only the diagnostic was one-sided.
-            decision = _downgrade_to_oracle(
-                decision,
-                "uncovered_columns:"
-                f"{sorted(actual - covered)};missing_configured_columns:{sorted(covered - actual)}",
-            )
-
-    if decision.native_admitted:
-        # Native faker selection converts the source column with per-chunk
-        # `source.to_pandas()` (_sample_faker_chunk), which diverges from the
-        # oracle's table-level `Table.to_pandas()` for non-string nullable
-        # extension types: a nullable Int64 source can materialize as float64 in
-        # a later chunk (3 -> 3.0), so deterministic canonicalization raises
-        # `float_canonicalization_unsupported` AFTER earlier chunks already
-        # yielded -- partial native output the whole-frame oracle never produces.
-        # C1's faker columns are string-typed; a faker column over a non-string
-        # source reroutes the WHOLE table to the oracle (narrower, never wider).
-        for node in decision.node_routes:
-            if node.strategy != "faker":
-                continue
-            ftype = first.schema.field(node.column).type
-            if not (pa.types.is_string(ftype) or pa.types.is_large_string(ftype)):
-                decision = _downgrade_to_oracle(
-                    decision, f"faker_source_type_not_string:{node.column}:{ftype}"
-                )
-                break
+    preflight = plan_native_route(
+        config,
+        profile,
+        table=table,
+        engine_version=engine_version,
+        first_schema=first.schema,
+    )
+    decision = preflight.evidence
 
     if route_evidence_sink is not None:
         route_evidence_sink.append(decision)
@@ -442,11 +507,13 @@ def run_native_or_oracle_chunked(
         evidence=decision,
         pool_cache=pool_cache,
         native_threads=native_threads,
+        index_kernel=preflight.index_kernel,
     )
 
 
 __all__ = [
     "NativeChunkSchemaDriftError",
+    "NativePreflight",
     "NativeRouteEvidence",
     "NodeRouteRecord",
     "plan_native_route",
