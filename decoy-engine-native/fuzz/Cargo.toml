@@ -27,6 +27,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "derive_index"
+path = "fuzz_targets/derive_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "ffi_metadata"
 path = "fuzz_targets/ffi_metadata.rs"
 test = false

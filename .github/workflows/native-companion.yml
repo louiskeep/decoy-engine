@@ -190,6 +190,12 @@ jobs:
       - name: Bounded fuzz campaign over derive_array
         working-directory: decoy-engine-native
         run: cargo +nightly fuzz run derive_array -- -max_total_time=120
+      # The index kernel (Task 2.3) gets its own bounded campaign over the PyO3-free
+      # batch::derive_index_array path: same admitted-type array generation as derive_array plus a
+      # full-range i64 pool_size that drives both pool guards and the modulo arithmetic between them.
+      - name: Bounded fuzz campaign over derive_index
+        working-directory: decoy-engine-native
+        run: cargo +nightly fuzz run derive_index -- -max_total_time=120
       - name: Crate tests under AddressSanitizer
         working-directory: decoy-engine-native
         env:
