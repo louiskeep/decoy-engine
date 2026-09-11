@@ -47,8 +47,8 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 #                (equivalent to one round of HMAC-SHA256 since 32 == HashLen)
 #   HMAC_input = (
 #       bytes([SEED_PROTOCOL_VERSION])              # 0x06 (v6 envelope)
-#       + len(namespace).to_bytes(4, "big")         # b"\x00\x00\x00\x14" (20)
-#       + namespace.encode("utf-8")                 # 20 bytes
+#       + len(ns_bytes).to_bytes(4, "big")          # UTF-8 BYTE length, here b"\x00\x00\x00\x14" (20)
+#       + ns_bytes                                  # ns_bytes = namespace.encode("utf-8"), 20 bytes
 #       + len(source).to_bytes(4, "big")            # b"\x00\x00\x00\x11" (17)
 #       + source                                    # 17 bytes
 #   )

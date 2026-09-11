@@ -236,10 +236,17 @@ _ALLOWLIST = frozenset(
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",
-        # Task 0.4 crypto contract: reference kernels call derive/fpe_encrypt_value
+        # Task 0.4 crypto contract: the reference kernels call derive/fpe_encrypt_value
         # to reproduce shipped KEYED derivation, which is deterministic, not an RNG
-        # output draw. Not a new draw site.
-        "execution/native/_crypto_ext.py",
+        # output draw. Not a new draw site. (Split out of _crypto_ext.py into this
+        # sibling by the 2026-09-10 module-size remediation; _crypto_ext.py no longer
+        # carries the derive calls, so only this module needs the allowlist entry.)
+        "execution/native/_crypto_reference.py",
+        # Task 2.3 index-kernel contract: the loader's KAT self-test and the
+        # `_ReferenceIndexDerivation` oracle both call the already-catalogued
+        # `derive_index` primitive to reproduce/verify deterministic pool selection.
+        # Not a new draw site (mirrors the _crypto_reference.py entry above).
+        "execution/native/_index_ext.py",
     }
 )
 

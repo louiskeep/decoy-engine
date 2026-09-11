@@ -8,29 +8,45 @@ on the oracle), pool-identity sharing (built once per unique identity,
 job_seed re-keys the pool build), and the `pool_select` route-evidence
 counters. End-to-end oracle-vs-native logical parity lives in
 `tests/parity/native/test_c1_faker_parity.py`.
+
+Task 2.3 Phase 5 adds the compiled-index-kernel wiring's own gaps: spy/stub
+kernel injection (`monkeypatch.setattr(_dispatch, "load_compiled_index_kernel",
+...)`, mirroring the existing crypto-loader monkeypatch pattern below),
+companion-absent downgrade + probe ordering, malformed-result fail-closed,
+and dictionary-encoded rejection.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import tempfile
+from collections.abc import Callable
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution import run_pipeline
+from decoy_engine.execution.native import _chunk_masking, _dispatch
+from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._dispatch import (
     NativeRouteEvidence,
     plan_native_route,
     run_native_or_oracle_chunked,
 )
+from decoy_engine.execution.native._index_ext import (
+    load_compiled_index_kernel,
+    reference_index_derivation,
+)
 from decoy_engine.execution.native._requirements import (
     NATIVE_POOL_STRATEGIES,
     faker_pool_precondition_met,
 )
-from decoy_engine.generation.pool import PoolBuilder, PoolCache
+from decoy_engine.generation.pool import GenerationError, PoolBuilder, PoolCache, ValuePool
+from decoy_engine.generation.pool import PoolSampler as _PoolSampler
+from decoy_engine.generation.pool import _sampler as _pool_sampler_module
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
 
@@ -138,6 +154,7 @@ def _run_native(
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_deterministic_reuse_faker_admits_on_native_pool_route() -> None:
     config = _config(_faker_column())
     source = _source()
@@ -179,7 +196,7 @@ def test_non_c1_faker_variant_stays_on_oracle(columns: list[dict]) -> None:
     config = _config(*columns)
     decision = plan_native_route(
         config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
-    )
+    ).evidence
 
     assert decision.native_admitted is False
     assert decision.reroute_reason is not None
@@ -217,6 +234,7 @@ def test_non_string_faker_source_reroutes_whole_table_to_oracle() -> None:
     assert evidence.compiled_kernel_executed is False
 
 
+@_NEEDS_COMPANION
 def test_large_string_faker_source_still_admits_native() -> None:
     # The scope-lock admits BOTH string kinds: a large_utf8 source is still a
     # string source, so it must not be rerouted by the non-string guard.
@@ -297,7 +315,7 @@ def test_one_non_c1_faker_column_reroutes_whole_table_not_just_that_column() -> 
     )
     decision = plan_native_route(
         config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
-    )
+    ).evidence
 
     assert decision.native_admitted is False
     assert all(r.route == "oracle" for r in decision.node_routes)
@@ -310,6 +328,7 @@ def test_one_non_c1_faker_column_reroutes_whole_table_not_just_that_column() -> 
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_pool_select_counters_prove_real_invocation_not_intent() -> None:
     config = _config(_faker_column())
     source = _source(n=12)
@@ -334,6 +353,7 @@ def test_pool_select_counters_prove_real_invocation_not_intent() -> None:
     assert evidence.compiled_kernel_executed is False
 
 
+@_NEEDS_COMPANION
 def test_pool_select_counts_per_column_chunk_with_two_faker_columns() -> None:
     config = _config(
         _faker_column("FIRST"),
@@ -356,6 +376,7 @@ def test_pool_select_counts_per_column_chunk_with_two_faker_columns() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_pool_built_once_per_invocation_regardless_of_chunk_count() -> None:
     config = _config(_faker_column())
     source = _source(n=20)
@@ -369,6 +390,7 @@ def test_pool_built_once_per_invocation_regardless_of_chunk_count() -> None:
     assert stats.misses == 1
 
 
+@_NEEDS_COMPANION
 def test_warm_cache_reused_across_separate_invocations() -> None:
     config = _config(_faker_column())
     cache = PoolCache()
@@ -386,6 +408,7 @@ def test_warm_cache_reused_across_separate_invocations() -> None:
     assert second_stats.misses == first_stats.misses  # no new build
 
 
+@_NEEDS_COMPANION
 def test_reversed_table_order_still_hits_warm_cache() -> None:
     config = _config(_faker_column())
     cache = PoolCache()
@@ -397,6 +420,7 @@ def test_reversed_table_order_still_hits_warm_cache() -> None:
     assert cache.stats().misses == 1
 
 
+@_NEEDS_COMPANION
 def test_distinct_namespaces_build_distinct_pools() -> None:
     config = _config(
         _faker_column("FIRST", namespace="ns_a"),
@@ -419,6 +443,7 @@ def test_distinct_namespaces_build_distinct_pools() -> None:
     assert first_vals != last_vals
 
 
+@_NEEDS_COMPANION
 def test_repeated_provider_across_columns_same_namespace_shares_one_pool() -> None:
     # Same provider, same namespace, same pool_size/config -> ONE identity,
     # even though the columns are named differently.
@@ -440,6 +465,7 @@ def test_repeated_provider_across_columns_same_namespace_shares_one_pool() -> No
     assert result.column("FIRST").to_pylist() == result.column("LAST").to_pylist()
 
 
+@_NEEDS_COMPANION
 def test_forced_eviction_still_rebuilds_value_identical_pool() -> None:
     # A pool larger than the tiny budget forces eviction of the FIRST
     # column's pool before the LAST column's identity is resolved; a later
@@ -548,6 +574,7 @@ def _run_with_key(config: dict, source: pa.Table, key_provider: SecretKeyProvide
     return pa.concat_tables(chunks).combine_chunks()
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("batch_size", [1, 3, 7])
 def test_mask_key_only_changes_selection_not_pool_identity(batch_size: int) -> None:
     config = _config(_faker_column())
@@ -579,6 +606,7 @@ def test_mask_key_only_changes_selection_not_pool_identity(batch_size: int) -> N
     assert result_a.column("FIRST").to_pylist() != result_b.column("FIRST").to_pylist()
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("cache_state", ["cold", "warm"])
 def test_job_seed_only_changes_pool_identity_and_build(cache_state: str) -> None:
     config_a = _config(_faker_column(), seed=111)
@@ -605,10 +633,13 @@ def test_job_seed_only_changes_pool_identity_and_build(cache_state: str) -> None
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_plan_native_route_agrees_with_run_native_or_oracle_chunked() -> None:
     config = _config(_faker_column())
     profile = _profile("FIRST")
-    decision = plan_native_route(config, profile, table="t", engine_version=_ENGINE_VERSION)
+    decision = plan_native_route(
+        config, profile, table="t", engine_version=_ENGINE_VERSION
+    ).evidence
     assert decision.native_admitted is True
 
     _, evidence = _run_native(config, _source(), batch_size=4)
@@ -671,6 +702,7 @@ def _null_dense_source(n: int = 24, *, n_distinct: int = 4) -> pa.Table:
     return pa.table({"FIRST": pa.array(values, type=pa.string())})
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("batch_size", [1, 5, 24])
 def test_selected_values_match_pandas_oracle_over_repeated_and_null_source(
     batch_size: int,
@@ -736,6 +768,7 @@ def test_null_positions_preserved_byte_for_byte_vs_oracle_null_dense_source() ->
     assert native_nulls == source_nulls
 
 
+@_NEEDS_COMPANION
 def test_faker_output_column_is_arrow_string_type() -> None:
     # `_sample_faker_chunk` builds `pa.array(..., type=pa.string())`
     # explicitly; a mutant dropping or changing that type argument would let
@@ -746,6 +779,7 @@ def test_faker_output_column_is_arrow_string_type() -> None:
     assert result.column("FIRST").type == pa.string()
 
 
+@_NEEDS_COMPANION
 def test_pool_cache_hit_selection_is_byte_identical_to_the_cold_build() -> None:
     # A cache HIT must select from the exact same pool object a cache MISS
     # would have built -- not a fresh, possibly-different rebuild, and not a
@@ -1018,3 +1052,551 @@ def test_resolve_faker_pools_passes_locale_and_config_through_to_the_builder(mon
 
     assert captured["locale"] == "en_US"
     assert captured["config"] == {"unused_marker": "x"}
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Phase 5, item 3 + 4: the compiled index kernel replaces the Python
+# per-row loop entirely -- exactly one batch call per faker column-chunk, the
+# requested native_threads budget reaches every call, and neither PoolSampler
+# nor the Python derive_index is ever touched.
+# ---------------------------------------------------------------------------
+
+
+@_NEEDS_COMPANION
+def test_index_kernel_called_exactly_once_per_faker_column_chunk_never_the_python_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_kernel = load_compiled_index_kernel()
+    call_lengths: list[int] = []
+
+    class _RecordingKernel:
+        def derive_index_batch(
+            self,
+            values: object,
+            *,
+            mask_key: bytes | None,
+            namespace: str,
+            pool_size: int,
+            native_threads: int | None = None,
+        ) -> pa.Array:
+            call_lengths.append(len(values))  # type: ignore[arg-type]
+            return real_kernel.derive_index_batch(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                pool_size=pool_size,
+                native_threads=native_threads,
+            )
+
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", lambda: _RecordingKernel())
+
+    def _fail_sample(*args: object, **kwargs: object) -> None:
+        raise AssertionError("PoolSampler.sample must never run on the compiled index route")
+
+    def _fail_derive_index(*args: object, **kwargs: object) -> None:
+        raise AssertionError("derive_index must never run per-row on the compiled index route")
+
+    monkeypatch.setattr(_PoolSampler, "sample", _fail_sample)
+    monkeypatch.setattr(_pool_sampler_module, "derive_index", _fail_derive_index)
+
+    config = _config(
+        _faker_column("FIRST", namespace="ns_first"),
+        _faker_column("LAST", provider="person_last_name", namespace="ns_last"),
+    )
+    source = pa.table(
+        {
+            "FIRST": pa.array(["a", "b", "c", "a", "b", "c"], type=pa.string()),
+            "LAST": pa.array(["x", "y", "z", "x", "y", "z"], type=pa.string()),
+        }
+    )
+    _, evidence = _run_native(config, source, batch_size=2)  # 3 chunks
+
+    assert evidence.native_admitted is True
+    # 2 faker columns x 3 chunks = 6 real batch calls, each over one 2-row chunk;
+    # if the route had fallen back to a per-row Python loop instead, the fail-if-
+    # called PoolSampler/derive_index patches above would have raised already.
+    assert call_lengths == [2, 2, 2, 2, 2, 2]
+
+
+@_NEEDS_COMPANION
+def test_native_threads_reaches_the_index_kernel_through_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Byte-parity alone cannot prove the plumbing stays intact (the kernel is
+    # thread-invariant), so record what native_threads the compiled call
+    # actually receives -- mirrors tests/parity/native/test_phase2_gate.py's
+    # hash-kernel forwarding proof.
+    real_kernel = load_compiled_index_kernel()
+    seen: list[object] = []
+
+    class _RecordingKernel:
+        def derive_index_batch(
+            self,
+            values: object,
+            *,
+            mask_key: bytes | None,
+            namespace: str,
+            pool_size: int,
+            native_threads: int | None = None,
+        ) -> pa.Array:
+            seen.append(native_threads)
+            return real_kernel.derive_index_batch(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                pool_size=pool_size,
+                native_threads=native_threads,
+            )
+
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", lambda: _RecordingKernel())
+
+    config = _config(_faker_column())
+    source = _source(n=24, n_distinct=6)
+    sink: list[NativeRouteEvidence] = []
+    list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 6),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            route_evidence_sink=sink,
+            native_threads=5,
+        )
+    )
+    assert sink[0].native_admitted is True
+    assert seen, "no compiled derive_index_batch call was recorded"
+    assert all(nt == 5 for nt in seen), (
+        f"native_threads did not reach every index-kernel call: saw {sorted(set(map(repr, seen)))}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Phase 5, item 2: gather proofs. An all-distinct sentinel pool (each
+# value encodes its own index) makes a wrong-index gather detectable by
+# inspection; a duplicate-bearing pool proves raw pool order and duplicates
+# survive the gather (no dedup). Both compare the route's actual output
+# against an INDEPENDENT recomputation via the pure-Python
+# `reference_index_derivation`, over the exact (values, mask_key, namespace,
+# pool_size) the route used -- captured off a recording wrapper around the
+# real compiled kernel, not read back out of the route's own output.
+# ---------------------------------------------------------------------------
+
+
+def _sentinel_pool_builder(values_by_size: dict[int, np.ndarray]):
+    def _build(self: PoolBuilder, provider: str, *, size: int, **kwargs: object) -> ValuePool:
+        values = values_by_size[size]
+        return ValuePool(
+            values=values,
+            provider=provider,
+            locale=kwargs.get("locale") or "default",  # type: ignore[arg-type]
+            config_hash="sentinel-hash",
+            seed=b"sentinel-seed",
+            size=size,
+            build_time_ms=0.0,
+            backend_type="test",
+            backend_version="0",
+            distinct_count=len(set(values)),
+        )
+
+    return _build
+
+
+def _recompute_expected(captured: dict[str, object], pool_values: np.ndarray) -> list[str | None]:
+    ref = reference_index_derivation()
+    expected_idx = ref.derive_index_batch(
+        captured["values"],
+        mask_key=captured["mask_key"],  # type: ignore[arg-type]
+        namespace=captured["namespace"],  # type: ignore[arg-type]
+        pool_size=captured["pool_size"],  # type: ignore[arg-type]
+    ).to_pylist()
+    return [None if i is None else str(pool_values[i]) for i in expected_idx]
+
+
+@_NEEDS_COMPANION
+def test_sentinel_pool_gather_matches_independently_derived_index_by_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool_size = 40
+    sentinel_values = np.array([f"POOL_{i:04d}" for i in range(pool_size)], dtype=object)
+    monkeypatch.setattr(PoolBuilder, "build", _sentinel_pool_builder({pool_size: sentinel_values}))
+
+    real_kernel = load_compiled_index_kernel()
+    captured: dict[str, object] = {}
+
+    class _CapturingKernel:
+        def derive_index_batch(
+            self,
+            values: object,
+            *,
+            mask_key: bytes | None,
+            namespace: str,
+            pool_size: int,
+            native_threads: int | None = None,
+        ) -> pa.Array:
+            captured["values"] = values
+            captured["mask_key"] = mask_key
+            captured["namespace"] = namespace
+            captured["pool_size"] = pool_size
+            return real_kernel.derive_index_batch(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                pool_size=pool_size,
+                native_threads=native_threads,
+            )
+
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", lambda: _CapturingKernel())
+
+    config = _config(_faker_column(pool_size=pool_size))
+    source = _source(n=12)  # one chunk (batch_size=12); has nulls at i % 7 == 0
+    result, evidence = _run_native(config, source, batch_size=12)
+
+    assert evidence.native_admitted is True
+    expected = _recompute_expected(captured, sentinel_values)
+    assert result.column("FIRST").to_pylist() == expected
+
+
+@_NEEDS_COMPANION
+def test_duplicate_bearing_pool_gather_preserves_raw_order_and_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two distinct pool slots (3 and 7) deliberately share one value; every
+    # other slot is unique. A gather that deduplicated the pool before
+    # indexing (or reordered it) would diverge from this direct recomputation
+    # the moment any selected index lands on 3 or 7. A SMALL pool plus MANY
+    # distinct source values (deterministic reuse maps each distinct value to
+    # one fixed slot, so row COUNT alone would not add coverage) makes it
+    # overwhelmingly likely (and this test also verifies it, not just hopes)
+    # that at least one row lands on the shared pair.
+    pool_size = 10
+    dup_values = np.array([f"POOL_{i:04d}" for i in range(pool_size)], dtype=object)
+    dup_values[7] = dup_values[3]
+    monkeypatch.setattr(PoolBuilder, "build", _sentinel_pool_builder({pool_size: dup_values}))
+
+    real_kernel = load_compiled_index_kernel()
+    captured: dict[str, object] = {}
+
+    class _CapturingKernel:
+        def derive_index_batch(
+            self,
+            values: object,
+            *,
+            mask_key: bytes | None,
+            namespace: str,
+            pool_size: int,
+            native_threads: int | None = None,
+        ) -> pa.Array:
+            captured["values"] = values
+            captured["mask_key"] = mask_key
+            captured["namespace"] = namespace
+            captured["pool_size"] = pool_size
+            return real_kernel.derive_index_batch(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                pool_size=pool_size,
+                native_threads=native_threads,
+            )
+
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", lambda: _CapturingKernel())
+
+    config = _config(_faker_column(pool_size=pool_size))
+    source = _source(n=120, n_distinct=120)
+    result, evidence = _run_native(config, source, batch_size=120)
+
+    assert evidence.native_admitted is True
+    expected = _recompute_expected(captured, dup_values)
+    assert result.column("FIRST").to_pylist() == expected
+    # At least one row actually landed on the duplicated pair, so this proves
+    # something real about duplicate handling rather than passing vacuously.
+    assert any(v == dup_values[3] for v in expected if v is not None)
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Phase 5, item 5 + 14: companion-absent downgrade, and the D1 probe
+# ORDER -- guards (static admission, schema/coverage, non-string faker)
+# precede probes (crypto, index), so a schema-rejected table never reaches
+# either loader.
+# ---------------------------------------------------------------------------
+
+
+def test_faker_only_index_absence_downgrades_with_reason_and_matches_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _unavailable() -> None:
+        raise CryptoExtensionUnavailableError("simulated index absence")
+
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", _unavailable)
+
+    source = _null_dense_source()
+    config = _config_on_disk(source, _faker_column())
+    key_provider = _key_provider()
+    oracle_out = _run_oracle(config, source, key_provider)
+
+    sink: list[NativeRouteEvidence] = []
+    native_chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 5),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=key_provider,
+            route_evidence_sink=sink,
+        )
+    )
+    evidence = sink[0]
+    assert evidence.native_admitted is False
+    assert evidence.reroute_reason == "index_extension_unavailable"
+    assert all(r.route == "oracle" for r in evidence.node_routes)
+    native_out = pa.concat_tables(native_chunks).combine_chunks()
+    assert native_out.column("FIRST").to_pylist() == oracle_out.column("FIRST").to_pylist()
+
+
+def test_mixed_hash_and_faker_index_absence_downgrades_whole_table_hash_never_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The crypto probe only needs to not raise here; stubbing it means this
+    # test needs no real companion at all -- the point is the ORDER (crypto
+    # probe succeeds, index probe fails, downgrade) and that NEITHER node's
+    # real kernel call ever executes once the whole table downgrades.
+    monkeypatch.setattr(_dispatch, "load_compiled_crypto_kernel", lambda: object())
+
+    def _unavailable() -> None:
+        raise CryptoExtensionUnavailableError("simulated index absence")
+
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", _unavailable)
+
+    def _fail_hash(*args: object, **kwargs: object) -> None:
+        raise AssertionError("native_keyed_hash must never run once the whole table downgrades")
+
+    monkeypatch.setattr(_chunk_masking, "native_keyed_hash", _fail_hash)
+
+    config = _config(
+        _faker_column(),
+        {"name": "SSN", "strategy": "hash", "namespace": "ssn_identity"},
+    )
+    source = pa.table(
+        {
+            "FIRST": pa.array(["a", "b", None, "a"], type=pa.string()),
+            "SSN": pa.array(["111-22-3333", "222-33-4444", None, "444-55-6666"], type=pa.string()),
+        }
+    )
+    sink: list[NativeRouteEvidence] = []
+    chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 2),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            route_evidence_sink=sink,
+        )
+    )
+    evidence = sink[0]
+    assert evidence.native_admitted is False
+    assert evidence.reroute_reason == "index_extension_unavailable"
+    assert all(r.route == "oracle" for r in evidence.node_routes)
+    assert evidence.kernel_calls == {}
+    assert evidence.compiled_kernel_executed is False
+    out = pa.concat_tables(chunks).combine_chunks()
+    assert len(out) == 4
+
+
+def test_static_rejection_never_reaches_either_companion_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_crypto() -> None:
+        raise AssertionError("crypto probe must not run for a statically-rejected table")
+
+    def _fail_index() -> None:
+        raise AssertionError("index probe must not run for a statically-rejected table")
+
+    monkeypatch.setattr(_dispatch, "load_compiled_crypto_kernel", _fail_crypto)
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", _fail_index)
+
+    config = _config(_faker_column())
+    config["relationships"] = [
+        {
+            "parent": {"table": "t", "columns": ["FIRST"]},
+            "children": [{"table": "other", "columns": ["x"]}],
+            "orphan_policy": "fail",
+            "namespace": "ns_first",
+        }
+    ]
+    decision = plan_native_route(
+        config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
+    ).evidence
+    assert decision.native_admitted is False
+    assert decision.reroute_reason == "fk_relationship_not_native_route"
+
+
+def _multi_column_profile(*names: str) -> Profile:
+    from datetime import datetime
+
+    cols = tuple(
+        ColumnProfile(
+            name=n,
+            dtype="object",
+            row_count=3,
+            null_count=0,
+            distinct_count=3,
+            sampled=False,
+            is_candidate_key_sampled=False,
+            declared_pk=False,
+            is_fk=False,
+            fk_target=None,
+            pii_class=None,
+        )
+        for n in names
+    )
+    return Profile(
+        schema_version=1,
+        tables=(TableProfile(name="t", row_count=3, columns=cols),),
+        relationships=(),
+        profiled_at=datetime(2026, 8, 30, 0, 0, 0),
+        decoy_engine_version="0.1.0",
+    )
+
+
+def test_coverage_mismatch_with_extra_and_missing_column_never_reaches_either_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_crypto() -> None:
+        raise AssertionError("crypto probe must not run for a schema-rejected table")
+
+    def _fail_index() -> None:
+        raise AssertionError("index probe must not run for a schema-rejected table")
+
+    monkeypatch.setattr(_dispatch, "load_compiled_crypto_kernel", _fail_crypto)
+    monkeypatch.setattr(_dispatch, "load_compiled_index_kernel", _fail_index)
+
+    config = _config(
+        _faker_column("FIRST"),
+        {"name": "SSN", "strategy": "hash", "namespace": "ssn_identity"},
+    )
+    # Both sides of the symmetric difference at once: EXTRA is unconfigured,
+    # SSN (configured) is missing from this chunk. The profile must carry
+    # BOTH configured columns (FIRST and SSN), or the hash column's own
+    # capability resolution rejects it for an unrelated reason (a missing
+    # profile entry), masking the coverage-mismatch reason this test targets.
+    schema = pa.schema([("FIRST", pa.string()), ("EXTRA", pa.string())])
+    decision = plan_native_route(
+        config,
+        _multi_column_profile("FIRST", "SSN"),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        first_schema=schema,
+    ).evidence
+    assert decision.native_admitted is False
+    assert decision.reroute_reason is not None
+    assert "uncovered_columns:['EXTRA']" in decision.reroute_reason
+    assert "missing_configured_columns:['SSN']" in decision.reroute_reason
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Phase 5, item 12: a malformed compiled (or stub) index kernel
+# result must fail closed with the coded runtime-invariant error, never an
+# uncoded NumPy/Arrow exception.
+# ---------------------------------------------------------------------------
+
+
+def _stub_index_kernel(make_bad_result: Callable[[int], object]) -> object:
+    class _Stub:
+        def derive_index_batch(
+            self,
+            values: object,
+            *,
+            mask_key: bytes | None,
+            namespace: str,
+            pool_size: int,
+            native_threads: int | None = None,
+        ) -> pa.Array:
+            return make_bad_result(len(values))  # type: ignore[arg-type]
+
+    return _Stub()
+
+
+@pytest.mark.parametrize(
+    ("make_bad_result", "expected_code"),
+    [
+        pytest.param(
+            lambda n: pa.array(list(range(max(n - 1, 0))), type=pa.uint64()),
+            "index_batch_length_mismatch",
+            id="wrong_length",
+        ),
+        pytest.param(
+            lambda n: pa.array(list(range(n)), type=pa.int64()),
+            "index_batch_type_mismatch",
+            id="non_uint64_type",
+        ),
+        pytest.param(
+            lambda n: pa.array([0] * (n - 1) + [None], type=pa.uint64()),
+            "index_batch_null_mask_mismatch",
+            id="null_mask_mismatch",
+        ),
+        pytest.param(
+            lambda n: pa.array([0] * (n - 1) + [999], type=pa.uint64()),
+            "index_batch_out_of_bounds",
+            id="out_of_bounds",
+        ),
+        pytest.param(
+            # A correctly-sized plain Python list (not a pa.Array): has no
+            # `.type`/`.is_valid()`, so the isinstance guard must catch it as a
+            # coded type_mismatch rather than leaking an uncoded AttributeError.
+            lambda n: list(range(n)),
+            "index_batch_type_mismatch",
+            id="non_arrow_list",
+        ),
+    ],
+)
+def test_malformed_index_kernel_result_fails_closed_with_coded_error(
+    monkeypatch: pytest.MonkeyPatch,
+    make_bad_result: Callable[[int], object],
+    expected_code: str,
+) -> None:
+    monkeypatch.setattr(
+        _dispatch, "load_compiled_index_kernel", lambda: _stub_index_kernel(make_bad_result)
+    )
+
+    config = _config(_faker_column(pool_size=10))
+    source = pa.table({"FIRST": pa.array(["a", "b", "c", "d"], type=pa.string())})
+    sink: list[NativeRouteEvidence] = []
+    it = run_native_or_oracle_chunked(
+        config,
+        [source],
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        key_provider=_key_provider(),
+        route_evidence_sink=sink,
+    )
+    with pytest.raises(GenerationError) as exc_info:
+        list(it)
+    assert exc_info.value.code == expected_code
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Phase 5, item 13: a dictionary-encoded faker source is rejected by
+# the existing non-string guard, never silently decoded and admitted.
+# ---------------------------------------------------------------------------
+
+
+def test_dictionary_encoded_faker_source_is_rejected_not_silently_decoded() -> None:
+    config = _config(_faker_column())
+    dict_array = pa.array(["a", "b", None, "a"], type=pa.string()).dictionary_encode()
+    source = pa.table({"FIRST": dict_array})
+    sink: list[NativeRouteEvidence] = []
+    list(
+        run_native_or_oracle_chunked(
+            config,
+            _chunk(source, 2),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            route_evidence_sink=sink,
+        )
+    )
+    evidence = sink[0]
+    assert evidence.native_admitted is False
+    assert evidence.reroute_reason is not None
+    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")

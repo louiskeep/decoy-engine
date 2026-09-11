@@ -39,10 +39,11 @@ class TestStringNFC:
 
 class TestInteger:
     """Current envelope (stabilised at v2 F-series NF1/NF2; unchanged
-    through v3): length-prefixed minimal-width two's
-    complement big-endian (4-byte length prefix + minimal body). Replaces the
-    fixed 8-byte form, which overflowed for |value| >= 2**63 and missed numpy
-    integer scalars."""
+    through v3): length-prefixed signed two's complement big-endian, a
+    `(bit_length+8)//8`-byte body (a reserved sign byte, so NOT strictly minimal:
+    -128 is `ff80`, not `80`) behind a 4-byte length prefix. Replaces the fixed
+    8-byte form, which overflowed for |value| >= 2**63 and missed numpy integer
+    scalars."""
 
     def test_zero(self) -> None:
         # length 1, body 0x00
@@ -98,7 +99,10 @@ class TestDatetime:
         dt = datetime(2026, 5, 27, 14, 0, 0, tzinfo=timezone.utc)
         out = _canonicalize_source(dt)
         assert out.startswith(b"2026-05-27")
-        assert b"+00:00" in out or b"Z" in out
+        # The frozen form is the "+00:00" offset, not a "Z" suffix (the derive_index / keyed-hash
+        # KATs pin "+00:00"); assert it exactly rather than accepting either.
+        assert b"+00:00" in out
+        assert b"Z" not in out
 
     def test_timezone_naive_raises(self) -> None:
         dt = datetime(2026, 5, 27, 14, 0, 0)  # no tz

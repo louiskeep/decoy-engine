@@ -31,6 +31,8 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     FpeConfig,
     load_compiled_crypto_kernel,
+)
+from decoy_engine.execution.native._crypto_reference import (
     reference_fpe,
     reference_keyed_derivation,
 )

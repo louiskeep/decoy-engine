@@ -18,13 +18,18 @@ DuckDB spill-backed aggregation (that path's own boundedness is Task 3.2's
 scope, tested there); "each state owner" here means the two Task 3.4 was
 asked to build/prove: `PoolCache` and `RouteDiagnostics`.
 
-Faker-only config throughout, so this never needs the compiled companion
-(unlike the hash kernel path in `tests/native/test_kernels_keyed.py`).
+Faker-only config throughout. Since Task 2.3 the native Faker route selects
+through the compiled `derive_index_batch` kernel, so these native-route tests
+need the compiled companion (they downgrade to the oracle without it); they are
+gated `@_NEEDS_COMPANION` and skip in the companion-absent CI substrate jobs.
 """
 
 from __future__ import annotations
 
+import importlib.util
+
 import pyarrow as pa
+import pytest
 
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution.native._dispatch import (
@@ -34,6 +39,13 @@ from decoy_engine.execution.native._dispatch import (
 from decoy_engine.execution.native._route_diagnostics import PoolOwner, RouteDiagnostics
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.keyprovider import SecretKeyProvider
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
+)
+
 
 _ENGINE_VERSION = "phase3-task3.4-adversary"
 _DEFAULT_MAX_BYTES = 256 * 1024 * 1024
@@ -99,6 +111,7 @@ def _run(
     return sink[0], diag
 
 
+@_NEEDS_COMPANION
 def test_row_and_chunk_count_do_not_move_cache_or_collector_state() -> None:
     pool_size = 2_000
 
@@ -139,6 +152,7 @@ def test_row_and_chunk_count_do_not_move_cache_or_collector_state() -> None:
     assert cache_small.stats().bytes_capacity == _DEFAULT_MAX_BYTES
 
 
+@_NEEDS_COMPANION
 def test_dominate_warning_count_stays_at_one_across_chunk_count() -> None:
     pool_size = 2_000
     config = _faker_config(pool_size=pool_size)
@@ -176,6 +190,7 @@ def test_dominate_warning_count_stays_at_one_across_chunk_count() -> None:
     assert cache_many.stats().bytes_used <= cache_many.stats().bytes_capacity
 
 
+@_NEEDS_COMPANION
 def test_pool_cache_evicts_at_byte_bound_under_many_distinct_identities() -> None:
     """Many distinct namespaces (distinct pool identities) sharing ONE small
     cache force real LRU eviction, proving `PoolCache` never grows past its

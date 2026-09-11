@@ -36,8 +36,8 @@ function's docstring (cited per test):
   mechanisms, both tested directly: `fk_join_key`'s per-type tag prefix
   (`\\x00INT:`/`\\x00STR:`/`\\x00DEC:`/...) keeps different Python types from
   colliding, and `fk_join_key_tuple`'s length-prefixed framing (cited in its
-  own docstring as the same idea as the kernel's ASN.1 DER length-prefix
-  encoding) keeps differently-shaped key tuples from colliding under naive
+  own docstring as the same length-prefix idea as the kernel's `_encode_int`)
+  keeps differently-shaped key tuples from colliding under naive
   concatenation. `fk_columns_for_table` has its own, simpler table-scoped
   isolation: a table's protected FK columns never include a column that
   belongs only to a DIFFERENT table's edge.
@@ -359,10 +359,10 @@ def test_join_key_tuple_agrees_with_normalized_equality(t1, t2) -> None:
 
 def test_join_key_tuple_framing_prevents_concatenation_collision() -> None:
     """Regression pin for the exact adversarial shape `fk_join_key_tuple`'s
-    own docstring cites (the ASN.1 DER length-prefix framing idea,
-    `kernel/_canonicalize.py::_encode_int`'s lineage): two differently-shaped
-    key tuples whose components would concatenate to the same joined text
-    under a NAIVE (unframed) join must still encode to different tokens."""
+    own docstring cites (the same length-prefix framing idea as
+    `kernel/_canonicalize.py::_encode_int`): two differently-shaped key tuples
+    whose components would concatenate to the same joined text under a NAIVE
+    (unframed) join must still encode to different tokens."""
     assert fk_join_key_tuple(("ab", "c")) != fk_join_key_tuple(("a", "bc"))
 
 

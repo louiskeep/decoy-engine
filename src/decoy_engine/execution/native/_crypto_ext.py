@@ -49,19 +49,14 @@ from typing import Any, Protocol, TypeAlias
 
 import pyarrow as pa
 
-from decoy_engine.determinism import DeterminismError, derive
+from decoy_engine.determinism import DeterminismError
 from decoy_engine.errors import (
     DecoyError,
-    FpeChecksumError,
-    FpeUnencryptableError,
     MaskKeyRequiredError,
 )
-from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL, FpeStrategyHandler
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.generation.pool._events import QualityWarning
-from decoy_engine.kernel._canonicalize import canonicalize_derive_source
-from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
-from decoy_engine.transforms.fpe import _CHARSETS, fpe_decrypt_value, fpe_encrypt_value
+from decoy_engine.transforms.fpe import _CHARSETS
 
 KernelInput: TypeAlias = pa.Array | pa.ChunkedArray | list[Any]
 
@@ -302,6 +297,7 @@ class KeyedDerivationKernel(Protocol):
         mask_key: bytes | None,
         namespace: str,
         truncate: int | None,
+        native_threads: int | None = None,
     ) -> pa.Array: ...
 
 
@@ -345,188 +341,6 @@ def _require_mask_key(mask_key: bytes | None, kernel: str) -> bytes:
     return mask_key
 
 
-class _ReferenceKeyedDerivation:
-    """Pure-Python reference for `kernel/_scalar.hash_array`.
-
-    Reuses the shipped normalization (`_array_to_pylist`), null policy
-    (`_is_missing`), canonicalizer, and `derive`, so output is byte-identical
-    by construction while carrying the native contract's mask_key naming and
-    fail-closed guard. Accepts the pa.Array form and the mixed-object list
-    form; the compiled kernel accepts only pa.Array (see CRYPTO_EXT_ABI)."""
-
-    def derive_batch(
-        self,
-        values: KernelInput,
-        *,
-        mask_key: bytes | None,
-        namespace: str,
-        truncate: int | None,
-    ) -> pa.Array:
-        key = _require_mask_key(mask_key, "keyed_derivation")
-        out: list[str | None] = []
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            token = derive(key, namespace, canonicalize_derive_source(value)).hex()
-            out.append(token[:truncate] if truncate is not None else token)
-        return pa.array(out, type=pa.string())
-
-
-class _ReferenceFpe:
-    """Pure-Python reference for `execution/_strategies/_fpe.py`.
-
-    Reuses the shipped value primitive (`fpe_encrypt_value` / `fpe_decrypt_value`)
-    and the shipped residual-risk warning method, and reproduces the strategy's
-    config resolution, key derivation, tweak, null policy, and fail-closed
-    error mapping, so output is byte-identical to the strategy."""
-
-    _warner = FpeStrategyHandler()
-
-    def encrypt_batch(
-        self,
-        values: KernelInput,
-        *,
-        mask_key: bytes | None,
-        namespace: str,
-        tweak_column: str,
-        config: FpeConfig,
-    ) -> FpeBatchResult:
-        return self._run(
-            values,
-            mask_key=mask_key,
-            namespace=namespace,
-            tweak_column=tweak_column,
-            config=config,
-            forward=True,
-        )
-
-    def decrypt_batch(
-        self,
-        values: KernelInput,
-        *,
-        mask_key: bytes | None,
-        namespace: str,
-        tweak_column: str,
-        config: FpeConfig,
-    ) -> FpeBatchResult:
-        return self._run(
-            values,
-            mask_key=mask_key,
-            namespace=namespace,
-            tweak_column=tweak_column,
-            config=config,
-            forward=False,
-        )
-
-    def _run(
-        self,
-        values: KernelInput,
-        *,
-        mask_key: bytes | None,
-        namespace: str,
-        tweak_column: str,
-        config: FpeConfig,
-        forward: bool,
-    ) -> FpeBatchResult:
-        key_material = _require_mask_key(mask_key, "fpe")
-        charset, preserve_sep, validate_luhn, checksum = config._resolve()
-        tweak = (config.join_group or tweak_column).encode("utf-8", errors="replace")
-        key = derive(key_material, namespace, FPE_KEY_LABEL)
-        transform = fpe_encrypt_value if forward else fpe_decrypt_value
-
-        out: list[str | None] = []
-        errors: list[FpeRowError] = []
-        non_na_values: list[str] = []
-        for row_index, value in enumerate(_array_to_pylist(values)):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            text = str(value)
-            non_na_values.append(text)
-            try:
-                out.append(
-                    transform(text, key, charset, tweak, preserve_sep, validate_luhn, checksum)
-                )
-            except FpeUnencryptableError:
-                out.append(None)
-                errors.append(_row_error(row_index, "fpe_unencryptable_value"))
-            except FpeChecksumError:
-                out.append(None)
-                errors.append(_row_error(row_index, "fpe_checksum_unsupported"))
-
-        warnings = self._warnings(
-            non_na_values,
-            charset=charset,
-            preserve_sep=preserve_sep,
-            column=tweak_column,
-            join_group=config.join_group,
-        )
-        return FpeBatchResult(
-            values=pa.array(out, type=pa.string()),
-            errors=tuple(errors),
-            warnings=tuple(warnings),
-        )
-
-    def _warnings(
-        self,
-        non_na_values: list[str],
-        *,
-        charset: str,
-        preserve_sep: bool,
-        column: str,
-        join_group: str | None,
-    ) -> list[QualityWarning]:
-        warnings = list(
-            self._warner._residual_risk_warnings(
-                non_na_values,
-                charset_set=set(charset),
-                radix=len(charset),
-                preserve_sep=preserve_sep,
-                column=column,
-            )
-        )
-        if join_group:
-            warnings.append(
-                QualityWarning(
-                    code="fpe_join_group_active",
-                    provider="fpe",
-                    column=column,
-                    detail={
-                        "join_group": join_group,
-                        "security_note": "cross-column domain separation intentionally waived",
-                    },
-                )
-            )
-        return warnings
-
-
-_ROW_ERROR_MESSAGES = {
-    "fpe_unencryptable_value": (
-        "value cannot be format-preserving-encrypted without leaking cleartext or "
-        "producing non-invertible output; the engine fails closed."
-    ),
-    "fpe_checksum_unsupported": (
-        "value has an invalid length for the configured checksum scheme; the engine fails closed."
-    ),
-}
-
-
-def _row_error(row_index: int, code: str) -> FpeRowError:
-    """Build a redacted per-row error (never carries the cell value)."""
-    return FpeRowError(row_index=row_index, code=code, message=_ROW_ERROR_MESSAGES[code])
-
-
-def reference_keyed_derivation() -> KeyedDerivationKernel:
-    """Return the pure-Python keyed-derivation reference kernel."""
-    return _ReferenceKeyedDerivation()
-
-
-def reference_fpe() -> FpeKernel:
-    """Return the pure-Python FPE reference kernel."""
-    return _ReferenceFpe()
-
-
 # The ABI tag this core build expects from the compiled companion, pinned to the
 # `ABI_VERSION` constant `decoy-engine-native/src/lib.rs` exports as `abi_version()`.
 # A mismatch (a companion built against a different core revision) is treated the
@@ -534,7 +348,7 @@ def reference_fpe() -> FpeKernel:
 # CryptoExtensionUnavailableError rather than run a binary whose framing this core
 # did not pin. Whether to fall back to the reference kernel is the caller's
 # preflight decision, not this loader's.
-_EXPECTED_ABI_VERSION = "decoy-native-abi-1"
+_EXPECTED_ABI_VERSION = "decoy-native-abi-2"
 
 
 def _translate_compiled_kernel_error(exc: ValueError) -> Exception:
@@ -576,6 +390,7 @@ class _CompiledKeyedDerivationKernel:
         mask_key: bytes | None,
         namespace: str,
         truncate: int | None,
+        native_threads: int | None = None,
     ) -> pa.Array:
         # Fail before the compiled kernel is even called, matching
         # `_ReferenceKeyedDerivation.derive_batch`'s unconditional pre-loop guard
@@ -591,7 +406,11 @@ class _CompiledKeyedDerivationKernel:
         array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
         try:
             return self._derive_batch_fn(
-                array, mask_key=key, namespace=namespace, truncate=truncate
+                array,
+                mask_key=key,
+                namespace=namespace,
+                truncate=truncate,
+                native_threads=native_threads,
             )
         except ValueError as exc:
             raise _translate_compiled_kernel_error(exc) from exc
@@ -650,11 +469,15 @@ def load_compiled_crypto_kernel() -> KeyedDerivationKernel:
     try:
         derive_batch_fn = _kernel.derive_batch
         probe = HASH_KAT[0]
+        # Pass native_threads (abi-2 requirement) in the load-time self-test too: an old-signature
+        # binary that somehow reports abi-2 but lacks the parameter fails HERE, at load, rather than
+        # on the first real hash call. Belt-and-suspenders with the abi-2 tag check above.
         probe_out = derive_batch_fn(
             pa.array([probe.value]),
             mask_key=probe.mask_key,
             namespace=probe.namespace,
             truncate=probe.truncate,
+            native_threads=1,
         )
         # Require the exact Arrow type the reference emits, not just matching Python
         # values: a large_string array or a non-Arrow object that merely spoofs
@@ -697,6 +520,4 @@ __all__ = [
     "HashKatVector",
     "KeyedDerivationKernel",
     "load_compiled_crypto_kernel",
-    "reference_fpe",
-    "reference_keyed_derivation",
 ]

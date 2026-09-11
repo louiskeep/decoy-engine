@@ -124,7 +124,11 @@ def _chunk(table: pa.Table, batch_size: int) -> list[pa.Table]:
 
 
 def _run_native(
-    config: dict, source: pa.Table, batch_size: int
+    config: dict,
+    source: pa.Table,
+    batch_size: int,
+    *,
+    native_threads: int | None = None,
 ) -> tuple[pa.Table, NativeRouteEvidence]:
     sink: list[NativeRouteEvidence] = []
     chunks = list(
@@ -135,6 +139,7 @@ def _run_native(
             engine_version=_ENGINE_VERSION,
             key_provider=_key_provider(),
             route_evidence_sink=sink,
+            native_threads=native_threads,
         )
     )
     return pa.concat_tables(chunks).combine_chunks(), sink[0]
@@ -162,16 +167,22 @@ def _run_oracle(config: dict, source: pa.Table) -> _LogicalResult:
 _N_ROWS = 33  # not a multiple of any batch size below: exercises a ragged last chunk
 _BATCH_SIZES = (1, 4, 11)
 _ORDERS = (False, True)  # natural, then reversed
+_NATIVE_THREADS = (1, 2, 4)  # the index kernel is thread-invariant; output must not move
 
 
 @_NEEDS_COMPANION
+@pytest.mark.parametrize(
+    "native_threads", _NATIVE_THREADS, ids=[f"threads_{t}" for t in _NATIVE_THREADS]
+)
 @pytest.mark.parametrize("reverse", _ORDERS, ids=["natural_order", "reversed_order"])
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES, ids=[f"batch_{b}" for b in _BATCH_SIZES])
-def test_native_faker_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> None:
+def test_native_faker_route_exact_parity_vs_oracle(
+    batch_size: int, reverse: bool, native_threads: int
+) -> None:
     source = _build_source(_N_ROWS, reverse=reverse)
     config = _build_config(source)
     oracle = _run_oracle(config, source)
-    native_table, evidence = _run_native(config, source, batch_size)
+    native_table, evidence = _run_native(config, source, batch_size, native_threads=native_threads)
 
     assert evidence.native_admitted is True
     candidate = _LogicalResult(outputs={"c1": native_table})
@@ -217,3 +228,54 @@ def test_route_evidence_matches_column_count_and_native_pool_tag() -> None:
     assert evidence.pool_select_executed is True
     assert evidence.compiled_kernel_executed is True
     assert evidence.kernel_calls.get("hash") == 4
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Phase 5, item 9: type/shape edges byte-parity checks. Admission
+# for a large_string faker source is already covered in
+# tests/native/test_dispatch_faker.py; this adds the byte-parity-vs-oracle
+# proof admission alone does not.
+# ---------------------------------------------------------------------------
+
+
+@_NEEDS_COMPANION
+def test_native_faker_route_parity_with_large_string_source() -> None:
+    idx = list(range(20))
+    n_distinct = 5
+    first = pa.array([f"first_src_{i % n_distinct}" for i in idx], type=pa.large_string())
+    last = pa.array([f"last_src_{i % n_distinct}" for i in idx], type=pa.large_string())
+    ssn = pa.array([f"5{i % 900:03d}-11-2222" for i in idx], type=pa.string())
+    source = pa.table({"FIRST": first, "LAST": last, "SSN": ssn})
+    config = _build_config(source)
+    oracle = _run_oracle(config, source)
+    native_table, evidence = _run_native(config, source, batch_size=6)
+
+    assert evidence.native_admitted is True
+    assert_logical_parity(_LogicalResult(outputs={"c1": native_table}), oracle)
+
+
+@_NEEDS_COMPANION
+def test_native_faker_route_parity_with_an_empty_chunk_mid_stream() -> None:
+    # A zero-row chunk between two non-empty ones: the ChunkedArray/gather
+    # path in `_sample_faker_chunk` must fall out naturally to an empty
+    # output, not misalign the chunks that follow it.
+    source = _build_source(12)
+    config = _build_config(source)
+    oracle = _run_oracle(config, source)
+
+    empty_chunk = source.schema.empty_table()
+    chunks = [source.slice(0, 4), empty_chunk, source.slice(4, 4), source.slice(8, 4)]
+    sink: list[NativeRouteEvidence] = []
+    native_chunks = list(
+        run_native_or_oracle_chunked(
+            config,
+            chunks,
+            table="c1",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            route_evidence_sink=sink,
+        )
+    )
+    assert sink[0].native_admitted is True
+    native_table = pa.concat_tables(native_chunks).combine_chunks()
+    assert_logical_parity(_LogicalResult(outputs={"c1": native_table}), oracle)

@@ -1,10 +1,11 @@
 //! Compiled Rust companion for `decoy-engine`'s native masking hot path.
 //!
 //! `_kernel` is the canonical compiled module the engine's `native` extra ships and the
-//! `load_compiled_crypto_kernel` loader targets. It exports `abi_version()` (the build-system
-//! stub from the companion scaffold) and `derive_batch` (the security-sensitive
-//! `KeyedDerivationKernel`, see `arrow_ffi::derive_batch`). Everything else the engine does
-//! stays pure Python.
+//! `load_compiled_crypto_kernel` / `load_compiled_index_kernel` loaders target. It exports
+//! `abi_version()` (the build-system stub from the companion scaffold), `derive_batch` (the
+//! security-sensitive `KeyedDerivationKernel`, see `arrow_ffi::derive_batch`), and
+//! `derive_index_batch` (the deterministic-faker pool-index kernel, see
+//! `arrow_ffi::derive_index_batch`). Everything else the engine does stays pure Python.
 //!
 //! `batch`/`canonicalize`/`derive`/`ffi_import` have no PyO3 dependency and stay `pub`
 //! unconditionally, so a standalone binary (a fuzz target, an ASan/TSan test build) can link
@@ -22,13 +23,18 @@ pub mod batch;
 pub mod canonicalize;
 pub mod derive;
 pub mod ffi_import;
+pub mod threads;
 
 /// The ABI tag the core's loader checks on every load (`load_compiled_crypto_kernel`).
 ///
 /// A mismatch or absence is treated as an incompatible extension: the core reroutes to the
 /// pandas oracle rather than running against a stale binary.
 #[cfg(feature = "extension-module")]
-const ABI_VERSION: &str = "decoy-native-abi-1";
+// abi-2 (was abi-1): the keyed-derivation contract now REQUIRES the `native_threads`
+// keyword on `derive_batch` (the core's wrapper always passes it, Task 1.6). A pre-1.3
+// abi-1 binary lacks the parameter, so the loader must reject it at load-time by tag
+// rather than let it crash on the first hash call.
+const ABI_VERSION: &str = "decoy-native-abi-2";
 
 #[cfg(feature = "extension-module")]
 #[pyfunction]

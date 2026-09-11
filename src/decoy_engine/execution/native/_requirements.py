@@ -125,13 +125,17 @@ NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
-# identity, `resolve_faker_pool_identity`) and `PoolSampler.sample(...)`
-# selects per chunk. Deliberately NOT folded into `NATIVE_KERNEL_STRATEGIES`:
-# there is no compiled Rust kernel here, only the pre-existing Python
-# per-row `derive_index` loop the pool sampler already runs on the oracle
-# path, measured (JC-1) to hold the JC-3 wall bound when called once per
-# chunk instead of once per whole column. Grows only when a later task lands
-# another pool-backed strategy on this route.
+# identity, `resolve_faker_pool_identity`) and selected per chunk. Deliberately
+# NOT folded into `NATIVE_KERNEL_STRATEGIES`: a kernel strategy's compiled
+# entry point runs directly over the source column, while a pool strategy
+# selects a row's output from a pool built ahead of time -- a different shape
+# of native execution, tracked by its own allowlist so the two admitted sets
+# can never silently drift together. On the native route (Task 2.3), a pool
+# strategy's per-chunk selection runs through the compiled `derive_index_batch`
+# kernel, one batch call per chunk; the pure-Python `PoolSampler`/`derive_index`
+# per-row loop remains the ORACLE's selection mechanism and this module's own
+# reference oracle for differential testing. Grows only when a later task
+# lands another pool-backed strategy on this route.
 NATIVE_POOL_STRATEGIES = frozenset({"faker"})
 
 # The only cardinality mode whose deterministic selection is partition-
@@ -195,10 +199,13 @@ def native_pool_rejection(node: Any, name: str, strategy: str) -> str | None:
     """The coded reason `strategy` has no native POOL execution path for
     `node`, or None when it does.
 
-    Distinct from `native_kernel_rejection`: a pool strategy has no compiled
-    kernel, it runs the Python `PoolSampler` once per chunk (JC-1). Only
-    fires for a strategy in `NATIVE_POOL_STRATEGIES`; every other strategy
-    goes through `native_kernel_rejection` instead (see `requirements_for`).
+    Distinct from `native_kernel_rejection`: a pool strategy selects a row's
+    output from a pool built ahead of time (on the native route, via the
+    compiled `derive_index_batch` kernel, one batch call per chunk -- JC-1),
+    rather than deriving it directly from the source column the way a kernel
+    strategy does. Only fires for a strategy in `NATIVE_POOL_STRATEGIES`;
+    every other strategy goes through `native_kernel_rejection` instead (see
+    `requirements_for`).
     """
     if strategy not in NATIVE_POOL_STRATEGIES:
         return f"no_native_pool_path:{name}:{strategy}"
@@ -457,11 +464,15 @@ def requirements_for(node: Any, *, plan: Any, profile: Any) -> NodeRequirements:
     caps = capabilities_for(strategy_name)
     cfg = _config_dict(node)
     column_name = node.columns[0] if node.columns else "?"
-    # A pool strategy (faker) has no compiled kernel; it is admitted through
-    # `native_pool_rejection` instead, which additionally enforces the JC-5
-    # deterministic-reuse precondition. Every other strategy keeps the
-    # existing kernel-only check, so this change touches nothing but the
-    # pool strategy set (narrower, never wider, than the pre-Task-3.1 gate).
+    # A pool strategy (faker) is admitted through `native_pool_rejection`
+    # instead of the kernel-only check below, which additionally enforces the
+    # JC-5 deterministic-reuse precondition -- a separate admitted set from
+    # `NATIVE_KERNEL_STRATEGIES` because pool selection (via the compiled
+    # `derive_index_batch` kernel on the native route, Task 2.3) is a
+    # different execution shape, not because it lacks a compiled kernel.
+    # Every other strategy keeps the existing kernel-only check, so this
+    # split touches nothing but the pool strategy set (narrower, never wider,
+    # than the pre-Task-3.1 gate).
     if strategy_name in NATIVE_POOL_STRATEGIES:
         kernel_reason = native_pool_rejection(node, column_name, strategy_name)
     else:

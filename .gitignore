@@ -51,3 +51,6 @@ target/
 # drops next to decoy_engine_native/__init__.py for the local dev venv.
 decoy-engine-native/decoy_engine_native/*.so
 decoy-engine-native/decoy_engine_native/*.pyd
+
+# graphify knowledge-graph cache/output (not source)
+graphify-out/

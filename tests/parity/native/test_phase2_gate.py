@@ -136,7 +136,10 @@ def _chunk(table: pa.Table, batch_size: int) -> list[pa.Table]:
 
 
 def _run_native(
-    config: dict, source: pa.Table, batch_size: int
+    config: dict,
+    source: pa.Table,
+    batch_size: int,
+    native_threads: int | None = None,
 ) -> tuple[pa.Table, NativeRouteEvidence]:
     sink: list[NativeRouteEvidence] = []
     chunks = list(
@@ -147,6 +150,7 @@ def _run_native(
             engine_version=_ENGINE_VERSION,
             key_provider=_key_provider(),
             route_evidence_sink=sink,
+            native_threads=native_threads,
         )
     )
     return pa.concat_tables(chunks).combine_chunks(), sink[0]
@@ -225,6 +229,74 @@ def test_native_route_exact_parity_vs_oracle(batch_size: int, reverse: bool) -> 
 
     assert evidence.native_admitted is True
     _assert_gate_parity(native_table, oracle)
+
+
+# Enough rows AND a batch >= the largest thread count under test so at least one chunk holds
+# >= 8 non-null rows: the kernel clamps nranges = min(threads, non_null), so a 1-row chunk would
+# collapse every thread count to a single range and never exercise the split_at_mut/rayon path
+# through the Python chain (dennis Task-1.6 MEDIUM). 200 rows / batch 32 => six 32-row chunks, each
+# split into 8 ranges at threads=8.
+_THREAD_INVARIANCE_ROWS = 200
+_THREAD_INVARIANCE_BATCH = 32
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("native_threads", [1, 2, 4, 8], ids=lambda t: f"threads_{t}")
+def test_native_route_output_is_thread_invariant_and_matches_oracle(native_threads: int) -> None:
+    """The Task 1.6 thread plumbing must not change any output byte: the whole W2 native route at
+    any native_threads count must equal both the 1-thread run and the pinned pandas oracle. Uses a
+    batch large enough that the kernel really splits into `native_threads` ranges (see the row/batch
+    constants above), so this exercises the full Python dispatch chain AND the multi-range parallel
+    fill, not a collapsed single-range path."""
+    source = _build_source(_THREAD_INVARIANCE_ROWS)
+    config = _build_config(source, key="thread_invariance")
+    oracle = _run_oracle(config, source)
+
+    serial, serial_ev = _run_native(config, source, _THREAD_INVARIANCE_BATCH, native_threads=1)
+    parallel, parallel_ev = _run_native(
+        config, source, _THREAD_INVARIANCE_BATCH, native_threads=native_threads
+    )
+
+    assert serial_ev.native_admitted is True
+    assert parallel_ev.native_admitted is True
+    assert parallel.equals(serial), (
+        f"native_threads={native_threads} diverged from the 1-thread run"
+    )
+    _assert_gate_parity(parallel, oracle)
+
+
+@_NEEDS_COMPANION
+def test_native_threads_reaches_the_compiled_kernel_through_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Byte-parity alone cannot prove the plumbing stays intact: since serial and parallel output
+    are identical, a broken forwarding hop (native_threads silently -> None) still passes every
+    parity assertion, just running serial. So record what the compiled derive_batch actually
+    receives and assert the requested budget arrives at every hash call. Guards against a dropped
+    forwarding hop anywhere in run_native_or_oracle_chunked -> ... -> derive_batch (dennis/Codex)."""
+    from decoy_engine.execution.native import _kernels_keyed
+    from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
+
+    seen: list[object] = []
+    real_kernel = load_compiled_crypto_kernel()
+
+    class _RecordingKernel:
+        def derive_batch(self, values, *, native_threads=None, **kwargs):  # type: ignore[no-untyped-def]
+            seen.append(native_threads)
+            return real_kernel.derive_batch(values, native_threads=native_threads, **kwargs)
+
+    monkeypatch.setattr(_kernels_keyed, "load_compiled_crypto_kernel", lambda: _RecordingKernel())
+
+    source = _build_source(_THREAD_INVARIANCE_ROWS)
+    config = _build_config(source, key="threads_reach_kernel")
+    _table, evidence = _run_native(config, source, _THREAD_INVARIANCE_BATCH, native_threads=6)
+
+    assert evidence.native_admitted is True
+    # Three hash columns x (six 32-row chunks + one 8-row chunk) = 21 hash calls, every one at 6.
+    assert seen, "no compiled derive_batch call was recorded; the hash route did not run"
+    assert all(nt == 6 for nt in seen), (
+        f"native_threads did not reach every kernel call: saw {sorted(set(map(repr, seen)))}"
+    )
 
 
 @_NEEDS_COMPANION

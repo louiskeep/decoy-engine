@@ -157,7 +157,8 @@ They must also prove that moving bytes between namespace and source changes the 
 
 Current canonical source encoding has type-specific rules.
 Strings use NFC followed by UTF-8.
-Integers use a length-prefixed minimal two's-complement big-endian representation.
+Integers use a length-prefixed signed two's-complement big-endian representation of
+`(bit_length+8)//8` bytes (a reserved sign byte, so not strictly minimal: -128 is `ff80`, not `80`).
 Booleans use one byte.
 Aware datetimes use a normalized UTC ISO 8601 form.
 Naive datetimes and unsupported floating-point sources fail.

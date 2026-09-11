@@ -27,16 +27,20 @@ on:
     paths:
       - "decoy-engine-native/**"
       - "src/decoy_engine/execution/native/**"
-      - "tests/native/test_native_ext_abi.py"
-      - "tests/native/test_keyed_derivation_kernel_parity.py"
+      # Whole native test tree, not an enumerated file list: a per-file list
+      # silently failed to trigger (and failed to run) new native tests once
+      # before, which is exactly the gap that let an unrun proof through. The
+      # companion-dependent route/parity tests live under tests/parity/native.
+      - "tests/native/**"
+      - "tests/parity/native/**"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
   pull_request:
     paths:
       - "decoy-engine-native/**"
       - "src/decoy_engine/execution/native/**"
-      - "tests/native/test_native_ext_abi.py"
-      - "tests/native/test_keyed_derivation_kernel_parity.py"
+      - "tests/native/**"
+      - "tests/parity/native/**"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
 
@@ -82,7 +86,7 @@ jobs:
           set -euo pipefail
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
           python -m pip install "$wheel"
-          python -c "import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-1', got; print('x86_64 cp${{ matrix.python-version }} wheel imports; abi', got)"
+          python -c "import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-2', got; print('x86_64 cp${{ matrix.python-version }} wheel imports; abi', got)"
       - name: Set up QEMU (aarch64 emulation)
         if: matrix.target == 'aarch64'
         uses: docker/setup-qemu-action@v3
@@ -93,7 +97,7 @@ jobs:
           wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
           docker run --rm --platform linux/arm64 -v "$PWD/decoy-engine-native/dist:/w" \
             python:${{ matrix.python-version }}-slim-bookworm bash -c \
-            "python -m pip install /w/$(basename "$wheel") && python -c \"import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-1', got; print('aarch64 cp${{ matrix.python-version }} wheel imports; abi', got)\""
+            "python -m pip install /w/$(basename "$wheel") && python -c \"import decoy_engine_native._kernel as k; got=k.abi_version(); assert got=='decoy-native-abi-2', got; print('aarch64 cp${{ matrix.python-version }} wheel imports; abi', got)\""
       - uses: actions/upload-artifact@v7
         with:
           name: companion-wheel-${{ matrix.python-version }}-${{ matrix.target }}
@@ -143,6 +147,27 @@ jobs:
         run: pytest tests/native/test_native_ext_abi.py -v --tb=short
       - name: Compiled-kernel-vs-live-reference parity harness
         run: pytest tests/native/test_keyed_derivation_kernel_parity.py -v --tb=short
+      # The GIL-release proof (panic-safety, wall-clock parallel speedup, concurrent
+      # agreement) only has signal with the compiled companion present; without it all
+      # three tests skip. This is the one job that installs it, so it must run them.
+      - name: GIL-release proof (companion-present case)
+        run: pytest tests/native/test_gil_release.py -v --tb=short
+      # The loader self-test/ABI-contract tests and the native-route parity + thread
+      # plumbing tests (thread invariance, the native_threads route recorder) are also
+      # companion-present-only; without the compiled kernel installed they skip, so they
+      # must run in this job too.
+      - name: Loader + native-route parity/plumbing (companion-present case)
+        run: pytest tests/native/test_crypto_ext_loader.py tests/parity/native/test_phase2_gate.py -v --tb=short
+      # The derive_index KAT + differential (Task 2.2) exercise the compiled derive_index_batch
+      # against the frozen vectors + the live Python reference; companion-present only.
+      - name: derive_index KAT + differential (companion-present case)
+        run: pytest tests/native/test_derive_index_kat.py -v --tb=short
+      # Task 2.3 wires that compiled index kernel into the deterministic-faker route itself
+      # (byte parity across batch sizes/orders/null shapes/thread counts, the exactly-one-
+      # batch-call and native_threads-forwarding proofs, companion-absent downgrade + probe
+      # ordering, malformed-result fail-closed); companion-present only.
+      - name: Faker route integration (companion-present case)
+        run: pytest tests/parity/native/test_c1_faker_parity.py tests/native/test_dispatch_faker.py tests/native/test_index_ext.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A
@@ -171,16 +196,29 @@ jobs:
       - name: Bounded fuzz campaign over derive_array
         working-directory: decoy-engine-native
         run: cargo +nightly fuzz run derive_array -- -max_total_time=120
+      # The index kernel (Task 2.3) gets its own bounded campaign over the PyO3-free
+      # batch::derive_index_array path: same admitted-type array generation as derive_array plus a
+      # full-range i64 pool_size that drives both pool guards and the modulo arithmetic between them.
+      - name: Bounded fuzz campaign over derive_index
+        working-directory: decoy-engine-native
+        run: cargo +nightly fuzz run derive_index -- -max_total_time=120
       - name: Crate tests under AddressSanitizer
         working-directory: decoy-engine-native
         env:
           RUSTFLAGS: -Zsanitizer=address
         run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu
-      - name: Concurrent Send/Sync test under ThreadSanitizer
+      # Filter on "concurrent" so BOTH the cross-call Send/Sync test and the Task 1.5 intra-call
+      # multi-range parallel-fill test run under TSan (the split_at_mut disjoint windows are the
+      # thing that must be race-free). A name-specific filter silently dropped the newer test.
+      # Run the WHOLE unit-test suite under TSan (not a name filter): both parallel fills
+      # (derive_array byte windows + derive_index u64 slots) and every concurrency test live in
+      # `--lib`, so a filter would silently miss a newly added parallel test. The unit tests are
+      # fast even under `-Zbuild-std`.
+      - name: Unit tests under ThreadSanitizer
         working-directory: decoy-engine-native
         env:
           RUSTFLAGS: -Zsanitizer=thread
-        run: cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu derive_is_send_sync_and_concurrent_calls_agree
+        run: cargo +nightly test --lib -Zbuild-std --target x86_64-unknown-linux-gnu
       - name: Upload fuzz artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v7

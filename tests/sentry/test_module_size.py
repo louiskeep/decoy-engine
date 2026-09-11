@@ -547,31 +547,22 @@ ALLOWLIST: dict[str, int] = {
     # registry when the next draw-site batch lands.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # Native program Task 2.3 (Phase 2 merge, 2026-08-30): the compiled-kernel
-    # loader gained a load-time known-answer self-test (fail-before-output
-    # hardening, the DE-08-style contract) that pushed the module to 702. It
-    # bundles the ABI/error/config/result types, the KAT vectors, the two
-    # Protocols, the two pure-Python reference kernels, and the compiled loader.
-    # Decomposition target: move the reference kernels + factories
-    # (_ReferenceKeyedDerivation / _ReferenceFpe / reference_keyed_derivation /
-    # reference_fpe / _row_error / _ROW_ERROR_MESSAGES) into a
-    # `_crypto_reference.py` sibling that imports the shared types + KATs from
-    # here. The loader does not depend on the reference kernels, so this splits
-    # with no import cycle and brings the module back under 600. Do it when the
-    # native crypto surface is next touched.
-    "src/decoy_engine/execution/native/_crypto_ext.py": 702,
-    # Phase 3 C1 slice (2026-08-31): crossed the 600 cap (434 -> 689) as the
-    # native-route dispatcher grew the faker-pool masking branch
-    # (`_sample_faker_chunk`/`_mask_chunk_native`/`_resolve_faker_pools`), the
-    # preflight string-type scope-lock, the pool_select counters, and the
-    # later-chunk schema-drift sentry (`NativeChunkSchemaDriftError`/
-    # `_check_chunk_schema_drift`). This module is THE native route orchestrator
-    # (route decision + chunk masking + route evidence + drift guard), so a
-    # sound decomposition needs its own design pass, not a merge-time hack:
-    # extract the schema-drift concern into a `_chunk_schema.py` sibling and the
-    # faker-chunk sampling/masking into a `_chunk_masking.py` sibling (both split
-    # with no import cycle) when the native route is next touched. Owes that
-    # decomposition; recorded here per the allowlist-as-ratchet (section 5.1).
-    "src/decoy_engine/execution/native/_dispatch.py": 689,
+    # loader gained a load-time known-answer self-test that pushed the module to
+    # 702, and the 2026-09-09 native-throughput program's Task 1.6 native_threads
+    # plumbing pushed it further to 718. The prescribed decomposition then ran
+    # (2026-09-10): the reference kernels + factories (_ReferenceKeyedDerivation /
+    # _ReferenceFpe / reference_keyed_derivation / reference_fpe / _row_error /
+    # _ROW_ERROR_MESSAGES) moved into the `_crypto_reference.py` sibling, bringing
+    # this module back to 530 -- under the 600 cap, so it is no longer allowlisted.
+    # Do not re-add it without cause.
+    # NOTE: execution/native/_dispatch.py was allowlisted at 653 through the
+    # Phase 3 C1 slice and the schema-drift extraction (`_chunk_schema.py`).
+    # Task 2.3 Phase 0 (2026-09-10) finished the prescribed decomposition:
+    # the faker-chunk sampling/masking (`_sample_faker_chunk` /
+    # `_mask_chunk_native` / `_resolve_faker_pools` / `_resolve_truncate_keep`)
+    # moved into the `_chunk_masking.py` sibling, bringing this module back to
+    # 454 -- under the 600 cap, so it is no longer allowlisted here. Do not
+    # re-add it without cause.
     # Phase 4 slice 2 (2026-08-31): crossed the 600 cap (590 -> 613) wiring
     # the group_key group_by effective-type gate (Trap E) into the
     # auto-chunk classifier: `classify_job` now computes `ordered_work`

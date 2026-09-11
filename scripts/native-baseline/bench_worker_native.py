@@ -104,6 +104,20 @@ def main() -> None:
     n_rows = int(sys.argv[1])
     parquet_path = sys.argv[2]
     batch_rows = int(sys.argv[3]) if len(sys.argv) > 3 else DEFAULT_BATCH_ROWS
+    # Task 1.6 thread sweep: DECOY_BENCH_NATIVE_THREADS sets the native keyed-hash
+    # thread budget for this run. Unset -> None -> the serial (1-thread) kernel, so
+    # the pre-Task-1.5 baseline reproduces unchanged; an explicit count drives the
+    # parallel path. Output is byte-identical either way (the kernel is thread-invariant).
+    _nt_env = os.environ.get("DECOY_BENCH_NATIVE_THREADS", "").strip()
+    if not _nt_env:
+        native_threads = None
+    else:
+        try:
+            native_threads = int(_nt_env)
+        except ValueError:
+            raise SystemExit(
+                f"DECOY_BENCH_NATIVE_THREADS must be an integer (or unset); got {_nt_env!r}"
+            ) from None
     key_provider = SecretKeyProvider(secret=FIXED_MASK_KEY, key_version="v1")
 
     # A small representative CSV satisfies the "mask tables require a declared
@@ -127,15 +141,25 @@ def main() -> None:
         engine_version="phase2-gate-bench",
         key_provider=key_provider,
         route_evidence_sink=sink,
+        native_threads=native_threads,
     ):
         out_rows += masked.num_rows  # drop the batch immediately; never accumulate
     t1 = time.perf_counter()
 
     evidence = sink[0]
     hash_ms = evidence.kernel_elapsed_s.get("hash", 0.0) * 1000.0
+    # Record the host's real parallel capacity so an N-thread result is interpretable: the shared
+    # pool is sized to available_parallelism() (all logical CPUs), and the per-job budget caps the
+    # range count, so "8 threads" on a 4-physical-core + HT box means 8 ranges over 4 real cores,
+    # not an 8x speedup ceiling (Codex Task 1.6 evidence caveat).
+    _affinity = getattr(os, "sched_getaffinity", None)
+    effective_cpus = len(_affinity(0)) if _affinity is not None else (os.cpu_count() or 1)
     rec = {
         "n_rows": n_rows,
         "batch_rows": batch_rows,
+        "native_threads": native_threads if native_threads is not None else 1,
+        "cpu_count": os.cpu_count(),
+        "effective_cpus": effective_cpus,
         "wall_s": t1 - t0,
         "out_rows": out_rows,
         "native_admitted": evidence.native_admitted,

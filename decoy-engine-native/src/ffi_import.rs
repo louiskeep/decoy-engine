@@ -25,6 +25,17 @@ pub enum KernelError {
     Derive(DeriveError),
     /// Missing or empty mask key (fail-before-output; no row has been touched yet).
     MaskKeyRequired,
+    /// The batch output would exceed the i32 `StringArray` offset ceiling (~2GB); fail closed
+    /// rather than wrap. Carries `batch::BatchError::OffsetOverflow`.
+    OffsetOverflow,
+    /// `derive_index_batch` pool_size < 1. Carries `batch::BatchError::PoolSizeInvalid`.
+    PoolSizeInvalid,
+    /// `derive_index_batch` pool_size > 2**56. Carries `batch::BatchError::PoolSizeOverflow`.
+    PoolSizeOverflow,
+    /// `derive_index_batch` pool_size was not a Python int. Carries `batch::BatchError::PoolSizeType`.
+    /// Surfaces as a Python `TypeError` (not a coded `ValueError`) to match the reference's non-int
+    /// rejection; the deferral to the pool-guard slot happens in `batch`, see that variant's docs.
+    PoolSizeType,
     /// The `__arrow_c_array__` protocol failed or returned an unexpected shape.
     ProtocolError(String),
 }
@@ -35,6 +46,10 @@ impl KernelError {
             KernelError::Canon(e) => e.code,
             KernelError::Derive(e) => e.code,
             KernelError::MaskKeyRequired => "mask_key_required",
+            KernelError::OffsetOverflow => "native_offset_overflow",
+            KernelError::PoolSizeInvalid => "pool_size_invalid",
+            KernelError::PoolSizeOverflow => "pool_size_overflow",
+            KernelError::PoolSizeType => "pool_size_type",
             KernelError::ProtocolError(_) => "mixed_object_not_native",
         }
     }
@@ -47,6 +62,13 @@ impl KernelError {
                 "mask_key is required and must be non-empty; refusing to emit unkeyed output"
                     .to_string()
             }
+            KernelError::OffsetOverflow => {
+                "batch output exceeds the i32 StringArray offset limit (~2GB); split the batch"
+                    .to_string()
+            }
+            KernelError::PoolSizeInvalid => "pool_size must be >= 1".to_string(),
+            KernelError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
+            KernelError::PoolSizeType => "pool_size must be an int".to_string(),
             KernelError::ProtocolError(msg) => msg.clone(),
         }
     }
@@ -74,6 +96,10 @@ impl From<crate::batch::BatchError> for KernelError {
             crate::batch::BatchError::Canon(c) => KernelError::Canon(c),
             crate::batch::BatchError::Derive(d) => KernelError::Derive(d),
             crate::batch::BatchError::MaskKeyRequired => KernelError::MaskKeyRequired,
+            crate::batch::BatchError::OffsetOverflow => KernelError::OffsetOverflow,
+            crate::batch::BatchError::PoolSizeInvalid => KernelError::PoolSizeInvalid,
+            crate::batch::BatchError::PoolSizeOverflow => KernelError::PoolSizeOverflow,
+            crate::batch::BatchError::PoolSizeType => KernelError::PoolSizeType,
         }
     }
 }
@@ -242,6 +268,7 @@ mod tests {
             Some(sentinel_key),
             SENTINEL_NAMESPACE_MARKER,
             None,
+            1,
         )
         .unwrap_err();
         messages.push(format!("{}: {}", err.code(), err.detail()));
@@ -249,7 +276,8 @@ mod tests {
         // Empty namespace over a sentinel-content string array.
         let strings =
             arrow_array::StringArray::from(vec![Some(SENTINEL_SOURCE_MARKER.to_string())]);
-        let err = crate::batch::derive_array(&strings, Some(sentinel_key), "", None).unwrap_err();
+        let err =
+            crate::batch::derive_array(&strings, Some(sentinel_key), "", None, 1).unwrap_err();
         messages.push(format!("{}: {}", err.code(), err.detail()));
 
         // Wrong-length key (16 bytes, neither 8 nor 32): the error must report the LENGTH,
@@ -260,6 +288,7 @@ mod tests {
             Some(wrong_len_key),
             SENTINEL_NAMESPACE_MARKER,
             None,
+            1,
         )
         .unwrap_err();
         messages.push(format!("{}: {}", err.code(), err.detail()));

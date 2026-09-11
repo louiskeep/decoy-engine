@@ -1,9 +1,11 @@
 # decoy-engine-native
 
 Compiled Rust companion to [decoy-engine](https://github.com/louiskeep/decoy-engine). It ships the
-`KeyedDerivationKernel`, the one security-sensitive native masking kernel (HKDF-SHA256 then
+`KeyedDerivationKernel`, the security-sensitive native masking kernel (HKDF-SHA256 then
 HMAC-SHA256 over the Arrow C Data Interface, reproducing the engine's shipped `hash` strategy byte
-for byte). Everything else the engine does stays pure Python.
+for byte), and the deterministic-faker index kernel (one pool-index derivation per row, reproducing
+the engine's shipped `derive_index` byte for byte). Everything else the engine does stays pure
+Python.
 
 ## Why a separate package
 
@@ -39,21 +41,34 @@ is processed. See `src/derive.rs`, `src/canonicalize.rs`, and `src/arrow_ffi.rs`
 implementation, and `vectors/keyed_derivation_kat.json` for the shared known-answer-test corpus
 (generated from the live Python reference by `vectors/generate_kat.py`).
 
-Wiring this kernel into the core's real loader (replacing the always-raising Phase 0 stub) is a
-separate slice; today, `load_compiled_crypto_kernel` still always raises
-`CryptoExtensionUnavailableError` regardless of whether this companion is installed.
+`decoy_engine_native._kernel.derive_index_batch(values, *, mask_key, namespace, pool_size,
+native_threads=None)` is the compiled deterministic-faker pool-index kernel: returns one uint64
+pool index per row (null in, null out), reproducing the engine's shipped `derive_index` byte for
+byte. It backs the native masking route's per-chunk faker selection (`_sample_faker_chunk`); the
+pure-Python `PoolSampler` remains the oracle's own selection mechanism. See `src/batch.rs` and
+`src/arrow_ffi.rs` for the implementation, and `vectors/derive_index_kat.json` for the shared
+known-answer-test corpus.
+
+Both kernels are wired into the core's real loaders
+(`decoy_engine.execution.native._crypto_ext.load_compiled_crypto_kernel` and
+`decoy_engine.execution.native._index_ext.load_compiled_index_kernel`): an absent or
+ABI-incompatible companion reroutes the affected table to the pandas oracle at preflight rather
+than raising mid-run.
 
 ## Fuzzing and sanitizers
 
 `fuzz/fuzz_targets/derive_array.rs` is a libFuzzer target over the PyO3-free `batch::derive_array`
 path: it builds an array of one admitted type from structured `arbitrary` input and calls the real
-derivation loop, letting libFuzzer's crash detector catch a panic or memory fault directly. The
-target links the crate with `default-features = false`, since pyo3's own `extension-module`
-feature omits linking libpython, which a standalone fuzz binary does not provide.
+derivation loop, letting libFuzzer's crash detector catch a panic or memory fault directly.
+`fuzz/fuzz_targets/derive_index.rs` mirrors it over `batch::derive_index_array`, additionally
+fuzzing `pool_size` across its full valid range. Both targets link the crate with
+`default-features = false`, since pyo3's own `extension-module` feature omits linking libpython,
+which a standalone fuzz binary does not provide.
 
 ```
 cargo install cargo-fuzz
 cargo +nightly fuzz run derive_array -- -max_total_time=120
+cargo +nightly fuzz run derive_index -- -max_total_time=120
 ```
 
 Running the crate's own test suite under AddressSanitizer or ThreadSanitizer needs a

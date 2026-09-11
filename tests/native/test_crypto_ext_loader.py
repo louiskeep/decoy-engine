@@ -28,8 +28,8 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     _translate_compiled_kernel_error,
     load_compiled_crypto_kernel,
-    reference_keyed_derivation,
 )
+from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
 from decoy_engine.generation.pool._errors import GenerationError
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
@@ -177,7 +177,7 @@ def test_wrong_abi_tag_raises_unavailable_before_returning(
 def test_abi_version_call_raising_is_treated_as_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-1", abi_raises=True)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", abi_raises=True)
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 
@@ -187,7 +187,7 @@ def test_matching_abi_but_missing_derive_batch_raises_unavailable(
 ) -> None:
     # A companion whose ABI tag matches but that exposes no `derive_batch` must fail
     # closed BEFORE returning, not leak a bare AttributeError from the return line.
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-1", derive_batch=_NO_DERIVE_BATCH)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_batch=_NO_DERIVE_BATCH)
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 
@@ -198,7 +198,7 @@ def test_matching_abi_but_non_callable_derive_batch_raises_unavailable(
     # A non-callable `derive_batch` (a stale build shipping a data attribute, say)
     # must be rejected at load time rather than wrapped into a kernel that raises
     # TypeError only once the first batch is derived, after output would begin.
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-1", derive_batch=42)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_batch=42)
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 
@@ -213,7 +213,7 @@ def test_matching_abi_but_callable_dunder_none_raises_unavailable(
     class _CallDunderNone:
         __call__ = None
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-1", derive_batch=_CallDunderNone())
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_batch=_CallDunderNone())
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 
@@ -226,7 +226,7 @@ def test_matching_abi_but_raising_derive_batch_descriptor_raises_unavailable(
     # inside the guarded self-test turns it into a fail-closed CryptoExtensionUnavailableError.
     class _RaisingKernel(types.ModuleType):
         def abi_version(self) -> str:
-            return "decoy-native-abi-1"
+            return "decoy-native-abi-2"
 
         @property
         def derive_batch(self) -> Callable[..., pa.Array]:
@@ -250,7 +250,7 @@ def test_matching_abi_but_wrong_bytes_fails_load_time_self_test(
     def _wrong(values: pa.Array, **kwargs: object) -> pa.Array:
         return pa.array(["deadbeef"] * len(values), type=pa.string())
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-1", derive_batch=_wrong)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_batch=_wrong)
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 
@@ -267,7 +267,7 @@ def test_matching_abi_but_wrong_arrow_type_fails_load_time_self_test(
         correct = reference.derive_batch(values, **kwargs)  # type: ignore[arg-type]
         return pa.array(correct.to_pylist(), type=pa.large_string())
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-1", derive_batch=_wrong_type)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_batch=_wrong_type)
     with pytest.raises(CryptoExtensionUnavailableError):
         load_compiled_crypto_kernel()
 
@@ -276,7 +276,7 @@ def test_matching_abi_tag_returns_a_working_kernel(monkeypatch: pytest.MonkeyPat
     calls: list[dict[str, object]] = []
     _install_fake_kernel(
         monkeypatch,
-        abi="decoy-native-abi-1",
+        abi="decoy-native-abi-2",
         derive_batch=_recording_reference_derive_batch(calls),
     )
     kernel = load_compiled_crypto_kernel()
@@ -289,10 +289,35 @@ def test_matching_abi_tag_returns_a_working_kernel(monkeypatch: pytest.MonkeyPat
     assert out.equals(reference_out)
     # The load-time self-test makes one call (HASH_KAT[0]); the real derive is the
     # last. Every keyword the reference contract carries must reach the entry point:
-    # namespace, the resolved mask_key, and truncate (not just namespace).
+    # namespace, the resolved mask_key, truncate, and the native_threads budget.
     assert calls[-1]["namespace"] == _NAMESPACE
     assert calls[-1]["mask_key"] == _MASK_KEY
     assert calls[-1]["truncate"] == 8
+    assert calls[-1]["native_threads"] is None  # default caller -> serial
+
+    # An explicit budget must reach the compiled entry point unchanged (the abi-2 contract).
+    kernel.derive_batch(
+        array, mask_key=_MASK_KEY, namespace=_NAMESPACE, truncate=8, native_threads=4
+    )
+    assert calls[-1]["native_threads"] == 4
+
+
+def test_old_signature_companion_rejected_at_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pre-abi-2 binary that reports the right tag but whose derive_batch lacks native_threads
+    must fail the LOAD-time self-test (which now passes native_threads), not crash on the first
+    hash call. Guards the abi-2 contract + KAT defense-in-depth against a stale companion."""
+    reference = reference_keyed_derivation()
+
+    def _old_signature_derive_batch(values: pa.Array, **kwargs: object) -> pa.Array:
+        if "native_threads" in kwargs:
+            raise TypeError("derive_batch() got an unexpected keyword argument 'native_threads'")
+        return reference.derive_batch(values, **kwargs)  # type: ignore[arg-type]
+
+    _install_fake_kernel(
+        monkeypatch, abi="decoy-native-abi-2", derive_batch=_old_signature_derive_batch
+    )
+    with pytest.raises(CryptoExtensionUnavailableError):
+        load_compiled_crypto_kernel()
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,747 @@
+{
+  "format_version": 1,
+  "seed_protocol_version": 6,
+  "seed_protocol_version_note": "expected_index values are valid only for this seed_protocol_version and the canonicalization live when generated; a bump invalidates them all",
+  "cases": [
+    {
+      "name": "utf8_basic_with_nulls_pool1000",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        "bob",
+        null,
+        ""
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        "626f62",
+        null,
+        ""
+      ],
+      "expected_index": [
+        406,
+        45,
+        null,
+        358
+      ]
+    },
+    {
+      "name": "utf8_pool_size_one_all_zero",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        "bob",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        "626f62",
+        null
+      ],
+      "expected_index": [
+        0,
+        0,
+        null
+      ]
+    },
+    {
+      "name": "utf8_pool_size_at_max_boundary",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        "bob"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 72057594037927936,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        "626f62"
+      ],
+      "expected_index": [
+        37003622189524510,
+        33606804572702413
+      ]
+    },
+    {
+      "name": "large_utf8_with_nulls",
+      "arrow_type": {
+        "kind": "large_utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        null,
+        "carol"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 997,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        null,
+        "6361726f6c"
+      ],
+      "expected_index": [
+        306,
+        null,
+        519
+      ]
+    },
+    {
+      "name": "utf8_all_null",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        null,
+        null,
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        null,
+        null,
+        null
+      ],
+      "expected_index": [
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "name": "utf8_empty",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [],
+      "expected_index": []
+    },
+    {
+      "name": "utf8_nfc_nfd_equivalence",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "caf\u00e9",
+        "cafe\u0301"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "636166c3a9",
+        "636166c3a9"
+      ],
+      "expected_index": [
+        302,
+        302
+      ]
+    },
+    {
+      "name": "framing_boundary_ab_c",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "c"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "ab",
+      "pool_size": 100000,
+      "expected_canonical_source_hex": [
+        "63"
+      ],
+      "expected_index": [
+        31972
+      ]
+    },
+    {
+      "name": "framing_boundary_a_bc",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "bc"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "a",
+      "pool_size": 100000,
+      "expected_canonical_source_hex": [
+        "6263"
+      ],
+      "expected_index": [
+        40596
+      ]
+    },
+    {
+      "name": "utf8_unicode_namespace_high_bit_digest",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice"
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "caf\u00e9.\u5730\u533a",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "616c696365"
+      ],
+      "expected_index": [
+        88
+      ]
+    },
+    {
+      "name": "utf8_job_seed_8_byte",
+      "arrow_type": {
+        "kind": "utf8",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "alice",
+        "bob",
+        null
+      ],
+      "seed_hex": "0001020304050607",
+      "namespace": "pool.city",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "616c696365",
+        "626f62",
+        null
+      ],
+      "expected_index": [
+        904,
+        468,
+        null
+      ]
+    },
+    {
+      "name": "int8_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 8,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-128",
+        "-1",
+        "0",
+        "1",
+        "127",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "00000002ff80",
+        "00000001ff",
+        "0000000100",
+        "0000000101",
+        "000000017f",
+        null
+      ],
+      "expected_index": [
+        1684,
+        3416,
+        1289,
+        3605,
+        1496,
+        null
+      ]
+    },
+    {
+      "name": "int8_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 8,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "1",
+        "255",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000101",
+        "0000000200ff",
+        null
+      ],
+      "expected_index": [
+        1289,
+        3605,
+        3354,
+        null
+      ]
+    },
+    {
+      "name": "int16_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 16,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-32768",
+        "0",
+        "32767",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "00000003ff8000",
+        "0000000100",
+        "000000027fff",
+        null
+      ],
+      "expected_index": [
+        2824,
+        1289,
+        2897,
+        null
+      ]
+    },
+    {
+      "name": "int16_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 16,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "65535",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000300ffff",
+        null
+      ],
+      "expected_index": [
+        1289,
+        796,
+        null
+      ]
+    },
+    {
+      "name": "int32_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 32,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-2147483648",
+        "0",
+        "2147483647",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "00000005ff80000000",
+        "0000000100",
+        "000000047fffffff",
+        null
+      ],
+      "expected_index": [
+        1226,
+        1289,
+        914,
+        null
+      ]
+    },
+    {
+      "name": "int32_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 32,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "4294967295",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000500ffffffff",
+        null
+      ],
+      "expected_index": [
+        1289,
+        3969,
+        null
+      ]
+    },
+    {
+      "name": "int64_signed_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 64,
+        "signed": true,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "-9223372036854775808",
+        "0",
+        "9223372036854775807",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "00000009ff8000000000000000",
+        "0000000100",
+        "000000087fffffffffffffff",
+        null
+      ],
+      "expected_index": [
+        2346,
+        1289,
+        553,
+        null
+      ]
+    },
+    {
+      "name": "int64_unsigned_boundaries",
+      "arrow_type": {
+        "kind": "int",
+        "bits": 64,
+        "signed": false,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        "0",
+        "18446744073709551615",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.code",
+      "pool_size": 4099,
+      "expected_canonical_source_hex": [
+        "0000000100",
+        "0000000900ffffffffffffffff",
+        null
+      ],
+      "expected_index": [
+        1289,
+        369,
+        null
+      ]
+    },
+    {
+      "name": "bool_basic_with_null",
+      "arrow_type": {
+        "kind": "bool",
+        "bits": null,
+        "signed": null,
+        "unit": null,
+        "tz": null
+      },
+      "logical_values": [
+        true,
+        false,
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.flag",
+      "pool_size": 64,
+      "expected_canonical_source_hex": [
+        "01",
+        "00",
+        null
+      ],
+      "expected_index": [
+        37,
+        22,
+        null
+      ]
+    },
+    {
+      "name": "timestamp_s_utc",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "s",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45+00:00",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.at",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352b30303a3030",
+        null
+      ],
+      "expected_index": [
+        771,
+        null
+      ]
+    },
+    {
+      "name": "timestamp_ms_utc",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ms",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.120000+00:00",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.at",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3132303030302b30303a3030",
+        null
+      ],
+      "expected_index": [
+        117,
+        null
+      ]
+    },
+    {
+      "name": "timestamp_us_utc_with_negative_epoch",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "us",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.500000+00:00",
+        "1969-12-31T23:59:59.999999+00:00",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.at",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3530303030302b30303a3030",
+        "313936392d31322d33315432333a35393a35392e3939393939392b30303a3030",
+        null
+      ],
+      "expected_index": [
+        974,
+        266,
+        null
+      ]
+    },
+    {
+      "name": "timestamp_ns_utc_fraction_precision",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ns",
+        "tz": "UTC"
+      },
+      "logical_values": [
+        "2020-01-01T12:30:45.123456789+00:00",
+        "2020-01-01T12:30:45.123456000+00:00",
+        "2020-01-01T12:30:45+00:00",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.at",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "323032302d30312d30315431323a33303a34352e3132333435363738392b30303a3030",
+        "323032302d30312d30315431323a33303a34352e3132333435362b30303a3030",
+        "323032302d30312d30315431323a33303a34352b30303a3030",
+        null
+      ],
+      "expected_index": [
+        90,
+        744,
+        771,
+        null
+      ]
+    },
+    {
+      "name": "timestamp_ns_non_utc_tz",
+      "arrow_type": {
+        "kind": "timestamp",
+        "bits": null,
+        "signed": null,
+        "unit": "ns",
+        "tz": "America/New_York"
+      },
+      "logical_values": [
+        "2020-06-15T08:00:00.000000001-04:00",
+        null
+      ],
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.at",
+      "pool_size": 1000,
+      "expected_canonical_source_hex": [
+        "323032302d30362d31355431323a30303a30302e3030303030303030312b30303a3030",
+        null
+      ],
+      "expected_index": [
+        599,
+        null
+      ]
+    }
+  ],
+  "error_cases": [
+    {
+      "name": "pool_size_zero",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "source_hex": "616c696365",
+      "pool_size": 0,
+      "expected_error_code": "pool_size_invalid"
+    },
+    {
+      "name": "pool_size_negative",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "source_hex": "616c696365",
+      "pool_size": -5,
+      "expected_error_code": "pool_size_invalid"
+    },
+    {
+      "name": "pool_size_above_max",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "pool.city",
+      "source_hex": "616c696365",
+      "pool_size": 72057594037927937,
+      "expected_error_code": "pool_size_overflow"
+    },
+    {
+      "name": "seed_wrong_length_16",
+      "seed_hex": "00000000000000000000000000000000",
+      "namespace": "pool.city",
+      "source_hex": "616c696365",
+      "pool_size": 1000,
+      "expected_error_code": "seed_wrong_length"
+    },
+    {
+      "name": "namespace_empty",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "",
+      "source_hex": "616c696365",
+      "pool_size": 1000,
+      "expected_error_code": "namespace_empty"
+    },
+    {
+      "name": "pool_invalid_beats_seed",
+      "seed_hex": "00000000000000000000000000000000",
+      "namespace": "pool.city",
+      "source_hex": "616c696365",
+      "pool_size": 0,
+      "expected_error_code": "pool_size_invalid"
+    },
+    {
+      "name": "pool_overflow_beats_namespace",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "namespace": "",
+      "source_hex": "616c696365",
+      "pool_size": 72057594037927937,
+      "expected_error_code": "pool_size_overflow"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ def native_keyed_hash(
     mask_key: bytes | None,
     namespace: str | None,
     truncate: Any = None,
+    native_threads: int | None = None,
 ) -> pa.Array:
     """Derive one token per value: `derive(mask_key, namespace, canonical(value))`,
     optionally truncated, matching `HashStrategyHandler` byte for byte.
@@ -58,7 +59,11 @@ def native_keyed_hash(
     resolved_truncate = truncate if isinstance(truncate, int) and truncate > 0 else None
     kernel = load_compiled_crypto_kernel()
     return kernel.derive_batch(
-        array, mask_key=mask_key, namespace=namespace, truncate=resolved_truncate
+        array,
+        mask_key=mask_key,
+        namespace=namespace,
+        truncate=resolved_truncate,
+        native_threads=native_threads,
     )
 
 

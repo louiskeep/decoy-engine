@@ -125,7 +125,8 @@ def _dtype_family(dtype: str) -> str:
 
     Widths within a family (int32 vs int64) reproduce identical masked bytes
     for equal values -- the kernel canonicalizer encodes any-width integers
-    as a length-prefixed minimal two's complement form regardless of storage
+    as a length-prefixed signed two's complement form (see `_encode_int`; the
+    width is `(bit_length+8)//8`, not strictly minimal) regardless of storage
     width (kernel/_canonicalize.py) -- so only the family needs to agree, not
     the exact dtype string. Unrecognized strings pass through lowercased and
     unmodified, so an unknown dtype only ever matches another occurrence of
