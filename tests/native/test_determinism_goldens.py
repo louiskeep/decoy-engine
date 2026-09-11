@@ -14,12 +14,12 @@ provider on the same identity. The functions routed:
   (code_set mask mode), ``ReferenceTable.keyed_row`` (joint_mask),
   ``PoolSampler.sample`` (pool_deterministic + mask.faker), ``SsnAdapter``
   (identifier), ``_apply_monotone_walk``, ``apply_windowed_date``.
-- mask.fpe is keyed-material: the provider emits the per-column Feistel KEY, and
+- mask.fpe is keyed-material: the provider emits the per-column FF1 KEY, and
   the ciphertext is reproduced by driving that key through the SHIPPED
   ``fpe_encrypt_value`` and matching the real ``FpeStrategyHandler`` output.
 
 18 sites reproduce the shipped OUTPUT byte-for-byte; mask.fpe reproduces the
-keyed material (Feistel arithmetic is transform semantics, deferred to Task 0.4).
+keyed material (FF1 arithmetic is transform semantics, deferred to Task 0.4).
 
 If any site fails to reproduce, that is a real finding: the fix is to correct
 the provider to match SHIPPED behavior (and the inventory entry), never to
@@ -79,7 +79,12 @@ from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from decoy_engine.transforms.bucket_perturb import _bucket_start_and_size, apply_bucket_perturb
 from decoy_engine.transforms.code_set import _pick_from_seq
-from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
+from decoy_engine.transforms.fpe import (
+    _CHARSETS,
+    FF1_TWEAK_SCOPE_COLUMN,
+    build_ff1_tweak,
+    fpe_encrypt_value,
+)
 from decoy_engine.transforms.group_key import GroupKeyConfig, apply_group_key
 from decoy_engine.transforms.grouped_series import GroupedSeriesConfig, _apply_monotone_walk
 from decoy_engine.transforms.joint_mask import _KEYED_ROW_SOURCE
@@ -371,7 +376,7 @@ class TestStatisticalPerRowGolden:
 # ---------------------------------------------------------------------------
 # source_keyed_hmac sites: route the REAL shipped transform / primitive and
 # assert the provider reproduces its output (or, for fpe, its keyed material
-# proven through the shipped Feistel). NO derive-vs-derive tautologies.
+# proven through the shipped FF1 call). NO derive-vs-derive tautologies.
 # ---------------------------------------------------------------------------
 
 
@@ -581,12 +586,14 @@ class TestIdentifierDeterministicGolden:
 
 class TestFpeKeyGolden:
     def test_provider_key_reproduces_shipped_ciphertext(self) -> None:
-        # mask.fpe is keyed-material: the provider emits the per-column Feistel
+        # mask.fpe is keyed-material: the provider emits the per-column FF1
         # KEY; the ciphertext is reproduced by driving that key through the
         # SHIPPED fpe_encrypt_value, and must equal the real handler's output.
+        # Values must clear the FF1 minimum domain for radix 10 (length >= 6);
+        # a shorter value now fails closed instead of encrypting.
         ns = "fpe/acct"
         col = "acct"
-        values = ["12345", "67890", None, "24680"]
+        values = ["123456", "678905", None, "246803"]
         df = pd.DataFrame({col: values})
         plan = _mask_col("fpe", ns, (("charset", "digits"),))
         out_df, _ = FpeStrategyHandler(chunk_count=1).run(df.copy(), col, plan, _full_ctx())
@@ -594,8 +601,8 @@ class TestFpeKeyGolden:
 
         p = provider_for("mask.fpe")
         key = p.column_key(_MASK_KEY, ns)
-        charset = "".join(dict.fromkeys(_CHARSETS.get("digits", "digits")))
-        tweak = col.encode("utf-8", errors="replace")
+        charset = _CHARSETS.get("digits", "digits")
+        tweak = build_ff1_tweak(FF1_TWEAK_SCOPE_COLUMN, col)
         reproduced = [
             None if v is None else fpe_encrypt_value(str(v), key, charset, tweak, True, False, None)
             for v in values
@@ -640,7 +647,7 @@ class TestGoldenGateCoverage:
         assert set(_ROUTED) == expected_sites
         # 19 distinct sites, each routed exactly once through the REAL shipped
         # code. 18 reproduce the shipped OUTPUT byte-for-byte; mask.fpe is
-        # keyed-material (the provider emits the Feistel key, and the ciphertext
+        # keyed-material (the provider emits the FF1 key, and the ciphertext
         # is reproduced via the shipped fpe_encrypt_value driven by that key).
         _keyed_material_only = {"mask.fpe"}
         _reproduces_output = expected_sites - _keyed_material_only

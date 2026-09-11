@@ -48,7 +48,7 @@ def _validate_scheme_length(scheme: str, s: str) -> None:
         expected = " or ".join(str(n) for n in sorted(exact))
         raise FpeChecksumError(
             f"FPE checksum scheme {scheme!r} requires exactly {expected} character(s); "
-            f"got {len(s)} for {s!r}. A value outside the scheme's fixed length cannot "
+            f"got {len(s)}. A value outside the scheme's fixed length cannot "
             "be format-preserving-encrypted without leaking or truncating a character, "
             "so the engine fails closed. Fix the source data or route this column "
             "through a different strategy.",
@@ -58,7 +58,7 @@ def _validate_scheme_length(scheme: str, s: str) -> None:
     if minimum is not None and len(s) < minimum:
         raise FpeChecksumError(
             f"FPE checksum scheme {scheme!r} requires at least {minimum} characters "
-            f"(body + check digit); got {len(s)} for {s!r}. The engine fails closed "
+            f"(body + check digit); got {len(s)}. The engine fails closed "
             "rather than pass the value through unmasked.",
             scheme=scheme,
         )
@@ -123,10 +123,23 @@ def _fpe_checksum_permute(
         a silent cleartext pass-through of an identifier the config asked to
         mask.  Each now raises ``FpeChecksumError`` instead.
 
+    Invalid source checksum (Task 5.2 plan P5-final)
+        On the FORWARD (encrypt) direction only, the complete normalized
+        identifier, INCLUDING its check digit, must already satisfy
+        ``checksums.validate()`` before any permutation runs. A value whose
+        stated check digit does not match its body is not a valid instance
+        of the scheme (e.g. an SSN typed in the PAN column with a mangled
+        Luhn digit); permuting it anyway would produce output that looks
+        checksum-valid but has no honest source, so the engine fails closed
+        with ``FpeChecksumError`` (code ``fpe.checksum_invalid_source``)
+        instead. Decrypt does NOT re-validate: the ciphertext's check digit
+        is recomputed from the decrypted body, not read from the ciphertext,
+        so there is nothing meaningful to validate on that side.
+
     The function is symmetric: the same body permutation runs in both the
     forward (encrypt) and inverse (decrypt) directions.
     """
-    from decoy_engine.checksums import _KNOWN_SCHEMES, calc_check_digit
+    from decoy_engine.checksums import _KNOWN_SCHEMES, calc_check_digit, validate
 
     # H2: unknown scheme - fail closed.
     if scheme not in _KNOWN_SCHEMES:
@@ -155,6 +168,22 @@ def _fpe_checksum_permute(
     # itself) and the over-length leak/truncation (a surplus char never fit the
     # fixed-width checksum body).
     _validate_scheme_length(scheme, s)
+
+    # P5-final: validate the COMPLETE source identifier (check digit included)
+    # before permuting, forward direction only. `s` here has already had any
+    # separators stripped by the caller (`_fpe_value`'s in-charset extraction),
+    # which every supported scheme's check-digit arithmetic is indifferent to.
+    if forward and not validate(scheme, s):
+        raise FpeChecksumError(
+            f"FPE checksum mode: source value fails checksums.validate() for "
+            f"scheme {scheme!r}; its check digit does not match its body. "
+            "Permuting an already-invalid identifier would produce output "
+            "that looks checksum-valid but has no honest source, so the "
+            "engine fails closed. Fix the source data or route this column "
+            "through a different strategy.",
+            scheme=scheme,
+            code="fpe.checksum_invalid_source",
+        )
 
     _DIGITS_ONLY = "0123456789"
 

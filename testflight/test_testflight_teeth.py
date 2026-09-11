@@ -3703,12 +3703,13 @@ class TestValueChangingMaskPassthroughTooth:
     - FPE finds no in-charset characters in any value, so every value passes
       through unchanged: output value-set == source value-set.
     - charset:ALPHANUM is '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ...' (includes
-      uppercase). FPE permutes each value to a different 2-char string.
+      uppercase). FPE permutes each value to a different 4-char string.
     """
 
-    # Reference values matching Job B fixture (uppercase 2-char codes).
-    _SRC_CATS = ["EL", "CL", "FD", "HM", "SP"]
-    _SRC_RISKS = ["HI", "MD", "LO"]
+    # Reference values matching Job B fixture (uppercase 4-char codes; 4
+    # chars clears the FF1 minimum admissible domain at radix 62).
+    _SRC_CATS = ["ELXX", "CLXX", "FDXX", "HMXX", "SPXX"]
+    _SRC_RISKS = ["HIXX", "MDXX", "LOXX"]
 
     @staticmethod
     def _apply_fpe(values: list[str], charset_name: str, tweak: bytes) -> list[str]:
@@ -3754,7 +3755,7 @@ class TestValueChangingMaskPassthroughTooth:
         """FPE with ALPHANUM charset on uppercase data must pass the passthrough tooth.
 
         GREEN (BLOCKER-1 fix): charset:ALPHANUM includes uppercase letters. FPE
-        permutes each unique value to a different 2-char string over the 62-char
+        permutes each unique value to a different 4-char string over the 62-char
         ALPHANUM set. The output value-set differs from the source value-set.
         check_value_changing_not_passthrough must NOT raise.
 

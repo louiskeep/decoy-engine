@@ -68,7 +68,7 @@ HMAC-SHA256 envelope:
   a domain-typed wrapper the `providers_v2` identifier adapters use.
 
 The determinism envelope for every keyed site is HKDF-SHA256 (RFC 5869) extract
-plus HMAC-SHA256 (RFC 2104) with `SEED_PROTOCOL_VERSION = 6` mixed into the HMAC
+plus HMAC-SHA256 (RFC 2104) with `SEED_PROTOCOL_VERSION = 7` mixed into the HMAC
 input, implemented in `decoy_engine.determinism._derive`. numpy sites follow the
 NEP-19 `default_rng` (PCG64) seed-stability contract; Python sites use the
 CPython Mersenne Twister via `random.Random`.
@@ -112,9 +112,13 @@ the CDF. Mirrors: the out-of-core categorical kernel
 (`execution/polars/_strategies/_categorical.py:113`).
 
 ### mask.fpe
-`transforms/fpe.py:344`. 8-round type-II Feistel permutation with an HMAC-SHA256
-round function; the per-column key is `derive(mask_key, namespace, FPE_KEY_LABEL)`.
-A keyed bijection (reversible), home-rolled HMAC-SHA256 Feistel, NOT NIST FF1.
+`transforms/fpe.py:349`. NIST SP 800-38G FF1 (AES-256, Algorithms 5/6; Task 5.2,
+2026-09-11, replaced the earlier home-rolled 8-round HMAC-SHA256 Feistel
+entirely); the per-column key is `derive(mask_key, namespace, FF1_KEY_LABEL)`,
+and the tweak is the pinned wire format from `transforms.fpe.build_ff1_tweak`.
+A keyed bijection (reversible) under the deployable profile's domain floor
+(`radix ** length >= FF1_MIN_DOMAIN`); below the floor `_permute` fails closed
+(`FpeUnencryptableError`) rather than emitting an undefined-security output.
 Out-of-core mirror at `_mask_group_b.py:132`.
 
 ### mask.date_shift
@@ -441,10 +445,10 @@ shipped code:
   (`apply_windowed_date`), `gen.categorical` / `gen.reference` /
   `gen.null_probability` / `gen.faker_per_row` (`synthesize.py`),
   `gen.statistical_per_row` (`sample_column`).
-- 1 is keyed-material: `mask.fpe`. The provider emits the per-column Feistel KEY
-  (`derive(mask_key, namespace, FPE_KEY_LABEL)`); the ciphertext is reproduced by
+- 1 is keyed-material: `mask.fpe`. The provider emits the per-column FF1 KEY
+  (`derive(mask_key, namespace, FF1_KEY_LABEL)`); the ciphertext is reproduced by
   driving that key through the shipped `fpe_encrypt_value` and matching the real
-  `FpeStrategyHandler` output. The Feistel arithmetic is transform semantics,
+  `FpeStrategyHandler` output. The FF1 arithmetic is transform semantics,
   deferred to Task 0.4's pure-Python reference.
 
 The compound source-keyed sites (`mask.fpe` key, `mask.code_set` and

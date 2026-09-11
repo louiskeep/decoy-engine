@@ -537,7 +537,10 @@ ALLOWLIST: dict[str, int] = {
     # whole contract, so the entries cannot be abbreviated). Not orchestration.
     # Decomposition target: split `DRAW_SITES` into `_draw_sites_mask.py` /
     # `_draw_sites_gen.py` data siblings re-exported here if it grows further.
-    "src/decoy_engine/execution/native/_determinism_protocol.py": 927,
+    # Task 5.2 (2026-09-11): the FF1 cutover renamed FPE_KEY_LABEL to
+    # FF1_KEY_LABEL and updated the `mask.fpe` DrawSite's seed-derivation
+    # notes and call-site reference, pushing the module from 927 to 931.
+    "src/decoy_engine/execution/native/_determinism_protocol.py": 931,
     # Native program Task 0.3 (2026-08-27): one determinism PROVIDER per
     # catalogued draw site (the registry that reproduces each shipped draw off
     # the hot path). One small class per draw mechanism plus the per-site
@@ -545,7 +548,9 @@ ALLOWLIST: dict[str, int] = {
     # Decomposition target: split the provider families (numpy / python_mt /
     # faker / source_keyed) into sibling modules re-exported through the
     # registry when the next draw-site batch lands.
-    "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
+    # Task 5.2 (2026-09-11): FF1_KEY_LABEL rename touched the `mask.fpe`
+    # provider's key-derivation reference, pushing the module from 985 to 986.
+    "src/decoy_engine/execution/native/_draw_site_providers.py": 986,
     # Native program Task 2.3 (Phase 2 merge, 2026-08-30): the compiled-kernel
     # loader gained a load-time known-answer self-test that pushed the module to
     # 702, and the 2026-09-09 native-throughput program's Task 1.6 native_threads
@@ -604,6 +609,15 @@ ALLOWLIST: dict[str, int] = {
     # ratchet -- the plan gate found no cleaner class split worth introducing
     # solely to reach 600 LOC.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
+    # Task 5.2 (2026-09-11): crossed the 600 cap (590 -> 657) for the P3-final
+    # fpe-span rewrite: FF1 keying independent of `_span_key`
+    # (`derive(mask_key, f"text.{detector_id}", FF1_KEY_LABEL)` +
+    # `build_ff1_tweak`), plus the new `sub_floor_span` redact|synthetic
+    # policy (`_apply_sub_floor_span_policy` / `_synthetic_span_value`) for
+    # spans FF1 cannot encrypt. Decomposition target: split the sub-floor
+    # policy helpers into a `_text_mask_sub_floor.py` sibling when this
+    # module is next touched.
+    "src/decoy_engine/transforms/text_mask.py": 657,
 }
 
 

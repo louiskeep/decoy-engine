@@ -107,12 +107,17 @@ that the engine rejects rather than silently mis-keying.
 
 ## FPE key and tweak model
 
-FPE uses a single Feistel key per `(job_seed, namespace)`, derived as
-`derive(job_seed, namespace, b"fpe-key/v1")`. This is a single-key/varying-tweak
-key model (one key, varying tweak per column), but the underlying primitive is
-the engine's home-rolled 8-round HMAC-SHA256 Feistel, which is NOT NIST SP
-800-38G FF1 (an audited FF1 is a documented fast-follow). The default tweak is
-the column name encoded as UTF-8.
+FPE uses a single AES-256 key per `(job_seed, namespace)`, derived as
+`derive(job_seed, namespace, b"ff1-key/v1")`. This is a single-key/varying-tweak
+key model (one key, varying tweak per column). The underlying primitive is
+NIST SP 800-38G FF1 (Algorithms 5/6, AES-256 via the `cryptography` package),
+which replaced the engine's earlier home-rolled 8-round HMAC-SHA256 Feistel
+entirely (Task 5.2, `SEED_PROTOCOL_VERSION` 6 -> 7; see
+[docs/security/de-01-ff1-adoption.md](security/de-01-ff1-adoption.md) for the
+conformance claim and known leakage). The tweak is a pinned wire format
+(`transforms.fpe.build_ff1_tweak`): a version byte, a scope byte (column vs.
+join_group vs. text-span), a big-endian length prefix, then the column name
+(or `fpe_join_group`) as strict UTF-8.
 
 This means:
 
@@ -126,9 +131,14 @@ This means:
   If you rename `email` to `contact_email` and re-run the mask, `unmask` with
   the original column name will not reverse the new ciphertexts. Re-run unmask
   against the new column name, or treat the rename as a re-keying event.
+- FF1 requires a minimum admissible domain (`radix ** length >= 1,000,000`); a
+  value whose in-charset body falls short fails closed
+  (`FpeUnencryptableError`, code `fpe.unencryptable_domain`) rather than
+  masking under a domain too small for the cipher to be well-defined.
 
 The implementation is in `src/decoy_engine/execution/_strategies/_fpe.py`
-(key derivation) and `src/decoy_engine/transforms/fpe.py` (Feistel cipher).
+(key derivation) and `src/decoy_engine/transforms/fpe.py` (deployable-profile
+wrapper) plus `src/decoy_engine/transforms/_ff1.py` (the FF1 primitive itself).
 
 ### FPE join groups (opt-in, SP-46)
 

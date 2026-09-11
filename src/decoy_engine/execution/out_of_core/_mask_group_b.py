@@ -11,10 +11,10 @@ Established methodology (CLAUDE.md core rule): none of these invent a new
 approach; each reuses the SAME primitive the full-frame handler cites, so the
 out-of-core output is byte-identical rather than merely similar.
 
-- fpe: reuses `transforms.fpe.fpe_encrypt_value` (type-II Feistel + HMAC-SHA256;
-  single-key/varying-tweak model, home-rolled -- NOT NIST SP 800-38G FF1) with the exact key
-  derivation the `_strategies/_fpe.FpeStrategyHandler` uses
-  (`derive(job_seed, namespace, FPE_KEY_LABEL)`, column-or-join_group tweak).
+- fpe: reuses `transforms.fpe.fpe_encrypt_value` (NIST SP 800-38G FF1,
+  single-key/varying-tweak model) with the exact key derivation the
+  `_strategies/_fpe.FpeStrategyHandler` uses (`derive(job_seed, namespace,
+  FF1_KEY_LABEL)`, column-or-join_group tweak per `build_ff1_tweak`).
 - text_redact: reuses `storm.detectors.iter_spans` + `_text_redact._splice`
   (span-level PII redaction; deterministic pure function of input + config).
 - categorical: reuses `determinism.derive_index` over the plan's category pool
@@ -55,12 +55,23 @@ from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._categorical import _WEIGHTED_CDF_RES, _build_cdf
-from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
+from decoy_engine.execution._strategies._fpe import (
+    FF1_KEY_LABEL,
+    strategy_code_for_checksum,
+    strategy_code_for_unencryptable,
+)
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.storm.detectors import Span, iter_spans
-from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
+from decoy_engine.transforms.fpe import (
+    FF1_TWEAK_SCOPE_COLUMN,
+    FF1_TWEAK_SCOPE_JOIN_GROUP,
+    build_ff1_tweak,
+    check_charset_unique,
+    fpe_encrypt_value,
+    resolve_fpe_charset,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import ColumnSeed
@@ -74,15 +85,23 @@ GROUP_B_STRATEGIES = frozenset({"fpe", "text_redact", "categorical"})
 
 
 def _fpe_charset(cfg: dict[str, Any]) -> str:
-    """Resolve + validate the fpe charset, fail-closed on a degenerate one.
+    """Resolve + validate the fpe charset, fail-closed on a duplicate or a
+    degenerate one.
 
     Mirrors `_strategies/_fpe.FpeStrategyHandler.run` exactly (resolve the
-    named charset, dedup preserving order, reject < 2 distinct chars with the
-    SAME `fpe_charset_degenerate` code the oracle raises) so the out-of-core
-    route rejects the identical configs at the identical point.
+    named charset, reject a duplicate symbol, reject < 2 distinct chars with
+    the SAME `fpe_charset_duplicate_symbols` / `fpe_charset_degenerate`
+    codes the oracle raises) so the out-of-core route rejects the identical
+    configs at the identical point.
     """
     charset_spec = cfg.get("charset", "digits")
-    charset = "".join(dict.fromkeys(_CHARSETS.get(charset_spec, charset_spec)))
+    charset = resolve_fpe_charset(charset_spec)
+    try:
+        check_charset_unique(charset_spec, charset)
+    except FpeUnencryptableError as exc:
+        raise StrategyError(
+            code="fpe_charset_duplicate_symbols", strategy="fpe", message=str(exc)
+        ) from exc
     if len(charset) < 2:
         raise StrategyError(
             code="fpe_charset_degenerate",
@@ -128,8 +147,10 @@ def fpe_array(
             code="out_of_core_fpe_column_required",
             message="fpe out-of-core masking needs a column name (or fpe_join_group) for the tweak.",
         )
-    tweak = tweak_source.encode("utf-8", errors="replace")
-    key = derive(job_seed, namespace, FPE_KEY_LABEL)
+    tweak = build_ff1_tweak(
+        FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN, tweak_source
+    )
+    key = derive(job_seed, namespace, FF1_KEY_LABEL)
 
     out: list[str | None] = []
     # DE-01 cluster-C (2026-07-14): translate the value-level fail-closed raises
@@ -148,7 +169,7 @@ def fpe_array(
             )
     except FpeUnencryptableError as exc:
         raise StrategyError(
-            code="fpe_unencryptable_value",
+            code=strategy_code_for_unencryptable(exc),
             strategy="fpe",
             message=(
                 f"column {column!r}: {exc}. The engine fails closed rather than "
@@ -157,7 +178,7 @@ def fpe_array(
         ) from exc
     except FpeChecksumError as exc:
         raise StrategyError(
-            code="fpe_checksum_unsupported",
+            code=strategy_code_for_checksum(exc),
             strategy="fpe",
             message=f"column {column!r}: {exc}",
         ) from exc

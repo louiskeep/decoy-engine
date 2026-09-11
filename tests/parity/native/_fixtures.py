@@ -358,7 +358,9 @@ _STRATEGY_SPECS: dict[str, list[tuple[dict[str, Any], list[object], pa.DataType,
                 "namespace": "fpe_ns",
                 "provider_config": {"charset": "digits"},
             },
-            ["12345", "67890", "00001"],
+            # 6-digit: radix 10, length 6 clears the FF1 minimum admissible
+            # domain (10**6 == 1,000,000); 5 digits fail closed on the floor.
+            ["123456", "678901", "000012"],
             _STR,
             "seed_deterministic",
         )

@@ -16,7 +16,10 @@ import pytest
 from decoy_engine import unmask_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError, run_pipeline
+from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.unmask import UnmaskResult
+
+_SECRET = SecretKeyProvider(b"a-strong-32B+-managed-secret-value!!", key_version="v1")
 
 _ENGINE_VERSION = "ws1-test"
 
@@ -58,10 +61,12 @@ def _fpe_col(name: str, namespace: str = "acct_ns", **provider_config) -> dict:
     }
 
 
-def _mask(tmp_path, cfg: dict, df: pd.DataFrame) -> dict[str, pa.Table]:
+def _mask(tmp_path, cfg: dict, df: pd.DataFrame, *, key_provider=None) -> dict[str, pa.Table]:
     df.to_csv(tmp_path / "accounts.csv", index=False)
     sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
-    result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+    result = run_pipeline(
+        cfg, sources=sources, engine_version=_ENGINE_VERSION, key_provider=key_provider
+    )
     return dict(result.outputs)
 
 
@@ -101,12 +106,16 @@ class TestRoundTrip:
         assert result.outputs["accounts"].column("pan").to_pylist() == source
 
     def test_wrong_seed_does_not_recover(self, tmp_path):
+        """A single value recovering by coincidence under the wrong seed is
+        legal for a permutation, so the guard is aggregate across several
+        independent values rather than a universal per-value claim."""
         cfg = _config(tmp_path, [_fpe_col("acct")], seed=42)
-        source = ["123456789"]
+        source = ["123456789", "987654321", "000000042"]
         masked = _mask(tmp_path, cfg, pd.DataFrame({"acct": source}))
         wrong = _config(tmp_path, [_fpe_col("acct")], seed=43)
         result = unmask_pipeline(wrong, masked)
-        assert result.outputs["accounts"].column("acct").to_pylist() != source
+        recovered = result.outputs["accounts"].column("acct").to_pylist()
+        assert any(r != s for r, s in zip(recovered, source, strict=True))
 
 
 class TestReport:
@@ -140,6 +149,22 @@ class TestReport:
         out = result.outputs["accounts"]
         assert out.column("email").to_pylist() == masked["accounts"].column("email").to_pylist()
         assert out.column("notes").to_pylist() == ["hello"]
+
+    def test_secret_keyed_fpe_is_still_reversed_unverified(self, tmp_path):
+        """Task 5.2 P4 (round-2 finding 3 / BLOCKER-2): FF1 is unauthenticated,
+        so a wrong key yields a plausible-looking but WRONG plaintext with no
+        signal that it is wrong. Pre-FF1, reversing under a real KeyProvider
+        secret reported a confident `reversed`; that distinction no longer
+        holds for FF1, so it must report `reversed_unverified` here too, not
+        only under the no-secret job_seed fallback the other tests exercise."""
+        cfg = _config(tmp_path, [_fpe_col("acct")])
+        source = ["123456789"]
+        masked = _mask(tmp_path, cfg, pd.DataFrame({"acct": source}), key_provider=_SECRET)
+        result = unmask_pipeline(cfg, masked, key_provider=_SECRET)
+        assert result.outputs["accounts"].column("acct").to_pylist() == source
+        (entry,) = [r for r in result.columns if r.column == "acct"]
+        assert entry.status == "reversed_unverified"
+        assert "unauthenticated" in entry.detail.lower()
 
     def test_luhn_column_carries_caveat_detail(self, tmp_path):
         cfg = _config(tmp_path, [_fpe_col("pan", validate_luhn=True)])

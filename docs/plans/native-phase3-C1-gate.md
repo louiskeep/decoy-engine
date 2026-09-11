@@ -209,6 +209,13 @@ baseline's own claim that these rates are tier-invariant for this recipe):
 | LAST | 0.5617 | 0.9013 | 0.5817 / 0.9213 |
 | MAIDEN | 0.2944 | 0.9017 | 0.3144 / 0.9217 |
 
+Re-derived at SEED_PROTOCOL_VERSION 7 (Task 5.2, 2026-09-11): the FF1 cutover
+bumped the protocol version byte that keys the faker pool draw, so the observed
+rates moved (FIRST 0.6530 / 0.9349, LAST 0.5508 / 0.9020, MAIDEN 0.3361 /
+0.9014; thresholds FIRST 0.6730 / 0.9549, LAST 0.5708 / 0.9220, MAIDEN 0.3561 /
+0.9214). The live baseline is the `ORACLE_*` map in `_pool_quality.py`; the
+table above is the Task 3.0 (v6) freeze record.
+
 ### Route ledger (from the bench, sanity-checked; the authoritative exact
 ledger is the gate test's own criterion 4)
 

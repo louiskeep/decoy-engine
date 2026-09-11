@@ -247,7 +247,7 @@ class TestSourceKeyedEmulation:
 
 class TestCompoundSourceKeyedEmulation:
     def test_fpe_column_key_uses_fixed_label_source(self) -> None:
-        # The Feistel key is per-COLUMN (source = the fixed FPE_KEY_LABEL), NOT
+        # The FF1 key is per-COLUMN (source = the fixed FF1_KEY_LABEL), NOT
         # a per-value derive. This is the bug the review caught.
         p = provider_for("mask.fpe")
         assert p.column_key(_MASK_KEY, _NS) == derive(_MASK_KEY, _NS, _FPE_KEY_LABEL)
@@ -276,11 +276,11 @@ class TestShippedSymbolDrift:
     utilities; these pins fail loudly if the shipped source ever changes."""
 
     def test_constants_match_shipped(self) -> None:
-        from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
         from decoy_engine.transforms.code_set import _KEYED_SALT
+        from decoy_engine.transforms.fpe import FF1_KEY_LABEL
         from decoy_engine.transforms.joint_mask import _KEYED_ROW_SOURCE
 
-        assert _FPE_KEY_LABEL == FPE_KEY_LABEL
+        assert _FPE_KEY_LABEL == FF1_KEY_LABEL
         assert _CODE_SET_KEYED_SALT == _KEYED_SALT
         assert _JOINT_MASK_KEYED_ROW_SOURCE == _KEYED_ROW_SOURCE
 

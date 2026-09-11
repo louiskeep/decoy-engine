@@ -19,7 +19,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine.execution.native._crypto_ext import reference_keyed_derivation
+from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 
 _MASK_KEY = bytes(range(32))

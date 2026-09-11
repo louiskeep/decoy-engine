@@ -29,8 +29,8 @@ modules:
   # strategy modules is V2.1 follow-up.
 
   - path: src/decoy_engine/transforms/fpe.py
-    pattern: Type-II Feistel + HMAC-SHA256
-    source: Feistel 1973; HMAC RFC 2104
+    pattern: NIST SP 800-38G FF1
+    source: NIST SP 800-38G (FF1, Algorithms 5/6); cryptography (PyCA, Apache-2.0/BSD)
 
   - path: src/decoy_engine/checksums.py
     pattern: Check-digit validation (python-stdnum + NPPES + ISO 3779)
@@ -68,11 +68,13 @@ modules:
 
   # SP-07 / P5.S.text_mask (2026-06-28): span-level PII masking.
   # HMAC-SHA256 keyed per-span determinism (same real value in any cell
-  # always produces the same masked value). Reuses fpe_encrypt_value
-  # (Feistel+HMAC) and storm.detectors.iter_spans (single source of truth).
+  # always produces the same masked value) for faker/date_shift spans.
+  # Reuses fpe_encrypt_value and storm.detectors.iter_spans (single source
+  # of truth). Task 5.2 (2026-09-11): the fpe span branch now keys via
+  # NIST SP 800-38G FF1, same as the column fpe strategy (see fpe.py).
   - path: src/decoy_engine/transforms/text_mask.py
     pattern: HMAC-SHA256 keyed span determinism
-    source: RFC 2104 (HMAC); Type-II Feistel 1973 (via fpe.py)
+    source: RFC 2104 (HMAC); NIST SP 800-38G FF1 (via fpe.py)
 
   # SP-08 (2026-06-28): joint_mask compound reference-tuple masking.
   # HMAC-SHA256-keyed row selection via ReferenceTable.keyed_row (RFC 2104).

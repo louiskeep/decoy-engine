@@ -473,10 +473,10 @@ class TestPerturbDateOffsetKnownAnswer:
         digest slice (`[:8]` -> `[:9]`) changes the offset and thus the output."""
         assert _perturb_date(
             datetime.date(2024, 6, 15), "month", _SEED, "dates", "2024-06-15"
-        ) == datetime.date(2024, 6, 9)
+        ) == datetime.date(2024, 6, 12)
         assert _perturb_date(
             datetime.date(2024, 6, 15), "quarter", _SEED, "dates", "2024-06-15"
-        ) == datetime.date(2024, 6, 3)
+        ) == datetime.date(2024, 4, 8)
 
 
 class TestApplyBucketPerturbCore:
@@ -488,7 +488,7 @@ class TestApplyBucketPerturbCore:
         or an `&`->`|` parse-mask flip (all of which pass the value through
         unchanged) are caught."""
         out = apply_bucket_perturb(pd.Series(["2024-06-15"]), "month", _SEED, "dates", "%Y-%m-%d")
-        assert list(out) == ["2024-06-09"]
+        assert list(out) == ["2024-06-12"]
 
     def test_extension_array_dtype_input_is_processed(self):
         """An extension-dtype (pandas `string`) column is materialized and bucketed;
@@ -496,13 +496,13 @@ class TestApplyBucketPerturbCore:
         out = apply_bucket_perturb(
             pd.Series(["2024-06-15"], dtype="string"), "month", _SEED, "dates", "%Y-%m-%d"
         )
-        assert list(out) == ["2024-06-09"]
+        assert list(out) == ["2024-06-12"]
 
     def test_autodetect_used_when_date_format_is_none(self):
         """With date_format=None the format is detected from the data; passing None
         into detection instead of the series would crash."""
         out = apply_bucket_perturb(pd.Series(["2024-06-15"]), "month", _SEED, "dates", None)
-        assert list(out) == ["2024-06-09"]
+        assert list(out) == ["2024-06-12"]
 
     def test_unparseable_value_passes_through_unchanged(self):
         """An unparseable cell is preserved verbatim while its neighbours are
@@ -515,7 +515,7 @@ class TestApplyBucketPerturbCore:
             "dates",
             "%Y-%m-%d",
         )
-        assert list(out) == ["2024-06-09", "not-a-date", "2024-08-14"]
+        assert list(out) == ["2024-06-12", "not-a-date", "2024-08-11"]
 
     def test_value_after_a_null_is_still_bucketed(self):
         """A null cell is skipped with `continue`, not `break`; the value after it
@@ -527,9 +527,9 @@ class TestApplyBucketPerturbCore:
             "dates",
             "%Y-%m-%d",
         )
-        assert out.iloc[0] == "2024-06-09"
+        assert out.iloc[0] == "2024-06-12"
         assert out.iloc[1] is None
-        assert out.iloc[2] == "2024-08-14"
+        assert out.iloc[2] == "2024-08-11"
 
 
 class TestValidateConfigCore:

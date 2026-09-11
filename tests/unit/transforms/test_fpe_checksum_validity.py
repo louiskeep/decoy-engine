@@ -125,7 +125,7 @@ class TestFpeIsbn13:
     """FPE with checksum='isbn13' must produce an isbn13-valid 13-char string
     and must preserve the 978/979 bookland prefix."""
 
-    _ISBNS = ["9783161484100", "9780471117094", "9790201234567"]
+    _ISBNS = ["9783161484100", "9780471117094", "9790201234564"]
 
     def test_fpe_isbn13_output_validates(self) -> None:
         for isbn in self._ISBNS:
@@ -597,32 +597,76 @@ class TestFpeChecksumErrorFields:
 
 
 class TestFpeChecksumLengthBoundary:
-    """The fail-closed length guard is a boundary, not a one-sided floor.
-
-    A value one below the minimum must raise; a value exactly at the minimum
-    must pass. Widening the comparison (``<`` to ``<=``) would reject the
-    shortest legal value, and dropping the guard entirely would let a
-    below-minimum value slip through to a silent self-permutation.
+    """The checksum module's own per-scheme length guard (``_MIN_LENGTHS`` /
+    ``_EXACT_LENGTHS`` in ``_fpe_checksum.py``) is a boundary, not a one-sided
+    floor: a value one below the minimum must raise, and a value at or above
+    it proceeds to the permutation. Task 5.2 (FF1) adds a SECOND, independent
+    boundary underneath that one: the permuted body's own domain
+    (``radix ** length``) must also clear ``FF1_MIN_DOMAIN`` (~1,000,000), or
+    ``_permute`` raises ``FpeUnencryptableError`` (code
+    ``fpe.unencryptable_domain``) before the checksum module's length guard
+    ever gets to matter. Luhn's own minimum (2: one body digit plus the check
+    digit) is far below the FF1 floor for a digit body (needs 6 body digits,
+    radix 10); a value that clears Luhn's OWN floor can still be rejected by
+    FF1's floor underneath it. These tests pin both boundaries rather than
+    conflating them.
     """
 
-    def test_luhn_length_two_passes(self) -> None:
-        # Exactly at the floor (1 body char + 1 check digit): must NOT raise.
-        out = fpe_encrypt_value("18", _KEY, _DIGITS, _TWEAK, checksum="luhn")
-        assert len(out) == 2
+    def test_luhn_below_ff1_floor_fails_closed_on_domain(self) -> None:
+        """ "18" clears the checksum module's own length floor (2) and is a
+        genuinely Luhn-valid value, but its 1-digit body (radix 10, domain 10)
+        is far below the FF1 minimum admissible domain. The permutation layer
+        rejects it before the checksum module's own length guard would ever
+        matter; the failure is `FpeUnencryptableError`, not `FpeChecksumError`,
+        because the FF1 domain floor is a property of the permutation, not of
+        the checksum scheme.
+        """
+        from decoy_engine.errors import FpeUnencryptableError
+
+        assert checksums.validate("luhn", "18")
+        with pytest.raises(FpeUnencryptableError) as exc:
+            fpe_encrypt_value("18", _KEY, _DIGITS, _TWEAK, checksum="luhn")
+        assert exc.value.code == "fpe.unencryptable_domain"
+
+    def test_luhn_at_ff1_floor_passes(self) -> None:
+        # 6-digit body (10**6 exactly clears FF1_MIN_DOMAIN) + 1 check digit.
+        body = "100000"
+        src = body + checksums.calc_check_digit("luhn", body)
+        out = fpe_encrypt_value(src, _KEY, _DIGITS, _TWEAK, checksum="luhn")
+        assert len(out) == len(src)
         assert checksums.validate("luhn", out)
 
-    def test_vin_two_char_charset_used_verbatim(self) -> None:
-        """A caller charset yielding exactly two VIN-legal characters is used as
-        the permutation alphabet as-is -- it must not be treated as too small
-        and collapsed to the digit fallback.
-
-        The fallback fires only below two usable characters; at exactly two the
-        two-symbol alphabet drives the permutation, which is observable as a
-        different (still VIN-valid) output than the ten-digit fallback would
-        produce. The output is pinned under the fixed test key/tweak.
+    def test_vin_two_symbol_charset_fails_closed_on_domain(self) -> None:
+        """A 2-symbol VIN-legal charset can never clear the FF1 floor for
+        VIN's fixed 16-character non-check body: 2**16 = 65,536, far below
+        FF1_MIN_DOMAIN. This is a structural property of the (charset,
+        body-length) pair, not of the specific source VIN, so any
+        checksum-valid 17-character source built entirely from a 2-symbol
+        charset hits the same fail-closed domain rejection.
         """
-        # 17-char source whose 16 non-check chars are all within charset "01".
-        src = "00000000011111111"
-        out = fpe_encrypt_value(src, _KEY, "01", _TWEAK, checksum="vin")
+        from decoy_engine.errors import FpeUnencryptableError
+
+        body16 = "0101010101010101"
+        src = body16[:8] + checksums.calc_check_digit("vin", body16) + body16[8:]
+        assert checksums.validate("vin", src)
+        with pytest.raises(FpeUnencryptableError) as exc:
+            fpe_encrypt_value(src, _KEY, "01", _TWEAK, checksum="vin")
+        assert exc.value.code == "fpe.unencryptable_domain"
+
+    def test_vin_four_symbol_charset_used_verbatim(self) -> None:
+        """A caller charset yielding exactly four VIN-legal characters clears
+        the FF1 floor (4**16 = 4,294,967,296) and is used as the permutation
+        alphabet as-is, not collapsed to a wider fallback: every non-check
+        character of the output stays within the caller's 4-symbol charset,
+        which a 10-symbol digit fallback would not guarantee.
+        """
+        body16 = "2103210321032103"
+        src = body16[:8] + checksums.calc_check_digit("vin", body16) + body16[8:]
+        assert checksums.validate("vin", src)
+        assert all(c in "0123" for c in src)
+        out = fpe_encrypt_value(src, _KEY, "0123", _TWEAK, checksum="vin")
         assert checksums.validate("vin", out)
-        assert out == "11001011X10011010"
+        non_check = out[:8] + out[9:]
+        assert all(c in "0123" for c in non_check), (
+            f"permuted VIN body {non_check!r} left the caller's 4-symbol charset."
+        )

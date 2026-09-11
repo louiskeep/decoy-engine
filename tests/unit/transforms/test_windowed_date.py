@@ -192,7 +192,7 @@ class TestWindowedDateBounds:
         # any change to the seed derivation or the uniform draw fails here.
         anchors = ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]
         result = self._apply(anchors, min_days=0, max_days=100)
-        assert result == ["2024-01-09", "2024-04-06", "2024-03-09", "2024-06-24", "2024-12-07"]
+        assert result == ["2024-02-07", "2024-03-26", "2024-01-09", "2024-08-03", "2024-09-21"]
 
     def test_late_distribution_output_is_the_pinned_known_answer(self) -> None:
         # Uniform returns the first draw and never touches the second (`b`); only
@@ -202,7 +202,7 @@ class TestWindowedDateBounds:
         # split and miss those.
         anchors = ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]
         result = self._apply(anchors, min_days=0, max_days=100, distribution="late")
-        assert result == ["2024-02-09", "2024-05-20", "2024-03-09", "2024-08-14", "2024-12-07"]
+        assert result == ["2024-03-11", "2024-05-15", "2024-04-07", "2024-08-03", "2024-10-28"]
 
     def test_late_distribution_nonzero_min_known_answer(self) -> None:
         # min_days=20 (non-zero) so the b draw's LOWER bound matters: a
@@ -211,7 +211,7 @@ class TestWindowedDateBounds:
         # cannot see it, since integers(0, max+1) == integers(min, max+1) there.)
         anchors = ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]
         result = self._apply(anchors, min_days=20, max_days=100, distribution="late")
-        assert result == ["2024-02-21", "2024-05-27", "2024-03-16", "2024-08-20", "2024-12-10"]
+        assert result == ["2024-03-17", "2024-05-23", "2024-04-07", "2024-08-10", "2024-11-08"]
 
     def test_both_window_endpoints_are_reachable(self) -> None:
         # A mutated sampling bound (rng.integers(min, max - 1) or a dropped

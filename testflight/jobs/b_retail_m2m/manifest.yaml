@@ -9,7 +9,7 @@
 #     orphan_policy:warn for customer_identity -> 7 orphan orders in output
 #   - 0 orphan product orders (all product_ids are valid)
 #     orphan_policy:warn for product_identity -> 0 orphan orders
-#   - SENTINEL_PAN "4111111111111110" in customer row 0 (FPE+luhn transforms it)
+#   - SENTINEL_PAN "4111111111111111" in customer row 0 (FPE+luhn transforms it)
 #   - SENTINEL_EMAIL "sentinel.leak.test@b-retail-decoy-testflight.invalid" in row 0
 #     (text_redact masks to "[REDACTED]")
 #
@@ -29,7 +29,9 @@
 #   output -> joint similarity drops below corr_tol=0.90 -> RAISES.
 #
 # FPE-MASKED CORRELATED PAIR (Phase 3c -- masked_correlations, carry-forward CLOSED):
-#   cat_code (EL/CL/FD/HM/SP) and risk_flag (HI/MD/LO) are BOTH FPE-masked.
+#   cat_code (ELXX/CLXX/FDXX/HMXX/SPXX) and risk_flag (HIXX/MDXX/LOXX) are
+#   BOTH FPE-masked (4 chars: clears the FF1 minimum admissible domain at
+#   radix 62, ALPHANUM).
 #   Source Cramers V = 1.0 (deterministic many-to-one: each cat_code -> one risk_flag).
 #   After FPE bijection both columns the contingency COUNTS are unchanged; V_out = 1.0.
 #   diff = |V_out - V_src| = 0.0 < tol=0.10 -> PASSES.
@@ -51,8 +53,8 @@
 # Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside each fixture build_* function -- update all three after any fixture change):
 #   customers: e3c28d3e27dbc27d24adc53370cbe2c4e490b6b562e70ec483c9dcf20f29dd1e
-#   products:  8b5f2816591cd58d88566b6ef5d26c41e479c591fab7a6f55df841eb61da5d34
-#   orders:    90cef1e6383ecba8f245d6a2a74be9a2b34a23db1202090d7d6a279f7089ddd9
+#   products:  2ca9fa3cc0e69b24ee0dd289199ccb2a6fc9f710065254d215ea46dc54fc6671
+#   orders:    a8a22450fd277dff0f03a96472db6d45eee52d97535f85328e60c0f813d2b5d3
 #             (Phase 3c: cat_code + risk_flag columns added)
 #
 # Strategies exercised (strategy_coverage below):
@@ -143,7 +145,7 @@ config:
 
         # pan: FPE + Luhn checksum recomputation. Digits only (16-digit PAN).
         # FPE permutes digits 1-15; Luhn check digit is recomputed for digit 16.
-        # The sentinel PAN "4111111111111110" is transformed to a different
+        # The sentinel PAN "4111111111111111" is transformed to a different
         # Luhn-valid PAN (sentinel no-leakage verified by check_sentinels).
         - name: pan
           strategy: fpe
@@ -275,9 +277,10 @@ config:
           strategy: passthrough
 
         # cat_code: FPE-masked category code (Phase 3c masked-correlation pair).
-        # 2-char UPPERCASE values (EL/CL/FD/HM/SP). charset:ALPHANUM includes
+        # 4-char UPPERCASE-only values (ELXX/CLXX/FDXX/HMXX/SPXX), clearing the
+        # FF1 minimum admissible domain at radix 62. charset:ALPHANUM includes
         # uppercase letters so FPE genuinely permutes each value to a different
-        # 2-char string. Bijective: 5 unique inputs -> 5 unique outputs.
+        # 4-char string. Bijective: 5 unique inputs -> 5 unique outputs.
         # Namespace cat_code_ns ensures per-value stable mapping across reruns.
         - name: cat_code
           strategy: fpe
@@ -286,7 +289,7 @@ config:
             charset: ALPHANUM
 
         # risk_flag: FPE-masked risk tier (Phase 3c masked-correlation pair).
-        # 2-char UPPERCASE values (HI/MD/LO). Same bijective FPE properties.
+        # 4-char UPPERCASE-only values (HIXX/MDXX/LOXX). Same bijective FPE properties.
         # Correlated with cat_code in source: EL/HM->HI, CL/SP->MD, FD->LO.
         # After FPE on both columns, contingency COUNTS unchanged -> V preserved.
         - name: risk_flag
@@ -504,7 +507,7 @@ invariants:
         the pair and avoids inflating the non-waived preserve count.
 
     # orders.cat_code: preserve class (fpe bijection; Phase 3c).
-    # 2-char category code. FPE is a bijection: cardinality preserved exactly.
+    # 4-char category code. FPE is a bijection: cardinality preserved exactly.
     # Joint is NOT declared here because the engine crosstab-TVD metric cannot
     # measure correlation through a value-changing mask (see masked_correlations
     # below for the relabel-invariant Cramers V check instead).
@@ -524,7 +527,7 @@ invariants:
         Cramers V check declared in masked_correlations instead.
 
     # orders.risk_flag: preserve class (fpe bijection; Phase 3c).
-    # 2-char risk tier. Same FPE bijection properties as cat_code.
+    # 4-char risk tier. Same FPE bijection properties as cat_code.
     - table: orders
       column: risk_flag
       distribution_class: preserve
@@ -555,7 +558,7 @@ invariants:
   sentinels:
     - table: customers
       column: pan
-      value: "4111111111111110"
+      value: "4111111111111111"
     - table: customers
       column: email
       value: "sentinel.leak.test@b-retail-decoy-testflight.invalid"

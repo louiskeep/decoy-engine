@@ -105,7 +105,11 @@ _TEXT = st.text(
 _CELL = st.one_of(st.none(), _TEXT)
 _COLUMN = st.lists(_CELL, min_size=1, max_size=40)
 
-_DIGITS = st.text(alphabet="0123456789", min_size=1, max_size=12)
+# Task 5.2: FF1 is undefined/insecure below its minimum admissible domain
+# (radix ** length >= 1,000,000). At radix 10 that floor is length 6; a
+# shorter value now fails closed (`fpe.unencryptable_domain`) instead of
+# encrypting, so the fpe property test below needs values that clear it.
+_DIGITS = st.text(alphabet="0123456789", min_size=6, max_size=12)
 _DIGIT_COLUMN = st.lists(st.one_of(st.none(), _DIGITS), min_size=1, max_size=40)
 
 _DATES = st.dates(
@@ -314,10 +318,11 @@ _FPE_CHARSETS = st.sampled_from(["digits", "alpha", "ALPHA", "alphanum", "ALPHAN
     charset_name=_FPE_CHARSETS,
     key=st.binary(min_size=32, max_size=32),
     tweak=st.binary(min_size=1, max_size=32),
-    body_len=st.integers(min_value=1, max_value=24),
+    extra_len=st.integers(min_value=0, max_value=18),
     data=st.data(),
 )
-def test_fpe_decrypt_inverts_encrypt(charset_name, key, tweak, body_len, data):
+def test_fpe_decrypt_inverts_encrypt(charset_name, key, tweak, extra_len, data):
+    from decoy_engine.transforms import _ff1
     from decoy_engine.transforms.fpe import (
         _CHARSETS,
         fpe_decrypt_value,
@@ -325,6 +330,13 @@ def test_fpe_decrypt_inverts_encrypt(charset_name, key, tweak, body_len, data):
     )
 
     charset = _CHARSETS[charset_name]
+    # FF1 is undefined/insecure below its minimum admissible domain
+    # (radix ** length >= 1,000,000); a key is exactly 32 bytes (AES-256
+    # only). `body_len` starts at the floor for this charset's radix and
+    # `extra_len` draws additional length above it, so every generated
+    # value is admissible by construction rather than filtered after
+    # the fact.
+    body_len = _ff1.min_domain_length(len(charset)) + extra_len
     value = "".join(data.draw(st.sampled_from(charset)) for _ in range(body_len))
     enc = fpe_encrypt_value(value, key, charset, tweak)
     assert len(enc) == len(value)

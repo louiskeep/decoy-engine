@@ -85,10 +85,11 @@ def _graph() -> RelationshipGraph:
 def _sources(orphan_key: str) -> dict[str, pa.Table]:
     # Parent + non-orphan children are in-charset (digits) so the normal FPE
     # path runs; `orphan_key` is the child-only value that gets REMAP'd through
-    # the parent's FPE strategy.
+    # the parent's FPE strategy. 6-digit: clears the FF1 minimum admissible
+    # domain for radix 10 (radix**length >= 1,000,000 needs length >= 6).
     return {
-        "customers": pa.table({"customer_id": ["100", "200", "300"]}),
-        "orders": pa.table({"customer_id": ["100", "200", "100", orphan_key]}),
+        "customers": pa.table({"customer_id": ["100000", "200000", "300000"]}),
+        "orders": pa.table({"customer_id": ["100000", "200000", "100000", orphan_key]}),
     }
 
 
@@ -132,8 +133,15 @@ class TestRemapOutOfCharsetOrphanFailsClosed:
     def test_in_charset_orphan_still_remaps_normally(self) -> None:
         """Control: an IN-charset orphan (all digits) is not a leak case -- it
         REMAPs through FPE to a fresh masked value, proving the fail-closed is
-        specific to un-encryptable orphans, not REMAP itself."""
-        res = _run("999")  # in-charset digits: a normal orphan
-        child = res.outputs["orders"].column("customer_id").to_pylist()
-        assert child[3] != "999", "in-charset orphan should be masked, not preserved"
-        assert child[3] is not None
+        specific to un-encryptable orphans, not REMAP itself. A fixed point on
+        any one orphan value is legal for a permutation, so the no-op guard is
+        aggregate across several independent in-charset orphans rather than a
+        universal per-value claim."""
+        orphans = ["999999", "888888", "777777"]
+        changed = []
+        for orphan in orphans:
+            res = _run(orphan)
+            child = res.outputs["orders"].column("customer_id").to_pylist()
+            assert child[3] is not None
+            changed.append(child[3] != orphan)
+        assert any(changed), "every in-charset orphan value came back unchanged: REMAP is a no-op"

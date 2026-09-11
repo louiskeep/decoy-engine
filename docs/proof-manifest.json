@@ -66,51 +66,51 @@
         ],
         "output": [
           {
-            "member_id": "072426646",
-            "ssn": "498-77-6275",
-            "first_name": "Tricia",
-            "last_name": "Clark",
-            "email": "tricia.clark@example.net",
+            "member_id": "621067875",
+            "ssn": "769-09-6725",
+            "first_name": "Heather",
+            "last_name": "Smith",
+            "email": "heather.smith@example.net",
             "city": "Raleigh",
             "state": "NC",
             "zip": "27601"
           },
           {
-            "member_id": "198389147",
-            "ssn": "120-21-3146",
-            "first_name": "Connie",
-            "last_name": "Lane",
-            "email": "connie.lane@corp.example.com",
+            "member_id": "842078876",
+            "ssn": "967-75-6485",
+            "first_name": "Katie",
+            "last_name": "Thomas",
+            "email": "katie.thomas@corp.example.com",
             "city": "St. Louis",
             "state": "MO",
             "zip": "63101"
           },
           {
-            "member_id": "294512140",
-            "ssn": "966-18-6578",
-            "first_name": "Leah",
-            "last_name": "Schaefer",
-            "email": "leah.schaefer@mail.example.com",
+            "member_id": "611418145",
+            "ssn": "460-48-9848",
+            "first_name": "Sonia",
+            "last_name": "Hall",
+            "email": "sonia.hall@mail.example.com",
             "city": "Philadelphia",
             "state": "PA",
             "zip": "19101"
           },
           {
-            "member_id": "997965490",
-            "ssn": "913-40-7403",
-            "first_name": "Derek",
-            "last_name": "Hall",
-            "email": "derek.hall@mail.example.com",
+            "member_id": "301467856",
+            "ssn": "511-51-5529",
+            "first_name": "Victoria",
+            "last_name": "Reeves",
+            "email": "victoria.reeves@mail.example.com",
             "city": "New York",
             "state": "NY",
             "zip": "10001"
           },
           {
-            "member_id": "017723403",
-            "ssn": "184-61-3581",
-            "first_name": "Lance",
-            "last_name": "Wilson",
-            "email": "lance.wilson@example.org",
+            "member_id": "661897357",
+            "ssn": "305-80-2379",
+            "first_name": "Nicole",
+            "last_name": "Mitchell",
+            "email": "nicole.mitchell@example.org",
             "city": "Baltimore",
             "state": "MD",
             "zip": "21201"
@@ -148,28 +148,28 @@
         ],
         "output": [
           {
-            "member_id": "072426646",
-            "claim_id": "720378",
+            "member_id": "621067875",
+            "claim_id": "605108",
             "billed_amount": "100.0"
           },
           {
-            "member_id": "198389147",
-            "claim_id": "428746",
+            "member_id": "842078876",
+            "claim_id": "029848",
             "billed_amount": "113.5"
           },
           {
-            "member_id": "294512140",
-            "claim_id": "264321",
+            "member_id": "611418145",
+            "claim_id": "312360",
             "billed_amount": "127.0"
           },
           {
-            "member_id": "997965490",
-            "claim_id": "497136",
+            "member_id": "301467856",
+            "claim_id": "512363",
             "billed_amount": "140.5"
           },
           {
-            "member_id": "017723403",
-            "claim_id": "795379",
+            "member_id": "661897357",
+            "claim_id": "694418",
             "billed_amount": "154.0"
           }
         ]
@@ -200,24 +200,24 @@
         ],
         "output": [
           {
-            "npi": "8846327154",
-            "pan": "7533568238343757"
+            "npi": "9605602698",
+            "pan": "8102802635372245"
           },
           {
-            "npi": "5886096479",
-            "pan": "7533568238343757"
+            "npi": "7610263395",
+            "pan": "8102802635372245"
           },
           {
-            "npi": "5465126330",
-            "pan": "7533568238343757"
+            "npi": "9909786450",
+            "pan": "8102802635372245"
           },
           {
-            "npi": "7156967787",
-            "pan": "7533568238343757"
+            "npi": "4599267540",
+            "pan": "8102802635372245"
           },
           {
-            "npi": "3046560588",
-            "pan": "7533568238343757"
+            "npi": "0133796805",
+            "pan": "8102802635372245"
           }
         ]
       }
@@ -225,28 +225,28 @@
     "audit_log": [
       {
         "event_id": "1",
-        "actor": "barrypowell",
+        "actor": "rossnicole",
         "action": "edit"
       },
       {
         "event_id": "2",
-        "actor": "christopher97",
+        "actor": "waterscassandra",
         "action": "export"
       },
       {
         "event_id": "3",
-        "actor": "josewilliams",
-        "action": "view"
+        "actor": "aewing",
+        "action": "edit"
       },
       {
         "event_id": "4",
-        "actor": "vharrison",
-        "action": "delete"
+        "actor": "christopher72",
+        "action": "view"
       },
       {
         "event_id": "5",
-        "actor": "todd47",
-        "action": "export"
+        "actor": "fbell",
+        "action": "edit"
       }
     ],
     "invariants": [
@@ -276,13 +276,13 @@
       ],
       "output": [
         {
-          "account": "946470353"
+          "account": "827097706"
         },
         {
-          "account": "722880873"
+          "account": "936758993"
         },
         {
-          "account": "103419103"
+          "account": "125340253"
         }
       ],
       "invariant": "Output preserves the exact length and digit charset of the input, and is reversible with the key."
@@ -336,13 +336,13 @@
       ],
       "output": [
         {
-          "user_id": "539398115eb4e9a85a5862d64650cd7bc5207fdbfb43830bbc5c9fae565e01a2"
+          "user_id": "67208a15cfeafe0c343a444b9e59a2bb2235800ed60026ed2fb59d5a65665c6c"
         },
         {
-          "user_id": "1a85797e34b487ce2f346ee9021028fd39dc9d37bd1309cdc9b30af65d55f587"
+          "user_id": "56770d460af74f8da1744125a1ba0704e6422d6a4b704ef393790bdc20dea902"
         },
         {
-          "user_id": "63735569c9c83936e3ce9cde91b0cc69526044ebfac0ea2d9602c2b03434122c"
+          "user_id": "423500d584fd207c6e554d04b008b01f6a3824507574dccb5f15164e180a9680"
         }
       ],
       "invariant": "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive."
@@ -462,7 +462,7 @@
           "tier": "silver"
         },
         {
-          "tier": "bronze"
+          "tier": "silver"
         }
       ],
       "invariant": "Every value is remapped onto the configured category pool; equal inputs map to the same category."
@@ -486,13 +486,13 @@
       ],
       "output": [
         {
-          "dob": "1980-04-13"
+          "dob": "1980-02-21"
         },
         {
-          "dob": "1991-08-19"
+          "dob": "1991-09-18"
         },
         {
-          "dob": "2003-12-05"
+          "dob": "2003-12-08"
         }
       ],
       "invariant": "Each date is shifted by a keyed offset inside the configured window, preserving the date format."
@@ -516,13 +516,13 @@
       ],
       "output": [
         {
-          "event_date": "2024-01-21"
+          "event_date": "2024-01-06"
         },
         {
-          "event_date": "2024-04-08"
+          "event_date": "2024-04-21"
         },
         {
-          "event_date": "2024-07-29"
+          "event_date": "2024-07-08"
         }
       ],
       "invariant": "Each date is snapped to a deterministic position within its calendar month. The output is always a valid date in the same month as the input; exact day is derived from (job_seed, namespace, value) so the same input always produces the same output across runs."
@@ -546,10 +546,10 @@
       ],
       "output": [
         {
-          "salary": "50000"
+          "salary": "92000"
         },
         {
-          "salary": "92000"
+          "salary": "50000"
         },
         {
           "salary": "75000"
@@ -576,13 +576,13 @@
       ],
       "output": [
         {
-          "first_name": "Katherine"
+          "first_name": "Jerry"
         },
         {
-          "first_name": "Marissa"
+          "first_name": "Paul"
         },
         {
-          "first_name": "Sarah"
+          "first_name": "Tara"
         }
       ],
       "invariant": "Values are replaced with synthetic provider output drawn from a value pool, not the originals."
@@ -666,13 +666,13 @@
       ],
       "output": [
         {
-          "note": "Patient SSN 238-40-1968 on file"
+          "note": "Patient SSN 985-79-6664 on file"
         },
         {
-          "note": "SSN 164-58-3497 updated on record"
+          "note": "SSN 546-01-2785 updated on record"
         },
         {
-          "note": "Contact SSN 293-00-5427 verified"
+          "note": "Contact SSN 816-64-4824 verified"
         }
       ],
       "invariant": "PII spans are detected and masked per-detector (FPE for SSN by default); unmatched surrounding text is controlled by unmatched_span_policy."
@@ -726,13 +726,13 @@
       ],
       "output": [
         {
-          "diag_code": "C18.9"
+          "diag_code": "H35.30"
         },
         {
-          "diag_code": "Z87.891"
+          "diag_code": "D64.9"
         },
         {
-          "diag_code": "J18.9"
+          "diag_code": "A04.7"
         }
       ],
       "invariant": "Each diagnosis code is replaced with a different real ICD-10 code drawn from the shipped corpus via HMAC-keyed selection. Output is always a valid corpus code and is always different from the input."
@@ -760,21 +760,21 @@
       "output": [
         {
           "patient_id": "P0001",
-          "zip": "78202",
-          "city": "San Antonio",
-          "state": "TX"
+          "zip": "19102",
+          "city": "Philadelphia",
+          "state": "PA"
         },
         {
           "patient_id": "P0002",
-          "zip": "92104",
-          "city": "San Diego",
-          "state": "CA"
+          "zip": "30304",
+          "city": "Atlanta",
+          "state": "GA"
         },
         {
           "patient_id": "P0003",
-          "zip": "92105",
-          "city": "San Diego",
-          "state": "CA"
+          "zip": "85004",
+          "city": "Phoenix",
+          "state": "AZ"
         }
       ],
       "invariant": "Every output (zip, city, state) tuple is a real row from the reference table; geographic consistency is guaranteed because the entire row is drawn from a single reference record, never assembled field-by-field."
@@ -968,15 +968,15 @@
       "output": [
         {
           "anchor": "2024-01-15",
-          "event_date": "2024-02-10"
+          "event_date": "2024-01-28"
         },
         {
           "anchor": "2024-06-30",
-          "event_date": "2024-07-16"
+          "event_date": "2024-07-15"
         },
         {
           "anchor": "2024-11-02",
-          "event_date": "2024-11-29"
+          "event_date": "2024-11-30"
         }
       ],
       "invariant": "Each output date falls within [min_days, max_days] of the anchor column value in the same row. The exact offset is seeded per-row from the job seed; the same input always produces the same output across runs. The original column value is not preserved."
@@ -1012,23 +1012,23 @@
       "output": [
         {
           "cluster_id": "X",
-          "key": "GK-97bff3d5d569737c"
+          "key": "GK-4eb7d8466d4bd97b"
         },
         {
           "cluster_id": "X",
-          "key": "GK-97bff3d5d569737c"
+          "key": "GK-4eb7d8466d4bd97b"
         },
         {
           "cluster_id": "Y",
-          "key": "GK-b7ce362a7f21843a"
+          "key": "GK-edba65caae3eb8d4"
         },
         {
           "cluster_id": "Y",
-          "key": "GK-b7ce362a7f21843a"
+          "key": "GK-edba65caae3eb8d4"
         },
         {
           "cluster_id": "Z",
-          "key": "GK-1a3d2ec88a282ae4"
+          "key": "GK-b2b54b800e2f3fb2"
         }
       ],
       "invariant": "Every row sharing the same group_by value receives the same HKDF-SHA256 derived hex key. Distinct group_by values produce distinct keys (collision probability negligible under 32-byte HMAC output). The original column value is not preserved. Deterministic: same seed + same group_by -> same key on every run."

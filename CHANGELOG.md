@@ -9,6 +9,30 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (FPE cipher: NIST SP 800-38G FF1 replaces the home-rolled Feistel construction, 2026-09-11)
+
+Cryptographic contract change (Task 5.2, DE-01 resolution). The `fpe` strategy's cipher, and the
+`fpe`-branch text-mask spans (ZIP, SSN, phone, PAN), now run NIST SP 800-38G FF1 (AES-256) in
+place of the earlier 8-round HMAC-SHA256 Feistel permutation. `SEED_PROTOCOL_VERSION` moves 6 -> 7
+(pre-GA hard cutover; every deterministic output changes, not only `fpe` columns). See
+[docs/security/de-01-ff1-adoption.md](docs/security/de-01-ff1-adoption.md) for the conformance
+claim, key/tweak model, and documented leakage.
+
+- **`cryptography` is now a base runtime dependency**, not the optional `[vault]` extra (FF1
+  needs AES unconditionally); `[vault]` is kept as a no-op compatibility alias.
+- **FF1's minimum admissible domain (`radix ** length >= 1,000,000`) is enforced fail-closed.** A
+  value whose in-charset body falls short raises `FpeUnencryptableError`
+  (`fpe.unencryptable_domain`) instead of masking under an undefined-security domain.
+- **New required config field for text-mask columns that can produce sub-floor spans:**
+  `sub_floor_span: "redact" | "synthetic"`. There is no default; an unset policy on a column whose
+  detector can produce a sub-floor match (e.g. a bare 5-digit ZIP) fails the plan check.
+- **FPE reversal always reports `reversed_unverified`**, including when a secret is supplied. FF1
+  is unauthenticated: a wrong key produces a plausible wrong plaintext, not a decryption failure,
+  so the engine never claims a verified reversal for it.
+- Custom FPE alphabets are restricted to printable ASCII (`0x21`-`0x7E`).
+- The legacy `FPEStrategy` class and its Feistel internals are deleted; nothing in this repo
+  still runs the retired construction.
+
 ### Changed (out-of-core preflight recalibration: build-floor advisory, fan-in hard end-to-end, 2026-09-08)
 
 Public contract change: `CapacityVerdict.FIT` no longer means "clears the

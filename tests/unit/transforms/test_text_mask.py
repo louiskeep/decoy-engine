@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
 from decoy_engine.transforms.text_mask import (
@@ -768,30 +769,36 @@ class TestMaskFpeDispatch:
 
     KATs pin the FPE output so a wrong config key, wrong charset default, wrong
     checksum scheme, or a flipped validate_luhn changes the ciphertext and dies.
+
+    Task 5.2 plan P3-final: `_mask_fpe` takes the raw `mask_key` directly (it
+    derives its own namespace-scoped FF1 key internally,
+    `derive(mask_key, f"text.{detector_id}", FF1_KEY_LABEL)`), not a
+    plaintext-derived `_span_key` the way `_mask_faker`/`_mask_date_shift`
+    still do; the KATs below pass `_SEED` accordingly.
     """
 
     def test_pan_uses_luhn_checksum(self) -> None:
         """pan -> ("digits","luhn"); dropping/nulling the checksum changes output."""
         pan = "4111111111111111"
-        assert _mask_fpe(pan, _span_key(_SEED, pan), "pan") == "4885959915148828"
+        assert _mask_fpe(pan, _SEED, "pan") == "2244299966131195"
 
     def test_ssn_has_no_checksum(self) -> None:
         """ssn -> ("digits",None); validate_luhn stays False (flipping it re-shapes)."""
         ssn = "123-45-6789"
-        assert _mask_fpe(ssn, _span_key(_SEED, ssn), "ssn") == "904-52-1741"
+        assert _mask_fpe(ssn, _SEED, "ssn") == "178-87-3971"
 
     def test_unknown_detector_uses_digits_default(self) -> None:
         """A detector absent from _FPE_CONFIG falls back to ("digits", None) and
         still FPE-encrypts (kills default-key/charset mutants that break the fallback)."""
         val = "12345678"
-        assert _mask_fpe(val, _span_key(_SEED, val), "unknown_det_xyz") == "67241497"
+        assert _mask_fpe(val, _SEED, "unknown_det_xyz") == "16863636"
 
-    def test_fpe_failure_returns_configured_token(self) -> None:
-        """All-separator input fails closed to the caller's token, not _DEFAULT_TOKEN."""
-        assert _mask_fpe("--", _span_key(_SEED, "--"), "ssn", "[X]") == "[X]"
-
-    def test_fpe_failure_defaults_to_redacted_token(self) -> None:
-        assert _mask_fpe("--", _span_key(_SEED, "--"), "ssn") == _DEFAULT_TOKEN
+    def test_all_out_of_charset_span_fails_closed(self) -> None:
+        """An all-separator match has no in-charset content to FF1 at all (DE-01);
+        this propagates rather than falling back to a token, per the plan's removal
+        of the old catch-all `except -> static token` fallback."""
+        with pytest.raises(FpeUnencryptableError):
+            _mask_fpe("--", _SEED, "ssn", "[X]")
 
 
 class TestMaskFakerDispatch:
@@ -868,12 +875,12 @@ class TestMaskSpanDispatch:
 
     def test_fpe_strategy_ssn(self) -> None:
         sp = Span("ssn", 0, 11, "123-45-6789")
-        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "904-52-1741"
+        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "178-87-3971"
 
     def test_fpe_strategy_pan_passes_detector_id(self) -> None:
         """detector_id must reach _mask_fpe (drives tweak + checksum): pan -> luhn."""
         sp = Span("pan", 0, 16, "4111111111111111")
-        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "4885959915148828"
+        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "2244299966131195"
 
     def test_faker_strategy_uses_detector_id(self) -> None:
         sp = Span("first_name", 0, 4, "John")
@@ -895,15 +902,13 @@ class TestMaskSpanDispatch:
         sp = Span("ssn", 0, 11, "123-45-6789")
         assert _mask_span(sp, _SEED, "no_such_strategy", {"token": "[X]"}) == "[X]"
 
-    def test_fpe_failure_uses_span_token(self) -> None:
-        """FPE fail-closed carries the cfg token through _mask_span's token wiring."""
+    def test_fpe_all_out_of_charset_span_fails_closed(self) -> None:
+        """An all-separator match has no in-charset content to FF1 (DE-01); this
+        propagates through `_mask_span` rather than falling back to a token,
+        per the plan's removal of the old catch-all fallback."""
         sp = Span("ssn", 0, 2, "--")
-        assert _mask_span(sp, _SEED, "fpe", {"token": "[X]"}) == "[X]"
-
-    def test_fpe_failure_defaults_token_when_absent(self) -> None:
-        """cfg without a token -> _DEFAULT_TOKEN (kills token-default -> None mutants)."""
-        sp = Span("ssn", 0, 2, "--")
-        assert _mask_span(sp, _SEED, "fpe", {}) == _DEFAULT_TOKEN
+        with pytest.raises(FpeUnencryptableError):
+            _mask_span(sp, _SEED, "fpe", {"token": "[X]"})
 
     def test_date_shift_uses_cfg_bounds(self) -> None:
         sp = Span("iso_date", 0, 10, "1990-01-15")
@@ -927,7 +932,7 @@ class TestMaskCellReassembly:
         out = mask_cell(
             text, _SEED, detector_ids=["ssn", "email"], unmatched_span_policy="passthrough"
         )
-        assert out == "Patient [REDACTED], SSN 904-52-1741."
+        assert out == "Patient [REDACTED], SSN 178-87-3971."
 
     def test_no_junk_separator_between_parts(self) -> None:
         out = mask_cell(
@@ -967,5 +972,5 @@ class TestMaskCellReassembly:
         b = mask_cell(
             "B 123-45-6789 y", _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough"
         )
-        assert "904-52-1741" in a
-        assert "904-52-1741" in b
+        assert "178-87-3971" in a
+        assert "178-87-3971" in b

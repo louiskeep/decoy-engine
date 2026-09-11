@@ -163,7 +163,7 @@ class TestCollisionRateNonVacuity:
     def test_breaching_collision_rate_raises(self, tmp_path: Path) -> None:
         # 10 distinct sources collapsed onto 3 distinct outputs:
         # collision_count = 10 - 3 = 7, collision_rate = 0.7, which exceeds
-        # FIRST's frozen threshold (0.6630).
+        # FIRST's frozen threshold (0.6730).
         sources = [f"s{i}" for i in range(10)]
         masked = [f"o{i % 3}" for i in range(10)]
         pool = _pool(size=100, distinct_count=100)
@@ -191,7 +191,7 @@ class TestCollisionRateNonVacuity:
 class TestPoolDuplicateRateNonVacuity:
     def test_breaching_pool_duplicate_rate_raises(self, tmp_path: Path) -> None:
         # size=100, distinct_count=2: duplicate_rate = 98/100 = 0.98, which
-        # exceeds FIRST's frozen threshold (0.9538).
+        # exceeds FIRST's frozen threshold (0.9549).
         sources = [f"s{i}" for i in range(5)]
         masked = [f"o{i}" for i in range(5)]  # zero collisions, so only the
         # pool-duplicate check can fail here.
@@ -394,8 +394,8 @@ class TestThresholdBoundary:
 class TestEnforcerInputContract:
     def test_rejects_measurement_for_a_different_column(self) -> None:
         # A MAIDEN measurement enforced with column="FIRST" must NOT silently
-        # apply FIRST's looser threshold: 0.5 is above MAIDEN's 0.3144 but
-        # below FIRST's 0.6630, so a mismatch that slipped through would pass a
+        # apply FIRST's looser threshold: 0.5 is above MAIDEN's 0.3561 but
+        # below FIRST's 0.6730, so a mismatch that slipped through would pass a
         # real breach. The mismatch is a coded integrity failure.
         maiden = PoolQualityMeasurement(
             column="MAIDEN",
@@ -513,13 +513,17 @@ class TestFrozenThresholdProvenance:
             assert POOL_DUPLICATE_RATE_THRESHOLD[column] == pytest.approx(oracle_rate + MARGIN)
 
     def test_frozen_first_last_maiden_values_match_baseline(self) -> None:
-        # PHASE3-C1-BASELINE.md "Frozen per-tier thresholds" table.
-        assert COLLISION_RATE_THRESHOLD["FIRST"] == pytest.approx(0.6630)
-        assert COLLISION_RATE_THRESHOLD["LAST"] == pytest.approx(0.5817)
-        assert COLLISION_RATE_THRESHOLD["MAIDEN"] == pytest.approx(0.3144)
-        assert POOL_DUPLICATE_RATE_THRESHOLD["FIRST"] == pytest.approx(0.9538)
-        assert POOL_DUPLICATE_RATE_THRESHOLD["LAST"] == pytest.approx(0.9213)
-        assert POOL_DUPLICATE_RATE_THRESHOLD["MAIDEN"] == pytest.approx(0.9217)
+        # Frozen per-tier thresholds, re-derived at SEED_PROTOCOL_VERSION 7
+        # (Task 5.2): threshold = v7 oracle-observed rate + MARGIN. The
+        # protocol bump reshuffles the keyed faker pool draw, so the observed
+        # baseline moves; the formula and MARGIN are unchanged. See the
+        # ORACLE_* provenance note in `_pool_quality.py` for the v6 values.
+        assert COLLISION_RATE_THRESHOLD["FIRST"] == pytest.approx(0.6730)
+        assert COLLISION_RATE_THRESHOLD["LAST"] == pytest.approx(0.5708)
+        assert COLLISION_RATE_THRESHOLD["MAIDEN"] == pytest.approx(0.3561)
+        assert POOL_DUPLICATE_RATE_THRESHOLD["FIRST"] == pytest.approx(0.9549)
+        assert POOL_DUPLICATE_RATE_THRESHOLD["LAST"] == pytest.approx(0.9220)
+        assert POOL_DUPLICATE_RATE_THRESHOLD["MAIDEN"] == pytest.approx(0.9214)
 
 
 class TestUnrecognizedObligationAndColumn:

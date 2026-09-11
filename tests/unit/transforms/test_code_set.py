@@ -2443,7 +2443,9 @@ class TestPrivateRowIndexDefaults:
         from decoy_engine.transforms.code_set import _pick_gen
 
         rows = _get_corpus_record("icd10", None, is_shipped=True).rows
-        seed = b"\x09" * 8
+        # \x09 collided (row_index 0 and 1 picked the same row) under protocol v7;
+        # \x01 is confirmed non-colliding for this fixed corpus + namespace.
+        seed = b"\x01" * 8
         default = _pick_gen(rows, job_seed=seed, namespace="ns")
         explicit0 = _pick_gen(rows, job_seed=seed, namespace="ns", row_index=0)
         explicit1 = _pick_gen(rows, job_seed=seed, namespace="ns", row_index=1)
@@ -2459,7 +2461,9 @@ class TestPrivateRowIndexDefaults:
         path = tmp_path / "big_chapter.parquet"
         _write_corpus(path, ["A01", "A02", "A03", "A04"], chapters=["A"] * 4)
         record = _get_corpus_record("bc", path, is_shipped=False)
-        seed = b"\x0a" * 8
+        # \x0a collided (row_index 0 and 1 picked the same row) under protocol v7;
+        # \x01 is confirmed non-colliding for this fixed corpus + namespace.
+        seed = b"\x01" * 8
         default = _apply_chapter_preserve("A01", record, mode="gen", job_seed=seed, namespace="ns")
         explicit0 = _apply_chapter_preserve(
             "A01", record, mode="gen", job_seed=seed, namespace="ns", row_index=0

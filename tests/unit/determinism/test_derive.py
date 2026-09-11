@@ -92,15 +92,19 @@ class TestDeriveValidation:
 
 
 class TestSeedProtocolVersion:
-    def test_constant_is_six(self) -> None:
+    def test_constant_is_seven(self) -> None:
         """S3 shipped SEED_PROTOCOL_VERSION = 1; F-series corrections
         bumped to 2; QA walks/gen F3 vectorised null-injection bumped
         to 3 (2026-06-01); formula-hash migration to keyed primitive
-        bumped to 4 (2026-06-01); WS1 FPE detokenization bumps to 5
+        bumped to 4 (2026-06-01); WS1 FPE detokenization bumped to 5
         (2026-06-12): the Feistel key moved to one key per
-        (seed, namespace) (NIST FF1 key model) and Luhn mode became
-        invertible, changing output bytes for every fpe column."""
-        assert SEED_PROTOCOL_VERSION == 6
+        (seed, namespace) and Luhn mode became invertible, changing
+        output bytes for every fpe column; the F2/F3 generation rewrite
+        bumped to 6 (2026-06-26); Task 5.2 bumped to 7 (2026-09-11): the
+        `fpe` strategy's cipher moved from the home-rolled Feistel to
+        NIST SP 800-38G FF1 (AES-256), changing output bytes for every
+        fpe column and FF1-branch text-mask span again."""
+        assert SEED_PROTOCOL_VERSION == 7
 
 
 class TestDeriveIndex:

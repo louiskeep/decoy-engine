@@ -610,7 +610,7 @@ class TestGroupedSeriesMonotoneWalkValues:
             namespace="grouped_series/gold",
             start=1,
         )
-        assert result == [1, 4, 5, 1, 5, 14]
+        assert result == [1, 10, 17, 1, 3, 12]
 
     def test_step_equals_max_step_is_exact_arithmetic(self) -> None:
         """step == max_step forces integers(k, k+1) == k, giving a pure arithmetic run.

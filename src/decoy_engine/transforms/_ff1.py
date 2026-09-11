@@ -184,7 +184,14 @@ def _validate_common(key: bytes, tweak: bytes, radix: int, numerals: list[int]) 
     if n < 2:
         raise Ff1Error(f"numeral string must have length >= 2 (NIST FF1 precondition); got {n}")
     if any(not (0 <= digit < radix) for digit in numerals):
-        raise Ff1Error(f"every numeral must be in [0, {radix}); got {numerals!r}")
+        # Never echo the numeral list itself: for a real caller (transforms.fpe's
+        # _permute) it is a reversible encoding of the source value, and this
+        # exception's text must stay safe to log (Task 5.2 P7).
+        out_of_range = sum(1 for digit in numerals if not (0 <= digit < radix))
+        raise Ff1Error(
+            f"every numeral must be in [0, {radix}); {out_of_range} of {len(numerals)} "
+            "numeral(s) are out of range"
+        )
     if len(tweak) >= 2**32:
         raise Ff1Error(f"tweak length must fit in a uint32; got {len(tweak)} bytes")
     return n, len(tweak)

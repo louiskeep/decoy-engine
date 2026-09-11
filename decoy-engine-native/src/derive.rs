@@ -20,7 +20,7 @@
 //! ```
 //!
 //! The version byte and salt are pinned to the shipped protocol
-//! (`decoy_engine.determinism._derive`, `SEED_PROTOCOL_VERSION = 6`); a native re-implementation
+//! (`decoy_engine.determinism._derive`, `SEED_PROTOCOL_VERSION = 7`); a native re-implementation
 //! never changes them, since Phase 2 changes no logical value.
 
 use hkdf::Hkdf;
@@ -32,7 +32,12 @@ const SALT: &[u8] = b"decoy-engine/determinism/v1";
 
 /// The version byte mixed into every HMAC frame, pinned to the shipped protocol.
 /// Bumping it is a determinism-family decision made in the Python envelope, not here.
-const SEED_PROTOCOL_VERSION: u8 = 6;
+/// v6 -> v7 (Task 5.2): the `fpe` strategy's cipher moved from a home-rolled
+/// Feistel permutation to NIST SP 800-38G FF1; this derivation module's own
+/// HKDF/HMAC envelope is unaffected, but the version byte must track the
+/// Python side exactly or a compiled kernel silently derives against the
+/// wrong protocol.
+const SEED_PROTOCOL_VERSION: u8 = 7;
 
 /// The two seed lengths the shipped reference accepts
 /// (`decoy_engine.determinism._derive._SEED_LENGTHS`): 8 bytes for the no-secret `job_seed`

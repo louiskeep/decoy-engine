@@ -153,7 +153,9 @@ class _Ortho:
 #   row errors: bucketize/date_shift/top_code (format_error), code_set
 #     (mask_error), nested (format_error + propagated child trigger).
 #   warnings:   top_code (top_code_generalized), geo_generalize
-#     (geo_generalize_cascade), fpe (3 codes), nested (2 codes).
+#     (geo_generalize_cascade), fpe (2 codes; Task 5.2 retired
+#     fpe_sub_minimum_domain, now a fail-closed FpeUnencryptableError instead
+#     of a warning), nested (2 codes).
 #   pool quality: faker only (the sole PoolBuilder/PoolSampler user).
 # ---------------------------------------------------------------------------
 
@@ -174,7 +176,6 @@ _MASK: dict[str, _Ortho] = {
         True,
         warning_codes=(
             "fpe_join_group_active",
-            "fpe_sub_minimum_domain",
             "fpe_partial_plaintext_disclosure",
         ),
     ),

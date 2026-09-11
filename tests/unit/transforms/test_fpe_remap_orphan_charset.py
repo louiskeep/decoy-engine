@@ -47,13 +47,15 @@ class TestAllOutOfCharsetFailsClosed:
     def test_all_out_of_charset_raises(self, val: str) -> None:
         """Every character is outside the charset -> FpeUnencryptableError.
 
-        Pre-fix these returned a covering hash (non-round-trip). The value
-        carried on the exception is the offending source value.
+        Pre-fix these returned a covering hash (non-round-trip). The
+        exception carries the offending value's length (P7: never the
+        value itself, which must not appear in the message either).
         """
         with pytest.raises(FpeUnencryptableError) as exc:
             fpe_encrypt_value(val, _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
-        assert exc.value.value == val
+        assert exc.value.value_length == len(val)
         assert "no character in the configured charset" in str(exc.value)
+        assert val not in str(exc.value)
 
     def test_separators_only_value_raises(self) -> None:
         """A value made entirely of separators (no in-charset chars) fails closed.
@@ -65,16 +67,23 @@ class TestAllOutOfCharsetFailsClosed:
             fpe_encrypt_value("---", _KEY, _CHARSETS["digits"], _TWEAK, preserve_separators=True)
 
     def test_in_charset_values_use_normal_fpe(self) -> None:
-        """Values with in-charset characters still go through the normal Feistel path."""
-        val = "emp99999"  # all chars in alphanum charset (0-9a-z)
-        result = fpe_encrypt_value(val, _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
-        assert result != val, (
-            f"Normal FPE should permute in-charset value; got identity {result!r}."
+        """Values with in-charset characters still go through the normal FF1
+        path. A fixed point on any one value is legal for a permutation, so
+        the no-op regression guard is aggregate across several independent
+        values rather than a universal per-value claim."""
+        vals = ["emp99999", "usr12345", "acct00001"]  # all chars in alphanum charset (0-9a-z)
+        results = [
+            fpe_encrypt_value(val, _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
+            for val in vals
+        ]
+        assert any(result != val for result, val in zip(results, vals, strict=True)), (
+            f"Normal FPE should permute in-charset values; got identity for all of {vals!r}."
         )
         charset_set = set(_ALPHANUM)
-        assert all(ch in charset_set for ch in result), (
-            f"Normal FPE output {result!r} contains non-charset chars."
-        )
+        for result in results:
+            assert all(ch in charset_set for ch in result), (
+                f"Normal FPE output {result!r} contains non-charset chars."
+            )
 
     def test_empty_string_passthrough(self) -> None:
         """Empty string is a no-op (nothing to encrypt, nothing to leak)."""
@@ -90,9 +99,17 @@ class TestAllOutOfCharsetFailsClosed:
         behavior). `"EMP-00001"` has in-charset digits under alphanum, so it does
         NOT fail closed (unlike the all-out-of-charset `"EMP-ORPHAN"`).
         """
-        val = "EMP-00001"  # digits in-charset (alphanum); "EMP-" out of charset
-        result = fpe_encrypt_value(val, _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
-        assert result != val, "Digit portion should be permuted."
-        assert result[:4] == "EMP-", (
-            f"Out-of-charset prefix 'EMP-' should be preserved; got {result[:4]!r}."
+        vals = ["EMP-00001", "EMP-00002", "EMP-00003"]  # digits in-charset (alphanum); "EMP-" out
+        results = [
+            fpe_encrypt_value(val, _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
+            for val in vals
+        ]
+        # A fixed point on any one digit suffix is legal for a permutation, so the
+        # no-op regression guard is aggregate across several independent values.
+        assert any(result[4:] != val[4:] for result, val in zip(results, vals, strict=True)), (
+            "Digit portion should be permuted for at least one of the test values."
         )
+        for result in results:
+            assert result[:4] == "EMP-", (
+                f"Out-of-charset prefix 'EMP-' should be preserved; got {result[:4]!r}."
+            )

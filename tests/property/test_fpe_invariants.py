@@ -8,46 +8,57 @@ The existing covering suite (`tests/codspeed/test_fpe_transform.py`,
 test_fpe_roundtrip.py`, `test_fpe_checksum_validity.py`,
 `test_fpe_remap_orphan_charset.py`, and the Hypothesis round-trip in
 `tests/property/test_mask_invariants.py::test_fpe_decrypt_inverts_encrypt`)
-already example-tests and property-tests format preservation + plain-mode
-invertibility. This module LAYERS ON rather than repeats: it adds the
-invariants those suites don't cover as properties (determinism as a
-first-class assertion, key/tweak sensitivity, out-of-charset domain
-validation, the empty/single-char boundary, and checksum/Luhn round-trips
-over RANDOM bodies instead of hand-picked examples), and it broadens the
-charset domain to include synthesized custom charsets, not just the 5 named
-ones.
+already example-tests and property-tests format preservation and plain-mode
+invertibility. `tests/unit/transforms/test_ff1_primitive.py` separately
+KAT-locks and differentially tests the FF1 primitive itself
+(`transforms/_ff1.py`) against NIST's own published vectors, an external
+corpus, and an independently authored oracle; that is not this file's
+concern. This module layers on the wrapper (`transforms/fpe.py`) instead:
+determinism as a first-class assertion, key/tweak sensitivity, out-of-charset
+domain validation, the FF1 minimum-domain floor, charset-duplicate rejection,
+and checksum/Luhn round-trips over random bodies instead of hand-picked
+examples, broadening the charset domain to synthesized custom charsets, not
+just the 5 named ones.
 
 Invariant sources (cite-the-source-pattern, per repo CLAUDE.md):
 
 - FORMAT PRESERVATION + INVERTIBILITY: `transforms/fpe.py` module docstring
   ("Replaces each string value with another string of the same length over
-  the same character set... The Feistel construction is a bijection
-  regardless of the round function"). Feistel: Horst Feistel, IBM, 1973.
-  HMAC: RFC 2104. This is the KILLER metamorphic property -- a bijection
-  that isn't actually invertible is a broken cipher, and almost any mutant
-  that corrupts the round arithmetic breaks the round trip.
-- DETERMINISM: `FPEStrategy` docstring ("Same input + same key -> same
-  output (keyed determinism)"), the same keyed-determinism contract
-  `HashStrategy` and `DateShiftStrategy` share.
-- KEY/TWEAK SENSITIVITY: implied by the cipher being keyed at all (a PRF
-  that ignores its key is not a PRF); NIST SP 800-38G (FF1) sec. 4 makes
-  the tweak part of the encryption's identity for the same reason. Domain
-  is gated to >= 1,000,000 possible values (radix^length; the same bound
-  FF1 sec. 5.2 sets as its OWN minimum-domain requirement) so a
-  coincidental collision across two random keys is negligible.
+  the same character set"). FF1 is a keyed permutation over its numeral-string
+  domain (NIST SP 800-38G, Algorithms 5/6; see `transforms/_ff1.py`), so it is
+  a bijection by construction. This is the killer metamorphic property: a
+  bijection that isn't actually invertible is a broken cipher, and almost any
+  mutant that corrupts the round arithmetic breaks the round trip.
+- DETERMINISM: the fpe strategy's keyed-determinism contract ("same input +
+  same key -> same output"), the same contract `HashStrategy` and
+  `DateShiftStrategy` share.
+- KEY/TWEAK SENSITIVITY: implied by the cipher being keyed at all (a PRF that
+  ignores its key is not a PRF); NIST SP 800-38G treats the tweak as part of
+  the encryption's identity for the same reason. Domain is gated to the FF1
+  minimum admissible domain (radix^length >= 1,000,000) so a coincidental
+  collision across two random keys is negligible.
 - DOMAIN VALIDATION: `FpeUnencryptableError`'s docstring in
-  `decoy_engine/errors.py` (DE-01 cluster-C, 2026-07-14) -- the two fail
-  types (all-out-of-charset always closed; any-out-of-charset closed under
-  `preserve_separators=False`).
-- BOUNDARY (this module is NOT NIST FF1; it has its own documented minimums,
-  not FF1's minlen=2/radix^minlen>=1e6 rule -- see the module's "Design
-  note" at the top): empty string is an explicit documented passthrough
-  (`_fpe_value`/`_fpe_pure_value` docstrings, "Empty-string preserve");
-  length 1 uses the dedicated `_single_char_shift` rotation (QA-10 F2,
-  2026-06-01, "uniform alphabet rotation; trivially bijective"); length < 2
-  under `validate_luhn=True` silently falls back to the plain permutation
-  (the `len(s) >= 2` guard in `_fpe_pure_value`) since there's no separate
-  check-digit position to reserve.
+  `decoy_engine/errors.py`. Two families: the DE-01 cluster-C guards
+  (all-out-of-charset always closed; any-out-of-charset closed under
+  `preserve_separators=False`), unchanged by the FF1 swap, and the FF1
+  profile guards added in `transforms/fpe.py::_permute` (key size, radix
+  range, charset-duplicate rejection, the minimum-domain floor, length/tweak
+  caps), which are new to this file.
+- CHECKSUM INVALID SOURCE: `transforms/_fpe_checksum.py`'s
+  `_fpe_checksum_permute` validates the complete source identifier (check
+  digit included) via `checksums.validate()` before permuting, forward
+  direction only; an invalid source fails closed with `FpeChecksumError`.
+- BOUNDARY: empty string is an explicit documented passthrough
+  (`_fpe_value`/`_fpe_pure_value` docstrings, "Empty-string preserve"). A
+  single in-charset character has no FF1 equivalent to the retired Feistel's
+  dedicated rotation: FF1's algorithm itself requires a numeral string of
+  length >= 2, and every charset radix in this engine (2-64) puts a
+  single-character domain (radix^1 <= 64) below the 1,000,000 floor anyway,
+  so length 1 always fails closed on the domain floor now. Length < 2 under
+  `validate_luhn=True` used to silently fall back to the plain permutation
+  (the `len(s) >= 2` guard in `_fpe_pure_value`); at length 1 that fallback
+  now also fails closed on the domain floor (length 0 is unaffected, since
+  the empty-string passthrough runs first).
 - NO-OP LEAKAGE: a mask that returns its input unchanged provides zero
   protection; gated to the same negligible-collision domain as key/tweak
   sensitivity.
@@ -58,32 +69,29 @@ Run:  pytest tests/property/test_fpe_invariants.py -q
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import string
-import struct
 
 import pytest
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 import decoy_engine.checksums as checksums
-from decoy_engine.errors import FpeUnencryptableError
+from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
+from decoy_engine.transforms._ff1 import FF1_KEY_BYTES, min_domain_length
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
-    FPEStrategy,
     _char_lookup,
-    _encode,
     _luhn_check_digit,
-    _prf,
-    _single_char_shift,
+    check_charset_unique,
     fpe_decrypt_value,
     fpe_encrypt_value,
+    resolve_fpe_charset,
 )
 
 # Match the pilot's audit profile: more examples than the 100-example
-# default, no deadline (8-round HMAC-SHA256 Feistel is cheap but Hypothesis
-# shrinking can trip the 200ms wall), and print_blob so a counterexample is
+# default, no deadline (an admissible-domain value can run up to ~40
+# characters through 10 rounds of AES-backed FF1, and Hypothesis shrinking
+# can trip the 200ms wall), and print_blob so a counterexample is
 # replayable.
 settings.register_profile(
     "audit",
@@ -101,15 +109,15 @@ _CUSTOM_POOL = string.ascii_letters + string.digits + "!@#$%^&*_-+="
 _POISON_BASE = "()~`+=[]{}|;:'\",.<>?/\\ !@#$%^&*_-"
 _POISON_BACKSTOP = "★"
 
-_KEYS = st.binary(min_size=8, max_size=32)
-_TWEAKS = st.binary(min_size=1, max_size=32)
+_KEYS = st.binary(min_size=FF1_KEY_BYTES, max_size=FF1_KEY_BYTES)
+_TWEAKS = st.binary(min_size=0, max_size=32)
 
 
 @st.composite
 def _charset(draw: st.DrawFn) -> str:
     """One of the engine's 5 named charsets, or a synthesized custom one
-    (2-20 distinct characters) -- the two shapes `FPEStrategy.apply`
-    resolves a `charset:` config value to (`_CHARSETS.get(spec, spec)`)."""
+    (2-20 distinct characters), the two shapes `resolve_fpe_charset` resolves
+    a `charset:` config value to (`_CHARSETS.get(spec, spec)`)."""
     if draw(st.booleans()):
         return draw(st.sampled_from(_NAMED_CHARSETS))
     size = draw(st.integers(min_value=2, max_value=20))
@@ -119,7 +127,10 @@ def _charset(draw: st.DrawFn) -> str:
 
 @st.composite
 def _charset_and_value(draw: st.DrawFn, min_len: int = 0, max_len: int = 24) -> tuple[str, str]:
-    """A charset plus a value made ENTIRELY of that charset's characters."""
+    """A charset plus a value made ENTIRELY of that charset's characters, of
+    an arbitrary length (may be below the FF1 domain floor; use
+    `_charset_and_admissible_value` when the test needs encryption to
+    succeed)."""
     cs = draw(_charset())
     n = draw(st.integers(min_value=min_len, max_value=max_len))
     value = "".join(draw(st.lists(st.sampled_from(cs), min_size=n, max_size=n)))
@@ -127,17 +138,16 @@ def _charset_and_value(draw: st.DrawFn, min_len: int = 0, max_len: int = 24) -> 
 
 
 @st.composite
-def _charset_and_value_nonvacuous(draw: st.DrawFn, min_domain: int = 1_000_000) -> tuple[str, str]:
-    """A charset plus a value whose domain size (radix^length) clears
-    `min_domain`, so a COINCIDENTAL collision across two independently
-    generated keys/tweaks is negligible (< 1e-6). Mirrors FF1's own
-    minimum-domain floor (NIST SP 800-38G sec. 5.2: radix^minlen >=
-    1,000,000), even though this module is not FF1."""
+def _charset_and_admissible_value(draw: st.DrawFn, extra_max: int = 20) -> tuple[str, str]:
+    """A charset plus a value whose length clears the FF1 minimum admissible
+    domain for that charset's radix (NIST SP 800-38G's own minimum-domain
+    floor, `FF1_MIN_DOMAIN`), so `fpe_encrypt_value` succeeds and a
+    coincidental collision across two independently generated keys/tweaks is
+    negligible (< 1e-6). Drawn at the floor length plus 0-`extra_max` extra
+    characters, for coverage above the boundary too."""
     cs = draw(_charset())
-    r = len(cs)
-    n = 1
-    while r**n < min_domain and n < 40:
-        n += 1
+    floor = min_domain_length(len(cs))
+    n = draw(st.integers(min_value=floor, max_value=floor + extra_max))
     value = "".join(draw(st.lists(st.sampled_from(cs), min_size=n, max_size=n)))
     return cs, value
 
@@ -166,12 +176,16 @@ def _all_out_of_charset_value(draw: st.DrawFn) -> tuple[str, str]:
 
 @st.composite
 def _charset_value_with_separators(draw: st.DrawFn) -> tuple[str, str]:
-    """A charset plus a value interleaving in-charset characters with
-    out-of-charset "separator" characters at random positions, exercising
-    `preserve_separators=True`'s partial-content contract."""
+    """A charset plus a value interleaving an ADMISSIBLE-length run of
+    in-charset characters with out-of-charset "separator" characters at
+    random positions, exercising `preserve_separators=True`'s partial-content
+    contract. Only the in-charset characters count toward the FF1 domain
+    (separators are reinserted verbatim, never permuted), so the body drawn
+    here clears the floor the same way `_charset_and_admissible_value` does."""
     cs = draw(_charset())
     sep_candidates = _poison_candidates(cs)
-    n_body = draw(st.integers(min_value=0, max_value=12))
+    floor = min_domain_length(len(cs))
+    n_body = draw(st.integers(min_value=floor, max_value=floor + 12))
     body = draw(st.lists(st.sampled_from(cs), min_size=n_body, max_size=n_body))
     n_sep = draw(st.integers(min_value=0, max_value=6))
     seps = draw(st.lists(st.sampled_from(sep_candidates), min_size=n_sep, max_size=n_sep))
@@ -187,7 +201,7 @@ def _charset_value_with_separators(draw: st.DrawFn) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 
-@given(_charset_and_value(min_len=0, max_len=24), _KEYS, _TWEAKS)
+@given(_charset_and_admissible_value(), _KEYS, _TWEAKS)
 def test_format_preservation_length_and_alphabet(data, key, tweak) -> None:
     """Module docstring: 'Replaces each string value with another string of
     the same length over the same character set.'"""
@@ -197,13 +211,13 @@ def test_format_preservation_length_and_alphabet(data, key, tweak) -> None:
     assert all(ch in cs for ch in enc)
 
 
-@given(_charset_and_value(min_len=0, max_len=24), _KEYS, _TWEAKS)
+@given(_charset_and_admissible_value(), _KEYS, _TWEAKS)
 def test_invertibility_decrypt_undoes_encrypt(data, key, tweak) -> None:
     """The killer property: `fpe_decrypt_value(fpe_encrypt_value(x)) == x`
-    for every valid input, over a broader charset domain (including
-    synthesized custom charsets) than the existing example-based suite.
-    A Feistel network is a bijection by construction (module docstring);
-    almost any mutant to the round arithmetic breaks this."""
+    for every admissible-domain input, over a broader charset domain
+    (including synthesized custom charsets) than the existing example-based
+    suite. FF1 is a bijection by construction (NIST SP 800-38G); almost any
+    mutant to the round arithmetic breaks this."""
     cs, val = data
     enc = fpe_encrypt_value(val, key, cs, tweak)
     assert fpe_decrypt_value(enc, key, cs, tweak) == val
@@ -231,12 +245,12 @@ def test_invertibility_holds_with_separators_preserved_in_place(data, key, tweak
 # --------------------------------------------------------------------------
 
 
-@given(_charset_and_value(min_len=0, max_len=24), _KEYS, _TWEAKS, st.booleans())
+@given(_charset_and_admissible_value(), _KEYS, _TWEAKS, st.booleans())
 def test_determinism_same_key_and_tweak_same_output(data, key, tweak, preserve_sep) -> None:
-    """`FPEStrategy` docstring: 'Same input + same key -> same output
-    (keyed determinism).' Encrypting the same value twice under the same
-    (key, charset, tweak, config) must be byte-identical -- this is what
-    makes cross-run/cross-process fingerprints stable."""
+    """Same input + same key -> same output (keyed determinism): encrypting
+    the same value twice under the same (key, charset, tweak, config) must be
+    byte-identical, since this is what makes cross-run/cross-process
+    fingerprints stable."""
     cs, val = data
     a = fpe_encrypt_value(val, key, cs, tweak, preserve_separators=preserve_sep)
     b = fpe_encrypt_value(val, key, cs, tweak, preserve_separators=preserve_sep)
@@ -248,31 +262,61 @@ def test_determinism_same_key_and_tweak_same_output(data, key, tweak, preserve_s
 # --------------------------------------------------------------------------
 
 
-@given(_charset_and_value_nonvacuous(), _KEYS, _KEYS, _TWEAKS)
-def test_different_key_changes_ciphertext(data, key_a, key_b, tweak) -> None:
+_SENSITIVITY_SAMPLE_SIZE = 8
+
+
+@given(_charset_and_admissible_value(), _TWEAKS, st.data())
+def test_different_key_changes_ciphertext(data, tweak, hyp_data) -> None:
     """A cipher whose output does not depend on the key is not keyed at
-    all -- that would mean anyone (not just the key holder) could predict
-    the mapping. Domain-gated to >= 1e6 possible values so a coincidental
-    match between two independent random keys is negligible."""
-    assume(key_a != key_b)
+    all, which would mean anyone (not just the key holder) could predict
+    the mapping. A single pair of independent random keys colliding on one
+    value is legal for a permutation family (not every key pair need land
+    on a different output), so the universal per-sample inequality is not
+    a valid invariant; the real invariant is aggregate. Draw several
+    independent key pairs for the same value/tweak: if the cipher were
+    key-independent, EVERY pair would collide, which the domain floor
+    (>= 1e6) makes a vanishingly unlikely accident otherwise."""
     cs, val = data
-    enc_a = fpe_encrypt_value(val, key_a, cs, tweak)
-    enc_b = fpe_encrypt_value(val, key_b, cs, tweak)
-    assert enc_a != enc_b
+    pairs = []
+    for _ in range(_SENSITIVITY_SAMPLE_SIZE):
+        key_a = hyp_data.draw(_KEYS)
+        key_b = hyp_data.draw(_KEYS)
+        assume(key_a != key_b)
+        pairs.append((key_a, key_b))
+    outputs = [
+        (fpe_encrypt_value(val, key_a, cs, tweak), fpe_encrypt_value(val, key_b, cs, tweak))
+        for key_a, key_b in pairs
+    ]
+    assert any(enc_a != enc_b for enc_a, enc_b in outputs), (
+        f"{_SENSITIVITY_SAMPLE_SIZE} independent key pairs all produced identical "
+        "ciphertext for the same value and tweak: output does not depend on the key"
+    )
 
 
-@given(_charset_and_value_nonvacuous(), _KEYS, _TWEAKS, _TWEAKS)
-def test_different_tweak_changes_ciphertext(data, key, tweak_a, tweak_b) -> None:
-    """NIST SP 800-38G sec. 4 treats the tweak as part of the encryption's
-    identity (two different tweaks under the same key must not collapse to
-    the same permutation, or per-column tweaking -- this engine's
-    `fpe_join_group`/column-name tweak -- would leak cross-column
-    correlations). Domain-gated as above."""
-    assume(tweak_a != tweak_b)
+@given(_charset_and_admissible_value(), _KEYS, st.data())
+def test_different_tweak_changes_ciphertext(data, key, hyp_data) -> None:
+    """NIST SP 800-38G treats the tweak as part of the encryption's identity
+    (per-column tweaking, this engine's `fpe_join_group`/column-name tweak,
+    would leak cross-column correlations if the tweak had no effect). A
+    single pair of tweaks colliding on one value is legal for a permutation
+    family, so, as with key sensitivity above, the invariant is aggregate
+    over several independent tweak pairs rather than a universal per-pair
+    claim."""
     cs, val = data
-    enc_a = fpe_encrypt_value(val, key, cs, tweak_a)
-    enc_b = fpe_encrypt_value(val, key, cs, tweak_b)
-    assert enc_a != enc_b
+    pairs = []
+    for _ in range(_SENSITIVITY_SAMPLE_SIZE):
+        tweak_a = hyp_data.draw(_TWEAKS)
+        tweak_b = hyp_data.draw(_TWEAKS)
+        assume(tweak_a != tweak_b)
+        pairs.append((tweak_a, tweak_b))
+    outputs = [
+        (fpe_encrypt_value(val, key, cs, tweak_a), fpe_encrypt_value(val, key, cs, tweak_b))
+        for tweak_a, tweak_b in pairs
+    ]
+    assert any(enc_a != enc_b for enc_a, enc_b in outputs), (
+        f"{_SENSITIVITY_SAMPLE_SIZE} independent tweak pairs all produced identical "
+        "ciphertext for the same value and key: output does not depend on the tweak"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -280,20 +324,30 @@ def test_different_tweak_changes_ciphertext(data, key, tweak_a, tweak_b) -> None
 # --------------------------------------------------------------------------
 
 
-@given(_charset_and_value_nonvacuous(), _KEYS, _TWEAKS)
-def test_no_op_leakage_ciphertext_differs_from_plaintext(data, key, tweak) -> None:
+@given(_charset_and_admissible_value(), st.data())
+def test_no_op_leakage_ciphertext_differs_from_plaintext(data, hyp_data) -> None:
     """A mask strategy that returns its input unchanged protects nothing.
-    Domain-gated to >= 1e6 possible values so a coincidental Feistel fixed
-    point is negligible (this is NOT true at tiny domains, e.g. a 1-char
-    value over a 2-char charset has a 1-in-2 chance of a fixed rotation --
-    see `test_single_character_...` below, which does not assert this)."""
+    A fixed point (ciphertext == plaintext) is legal for a permutation, so
+    a universal per-sample claim is not a valid invariant; the real bug
+    this guards against is a strategy that is ALWAYS a no-op. Draw several
+    independent (key, tweak) pairs for the same value and require they do
+    not ALL land on the identity (below the FF1 floor a real fixed-point
+    chance exists, see `test_single_in_charset_character_*`, which is
+    exactly why that domain is rejected outright rather than left to
+    chance)."""
     cs, val = data
-    enc = fpe_encrypt_value(val, key, cs, tweak)
-    assert enc != val
+    samples = [
+        (hyp_data.draw(_KEYS), hyp_data.draw(_TWEAKS)) for _ in range(_SENSITIVITY_SAMPLE_SIZE)
+    ]
+    outputs = [fpe_encrypt_value(val, key, cs, tweak) for key, tweak in samples]
+    assert any(enc != val for enc in outputs), (
+        f"{_SENSITIVITY_SAMPLE_SIZE} independent (key, tweak) pairs all reproduced "
+        "the plaintext unchanged: the strategy is a no-op"
+    )
 
 
 # --------------------------------------------------------------------------
-# Domain validation
+# Domain validation: the DE-01 cluster-C guards (unchanged by the FF1 swap)
 # --------------------------------------------------------------------------
 
 
@@ -303,9 +357,10 @@ def test_out_of_charset_character_rejected_without_separator_preservation(
 ) -> None:
     """`FpeUnencryptableError` (DE-01 cluster-C): under
     `preserve_separators=False`, ANY out-of-charset character fails closed
-    (the pre-fix path silently returned the value unchanged -- a cleartext
+    (the pre-fix path silently returned the value unchanged, a cleartext
     leak). One poisoned position in an otherwise-valid random body is
-    enough to trip it."""
+    enough to trip it. This guard fires before any FF1 call, so it is
+    independent of the domain floor and unaffected by the cipher swap."""
     cs, poison = cs_poison
     body = "".join(data.draw(st.lists(st.sampled_from(cs), min_size=body_len, max_size=body_len)))
     pos = data.draw(st.integers(min_value=0, max_value=len(body)))
@@ -313,7 +368,12 @@ def test_out_of_charset_character_rejected_without_separator_preservation(
     with pytest.raises(FpeUnencryptableError) as ei:
         fpe_encrypt_value(val, key, cs, tweak, preserve_separators=False)
     assert ei.value.code == "fpe.unencryptable"
-    assert ei.value.value == val
+    # P7: the exception carries a length, never the value itself. (No
+    # `val not in str(...)` check here: `val` can be a single arbitrary
+    # punctuation character, which would spuriously "match" ordinary prose
+    # in the message; the dedicated redaction tests use longer, more
+    # distinctive values instead.)
+    assert ei.value.value_length == len(val)
 
 
 @given(_all_out_of_charset_value(), _KEYS, _TWEAKS)
@@ -323,7 +383,8 @@ def test_all_out_of_charset_value_rejected_even_with_separator_preservation(
     """`FpeUnencryptableError`: a value with ZERO in-charset characters has
     nothing to format-preserving-encrypt, so it fails closed even under
     `preserve_separators=True` (which otherwise tolerates PARTIAL
-    out-of-charset content -- see the separators property above)."""
+    out-of-charset content, see the separators property above). This guard
+    also fires before any FF1 call."""
     cs, val = data
     with pytest.raises(FpeUnencryptableError) as ei:
         fpe_encrypt_value(val, key, cs, tweak, preserve_separators=True)
@@ -332,7 +393,119 @@ def test_all_out_of_charset_value_rejected_even_with_separator_preservation(
 
 
 # --------------------------------------------------------------------------
-# Boundary: empty string, single character, sub-minimum validate_luhn length
+# Domain validation: the FF1 profile guards (new to the FF1 swap)
+# --------------------------------------------------------------------------
+
+
+@given(_charset(), _KEYS, _TWEAKS, st.data())
+def test_below_domain_floor_value_fails_closed(cs, key, tweak, data) -> None:
+    """A non-empty, fully in-charset value shorter than
+    `min_domain_length(radix)` has a domain (`radix ** length`) below FF1's
+    minimum admissible domain: below that floor FF1 (and any format-
+    preserving cipher) is undefined/insecure, so `_permute` fails closed
+    rather than encrypt under a domain too small to be safe."""
+    floor = min_domain_length(len(cs))
+    assume(floor > 1)  # only charsets with a floor above the trivial 1-char case are useful here
+    n = data.draw(st.integers(min_value=1, max_value=floor - 1))
+    val = "".join(data.draw(st.lists(st.sampled_from(cs), min_size=n, max_size=n)))
+    with pytest.raises(FpeUnencryptableError) as ei:
+        fpe_encrypt_value(val, key, cs, tweak)
+    assert ei.value.code == "fpe.unencryptable_domain"
+
+
+@given(_charset(), _KEYS, _TWEAKS, st.data())
+def test_single_in_charset_character_always_fails_the_domain_floor(cs, key, tweak, data) -> None:
+    """Every charset radix in this engine is <= 64 (the deployed profile's
+    ceiling), so a single in-charset character's domain (`radix ** 1 <= 64`)
+    is always below the 1,000,000 floor: length 1 is unconditionally
+    sub-floor, for every charset this module can construct, not merely a
+    boundary case that happens to land below it."""
+    ch = data.draw(st.sampled_from(cs))
+    with pytest.raises(FpeUnencryptableError) as ei:
+        fpe_encrypt_value(ch, key, cs, tweak)
+    assert ei.value.code == "fpe.unencryptable_domain"
+
+
+@given(_charset_and_value(min_len=1, max_len=40), st.data())
+def test_key_length_other_than_32_bytes_fails_closed(data_pair, data) -> None:
+    """FF1 is deployed AES-256-only: a key of any other length fails closed
+    before any cipher arithmetic runs, whether it is short (a weaker cipher
+    the engine never deploys) or long (a caller bug), which distinguishes
+    "genuinely too small a domain" from "this is a config/wiring bug" via a
+    dedicated code."""
+    cs, val = data_pair
+    assume(val)  # empty string is a passthrough regardless of key length
+    bad_length = data.draw(st.integers(min_value=0, max_value=64).filter(lambda n: n != 32))
+    key = bytes(bad_length)
+    tweak = b"tw"
+    with pytest.raises(FpeUnencryptableError) as ei:
+        fpe_encrypt_value(val, key, cs, tweak)
+    assert ei.value.code == "fpe.unencryptable_length"
+
+
+# --------------------------------------------------------------------------
+# Charset-duplicate rejection (new to the FF1 swap: the pre-FF1 engine
+# silently deduplicated a custom charset; FF1 requires an ordered,
+# duplicate-free alphabet and rejects a duplicate outright instead)
+# --------------------------------------------------------------------------
+
+
+@st.composite
+def _charset_with_duplicate(draw: st.DrawFn) -> str:
+    """A synthesized custom charset (2-20 unique characters) with one
+    randomly chosen character duplicated, so `len(set(charset)) !=
+    len(charset)`."""
+    size = draw(st.integers(min_value=2, max_value=20))
+    chars = draw(st.lists(st.sampled_from(_CUSTOM_POOL), unique=True, min_size=size, max_size=size))
+    dup = draw(st.sampled_from(chars))
+    pos = draw(st.integers(min_value=0, max_value=len(chars)))
+    chars = [*chars[:pos], dup, *chars[pos:]]
+    return "".join(chars)
+
+
+@given(_charset_with_duplicate())
+def test_check_charset_unique_rejects_a_duplicate_symbol(charset_with_dup) -> None:
+    with pytest.raises(FpeUnencryptableError) as ei:
+        check_charset_unique("custom", charset_with_dup)
+    assert ei.value.code == "fpe.unencryptable_length"
+
+
+@given(_charset())
+def test_check_charset_unique_accepts_every_charset_this_module_synthesizes(cs) -> None:
+    """`_charset()` only ever produces unique-by-construction alphabets
+    (named charsets are unique; the custom generator draws with
+    `unique=True`), so `check_charset_unique` must accept all of them."""
+    check_charset_unique("custom", cs)  # must not raise
+
+
+@given(_charset_with_duplicate(), _KEYS, _TWEAKS, st.data())
+def test_permute_itself_rejects_a_duplicate_charset_even_unfiltered(
+    charset_with_dup, key, tweak, data
+) -> None:
+    """`_permute`'s own duplicate check is a backstop independent of
+    `check_charset_unique`: a caller that reaches `fpe_encrypt_value`
+    directly with a duplicate-symbol charset (bypassing the resolve/check
+    helpers a strategy handler would normally call) still fails closed,
+    rather than silently permuting over an ambiguous alphabet."""
+    radix = len(set(charset_with_dup))
+    floor = min_domain_length(radix)
+    n = data.draw(st.integers(min_value=floor, max_value=floor + 5))
+    val = "".join(data.draw(st.lists(st.sampled_from(charset_with_dup), min_size=n, max_size=n)))
+    with pytest.raises(FpeUnencryptableError) as ei:
+        fpe_encrypt_value(val, key, charset_with_dup, tweak)
+    assert ei.value.code == "fpe.unencryptable_length"
+
+
+def test_resolve_fpe_charset_named_vs_literal() -> None:
+    """A named spec resolves through `_CHARSETS`; anything else is taken as
+    a literal charset string, unchanged."""
+    assert resolve_fpe_charset("digits") == _CHARSETS["digits"]
+    assert resolve_fpe_charset("ALPHANUM") == _CHARSETS["ALPHANUM"]
+    assert resolve_fpe_charset("xzq!") == "xzq!"
+
+
+# --------------------------------------------------------------------------
+# Boundary: empty string, and the retired single-character rotation
 # --------------------------------------------------------------------------
 
 
@@ -341,77 +514,74 @@ def test_empty_string_is_the_only_documented_passthrough(
     cs, key, tweak, preserve_sep, validate_luhn
 ) -> None:
     """`_fpe_value`/`_fpe_pure_value` docstrings: an empty value carries no
-    PII and is explicitly passed through unchanged -- the ONLY passthrough
+    PII and is explicitly passed through unchanged, the ONLY passthrough
     this module allows (every other unencryptable case fails closed, see
     the domain-validation properties above)."""
     assert fpe_encrypt_value("", key, cs, tweak, preserve_sep, validate_luhn) == ""
     assert fpe_decrypt_value("", key, cs, tweak, preserve_sep, validate_luhn) == ""
 
 
-@given(_charset(), _KEYS, _TWEAKS, st.data())
-def test_single_character_uses_the_documented_rotation_and_stays_bijective(
-    cs, key, tweak, data
-) -> None:
-    """QA-10 F2 (2026-06-01): the degenerate 1-character case uses a
-    dedicated keyed rotation (`_single_char_shift`), documented as "a
-    uniform alphabet rotation; trivially bijective." This is the module's
-    OWN minimum-length boundary (not FF1's minlen=2 -- see the module's
-    "Design note")."""
-    ch = data.draw(st.sampled_from(cs))
-    enc = fpe_encrypt_value(ch, key, cs, tweak)
-    assert len(enc) == 1
-    assert enc in cs
-    assert fpe_decrypt_value(enc, key, cs, tweak) == ch
-
-
-@given(_KEYS, _TWEAKS, st.integers(min_value=0, max_value=1), st.data())
-def test_validate_luhn_below_minimum_length_falls_back_to_plain_permute(
-    key, tweak, length, data
-) -> None:
-    """`_fpe_pure_value`'s `if validate_luhn and len(s) >= 2` guard: a
-    value shorter than 2 characters has no separate check-digit position to
-    reserve, so `validate_luhn=True` is silently equivalent to
-    `validate_luhn=False` at length 0-1 (encodes the module's OWN
-    length boundary for Luhn mode, distinct from the checksum-mode minimums
-    in `_fpe_checksum.py`, which fail closed instead)."""
+@given(_KEYS, _TWEAKS, st.data())
+def test_validate_luhn_at_length_zero_is_the_empty_passthrough_regardless(key, tweak, data) -> None:
+    """At length 0, `validate_luhn` cannot change anything: the empty-string
+    passthrough in `_fpe_pure_value` runs before the `validate_luhn` check is
+    ever reached."""
     digits = _CHARSETS["digits"]
-    val = "".join(data.draw(st.lists(st.sampled_from(digits), min_size=length, max_size=length)))
-    with_luhn = fpe_encrypt_value(val, key, digits, tweak, validate_luhn=True)
-    without_luhn = fpe_encrypt_value(val, key, digits, tweak, validate_luhn=False)
-    assert with_luhn == without_luhn
+    with_luhn = fpe_encrypt_value("", key, digits, tweak, validate_luhn=True)
+    without_luhn = fpe_encrypt_value("", key, digits, tweak, validate_luhn=False)
+    assert with_luhn == without_luhn == ""
 
 
-@given(_KEYS, _TWEAKS, st.integers(min_value=2, max_value=16), st.data())
+@given(_KEYS, _TWEAKS, st.data())
+def test_validate_luhn_at_length_one_fails_the_domain_floor_either_way(key, tweak, data) -> None:
+    """`_fpe_pure_value`'s `if validate_luhn and len(s) >= 2` guard means a
+    length-1 value falls through to the plain `_permute` call regardless of
+    `validate_luhn` (there is no separate check-digit position to reserve
+    below length 2). Under FF1, that plain call now fails the domain floor
+    the same way for both settings: `validate_luhn` does not change the
+    failure mode at this length."""
+    digits = _CHARSETS["digits"]
+    val = data.draw(st.sampled_from(digits))
+    for validate_luhn in (True, False):
+        with pytest.raises(FpeUnencryptableError) as ei:
+            fpe_encrypt_value(val, key, digits, tweak, validate_luhn=validate_luhn)
+        assert ei.value.code == "fpe.unencryptable_domain"
+
+
+@given(_KEYS, _TWEAKS, st.integers(min_value=7, max_value=17), st.data())
 def test_validate_luhn_output_last_digit_is_the_luhn_check_digit_of_the_body(
     key, tweak, length, data
 ) -> None:
-    """Composition property: at/above the length-2 floor, `validate_luhn`'s
-    output is checksum-valid BY CONSTRUCTION -- its last digit is exactly
-    `_luhn_check_digit` of everything before it. Property-generalizes the
-    hand-picked PAN example in `test_fpe_roundtrip.py` over random bodies
-    and lengths."""
+    """Composition property: at/above the length floor (radix 10 needs
+    `min_domain_length(10) == 6` for the body, so `length >= 7` keeps the
+    6+-digit body admissible), `validate_luhn`'s output is checksum-valid BY
+    CONSTRUCTION: its last digit is exactly `_luhn_check_digit` of everything
+    before it. Property-generalizes the hand-picked PAN example in
+    `test_fpe_roundtrip.py` over random bodies and lengths."""
     digits = _CHARSETS["digits"]
+    assert min_domain_length(10) == 6
     val = "".join(data.draw(st.lists(st.sampled_from(digits), min_size=length, max_size=length)))
     enc = fpe_encrypt_value(val, key, digits, tweak, validate_luhn=True)
     assert enc[-1] == _luhn_check_digit(enc[:-1])
 
 
 # --------------------------------------------------------------------------
-# Checksum mode: random-body invertibility (luhn scheme -- no pinned
+# Checksum mode: random-body invertibility (luhn scheme, no pinned
 # prefix/fixed length, so it is the one scheme tractable for property
 # generation; the other schemes' pinned-prefix/exact-length shapes are
 # already covered by hand-picked examples in test_fpe_checksum_validity.py)
 # --------------------------------------------------------------------------
 
 
-@given(_KEYS, _TWEAKS, st.integers(min_value=1, max_value=15), st.data())
+@given(_KEYS, _TWEAKS, st.integers(min_value=6, max_value=20), st.data())
 def test_checksum_luhn_scheme_round_trips_for_random_valid_bodies(
     key, tweak, body_len, data
 ) -> None:
     """`_fpe_checksum_permute`'s luhn branch: valid-by-construction output,
     and (being symmetric in both directions per its own docstring) an exact
-    round trip for a source that was already Luhn-valid. Luhn: Hans Peter
-    Luhn, US Patent 2,950,048 (1954)."""
+    round trip for a source that was already Luhn-valid. `body_len` starts
+    at `min_domain_length(10) == 6` so the permuted body clears the FF1
+    domain floor. Luhn: Hans Peter Luhn, US Patent 2,950,048 (1954)."""
     digits = _CHARSETS["digits"]
     body = "".join(
         data.draw(st.lists(st.sampled_from(digits), min_size=body_len, max_size=body_len))
@@ -422,244 +592,79 @@ def test_checksum_luhn_scheme_round_trips_for_random_valid_bodies(
     assert fpe_decrypt_value(enc, key, digits, tweak, checksum="luhn") == value
 
 
-# --------------------------------------------------------------------------
-# TQ crown-jewels mutation-kill pass (2026-07-25): the properties above hold
-# under several classes of internal mutant that they cannot, by construction,
-# observe -- a symmetric sign flip shared by both encrypt/decrypt directions
-# stays self-consistently invertible, a Feistel u/v split other than the
-# documented ceil(n/2) is still a valid bijection, and the single-character
-# domain is too small to clear the >=1e6 collision floor the key/tweak
-# sensitivity properties gate on. These targeted tests close those gaps; see
-# docs/quality/mutation-ledgers/transforms_fpe.md for the full survivor
-# classification this pass is based on.
-# --------------------------------------------------------------------------
-
-
-@given(
-    st.integers(min_value=0, max_value=255),
-    _KEYS,
-    _TWEAKS,
-    st.integers(min_value=0, max_value=2**64),
-)
-def test_prf_message_matches_the_documented_wire_format(round_index, key, tweak, operand) -> None:
-    """`_prf`'s docstring: 'HMAC-SHA256 round function: keyed on
-    (round_index, tweak, operand)'. Pins the documented wire format --
-    round_index packed as an unsigned byte, the literal 0xff domain
-    separator between tweak and the operand, and the operand encoded as its
-    OWN minimal big-endian byte string (ceil(bit_length/8), at least 1 byte
-    even for operand=0) -- against an independently-built reference
-    message, so a bug in the byte-length arithmetic, the minimum-size
-    floor, or the separator changes the digest."""
-    operand_b = operand.to_bytes(max((operand.bit_length() + 7) // 8, 1), "big")
-    expected_msg = struct.pack(">B", round_index) + tweak + b"\xff" + operand_b
-    expected = hmac.new(key, expected_msg, hashlib.sha256).digest()
-    assert _prf(key, round_index, tweak, operand) == expected
-
-
-def test_prf_round_index_packs_as_a_full_unsigned_byte() -> None:
-    """`_prf` packs `round_index` with `>B` (unsigned, 0-255). The real
-    round loop only ever uses 0-7 (`_ROUNDS = 8`), where signed and
-    unsigned packing coincide byte-for-byte, so a property test restricted
-    to that range can never observe a `>B` -> `>b` (signed) mutation --
-    only a round_index outside the signed range (-128..127) does, where a
-    `>b` mutant raises `struct.error` instead of packing normally."""
-    key = b"k" * 16
-    tweak = b"tw"
-    digest = _prf(key, 200, tweak, 1)
-    expected_msg = struct.pack(">B", 200) + tweak + b"\xff" + (1).to_bytes(1, "big")
-    assert digest == hmac.new(key, expected_msg, hashlib.sha256).digest()
-
-
-def test_encode_uses_the_given_char_to_idx_lookup_not_charset_index() -> None:
-    """`_encode`'s F5 perf-fix docstring: when `char_to_idx` is given, use
-    it for O(1) indexing -- trust the caller-supplied mapping rather than
-    silently falling back to `charset.index`. A deliberately-shifted
-    mapping (not the identity `charset.index` would compute) distinguishes
-    the two code paths cleanly."""
-    charset = "abc"
-    shifted = {"a": 2, "b": 0, "c": 1}
-    assert _encode("ab", charset, shifted) == 6  # 0*3+2, then 2*3+0
-
-
-def test_encode_matches_between_the_lookup_and_charset_index_paths() -> None:
-    """The two `_encode` code paths (O(1) lookup vs O(r) `charset.index`
-    fallback) must agree for a consistent lookup -- this is the property
-    that makes the F5 perf-fix a pure speed optimization, not a behavior
-    change. Catches a corrupted accumulator, a flipped sign/operator, or a
-    lookup performed on the wrong key in the fallback branch."""
-    charset = "abc"
-    lookup = {ch: i for i, ch in enumerate(charset)}
-    assert _encode("ba", charset) == _encode("ba", charset, lookup)
-
-
-def test_encode_without_lookup_uses_first_occurrence_index_for_duplicate_charset() -> None:
-    """`_encode`'s O(r) fallback must match `charset.index` (first
-    occurrence) exactly -- distinguishable from `rindex` (last occurrence)
-    only when the charset has a duplicate character, which
-    `FPEStrategy.apply()` dedupes before use but this lower-level function
-    does not enforce."""
-    assert _encode("aa", "aab") == 0
-
-
-@pytest.mark.parametrize(
-    ("body", "expected"),
-    [
-        # Independent reference, not derived by calling `_luhn_check_digit`
-        # itself (unlike `test_validate_luhn_output_last_digit_is_...`
-        # above, which is self-referential and can't catch a bug shared by
-        # both sides of its own comparison): the worked example from the
-        # Luhn algorithm's public description (Hans Peter Luhn, US Patent
-        # 2,950,048, 1954; see e.g. Wikipedia's "Luhn algorithm" article) --
-        # payload 7992739871 check-digits to 3, giving the well-known valid
-        # number 79927398713.
-        ("7992739871", "3"),
-        ("25", "7"),
-        ("123456789", "7"),
-    ],
-)
-def test_luhn_check_digit_matches_known_answer_vectors(body, expected) -> None:
-    """These three vectors together exercise every step of the algorithm:
-    the running total's start value, which positions get doubled (odd vs
-    even, in both directions), the doubling itself, the >9 correction, and
-    the final `(10 - total % 10) % 10` formula."""
-    assert _luhn_check_digit(body) == expected
-
-
-def test_char_lookup_builds_a_complete_index_for_a_custom_charset() -> None:
-    """`_char_lookup`'s cache-miss branch (a charset not in the module's 5
-    named `_CHARSETS`, so `_CHARSET_INDEX` has no precomputed entry) must
-    still build and return the full {char: index} mapping -- not skip the
-    build and return the cache-miss sentinel unchanged."""
-    charset = "qzxjk"
-    assert _char_lookup(charset) == {ch: i for i, ch in enumerate(charset)}
-
-
-def test_single_char_shift_matches_the_documented_message_format() -> None:
-    """`_single_char_shift`'s docstring: the shift depends on (key, tweak)
-    only. Pins the exact HMAC message (`b"fpe-single\\xff" + tweak`) against
-    an independently-built reference, so a bug that drops, corrupts, or
-    case-mangles the message -- silently collapsing the shift to key-only,
-    or changing which characters are hashed -- is caught directly."""
-    key = b"k" * 16
-    tweak = b"my-tweak"
-    expected = int.from_bytes(
-        hmac.new(key, b"fpe-single\xff" + tweak, hashlib.sha256).digest(), "big"
-    )
-    assert _single_char_shift(key, tweak) == expected
-
-
-def test_single_character_permutation_matches_the_documented_shift_formula() -> None:
-    """Pins `_permute`'s single-char return formula (`charset[(idx + shift)
-    % len(charset)]`, `idx = charset.index(s[0])`) against an
-    independently-computed expected value. The round-trip/bijection
-    property above can't catch a `+`/`-` sign flip here (both encrypt and
-    decrypt share this line, so a sign flip stays self-consistently
-    invertible) or an `n == 0`/`n == 1` guard swap (which degenerates the
-    single-char case to a same-charset no-op that a length/alphabet check
-    can't distinguish from a real permutation)."""
-    charset = "abcdefghij"
-    key = b"k" * 16
-    tweak = b"tw"
-    ch = "c"
-    F = _single_char_shift(key, tweak)
-    expected = charset[(charset.index(ch) + F) % len(charset)]
-    assert fpe_encrypt_value(ch, key, charset, tweak) == expected
-
-
-def test_single_character_uses_first_occurrence_index_for_duplicate_charset() -> None:
-    """`_permute`'s single-char branch must use `charset.index` (first
-    occurrence), not `rindex` (last) -- observable only when the charset
-    has a duplicate character, which `FPEStrategy.apply()` dedupes before
-    use but the lower-level `fpe_encrypt_value`/`_permute` API does not."""
-    charset = "aab"
-    key = b"k" * 16
-    tweak = b"tw"
-    F = _single_char_shift(key, tweak)
-    expected = charset[(0 + F) % len(charset)]  # charset.index('a') == 0
-    assert fpe_encrypt_value("a", key, charset, tweak) == expected
-
-
-# Computed with this module's current (audited) implementation, fixed
-# key=b"K"*16 / tweak=b"vector-tweak" -- a known-answer regression pin
-# (KAT-style, per NIST SP 800-38G's own worked test vectors for FF1) that
-# locks the documented Feistel split (u = ceil(n/2)), the PRF message
-# format, and the round arithmetic across both odd and even lengths. The
-# round-trip/format-preservation properties above hold for ANY valid u/v
-# split (a Feistel network is bijective for any u + v == n, not only the
-# documented ceil(n/2) split), so they cannot catch a change to the split
-# ratio itself -- only a pinned vector can.
-_KAT_VECTORS: tuple[tuple[str, str, str], ...] = (
-    ("0123456789", "01", "22"),
-    ("0123456789", "012", "120"),
-    ("0123456789", "0123", "4123"),
-    ("0123456789", "01234", "75961"),
-    ("0123456789", "012345", "573922"),
-    ("0123456789", "0123456", "4147342"),
-    ("0123456789", "01234567", "26293378"),
-    ("abcdefghijklmnopqrstuvwxyz", "ab", "hd"),
-    ("abcdefghijklmnopqrstuvwxyz", "abc", "tcb"),
-    ("abcdefghijklmnopqrstuvwxyz", "abcd", "wbrc"),
-    ("abcdefghijklmnopqrstuvwxyz", "abcde", "gtflf"),
-    ("abcdefghijklmnopqrstuvwxyz", "abcdef", "ayvywg"),
-    ("abcdefghijklmnopqrstuvwxyz", "abcdefg", "fuzpxqx"),
-    ("abcdefghijklmnopqrstuvwxyz", "abcdefgh", "akmfnulo"),
-)
-
-
-@pytest.mark.parametrize(("charset", "val", "expected"), _KAT_VECTORS)
-def test_known_answer_vectors_pin_the_documented_feistel_construction(
-    charset, val, expected
+@given(_KEYS, _TWEAKS, st.integers(min_value=6, max_value=20), st.data())
+def test_checksum_luhn_scheme_rejects_an_invalid_source_check_digit(
+    key, tweak, body_len, data
 ) -> None:
-    key = b"K" * 16
-    tweak = b"vector-tweak"
-    enc = fpe_encrypt_value(val, key, charset, tweak)
-    assert enc == expected
-    assert fpe_decrypt_value(enc, key, charset, tweak) == val
+    """Task 5.2 plan P5-final: the SOURCE value's check digit must already
+    be valid before any permutation runs (forward direction only). A body
+    with a check digit that does NOT match it fails closed with
+    `FpeChecksumError` (code `fpe.checksum_invalid_source`) rather than
+    silently permuting an already-invalid identifier."""
+    digits = _CHARSETS["digits"]
+    body = "".join(
+        data.draw(st.lists(st.sampled_from(digits), min_size=body_len, max_size=body_len))
+    )
+    correct_check_digit = checksums.calc_check_digit("luhn", body)
+    wrong_check_digit = data.draw(
+        st.sampled_from(digits).filter(lambda d: d != correct_check_digit)
+    )
+    value = body + wrong_check_digit
+    with pytest.raises(FpeChecksumError) as ei:
+        fpe_encrypt_value(value, key, digits, tweak, checksum="luhn")
+    assert ei.value.code == "fpe.checksum_invalid_source"
 
 
-def test_out_of_charset_rejection_message_lists_the_actual_offending_characters() -> None:
-    """The `out_of_charset` list is the load-bearing diagnostic content of
-    the `preserve_separators=False` rejection message (per the playbook's
-    "assert the load-bearing parts of a message" guidance): it must be the
-    DISTINCT out-of-charset characters, not the in-charset ones, not
-    dropped, and not silenced entirely -- callers use this list to fix
-    their charset config."""
+# --------------------------------------------------------------------------
+# Named-checksum wiring (example-based: fixed prefixes/lengths per scheme,
+# not property-tractable the way luhn's free-form body is)
+# --------------------------------------------------------------------------
+
+
+def test_out_of_charset_rejection_message_lists_the_offending_character_count() -> None:
+    """The `preserve_separators=False` rejection message's load-bearing
+    diagnostic content is the COUNT of distinct out-of-charset characters
+    (per the playbook's "assert the load-bearing parts of a message"
+    guidance), not the characters themselves: P7 forbids echoing source
+    value content in an exception message, so the count is what callers
+    get to size up their charset config."""
     with pytest.raises(FpeUnencryptableError) as ei:
-        fpe_encrypt_value("1a2b3", b"k" * 16, _CHARSETS["digits"], b"tw", preserve_separators=False)
-    assert repr(["a", "b"]) in str(ei.value)
+        fpe_encrypt_value("1a2b3", b"k" * 32, _CHARSETS["digits"], b"tw", preserve_separators=False)
+    assert "2 distinct out-of-charset character(s)" in str(ei.value)
 
 
 def test_length_invariant_guard_fails_closed_with_the_offending_value(monkeypatch) -> None:
     """The internal 'permuted body length != positions' guard is a
     belt-and-suspenders defense that should be unreachable via any current
     public-API input (the upstream checksum/Luhn length validation already
-    prevents a mismatch) -- exercise it directly by forcing
-    `_fpe_pure_value` to return a wrong-length body, and confirm it still
-    fails closed with the correct error `code` and the ACTUAL offending
-    `value` (not `None` or a dropped kwarg -- that attribute is what a
-    caller inspects to diagnose the failure)."""
+    prevents a mismatch), exercised directly by forcing `_fpe_pure_value` to
+    return a wrong-length body, confirming it still fails closed with the
+    correct error `code` and a length derived from the offending value (P7:
+    never the value itself, since that is what would leak through a caller
+    inspecting or logging the exception)."""
     import decoy_engine.transforms.fpe as fpe_mod
 
     monkeypatch.setattr(fpe_mod, "_fpe_pure_value", lambda *a, **k: "short")
     val = "12-34"
     with pytest.raises(FpeUnencryptableError) as ei:
-        fpe_encrypt_value(val, b"k" * 16, _CHARSETS["digits"], b"tw", preserve_separators=True)
+        fpe_encrypt_value(val, b"k" * 32, _CHARSETS["digits"], b"tw", preserve_separators=True)
     assert ei.value.code == "fpe.unencryptable"
-    assert ei.value.value == val
+    assert ei.value.value_length == len(val)
+    assert val not in str(ei.value)
+    assert val not in repr(ei.value)
 
 
 def test_preserve_separators_false_round_trips_the_real_value() -> None:
     """The final `_fpe_pure_value` call in the `preserve_separators=False`
-    branch must forward the ACTUAL value and the ACTUAL `forward` flag --
-    not `None`, not a placeholder. A `forward=None` mutant here is falsy
-    like `_feistel_inverse`, so it silently makes ENCRYPT use
-    decrypt-direction math; decrypt then composes two inverse applications
-    instead of one forward + one inverse, which breaks invertibility even
-    though each call individually 'succeeds' without error. A `val=None`
-    mutant hits `_fpe_pure_value`'s empty-string passthrough (`not None` is
-    truthy) and returns `None` outright."""
-    val = "12345"
-    key = b"k" * 16
+    branch must forward the ACTUAL value and the ACTUAL `forward` flag, not
+    `None`, not a placeholder. A `forward=None` mutant here silently makes
+    ENCRYPT use decrypt-direction math; decrypt then composes two inverse
+    applications instead of one forward + one inverse, which breaks
+    invertibility even though each call individually "succeeds" without
+    error. A `val=None` mutant hits `_fpe_pure_value`'s empty-string
+    passthrough (`not None` is truthy) and returns `None` outright."""
+    val = "1234567890"
+    key = b"k" * 32
     digits = _CHARSETS["digits"]
     enc = fpe_encrypt_value(val, key, digits, b"tw", preserve_separators=False)
     assert len(enc) == len(val)
@@ -668,10 +673,11 @@ def test_preserve_separators_false_round_trips_the_real_value() -> None:
 
 def test_preserve_separators_false_forwards_validate_luhn_true() -> None:
     """Same final call as above: `validate_luhn` must reach
-    `_fpe_pure_value` un-substituted -- `None` is falsy, silently behaving
-    like `validate_luhn=False` and skipping the Luhn check-digit append."""
-    val = "12345670"
-    key = b"k" * 16
+    `_fpe_pure_value` un-substituted, since `None` is falsy and would
+    silently behave like `validate_luhn=False`, skipping the Luhn
+    check-digit append."""
+    val = "1234567890"
+    key = b"k" * 32
     digits = _CHARSETS["digits"]
     enc = fpe_encrypt_value(val, key, digits, b"tw", preserve_separators=False, validate_luhn=True)
     assert enc[-1] == _luhn_check_digit(enc[:-1])
@@ -679,12 +685,12 @@ def test_preserve_separators_false_forwards_validate_luhn_true() -> None:
 
 def test_preserve_separators_false_forwards_checksum_scheme() -> None:
     """Same final call as above: `checksum` must reach `_fpe_pure_value`
-    un-substituted and un-dropped -- either failure silently falls back to
-    plain permutation, producing output that is NOT checksum-valid."""
+    un-substituted and un-dropped, since either failure would silently fall
+    back to plain permutation, producing output that is NOT checksum-valid."""
     digits = _CHARSETS["digits"]
     body = "123456789"
     value = body + checksums.calc_check_digit("luhn", body)
-    key = b"k" * 16
+    key = b"k" * 32
     enc = fpe_encrypt_value(value, key, digits, b"tw", preserve_separators=False, checksum="luhn")
     assert checksums.validate("luhn", enc)
     assert (
@@ -694,13 +700,12 @@ def test_preserve_separators_false_forwards_checksum_scheme() -> None:
 
 
 def test_encrypt_defaults_to_preserving_separators() -> None:
-    """`fpe_encrypt_value`'s documented default (`FPEStrategy`'s YAML docs:
-    'preserve_separators: bool (default: true)') -- callers that omit the
-    argument must get separator-preserving behavior, not a silent switch to
-    preserve_separators=False (which would fail closed on this value's
-    dashes instead)."""
+    """`fpe_encrypt_value`'s documented default (`preserve_separators: bool
+    (default: true)`): callers that omit the argument must get separator-
+    preserving behavior, not a silent switch to `preserve_separators=False`
+    (which would fail closed on this value's dashes instead)."""
     val = "123-45-6789"
-    key = b"k" * 16
+    key = b"k" * 32
     digits = _CHARSETS["digits"]
     enc = fpe_encrypt_value(val, key, digits, b"tw")  # relies on the default
     assert enc[3] == "-" and enc[6] == "-"
@@ -710,53 +715,30 @@ def test_encrypt_defaults_to_preserving_separators() -> None:
 def test_decrypt_defaults_to_preserving_separators() -> None:
     """Same default, `fpe_decrypt_value` side."""
     val = "123-45-6789"
-    key = b"k" * 16
+    key = b"k" * 32
     digits = _CHARSETS["digits"]
     enc = fpe_encrypt_value(val, key, digits, b"tw", preserve_separators=True)
     assert fpe_decrypt_value(enc, key, digits, b"tw") == val  # relies on the default
 
 
-def test_fpe_pure_matches_the_public_encrypt_function() -> None:
-    """`FPEStrategy._fpe_pure`'s docstring: a 'thin delegate' with
-    `forward=True` hardcoded -- must match `fpe_encrypt_value` byte-for-byte
-    on an already-in-charset value, not silently flip to the
-    inverse-direction math."""
-    strategy = FPEStrategy(seed=1)
-    key = b"k" * 16
-    tweak = b"tw"
-    digits = _CHARSETS["digits"]
-    s = "13579"
-    assert strategy._fpe_pure(s, key, digits, tweak, False) == fpe_encrypt_value(
-        s, key, digits, tweak, preserve_separators=True, validate_luhn=False
-    )
+def test_luhn_check_digit_matches_known_answer_vectors() -> None:
+    """Independent reference, not derived by calling `_luhn_check_digit`
+    itself: the worked examples from the Luhn algorithm's public description
+    (Hans Peter Luhn, US Patent 2,950,048, 1954; see e.g. Wikipedia's "Luhn
+    algorithm" article). Payload 7992739871 check-digits to 3, giving the
+    well-known valid number 79927398713; the other two vectors together
+    exercise every step of the algorithm: the running total's start value,
+    which positions get doubled (odd vs even, in both directions), the
+    doubling itself, the >9 correction, and the final
+    `(10 - total % 10) % 10` formula."""
+    for body, expected in (("7992739871", "3"), ("25", "7"), ("123456789", "7")):
+        assert _luhn_check_digit(body) == expected
 
 
-def test_fpe_pure_forwards_validate_luhn() -> None:
-    """`_fpe_pure`'s `validate_luhn` parameter must reach `_fpe_pure_value`
-    un-substituted -- `None` is falsy, silently behaving like
-    `validate_luhn=False` and skipping the check-digit append."""
-    strategy = FPEStrategy(seed=1)
-    key = b"k" * 16
-    tweak = b"tw"
-    digits = _CHARSETS["digits"]
-    out = strategy._fpe_pure("123456", key, digits, tweak, True)
-    assert out[-1] == _luhn_check_digit(out[:-1])
-
-
-def test_column_key_derives_with_the_exact_mask_label() -> None:
-    """`FPEStrategy._column_key` must call `derive_key('mask')` with the
-    EXACT label 'mask' -- not `None`, a mangled case variant, or any other
-    string, all of which would derive a DIFFERENT key than every other
-    caller of the same master-key infrastructure expects for this column's
-    mask sub-key (the keyed-determinism contract shared with
-    HashStrategy/DateShiftStrategy)."""
-    captured: dict[str, str] = {}
-
-    def fake_derive_key(label: str) -> bytes:
-        captured["label"] = label
-        return b"k" * 32
-
-    strategy = FPEStrategy(seed=1, derive_key=fake_derive_key)
-    key = strategy._column_key("col")
-    assert captured["label"] == "mask"
-    assert key == b"k" * 32
+def test_char_lookup_builds_a_complete_index_for_a_custom_charset() -> None:
+    """`_char_lookup`'s cache-miss branch (a charset not in the module's 5
+    named `_CHARSETS`, so `_CHARSET_INDEX` has no precomputed entry) must
+    still build and return the full {char: index} mapping, not skip the
+    build and return the cache-miss sentinel unchanged."""
+    charset = "qzxjk"
+    assert _char_lookup(charset) == {ch: i for i, ch in enumerate(charset)}

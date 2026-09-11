@@ -4,6 +4,10 @@
 [adversarial-architecture-review-2026-07-12.md](../adversarial-architecture-review-2026-07-12.md).
 **Status:** design brief. No source under `src/` changed by this document.
 **Author scope:** security/crypto tech-lead decision brief to unblock the product owner.
+**Resolution:** the CAM-GATED FORK below was decided 2026-09-11 (FF1, not vault
+tokenization or indefinite containment) and built as Task 5.2. See
+[de-01-ff1-adoption.md](de-01-ff1-adoption.md) for what shipped; this document
+stays as the historical record of the finding and the options it weighed.
 
 This document separates the work into two clearly labelled tiers:
 

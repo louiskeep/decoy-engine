@@ -12,10 +12,12 @@ Established methodology (CLAUDE.md core rule): none of these invent a new
 approach; each reuses the SAME primitive the full-frame handler cites, so the
 out-of-core output is byte-identical rather than merely similar.
 
-- text_mask: reuses `transforms.text_mask.mask_cell` (HMAC-SHA256 keyed span
-  masking, RFC 2104; the exact primitive `_strategies/_text_mask.TextMaskHandler`
-  calls). The mask key is HMAC(job_seed, matched_text) per span -- a pure
-  function of (job_seed, cell), with no cross-row state, so it chunks cleanly.
+- text_mask: reuses `transforms.text_mask.mask_cell` (the exact primitive
+  `_strategies/_text_mask.TextMaskHandler` calls). faker/date_shift spans use
+  HMAC(job_seed, matched_text) per span (RFC 2104); the fpe span strategy uses
+  NIST SP 800-38G FF1 keyed per detector (Task 5.2 plan P3-final), not this
+  HMAC. Either way it is a pure function of (job_seed, cell), with no
+  cross-row state, so it chunks cleanly.
   TX-2 (2026-07-20): the `ner` opt-in mirrors `text_redact`'s OOC NER handling
   (`_text_redact_ner` above) -- resolve model/entities from cfg, enforce the
   same `ner_model_version_mismatch` fail-closed drift guard against
@@ -74,6 +76,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
@@ -114,7 +117,7 @@ def group_c_array(
     `_code_set_array`'s docstring. The other Group (c) kernels ignore it.
     """
     if seed.strategy == "text_mask":
-        return _text_mask_array(values, seed, job_seed=job_seed, cfg=cfg)
+        return _text_mask_array(values, seed, job_seed=job_seed, cfg=cfg, column=column)
     if seed.strategy == "code_set":
         return _code_set_array(
             values,
@@ -137,16 +140,30 @@ def group_c_array(
 
 
 def _text_mask_array(
-    values: pa.Array | pa.ChunkedArray, plan: ColumnSeed, *, job_seed: bytes, cfg: dict[str, Any]
+    values: pa.Array | pa.ChunkedArray,
+    plan: ColumnSeed,
+    *,
+    job_seed: bytes,
+    cfg: dict[str, Any],
+    column: str | None = None,
 ) -> pa.Array:
     """Span-level PII mask each non-null cell, byte-identical to the oracle.
 
     Mirrors `_strategies/_text_mask.TextMaskHandler.run` exactly: same config
     resolution (detectors, per_detector_strategy, unmatched_span_policy, token,
-    min_days/max_days, TX-2 `ner`), same non-string -> str coercion, and the
-    same reused `mask_cell` primitive. `mask_cell` never raises on bad data
-    (fpe failure -> token, unparseable date -> passthrough), so there is no
-    quarantine channel to reproduce.
+    min_days/max_days, sub_floor_span, TX-2 `ner`), same non-string -> str
+    coercion, and the same reused `mask_cell` primitive. An unparseable date
+    still passes through unchanged; an fpe span whose domain FF1 cannot cover
+    (or whose checksum fails validation) now fails closed via
+    `FpeUnencryptableError` when no `sub_floor_span` policy is configured
+    (Task 5.2 plan P3-final removed the old catch-all token fallback), so this
+    route can raise where it previously never did. Known accepted gap
+    (mirrors the `fpe_join_group_active` gap `_mask_group_b.py` documents):
+    this kernel has no static per-column emission point wired to the runner's
+    `warnings` list, so a sub-floor span handled here produces the same
+    log-level notice as the full-frame route but not the aggregate
+    `text_mask_sub_floor_span_handled` QualityWarning; `outputs` stay
+    byte-identical either way.
     """
     detectors_raw = cfg.get("detectors")
     detector_ids: list[str] | None
@@ -157,6 +174,8 @@ def _text_mask_array(
     per_detector: dict[str, str] = dict(cfg.get("per_detector_strategy") or {})
     policy = str(cfg.get("unmatched_span_policy", "redact"))
     token = str(cfg.get("token", "[REDACTED]"))
+    sub_floor_raw = cfg.get("sub_floor_span")
+    sub_floor_span_policy = str(sub_floor_raw) if sub_floor_raw is not None else None
     extra: dict[str, Any] = {key: cfg[key] for key in ("min_days", "max_days") if key in cfg}
 
     ner_model, ner_entities = _text_mask_ner(cfg, plan)
@@ -182,17 +201,31 @@ def _text_mask_array(
 
         ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
 
-    for i, pos in enumerate(non_null_positions):
-        out[pos] = mask_cell(
-            texts[i],
-            job_seed,
-            detector_ids=detector_ids,
-            extra_spans=ner_spans_by_pos[i] if ner_spans_by_pos is not None else None,
-            strategy_map=per_detector or None,
-            unmatched_span_policy=policy,
-            token=token,
-            cfg=extra or None,
-        )
+    try:
+        for i, pos in enumerate(non_null_positions):
+            out[pos] = mask_cell(
+                texts[i],
+                job_seed,
+                detector_ids=detector_ids,
+                extra_spans=ner_spans_by_pos[i] if ner_spans_by_pos is not None else None,
+                strategy_map=per_detector or None,
+                unmatched_span_policy=policy,
+                token=token,
+                cfg=extra or None,
+                sub_floor_span_policy=sub_floor_span_policy,
+            )
+    except FpeUnencryptableError as exc:
+        # Matches the full-frame handler's fail-closed mapping
+        # (`_strategies/_text_mask.TextMaskHandler.run`) so a consumer keying
+        # on `StrategyError.code` sees an identical event on both routes.
+        raise StrategyError(
+            code="fpe_unencryptable_domain",
+            strategy="text_mask",
+            message=(
+                f"column {column!r}: {exc}. The engine fails closed rather than "
+                "silently choose a sub_floor_span fallback."
+            ),
+        ) from exc
     return pa.array(out, type=pa.string())
 
 

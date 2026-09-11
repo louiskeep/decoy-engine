@@ -35,13 +35,14 @@ Correlations (deliberate, non-trivial for the distribution invariant):
 
 Phase 3c: FPE-masked correlated pair (masked_correlation invariant):
   - cat_code and risk_flag are BOTH FPE-masked in the pipeline.
-  - cat_code is a 2-char category code derived from the product category:
-      electronics -> "EL", clothing -> "CL", food -> "FD",
-      home -> "HM", sports -> "SP".
-  - risk_flag is a 2-char risk tier derived from cat_code:
-      "EL" or "HM" -> "HI" (high-margin product groups)
-      "CL" or "SP" -> "MD" (mid-tier)
-      "FD" -> "LO" (low-margin food)
+  - cat_code is a 4-char category code derived from the product category
+    (4 chars clears the FF1 minimum admissible domain at radix 62, ALPHANUM):
+      electronics -> "ELXX", clothing -> "CLXX", food -> "FDXX",
+      home -> "HMXX", sports -> "SPXX".
+  - risk_flag is a 4-char risk tier derived from cat_code:
+      "ELXX" or "HMXX" -> "HIXX" (high-margin product groups)
+      "CLXX" or "SPXX" -> "MDXX" (mid-tier)
+      "FDXX" -> "LOXX" (low-margin food)
   - Source Cramers V is high (deterministic many-to-one mapping from 5
     cat_codes to 3 risk_flags) -- above min_assoc=0.50.
   - After FPE bijection on both columns, the contingency COUNTS are unchanged
@@ -67,7 +68,8 @@ Source format notes:
   - zip5: 5-digit string; 15 rows use HHS-restricted ZIP3 prefixes
   - signup_date: ISO date string YYYY-MM-DD
   - segment: "budget" / "standard" / "premium"
-  - product_id: "PR{n:05d}"
+  - product_id: "PR{n:06d}" (6 digits clears the FF1 minimum admissible
+    domain at radix 10)
   - category: "electronics" / "clothing" / "food" / "home" / "sports"
   - mcc: 4-digit MCC code from the shipped corpus
   - order_id: "OR{n:07d}"
@@ -75,8 +77,8 @@ Source format notes:
   - unit_price: float correlated with category
   - qty_band: "low" / "mid" / "high" (passthrough; correlated with order_total_band)
   - order_total_band: "low" / "mid" / "high" (passthrough; correlated with qty_band)
-  - cat_code: 2-char category code (FPE-masked; correlated with risk_flag)
-  - risk_flag: 2-char risk tier (FPE-masked; correlated with cat_code)
+  - cat_code: 4-char category code (FPE-masked; correlated with risk_flag)
+  - risk_flag: 4-char risk tier (FPE-masked; correlated with cat_code)
   - order_total: placeholder (derived by engine from qty * unit_price)
   - tier: placeholder (derived case_when over order_total)
 """
@@ -106,15 +108,15 @@ ORPHAN_PRODUCT_ORDER_COUNT = 0  # no orphan product orders planted
 RESTRICTED_ZIP3_COUNT = 15
 
 # Sentinel strings that MUST NOT appear in any output column after masking.
-SENTINEL_PAN = "4111111111111110"  # Visa test-like PAN; Luhn-valid (check digit 0)
+SENTINEL_PAN = "4111111111111111"  # canonical Visa test PAN; Luhn-valid
 SENTINEL_EMAIL = "sentinel.leak.test@b-retail-decoy-testflight.invalid"
 SENTINEL_CUSTOMER_IDX = 0  # planted in the FIRST customer row
 
 # Source fingerprints (SHA-256 of canonical CSV; computed on first run).
 # Re-baseline deliberately when the fixture generator changes.
-_CUSTOMERS_FINGERPRINT = "e3c28d3e27dbc27d24adc53370cbe2c4e490b6b562e70ec483c9dcf20f29dd1e"
-_PRODUCTS_FINGERPRINT = "8b5f2816591cd58d88566b6ef5d26c41e479c591fab7a6f55df841eb61da5d34"
-_ORDERS_FINGERPRINT = "90cef1e6383ecba8f245d6a2a74be9a2b34a23db1202090d7d6a279f7089ddd9"
+_CUSTOMERS_FINGERPRINT = "6b11e1006c1ea29a2573aab31e0c0dc939078ddc400a1844f735211f924a5cb2"
+_PRODUCTS_FINGERPRINT = "2ca9fa3cc0e69b24ee0dd289199ccb2a6fc9f710065254d215ea46dc54fc6671"
+_ORDERS_FINGERPRINT = "a8a22450fd277dff0f03a96472db6d45eee52d97535f85328e60c0f813d2b5d3"
 
 # HHS-restricted ZIP3 prefixes (same set as Job A).
 _RESTRICTED_ZIP3_PREFIXES = [
@@ -271,19 +273,21 @@ _US_CITIES = [
 # Phase 3c: category-code and risk-flag helpers (FPE-masked correlated pair)
 # ---------------------------------------------------------------------------
 
-# 2-char category codes (uppercase letters). The manifest uses charset:ALPHANUM
+# 4-char category codes (uppercase letters + digits). 4 chars clears the FF1
+# minimum admissible domain (radix**length >= 1,000,000) at radix 62; a 2-char
+# code cannot, since 62**2 = 3,844. The manifest uses charset:ALPHANUM
 # (includes uppercase) so FPE genuinely permutes these values. Do NOT use
 # charset:alphanum (lowercase only) -- uppercase chars fall outside that
 # charset and FPE would leave them unchanged (verbatim passthrough).
 _CAT_CODE: dict[str, str] = {
-    "electronics": "EL",
-    "clothing": "CL",
-    "food": "FD",
-    "home": "HM",
-    "sports": "SP",
+    "electronics": "ELXX",
+    "clothing": "CLXX",
+    "food": "FDXX",
+    "home": "HMXX",
+    "sports": "SPXX",
 }
 
-# 2-char risk flags derived from cat_code (many-to-one; deterministic).
+# 4-char risk flags derived from cat_code (many-to-one; deterministic).
 # EL and HM -> "HI" (high-margin categories).
 # CL and SP -> "MD" (mid-tier).
 # FD -> "LO" (low-margin food).
@@ -293,11 +297,11 @@ _CAT_CODE: dict[str, str] = {
 # functional dependency saturates the chi-square statistic). Matches the
 # V=1.0 claim in manifest.yaml masked_correlations.
 _RISK_FLAG: dict[str, str] = {
-    "EL": "HI",
-    "CL": "MD",
-    "FD": "LO",
-    "HM": "HI",
-    "SP": "MD",
+    "ELXX": "HIXX",
+    "CLXX": "MDXX",
+    "FDXX": "LOXX",
+    "HMXX": "HIXX",
+    "SPXX": "MDXX",
 }
 
 
@@ -465,7 +469,7 @@ def build_products(seed: int = 43) -> pd.DataFrame:
 
     rows: list[dict[str, Any]] = []
     for i in range(PRODUCT_COUNT):
-        product_id = f"PR{i + 1:05d}"
+        product_id = f"PR{i + 1:06d}"
 
         # Category: weighted random.
         cat_draw = float(rng.uniform(0, 1))
@@ -513,10 +517,11 @@ def build_orders(
     - Deliberate correlation: qty_band and order_total_band are correlated
       via the category-driven unit_price model (passthrough pair).
     - Phase 3c FPE-masked pair: cat_code and risk_flag are both FPE-masked.
-      cat_code is a 2-char category abbreviation (EL/CL/FD/HM/SP).
-      risk_flag is a 2-char risk tier (HI/MD/LO) deterministically derived
-      from cat_code: EL/HM->HI, CL/SP->MD, FD->LO. Source Cramers V is
-      high (5 cat_codes -> 3 risk_flags, near-deterministic mapping).
+      cat_code is a 4-char category abbreviation (ELXX/CLXX/FDXX/HMXX/SPXX).
+      risk_flag is a 4-char risk tier (HIXX/MDXX/LOXX) deterministically
+      derived from cat_code: ELXX/HMXX->HIXX, CLXX/SPXX->MDXX, FDXX->LOXX.
+      Source Cramers V is high (5 cat_codes -> 3 risk_flags,
+      near-deterministic mapping).
 
     Args:
         seed: Reproducibility seed.

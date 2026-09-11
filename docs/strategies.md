@@ -45,9 +45,14 @@ join-stable but not human-readable.
 ### fpe
 
 Format-preserving encryption: the output keeps the input's shape (a 9-digit
-input stays 9 digits). Built on a Feistel-plus-HMAC permutation. Same value
+input stays 9 digits). Built on NIST SP 800-38G FF1 (AES-256). Same value
 maps to the same ciphertext within a namespace; byte-stable across runs. Needs
-a namespace.
+a namespace. FF1 requires a minimum admissible domain
+(`radix ** in-charset length >= 1,000,000`); a value whose body falls short
+fails the job closed (`fpe_unencryptable_domain`) rather than masking under
+an undefined-security domain. See
+[docs/security/de-01-ff1-adoption.md](security/de-01-ff1-adoption.md) for the
+conformance claim, key/tweak model, and known leakage.
 
 - `charset`: a named set (for example `digits`) or an explicit character set.
   A degenerate (< 2 char) set degrades to passthrough.
@@ -55,7 +60,7 @@ a namespace.
 - `validate_luhn`: keep Luhn-checksum validity for digit charsets (default false).
 - `checksum`: scheme name for check-digit recomputation after encryption
   (default: none). When set, `checksum` takes priority over `validate_luhn`.
-  After the Feistel permutation rewrites the value body, the engine recomputes
+  After the FF1 permutation rewrites the value body, the engine recomputes
   the check digit in place, so the masked value is valid for the named scheme
   by construction. Determinism is preserved: the same input, key, and scheme
   always produce the same output.
@@ -75,7 +80,7 @@ a namespace.
   1. `iban`: raises `PlanCompileError(fpe_checksum_iban_unsupported)` at
      plan-compile and `FpeChecksumError` at runtime. Per-country BBAN
      structure enforced by `stdnum.iban.validate` cannot be satisfied by a
-     free Feistel permutation. For validation-only use, call
+     free format-preservation permutation. For validation-only use, call
      `checksums.validate("iban", value)` directly; only FPE checksum mode is
      unsupported.
   2. Unknown or misspelled scheme: raises
@@ -260,6 +265,19 @@ clinical notes or support tickets.
   unmatched policy and for per-span `redact` dispatch.
 - `min_days` / `max_days` (int, defaults -365 / 365): date-shift offset range
   for spans dispatched to `date_shift`.
+- `sub_floor_span` (str, `"redact"` or `"synthetic"`, no default): required
+  whenever the configured detectors can produce an `fpe`-dispatched span
+  below FF1's minimum admissible domain (a bare 5-digit ZIP match is the
+  common case; a 9-digit ZIP+4 match on the same detector still clears the
+  floor and uses FF1 normally). `redact` replaces the span with `token`;
+  `synthetic` replaces it with a deterministic, valid-format synthetic value
+  of the span's type. Both are non-reversible. Leaving this unset raises a
+  fail-closed error the first time a sub-floor span is actually matched at
+  runtime (there is no plan-compile-time prediction of which values a run
+  will see, and no silent default). See
+  [docs/security/de-01-ff1-adoption.md](security/de-01-ff1-adoption.md) for
+  why the floor exists and what handling it emits (a
+  `text_mask_sub_floor_span_handled` warning, not a silent substitution).
 
 #### Detector reachability: TIER-1 and TIER-2
 
@@ -292,10 +310,18 @@ TIER-1 detector set may not cover all PII present.
 
 #### Cross-cell determinism
 
-Each matched span is keyed by `HMAC-SHA256(job_seed, matched_text)` (RFC 2104).
-The key depends only on the matched value, not on surrounding cell text, column
-name, or row index. The same SSN in two different cells always produces the same
-masked SSN, keeping cross-column joins intact.
+The `faker` and `date_shift` span strategies key each matched span by
+`HMAC-SHA256(job_seed, matched_text)` (RFC 2104). The key depends only on the
+matched value, not on surrounding cell text, column name, or row index, so
+the same name or date in two different cells always produces the same
+synthetic replacement.
+
+The `fpe` span strategy (SSN, ZIP, phone, PAN) keys independently of the
+matched text: `derive(mask_key, f"text.{detector_id}", FF1_KEY_LABEL)`, the
+same model the column `fpe` strategy uses, with the FF1 tweak built from the
+detector id. It is still cross-cell deterministic (the key and tweak don't
+depend on the matched value, and the FF1 permutation itself does), but the
+key derivation is per-detector, not per-plaintext.
 
 #### Raw-value isolation
 
@@ -337,6 +363,18 @@ columns:
         email: redact
       unmatched_span_policy: passthrough
       token: "[REDACTED]"
+
+# ZIP via FPE: a bare 5-digit match is below FF1's floor and needs a
+# sub_floor_span policy; a 9-digit ZIP+4 match on the same detector clears
+# the floor and always uses FF1.
+columns:
+  - name: address_line
+    strategy: text_mask
+    provider_config:
+      detectors: [us_zip]
+      per_detector_strategy:
+        us_zip: fpe
+      sub_floor_span: synthetic
 ```
 
 ### geo_generalize
