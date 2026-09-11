@@ -154,6 +154,7 @@ def _run_native(
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_deterministic_reuse_faker_admits_on_native_pool_route() -> None:
     config = _config(_faker_column())
     source = _source()
@@ -233,6 +234,7 @@ def test_non_string_faker_source_reroutes_whole_table_to_oracle() -> None:
     assert evidence.compiled_kernel_executed is False
 
 
+@_NEEDS_COMPANION
 def test_large_string_faker_source_still_admits_native() -> None:
     # The scope-lock admits BOTH string kinds: a large_utf8 source is still a
     # string source, so it must not be rerouted by the non-string guard.
@@ -326,6 +328,7 @@ def test_one_non_c1_faker_column_reroutes_whole_table_not_just_that_column() -> 
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_pool_select_counters_prove_real_invocation_not_intent() -> None:
     config = _config(_faker_column())
     source = _source(n=12)
@@ -350,6 +353,7 @@ def test_pool_select_counters_prove_real_invocation_not_intent() -> None:
     assert evidence.compiled_kernel_executed is False
 
 
+@_NEEDS_COMPANION
 def test_pool_select_counts_per_column_chunk_with_two_faker_columns() -> None:
     config = _config(
         _faker_column("FIRST"),
@@ -372,6 +376,7 @@ def test_pool_select_counts_per_column_chunk_with_two_faker_columns() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_pool_built_once_per_invocation_regardless_of_chunk_count() -> None:
     config = _config(_faker_column())
     source = _source(n=20)
@@ -385,6 +390,7 @@ def test_pool_built_once_per_invocation_regardless_of_chunk_count() -> None:
     assert stats.misses == 1
 
 
+@_NEEDS_COMPANION
 def test_warm_cache_reused_across_separate_invocations() -> None:
     config = _config(_faker_column())
     cache = PoolCache()
@@ -402,6 +408,7 @@ def test_warm_cache_reused_across_separate_invocations() -> None:
     assert second_stats.misses == first_stats.misses  # no new build
 
 
+@_NEEDS_COMPANION
 def test_reversed_table_order_still_hits_warm_cache() -> None:
     config = _config(_faker_column())
     cache = PoolCache()
@@ -413,6 +420,7 @@ def test_reversed_table_order_still_hits_warm_cache() -> None:
     assert cache.stats().misses == 1
 
 
+@_NEEDS_COMPANION
 def test_distinct_namespaces_build_distinct_pools() -> None:
     config = _config(
         _faker_column("FIRST", namespace="ns_a"),
@@ -435,6 +443,7 @@ def test_distinct_namespaces_build_distinct_pools() -> None:
     assert first_vals != last_vals
 
 
+@_NEEDS_COMPANION
 def test_repeated_provider_across_columns_same_namespace_shares_one_pool() -> None:
     # Same provider, same namespace, same pool_size/config -> ONE identity,
     # even though the columns are named differently.
@@ -456,6 +465,7 @@ def test_repeated_provider_across_columns_same_namespace_shares_one_pool() -> No
     assert result.column("FIRST").to_pylist() == result.column("LAST").to_pylist()
 
 
+@_NEEDS_COMPANION
 def test_forced_eviction_still_rebuilds_value_identical_pool() -> None:
     # A pool larger than the tiny budget forces eviction of the FIRST
     # column's pool before the LAST column's identity is resolved; a later
@@ -564,6 +574,7 @@ def _run_with_key(config: dict, source: pa.Table, key_provider: SecretKeyProvide
     return pa.concat_tables(chunks).combine_chunks()
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("batch_size", [1, 3, 7])
 def test_mask_key_only_changes_selection_not_pool_identity(batch_size: int) -> None:
     config = _config(_faker_column())
@@ -595,6 +606,7 @@ def test_mask_key_only_changes_selection_not_pool_identity(batch_size: int) -> N
     assert result_a.column("FIRST").to_pylist() != result_b.column("FIRST").to_pylist()
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("cache_state", ["cold", "warm"])
 def test_job_seed_only_changes_pool_identity_and_build(cache_state: str) -> None:
     config_a = _config(_faker_column(), seed=111)
@@ -621,6 +633,7 @@ def test_job_seed_only_changes_pool_identity_and_build(cache_state: str) -> None
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_plan_native_route_agrees_with_run_native_or_oracle_chunked() -> None:
     config = _config(_faker_column())
     profile = _profile("FIRST")
@@ -689,6 +702,7 @@ def _null_dense_source(n: int = 24, *, n_distinct: int = 4) -> pa.Table:
     return pa.table({"FIRST": pa.array(values, type=pa.string())})
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("batch_size", [1, 5, 24])
 def test_selected_values_match_pandas_oracle_over_repeated_and_null_source(
     batch_size: int,
@@ -754,6 +768,7 @@ def test_null_positions_preserved_byte_for_byte_vs_oracle_null_dense_source() ->
     assert native_nulls == source_nulls
 
 
+@_NEEDS_COMPANION
 def test_faker_output_column_is_arrow_string_type() -> None:
     # `_sample_faker_chunk` builds `pa.array(..., type=pa.string())`
     # explicitly; a mutant dropping or changing that type argument would let
@@ -764,6 +779,7 @@ def test_faker_output_column_is_arrow_string_type() -> None:
     assert result.column("FIRST").type == pa.string()
 
 
+@_NEEDS_COMPANION
 def test_pool_cache_hit_selection_is_byte_identical_to_the_cold_build() -> None:
     # A cache HIT must select from the exact same pool object a cache MISS
     # would have built -- not a fresh, possibly-different rebuild, and not a

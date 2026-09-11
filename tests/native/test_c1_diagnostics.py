@@ -10,6 +10,8 @@ file covers correctness of what gets collected.
 
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pyarrow as pa
 import pytest
@@ -30,6 +32,13 @@ from decoy_engine.execution.native._route_diagnostics import (
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._value_pool import ValuePool
 from decoy_engine.keyprovider import SecretKeyProvider
+
+_COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not _COMPANION_PRESENT,
+    reason="decoy-engine-native companion not installed; the companion-present CI job covers this",
+)
+
 
 _ENGINE_VERSION = "phase3-task3.4"
 
@@ -335,6 +344,7 @@ def _run(config: dict, source: pa.Table, batch_size: int, cache: PoolCache) -> N
     return sink[0]
 
 
+@_NEEDS_COMPANION
 def test_real_dispatch_isolates_pool_warning_from_a_prior_invocation() -> None:
     config = _faker_config(pool_size=50)
     source = _source()

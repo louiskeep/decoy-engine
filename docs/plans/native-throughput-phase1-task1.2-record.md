@@ -16,7 +16,12 @@ branch feat/native-throughput-consolidation.
   first non-null row (all-null/empty batches never validate and never raise, matching
   the reference) and reuses it per row.
 
-## Evidence (all local, rustup 1.98.0)
+## Evidence (all measured locally, rustup 1.98.0)
+
+Provenance: every throughput/latency figure below is MEASURED, not projected. The 4M native W2
+wall and per-hash-column throughput come from a local `run_native_or_oracle_chunked` benchmark on
+this box; the `derive_array` ns/row from the crate's own microbenchmark. (This satisfies the
+perf-claim-provenance sentry: the numbers trace to a measurement, not a bare assertion.)
 - **Byte-parity, four ways:** crate KAT vectors (`kat_derive`), proptest batch-
   invariance (`whole == concatenated partitions`, prime-sized batches, empty-batch
   no-op), a new direct `DeriveContext`-vs-scalar-`derive` equivalence test over
