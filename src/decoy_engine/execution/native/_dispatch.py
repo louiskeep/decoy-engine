@@ -317,15 +317,16 @@ def plan_native_route(
                 )
 
         if decision.native_admitted:
-            # Native faker selection converts the source column with per-chunk
-            # `source.to_pandas()` (_sample_faker_chunk), which diverges from the
-            # oracle's table-level `Table.to_pandas()` for non-string nullable
-            # extension types: a nullable Int64 source can materialize as float64 in
-            # a later chunk (3 -> 3.0), so deterministic canonicalization raises
-            # `float_canonicalization_unsupported` AFTER earlier chunks already
-            # yielded -- partial native output the whole-frame oracle never produces.
-            # C1's faker columns are string-typed; a faker column over a non-string
-            # source reroutes the WHOLE table to the oracle (narrower, never wider).
+            # A non-string faker source's per-chunk Arrow type can drift across
+            # chunks (a nullable Int64 source can materialize as float64 in a
+            # later chunk, 3 -> 3.0), and the compiled index kernel's admitted
+            # input and canonicalization are scoped to the one variant C1 needs
+            # (string/large_string): admitting anything else risks a rejection
+            # surfacing only on a later chunk, after earlier chunks already
+            # yielded -- partial native output the whole-frame oracle never
+            # produces. C1's faker columns are string-typed; a faker column over
+            # a non-string source reroutes the WHOLE table to the oracle
+            # (narrower, never wider).
             for node in decision.node_routes:
                 if node.strategy != "faker":
                     continue

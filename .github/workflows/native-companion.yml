@@ -162,6 +162,12 @@ jobs:
       # against the frozen vectors + the live Python reference; companion-present only.
       - name: derive_index KAT + differential (companion-present case)
         run: pytest tests/native/test_derive_index_kat.py -v --tb=short
+      # Task 2.3 wires that compiled index kernel into the deterministic-faker route itself
+      # (byte parity across batch sizes/orders/null shapes/thread counts, the exactly-one-
+      # batch-call and native_threads-forwarding proofs, companion-absent downgrade + probe
+      # ordering, malformed-result fail-closed); companion-present only.
+      - name: Faker route integration (companion-present case)
+        run: pytest tests/parity/native/test_c1_faker_parity.py tests/native/test_dispatch_faker.py tests/native/test_index_ext.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A

@@ -1,10 +1,11 @@
 //! Compiled Rust companion for `decoy-engine`'s native masking hot path.
 //!
 //! `_kernel` is the canonical compiled module the engine's `native` extra ships and the
-//! `load_compiled_crypto_kernel` loader targets. It exports `abi_version()` (the build-system
-//! stub from the companion scaffold) and `derive_batch` (the security-sensitive
-//! `KeyedDerivationKernel`, see `arrow_ffi::derive_batch`). Everything else the engine does
-//! stays pure Python.
+//! `load_compiled_crypto_kernel` / `load_compiled_index_kernel` loaders target. It exports
+//! `abi_version()` (the build-system stub from the companion scaffold), `derive_batch` (the
+//! security-sensitive `KeyedDerivationKernel`, see `arrow_ffi::derive_batch`), and
+//! `derive_index_batch` (the deterministic-faker pool-index kernel, see
+//! `arrow_ffi::derive_index_batch`). Everything else the engine does stays pure Python.
 //!
 //! `batch`/`canonicalize`/`derive`/`ffi_import` have no PyO3 dependency and stay `pub`
 //! unconditionally, so a standalone binary (a fuzz target, an ASan/TSan test build) can link

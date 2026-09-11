@@ -651,10 +651,10 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+provider+pool build config",
         provider_version=_V6,
         notes=(
-            "The masking 'faker' strategy. The value-visible draw is the pool SELECTION "
-            "(mask.faker), backed by gen.pool_deterministic / gen.pool_nondeterministic. "
-            "The pool BUILD (fresh Faker values) is gen.pool_build_faker. Deterministic "
-            "selection re-keys onto mask_key; the build stays on job_seed."
+            "The masking 'faker' strategy: the value-visible draw is the pool SELECTION "
+            "(mask.faker), backed by gen.pool_deterministic / gen.pool_nondeterministic; the pool "
+            "BUILD is gen.pool_build_faker. Deterministic selection re-keys onto mask_key, build "
+            "stays on job_seed. Native (2.3): derive_index_batch per chunk; oracle unchanged."
         ),
         mirror_call_sites=("generation/pool/_sampler.py:225",),
     ),
