@@ -71,7 +71,7 @@ dependencies = [
     # shifts the name pools the proof manifest is generated against. Migrating
     # to a newer Faker is a dedicated, provider-regression-fixing task on the
     # roadmap, not a chore bump.
-    "faker==40.23.0",
+    "faker==40.37.0",
     "psutil>=5.9.0",
     "pyarrow>=14.0.0",
     # Used by decoy_engine.disguises.schema for the Disguise model.
@@ -186,8 +186,8 @@ mutation = [
 # code red with no code change. CI (.github/workflows/ci.yml) installs
 # these same versions; bump them deliberately alongside a lint pass.
 lint = [
-    "ruff==0.15.22",
-    "mypy==2.3.0",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
 ]
 # engine-v2 S7: Mimesis is an OPTIONAL alternative provider backend. The
 # default install does NOT pull it; MimesisAdapter imports behind a
@@ -280,7 +280,7 @@ geo = [
 # first ubuntu-latest ml-gate run is the reproducibility proof of record.
 ml = [
     "scikit-learn==1.7.2",
-    "lightgbm==4.6.0",
+    "lightgbm==4.7.0",
 ]
 # CI/perf-tooling: CodSpeed instrumented microbenchmarks (tests/codspeed/).
 # Optional: the `codspeed` pytest marker keeps that suite out of the default
