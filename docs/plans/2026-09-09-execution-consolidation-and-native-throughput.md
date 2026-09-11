@@ -1236,3 +1236,38 @@ derive_index contract: docs/native/derive-index-contract.md + decoy-engine-nativ
 derive_index_kat.json (25 value + 7 error cases, SHA-256 4736bfaf...e50d3e8) + generate_derive_index_kat.py
 + tests/native/test_derive_index_kat.py. Commits e57c7a7f..2760ff4a. Next: Task 2.2 Rust
 derive_index_batch reproduces the vectors. NOT merged (Cam-gated). -->
+
+<!-- Task 2.2 gate outcome (2026-09-10): DONE. Rust derive_index_batch reproduces the Task 2.1 KAT
+index-for-index. Plan-gate GO; dennis GO; Codex final NO-GO on 2 findings (MEDIUM: non-int pool_size
+bypassed canon-first precedence -- extract_pool_size raised TypeError at the PyO3 boundary before the
+Arrow import + first-non-null canonicalization; LOW: mutation-ledger overstated panic-guard coverage)
+-> both remediated at root cause (PoolSize::{Int,NotAnInteger} defers the non-int rejection to the
+pool-guard slot; ledger corrected) -> Codex re-gate GO. Commits 447bc23f..058eaa8c. NOT merged. -->
+
+<!-- Task 2.3 gate outcome (2026-09-11): DONE. Wires the compiled derive_index_batch into the
+deterministic-Faker route, byte-identical to the pandas oracle. 4-round Codex plan-gate GO. Built in
+5 phases (Sonnet from Opus spec, Opus-reviewed): P0 extract _chunk_masking.py; P1 _index_ext.py loader
+(abi-2 kept, guarded capability-detect + embedded-KAT self-test); P2+3 plan_native_route ->
+NativePreflight schema-aware preflight (guards before probes) + _sample_faker_chunk Arrow/NumPy gather
+(pool.size, fail-closed invariants); P4 Rust derive_index fuzz target (788k iters, 0 crash); P5
+acceptance matrix (+28 tests) + CI wiring + stale-comment cleanup. Plus 3 behavior-preserving
+module-size extractions (_crypto_reference/_chunk_schema/_chunk_masking) that greened the sentry.
+dennis GO (0 blocker/high/medium, 1 LOW = separate xfail scaffold). Codex final GO (0 blocker/high/
+medium, 2 LOW: non-pa.Array coded-guard + last stale comments) -> both remediated. 1497 native+parity
+tests pass. Commits 4bb033ab..521bb7bb. NOT merged (Cam-gated). -->
+
+<!-- Task 2.4 result (2026-09-11): MEASURED; exit-gate target (approval item #4, "deterministic Faker
+workload and target") remains Cam-gated. Re-ran the frozen bench_c1_native.py (C1 recipe, PHASE3-C1
+tiers) with the Task 2.3 compiled route vs the committed pre-2.3 native baseline (Python PoolSampler),
+same .55 box, same metric (kernel_elapsed_s["faker"] = pool-SELECTION time; pool BUILD is separate +
+unchanged). SINGLE-THREAD (native_threads default=1):
+- 1M tier: faker selection 105,076 -> 1,368,726 rows/s = 13.0x; total wall 60.9s -> 13.1s; RSS 340 ->
+  334MB (bounded, unchanged).
+- 3M tier: faker selection 102,406 -> 1,368,819 rows/s = 13.4x; total wall 179.7s -> 31.8s; RSS 355 ->
+  352MB.
+Route evidence: native_admitted, compiled_kernel_executed, pool_select_executed all true; pool_quality
+distribution unchanged (byte-parity to oracle proven by test_c1_faker_parity + dennis/Codex gates).
+The ~13x faker-selection speedup (single-thread; threading would push higher) clears the program's
+6-8x target class by a wide margin. Results: scripts/native-baseline/results_c1_native_task24_{1m,3m}.
+json. RECOMMENDATION to Cam: approve the faker target as met; a GCP n2-standard-8 reference-host
+confirmation (8-thread, authorized) is optional given the local margin. NOT merged (Cam-gated). -->
