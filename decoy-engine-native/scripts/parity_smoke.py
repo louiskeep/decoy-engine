@@ -18,9 +18,13 @@ Checks, in order:
    namespace='pool.city', pool_size=97)` reproduces the frozen pool-index vector, with
    the Arrow return type pinned to `uint64`.
 
-Exits 0 and prints one OK line per check on success; exits 1 with the failing
-assertion on first failure (a KAT wheel is unfit to ship, so this does not try to
-collect every failure before reporting).
+Exits 0 and prints one OK line per check on success; exits 1 with the failing check's
+message on first failure (a KAT wheel is unfit to ship, so this does not try to
+collect every failure before reporting). Checks use explicit `if not ...: raise
+SystemExit(...)` rather than `assert`: every wheel job runs this under plain
+`python` (no -O) today, but `assert` strips under `-O` and would then make the smoke
+exit 0 having verified nothing -- the same failure mode fixed in the redact/truncate
+kernel dispatchers.
 """
 
 from __future__ import annotations
@@ -41,9 +45,8 @@ def main() -> int:
     from decoy_engine_native import _kernel
 
     reported_abi = _kernel.abi_version()
-    assert reported_abi == _EXPECTED_ABI_VERSION, (
-        f"ABI mismatch: got {reported_abi!r}, expected {_EXPECTED_ABI_VERSION!r}"
-    )
+    if reported_abi != _EXPECTED_ABI_VERSION:
+        raise SystemExit(f"ABI mismatch: got {reported_abi!r}, expected {_EXPECTED_ABI_VERSION!r}")
     print(f"OK: abi_version() == {reported_abi!r}")
 
     hash_result = _kernel.derive_batch(
@@ -53,12 +56,12 @@ def main() -> int:
         truncate=None,
         native_threads=1,
     )
-    assert hash_result.to_pylist() == _HASH_EXPECTED, (
-        f"hash KAT mismatch: got {hash_result.to_pylist()!r}, expected {_HASH_EXPECTED!r}"
-    )
-    assert hash_result.type == pa.string(), (
-        f"hash KAT Arrow type mismatch: got {hash_result.type!r}, expected string"
-    )
+    if hash_result.to_pylist() != _HASH_EXPECTED:
+        raise SystemExit(
+            f"hash KAT mismatch: got {hash_result.to_pylist()!r}, expected {_HASH_EXPECTED!r}"
+        )
+    if hash_result.type != pa.string():
+        raise SystemExit(f"hash KAT Arrow type mismatch: got {hash_result.type!r}, expected string")
     print(f"OK: hash KAT == {_HASH_EXPECTED!r}, Arrow type == string")
 
     index_result = _kernel.derive_index_batch(
@@ -68,12 +71,14 @@ def main() -> int:
         pool_size=97,
         native_threads=1,
     )
-    assert index_result.to_pylist() == _INDEX_EXPECTED, (
-        f"index KAT mismatch: got {index_result.to_pylist()!r}, expected {_INDEX_EXPECTED!r}"
-    )
-    assert index_result.type == pa.uint64(), (
-        f"index KAT Arrow type mismatch: got {index_result.type!r}, expected uint64"
-    )
+    if index_result.to_pylist() != _INDEX_EXPECTED:
+        raise SystemExit(
+            f"index KAT mismatch: got {index_result.to_pylist()!r}, expected {_INDEX_EXPECTED!r}"
+        )
+    if index_result.type != pa.uint64():
+        raise SystemExit(
+            f"index KAT Arrow type mismatch: got {index_result.type!r}, expected uint64"
+        )
     print(f"OK: index KAT == {_INDEX_EXPECTED!r}, Arrow type == uint64")
 
     print("parity_smoke: all checks passed")

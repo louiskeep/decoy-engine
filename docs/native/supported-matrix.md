@@ -22,13 +22,13 @@ The compiled companion is optional. Where it is absent, every keyed-derivation a
 deterministic-faker-index column reroutes to the pandas oracle at preflight, before
 any output is produced. This is a **supported, correct, slower** mode, not a
 degraded one: the oracle produces byte-identical logical output to the compiled
-kernel, just without the throughput gain (see [section 5](#5-performance-evidence-kept-separate)).
+kernel, just without the throughput gain (see [section 7](#7-performance-evidence-kept-separate)).
 Absence of the companion is never silently swallowed mid-run.
 
 ## 2. Prebuilt companion wheels (approved starter pack)
 
 Four targets, each built for CPython 3.10, 3.11, and 3.12 (twelve wheel rows total),
-via [`native-companion.yml`](../../.github/workflows/native-companion.yml). All four
+via [`native-companion.yml`](https://github.com/louiskeep/decoy-engine/blob/main/.github/workflows/native-companion.yml). All four
 use `PyO3/maturin-action` (pinned by commit SHA and exact `maturin-version`, with
 `--locked --compatibility pypi`); this repo does not use cibuildwheel anywhere.
 
@@ -40,7 +40,7 @@ use `PyO3/maturin-action` (pinned by commit SHA and exact `maturin-version`, wit
 | macOS arm64 | `macos-15` (Apple Silicon) | maturin-action, native build | native, on the runner |
 
 Every row runs the same reusable script,
-[`decoy-engine-native/scripts/parity_smoke.py`](../../decoy-engine-native/scripts/parity_smoke.py),
+[`decoy-engine-native/scripts/parity_smoke.py`](https://github.com/louiskeep/decoy-engine/blob/main/decoy-engine-native/scripts/parity_smoke.py),
 against the built wheel: it asserts `abi_version() == "decoy-native-abi-2"`, then the
 hash KAT and the index KAT (both below), including the exact Arrow return type.
 
@@ -69,8 +69,8 @@ verified in CI on the pull request, not locally.
 
 Linux x86-64 only, today. ARM64 is explicitly deferred, not a near-term commitment;
 revisit only if Cam changes the approved target list. Bundling the compiled companion
-into the production image is [Task 3.2](../../docs/plans/) work, done in the platform
-repo (`decoy-platform`); this page documents the target state and does not claim the
+into the production image is Task 3.2 work, done in the platform repo
+(`decoy-platform`); this page documents the target state and does not claim the
 image already ships the companion.
 
 ## 4. GLIBC / manylinux baseline: three separate facts

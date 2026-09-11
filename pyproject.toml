@@ -474,10 +474,6 @@ ignore = [
 # driving git / mutmut / pytest subprocesses with fully code-constructed args
 # (S603/S607 subprocess with a partial path are intentional and trusted).
 "scripts/native-testing/python_mutation_pilot.py" = ["S603", "S607"]
-# Task 3.1 D2: a CI wheel-smoke harness, not test-suite code, so it is outside
-# tests/**; asserts (S101) are the intended fail-fast mechanism for a script
-# every wheel job runs under plain `python` (no -O), never pytest.
-"decoy-engine-native/scripts/parity_smoke.py" = ["S101"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;

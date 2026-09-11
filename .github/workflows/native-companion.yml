@@ -159,7 +159,7 @@ jobs:
           working-directory: decoy-engine-native
           target: x86_64-pc-windows-msvc
           maturin-version: v1.15.0
-          args: --release --out dist --locked -i python
+          args: --release --out dist --locked --compatibility pypi -i python
       - name: Assert the compiled _kernel module is present in the wheel
         shell: bash
         run: |
@@ -204,7 +204,7 @@ jobs:
           working-directory: decoy-engine-native
           target: aarch64-apple-darwin
           maturin-version: v1.15.0
-          args: --release --out dist --locked -i python
+          args: --release --out dist --locked --compatibility pypi -i python
       - name: Assert the compiled _kernel module is present in the wheel
         run: |
           set -euo pipefail
