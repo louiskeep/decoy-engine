@@ -4,7 +4,8 @@ extended by Phase 3 Task 3.1 for deterministic-faker pool masking).
 Decides, once per table at PREFLIGHT, whether every masked node of `table` can run
 on the native route -- a compiled kernel (`_kernels_scalar` / `_kernels_keyed`) or,
 for a deterministic-reuse faker column (Task 3.1), a bounded value pool built once
-and selected per chunk via `PoolSampler` -- or whether the WHOLE table must run on
+and selected per chunk via the compiled `derive_index_batch` index kernel (Task 2.3)
+-- or whether the WHOLE table must run on
 the pinned pandas oracle (`decoy_engine.execution._chunked.run_mask_pipeline_chunked`).
 The decision is atomic and whole-table: this phase never mixes a native column with
 an oracle column in the same table, and it never falls back mid-stream -- a route
@@ -105,11 +106,11 @@ class NativeRouteEvidence:
     kernel_calls: dict[str, int] = field(default_factory=dict)
     kernel_elapsed_s: dict[str, float] = field(default_factory=dict)
     # Task 3.1 Step 7: the pool-selection counterpart of
-    # `compiled_kernel_executed` / `kernel_calls`. A faker column has no
-    # compiled kernel, so it needs its own proof-of-execution pair rather
-    # than overloading the hash-kernel fields; `pool_select_calls` counts
-    # one unit per (column, chunk) selection, feeding Task 3.6's exact-count
-    # route ledger.
+    # `compiled_kernel_executed` / `kernel_calls`. The faker route runs its own
+    # compiled kernel (`derive_index_batch`, Task 2.3), distinct from the hash
+    # kernel, so it keeps its own proof-of-execution pair rather than overloading
+    # the hash-kernel fields; `pool_select_calls` counts one unit per (column,
+    # chunk) selection, feeding Task 3.6's exact-count route ledger.
     pool_select_executed: bool = False
     pool_select_calls: int = 0
 
@@ -138,9 +139,10 @@ def _downgrade_to_oracle(decision: NativeRouteEvidence, reason: str) -> NativeRo
 
 def _route_tag_for(strategy: str) -> RouteTag:
     """The per-column route tag for an ADMITTED strategy: `"native_pool"` for
-    a bounded-value-pool strategy (faker, no compiled kernel), `"native_kernel"`
+    a bounded-value-pool strategy (faker: pool selection via the compiled
+    `derive_index_batch` kernel, distinct from the hash kernel), `"native_kernel"`
     for everything else in `NATIVE_KERNEL_STRATEGIES`. Distinct tags keep
-    `compiled_kernel_executed` (a real Rust-kernel-invocation proof) from being
+    `compiled_kernel_executed` (the hash Rust-kernel-invocation proof) from being
     misread as also proving a pool selection ran, and vice versa.
     """
     return "native_pool" if strategy in NATIVE_POOL_STRATEGIES else "native_kernel"

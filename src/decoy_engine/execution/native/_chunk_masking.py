@@ -96,17 +96,21 @@ def _sample_faker_chunk(
     )
 
     # Runtime invariants on the kernel's own result: a malformed compiled (or
-    # stub, in tests) kernel must fail HERE, coded and fail-closed, never as
-    # an uncoded NumPy/Arrow out-of-bounds exception from the gather below.
+    # stub, in tests) kernel must fail HERE, coded and fail-closed, never as an
+    # uncoded exception. The isinstance/type check comes FIRST: a non-`pa.Array`
+    # result (a bare list, None) has no `.type`/`.is_valid()`, so probing those
+    # (or `len`) before confirming the shape would leak an uncoded AttributeError
+    # instead of the coded error every other malformed shape gets.
+    if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
+        got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
+        raise GenerationError(
+            code="index_batch_type_mismatch",
+            message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
+        )
     if len(idx) != n:
         raise GenerationError(
             code="index_batch_length_mismatch",
             message=f"derive_index_batch returned {len(idx)} indices for {n} input rows",
-        )
-    if idx.type != pa.uint64():
-        raise GenerationError(
-            code="index_batch_type_mismatch",
-            message=f"derive_index_batch returned dtype {idx.type}, expected uint64",
         )
     idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
     col_valid = col.is_valid().to_numpy(zero_copy_only=False)

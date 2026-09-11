@@ -1485,7 +1485,7 @@ def test_coverage_mismatch_with_extra_and_missing_column_never_reaches_either_pr
 # ---------------------------------------------------------------------------
 
 
-def _stub_index_kernel(make_bad_result: Callable[[int], pa.Array]) -> object:
+def _stub_index_kernel(make_bad_result: Callable[[int], object]) -> object:
     class _Stub:
         def derive_index_batch(
             self,
@@ -1524,11 +1524,19 @@ def _stub_index_kernel(make_bad_result: Callable[[int], pa.Array]) -> object:
             "index_batch_out_of_bounds",
             id="out_of_bounds",
         ),
+        pytest.param(
+            # A correctly-sized plain Python list (not a pa.Array): has no
+            # `.type`/`.is_valid()`, so the isinstance guard must catch it as a
+            # coded type_mismatch rather than leaking an uncoded AttributeError.
+            lambda n: list(range(n)),
+            "index_batch_type_mismatch",
+            id="non_arrow_list",
+        ),
     ],
 )
 def test_malformed_index_kernel_result_fails_closed_with_coded_error(
     monkeypatch: pytest.MonkeyPatch,
-    make_bad_result: Callable[[int], pa.Array],
+    make_bad_result: Callable[[int], object],
     expected_code: str,
 ) -> None:
     monkeypatch.setattr(
