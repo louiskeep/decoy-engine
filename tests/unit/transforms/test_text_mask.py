@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from decoy_engine.checksums import validate as _checksum_validate
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
@@ -30,6 +31,7 @@ from decoy_engine.transforms.text_mask import (
     _mask_fpe,
     _mask_span,
     _span_key,
+    _synthetic_span_value,
     mask_cell,
 )
 
@@ -799,6 +801,97 @@ class TestMaskFpeDispatch:
         of the old catch-all `except -> static token` fallback."""
         with pytest.raises(FpeUnencryptableError):
             _mask_fpe("--", _SEED, "ssn", "[X]")
+
+
+class TestSyntheticSpanValue:
+    """`_synthetic_span_value` (the `sub_floor_span: "synthetic"` policy).
+
+    Round-2 LOW-3: the fallback used to overwrite EVERY character (including
+    separators) with a random-looking digit and never touched a checksum, so
+    a synthetic PAN/NPI replacement was neither format-preserving (a real
+    PAN/NPI's separators are structural, e.g. ``4111-1111-1111-1111``) nor
+    "valid-format" for a checksum-backed detector (its check digit was just
+    another random digit, essentially never Luhn/NPI-valid). Both now hold.
+    """
+
+    def test_no_checksum_preserves_separators(self) -> None:
+        """ssn/us_phone/us_zip/fax_number: no checksum scheme. Separators
+        (out-of-charset characters) must survive unchanged; only the
+        in-charset digit positions are replaced."""
+        out = _synthetic_span_value(_SEED, "123-45-6789", "0123456789", None)
+        assert out[3] == "-" and out[6] == "-"
+        assert len(out) == len("123-45-6789")
+        assert all(c in "0123456789" for c in out.replace("-", ""))
+        assert out != "123-45-6789"  # actually replaced, not a no-op
+
+    def test_no_checksum_is_deterministic_and_key_sensitive(self) -> None:
+        a = _synthetic_span_value(_SEED, "55512", "0123456789", None)
+        b = _synthetic_span_value(_SEED, "55512", "0123456789", None)
+        c = _synthetic_span_value(b"\x00" * 32, "55512", "0123456789", None)
+        assert a == b
+        assert a != c
+
+    def test_luhn_checksum_recomputed_and_separators_preserved(self) -> None:
+        """A synthetic PAN replacement (checksum='luhn') must itself pass
+        Luhn -- not just look like digits -- and keep the source's dashes."""
+        out = _synthetic_span_value(_SEED, "4111-1111-1111-1112", "0123456789", "luhn")
+        assert out[4] == "-" and out[9] == "-" and out[14] == "-"
+        assert _checksum_validate("luhn", out.replace("-", ""))
+        assert out != "4111-1111-1111-1112"
+
+    def test_npi_checksum_recomputed_and_leading_digit_pinned(self) -> None:
+        """A synthetic NPI replacement (checksum='npi') must pass the NPI
+        check AND keep its source leading digit (1 or 2 per NPPES) --
+        `_fpe_checksum_permute`'s real encrypt path pins the same digit for
+        the same reason."""
+        out = _synthetic_span_value(_SEED, "1234567891", "0123456789", "npi")
+        assert out[0] == "1"
+        assert _checksum_validate("npi", out)
+        assert out != "1234567891"
+
+    def test_all_separator_span_is_a_no_op(self) -> None:
+        """No in-charset content at all: nothing to synthesize, returned as-is
+        (mirrors `_mask_fpe`'s own all-out-of-charset fail-closed case one
+        layer up; this leaf just has nothing to do)."""
+        assert _synthetic_span_value(_SEED, "---", "0123456789", None) == "---"
+
+    def test_mask_fpe_sub_floor_domain_routes_to_synthetic_without_checksum(self) -> None:
+        """us_zip (`_FPE_CONFIG`: no checksum): a 5-digit ZIP is below the FF1
+        floor (10**5 < 1,000,000) and must hit the synthetic path, not raise,
+        when the policy is configured."""
+        notices: dict[str, int] = {}
+        out = _mask_fpe(
+            "54321", _SEED, "us_zip", sub_floor_span_policy="synthetic", sub_floor_notices=notices
+        )
+        assert len(out) == 5 and out.isdigit() and out != "54321"
+        assert notices == {"us_zip": 1}
+
+    def test_mask_fpe_checksum_invalid_pan_routes_to_valid_luhn_synthetic(self) -> None:
+        """pan (`_FPE_CONFIG`: checksum='luhn'): a PAN whose stated check
+        digit is wrong fails `checksums.validate` on the forward path
+        (`fpe.checksum_invalid_source`) and must land on a Luhn-VALID
+        synthetic replacement under the synthetic policy, dashes intact."""
+        notices: dict[str, int] = {}
+        out = _mask_fpe(
+            "4111-1111-1111-1112",
+            _SEED,
+            "pan",
+            sub_floor_span_policy="synthetic",
+            sub_floor_notices=notices,
+        )
+        assert out[4] == "-" and out[9] == "-" and out[14] == "-"
+        assert _checksum_validate("luhn", out.replace("-", ""))
+        assert notices == {"pan": 1}
+
+    def test_mask_fpe_checksum_invalid_npi_routes_to_valid_npi_synthetic(self) -> None:
+        out = _mask_fpe(
+            "1234567891",  # fails the NPI check digit
+            _SEED,
+            "npi",
+            sub_floor_span_policy="synthetic",
+        )
+        assert out[0] == "1"
+        assert _checksum_validate("npi", out)
 
 
 class TestMaskFakerDispatch:
