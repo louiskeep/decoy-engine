@@ -69,7 +69,8 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 | `determinism/_hkdf` | yes / yes | 100% (7 equiv) | none | `tq/crown-jewels` |
 | `determinism/_derive` | yes / yes | 100% (3 equiv) | none | `tq/crown-jewels` |
 | `keyprovider` | yes / yes | 100% (25 equiv) | resolve_mask_key precedence gap closed | `tq/crown-jewels` |
-| `transforms/fpe` | yes / yes | 100% (~42 equiv) | Luhn self-ref + Feistel KATs pinned | `tq/crown-jewels` |
+| `transforms/fpe` | yes / yes | 100% (~42 equiv) | Luhn self-ref pinned; ledger predates the Task 5.2 FF1 swap (this row's `_permute` internals are now a thin FF1 caller -- see `transforms/_ff1` below for the crown-jewel primitive's own ledger) | `tq/crown-jewels` |
+| `transforms/_ff1` | yes / yes | 100% (survivors classified) | round-2 remediation: NIST SP 800-38G FF1 primitive (Task 5.2); ledger at `docs/quality/mutation-ledgers/transforms_ff1.md` supersedes this row's stale Feistel-era reference above | `tq/crown-jewels` |
 | `execution/_fk_keys` | yes / yes (re-graded post-fix `7e7be68`) | 100% (32 equiv) | continue/break + dtype gaps; 1 dead branch; float/Decimal route fix re-graded, 110/142 killed, all 32 survivors equivalent | `tq/crown-jewels` |
 | `quality/dp_budget` | yes / yes | 100% (18 equiv) | calibration + tolerance-masked mutants | `tq/crown-jewels` |
 | `quality/dp` | yes / partial (pure layer) | pure layer 100% (18 equiv) | 441 mutants, 124 killed; pure/fail-closed request layer graded to logic-100% (3 direct tests kill delta-except + two-bin boundary + DpError.message); OpenDP mechanism (293 mutants) cert-gated, deferred to CI cert-gate | `tq/crown-jewels` |

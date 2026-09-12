@@ -109,7 +109,7 @@ A useful record contains these fields:
 {
   "case_id": "derive-nfc-001",
   "primitive": "derive",
-  "seed_protocol_version": 6,
+  "seed_protocol_version": 7,
   "mask_key_hex": "...",
   "namespace_text": "customer.email",
   "namespace_utf8_hex": "637573746f6d65722e656d61696c",
@@ -140,7 +140,7 @@ Each imported corpus must record:
 
 ### 3.2 Current Decoy compatibility framing
 
-The current source defines seed protocol version 6.
+The current source defines seed protocol version 7.
 The derivation path first obtains a 32-byte key with HKDF-SHA256.
 It uses the literal salt `decoy-engine/determinism/v1` and the UTF-8 namespace as HKDF `info`.
 It then computes HMAC-SHA256 over this byte frame:
@@ -167,11 +167,16 @@ Naive datetimes and unsupported floating-point sources fail.
 Null is handled before derivation and remains null.
 Pin every supported type in a golden vector rather than reimplementing these rules in the test harness.
 
-The current FPE compatibility path derives its key using the source label `fpe-key/v1`.
-Its effective tweak is the join-group name when present, otherwise the column name.
-The Python path encodes that tweak as UTF-8 with replacement behavior for encoding errors.
-Compatibility tests must reproduce that behavior for the existing protocol.
-A future FF1 protocol must either specify the same behavior or adopt strict UTF-8 under a new version.
+The current FPE compatibility path derives its key using the source label `ff1-key/v1`.
+Its effective tweak identity is the join-group name when present, otherwise the column name.
+The identity is not encoded as raw UTF-8. It is wrapped in a fixed framed wire format:
+one tweak-version byte, one scope byte (column, join-group, or text-span), a two-byte
+big-endian field holding the identity's UTF-8 byte length, then the identity's UTF-8 bytes.
+The scope byte keeps a column tweak, a join-group tweak, and a text-span-detector tweak
+from colliding even when their identity strings happen to match.
+Compatibility tests must reproduce this framed encoding byte for byte, not the identity
+string alone.
+This framing is not a proposal for a future version. It is the current protocol.
 
 These framing rules describe current Decoy compatibility.
 They are not a substitute for the FF1 algorithm specification.

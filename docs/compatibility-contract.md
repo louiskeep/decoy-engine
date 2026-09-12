@@ -60,7 +60,7 @@ As of this writing the tags include:
 
 ```
 distribution-snapshot/v1   decoy-vault/v2        vault-key/v1
-fpe-key/v1                  quality-report/v1     synth-report/v1
+ff1-key/v1                 quality-report/v1     synth-report/v1
 quality-diagnostic/v1      quality-fidelity/v1   quality-policy/v1
 quality-shape-fidelity/v1  storm-post-mask/v1    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
@@ -155,6 +155,23 @@ before any decryption attempt and raises a typed
 from the wrong-seed `vault_key_mismatch`. Cross-version unmask is not supported
 and was not supported before F13; F13 makes the failure diagnosable rather than
 opaque.
+
+**Current state (v7, 2026-09-11, pre-GA):** `SEED_PROTOCOL_VERSION` moved 6 -> 7
+(Task 5.2, DE-01 resolution): the `fpe` strategy's cipher, and the `fpe`-branch
+text-mask spans (ZIP, SSN, phone, PAN), now run NIST SP 800-38G FF1 (AES-256)
+in place of the retired 8-round HMAC-SHA256 Feistel construction. Every
+deterministic mask output changes, not only `fpe` columns (same
+cross-both-roots consequence the v6 paragraph above describes). The fpe key
+derivation label moves from the retired `fpe-key/v1` to `ff1-key/v1` (domain
+separation: no v6 key material is ever reachable under FF1). The fpe tweak is
+no longer a raw UTF-8 identity string; it is the framed wire format
+`build_ff1_tweak` builds (version byte, scope byte, big-endian UTF-8-length
+field, identity bytes -- see `docs/native/crypto-testing-reference.md` §3.2).
+See `docs/security/de-01-ff1-adoption.md` for the conformance claim, key/tweak
+model, and documented leakage; `docs/quality/mutation-ledgers/transforms_ff1.md`
+for the crypto-crown-jewel mutation ledger (superseding the retired
+Feistel-era `transforms_fpe.md` ledger for `_ff1.py` itself -- `fpe.py`'s own
+wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
 
 ### 3.4 The public API + CLI contract
 

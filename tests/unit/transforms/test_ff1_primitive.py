@@ -66,6 +66,7 @@ level radix ceiling.
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
 
 import pytest
@@ -276,7 +277,19 @@ def _ff1_inputs(draw):
 
 
 class TestIndependentDifferential:
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    """`HealthCheck.differing_executors` is suppressed on every test here: the
+    mutation-grading harness (round-2 BLOCKER-1, scripts/tq_mutate.py) runs
+    this SAME test twice per mutant -- once from the real source tree, once
+    from mutmut's `mutants/` copy -- and Hypothesis's on-disk example
+    database sees the same qualified test name reappear from a different
+    execution context. That is real for THIS tooling, not a sign of test
+    flakiness; the check exists to catch a test invoked inconsistently
+    within one run, which is not what is happening here."""
+
+    @settings(
+        max_examples=200,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+    )
     @given(_ff1_inputs())
     def test_encrypt_matches_oracle(self, inputs):
         key, tweak, radix, digits = inputs
@@ -284,7 +297,10 @@ class TestIndependentDifferential:
         reference = oracle.oracle_encrypt(key, tweak, radix, digits)
         assert production == reference
 
-    @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        max_examples=200,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+    )
     @given(_ff1_inputs())
     def test_decrypt_matches_oracle(self, inputs):
         key, tweak, radix, digits = inputs
@@ -292,7 +308,10 @@ class TestIndependentDifferential:
         reference = oracle.oracle_decrypt(key, tweak, radix, digits)
         assert production == reference
 
-    @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        max_examples=100,
+        suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+    )
     @given(_ff1_inputs())
     def test_oracle_and_production_both_round_trip(self, inputs):
         key, tweak, radix, digits = inputs
@@ -378,7 +397,9 @@ class TestAcvpCorpus:
     and the one a KAT lock actually needs.
     """
 
-    @pytest.mark.parametrize("vector", _ACVP_VECTORS, ids=[_acvp_vector_id(v) for v in _ACVP_VECTORS])
+    @pytest.mark.parametrize(
+        "vector", _ACVP_VECTORS, ids=[_acvp_vector_id(v) for v in _ACVP_VECTORS]
+    )
     def test_encrypt_matches_vector(self, vector):
         key = bytes.fromhex(vector["key"])
         tweak = bytes.fromhex(vector["tweak"])
@@ -388,7 +409,9 @@ class TestAcvpCorpus:
         expected = _string_to_numerals(vector["ct"], alphabet)
         assert _ff1.encrypt(key, tweak, radix, msg) == expected
 
-    @pytest.mark.parametrize("vector", _ACVP_VECTORS, ids=[_acvp_vector_id(v) for v in _ACVP_VECTORS])
+    @pytest.mark.parametrize(
+        "vector", _ACVP_VECTORS, ids=[_acvp_vector_id(v) for v in _ACVP_VECTORS]
+    )
     def test_decrypt_matches_vector(self, vector):
         key = bytes.fromhex(vector["key"])
         tweak = bytes.fromhex(vector["tweak"])
@@ -503,17 +526,18 @@ class TestMalformedInputsAndBoundaries:
         with pytest.raises(_ff1.Ff1Error, match="radix must be"):
             _ff1.encrypt(self._KEY, self._TWEAK, radix, numerals)
 
-    def test_radix_at_standard_ceiling_is_still_a_primitive_precondition_error(self):
-        """The ceiling itself (``radix == 2**16``) is not rejected by THIS
-        guard -- it fails the numeral-length precondition instead (a
-        2-numeral string can't reach a 2**16 domain's floor requirement at
-        this primitive layer, since ``digit < radix`` must still hold and a
-        real transaction at this radix would need a much longer numeral
-        list than this boundary check bothers to construct). This test
-        pins that the radix bound alone does not misfire at the boundary
-        value; `FF1_MIN_RADIX <= FF1_STANDARD_MAX_RADIX` inclusive is a
-        valid radix count."""
-        assert _ff1.FF1_STANDARD_MAX_RADIX >= _ff1.FF1_MAX_RADIX
+    def test_radix_at_standard_ceiling_is_accepted(self):
+        """The ceiling itself (``radix == 2**16``) is INCLUSIVE -- LOW-2's
+        own wording is ``radix <= 2**16`` -- so it must NOT raise. Kills the
+        mutmut survivor that turned ``radix > FF1_STANDARD_MAX_RADIX`` into
+        ``>=``, which would wrongly reject exactly this boundary value while
+        every OTHER radix (below and above it) still behaves identically
+        either way. Calls ``_validate_common`` directly: a real ``encrypt``
+        at this radix would need a numeral string long enough to clear the
+        FF1 domain floor too, which is a separate (and much larger) concern
+        this test isn't about."""
+        key = bytes(32)
+        assert _ff1._validate_common(key, b"", _ff1.FF1_STANDARD_MAX_RADIX, [0, 1]) == (2, 0)
 
     def test_key_size_zero_is_rejected(self):
         with pytest.raises(_ff1.Ff1Error, match="16, 24, or 32"):
@@ -526,3 +550,135 @@ class TestMalformedInputsAndBoundaries:
             _ff1.encrypt(self._KEY, self._TWEAK, 10, [5])
         with pytest.raises(_ff1.Ff1Error, match="length >= 2"):
             _ff1.encrypt(self._KEY, self._TWEAK, 10, [])
+
+    def test_radix_below_two_is_rejected_with_a_specific_message(self):
+        """Kills the mutmut survivor that nulled this raise's message
+        (``_validate_common``'s ``radix < 2`` branch, distinct from
+        ``min_domain_length``'s own separate copy of the same check below)."""
+        with pytest.raises(_ff1.Ff1Error, match="radix must be >= 2; got 1"):
+            _ff1.encrypt(self._KEY, self._TWEAK, 1, [0, 0])
+
+    def test_out_of_range_message_reports_the_exact_offending_count(self):
+        """Kills five distinct mutmut survivors in the out-of-range counting
+        expression (`sum(1 for digit in numerals if not (0 <= digit < radix))`):
+        the count -> None, the summand 1 -> 2, the condition inverted or
+        negated, and both boundary shifts (`0 <` / `<= radix`). A mixed
+        numeral list -- one below-range, one at-range (== radix), several
+        valid including the 0 and radix-1 edges -- pins the count each of
+        those mutations would silently change."""
+        radix = 10
+        numerals = [0, 5, 9, 10, -1, 3]  # exactly 2 out of range: 10 and -1
+        with pytest.raises(_ff1.Ff1Error, match=r"2 of 6 numeral\(s\) are out of range"):
+            _ff1.encrypt(self._KEY, self._TWEAK, radix, numerals)
+
+
+class TestValidateCommonTweakLengthBoundary:
+    """The tweak-length ceiling (``len(tweak) >= 2**32``, a uint32 boundary)
+    cannot be exercised with a REAL 4-GiB ``bytes`` object. `_validate_common`
+    only ever calls ``len(tweak)`` before this check runs (it never iterates
+    or concatenates the tweak itself), so a duck-typed ``__len__`` override
+    exercises the real boundary check without allocating real memory."""
+
+    class _FakeLen:
+        def __init__(self, n: int) -> None:
+            self._n = n
+
+        def __len__(self) -> int:
+            return self._n
+
+    def test_tweak_length_exactly_at_the_uint32_ceiling_is_rejected(self):
+        """Kills three survivors that each widen the ceiling
+        (``>`` instead of ``>=``, ``3**32`` instead of ``2**32``,
+        ``2**33`` instead of ``2**32``): all three would wrongly ACCEPT a
+        tweak of exactly ``2**32`` bytes."""
+        key = bytes(32)
+        with pytest.raises(_ff1.Ff1Error, match="tweak length must fit in a uint32"):
+            _ff1._validate_common(key, self._FakeLen(2**32), 10, [1, 2])
+
+    def test_tweak_length_one_below_the_ceiling_is_accepted(self):
+        key = bytes(32)
+        assert _ff1._validate_common(key, self._FakeLen(2**32 - 1), 10, [1, 2]) == (
+            2,
+            2**32 - 1,
+        )
+
+
+class TestByteLenForRadixPower:
+    """Direct coverage for `_byte_len_for_radix_power`'s degenerate
+    ``length == 0`` case: no real `encrypt`/`decrypt` call ever reaches it
+    (the ``n >= 2`` precondition in `_validate_common` guarantees ``v >= 1``
+    for every real Feistel split), but the function's own contract -- zero
+    numerals need zero bytes -- is worth pinning directly."""
+
+    def test_zero_length_needs_zero_bytes(self):
+        assert _ff1._byte_len_for_radix_power(10, 0) == 0
+
+
+class TestMinDomainLength:
+    """Direct unit coverage for `min_domain_length` (round-2 mutation-kill
+    pass): every OTHER test in this file exercises it only indirectly, or
+    not at all -- `test_exhaustive_six_digit_permutation` hardcodes
+    ``length=6`` rather than calling the function -- so mutmut reported
+    every mutant here as a trivial "no tests" gap."""
+
+    def test_radix_below_two_is_rejected(self):
+        with pytest.raises(ValueError, match="radix must be >= 2; got 1"):
+            _ff1.min_domain_length(1)
+        with pytest.raises(ValueError, match="radix must be >= 2; got 0"):
+            _ff1.min_domain_length(0)
+
+    @pytest.mark.parametrize(
+        "radix,expected",
+        [(2, 20), (3, 13), (10, 6), (16, 5), (36, 4), (62, 4), (64, 4)],
+    )
+    def test_known_answer_values(self, radix, expected):
+        """radix=2 (the documented ``FF1_MIN_RADIX`` floor) kills the
+        mutants that reject it (``radix < 2`` -> ``<= 2`` / ``< 3``).
+        radix=10 -> 6 is the EXACT domain-floor boundary
+        (``10**6 == 1,000,000 == FF1_MIN_DOMAIN`` exactly): kills the
+        ``value < FF1_MIN_DOMAIN`` -> ``<=`` off-by-one mutant, which would
+        return 7 instead of 6 at this radix. The full parametrized spread
+        also kills every ``length`` accumulator mutant (``+= 1`` -> ``= 1``
+        / ``-= 1`` / ``+= 2``): each produces a wrong value at more than one
+        of these radices."""
+        assert _ff1.min_domain_length(radix) == expected
+        assert radix**expected >= _ff1.FF1_MIN_DOMAIN
+        assert radix ** (expected - 1) < _ff1.FF1_MIN_DOMAIN
+
+    @pytest.mark.parametrize("radix", [1_000_000, 2_000_000])
+    def test_radix_already_at_or_above_the_floor_needs_length_one(self, radix):
+        """A radix whose single numeral already covers the domain floor
+        returns 1 without the accumulation loop ever running -- kills the
+        ``length = 1`` -> ``None``/``2`` mutants, which only diverge from
+        the correct value on this exact no-loop-iteration path."""
+        assert _ff1.min_domain_length(radix) == 1
+
+    def test_terminates_within_a_bounded_time(self):
+        """Liveness guard, GUARDED by SIGALRM (same idiom as
+        ``test_ooc_external_sort_generic.py``'s
+        ``test_timestamp_ns_key_multipass_does_not_hang``): two round-2
+        mutmut survivors (``value = radix`` and ``value /= radix`` in place
+        of ``value *= radix``) turn the accumulation loop into an INFINITE
+        loop for any realistic radix -- once ``value`` stops growing it
+        never crosses ``FF1_MIN_DOMAIN`` again. A plain call would hang the
+        whole grading run rather than fail; the alarm turns that hang into
+        a clean, fast test failure instead."""
+
+        class _HangError(Exception):
+            pass
+
+        def _on_alarm(signum, frame):
+            raise _HangError
+
+        has_alarm = hasattr(signal, "SIGALRM")
+        if has_alarm:
+            old = signal.signal(signal.SIGALRM, _on_alarm)
+            signal.alarm(5)
+        try:
+            assert _ff1.min_domain_length(10) == 6
+        except _HangError:
+            pytest.fail("min_domain_length(10) did not terminate within 5s")
+        finally:
+            if has_alarm:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old)
