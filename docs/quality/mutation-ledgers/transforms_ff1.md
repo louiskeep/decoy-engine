@@ -13,8 +13,11 @@ mutants that never reach a definitive `killed`/`survived` verdict within the
 by manual inspection. **Manual audit: 0 residual logic defects** -- the 2
 timeouts are non-terminating (detected by any bounded test), and all 5
 survivors are equivalent (2 wording-only, 3 provably output-identical). So the
-effective LOGIC score is 100% with the taxonomy below; the sub-100% tool number
-is entirely the 2 timeouts, which are caught, not gaps.
+effective LOGIC score is 100% with the taxonomy below. To be precise about the
+tool's arithmetic: it computes `LOGIC = killed / (killed + survived) =
+384 / (384 + 5) = 98.71%`, EXCLUDING timeouts -- so the 1.29% gap is the 5
+equivalent survivors, and the 2 non-terminating timeouts are what trigger the
+separate `SCORE NOT TRUSTWORTHY` flag and exit 1. Both are resolved above.
 
 Covering tests: `tests/unit/transforms/test_ff1_primitive.py` (NIST published
 samples, the pinned ACVP AES-FF1 corpus, the Wycheproof valid + invalid
@@ -59,6 +62,7 @@ observable behavior change, so these are killed-by-hang, not residual gaps.
 
 384 killed + 2 caught-by-timeout (non-terminating) + 5 equivalent (3 provably
 output-identical, 2 wording) = 391. Zero residual logic survivors: the FF1
-primitive meets the crown-jewel 100%-logic bar. The tool's `98.71% / NOT
-TRUSTWORTHY / exit 1` is the honest raw number and is fully explained by the 2
-non-terminating timeouts documented above. Report: `scratchpad/ff1-mut-clean.json`.
+primitive meets the crown-jewel 100%-logic bar. The tool's raw
+`LOGIC 98.71% = 384/(384+5)` counts the 5 equivalent survivors; the separate
+`SCORE NOT TRUSTWORTHY` flag and exit 1 come from the 2 non-terminating
+timeouts. Both are resolved above. Report: `scratchpad/ff1-mut-clean.json`.

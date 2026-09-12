@@ -518,4 +518,5 @@ from `DRAW_SITES`.
 - CPython `random.Random` (Mersenne Twister MT19937): the seed-stability contract
   for the `python_mt19937` / `per_row_reseed` sites.
 - `SEED_PROTOCOL_VERSION` (`determinism/_derive.py`): the single compatibility
-  knob mixed into every keyed HMAC input; currently 6.
+  knob mixed into every keyed HMAC input; currently 7 (Task 5.2 bumped 6 -> 7
+  for the FF1 primitive swap).
