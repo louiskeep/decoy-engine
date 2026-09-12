@@ -76,7 +76,7 @@ pieces most callers need:
 | `PipelineConfig`                                                                  | Strict pipeline-config schema. Validate once: `PipelineConfig.model_validate(yaml).model_dump()`. |
 | `run_pipeline(config, sources, engine_version=...)`                               | Run the whole pipeline in one call (validate, profile, compile, execute). The recommended entrypoint; returns an `ExecutionResult` with `.outputs[table]`. |
 | `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan` (the lower-level path).                   |
-| `select_execution_adapter()` / `PandasExecutionAdapter` / `PolarsExecutionAdapter`| Plan-to-data execution. Polars is the default substrate.                     |
+| `select_execution_adapter()` / `PandasExecutionAdapter` / `PolarsExecutionAdapter`| Plan-to-data execution. Pandas is the default substrate (polars is a dormant explicit opt-in). |
 | `generate_tables(...)`                                                            | Table-from-schema synthesis for `mode: generate` configs.                    |
 | `run_storm(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |
 | `validate_config(...)`                                                            | Validation report without raising. Returns a `ValidationResult`.             |

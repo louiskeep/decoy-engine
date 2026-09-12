@@ -82,7 +82,7 @@ decoy run pipeline.yaml
 
 `validate` checks the config against the engine's schema before any data is
 touched. `run` profiles the source, compiles a frozen plan, executes it on the
-default (Polars) execution adapter, and writes `people_masked.csv`.
+pandas execution adapter, and writes `people_masked.csv`.
 
 Because `global_settings.seed` is fixed, the same config plus the same input
 produces the same output every time. For masking output that is stable across
