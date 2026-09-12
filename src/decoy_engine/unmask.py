@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.determinism import derive
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._strategies._fpe import FF1_KEY_LABEL
 from decoy_engine.plan._seed import _normalize_job_seed
@@ -47,6 +48,7 @@ from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
     FF1_TWEAK_SCOPE_JOIN_GROUP,
     build_ff1_tweak,
+    check_charset_unique,
     fpe_decrypt_value,
     resolve_fpe_charset,
 )
@@ -98,15 +100,37 @@ def _decrypt_column(
     key: bytes,
     cfg: dict[str, Any],
     tweak: bytes,
+    table_name: str,
 ) -> pa.Table:
     charset_spec = cfg.get("charset", "digits")
     charset = resolve_fpe_charset(charset_spec)
-    if len(set(charset)) != len(charset) or len(charset) < 2:
-        # A duplicate-symbol or degenerate charset can never have produced a
-        # masked value in the first place (encrypt fails closed on both); this
-        # is a defensive no-op for a config edited after the mask run, not a
-        # reachable path for output this unmask call actually needs to invert.
-        return table
+    # Round-2 BLOCKER-2/MEDIUM-2: a duplicate-symbol or degenerate charset can
+    # never have produced a masked value in the first place (the mask-side
+    # `FpeStrategyHandler.run` / OOC `fpe_array` fail closed on both, codes
+    # `fpe_charset_duplicate_symbols` / `fpe_charset_degenerate`). This used to
+    # be a silent `return table` no-op here -- the column came back UNCHANGED
+    # (still ciphertext, or whatever the stored config now resolves to) while
+    # the caller still reported `reversed_unverified`, a silent failed
+    # reversal masquerading as a completed one. Fail closed instead, matching
+    # the mask side's codes exactly, so a config edited after the mask run
+    # (or a hand-written unmask config) cannot produce a false reversal claim.
+    try:
+        check_charset_unique(charset_spec, charset)
+    except FpeUnencryptableError as exc:
+        raise ExecutionError(
+            code="fpe_charset_duplicate_symbols",
+            message=f"column {column!r} in table {table_name!r}: {exc}",
+        ) from exc
+    if len(charset) < 2:
+        raise ExecutionError(
+            code="fpe_charset_degenerate",
+            message=(
+                f"column {column!r} in table {table_name!r} uses fpe but its "
+                f"resolved charset {charset_spec!r} -> {charset!r} has fewer than 2 "
+                "distinct characters. A degenerate charset has nothing to permute "
+                "over, so this column cannot be reversed."
+            ),
+        )
     preserve_sep = bool(cfg.get("preserve_separators", True))
     # Codex cross-model review (2026-07-14): forward `checksum` and mirror the
     # encrypt-side resolution EXACTLY (checksum takes priority over validate_luhn).
@@ -120,13 +144,22 @@ def _decrypt_column(
         and bool(cfg.get("validate_luhn", False))
         and all(c in "0123456789" for c in charset)
     )
+
+    def _decrypt_one(v: object) -> object:
+        if v is None:
+            return v
+        s = str(v)
+        if s == "":
+            # Empty string is not null; the mask side now treats it as a
+            # missing-data passthrough rather than sending it to the cipher
+            # (plan P2: an empty value's domain is below the FF1 floor), so
+            # the masked output already carries it unchanged. Mirror that
+            # here instead of calling `fpe_decrypt_value` on it.
+            return s
+        return fpe_decrypt_value(s, key, charset, tweak, preserve_sep, validate_luhn, checksum)
+
     values = table.column(column).to_pylist()
-    decrypted = [
-        v
-        if v is None
-        else fpe_decrypt_value(str(v), key, charset, tweak, preserve_sep, validate_luhn, checksum)
-        for v in values
-    ]
+    decrypted = [_decrypt_one(v) for v in values]
     idx = table.schema.get_field_index(column)
     return table.set_column(idx, column, pa.array(decrypted, type=pa.string()))
 
@@ -371,7 +404,7 @@ def unmask_pipeline(
                 FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN,
                 join_group or col,
             )
-            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak)
+            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak, table_name=name)
             # checksum takes priority over validate_luhn (same as encrypt). Both
             # recompute the check digit on decrypt rather than store it, so the
             # round trip is byte-exact iff the source was valid for the scheme.

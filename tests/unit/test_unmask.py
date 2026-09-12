@@ -91,6 +91,19 @@ class TestRoundTrip:
         assert vals[1] is None
         assert vals[2] == "987654321"
 
+    def test_empty_cells_stay_empty(self, tmp_path):
+        """R2 LOW-1 companion: an empty (non-null) cell is preserved through
+        both mask and unmask, never sent to the cipher on either side (plan
+        P2's fail-closed empty-value contract lives at the value-function
+        layer; the per-cell missing-data tolerance for a real column with
+        empty cells lives at this strategy/unmask boundary instead)."""
+        cfg = _config(tmp_path, [_fpe_col("acct")])
+        masked = _mask(tmp_path, cfg, pd.DataFrame({"acct": ["123456789", "", "987654321"]}))
+        assert masked["accounts"].column("acct").to_pylist()[1] == ""
+        result = unmask_pipeline(cfg, masked)
+        vals = result.outputs["accounts"].column("acct").to_pylist()
+        assert vals == ["123456789", "", "987654321"]
+
     def test_separators_round_trip(self, tmp_path):
         cfg = _config(tmp_path, [_fpe_col("acct")])
         source = ["123-45-6789", "987-65-4321"]
@@ -204,3 +217,54 @@ class TestErrors:
         with pytest.raises(ExecutionError) as exc:
             unmask_pipeline(cfg, {"accounts": tbl})
         assert exc.value.code == "fpe_requires_namespace"
+
+    def test_fpe_column_with_degenerate_charset_fails_closed(self, tmp_path):
+        """R2 MEDIUM-2: a single-character charset (nothing to permute over)
+        used to silently `return table` unchanged while the caller still
+        reported `reversed_unverified` -- a silent failed reversal
+        masquerading as a completed one. Must now fail closed instead,
+        matching the mask-side `fpe_charset_degenerate` code."""
+        cfg = {
+            "global_settings": {"seed": 42},
+            "tables": [
+                {
+                    "name": "accounts",
+                    "columns": [
+                        {
+                            "name": "acct",
+                            "strategy": "fpe",
+                            "namespace": "acct_ns",
+                            "provider_config": {"charset": "x"},
+                        }
+                    ],
+                }
+            ],
+        }
+        tbl = pa.Table.from_pandas(pd.DataFrame({"acct": ["123456789"]}), preserve_index=False)
+        with pytest.raises(ExecutionError) as exc:
+            unmask_pipeline(cfg, {"accounts": tbl})
+        assert exc.value.code == "fpe_charset_degenerate"
+
+    def test_fpe_column_with_duplicate_symbol_charset_fails_closed(self, tmp_path):
+        """Same fail-closed treatment for a duplicate-symbol charset (also
+        never producible by the mask side, which rejects it up front)."""
+        cfg = {
+            "global_settings": {"seed": 42},
+            "tables": [
+                {
+                    "name": "accounts",
+                    "columns": [
+                        {
+                            "name": "acct",
+                            "strategy": "fpe",
+                            "namespace": "acct_ns",
+                            "provider_config": {"charset": "aabb"},
+                        }
+                    ],
+                }
+            ],
+        }
+        tbl = pa.Table.from_pandas(pd.DataFrame({"acct": ["123456789"]}), preserve_index=False)
+        with pytest.raises(ExecutionError) as exc:
+            unmask_pipeline(cfg, {"accounts": tbl})
+        assert exc.value.code == "fpe_charset_duplicate_symbols"
