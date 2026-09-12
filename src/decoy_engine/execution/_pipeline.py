@@ -58,10 +58,10 @@ Out of scope for FC-1 (deferred to V2.1):
   instead of a hung job at runtime.
 - Cross-substrate mixed mode. Polars falls back to pandas for FK paths
   (`_polars_adapter.py:121`); the pandas adapter is the canonical
-  mixed-mode adapter for V2 ship. `run_pipeline` therefore defaults its
-  `substrate` knob to `"pandas"` rather than inheriting the S13
-  DECOY_SUBSTRATE default flip; polars is an explicit per-call opt-in
-  (`substrate="polars"` or `substrate=None` to honor the env var).
+  mixed-mode adapter for V2 ship. `run_pipeline` defaults its `substrate`
+  knob to `"pandas"`, which is also the `DECOY_SUBSTRATE` default; polars is
+  a dormant explicit opt-in (`substrate="polars"`, or `substrate=None` to
+  honor the env var when it is set to polars).
 - Per-node preview on mixed configs. Covered by F5 at the platform
   layer (`run_v2_pipeline_preview`).
 

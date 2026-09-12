@@ -1,14 +1,19 @@
 """DECOY_SUBSTRATE flag + execution-adapter selection (engine-v2 S11).
 
-The flag picks which `ExecutionAdapter` the runner instantiates. Per PQ6
-(PO-ratified 2026-05-28) the default was `pandas` through S12 and FLIPPED to
-`polars` at S13 close, once all 11 strategies were polars-native and parity-green.
-The flag mechanism shipped in S11; the DEFAULT flipped at S13 (this module).
+The flag picks which `ExecutionAdapter` the runner instantiates. The default is
+`pandas`. (History: S11 shipped the flag with a `pandas` default; S13 flipped the
+default to `polars` on a throughput bet that measurement did not bear out -- the
+polars substrate is value-parity with pandas but not faster for the per-value
+keyed-crypto masking workload, so the bet was reverted here and pandas is the
+masking substrate again.)
 
-The flip changes ONLY this default. FK + composite jobs are not yet polars-native
-(deferred V2+), so the polars adapter keeps `fallback_to_pandas=True` and routes
-them through the pandas oracle (byte-for-byte identical, recorded as such, not a
-silent downgrade). See `polars/_polars_adapter.py` for that disposition.
+The polars substrate is retained but DORMANT for masking: `"polars"` stays a
+valid, explicit opt-in (so the adapter + its parity harness keep working and the
+switch is reversible), but nothing selects it by default and the CLI no longer
+advertises it. It is NOT removed -- `subset/` still uses polars directly for
+FK-closure joins (its genuine strength), unaffected by this default. When polars
+IS explicitly selected, FK + composite jobs route through the pandas oracle
+(byte-for-byte identical, recorded as such). See `polars/_polars_adapter.py`.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
 
 VALID_SUBSTRATES = ("pandas", "polars")
-_DEFAULT_SUBSTRATE = "polars"
+_DEFAULT_SUBSTRATE = "pandas"
 
 
 def resolve_substrate(override: str | None = None) -> str:

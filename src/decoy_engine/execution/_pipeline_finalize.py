@@ -44,10 +44,9 @@ __all__ = [
 # non-default booleans computed there too) needed no cross-module import,
 # but computing the booleans here instead does, and importing a bare literal
 # back across that boundary would create exactly the drift risk the old
-# comment warned against. `substrate` pins "pandas" (NOT None):
-# resolve_substrate(None) follows DECOY_SUBSTRATE and its S13 default flip to
-# polars, and run_pipeline's default route must stay byte-identical to the
-# original hardcoded pandas path.
+# comment warned against. `substrate` pins "pandas" (NOT None): pinning it
+# keeps run_pipeline's default route byte-identical to the original hardcoded
+# pandas path regardless of any DECOY_SUBSTRATE the environment sets.
 SUBSTRATE_DEFAULT = "pandas"
 FPE_CHUNK_COUNT_DEFAULT = 4
 MAX_WORKERS_DEFAULT = 4

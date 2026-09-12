@@ -28,11 +28,10 @@ oracle returns byte-for-byte identical output (the pa->pl->pa round-trip is
 lossless) AND records the per-strategy substrate of record as "pandas" in
 `quality_metrics["executed_substrate"]`.
 
-The S13 polars-default flip changes ONLY `_DEFAULT_SUBSTRATE` -> "polars"; this
-flag stays True. The flag is REMOVED (and a non-native job becomes a hard
-ExecutionError) only at the post-GA engine release that lands native FK +
-composite, NOT at S13 close: removing it earlier would hard-error every FK and
-composite job on the default substrate. When `fallback_to_pandas` is EXPLICITLY
+The S13 polars-default flip was later reverted: `_DEFAULT_SUBSTRATE` is "pandas"
+again and polars is a dormant explicit opt-in, so this adapter runs only when a
+caller explicitly selects polars. This `fallback_to_pandas` flag still defaults
+True for those explicit-polars jobs. When `fallback_to_pandas` is EXPLICITLY
 set False, a non-native job hard-errors rather than routing through pandas
 (cross-sprint contracts non-negotiable on silent downgrades). Pandas is the
 parity oracle, not a maintained customer fallback.
