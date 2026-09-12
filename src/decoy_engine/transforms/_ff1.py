@@ -57,6 +57,13 @@ FF1_MAX_LEN = 256  # numerals; practical cap, far under the spec's 2**32 ceiling
 FF1_MAX_TWEAK_LEN = 256  # bytes
 FF1_KEY_BYTES = 32  # AES-256 only in the deployed profile (P2: "AES key length: 256 only")
 
+# The STANDARD's own radix ceiling (NIST SP 800-38G Rev.1 2PD), enforced by
+# the raw primitive itself -- distinct from FF1_MAX_RADIX above, which is this
+# deployment's tighter policy cap that every caller already applies one layer
+# up. A primitive that accepted an arbitrarily large radix would be faithful
+# to no published profile at all, deployed or standard.
+FF1_STANDARD_MAX_RADIX = 2**16
+
 # SP 800-38G Rev.1 2PD raises the minimum domain; pin to the revision, not a
 # bare literal, so a future spec change is a one-line, reviewed diff.
 FF1_MIN_DOMAIN = 1_000_000
@@ -180,6 +187,15 @@ def _validate_common(key: bytes, tweak: bytes, radix: int, numerals: list[int]) 
         raise Ff1Error(f"AES key must be 16, 24, or 32 bytes; got {len(key)}")
     if radix < 2:
         raise Ff1Error(f"radix must be >= 2; got {radix}")
+    if radix > FF1_STANDARD_MAX_RADIX:
+        # NIST SP 800-38G Rev.1 2PD's own domain bound, not the deployed
+        # profile's tighter FF1_MAX_RADIX=64 cap: every caller already enforces
+        # 64, but the raw primitive should still refuse a radix the STANDARD
+        # itself does not define, independent of any one deployment's policy.
+        raise Ff1Error(
+            f"radix must be <= {FF1_STANDARD_MAX_RADIX} (NIST SP 800-38G Rev.1 2PD's "
+            f"own domain bound); got {radix}"
+        )
     n = len(numerals)
     if n < 2:
         raise Ff1Error(f"numeral string must have length >= 2 (NIST FF1 precondition); got {n}")

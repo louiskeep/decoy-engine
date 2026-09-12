@@ -1,0 +1,693 @@
+[
+  {
+    "src": "base10",
+    "tcId": 1,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "fb9fc869af3e4828da6efa18b5fa71a0",
+    "tweak": "379f81cab6ed2517",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 2,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "7325733095d90aff456a1e00fa977365",
+    "tweak": "a5f8950069a56f6c",
+    "msg": "6",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 3,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "af2463f51df63a015178e30edcf25dacbeb2abbc5144d0a6",
+    "tweak": "5d9c3dfb797c952a",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 4,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "e9e279f5fad3e7fd7922e838cf07da528ddcc5387f6145bf",
+    "tweak": "a25989a2e4360bae",
+    "msg": "9",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 5,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "f25e816c4d42629a428e48f2d48a31f79d6b1e8ef47e5ed3e7e5bbdf37f1806d",
+    "tweak": "42dbc8913a275520",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 6,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "b8c800bed3286920bd1d9ad89a78808e9f815ec638663a725f256cc7078fdaf0",
+    "tweak": "90120912eba3c19c",
+    "msg": "3",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 3841,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 0,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "",
+    "tweak": "3d6bcfb5e5efa4f9",
+    "msg": "269629",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 3842,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 8,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "ad",
+    "tweak": "3f9fd40c1fce6f74",
+    "msg": "209644",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 3843,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 64,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "b8e50ad7ecea0645",
+    "tweak": "b5b437b29ece97da",
+    "msg": "800534",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 3844,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 160,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "763c46dff5102f21352c1c1333f55e83c06609f8",
+    "tweak": "10ac049cdfe1f07a",
+    "msg": "750375",
+    "kind": "str"
+  },
+  {
+    "src": "base10",
+    "tcId": 3845,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 320,
+    "radix": 10,
+    "alphabet": "0123456789",
+    "key": "3b17fa375663dd5c0168d3da74d8bc0705650308cfe1106dc9dfe134a5c4b509eb8e58b298accc7a",
+    "tweak": "51c2284363c7707f",
+    "msg": "512662",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 1,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "fb9fc869af3e4828da6efa18b5fa71a0",
+    "tweak": "379f81cab6ed2517",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 2,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "7325733095d90aff456a1e00fa977365",
+    "tweak": "a5f8950069a56f6c",
+    "msg": "K",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 3,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "af2463f51df63a015178e30edcf25dacbeb2abbc5144d0a6",
+    "tweak": "5d9c3dfb797c952a",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 4,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "e9e279f5fad3e7fd7922e838cf07da528ddcc5387f6145bf",
+    "tweak": "a25989a2e4360bae",
+    "msg": "F",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 5,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "f25e816c4d42629a428e48f2d48a31f79d6b1e8ef47e5ed3e7e5bbdf37f1806d",
+    "tweak": "42dbc8913a275520",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 6,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "b8c800bed3286920bd1d9ad89a78808e9f815ec638663a725f256cc7078fdaf0",
+    "tweak": "90120912eba3c19c",
+    "msg": "3",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 2850,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 0,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "",
+    "tweak": "a5016eb62efc7e72",
+    "msg": "V3WK",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 2851,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 8,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "2e",
+    "tweak": "f33d831e66c0db16",
+    "msg": "S6EI",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 2852,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 64,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "1f22cd7ded80f7a8",
+    "tweak": "f40e82cd7c24eee2",
+    "msg": "B9S4",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 2853,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 160,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "9b708898ae15bbf6758a68366f724bc1b299e6ba",
+    "tweak": "a769d9747fa24abf",
+    "msg": "MV2D",
+    "kind": "str"
+  },
+  {
+    "src": "base36",
+    "tcId": 2854,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 320,
+    "radix": 36,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "key": "9a1b29efd5efb6504153004d40c73dba3157f7aa627104918b6d1abf5723830f4d106d3178a59209",
+    "tweak": "c91e67905cb51765",
+    "msg": "KN3B",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 1,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "fb9fc869af3e4828da6efa18b5fa71a0",
+    "tweak": "379f81cab6ed2517",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 2,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "7325733095d90aff456a1e00fa977365",
+    "tweak": "a5f8950069a56f6c",
+    "msg": "S",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 3,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "af2463f51df63a015178e30edcf25dacbeb2abbc5144d0a6",
+    "tweak": "5d9c3dfb797c952a",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 4,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "e9e279f5fad3e7fd7922e838cf07da528ddcc5387f6145bf",
+    "tweak": "a25989a2e4360bae",
+    "msg": "T",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 5,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "f25e816c4d42629a428e48f2d48a31f79d6b1e8ef47e5ed3e7e5bbdf37f1806d",
+    "tweak": "42dbc8913a275520",
+    "msg": "",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 6,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "b8c800bed3286920bd1d9ad89a78808e9f815ec638663a725f256cc7078fdaf0",
+    "tweak": "90120912eba3c19c",
+    "msg": "L",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 2470,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 0,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "",
+    "tweak": "a5016eb62efc7e72",
+    "msg": "NzGi",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 2471,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 8,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "2e",
+    "tweak": "f33d831e66c0db16",
+    "msg": "CKoy",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 2472,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 64,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "1f22cd7ded80f7a8",
+    "tweak": "f40e82cd7c24eee2",
+    "msg": "PJYI",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 2473,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 160,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "9b708898ae15bbf6758a68366f724bc1b299e6ba",
+    "tweak": "a769d9747fa24abf",
+    "msg": "wn6V",
+    "kind": "str"
+  },
+  {
+    "src": "base62",
+    "tcId": 2474,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 320,
+    "radix": 62,
+    "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    "key": "9a1b29efd5efb6504153004d40c73dba3157f7aa627104918b6d1abf5723830f4d106d3178a59209",
+    "tweak": "c91e67905cb51765",
+    "msg": "Yptx",
+    "kind": "str"
+  },
+  {
+    "src": "radix64",
+    "tcId": 1,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 64,
+    "alphabet": null,
+    "key": "fb9fc869af3e4828da6efa18b5fa71a0",
+    "tweak": "379f81cab6ed2517",
+    "msg": [],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 2,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 128,
+    "radix": 64,
+    "alphabet": null,
+    "key": "7325733095d90aff456a1e00fa977365",
+    "tweak": "a5f8950069a56f6c",
+    "msg": [
+      40
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 3,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 64,
+    "alphabet": null,
+    "key": "af2463f51df63a015178e30edcf25dacbeb2abbc5144d0a6",
+    "tweak": "5d9c3dfb797c952a",
+    "msg": [],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 4,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 192,
+    "radix": 64,
+    "alphabet": null,
+    "key": "e9e279f5fad3e7fd7922e838cf07da528ddcc5387f6145bf",
+    "tweak": "a25989a2e4360bae",
+    "msg": [
+      19
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 5,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 64,
+    "alphabet": null,
+    "key": "f25e816c4d42629a428e48f2d48a31f79d6b1e8ef47e5ed3e7e5bbdf37f1806d",
+    "tweak": "42dbc8913a275520",
+    "msg": [],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 6,
+    "flags": [
+      "InvalidMessageSize"
+    ],
+    "comment": "Invalid message size",
+    "keySize": 256,
+    "radix": 64,
+    "alphabet": null,
+    "key": "b8c800bed3286920bd1d9ad89a78808e9f815ec638663a725f256cc7078fdaf0",
+    "tweak": "90120912eba3c19c",
+    "msg": [
+      35
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 2413,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 0,
+    "radix": 64,
+    "alphabet": null,
+    "key": "",
+    "tweak": "a5016eb62efc7e72",
+    "msg": [
+      35,
+      7,
+      4,
+      52
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 2414,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 8,
+    "radix": 64,
+    "alphabet": null,
+    "key": "2e",
+    "tweak": "f33d831e66c0db16",
+    "msg": [
+      32,
+      30,
+      14,
+      18
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 2415,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 64,
+    "radix": 64,
+    "alphabet": null,
+    "key": "1f22cd7ded80f7a8",
+    "tweak": "f40e82cd7c24eee2",
+    "msg": [
+      15,
+      37,
+      16,
+      0
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 2416,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 160,
+    "radix": 64,
+    "alphabet": null,
+    "key": "9b708898ae15bbf6758a68366f724bc1b299e6ba",
+    "tweak": "a769d9747fa24abf",
+    "msg": [
+      34,
+      51,
+      30,
+      53
+    ],
+    "kind": "list"
+  },
+  {
+    "src": "radix64",
+    "tcId": 2417,
+    "flags": [
+      "InvalidKeySize"
+    ],
+    "comment": "invalid key size",
+    "keySize": 320,
+    "radix": 64,
+    "alphabet": null,
+    "key": "9a1b29efd5efb6504153004d40c73dba3157f7aa627104918b6d1abf5723830f4d106d3178a59209",
+    "tweak": "c91e67905cb51765",
+    "msg": [
+      52,
+      31,
+      39,
+      55
+    ],
+    "kind": "list"
+  }
+]
