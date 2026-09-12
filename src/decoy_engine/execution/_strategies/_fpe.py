@@ -187,7 +187,11 @@ class FpeStrategyHandler:
         # fail the whole run. This is a strategy-level missing-data policy, not
         # a crypto-layer carve-out: the value function's own contract stays
         # honestly fail-closed for any other caller that reaches it with "".
-        empty_local_mask = np.array([v == "" for v in raw_non_na])
+        # dtype=bool is load-bearing: an all-null column makes `raw_non_na`
+        # empty, and `np.array([])` defaults to float64, so `~empty_local_mask`
+        # below raises `TypeError: ufunc 'invert' not supported`. Forcing bool
+        # keeps the empty case a valid (empty) boolean mask.
+        empty_local_mask = np.array([v == "" for v in raw_non_na], dtype=bool)
         encrypt_positions = non_na_positions[~empty_local_mask]
         empty_positions = non_na_positions[empty_local_mask]
         non_na_values = [
