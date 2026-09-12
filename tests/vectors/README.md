@@ -126,3 +126,19 @@ subset heuristic (documented above) rather than a fully re-derivable algorithm,
 the committed file plus its digest is the reproducible artifact of record; each
 vector's `src`/`tcId` maps back to the pinned upstream file for independent
 re-verification.
+
+## Upstream Wycheproof source digests
+
+SHA-256 of the four upstream Wycheproof source files at their pinned commits
+(fetched from `raw.githubusercontent.com/C2SP/wycheproof/<commit>/testvectors_v1/`;
+recompute by fetching each URL and piping to `sha256sum`):
+
+```
+aes_ff1_base10_test.json   @770c84eb  d6672f96b9adb5cd811a5ea9b362aa874d18174653b6a17887ff43058855df7f
+aes_ff1_base36_test.json   @770c84eb  92f72b703466bb436b55449653892ea27c62834fba1126b3a50235ff252f51be
+aes_ff1_base62_test.json   @770c84eb  755ca7147d72ccf6acc914a6d30c641939e029bb5be70f7ff7652720b6d4a687
+aes_ff1_radix64_test.json  @3b1f1993  d2adf6c23541b3657b920d655f123851214235439748becce1a06e96c1c4f517
+```
+
+(`@770c84eb` = `770c84ebf74dbcaa1c0109b5a0d74014b187522f`; `@3b1f1993` =
+`3b1f1993d20ef710c67b2daada68d39ec6a0d53a`, per the commit pins above.)
