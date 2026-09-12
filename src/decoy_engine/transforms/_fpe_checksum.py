@@ -107,8 +107,8 @@ def _fpe_checksum_permute(
 
     iban
         FAILS CLOSED.  Per-country BBAN structure (enforced by
-        stdnum.iban.validate) cannot be satisfied by a free Feistel
-        permutation.  Raises ``FpeChecksumError`` unconditionally.
+        stdnum.iban.validate) cannot be satisfied by a free
+        format-preservation permutation.  Raises ``FpeChecksumError`` unconditionally.
         Use validate-only or a different strategy for IBAN columns.
 
     unknown scheme

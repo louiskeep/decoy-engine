@@ -96,16 +96,6 @@ def strategy_code_for_checksum(exc: FpeChecksumError) -> str:
     return _CHECKSUM_STRATEGY_CODE.get(exc.code, "fpe_checksum_unsupported")
 
 
-def _min_domain_length(radix: int, min_domain: int = _FF1_MIN_DOMAIN) -> int:
-    """Smallest value length whose domain (radix ** length) reaches min_domain."""
-    length = 1
-    size = radix
-    while size < min_domain:
-        size *= radix
-        length += 1
-    return length
-
-
 class FpeStrategyHandler:
     """Format-preserving encryption via NIST SP 800-38G FF1, keyed onto derive."""
 
