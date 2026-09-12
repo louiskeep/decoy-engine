@@ -3,7 +3,8 @@
 **Status:** current. Records what Task 5.2 shipped: the durable behavior, the
 conformance claim, and the accepted leakage. For the finding this resolves
 and the options weighed before choosing FF1, see
-[de-01-fpe-remediation-design.md](de-01-fpe-remediation-design.md).
+`docs/security/de-01-fpe-remediation-design.md` (in-tree, excluded from the
+rendered docs).
 
 ## What changed
 

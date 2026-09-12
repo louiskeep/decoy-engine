@@ -503,7 +503,10 @@ ALLOWLIST: dict[str, int] = {
     # holds only for LazySource sources + an incrementally-consuming sink). No
     # logic added here; the warning itself lives in the new sibling
     # `execution/_residency_warning.py`. Same decomposition target stands.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 676,
+    # Task 5.2 FF1 (2026-09-12): +31 LOC (676 -> 707) plumbing `sub_floor_notices`
+    # through the OOC text_mask route so it emits the same
+    # `text_mask_sub_floor_span_handled` QualityWarning as the full-frame route.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 707,
     # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
     # schema-invariant checker (_check_corpus_schema, shared by the load path
     # and the new standalone verify_corpus primitive), the
@@ -617,7 +620,11 @@ ALLOWLIST: dict[str, int] = {
     # spans FF1 cannot encrypt. Decomposition target: split the sub-floor
     # policy helpers into a `_text_mask_sub_floor.py` sibling when this
     # module is next touched.
-    "src/decoy_engine/transforms/text_mask.py": 657,
+    # Task 5.2 FF1 (2026-09-12): 657 -> 722 for the sub_floor_span redact|synthetic
+    # policy (deterministic valid-format synthetic PAN/NPI with checksum recompute)
+    # and the FF1-keyed span path. The `_text_mask_sub_floor.py` decomposition above
+    # is the standing target when this module is next touched.
+    "src/decoy_engine/transforms/text_mask.py": 722,
 }
 
 

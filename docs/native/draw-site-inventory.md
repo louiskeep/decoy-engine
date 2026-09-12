@@ -479,36 +479,36 @@ from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
 | --------------------------------- | ------------------- | ------------- | --------------------------------------------------------------- |
-| gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v6 (GenDeriveContext); Faker seed_instance |
-| gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v6 (pool_seed via derive); Faker/provider adapter |
+| gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v7 (GenDeriveContext); Faker seed_instance |
+| gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v7 (pool_seed via derive); Faker/provider adapter |
 | mask.text_mask_faker              | faker_seed_instance | yes           | Faker (seed_instance detaches a per-instance random.Random) |
-| gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v6 |
-| gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
-| gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v6 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v7 |
+| gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
-| gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v6 (GenDeriveContext); numpy NEP-19 PCG64 |
-| gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
+| gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.categorical_nondeterministic | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
-| mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
-| mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v6; numpy NEP-19 PCG64 |
-| mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
-| gen.formula_per_row               | per_row_reseed      | yes           | seed_protocol_v6 (GenDeriveContext); CPython MT + Faker |
+| mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v7; numpy NEP-19 PCG64 |
+| mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| gen.formula_per_row               | per_row_reseed      | yes           | seed_protocol_v7 (GenDeriveContext); CPython MT + Faker |
 | gen.statistical_per_row           | per_row_reseed      | yes           | CPython Mersenne Twister (no numpy; bit-stable inverse-CDF) |
-| gen.categorical                   | python_mt19937      | no            | seed_protocol_v6 (GenDeriveContext); CPython Mersenne Twister |
-| gen.reference                     | python_mt19937      | no            | seed_protocol_v6 (GenDeriveContext); CPython Mersenne Twister |
+| gen.categorical                   | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.reference                     | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | mask.formula                      | python_mt19937      | no            | CPython Mersenne Twister |
-| gen.identifier_deterministic      | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.bucket_perturb               | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.categorical_deterministic    | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| gen.identifier_deterministic      | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.bucket_perturb               | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.categorical_deterministic    | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 
 ## References
 

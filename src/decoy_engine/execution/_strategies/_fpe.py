@@ -190,7 +190,9 @@ class FpeStrategyHandler:
         empty_local_mask = np.array([v == "" for v in raw_non_na])
         encrypt_positions = non_na_positions[~empty_local_mask]
         empty_positions = non_na_positions[empty_local_mask]
-        non_na_values = [v for v, is_empty in zip(raw_non_na, empty_local_mask) if not is_empty]
+        non_na_values = [
+            v for v, is_empty in zip(raw_non_na, empty_local_mask, strict=True) if not is_empty
+        ]
         # DE-01 cluster-C (2026-07-14): value-level fail-closed raises
         # (`FpeUnencryptableError` for an all-out-of-charset value or a
         # preserve_separators=false out-of-charset value; `FpeChecksumError` for a
