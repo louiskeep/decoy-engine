@@ -406,6 +406,13 @@ route against these:
 | LAST | 0.5817 | 0.9213 |
 | MAIDEN | 0.3144 | 0.9217 |
 
+Re-derived at SEED_PROTOCOL_VERSION 7 (Task 5.2, 2026-09-11): the FF1 cutover
+moved the protocol version byte that keys the faker pool draw, shifting the
+oracle-observed rates and therefore these thresholds (FIRST 0.6730 / 0.9549,
+LAST 0.5708 / 0.9220, MAIDEN 0.3561 / 0.9214). The live values are the
+`ORACLE_*` map in `_pool_quality.py`; the table above is the Task 3.0 (v6)
+freeze record.
+
 UNIQUE-feasibility is N/A (reuse-only C1 scope) for every column, recorded
 explicitly.
 

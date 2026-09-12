@@ -102,7 +102,7 @@ def _gate_codes(plan: Any, graph: RelationshipGraph) -> set[str]:
 _PAYLOADS: dict[str, tuple[ColumnSeed, list[str | None]]] = {
     "fpe": (
         _seed("fpe", namespace="pii", provider_config=(("charset", "digits"),)),
-        ["123456789", "000111222", None, "999", "42", "7654321"],
+        ["123456789", "000111222", None, "099900", "420000", "7654321"],
     ),
     "fpe_preserve_sep": (
         _seed(
@@ -191,7 +191,7 @@ _PAYLOADS: dict[str, tuple[ColumnSeed, list[str | None]]] = {
             namespace="pjg",
             provider_config=(("charset", "digits"), ("fpe_join_group", "grp")),
         ),
-        ["123456789", "000111222", None, "999", "42", "7654321"],
+        ["123456789", "000111222", None, "099900", "420000", "7654321"],
     ),
     "text_redact_detector_subset": (
         _seed("text_redact", provider_config=(("detectors", ("ssn",)), ("token", "[S]"))),

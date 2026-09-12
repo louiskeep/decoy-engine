@@ -204,7 +204,10 @@ def test_non_admitted_column_reroutes_the_whole_table_not_just_that_column() -> 
         }
     )
     source = _all_admitted_source().append_column(
-        "fpe_col", pa.array(["12345", "67890", "00001", "11111"])
+        # 6+ digits: clears the FF1 minimum admissible domain for radix 10
+        # (radix**length >= 1,000,000 needs length >= 6).
+        "fpe_col",
+        pa.array(["123456", "678905", "000015", "111112"]),
     )
     sink: list[NativeRouteEvidence] = []
     list(

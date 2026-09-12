@@ -281,7 +281,7 @@ class TextMaskDateShiftProvider(DrawSiteProvider):
 # (a derive() key, then an HMAC-hex modular selection) or a fixed-label column
 # key. A single derive() call cannot express these, so each is its own provider
 # that reproduces the EXACT keyed material the shipped transform computes. The
-# downstream arithmetic (Feistel rounds for fpe; hole-resolve for code_set) is
+# downstream arithmetic (FF1 rounds for fpe; hole-resolve for code_set) is
 # transform semantics, not randomness, and stays with the transform / Task 0.4.
 #
 # The three byte-constants below are cited from the shipped modules; a drift
@@ -292,8 +292,9 @@ class TextMaskDateShiftProvider(DrawSiteProvider):
 # implementations byte-for-byte.
 # ---------------------------------------------------------------------------
 
-# execution/_strategies/_fpe.py:56 (FPE_KEY_LABEL).
-_FPE_KEY_LABEL = b"fpe-key/v1"
+# transforms/fpe.py (FF1_KEY_LABEL). Task 5.2: retired the Feistel-era
+# `b"fpe-key/v1"` label; the drift test now pins this to the FF1 key label.
+_FPE_KEY_LABEL = b"ff1-key/v1"
 # transforms/code_set.py:132 (_KEYED_SALT).
 _CODE_SET_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 # transforms/joint_mask.py:64 (_KEYED_ROW_SOURCE).
@@ -318,15 +319,15 @@ def _hole_resolve(idx: int, position: int | None) -> int:
 
 
 class FpeKeyProvider(DrawSiteProvider):
-    """``mask.fpe``: the per-column Feistel KEY (arithmetic deferred to Task 0.4).
+    """``mask.fpe``: the per-column FF1 KEY (arithmetic deferred to Task 0.4).
 
-    Shipped FPE derives ONE key per ``(mask_key, namespace)`` as
-    ``derive(mask_key, namespace, FPE_KEY_LABEL)`` (a fixed label, NOT a per-value
-    source), then applies an 8-round HMAC-SHA256 Feistel permutation with the
-    column name as the tweak (``execution/_strategies/_fpe.py:135``). This
-    provider reproduces the KEY only; the Feistel arithmetic is the transform's
-    (and Task 0.4's pure-Python reference). The key is source-independent, so
-    partitionable.
+    Shipped FPE derives ONE AES-256 key per ``(mask_key, namespace)`` as
+    ``derive(mask_key, namespace, FF1_KEY_LABEL)`` (a fixed label, NOT a
+    per-value source), then applies NIST SP 800-38G FF1 with a tweak built
+    from the column name (``execution/_strategies/_fpe.py``,
+    ``transforms/fpe.py``). This provider reproduces the KEY only; the FF1
+    arithmetic is the transform's (and Task 0.4's pure-Python reference). The
+    key is source-independent, so partitionable.
     """
 
     draw_site_id = "mask.fpe"

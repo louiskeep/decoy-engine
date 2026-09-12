@@ -19,9 +19,12 @@ vault alongside its masked output. The encryption is
 Fernet from the `cryptography` package (AES-128-CBC + HMAC-SHA256,
 encrypt-then-MAC, per the published Fernet spec) -- an audited AEAD
 construction rather than anything hand-rolled, per the engine's
-established-methodology rule. `cryptography` ships in the optional
-`vault` extra (`pip install 'decoy-engine[vault]'`); imports are
-function-local so the default install never pays for it.
+established-methodology rule. `cryptography` was promoted to a base
+dependency at Task 5.2 (the FF1 cipher needs AES unconditionally, not
+just vault); the `[vault]` extra is now a no-op compatibility alias, and
+`decoy_engine` itself fails to import without `cryptography` installed.
+The function-local imports below predate that promotion and stay as
+defense in depth against a future split, not a live degrade path.
 
 Key model. One key per job, domain-separated from every other engine
 derivation by a fresh label: `derive(mask_key, "vault",

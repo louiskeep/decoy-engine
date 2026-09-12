@@ -116,7 +116,21 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # (generation/synthesize.py) were rewritten in lockstep; the V2 null path
 # was unified to V1's numpy-vectorized mask so null-prob columns are now
 # byte-identical across engines.
-SEED_PROTOCOL_VERSION: int = 6
+#
+# Task 5.2 (FF1 primitive swap, 2026-09-11): bump to v7. The `fpe` strategy's
+# cipher moved from a home-rolled 8-round HMAC-SHA256 Feistel permutation to
+# NIST SP 800-38G FF1 (AES-256; see transforms/_ff1.py). The key label changed
+# too (`FF1_KEY_LABEL = b"ff1-key/v1"`, domain-separated from the retired
+# `FPE_KEY_LABEL = b"fpe-key/v1"`), and the per-column/join-group/text-span
+# tweak is now a fixed wire-format frame (`transforms.fpe.build_ff1_tweak`)
+# rather than raw UTF-8 identity bytes. Every `fpe`-strategy column and every
+# FF1-branch text-mask span produces different ciphertext under v7; nothing
+# else about the envelope changes. Pre-GA hard cutover: full golden
+# rebaseline, no v6 manifests to preserve. The companion Rust
+# `SEED_PROTOCOL_VERSION` (`decoy-engine-native/src/derive.rs`) bumps to 7 in
+# the same commit; the two must never drift, since a mismatch would silently
+# desync the compiled kernel from the Python reference it is graded against.
+SEED_PROTOCOL_VERSION: int = 7
 
 _SALT = b"decoy-engine/determinism/v1"
 # DE-02 (2026-07-14): the IKM slot accepts EITHER the 8-byte generation

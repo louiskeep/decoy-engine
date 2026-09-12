@@ -744,3 +744,81 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
             sink=ParquetTransactionalSink(tmp_path / "published"),
         )
         assert "code_set_corpora" not in ooc.quality_metrics
+
+
+# ---------------------------------------------------------------------------
+# Round-2 MEDIUM-1: text_mask sub_floor_span QualityWarning parity.
+#
+# A prior gap (documented in `_mask_group_c._text_mask_array`'s own docstring)
+# left `outputs` byte-identical between routes but the aggregate
+# `text_mask_sub_floor_span_handled` QualityWarning -- the full-frame handler's
+# runner-visible evidence channel for a sub-floor/checksum-invalid span --
+# unemitted on the out-of-core route (a log-only notice stood in for it). Both
+# routes must now emit the identical warning shape.
+# ---------------------------------------------------------------------------
+
+
+def _sub_floor_warnings(warnings: tuple[Any, ...]) -> list[Any]:
+    return [w for w in warnings if w.code == "text_mask_sub_floor_span_handled"]
+
+
+def test_text_mask_sub_floor_warning_parity_resident_route() -> None:
+    """A bare 5-digit ZIP is below the FF1 minimum domain (10**5 < 1,000,000)
+    and must route through `sub_floor_span`; the aggregate warning (one per
+    column, `by_detector` counting every handled match) must match between
+    the pandas oracle and the default (resident, no-sink) out-of-core route."""
+    payload_seed = _seed("text_mask", provider_config=(("sub_floor_span", "redact"),))
+    payload_vals = ["90210", "10001", None, "no pii here", "60601"]
+    plan, sources, graph = _payload_edge_job(
+        payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+    )
+    assert _gate_admits(plan, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+
+    oracle_ws = _sub_floor_warnings(oracle.warnings)
+    ooc_ws = _sub_floor_warnings(ooc.warnings)
+    assert oracle_ws, "sanity: the oracle itself must emit the warning for this fixture"
+    assert len(ooc_ws) == len(oracle_ws) == 2  # one per table: parent.pay, child.cpay
+    for column in ("pay", "cpay"):
+        oracle_w = next(w for w in oracle_ws if w.column == column)
+        ooc_w = next(w for w in ooc_ws if w.column == column)
+        assert ooc_w.detail == oracle_w.detail
+        assert ooc_w.detail["by_detector"] == {"us_zip": 3}
+        assert ooc_w.detail["policy"] == "redact"
+
+
+def test_text_mask_sub_floor_warning_parity_reorder_sink_route(tmp_path: Any) -> None:
+    """Same fixture, forced through the alternate sink-path reorder driver
+    (`_stream_driver.stream_table`, via `out_of_core_reorder_threshold_rows=0`)
+    instead of the default batch-join route (`_runner._stream_table`) -- the
+    two out-of-core drivers wire this warning independently, so both need
+    their own coverage."""
+    from decoy_engine.execution import ParquetTransactionalSink
+
+    payload_seed = _seed("text_mask", provider_config=(("sub_floor_span", "synthetic"),))
+    payload_vals = ["90210", "10001", None, "no pii here", "60601"]
+    plan, sources, graph = _payload_edge_job(
+        payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+    )
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(tmp_path / "published"),
+        out_of_core_reorder_threshold_rows=0,
+    )
+    oracle_ws = _sub_floor_warnings(oracle.warnings)
+    ooc_ws = _sub_floor_warnings(ooc.warnings)
+    assert len(ooc_ws) == len(oracle_ws) == 2
+    for column in ("pay", "cpay"):
+        oracle_w = next(w for w in oracle_ws if w.column == column)
+        ooc_w = next(w for w in ooc_ws if w.column == column)
+        assert ooc_w.detail == oracle_w.detail
+        assert ooc_w.detail["policy"] == "synthetic"

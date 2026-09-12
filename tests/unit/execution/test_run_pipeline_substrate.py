@@ -176,9 +176,9 @@ def forbid_profiling(monkeypatch):
 # (seed 42): the default route must keep producing exactly these bytes.
 _GOLDEN_PRE_P1 = {
     "email": [
-        "d86d99770dbd6506ff8dea0d67bd501d63cdfec4dd5b02aa518233c23228f69e",
-        "783fb9d532f88b4a580d7cd350e1cdc3e0e2bcfe74478a1a5cf1fb7f07b46406",
-        "56ea87a5865feff0d4c79e98043d3055867894527710ab7f130afe633592bece",
+        "fe41ab6a8df660b8689b220dedc9ed5bc4884e0b3aeeba7b37bbe7f75a82cefd",
+        "6618c5f5c09e40858005383ff376e4964778587a870e875015989e0be0d31405",
+        "e5aeefd8ad45bb1d8efbc1e70adf1512e89486daa5eb49579d52280521b8a9fc",
     ],
     "zip": ["902", "100", "606"],
     "secret": ["REDACTED", "REDACTED", "REDACTED"],

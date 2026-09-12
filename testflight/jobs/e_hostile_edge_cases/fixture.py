@@ -29,7 +29,8 @@ Row counts (from manifest.yaml):
   - singleton: 1
 
 Source format notes:
-  - person_id: "PP{n:05d}" (FPE PK; digits charset).
+  - person_id: "PP{n:06d}" (FPE PK; digits charset; 6 digits clears the
+    FF1 minimum admissible domain, radix**length >= 1,000,000 at radix 10).
   - kana_name: a romanized (ASCII) Japanese full name (see KANA_NAMES).
   - notes: a unicode sentence containing an embedded US-phone-shaped span.
   - bio: a unicode sentence containing an embedded email-shaped span.
@@ -37,7 +38,7 @@ Source format notes:
   - account_id: "AC{n:06d}" (FPE PK; digits charset).
   - person_id (accounts): FK to people.person_id.
   - balance: float.
-  - singleton_code: "SG{n:04d}" (FPE PK; digits charset), one row.
+  - singleton_code: "SG{n:06d}" (FPE PK; digits charset, 6 digits), one row.
 """
 
 from __future__ import annotations
@@ -99,9 +100,9 @@ KANA_NAMES: list[str] = [
 # DE-01 cluster-C (2026-07-14): re-fingerprinted after KANA_NAMES became
 # romanized (ASCII) so kana_name FPE-permutes and round-trips instead of hitting
 # the now-fail-closed all-out-of-charset covering-hash path.
-_PEOPLE_FINGERPRINT = "4f4b25e07d0aa5418eb8ba5b9c93b4cf5eabb679c8bd1663f3f988b61f60288f"
-_ACCOUNTS_FINGERPRINT = "3e35fb3b1950af73b0adeefb00317ea771b562a9ac86fa95ff373298519f83ff"
-_SINGLETON_FINGERPRINT = "5976c8a6c03141c653c7dbbc009b720b4fd937c010631195586f36fe398bc530"
+_PEOPLE_FINGERPRINT = "49becc24a180236f5279da352c177af04e4946e97c8cc83bd4de8b4c0aecb2f7"
+_ACCOUNTS_FINGERPRINT = "96d4c25b07dbfa2255adf33085fb9b2939a784c97e7b47776750a80fd40d7cb1"
+_SINGLETON_FINGERPRINT = "dfbfb03e4ee65617668addfc6d6f170cbc8d9ad50bd0a4268c8b4d0d9d5b1e04"
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +143,7 @@ def build_people(seed: int = 46) -> pd.DataFrame:
 
         rows.append(
             {
-                "person_id": f"PP{i + 1:05d}",
+                "person_id": f"PP{i + 1:06d}",
                 "kana_name": kana_name,
                 "notes": notes,
                 "bio": bio,
@@ -239,7 +240,7 @@ def build_singleton(seed: int = 46) -> pd.DataFrame:
     rng = make_rng(seed + 2)
     df = pd.DataFrame(
         {
-            "singleton_code": [f"SG{int(rng.integers(0, 10_000)):04d}"],
+            "singleton_code": [f"SG{int(rng.integers(0, 1_000_000)):06d}"],
         }
     )
     assert len(df) == SINGLETON_COUNT, f"Expected {SINGLETON_COUNT} row, got {len(df)}"

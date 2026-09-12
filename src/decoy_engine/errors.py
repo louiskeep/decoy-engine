@@ -263,13 +263,30 @@ class FpeChecksumError(DecoyError):
     plan-compile time for the same conditions.  Callers should catch
     ``DecoyError`` or ``FpeChecksumError`` specifically.
 
-    Maps to code ``fpe.checksum_unsupported``. Carries the scheme name on
-    ``.scheme``."""
+    Maps to code ``fpe.checksum_unsupported`` by default. Carries the scheme
+    name on ``.scheme``.
+
+    Task 5.2 (P5-final) adds a second code this class can carry:
+    ``fpe.checksum_invalid_source`` when the SOURCE value (including its
+    check digit) fails ``checksums.validate()`` before any permutation is
+    attempted. That is a distinct failure from "the scheme name itself is
+    unsupported," so callers mapping to handler-surface codes
+    (``fpe_checksum_unsupported`` vs ``fpe_checksum_invalid_source``) can
+    tell them apart via ``.code`` rather than string-matching the message.
+
+    Task 5.2 (P7, error redaction): this class never carries the offending
+    value, only ``.scheme`` (a config-level scheme name such as ``"luhn"``,
+    not customer data). Every call site's message text uses only
+    non-sensitive metadata (lengths, scheme names): a plaintext,
+    ciphertext, key, derived key material, or tweak must never appear in
+    this exception's ``str()``, ``repr()``, ``.args``, or any attribute."""
 
     code: str = "fpe.checksum_unsupported"
 
-    def __init__(self, message: str, *, scheme: str | None = None) -> None:
+    def __init__(self, message: str, *, scheme: str | None = None, code: str | None = None) -> None:
         self.scheme = scheme
+        if code is not None:
+            self.code = code
         super().__init__(message)
 
 
@@ -300,14 +317,36 @@ class FpeUnencryptableError(DecoyError):
 
     The executed strategy handler re-raises this as ``StrategyError`` at the
     execution boundary (matching the ``fpe_charset_degenerate`` precedent).
-    Carries the offending value on ``.value``. Maps to code
-    ``fpe.unencryptable``.
-    """
+    Maps to code ``fpe.unencryptable`` by default.
+
+    Task 5.2 (FF1 profile enforcement) adds two more codes this class can
+    carry: ``fpe.unencryptable_domain`` when a value's in-charset domain
+    (``radix ** length``) falls below the FF1 minimum admissible domain, and
+    ``fpe.unencryptable_length`` for every other profile-boundary rejection
+    (key size, radix range, alphabet duplicates, tweak/body length caps).
+    Distinct codes let a caller (the strategy handler mapping to
+    ``StrategyError`` codes) tell "this value's domain is genuinely too
+    small" apart from "this is a config/wiring bug," without string-matching
+    the message.
+
+    Task 5.2 (P7, error redaction): fully redacted. The constructor used to
+    carry the offending value verbatim on ``.value``; it no longer retains
+    the value anywhere on the instance, in the message, or via
+    ``__cause__``/``__context__`` chaining a caller controls. ``value=`` is
+    still accepted (so existing call sites need no signature change) but is
+    reduced immediately to ``.value_length`` (a character count), never
+    stored or echoed as content. Every call site's message text is written
+    to describe the failure using only non-sensitive metadata (lengths,
+    counts, code points, scheme/config names): a plaintext, ciphertext,
+    key, derived key material, or tweak must never appear in this
+    exception's ``str()``, ``repr()``, ``.args``, or any attribute."""
 
     code: str = "fpe.unencryptable"
 
-    def __init__(self, message: str, *, value: str | None = None) -> None:
-        self.value = value
+    def __init__(self, message: str, *, value: str | None = None, code: str | None = None) -> None:
+        self.value_length: int | None = len(value) if value is not None else None
+        if code is not None:
+            self.code = code
         super().__init__(message)
 
 

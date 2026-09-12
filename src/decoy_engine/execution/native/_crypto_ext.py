@@ -14,17 +14,18 @@ Crypto model (reproduced from the shipped engine, rolled nothing new):
   HMAC-SHA256 (per-source value); see `determinism/_derive.py`. Nulls (None or
   NaN) pass through as None.
 
-- FPE (the `fpe` strategy, `execution/_strategies/_fpe.py`, SEED_PROTOCOL v6):
-  ONE Feistel key per `(mask_key, namespace)` = ``derive(mask_key, namespace,
-  FPE_KEY_LABEL)`` with ``FPE_KEY_LABEL = b"fpe-key/v1"``. The per-column tweak
-  is the column name UTF-8 (or the `fpe_join_group` name when set, so grouped
-  columns share ciphertext). The primitive is the home-rolled 8-round
-  HMAC-SHA256 type-II Feistel in `transforms/fpe.py` (NOT NIST SP 800-38G FF1:
-  no AES, 8 rounds, no minimum-domain floor). Luhn mode permutes the body and
-  appends the check digit (invertible); checksum mode takes priority over
-  `validate_luhn` when both are set. Config resolution (charset dedup,
-  Luhn digit-charset gate, checksum priority, join-group tweak) mirrors the
-  shipped strategy's `run` exactly.
+- FPE (the `fpe` strategy, `execution/_strategies/_fpe.py`, SEED_PROTOCOL v7):
+  ONE AES-256 FF1 key per `(mask_key, namespace)` = ``derive(mask_key,
+  namespace, FF1_KEY_LABEL)`` with ``FF1_KEY_LABEL = b"ff1-key/v1"``. The
+  per-column tweak is built by `transforms.fpe.build_ff1_tweak` from the
+  column name (or the `fpe_join_group` name when set, so grouped columns
+  share ciphertext). The primitive is NIST SP 800-38G FF1 in
+  `transforms/_ff1.py`, wired in via `transforms/fpe.py`'s deployable-profile
+  wrapper (replaces the engine's earlier home-rolled Feistel entirely). Luhn
+  mode permutes the body and appends the check digit (invertible); checksum
+  mode takes priority over `validate_luhn` when both are set. Config
+  resolution (charset uniqueness, Luhn digit-charset gate, checksum
+  priority, join-group tweak) mirrors the shipped strategy's `run` exactly.
 
 Fail-closed contract (hard, tested):
 
@@ -38,7 +39,7 @@ Fail-closed contract (hard, tested):
 
 References:
 - RFC 5869 (HKDF-SHA256), RFC 2104 (HMAC-SHA256).
-- Feistel (1973), type-II Feistel construction.
+- NIST SP 800-38G (FF1, Algorithms 5/6).
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ Compiled crypto extension ABI (Phase 2 target; specified in Phase 0).
 Ownership
   The extension owns no engine state. Each call is pure: inputs are borrowed
   for the duration of the call and outputs are freshly allocated Arrow arrays
-  the caller owns. Key material (mask_key, derived Feistel key) is passed in
+  the caller owns. Key material (mask_key, derived FF1 key) is passed in
   per call, never cached across calls, and never logged.
 
 Thread model
@@ -165,7 +166,13 @@ class FpeConfig:
 
         Byte-for-byte the resolution the shipped strategy performs before it
         derives the key or encrypts a value."""
-        charset = "".join(dict.fromkeys(_CHARSETS.get(self.charset, self.charset)))
+        charset = _CHARSETS.get(self.charset, self.charset)
+        if len(set(charset)) != len(charset):
+            raise FpeConfigError(
+                f"fpe charset {self.charset!r} resolved to {charset!r} with duplicate "
+                "symbols; FF1 requires an ordered, duplicate-free alphabet (a "
+                "duplicate would make decode ambiguous)."
+            )
         if len(charset) < 2:
             raise FpeConfigError(
                 f"fpe charset {self.charset!r} resolved to {charset!r} with fewer than "
@@ -240,28 +247,28 @@ HASH_KAT: tuple[HashKatVector, ...] = (
         _KAT_NS,
         "alice",
         None,
-        "398a93520101bdc8e91ad659396a2bdf262bb59224ba39bfc807e075c33ab64c",
+        "0e0f7092a5bfbb5b1719ff096993a5169d585c0916277d18746eb21c8b246acd",
     ),
     HashKatVector(
         _KAT_MASK_KEY,
         _KAT_NS,
         "bob",
         None,
-        "c7f070cc2e08f825a284b4aa24fec05546ea4e65feb806f2221610e7a13195c1",
+        "34c6b897dc42436fdd2f03d3f9618632e4c44b373fbb49e6e6a327d43f1fa9b6",
     ),
     HashKatVector(
         _KAT_MASK_KEY,
         _KAT_NS,
         12345,
         None,
-        "afc185c92f6ff544f3fb3b4cb21435f67ada4a946a150e205aa59ef490168773",
+        "d77c147d5850760786e5c5cb8bdf44d80e1875dccbfadb2d6bc57473b75dbacd",
     ),
-    HashKatVector(_KAT_MASK_KEY, _KAT_NS, "alice", 16, "398a93520101bdc8"),
+    HashKatVector(_KAT_MASK_KEY, _KAT_NS, "alice", 16, "0e0f7092a5bfbb5b"),
 )
 
 FPE_KAT: tuple[FpeKatVector, ...] = (
     FpeKatVector(
-        _KAT_MASK_KEY, _KAT_NS, "ssn", FpeConfig(charset="digits"), "123456789", "528311328"
+        _KAT_MASK_KEY, _KAT_NS, "ssn", FpeConfig(charset="digits"), "123456789", "566184649"
     ),
     FpeKatVector(
         _KAT_MASK_KEY,
@@ -269,7 +276,7 @@ FPE_KAT: tuple[FpeKatVector, ...] = (
         "ssn",
         FpeConfig(charset="digits"),
         "123-45-6789",
-        "528-31-1328",
+        "566-18-4649",
     ),
     FpeKatVector(
         _KAT_MASK_KEY,
@@ -277,7 +284,7 @@ FPE_KAT: tuple[FpeKatVector, ...] = (
         "ssn",
         FpeConfig(charset="digits", validate_luhn=True),
         "4111111111111111",
-        "8913116545234802",
+        "3663799520739755",
     ),
 )
 

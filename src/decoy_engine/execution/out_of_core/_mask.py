@@ -101,6 +101,7 @@ def mask_column(
     *,
     column: str | None = None,
     corpus_record: _CorpusRecord | None = None,
+    sub_floor_notices: dict[str, int] | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -117,7 +118,10 @@ def mask_column(
 
     `corpus_record` (Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE
     remediation) is forwarded to the `code_set` Group (c) kernel only -- see
-    `_mask_group_c._code_set_array`'s docstring. Every other strategy ignores it.
+    `_mask_group_c._code_set_array`'s docstring. `sub_floor_notices` (round-2
+    MEDIUM-1) is forwarded to the `text_mask` Group (c) kernel only -- see
+    `_mask_group_c._text_mask_array`'s docstring. Every other strategy
+    ignores both.
     """
     job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
@@ -137,7 +141,13 @@ def mask_column(
         )
     if seed.strategy in GROUP_C_STRATEGIES:
         return group_c_array(
-            values, seed, job_seed, column=column, cfg=cfg, corpus_record=corpus_record
+            values,
+            seed,
+            job_seed,
+            column=column,
+            cfg=cfg,
+            corpus_record=corpus_record,
+            sub_floor_notices=sub_floor_notices,
         )
     if seed.strategy == "passthrough":
         return passthrough_array(values)
@@ -218,6 +228,7 @@ def mask_table(
     skip_columns: frozenset[str],
     mask_key: bytes | None = None,
     code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
+    sub_floor_totals: dict[str, dict[str, int]] | None = None,
 ) -> pa.Table:
     """Whole-table, whole-column masking.
 
@@ -236,6 +247,15 @@ def mask_table(
     one shot, so it has no cross-call divergence surface of its own; the
     parameter exists so a caller that already pinned records for `mask_batch`
     can pass the SAME dict here too (e.g. a parity test comparing both).
+
+    `sub_floor_totals` (round-2 MEDIUM-1), keyed by column name: a mutable
+    `{detector_id: count}` accumulator per `text_mask` column, reused across
+    every call the caller makes so a multi-batch stream aggregates into ONE
+    dict per column (see `_mask_group_c.text_mask_sub_floor_warning`, which
+    the caller emits from this after the whole table/stream is masked).
+    `None` (the default) means the caller does not want the warning (this
+    single-shot whole-table path resolves the whole column in one call, so it
+    has no cross-call aggregation need of its own).
     """
     seed = table_seed(plan, table_name)
     if seed is None:
@@ -248,8 +268,18 @@ def mask_table(
             continue
         if column not in out.column_names:
             continue
+        notices = (
+            sub_floor_totals.setdefault(column, {})
+            if sub_floor_totals is not None and column_seed.strategy == "text_mask"
+            else None
+        )
         masked = mask_column(
-            out.column(column), column_seed, key, column=column, corpus_record=records.get(column)
+            out.column(column),
+            column_seed,
+            key,
+            column=column,
+            corpus_record=records.get(column),
+            sub_floor_notices=notices,
         )
         out = out.set_column(out.schema.get_field_index(column), column, masked)
     return out
@@ -263,6 +293,7 @@ def mask_batch(
     skip_columns: frozenset[str] = frozenset(),
     mask_key: bytes | None = None,
     code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
+    sub_floor_totals: dict[str, dict[str, int]] | None = None,
 ) -> pa.RecordBatch:
     """Mask one RecordBatch's non-FK columns per the plan.
 
@@ -284,6 +315,11 @@ def mask_batch(
     version than an earlier one, or than the evidence stamped once per table.
     `None` (the default) falls back to a fresh per-value resolve per batch,
     matching pre-fix behavior.
+
+    `sub_floor_totals` (round-2 MEDIUM-1): same accumulator as `mask_table`
+    above, but here the whole point is cross-BATCH aggregation -- the runner
+    creates ONE dict per table, passes it to every `mask_batch` call for that
+    table, and emits the aggregate warning once the whole stream is consumed.
     """
     seed = table_seed(plan, table_name)
     if seed is None:
@@ -298,8 +334,18 @@ def mask_batch(
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
+        notices = (
+            sub_floor_totals.setdefault(column, {})
+            if sub_floor_totals is not None and column_seed.strategy == "text_mask"
+            else None
+        )
         masked = mask_column(
-            arrays[idx], column_seed, key, column=column, corpus_record=records.get(column)
+            arrays[idx],
+            column_seed,
+            key,
+            column=column,
+            corpus_record=records.get(column),
+            sub_floor_notices=notices,
         )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field

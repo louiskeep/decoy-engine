@@ -18,6 +18,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from decoy_engine.checksums import validate as _checksum_validate
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
 from decoy_engine.transforms.text_mask import (
@@ -29,6 +31,7 @@ from decoy_engine.transforms.text_mask import (
     _mask_fpe,
     _mask_span,
     _span_key,
+    _synthetic_span_value,
     mask_cell,
 )
 
@@ -768,30 +771,127 @@ class TestMaskFpeDispatch:
 
     KATs pin the FPE output so a wrong config key, wrong charset default, wrong
     checksum scheme, or a flipped validate_luhn changes the ciphertext and dies.
+
+    Task 5.2 plan P3-final: `_mask_fpe` takes the raw `mask_key` directly (it
+    derives its own namespace-scoped FF1 key internally,
+    `derive(mask_key, f"text.{detector_id}", FF1_KEY_LABEL)`), not a
+    plaintext-derived `_span_key` the way `_mask_faker`/`_mask_date_shift`
+    still do; the KATs below pass `_SEED` accordingly.
     """
 
     def test_pan_uses_luhn_checksum(self) -> None:
         """pan -> ("digits","luhn"); dropping/nulling the checksum changes output."""
         pan = "4111111111111111"
-        assert _mask_fpe(pan, _span_key(_SEED, pan), "pan") == "4885959915148828"
+        assert _mask_fpe(pan, _SEED, "pan") == "2244299966131195"
 
     def test_ssn_has_no_checksum(self) -> None:
         """ssn -> ("digits",None); validate_luhn stays False (flipping it re-shapes)."""
         ssn = "123-45-6789"
-        assert _mask_fpe(ssn, _span_key(_SEED, ssn), "ssn") == "904-52-1741"
+        assert _mask_fpe(ssn, _SEED, "ssn") == "178-87-3971"
 
     def test_unknown_detector_uses_digits_default(self) -> None:
         """A detector absent from _FPE_CONFIG falls back to ("digits", None) and
         still FPE-encrypts (kills default-key/charset mutants that break the fallback)."""
         val = "12345678"
-        assert _mask_fpe(val, _span_key(_SEED, val), "unknown_det_xyz") == "67241497"
+        assert _mask_fpe(val, _SEED, "unknown_det_xyz") == "16863636"
 
-    def test_fpe_failure_returns_configured_token(self) -> None:
-        """All-separator input fails closed to the caller's token, not _DEFAULT_TOKEN."""
-        assert _mask_fpe("--", _span_key(_SEED, "--"), "ssn", "[X]") == "[X]"
+    def test_all_out_of_charset_span_fails_closed(self) -> None:
+        """An all-separator match has no in-charset content to FF1 at all (DE-01);
+        this propagates rather than falling back to a token, per the plan's removal
+        of the old catch-all `except -> static token` fallback."""
+        with pytest.raises(FpeUnencryptableError):
+            _mask_fpe("--", _SEED, "ssn", "[X]")
 
-    def test_fpe_failure_defaults_to_redacted_token(self) -> None:
-        assert _mask_fpe("--", _span_key(_SEED, "--"), "ssn") == _DEFAULT_TOKEN
+
+class TestSyntheticSpanValue:
+    """`_synthetic_span_value` (the `sub_floor_span: "synthetic"` policy).
+
+    Round-2 LOW-3: the fallback used to overwrite EVERY character (including
+    separators) with a random-looking digit and never touched a checksum, so
+    a synthetic PAN/NPI replacement was neither format-preserving (a real
+    PAN/NPI's separators are structural, e.g. ``4111-1111-1111-1111``) nor
+    "valid-format" for a checksum-backed detector (its check digit was just
+    another random digit, essentially never Luhn/NPI-valid). Both now hold.
+    """
+
+    def test_no_checksum_preserves_separators(self) -> None:
+        """ssn/us_phone/us_zip/fax_number: no checksum scheme. Separators
+        (out-of-charset characters) must survive unchanged; only the
+        in-charset digit positions are replaced."""
+        out = _synthetic_span_value(_SEED, "123-45-6789", "0123456789", None)
+        assert out[3] == "-" and out[6] == "-"
+        assert len(out) == len("123-45-6789")
+        assert all(c in "0123456789" for c in out.replace("-", ""))
+        assert out != "123-45-6789"  # actually replaced, not a no-op
+
+    def test_no_checksum_is_deterministic_and_key_sensitive(self) -> None:
+        a = _synthetic_span_value(_SEED, "55512", "0123456789", None)
+        b = _synthetic_span_value(_SEED, "55512", "0123456789", None)
+        c = _synthetic_span_value(b"\x00" * 32, "55512", "0123456789", None)
+        assert a == b
+        assert a != c
+
+    def test_luhn_checksum_recomputed_and_separators_preserved(self) -> None:
+        """A synthetic PAN replacement (checksum='luhn') must itself pass
+        Luhn -- not just look like digits -- and keep the source's dashes."""
+        out = _synthetic_span_value(_SEED, "4111-1111-1111-1112", "0123456789", "luhn")
+        assert out[4] == "-" and out[9] == "-" and out[14] == "-"
+        assert _checksum_validate("luhn", out.replace("-", ""))
+        assert out != "4111-1111-1111-1112"
+
+    def test_npi_checksum_recomputed_and_leading_digit_pinned(self) -> None:
+        """A synthetic NPI replacement (checksum='npi') must pass the NPI
+        check AND keep its source leading digit (1 or 2 per NPPES) --
+        `_fpe_checksum_permute`'s real encrypt path pins the same digit for
+        the same reason."""
+        out = _synthetic_span_value(_SEED, "1234567891", "0123456789", "npi")
+        assert out[0] == "1"
+        assert _checksum_validate("npi", out)
+        assert out != "1234567891"
+
+    def test_all_separator_span_is_a_no_op(self) -> None:
+        """No in-charset content at all: nothing to synthesize, returned as-is
+        (mirrors `_mask_fpe`'s own all-out-of-charset fail-closed case one
+        layer up; this leaf just has nothing to do)."""
+        assert _synthetic_span_value(_SEED, "---", "0123456789", None) == "---"
+
+    def test_mask_fpe_sub_floor_domain_routes_to_synthetic_without_checksum(self) -> None:
+        """us_zip (`_FPE_CONFIG`: no checksum): a 5-digit ZIP is below the FF1
+        floor (10**5 < 1,000,000) and must hit the synthetic path, not raise,
+        when the policy is configured."""
+        notices: dict[str, int] = {}
+        out = _mask_fpe(
+            "54321", _SEED, "us_zip", sub_floor_span_policy="synthetic", sub_floor_notices=notices
+        )
+        assert len(out) == 5 and out.isdigit() and out != "54321"
+        assert notices == {"us_zip": 1}
+
+    def test_mask_fpe_checksum_invalid_pan_routes_to_valid_luhn_synthetic(self) -> None:
+        """pan (`_FPE_CONFIG`: checksum='luhn'): a PAN whose stated check
+        digit is wrong fails `checksums.validate` on the forward path
+        (`fpe.checksum_invalid_source`) and must land on a Luhn-VALID
+        synthetic replacement under the synthetic policy, dashes intact."""
+        notices: dict[str, int] = {}
+        out = _mask_fpe(
+            "4111-1111-1111-1112",
+            _SEED,
+            "pan",
+            sub_floor_span_policy="synthetic",
+            sub_floor_notices=notices,
+        )
+        assert out[4] == "-" and out[9] == "-" and out[14] == "-"
+        assert _checksum_validate("luhn", out.replace("-", ""))
+        assert notices == {"pan": 1}
+
+    def test_mask_fpe_checksum_invalid_npi_routes_to_valid_npi_synthetic(self) -> None:
+        out = _mask_fpe(
+            "1234567891",  # fails the NPI check digit
+            _SEED,
+            "npi",
+            sub_floor_span_policy="synthetic",
+        )
+        assert out[0] == "1"
+        assert _checksum_validate("npi", out)
 
 
 class TestMaskFakerDispatch:
@@ -868,12 +968,12 @@ class TestMaskSpanDispatch:
 
     def test_fpe_strategy_ssn(self) -> None:
         sp = Span("ssn", 0, 11, "123-45-6789")
-        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "904-52-1741"
+        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "178-87-3971"
 
     def test_fpe_strategy_pan_passes_detector_id(self) -> None:
         """detector_id must reach _mask_fpe (drives tweak + checksum): pan -> luhn."""
         sp = Span("pan", 0, 16, "4111111111111111")
-        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "4885959915148828"
+        assert _mask_span(sp, _SEED, "fpe", {"token": _DEFAULT_TOKEN}) == "2244299966131195"
 
     def test_faker_strategy_uses_detector_id(self) -> None:
         sp = Span("first_name", 0, 4, "John")
@@ -895,15 +995,13 @@ class TestMaskSpanDispatch:
         sp = Span("ssn", 0, 11, "123-45-6789")
         assert _mask_span(sp, _SEED, "no_such_strategy", {"token": "[X]"}) == "[X]"
 
-    def test_fpe_failure_uses_span_token(self) -> None:
-        """FPE fail-closed carries the cfg token through _mask_span's token wiring."""
+    def test_fpe_all_out_of_charset_span_fails_closed(self) -> None:
+        """An all-separator match has no in-charset content to FF1 (DE-01); this
+        propagates through `_mask_span` rather than falling back to a token,
+        per the plan's removal of the old catch-all fallback."""
         sp = Span("ssn", 0, 2, "--")
-        assert _mask_span(sp, _SEED, "fpe", {"token": "[X]"}) == "[X]"
-
-    def test_fpe_failure_defaults_token_when_absent(self) -> None:
-        """cfg without a token -> _DEFAULT_TOKEN (kills token-default -> None mutants)."""
-        sp = Span("ssn", 0, 2, "--")
-        assert _mask_span(sp, _SEED, "fpe", {}) == _DEFAULT_TOKEN
+        with pytest.raises(FpeUnencryptableError):
+            _mask_span(sp, _SEED, "fpe", {"token": "[X]"})
 
     def test_date_shift_uses_cfg_bounds(self) -> None:
         sp = Span("iso_date", 0, 10, "1990-01-15")
@@ -927,7 +1025,7 @@ class TestMaskCellReassembly:
         out = mask_cell(
             text, _SEED, detector_ids=["ssn", "email"], unmatched_span_policy="passthrough"
         )
-        assert out == "Patient [REDACTED], SSN 904-52-1741."
+        assert out == "Patient [REDACTED], SSN 178-87-3971."
 
     def test_no_junk_separator_between_parts(self) -> None:
         out = mask_cell(
@@ -967,5 +1065,5 @@ class TestMaskCellReassembly:
         b = mask_cell(
             "B 123-45-6789 y", _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough"
         )
-        assert "904-52-1741" in a
-        assert "904-52-1741" in b
+        assert "178-87-3971" in a
+        assert "178-87-3971" in b

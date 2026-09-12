@@ -343,10 +343,12 @@ def _multiparent_graph(policy: OrphanPolicy) -> RelationshipGraph:
 
 
 def _multiparent_sources() -> dict[str, pa.Table]:
+    # pb's ids are fpe/alphanum (radix 36): 4+ in-charset chars clears the FF1
+    # minimum admissible domain (36**4 >= 1,000,000; 36**2 does not).
     return {
         "pa": pa.table({"id": ["a1", "shared1"]}),
-        "pb": pa.table({"id": ["b1", "shared1"]}),
-        "child": pa.table({"id": ["a1", "b1", "shared1", "ghost"]}),
+        "pb": pa.table({"id": ["b0001", "shared1"]}),
+        "child": pa.table({"id": ["a1", "b0001", "shared1", "ghost"]}),
     }
 
 
@@ -359,10 +361,10 @@ def test_multiparent_resolves_through_both_parents_with_precedence() -> None:
     child = res.outputs["child"].column("id").to_pylist()
 
     assert child[0] == out_a[0]  # a1 resolves through parent pa
-    # b1 exists ONLY in pb: the merge branch (edges[1:], the extra _parent_map
-    # call, and merged.setdefault) must run for this to resolve.
+    # b0001 exists ONLY in pb: the merge branch (edges[1:], the extra
+    # _parent_map call, and merged.setdefault) must run for this to resolve.
     assert child[1] == out_b[0]
-    assert child[1] != "b1"
+    assert child[1] != "b0001"
     # shared1 is in BOTH parents with different masked values; first declared
     # parent wins.
     assert out_a[1] != out_b[1]

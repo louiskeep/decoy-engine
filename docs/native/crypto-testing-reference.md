@@ -1,6 +1,6 @@
 Status: reference
 Purpose: Testing playbook for Decoy's native keyed derivation and format-preserving encryption kernels.
-Last reviewed: 2026-08-27
+Last reviewed: 2026-09-11
 
 # Native Cryptography Testing Reference
 
@@ -24,19 +24,21 @@ Treat each line of custom permutation or key-schedule code as security-sensitive
 
 Decoy currently has pure-Python reference kernels named `reference_keyed_derivation` and `reference_fpe`.
 They reproduce the shipped Python behavior and are the compatibility oracles for the first native kernel.
-The current `reference_fpe` path uses Decoy's existing HMAC-SHA256 Feistel construction.
-It is not NIST FF1.
+Since Task 5.2 (2026-09-11), `reference_fpe` calls the real NIST SP 800-38G FF1 primitive
+(`transforms/_ff1.py`), not the retired HMAC-SHA256 Feistel construction it wrapped before.
 
-Therefore, these claims are separate:
+The two claims below still do not collapse into one, even now that `reference_fpe` is FF1-backed:
 
 1. **Compatibility claim:** the native code reproduces the current Decoy output byte for byte.
 2. **FF1 conformance claim:** an implementation matches the applicable NIST FF1 algorithm and vectors.
 
-A kernel cannot satisfy both claims merely by matching the current `reference_fpe` output.
-Round trips and parity with a non-FF1 oracle do not establish FF1 conformance.
-If Decoy moves to actual FF1, use a new seed protocol version and a new reviewed Python oracle.
-Expect ciphertext to change at that version boundary.
-Keep the old vectors to support explicit compatibility and migration tests.
+A kernel cannot satisfy both claims merely by matching the current `reference_fpe` output; that
+output is only as trustworthy as the FF1 primitive's own KAT and differential-oracle evidence
+(see [de-01-ff1-adoption.md](../security/de-01-ff1-adoption.md)). Round trips and parity with
+`reference_fpe` establish compatibility with today's shipped behavior, not conformance on their
+own. A future seed-protocol bump that changes the FF1 profile (radix range, domain floor, tweak
+framing) needs a new reviewed Python oracle and fresh vectors; keep the superseded ones to support
+explicit compatibility and migration tests.
 
 ### 1.2 Test evidence and what it cannot prove
 
@@ -70,11 +72,11 @@ Generic round-trip tests are not enough.
 | Byte, Unicode scalar, or grapheme confusion | Radix positions and lengths differ across languages | Explicit alphabet-index vectors with multi-byte UTF-8 characters. Reject unsupported semantics |
 | Draw-order or global-state dependency | Output changes with row order or prior work | Shuffle, prefix, retry, and isolated-row tests with identical row identity |
 | Batch-size dependency | Chunk boundaries change output | Compare one batch with partitions of size 1, prime sizes, uneven sizes, and empty batches |
-| Off-by-one radix handling | First or last alphabet character encrypts incorrectly | Exercise indices `0`, `1`, `radix - 2`, and `radix - 1` in both halves of the Feistel input |
+| Off-by-one radix handling | First or last alphabet character encrypts incorrectly | Exercise indices `0`, `1`, `radix - 2`, and `radix - 1` in both halves of the FF1 numeral string |
 | Duplicate or reordered alphabet mishandling | Domain is smaller than reported, or mappings silently change | Reject duplicates, pin alphabet order, and test reordered alphabets as different configurations |
 | Leading zero loss | Length or formatting changes | KATs with one and many leading zero digits, for encryption and decryption |
 | Null treated as an empty value | Nulls become tokens or empty strings become nulls | Mixed null and empty arrays with row-by-row expected output and validity bits |
-| Empty value silently passes cleartext | A declared encrypted field is not encrypted | Future FF1 path rejects empty domains unless the product contract explicitly versions a no-op rule |
+| Empty value silently passes cleartext | A declared encrypted field is not encrypted | The shipped FF1 wrapper documents empty-string as an explicit passthrough, not a rejection; pin that choice with a KAT rather than leaving it to fall out of whatever the length-boundary code happens to do |
 | Non-ASCII input is silently replaced | Data changes before cryptography and parity breaks | Strict UTF-8 tests, invalid scalar tests, and vectors that pin any deliberate replacement policy |
 | Invalid formatted value passes through | PII remains cleartext | Assert a typed, redacted row error and null placeholder at the kernel boundary. Then assert that the execution boundary discards the batch and fails the operation |
 | Partial batch returned after an error | Some rows leak or callers process incomplete results | Inject failures at first, middle, and last rows. Assert atomic failure or the documented error contract |
@@ -107,7 +109,7 @@ A useful record contains these fields:
 {
   "case_id": "derive-nfc-001",
   "primitive": "derive",
-  "seed_protocol_version": 6,
+  "seed_protocol_version": 7,
   "mask_key_hex": "...",
   "namespace_text": "customer.email",
   "namespace_utf8_hex": "637573746f6d65722e656d61696c",
@@ -138,7 +140,7 @@ Each imported corpus must record:
 
 ### 3.2 Current Decoy compatibility framing
 
-The current source defines seed protocol version 6.
+The current source defines seed protocol version 7.
 The derivation path first obtains a 32-byte key with HKDF-SHA256.
 It uses the literal salt `decoy-engine/determinism/v1` and the UTF-8 namespace as HKDF `info`.
 It then computes HMAC-SHA256 over this byte frame:
@@ -165,11 +167,16 @@ Naive datetimes and unsupported floating-point sources fail.
 Null is handled before derivation and remains null.
 Pin every supported type in a golden vector rather than reimplementing these rules in the test harness.
 
-The current FPE compatibility path derives its key using the source label `fpe-key/v1`.
-Its effective tweak is the join-group name when present, otherwise the column name.
-The Python path encodes that tweak as UTF-8 with replacement behavior for encoding errors.
-Compatibility tests must reproduce that behavior for the existing protocol.
-A future FF1 protocol must either specify the same behavior or adopt strict UTF-8 under a new version.
+The current FPE compatibility path derives its key using the source label `ff1-key/v1`.
+Its effective tweak identity is the join-group name when present, otherwise the column name.
+The identity is not encoded as raw UTF-8. It is wrapped in a fixed framed wire format:
+one tweak-version byte, one scope byte (column, join-group, or text-span), a two-byte
+big-endian field holding the identity's UTF-8 byte length, then the identity's UTF-8 bytes.
+The scope byte keeps a column tweak, a join-group tweak, and a text-span-detector tweak
+from colliding even when their identity strings happen to match.
+Compatibility tests must reproduce this framed encoding byte for byte, not the identity
+string alone.
+This framing is not a proposal for a future version. It is the current protocol.
 
 These framing rules describe current Decoy compatibility.
 They are not a substitute for the FF1 algorithm specification.

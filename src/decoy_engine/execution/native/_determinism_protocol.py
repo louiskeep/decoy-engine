@@ -200,10 +200,10 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.fpe",
         family="source_keyed_hmac",
-        call_site="transforms/fpe.py:344",
+        call_site="transforms/fpe.py:406",
         entropy_root="mask_key",
-        seed_derivation="derive(mask_key, namespace, FPE_KEY_LABEL)  # per-column Feistel key",
-        api_operation="8-round type-II Feistel permutation (HMAC-SHA256 round function)",
+        seed_derivation="derive(mask_key, namespace, FF1_KEY_LABEL)  # per-column AES-256 FF1 key",
+        api_operation="NIST SP 800-38G FF1 (10 rounds, AES-256 CBC-MAC PRF; see transforms/_ff1.py)",
         call_shape="fpe_encrypt_value(value, key, tweak)  # per value, format-preserving",
         consumes_variable_draws=False,
         identity="source_value",
@@ -211,10 +211,14 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         partitionable=True,
         config_fingerprint_source="namespace_registry(namespace)+alphabet/format",
         provider_version=_V6,
-        notes="Keyed bijection, home-rolled HMAC-SHA256 Feistel (NOT NIST FF1). Reversible.",
+        notes=(
+            "Keyed bijection, NIST SP 800-38G FF1 (Task 5.2, replacing the retired "
+            "home-rolled HMAC-SHA256 Feistel). Reversible, but FF1 is unauthenticated: "
+            "unmask always reports reversed_unverified for this strategy."
+        ),
         mirror_call_sites=(
-            "execution/_strategies/_fpe.py:135",
-            "execution/out_of_core/_mask_group_b.py:132",
+            "execution/_strategies/_fpe.py:176",
+            "execution/out_of_core/_mask_group_b.py:153",
         ),
     ),
     DrawSite(

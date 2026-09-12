@@ -45,11 +45,26 @@ class TestCheckFpeCharsetConfig:
         assert "t.c" in exc.value.path
 
     def test_repeated_character_charset_rejected(self) -> None:
-        """A literal charset of repeated chars dedupes to <2 distinct chars."""
+        """A literal charset of repeated characters is rejected outright.
+
+        FF1 requires an ordered, duplicate-free alphabet (Task 5.2); a
+        repeated symbol is caught by the duplicate-symbol check before the
+        distinct-character-count check ever runs, regardless of the
+        charset's raw length.
+        """
         cfg = _config({"charset": "aaaa"})
         with pytest.raises(PlanCompileError) as exc:
             check_fpe_charset_config(cfg)
-        assert exc.value.code == "fpe_charset_degenerate"
+        assert exc.value.code == "fpe_charset_duplicate_symbols"
+
+    def test_partially_repeated_charset_rejected(self) -> None:
+        """A charset with >= 2 distinct characters is still rejected if any
+        character repeats: duplicate detection does not depend on how many
+        distinct characters remain."""
+        cfg = _config({"charset": "aab"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_fpe_charset_config(cfg)
+        assert exc.value.code == "fpe_charset_duplicate_symbols"
 
     def test_empty_charset_rejected(self) -> None:
         cfg = _config({"charset": ""})

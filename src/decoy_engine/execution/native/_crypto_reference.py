@@ -15,11 +15,22 @@ import pyarrow as pa
 
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
-from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL, FpeStrategyHandler
+from decoy_engine.execution._strategies._fpe import (
+    FF1_KEY_LABEL,
+    FpeStrategyHandler,
+    strategy_code_for_checksum,
+    strategy_code_for_unencryptable,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
-from decoy_engine.transforms.fpe import fpe_decrypt_value, fpe_encrypt_value
+from decoy_engine.transforms.fpe import (
+    FF1_TWEAK_SCOPE_COLUMN,
+    FF1_TWEAK_SCOPE_JOIN_GROUP,
+    build_ff1_tweak,
+    fpe_decrypt_value,
+    fpe_encrypt_value,
+)
 
 from ._crypto_ext import (
     FpeBatchResult,
@@ -124,8 +135,11 @@ class _ReferenceFpe:
     ) -> FpeBatchResult:
         key_material = _require_mask_key(mask_key, "fpe")
         charset, preserve_sep, validate_luhn, checksum = config._resolve()
-        tweak = (config.join_group or tweak_column).encode("utf-8", errors="replace")
-        key = derive(key_material, namespace, FPE_KEY_LABEL)
+        tweak = build_ff1_tweak(
+            FF1_TWEAK_SCOPE_JOIN_GROUP if config.join_group else FF1_TWEAK_SCOPE_COLUMN,
+            config.join_group or tweak_column,
+        )
+        key = derive(key_material, namespace, FF1_KEY_LABEL)
         transform = fpe_encrypt_value if forward else fpe_decrypt_value
 
         out: list[str | None] = []
@@ -141,12 +155,12 @@ class _ReferenceFpe:
                 out.append(
                     transform(text, key, charset, tweak, preserve_sep, validate_luhn, checksum)
                 )
-            except FpeUnencryptableError:
+            except FpeUnencryptableError as exc:
                 out.append(None)
-                errors.append(_row_error(row_index, "fpe_unencryptable_value"))
-            except FpeChecksumError:
+                errors.append(_row_error(row_index, strategy_code_for_unencryptable(exc)))
+            except FpeChecksumError as exc:
                 out.append(None)
-                errors.append(_row_error(row_index, "fpe_checksum_unsupported"))
+                errors.append(_row_error(row_index, strategy_code_for_checksum(exc)))
 
         warnings = self._warnings(
             non_na_values,
@@ -174,7 +188,6 @@ class _ReferenceFpe:
             self._warner._residual_risk_warnings(
                 non_na_values,
                 charset_set=set(charset),
-                radix=len(charset),
                 preserve_sep=preserve_sep,
                 column=column,
             )
@@ -199,8 +212,20 @@ _ROW_ERROR_MESSAGES = {
         "value cannot be format-preserving-encrypted without leaking cleartext or "
         "producing non-invertible output; the engine fails closed."
     ),
+    "fpe_unencryptable_domain": (
+        "value's in-charset domain is below the FF1 minimum admissible domain; "
+        "the engine fails closed rather than mask under an undefined-security domain."
+    ),
+    "fpe_unencryptable_length": (
+        "value or configuration violates the deployed FF1 profile's length/radix/"
+        "key bounds; the engine fails closed."
+    ),
     "fpe_checksum_unsupported": (
         "value has an invalid length for the configured checksum scheme; the engine fails closed."
+    ),
+    "fpe_checksum_invalid_source": (
+        "source value fails checksum validation for the configured scheme; the "
+        "engine fails closed rather than permute an already-invalid identifier."
     ),
 }
 

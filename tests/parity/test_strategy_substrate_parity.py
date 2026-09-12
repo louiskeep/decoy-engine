@@ -365,7 +365,9 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
                 ),
             ),
         ),
-        {"t": pa.table({"c": [f"{i:05d}" for i in range(20)]})},
+        # 6-digit: radix 10, length 6 clears the FF1 minimum admissible domain
+        # (10**6 == 1,000,000); 5 digits fail closed on the domain floor.
+        {"t": pa.table({"c": [f"{i:06d}" for i in range(20)]})},
     ),
     (
         "faker-person-email-deterministic",

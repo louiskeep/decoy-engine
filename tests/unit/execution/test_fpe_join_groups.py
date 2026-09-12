@@ -157,41 +157,45 @@ class TestT2F3NotRegressed:
     """
 
     def test_no_join_group_columns_differ(self) -> None:
-        value = "5551234567"
+        """A single value colliding across two tweaks (col_a vs col_b) is legal
+        for a permutation family, so the F3 guard is aggregate across several
+        independent values rather than a universal per-value claim: if the
+        tweak had no effect (the `join_group or column` guard regressed to
+        always pick one branch), EVERY value would collide."""
+        values = ["5551234567", "9998887776", "1112223334", "4155552671"]
         plan_no_group = _fpe_col(namespace="phone_ns", join_group=None)
 
-        df_a = pd.DataFrame({"col_a": [value]})
-        df_b = pd.DataFrame({"col_b": [value]})
+        df_a = pd.DataFrame({"col_a": values})
+        df_b = pd.DataFrame({"col_b": values})
 
         out_a, _ = FpeStrategyHandler(chunk_count=1).run(df_a, "col_a", plan_no_group, _ctx())
         out_b, _ = FpeStrategyHandler(chunk_count=1).run(df_b, "col_b", plan_no_group, _ctx())
 
-        enc_a = out_a["col_a"].tolist()[0]
-        enc_b = out_b["col_b"].tolist()[0]
-        assert enc_a != enc_b, (
-            "F3 regression: two fpe columns with the same namespace but NO join_group "
-            "must produce different ciphertext (tweak = column name, not group name). "
-            f"Got enc_a={enc_a!r} enc_b={enc_b!r}"
+        enc_a = out_a["col_a"].tolist()
+        enc_b = out_b["col_b"].tolist()
+        assert any(a != b for a, b in zip(enc_a, enc_b, strict=True)), (
+            "F3 regression: every value produced identical ciphertext across two fpe "
+            "columns with the same namespace but NO join_group (tweak should be column "
+            f"name, not group name). Got enc_a={enc_a!r} enc_b={enc_b!r}"
         )
 
     def test_join_group_differs_from_no_group(self) -> None:
-        """A joined column and a non-joined column (same namespace, same value)
-        must produce different ciphertexts -- the join group changes the tweak."""
-        value = "5551234567"
+        """A joined column and a non-joined column (same namespace, same
+        values) are keyed by different tweaks (group name vs column name);
+        a single value coinciding is legal for a permutation, so the guard
+        is aggregate across several independent values, as above."""
+        values = ["5551234567", "9998887776", "1112223334", "4155552671"]
         plan_joined = _fpe_col(namespace="phone_ns", join_group="phone_e164")
         plan_plain = _fpe_col(namespace="phone_ns", join_group=None)
 
-        df = pd.DataFrame({"col": [value]})
+        df = pd.DataFrame({"col": values})
         out_joined, _ = FpeStrategyHandler(chunk_count=1).run(df.copy(), "col", plan_joined, _ctx())
         out_plain, _ = FpeStrategyHandler(chunk_count=1).run(df.copy(), "col", plan_plain, _ctx())
-        # When join_group="phone_e164" the tweak is b"phone_e164"; when unset the
-        # tweak is b"col". So the outputs will differ (unless a hash collision occurs,
-        # which is negligible for a 10-digit test value).
-        enc_joined = out_joined["col"].tolist()[0]
-        enc_plain = out_plain["col"].tolist()[0]
-        assert enc_joined != enc_plain, (
-            "A joined column (tweak=group name) must differ from a plain column "
-            "(tweak=column name) even for the same value + namespace."
+        enc_joined = out_joined["col"].tolist()
+        enc_plain = out_plain["col"].tolist()
+        assert any(j != p for j, p in zip(enc_joined, enc_plain, strict=True)), (
+            "every value produced identical ciphertext whether tweaked by the join "
+            "group name or the column name: the join group is not changing the tweak"
         )
 
 
@@ -237,8 +241,12 @@ class TestT4DefaultUnchanged:
 
     def test_no_group_matches_column_tweak(self) -> None:
         from decoy_engine.determinism import derive
-        from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
-        from decoy_engine.transforms.fpe import fpe_encrypt_value
+        from decoy_engine.transforms.fpe import (
+            FF1_KEY_LABEL,
+            FF1_TWEAK_SCOPE_COLUMN,
+            build_ff1_tweak,
+            fpe_encrypt_value,
+        )
 
         value = "1234567890"
         plan = _fpe_col(namespace="phone_ns", join_group=None)
@@ -247,19 +255,21 @@ class TestT4DefaultUnchanged:
         actual = out["acct"].tolist()[0]
 
         # Reproduce manually with tweak = column name (the pre-SP46 default)
-        key = derive(_SEED, "phone_ns", FPE_KEY_LABEL)
-        expected = fpe_encrypt_value(value, key, "0123456789", b"acct")
+        key = derive(_SEED, "phone_ns", FF1_KEY_LABEL)
+        tweak = build_ff1_tweak(FF1_TWEAK_SCOPE_COLUMN, "acct")
+        expected = fpe_encrypt_value(value, key, "0123456789", tweak)
         assert actual == expected, (
             "Default (no fpe_join_group) must be byte-identical to tweak=column_name"
         )
 
     def test_null_passthrough_unchanged(self) -> None:
         plan = _fpe_col(namespace="phone_ns", join_group=None)
-        df = pd.DataFrame({"acct": ["12345", None, "99999"]})
+        # 6-digit values: 10**6 clears the FF1 minimum admissible domain.
+        df = pd.DataFrame({"acct": ["123456", None, "999999"]})
         out, _ = FpeStrategyHandler(chunk_count=1).run(df, "acct", plan, _ctx())
         vals = out["acct"].tolist()
         assert pd.isna(vals[1])
-        assert len(vals[0]) == 5 and vals[0].isdigit()
+        assert len(vals[0]) == 6 and vals[0].isdigit()
 
 
 # ---------------------------------------------------------------------------
@@ -617,32 +627,35 @@ class TestT6PlanCheckRejections:
 
 class TestT7CrossGroupIsolation:
     def test_different_groups_produce_different_ciphertext(self) -> None:
-        """Two distinct groups must not share ciphertext for the same value.
-        The group name IS the tweak; different tweaks -> different outputs."""
-        value = "5551234567"
+        """Two distinct groups sharing ciphertext for one value is legal for
+        a permutation (the group name is the tweak, and a single-value tweak
+        collision is a rare accident, not a contradiction); the isolation
+        guard is aggregate across several independent values, matching the
+        reasoning in TestT2F3NotRegressed above."""
+        values = ["5551234567", "9998887776", "1112223334", "4155552671"]
         plan_a = _fpe_col(namespace="phone_ns", join_group="group_alpha")
         plan_b = _fpe_col(namespace="phone_ns", join_group="group_beta")
 
-        df = pd.DataFrame({"col": [value]})
+        df = pd.DataFrame({"col": values})
         out_a, _ = FpeStrategyHandler(chunk_count=1).run(df.copy(), "col", plan_a, _ctx())
         out_b, _ = FpeStrategyHandler(chunk_count=1).run(df.copy(), "col", plan_b, _ctx())
 
-        enc_a = out_a["col"].tolist()[0]
-        enc_b = out_b["col"].tolist()[0]
-        assert enc_a != enc_b, (
-            "Cross-group isolation violated: two distinct groups must produce "
-            f"different ciphertexts for the same value (got {enc_a!r} == {enc_b!r})"
+        enc_a = out_a["col"].tolist()
+        enc_b = out_b["col"].tolist()
+        assert any(a != b for a, b in zip(enc_a, enc_b, strict=True)), (
+            "Cross-group isolation violated: every value produced identical "
+            f"ciphertext under two distinct groups (got enc_a={enc_a!r} enc_b={enc_b!r})"
         )
 
     def test_group_member_differs_from_non_group_column_of_same_name(self) -> None:
-        """A column in a join group differs from the same column without a group
-        (tweak is group name vs column name -- they are different unless a hash
-        collision, which is negligible)."""
-        value = "5551234567"
+        """A column in a join group (tweak = group name) versus the same
+        column without a group (tweak = column name): aggregate across
+        several independent values, as above."""
+        values = ["5551234567", "9998887776", "1112223334", "4155552671"]
         plan_joined = _fpe_col(namespace="phone_ns", join_group="phone_e164")
         plan_plain = _fpe_col(namespace="phone_ns", join_group=None)
 
-        df = pd.DataFrame({"msisdn": [value]})
+        df = pd.DataFrame({"msisdn": values})
         out_joined, _ = FpeStrategyHandler(chunk_count=1).run(
             df.copy(), "msisdn", plan_joined, _ctx()
         )
@@ -650,9 +663,9 @@ class TestT7CrossGroupIsolation:
             df.copy(), "msisdn", plan_plain, _ctx()
         )
 
-        enc_joined = out_joined["msisdn"].tolist()[0]
-        enc_plain = out_plain["msisdn"].tolist()[0]
-        assert enc_joined != enc_plain
+        enc_joined = out_joined["msisdn"].tolist()
+        enc_plain = out_plain["msisdn"].tolist()
+        assert any(j != p for j, p in zip(enc_joined, enc_plain, strict=True))
 
 
 # ---------------------------------------------------------------------------

@@ -98,7 +98,6 @@ def test_warning_codes_match_handler_return_surface() -> None:
     assert capabilities_for("geo_generalize").warning_codes == ("geo_generalize_cascade",)
     assert set(capabilities_for("fpe").warning_codes) == {
         "fpe_join_group_active",
-        "fpe_sub_minimum_domain",
         "fpe_partial_plaintext_disclosure",
     }
     assert set(capabilities_for("nested").warning_codes) == {

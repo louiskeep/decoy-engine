@@ -156,6 +156,15 @@ dependencies = [
     # the pydantic and boto3 promotions above. Floor covers canonicalize_name
     # and Marker, both long-stable.
     "packaging>=21.0",
+    # Task 5.2 (2026-09-11): promoted from the optional `[vault]` extra. FF1
+    # (the `fpe` strategy's cipher, transforms/_ff1.py, NIST SP 800-38G) is
+    # now the default masking primitive for every fpe column, not an opt-in
+    # feature, so its AES-256 backend must always import. `cryptography` was
+    # already the vault's Fernet dependency (>=42); the version floor is
+    # unchanged, only its promotion to base. `[vault]` stays as a
+    # compatibility alias (see below) so an existing `pip install .[vault]`
+    # still resolves.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -207,14 +216,14 @@ ner = [
 ]
 # Deferred follow-up 1 (2026-06-12): the token vault encrypts its
 # source->masked map with Fernet (AES-128-CBC + HMAC-SHA256) from the
-# audited `cryptography` package. Optional: the default install stays
-# compiled-dep-free; vault.py imports it function-locally and raises
-# vault_crypto_not_installed naming this extra when absent. No upper
-# bound: the Fernet API is stable and capping a crypto dependency pins
-# users to stale security fixes.
-vault = [
-    "cryptography>=42",
-]
+# audited `cryptography` package. Originally optional so the default install
+# stayed compiled-dep-free; Task 5.2 (2026-09-11) promoted `cryptography` to
+# a base dependency (FF1 needs AES unconditionally now), so this extra is a
+# no-op compatibility alias: it resolves to nothing new (the base install
+# already satisfies it) and is kept only so an existing `pip install
+# .[vault]` invocation, script, or Dockerfile still works unchanged. New
+# installs need no extra flag for either the vault or fpe/FF1.
+vault = []
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`
 # then `make -C docs html`. CI lives at `.github/workflows/docs.yml`.
@@ -959,11 +968,11 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/transforms/_codeset_index.py"]
+only_mutate = ["src/decoy_engine/transforms/_ff1.py"]
 pytest_add_cli_args_test_selection = [
-    "tests/unit/transforms/test_code_set.py",
+    "tests/unit/transforms/test_ff1_primitive.py",
     "-k",
-    "not docs_strategies_md",
+    "not test_exhaustive_six_digit_permutation",
 ]
 # NOTE: the execution SUBSTRATES (e.g. _planner.py) cannot be graded with this
 # harness -- mutmut's in-process runner reports genuinely-surviving mutants as

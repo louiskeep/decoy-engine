@@ -123,7 +123,7 @@ class TestShuffle:
         src = pa.table({"c": ["a", "b", "c", "d", "e"]})
         seed = _col("shuffle", namespace="sh", deterministic=True)
         out = _run(_plan("c", seed), src).output.column("c").to_pylist()
-        assert out == ["d", "e", "c", "a", "b"]
+        assert out == ["c", "d", "e", "a", "b"]
 
     def test_output_keeps_object_dtype_and_null_not_nan(self) -> None:
         # Q13: an int column widens to float64 in pandas once it carries a null;
@@ -159,9 +159,9 @@ class TestShuffle:
         assert col.type == pa.timestamp("us")
         assert [str(pd.Timestamp(v).date()) for v in col.to_pylist()] == [
             "2024-04-04",
-            "2024-01-01",
-            "2024-02-02",
             "2024-05-05",
+            "2024-02-02",
+            "2024-01-01",
             "2024-03-03",
         ]
 

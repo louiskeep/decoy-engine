@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "seed_protocol_version": 6,
+  "seed_protocol_version": 7,
   "seed_protocol_version_note": "expected_index values are valid only for this seed_protocol_version and the canonicalization live when generated; a bump invalidates them all",
   "cases": [
     {
@@ -28,10 +28,10 @@
         ""
       ],
       "expected_index": [
-        406,
-        45,
+        455,
+        550,
         null,
-        358
+        292
       ]
     },
     {
@@ -83,8 +83,8 @@
         "626f62"
       ],
       "expected_index": [
-        37003622189524510,
-        33606804572702413
+        30888903039832943,
+        29703370401708454
       ]
     },
     {
@@ -110,9 +110,9 @@
         "6361726f6c"
       ],
       "expected_index": [
-        306,
+        84,
         null,
-        519
+        118
       ]
     },
     {
@@ -180,8 +180,8 @@
         "636166c3a9"
       ],
       "expected_index": [
-        302,
-        302
+        833,
+        833
       ]
     },
     {
@@ -203,7 +203,7 @@
         "63"
       ],
       "expected_index": [
-        31972
+        77448
       ]
     },
     {
@@ -225,7 +225,7 @@
         "6263"
       ],
       "expected_index": [
-        40596
+        41694
       ]
     },
     {
@@ -247,7 +247,7 @@
         "616c696365"
       ],
       "expected_index": [
-        88
+        946
       ]
     },
     {
@@ -273,8 +273,8 @@
         null
       ],
       "expected_index": [
-        904,
-        468,
+        953,
+        97,
         null
       ]
     },
@@ -307,11 +307,11 @@
         null
       ],
       "expected_index": [
-        1684,
-        3416,
-        1289,
-        3605,
-        1496,
+        1889,
+        472,
+        103,
+        2031,
+        3598,
         null
       ]
     },
@@ -340,9 +340,9 @@
         null
       ],
       "expected_index": [
-        1289,
-        3605,
-        3354,
+        103,
+        2031,
+        3478,
         null
       ]
     },
@@ -371,9 +371,9 @@
         null
       ],
       "expected_index": [
-        2824,
-        1289,
-        2897,
+        1000,
+        103,
+        3928,
         null
       ]
     },
@@ -400,8 +400,8 @@
         null
       ],
       "expected_index": [
-        1289,
-        796,
+        103,
+        1134,
         null
       ]
     },
@@ -430,9 +430,9 @@
         null
       ],
       "expected_index": [
-        1226,
-        1289,
-        914,
+        601,
+        103,
+        1362,
         null
       ]
     },
@@ -459,8 +459,8 @@
         null
       ],
       "expected_index": [
-        1289,
-        3969,
+        103,
+        4082,
         null
       ]
     },
@@ -489,9 +489,9 @@
         null
       ],
       "expected_index": [
-        2346,
-        1289,
-        553,
+        1794,
+        103,
+        1014,
         null
       ]
     },
@@ -518,8 +518,8 @@
         null
       ],
       "expected_index": [
-        1289,
-        369,
+        103,
+        4090,
         null
       ]
     },
@@ -546,8 +546,8 @@
         null
       ],
       "expected_index": [
-        37,
-        22,
+        23,
+        34,
         null
       ]
     },
@@ -572,7 +572,7 @@
         null
       ],
       "expected_index": [
-        771,
+        189,
         null
       ]
     },
@@ -597,7 +597,7 @@
         null
       ],
       "expected_index": [
-        117,
+        457,
         null
       ]
     },
@@ -624,8 +624,8 @@
         null
       ],
       "expected_index": [
-        974,
-        266,
+        330,
+        363,
         null
       ]
     },
@@ -654,9 +654,9 @@
         null
       ],
       "expected_index": [
-        90,
-        744,
-        771,
+        719,
+        628,
+        189,
         null
       ]
     },
@@ -681,7 +681,7 @@
         null
       ],
       "expected_index": [
-        599,
+        903,
         null
       ]
     }

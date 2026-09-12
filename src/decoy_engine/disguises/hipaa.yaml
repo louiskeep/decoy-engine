@@ -343,7 +343,7 @@ field_rules:
 
   # Clinical: National Provider Identifiers -> FPE with NPI checksum.
   # SP-11: added checksum: npi so masked NPIs are valid by construction.
-  # The Feistel permutation rewrites the 9-digit body and then recomputes
+  # The FF1 permutation rewrites the 9-digit body and then recomputes
   # the check digit per the CMS NPPES spec (Luhn applied to prefix 80840 +
   # 9-digit body). Masked NPIs pass NPI validators used in downstream systems.
   # The 1/2 leading digit is preserved (NPPES allocates only 1- and 2-prefixed

@@ -49,7 +49,7 @@ hash KAT and the index KAT (both below), including the exact Arrow return type.
 ```
 derive_batch(["alice"], mask_key=bytes(range(32)), namespace="people.ssn",
              truncate=None, native_threads=1)
-== ["398a93520101bdc8e91ad659396a2bdf262bb59224ba39bfc807e075c33ab64c"]
+== ["0e0f7092a5bfbb5b1719ff096993a5169d585c0916277d18746eb21c8b246acd"]  # SEED_PROTOCOL_VERSION 7
 Arrow type: string
 ```
 
@@ -58,7 +58,7 @@ Arrow type: string
 ```
 derive_index_batch(["alice"], mask_key=bytes(range(32)), namespace="pool.city",
                     pool_size=97, native_threads=1)
-== [59]
+== [72]  # SEED_PROTOCOL_VERSION 7
 Arrow type: uint64
 ```
 

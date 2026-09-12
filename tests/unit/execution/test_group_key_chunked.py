@@ -214,7 +214,7 @@ class TestLiteralPinnedKey:
     # Generated ONCE via `derive(bytes.fromhex("0102030405060708"),
     # "group_key/household_key", b"H-1001")[:8].hex()`; hardcoded here so the
     # assertion is not a derive(...) call recomputing the same thing.
-    _EXPECTED_KEY = "0fd9b889d8553b2d"
+    _EXPECTED_KEY = "a95d6cece5608252"
 
     def test_direct_handler_matches_pinned_literal(self) -> None:
         config = GroupKeyConfig.from_dict({"group_by": "household_id"})

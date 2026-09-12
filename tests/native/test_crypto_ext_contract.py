@@ -23,7 +23,7 @@ import pytest
 from decoy_engine.determinism import derive
 from decoy_engine.errors import MaskKeyRequiredError
 from decoy_engine.execution._adapter import StrategyContext
-from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL, FpeStrategyHandler
+from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution.native._crypto_ext import (
     CRYPTO_EXT_ABI,
     FPE_KAT,
@@ -43,7 +43,13 @@ from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
-from decoy_engine.transforms.fpe import fpe_encrypt_value
+from decoy_engine.transforms.fpe import (
+    FF1_KEY_LABEL,
+    FF1_TWEAK_SCOPE_COLUMN,
+    FF1_TWEAK_SCOPE_JOIN_GROUP,
+    build_ff1_tweak,
+    fpe_encrypt_value,
+)
 
 MK32 = bytes(range(32))
 NS = "people.ssn"
@@ -174,7 +180,7 @@ def test_hash_missing_key_fails_closed() -> None:
 @pytest.mark.parametrize(
     "config,column,rows",
     [
-        ({"charset": "digits"}, "acct", ["12345", "67890", None, "12345"]),
+        ({"charset": "digits"}, "acct", ["123456", "678901", None, "123456"]),
         ({"charset": "digits"}, "ssn", ["123-45-6789", "000-11-2222"]),
         (
             {"charset": "ALPHANUM"},
@@ -212,7 +218,7 @@ def test_reference_fpe_matches_shipped_strategy(
 @pytest.mark.parametrize(
     "config,column,rows",
     [
-        ({"charset": "digits"}, "acct", ["12345", "67890", "00000"]),
+        ({"charset": "digits"}, "acct", ["123456", "678901", "000000"]),
         ({"charset": "digits", "preserve_separators": True}, "ssn", ["123-45-6789"]),
         ({"charset": "ALPHANUM"}, "code", ["AB12CD", "ZZ99ZZ"]),
         ({"charset": "digits", "validate_luhn": True}, "pan", ["4111111111111111"]),
@@ -239,8 +245,11 @@ def test_fpe_kat_reproduced_by_reference_and_shipped() -> None:
     for vec in FPE_KAT:
         cfg = vec.config
         resolved_charset, preserve_sep, validate_luhn, checksum = cfg._resolve()
-        key = derive(vec.mask_key, vec.namespace, FPE_KEY_LABEL)
-        tweak = (cfg.join_group or vec.tweak_column).encode("utf-8", errors="replace")
+        key = derive(vec.mask_key, vec.namespace, FF1_KEY_LABEL)
+        tweak = build_ff1_tweak(
+            FF1_TWEAK_SCOPE_JOIN_GROUP if cfg.join_group else FF1_TWEAK_SCOPE_COLUMN,
+            cfg.join_group or vec.tweak_column,
+        )
         shipped = fpe_encrypt_value(
             vec.plaintext, key, resolved_charset, tweak, preserve_sep, validate_luhn, checksum
         )
@@ -279,7 +288,7 @@ def test_fpe_per_row_error_is_structured_and_redacted() -> None:
     # structured error must NOT embed the offending cell value (PII discipline).
     secret = "12-34"  # the dash is out of the digits charset
     result = reference_fpe().encrypt_batch(
-        pa.array(["1234", secret], type=pa.string()),
+        pa.array(["123456", secret], type=pa.string()),
         mask_key=MK32,
         namespace=NS,
         tweak_column="acct",
@@ -298,14 +307,14 @@ def test_fpe_join_group_shares_tweak_and_warns() -> None:
     # identically, and the batch surfaces the join-group warning.
     cfg = FpeConfig(charset="digits", join_group="link")
     a = reference_fpe().encrypt_batch(
-        pa.array(["12345"], type=pa.string()),
+        pa.array(["123456"], type=pa.string()),
         mask_key=MK32,
         namespace=NS,
         tweak_column="col_a",
         config=cfg,
     )
     b = reference_fpe().encrypt_batch(
-        pa.array(["12345"], type=pa.string()),
+        pa.array(["123456"], type=pa.string()),
         mask_key=MK32,
         namespace=NS,
         tweak_column="col_b",

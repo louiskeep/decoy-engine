@@ -13,7 +13,7 @@ set is exactly those:
 | strategy     | why chunk-safe |
 |--------------|----------------|
 | hash         | HMAC of the value |
-| fpe          | keyed Feistel permutation of the value |
+| fpe          | keyed FF1 permutation of the value |
 | redact       | constant |
 | truncate     | prefix of the value |
 | text_redact  | span replacement within the cell |

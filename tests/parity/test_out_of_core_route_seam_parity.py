@@ -647,7 +647,14 @@ def test_every_admitted_payload_strategy_parity(strategy: str) -> None:
 
 _UNDECLARED_OUTPUT_CODE = "undeclared_output_columns"
 _ORPHAN_FAIL_CODE = "orphan_fk_violation"
-_FPE_UNENCRYPTABLE_CODE = "fpe_unencryptable_value"
+# Task 5.2: an fpe fail-closed raise now carries one of three codes depending
+# on which pinned validation-order check failed first for the offending
+# value ("abc" trips the DE-01 all-out-of-charset guard = `_value`; a
+# sub-floor in-charset value like "12345" trips the FF1 minimum-domain guard
+# = `_domain`). Both routes still fail closed either way; this set is what
+# "both codes must be one of the expected fail-closed codes, not necessarily
+# equal" actually means now.
+_FPE_UNENCRYPTABLE_CODES = frozenset({"fpe_unencryptable_value", "fpe_unencryptable_domain"})
 
 
 def _passthrough_fk_seed(namespace: str) -> ColumnSeed:
@@ -824,15 +831,15 @@ def test_orphan_fail_x_masking_both_fail_closed_codes_may_differ() -> None:
 
     batch_code = getattr(batch_val, "code", None)
     reorder_code = getattr(reorder_val, "code", None)
-    # The carve-out: both codes must be one of the two expected fail-closed
+    # The carve-out: both codes must be one of the expected fail-closed
     # codes, but they are NOT asserted equal -- that is the point of this test.
-    assert batch_code in {_ORPHAN_FAIL_CODE, _FPE_UNENCRYPTABLE_CODE}, batch_code
-    assert reorder_code in {_ORPHAN_FAIL_CODE, _FPE_UNENCRYPTABLE_CODE}, reorder_code
+    assert batch_code in ({_ORPHAN_FAIL_CODE} | _FPE_UNENCRYPTABLE_CODES), batch_code
+    assert reorder_code in ({_ORPHAN_FAIL_CODE} | _FPE_UNENCRYPTABLE_CODES), reorder_code
     # Pin the actual per-route ordering the carve-out narrative depends on,
     # not just "some fail-closed code": batch's orphan precount always wins
     # before masking; reorder's masking always wins before its orphan check.
     assert batch_code == _ORPHAN_FAIL_CODE, f"batch route raised {batch_code!r}, expected orphan"
-    assert reorder_code == _FPE_UNENCRYPTABLE_CODE, (
+    assert reorder_code in _FPE_UNENCRYPTABLE_CODES, (
         f"reorder route raised {reorder_code!r}, expected fpe (masks before its own FAIL check)"
     )
 

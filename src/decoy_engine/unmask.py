@@ -11,7 +11,7 @@ What reverses and what does not:
 
 | strategy             | status         | why |
 |----------------------|----------------|-----|
-| fpe                  | reversed       | keyed Feistel permutation is a bijection; key = derive(seed, ns, FPE_KEY_LABEL) (single-key/varying-tweak model; home-rolled HMAC-SHA256 Feistel, NOT NIST FF1) |
+| fpe                  | reversed_unverified | keyed NIST SP 800-38G FF1 permutation is a bijection; key = derive(seed, ns, FF1_KEY_LABEL). ALWAYS reported unverified (never plain `reversed`, even under a real secret): FF1 is unauthenticated, so a wrong key yields plausible but wrong plaintext with no signal that it is wrong (Task 5.2 P4) |
 | any one-way + vault: true + vault file | vault_reversed / vault_miss | the mask run recorded the source->masked map into an encrypted vault (decoy_engine.vault); lookup keyed by (namespace, masked) |
 | hash                 | irreversible   | HMAC-SHA256 is one-way; recovery needs the column's vault |
 | redact / truncate    | irreversible   | information destroyed |
@@ -40,10 +40,18 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.determinism import derive
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
+from decoy_engine.execution._strategies._fpe import FF1_KEY_LABEL
 from decoy_engine.plan._seed import _normalize_job_seed
-from decoy_engine.transforms.fpe import _CHARSETS, fpe_decrypt_value
+from decoy_engine.transforms.fpe import (
+    FF1_TWEAK_SCOPE_COLUMN,
+    FF1_TWEAK_SCOPE_JOIN_GROUP,
+    build_ff1_tweak,
+    check_charset_unique,
+    fpe_decrypt_value,
+    resolve_fpe_charset,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
@@ -57,9 +65,10 @@ _CHECKSUM_CAVEAT = (
     "byte-exact iff the source was valid for the scheme"
 )
 _FPE_UNVERIFIED_CAVEAT = (
-    "UNVERIFIED: reversed under the non-secret job_seed fallback (no mask secret "
-    "supplied). FPE is unauthenticated -- a wrong key yields plausible but WRONG "
-    "plaintext. Supply the mask secret to reverse authentically."
+    "UNVERIFIED: FF1 is unauthenticated, so a wrong key yields a plausible-looking "
+    "but WRONG plaintext with no signal that it is wrong. This caveat applies "
+    "regardless of whether a mask secret was supplied (Task 5.2 P4); there is "
+    "no authenticated-reversal mode for FF1 today."
 )
 
 
@@ -91,11 +100,37 @@ def _decrypt_column(
     key: bytes,
     cfg: dict[str, Any],
     tweak: bytes,
+    table_name: str,
 ) -> pa.Table:
     charset_spec = cfg.get("charset", "digits")
-    charset = "".join(dict.fromkeys(_CHARSETS.get(charset_spec, charset_spec)))
+    charset = resolve_fpe_charset(charset_spec)
+    # Round-2 BLOCKER-2/MEDIUM-2: a duplicate-symbol or degenerate charset can
+    # never have produced a masked value in the first place (the mask-side
+    # `FpeStrategyHandler.run` / OOC `fpe_array` fail closed on both, codes
+    # `fpe_charset_duplicate_symbols` / `fpe_charset_degenerate`). This used to
+    # be a silent `return table` no-op here -- the column came back UNCHANGED
+    # (still ciphertext, or whatever the stored config now resolves to) while
+    # the caller still reported `reversed_unverified`, a silent failed
+    # reversal masquerading as a completed one. Fail closed instead, matching
+    # the mask side's codes exactly, so a config edited after the mask run
+    # (or a hand-written unmask config) cannot produce a false reversal claim.
+    try:
+        check_charset_unique(charset_spec, charset)
+    except FpeUnencryptableError as exc:
+        raise ExecutionError(
+            code="fpe_charset_duplicate_symbols",
+            message=f"column {column!r} in table {table_name!r}: {exc}",
+        ) from exc
     if len(charset) < 2:
-        return table  # degenerate charset was a passthrough on encrypt too
+        raise ExecutionError(
+            code="fpe_charset_degenerate",
+            message=(
+                f"column {column!r} in table {table_name!r} uses fpe but its "
+                f"resolved charset {charset_spec!r} -> {charset!r} has fewer than 2 "
+                "distinct characters. A degenerate charset has nothing to permute "
+                "over, so this column cannot be reversed."
+            ),
+        )
     preserve_sep = bool(cfg.get("preserve_separators", True))
     # Codex cross-model review (2026-07-14): forward `checksum` and mirror the
     # encrypt-side resolution EXACTLY (checksum takes priority over validate_luhn).
@@ -109,13 +144,22 @@ def _decrypt_column(
         and bool(cfg.get("validate_luhn", False))
         and all(c in "0123456789" for c in charset)
     )
+
+    def _decrypt_one(v: object) -> object:
+        if v is None:
+            return v
+        s = str(v)
+        if s == "":
+            # Empty string is not null; the mask side now treats it as a
+            # missing-data passthrough rather than sending it to the cipher
+            # (plan P2: an empty value's domain is below the FF1 floor), so
+            # the masked output already carries it unchanged. Mirror that
+            # here instead of calling `fpe_decrypt_value` on it.
+            return s
+        return fpe_decrypt_value(s, key, charset, tweak, preserve_sep, validate_luhn, checksum)
+
     values = table.column(column).to_pylist()
-    decrypted = [
-        v
-        if v is None
-        else fpe_decrypt_value(str(v), key, charset, tweak, preserve_sep, validate_luhn, checksum)
-        for v in values
-    ]
+    decrypted = [_decrypt_one(v) for v in values]
     idx = table.schema.get_field_index(column)
     return table.set_column(idx, column, pa.array(decrypted, type=pa.string()))
 
@@ -349,15 +393,18 @@ def unmask_pipeline(
                     ),
                 )
             cfg = col_cfg.get("provider_config") or {}
-            key = derive(mask_key, namespace, FPE_KEY_LABEL)
+            key = derive(mask_key, namespace, FF1_KEY_LABEL)
             # SP-46: mirror the join-group tweak resolution from _strategies/_fpe.py.
             # When fpe_join_group is set the tweak is the group name, not the column
             # name; using the wrong tweak produces incorrect decryption. The config
             # carries the same fpe_join_group value the mask run used, so this
             # lookup is always safe (same config -> same tweak resolution).
             join_group: str | None = cfg.get("fpe_join_group") or None
-            fpe_tweak = (join_group or col).encode("utf-8", errors="replace")
-            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak)
+            fpe_tweak = build_ff1_tweak(
+                FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN,
+                join_group or col,
+            )
+            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak, table_name=name)
             # checksum takes priority over validate_luhn (same as encrypt). Both
             # recompute the check digit on decrypt rather than store it, so the
             # round trip is byte-exact iff the source was valid for the scheme.
@@ -368,15 +415,15 @@ def unmask_pipeline(
                 detail = _LUHN_CAVEAT
             else:
                 detail = ""
-            # DE-02 (Codex MEDIUM 6): FPE is unauthenticated -- a wrong key yields
-            # plausible-looking (but wrong) plaintext. When reversing under the
-            # non-secret job_seed fallback (no >=32-byte secret supplied), flag the
-            # reversal as unverified so a consumer does not treat it as an
-            # authenticated round-trip. Under a real secret this caveat is omitted.
-            fpe_status = "reversed" if _authenticated else "reversed_unverified"
-            if not _authenticated:
-                caveat = _FPE_UNVERIFIED_CAVEAT
-                detail = f"{detail} {caveat}".strip() if detail else caveat
+            # Task 5.2 P4 (round-2 finding 3 / BLOCKER-2): FF1 is unauthenticated
+            # for every reversal, secret or not. A wrong key yields a plausible
+            # but WRONG plaintext with no signal that it is wrong. Pre-FF1, a
+            # real secret upgraded this to a plain `reversed` status; that
+            # distinction no longer holds, so EVERY fpe reversal now reports
+            # `reversed_unverified`, including the secret-keyed path.
+            fpe_status = "reversed_unverified"
+            caveat = _FPE_UNVERIFIED_CAVEAT
+            detail = f"{detail} {caveat}".strip() if detail else caveat
             reports.append(
                 UnmaskColumnReport(
                     table=name,

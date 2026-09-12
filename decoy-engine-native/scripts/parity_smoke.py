@@ -35,9 +35,12 @@ _EXPECTED_ABI_VERSION = "decoy-native-abi-2"
 _MASK_KEY = bytes(range(32))
 
 _HASH_EXPECTED = [
-    "398a93520101bdc8e91ad659396a2bdf262bb59224ba39bfc807e075c33ab64c",
+    # SEED_PROTOCOL_VERSION 7 vector (Task 5.2 FF1 bumped 6 -> 7; the derivation
+    # envelope mixes the protocol version into every keyed HMAC, so this vector
+    # changed from the v6 value the file shipped with in Task 3.1).
+    "0e0f7092a5bfbb5b1719ff096993a5169d585c0916277d18746eb21c8b246acd",
 ]
-_INDEX_EXPECTED = [59]
+_INDEX_EXPECTED = [72]
 
 
 def main() -> int:

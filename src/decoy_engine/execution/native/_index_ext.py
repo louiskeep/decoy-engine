@@ -67,7 +67,7 @@ INDEX_KAT = IndexKatVector(
     namespace="pool.city",
     pool_size=97,
     values=("alice", "bob", None, "carol"),
-    expected=(59, 61, None, 90),
+    expected=(72, 65, None, 51),
 )
 
 

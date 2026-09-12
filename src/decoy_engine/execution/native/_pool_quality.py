@@ -57,23 +57,32 @@ MARGIN = 0.02
 # (3,000,000-row) tiers because pool_size (10,000) and each column's
 # distinct_sources (1,000 FIRST / 1,200 LAST / 360 MAIDEN) are fixed by the
 # frozen recipe, not derived from row count.
+#
+# Re-derived at SEED_PROTOCOL_VERSION 7 (Task 5.2, 2026-09-11). The pool draw
+# is keyed through `derive()`, which mixes in the protocol version byte, so
+# the 6 -> 7 bump reshuffles which pool entry each source lands on and moves
+# the observed collision/duplicate rates within their normal seed-to-seed
+# variance (the rate is a birthday-problem statistic of distinct_sources into
+# pool_size, which the bump does not change). The metric definition, the
+# threshold formula, and MARGIN are unchanged; only the empirical baseline
+# these gates freeze against moves. Prior v6 values, for the record: collision
+# FIRST 0.6430 / LAST 0.5617 / MAIDEN 0.2944; duplicate FIRST 0.9338 / LAST
+# 0.9013 / MAIDEN 0.9017.
 ORACLE_COLLISION_RATE: Mapping[str, float] = {
-    "FIRST": 0.6430,
-    "LAST": 0.5617,
-    "MAIDEN": 0.2944,
+    "FIRST": 0.6530,
+    "LAST": 0.5508,
+    "MAIDEN": 0.3361,
 }
 ORACLE_POOL_DUPLICATE_RATE: Mapping[str, float] = {
-    "FIRST": 0.9338,
-    "LAST": 0.9013,
-    "MAIDEN": 0.9017,
+    "FIRST": 0.9349,
+    "LAST": 0.9020,
+    "MAIDEN": 0.9014,
 }
 
-# threshold = oracle_observed_rate + MARGIN (PHASE3-C1-BASELINE.md "Frozen
-# per-tier thresholds" table: FIRST 0.6630 / 0.9538, LAST 0.5817 / 0.9213,
-# MAIDEN 0.3144 / 0.9217). Derived here, not hand-copied, so the provenance
-# stays explicit; Step 6 of the baseline run asserts the oracle itself
-# passes these (a non-negative margin over its own observed rate can never
-# make the oracle fail its own bar).
+# threshold = oracle_observed_rate + MARGIN. Derived here, not hand-copied, so
+# the provenance stays explicit; Step 6 of the baseline run asserts the oracle
+# itself passes these (a non-negative margin over its own observed rate can
+# never make the oracle fail its own bar).
 COLLISION_RATE_THRESHOLD: Mapping[str, float] = {
     column: rate + MARGIN for column, rate in ORACLE_COLLISION_RATE.items()
 }

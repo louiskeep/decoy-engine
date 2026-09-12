@@ -434,9 +434,19 @@ class TestCollectEntries:
 
 # Subprocess that simulates the `cryptography` package being absent via a
 # meta-path finder (the established optional-dep pattern, see
-# tests/unit/providers_v2/mimesis/test_optional_dep.py). Imports must
-# succeed (vault.py imports cryptography function-locally); only the
-# write/load calls raise, naming the extra.
+# tests/unit/providers_v2/mimesis/test_optional_dep.py).
+#
+# Task 5.2 promoted `cryptography` from the optional `vault` extra to a base
+# dependency (the FF1 cipher needs AES unconditionally, not just vault), so
+# the old contract this test pinned -- "decoy_engine imports fine without
+# cryptography; only vault write/load raise a named-extra VaultError" -- no
+# longer holds. `_ff1.py` imports `cryptography` at module level and is
+# reached during `decoy_engine`'s own package import (via
+# `execution._strategies._fpe`), so `import decoy_engine` itself now fails
+# closed with a loud `ModuleNotFoundError` before vault.py's function-local
+# import is ever reached. This pins the NEW contract instead of the retired
+# one: the failure is loud, at import time, for the whole package, not a
+# vault-specific graceful degradation.
 _ABSENT_SCRIPT = """
 import json
 import sys
@@ -452,31 +462,23 @@ for mod in list(sys.modules):
     if mod == "cryptography" or mod.startswith("cryptography."):
         del sys.modules[mod]
 
-import decoy_engine
-from decoy_engine.vault import VaultError, VaultWriter, load_vault
-
-result = {"import_ok": True}
-writer = VaultWriter(b"\\x01" * 8)
-writer.add([("ns", "m", "s")])
+result = {}
 try:
-    writer.write("/tmp/decoy-vault-absent-test.bin")
-    result["write_raised"] = False
-except VaultError as exc:
-    result["write_raised"] = True
-    result["write_code"] = exc.code
-    result["names_extra"] = "decoy-engine[vault]" in exc.message
-try:
-    load_vault("/tmp/decoy-vault-absent-test.bin", b"\\x01" * 8)
-    result["load_raised"] = False
-except VaultError as exc:
-    result["load_raised"] = True
-    result["load_code"] = exc.code
+    import decoy_engine  # noqa: F401
+    result["import_ok"] = True
+except ModuleNotFoundError as exc:
+    result["import_ok"] = False
+    result["import_error"] = str(exc)
 print(json.dumps(result))
 """
 
 
 class TestCryptoAbsent:
-    def test_absent_behavior_in_subprocess(self) -> None:
+    def test_absent_fails_closed_at_package_import(self) -> None:
+        """`cryptography` is a base dependency (Task 5.2): with it blocked,
+        `import decoy_engine` fails loudly and immediately rather than
+        degrading gracefully. There is no supported way to run any part of
+        the engine, vault included, without `cryptography` installed."""
         proc = subprocess.run(  # noqa: S603 -- args are test literals, not untrusted input
             [sys.executable, "-c", _ABSENT_SCRIPT],
             capture_output=True,
@@ -484,9 +486,5 @@ class TestCryptoAbsent:
             check=True,
         )
         result = json.loads(proc.stdout.strip())
-        assert result["import_ok"] is True
-        assert result["write_raised"] is True
-        assert result["write_code"] == "vault_crypto_not_installed"
-        assert result["names_extra"] is True
-        assert result["load_raised"] is True
-        assert result["load_code"] == "vault_crypto_not_installed"
+        assert result["import_ok"] is False
+        assert "cryptography" in result["import_error"]

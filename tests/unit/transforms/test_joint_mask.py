@@ -488,12 +488,12 @@ class TestMaskRowSelection:
             for i in range(6)
         ]
         assert out == [
-            ("30302", "Atlanta", "GA"),
-            ("92104", "San Diego", "CA"),
-            ("85004", "Phoenix", "AZ"),
-            ("98103", "Seattle", "WA"),
-            ("77002", "Houston", "TX"),
-            ("77003", "Houston", "TX"),
+            ("90001", "Los Angeles", "CA"),
+            ("19103", "Philadelphia", "PA"),
+            ("77004", "Houston", "TX"),
+            ("92101", "San Diego", "CA"),
+            ("60604", "Chicago", "IL"),
+            ("60601", "Chicago", "IL"),
         ]
 
     def test_unsupported_mode_fails_closed(self):

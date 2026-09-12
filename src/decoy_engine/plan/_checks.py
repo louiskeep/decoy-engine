@@ -552,7 +552,7 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
        ``fpe_checksum_unknown_scheme``.
 
     2. IBAN (``checksum: iban``): per-country BBAN structure enforced by
-       ``stdnum.iban.validate`` cannot be satisfied by a free Feistel
+       ``stdnum.iban.validate`` cannot be satisfied by a format-preservation
        permutation.  Raises with code ``fpe_checksum_iban_unsupported``.
        IBAN columns may still use ``checksums.validate('iban', ...)`` for
        validation-only use cases; only the FPE mode is rejected here.

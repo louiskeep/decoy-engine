@@ -166,7 +166,9 @@ class TestParallelismParity:
     def test_fpe_chunk_count_knob_honored_and_parity(self) -> None:
         # 50 rows so chunk_count=4 does not short-circuit to serial inside the
         # FPE handler; the adapter knob must thread through and be byte-identical.
-        src = pa.table({"acct": [f"{i:05d}" for i in range(50)]})
+        # 6-digit: radix 10, length 6 clears the FF1 minimum admissible domain
+        # (10**6 == 1,000,000); 5 digits would fail closed on the domain floor.
+        src = pa.table({"acct": [f"{i:06d}" for i in range(50)]})
         plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
         one = PandasExecutionAdapter(fpe_chunk_count=1).run_single(
             plan, src, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS

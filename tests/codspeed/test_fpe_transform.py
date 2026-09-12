@@ -2,9 +2,9 @@
 ``fpe`` masking strategy (``decoy_engine.execution._strategies._fpe``).
 
 ``fpe_encrypt_value`` (``decoy_engine.transforms.fpe``) is the primitive the
-strategy calls once per cell -- an 8-round HMAC-SHA256 Feistel permutation
-(see that module's docstring for the "why not FF1" rationale). It is CPU-bound
-and allocation-heavy per call (one HMAC per round), so it is the clearest
+strategy calls once per cell: NIST SP 800-38G FF1 (10 rounds, AES-256
+CBC-MAC PRF; see ``transforms/_ff1.py``). It is CPU-bound and
+allocation-heavy per call (one AES call per round), so it is the clearest
 representative hot path for a masking transform: real column-shaped input,
 no I/O, no pandas overhead diluting the measurement.
 
@@ -18,13 +18,14 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine.determinism import derive
-from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
+from decoy_engine.transforms.fpe import _CHARSETS, FF1_KEY_LABEL, fpe_encrypt_value
 
 pytestmark = pytest.mark.codspeed
 
 _ROW_COUNT = 2_000
-# derive() requires an 8-byte (job_seed) or 32-byte (mask_key) IKM.
-_KEY = derive(b"cdsp-bch", "fpe_codspeed_bench", b"fpe-key/v1")
+# derive() requires an 8-byte (job_seed) or 32-byte (mask_key) IKM; the FF1
+# profile then requires the resulting key be exactly 32 bytes (AES-256 only).
+_KEY = derive(b"cdsp-bch", "fpe_codspeed_bench", FF1_KEY_LABEL)
 _TWEAK = b"acct"
 _CHARSET = _CHARSETS["digits"]
 _VALUES = [f"{100_000_000 + i:09d}" for i in range(_ROW_COUNT)]

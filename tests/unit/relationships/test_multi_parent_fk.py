@@ -172,10 +172,12 @@ class TestMultiParentResolveE2E:
         )
         graph = RelationshipGraph(edges=edges, ordering=())
         sources = {
-            # "shared1" lives in BOTH parents: precedence cell.
+            # "shared1" lives in BOTH parents: precedence cell. parent_b's ids
+            # are fpe/alphanum (radix 36): 4+ in-charset chars clears the FF1
+            # minimum admissible domain (36**4 >= 1,000,000; 36**2 does not).
             "parent_a": pa.table({"id": ["a1", "a2", "shared1"]}),
-            "parent_b": pa.table({"id": ["b1", "b2", "shared1"]}),
-            "child": pa.table({"id": ["a1", "b1", "shared1", "ghost"]}),
+            "parent_b": pa.table({"id": ["b0001", "b0002", "shared1"]}),
+            "child": pa.table({"id": ["a1", "b0001", "shared1", "ghost"]}),
         }
         return PandasExecutionAdapter().run(
             plan,
@@ -191,7 +193,7 @@ class TestMultiParentResolveE2E:
         out_b = result.outputs["parent_b"].column("id").to_pylist()
         child = result.outputs["child"].column("id").to_pylist()
         assert child[0] == out_a[0]  # a1 through parent_a's mask
-        assert child[1] == out_b[0]  # b1 through parent_b's mask
+        assert child[1] == out_b[0]  # b0001 through parent_b's mask
 
     def test_overlapping_key_resolves_to_first_declared_parent(self) -> None:
         result = self._run()

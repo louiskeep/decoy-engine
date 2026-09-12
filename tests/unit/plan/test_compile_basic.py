@@ -22,13 +22,15 @@ class TestCompilePlanHappyPath:
     def test_compile_stamps_versions(self, simple_config: dict, simple_profile: Profile) -> None:
         """S3 bumped seed_protocol_version 0 -> 1; F-series 1 -> 2;
         QA walks/gen F3 2 -> 3; formula-hash 3 -> 4 (2026-06-01);
-        WS1 FPE detokenization 4 -> 5 (2026-06-12).
+        WS1 FPE detokenization 4 -> 5 (2026-06-12); F2/F3 generation
+        rewrite 5 -> 6 (2026-06-26); Task 5.2 FF1 primitive swap 6 -> 7
+        (2026-09-11).
 
         plan_version bumped 1 -> 2 for the DPS Scope B pinned
         `GenerationPlan` payload (guide section 4.7)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_version == 2
-        assert plan.seed_protocol_version == 6
+        assert plan.seed_protocol_version == 7
         assert plan.engine_version == "0.1.0"
 
     def test_compile_records_thirty_checks_passed(
@@ -141,16 +143,16 @@ class TestYamlRoundTrip:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
         assert "plan_version: 2" in y
-        assert "seed_protocol_version: 6" in y
+        assert "seed_protocol_version: 7" in y
 
-    def test_yaml_emits_seed_protocol_version_six(
+    def test_yaml_emits_seed_protocol_version_seven(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
-        """The F2/F3 generation rewrite bumps the stamped
-        seed_protocol_version to 6 (see determinism/_derive.py history)."""
+        """Task 5.2 (FF1 primitive swap) bumps the stamped
+        seed_protocol_version to 7 (see determinism/_derive.py history)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "seed_protocol_version: 6" in y
+        assert "seed_protocol_version: 7" in y
 
     @pytest.mark.parametrize("policy", ["preserve", "remap", "warn", "fail"])
     def test_round_trip_preserves_each_orphan_policy(

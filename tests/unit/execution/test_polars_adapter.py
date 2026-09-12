@@ -325,7 +325,9 @@ class TestFallbackParity:
         assert res.outputs["t"].to_pydict() == _pandas_outputs(plan, {"t": src})["t"]
 
     def test_fpe_backend_strategy_matches_pandas(self) -> None:
-        src = pa.table({"acct": [f"{i:05d}" for i in range(50)]})
+        # 6-digit: radix 10, length 6 clears the FF1 minimum admissible domain
+        # (10**6 == 1,000,000); 5 digits would fail closed on the domain floor.
+        src = pa.table({"acct": [f"{i:06d}" for i in range(50)]})
         plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
         res = _polars_run(plan, {"t": src})
         pandas_out = _pandas_outputs(plan, {"t": src})["t"]

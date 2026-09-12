@@ -20,17 +20,17 @@ def test_hash_array_matches_frozen_pandas_snapshot() -> None:
     bool_values = pa.array([True, None], from_pandas=True)
 
     assert hash_array(text_values, seed=_SEED, namespace="ids").to_pylist() == [
-        "7ad63ec83b23d0e64567f43828bbed7f9cb2fed9dcea5ccae673ea1cbdaf9d0a",
-        "6e7264e5d6614602464575d589ca17f2bae8cc76bf3f93944c6bdb75ea2b764a",
-        "9a92b3b1ec4f7ba9b5ca6dcdb98188a1af9dde3543136c471201e083162b4041",
+        "0940123754a253cc8de95f6966c1a654c8888daad2ca2055a9fda0d1ec74c02a",
+        "4eb6c093573a837fc175be5c53fcb1f65b580911f7aa278737f4e060e7676300",
+        "bc7ade02649abf89a0fa7fe197d85e219a5c97f8ad9ee40bb3a285713ea80bb4",
         None,
     ]
     assert hash_array(int_values, seed=_SEED, namespace="ids").to_pylist() == [
-        "9ceda639d8bcb053d74c44cbbf5355148abdfb695e7c2c5da19139f45defd2d7",
+        "746537fef5ffc4806fca15f66d2c286ba909f2b71acc7c34bfbfcfaccb027173",
         None,
     ]
     assert hash_array(bool_values, seed=_SEED, namespace="ids").to_pylist() == [
-        "8755a01ac28bc82f33202d957844f0b61b2be4249722872f862b9593bbd92565",
+        "8b223319caba78352b2ad9774067a93af81e7bb22406bd7a97cccf2251d45b90",
         None,
     ]
 

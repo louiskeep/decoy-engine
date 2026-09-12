@@ -12,8 +12,10 @@ An encrypted file containing `(namespace, masked_value) ->
 source_value` triples for every column declared `vault: true`. Each
 bounded chunk of entries is serialized as a Parquet table and encrypted
 with Fernet (AES-128-CBC + HMAC-SHA256, encrypt-then-MAC, per the
-Fernet spec) from the `cryptography` package, installed via the optional
-`vault` extra. The file is a sequence of such encrypted chunks, so the
+Fernet spec) from the `cryptography` package, a base dependency since
+Task 5.2 promoted it out of the optional `vault` extra (FF1 needs AES
+unconditionally, not just vault; the `[vault]` extra is now a no-op
+compatibility alias). The file is a sequence of such encrypted chunks, so the
 full plaintext source-value table is never materialized as a single
 serialized blob before encryption (F13 privacy fix, 2026-06-26).
 
@@ -79,14 +81,15 @@ the failure would surface as an opaque `vault_key_mismatch`.
    AND the operator must pass `--vault PATH`. A mask run never writes
    a vault otherwise.
 2. Store the vault and the config separately, each access-controlled.
-3. `vault: true` requires the `cryptography` package (the optional
-   `vault` extra), a `namespace`, and is rejected on `strategy: fpe`
-   (already reversible from the config alone). The plan compiler
-   enforces all three at PLAN/COMPILE time: `vault_requires_cryptography`
-   (missing package), `vault_requires_namespace` (missing namespace),
-   `vault_strategy_reversible` (fpe strategy). A missing `cryptography`
-   package is caught here rather than hours into a run at vault-write
-   time; install with `pip install 'decoy-engine[vault]'`.
+3. `vault: true` requires the `cryptography` package, a `namespace`, and
+   is rejected on `strategy: fpe` (already reversible from the config
+   alone). The plan compiler enforces all three at PLAN/COMPILE time:
+   `vault_requires_cryptography` (missing package), `vault_requires_namespace`
+   (missing namespace), `vault_strategy_reversible` (fpe strategy).
+   `cryptography` is a base dependency (Task 5.2), so a normal install
+   always has it; the check is defense in depth against a broken or
+   partial install, caught here rather than hours into a run at
+   vault-write time.
 4. Pooled strategies can map two sources to one masked value; those
    keys are dropped at write time (`ambiguous_dropped` in the unencrypted
    header and the unmask report). Exact round trips are guaranteed only
@@ -99,7 +102,7 @@ attribute is machine-readable.
 
 | Code | When raised |
 |---|---|
-| `vault_crypto_not_installed` | The `cryptography` package is absent. Install with `pip install 'decoy-engine[vault]'`. |
+| `vault_crypto_not_installed` | The `cryptography` package is absent from a broken or partial install. `cryptography` is a base dependency (Task 5.2); a normal `pip install decoy-engine` always has it, and in practice `decoy_engine` fails to import at all before this code path is reached. |
 | `vault_unreadable` | The file is missing, has a bad magic header, or is truncated. |
 | `vault_format_unsupported` | The `format` field in the header names a version this engine does not consume. |
 | `vault_protocol_version_mismatch` | The header's `seed_protocol_version` differs from the running `SEED_PROTOCOL_VERSION`. Cross-version unmask is not supported; re-mask under the correct engine version. |

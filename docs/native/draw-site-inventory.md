@@ -68,7 +68,7 @@ HMAC-SHA256 envelope:
   a domain-typed wrapper the `providers_v2` identifier adapters use.
 
 The determinism envelope for every keyed site is HKDF-SHA256 (RFC 5869) extract
-plus HMAC-SHA256 (RFC 2104) with `SEED_PROTOCOL_VERSION = 6` mixed into the HMAC
+plus HMAC-SHA256 (RFC 2104) with `SEED_PROTOCOL_VERSION = 7` mixed into the HMAC
 input, implemented in `decoy_engine.determinism._derive`. numpy sites follow the
 NEP-19 `default_rng` (PCG64) seed-stability contract; Python sites use the
 CPython Mersenne Twister via `random.Random`.
@@ -112,9 +112,13 @@ the CDF. Mirrors: the out-of-core categorical kernel
 (`execution/polars/_strategies/_categorical.py:113`).
 
 ### mask.fpe
-`transforms/fpe.py:344`. 8-round type-II Feistel permutation with an HMAC-SHA256
-round function; the per-column key is `derive(mask_key, namespace, FPE_KEY_LABEL)`.
-A keyed bijection (reversible), home-rolled HMAC-SHA256 Feistel, NOT NIST FF1.
+`transforms/fpe.py:349`. NIST SP 800-38G FF1 (AES-256, Algorithms 5/6; Task 5.2,
+2026-09-11, replaced the earlier home-rolled 8-round HMAC-SHA256 Feistel
+entirely); the per-column key is `derive(mask_key, namespace, FF1_KEY_LABEL)`,
+and the tweak is the pinned wire format from `transforms.fpe.build_ff1_tweak`.
+A keyed bijection (reversible) under the deployable profile's domain floor
+(`radix ** length >= FF1_MIN_DOMAIN`); below the floor `_permute` fails closed
+(`FpeUnencryptableError`) rather than emitting an undefined-security output.
 Out-of-core mirror at `_mask_group_b.py:132`.
 
 ### mask.date_shift
@@ -441,10 +445,10 @@ shipped code:
   (`apply_windowed_date`), `gen.categorical` / `gen.reference` /
   `gen.null_probability` / `gen.faker_per_row` (`synthesize.py`),
   `gen.statistical_per_row` (`sample_column`).
-- 1 is keyed-material: `mask.fpe`. The provider emits the per-column Feistel KEY
-  (`derive(mask_key, namespace, FPE_KEY_LABEL)`); the ciphertext is reproduced by
+- 1 is keyed-material: `mask.fpe`. The provider emits the per-column FF1 KEY
+  (`derive(mask_key, namespace, FF1_KEY_LABEL)`); the ciphertext is reproduced by
   driving that key through the shipped `fpe_encrypt_value` and matching the real
-  `FpeStrategyHandler` output. The Feistel arithmetic is transform semantics,
+  `FpeStrategyHandler` output. The FF1 arithmetic is transform semantics,
   deferred to Task 0.4's pure-Python reference.
 
 The compound source-keyed sites (`mask.fpe` key, `mask.code_set` and
@@ -475,36 +479,36 @@ from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
 | --------------------------------- | ------------------- | ------------- | --------------------------------------------------------------- |
-| gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v6 (GenDeriveContext); Faker seed_instance |
-| gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v6 (pool_seed via derive); Faker/provider adapter |
+| gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v7 (GenDeriveContext); Faker seed_instance |
+| gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v7 (pool_seed via derive); Faker/provider adapter |
 | mask.text_mask_faker              | faker_seed_instance | yes           | Faker (seed_instance detaches a per-instance random.Random) |
-| gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v6 |
-| gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
-| gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v6 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v7 |
+| gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
-| gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v6 (GenDeriveContext); numpy NEP-19 PCG64 |
-| gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
+| gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.categorical_nondeterministic | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
-| mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
-| mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v6; numpy NEP-19 PCG64 |
-| mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v6; numpy NEP-19 PCG64 |
-| gen.formula_per_row               | per_row_reseed      | yes           | seed_protocol_v6 (GenDeriveContext); CPython MT + Faker |
+| mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v7; numpy NEP-19 PCG64 |
+| mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
+| gen.formula_per_row               | per_row_reseed      | yes           | seed_protocol_v7 (GenDeriveContext); CPython MT + Faker |
 | gen.statistical_per_row           | per_row_reseed      | yes           | CPython Mersenne Twister (no numpy; bit-stable inverse-CDF) |
-| gen.categorical                   | python_mt19937      | no            | seed_protocol_v6 (GenDeriveContext); CPython Mersenne Twister |
-| gen.reference                     | python_mt19937      | no            | seed_protocol_v6 (GenDeriveContext); CPython Mersenne Twister |
+| gen.categorical                   | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
+| gen.reference                     | python_mt19937      | no            | seed_protocol_v7 (GenDeriveContext); CPython Mersenne Twister |
 | mask.formula                      | python_mt19937      | no            | CPython Mersenne Twister |
-| gen.identifier_deterministic      | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.bucket_perturb               | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.categorical_deterministic    | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v6 |
-| mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v6 |
+| gen.identifier_deterministic      | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.bucket_perturb               | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.categorical_deterministic    | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 
 ## References
 
@@ -514,4 +518,5 @@ from `DRAW_SITES`.
 - CPython `random.Random` (Mersenne Twister MT19937): the seed-stability contract
   for the `python_mt19937` / `per_row_reseed` sites.
 - `SEED_PROTOCOL_VERSION` (`determinism/_derive.py`): the single compatibility
-  knob mixed into every keyed HMAC input; currently 6.
+  knob mixed into every keyed HMAC input; currently 7 (Task 5.2 bumped 6 -> 7
+  for the FF1 primitive swap).

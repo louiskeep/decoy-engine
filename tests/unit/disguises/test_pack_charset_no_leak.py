@@ -45,7 +45,11 @@ _MRN_TWEAK = b"mrn"
 _UPPERCASE_MRNS = [
     "MRN12345A",  # typical uppercase prefix + digit body + suffix
     "A1234567890B",  # uppercase bookends around a digit run
-    "ABC123",  # short all-cap alpha prefix
+    "ABC1234",  # short all-cap alpha prefix; digit body >= 4 chars so the
+    # lowercase 'alphanum' charset's IN-CHARSET portion ("1234") still clears
+    # the FF1 minimum admissible domain (radix 36 needs length >= 4). This
+    # fixture's whole point is exercising the under-covering charset, so it
+    # must itself be encryptable under that charset, not just under ALPHANUM.
     "PT00012345X",  # patient-id style with uppercase letters
 ]
 

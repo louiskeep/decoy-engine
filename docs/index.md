@@ -34,6 +34,7 @@ link to GitHub rather than into the rendered API reference.
 - [Key derivation](security/key-derivation.md): the KeyProvider / `mask_secret_ref` model and HKDF-SHA256 derivation contract.
 - [SQL surfaces](security/sql-surfaces.md): parameter-binding posture across in-tree connectors.
 - [Token vault](security/token-vault.md): handling and threat model for the reversible token vault.
+- [DE-01: NIST SP 800-38G FF1 adoption](security/de-01-ff1-adoption.md): the FPE cipher, conformance claim, key/tweak model, and documented leakage (equality, fixed points, unauthenticated reversal).
 - [DE-01 FPE remediation design](https://github.com/louiskeep/decoy-engine/blob/main/docs/security/de-01-fpe-remediation-design.md): the tech-lead decision brief behind the fail-closed FPE fix (removal of the covering-hash fallback). Excluded from the built docs site (`docs/conf.py`); linked here for discoverability.
 - [DE-02 KeyProvider design](https://github.com/louiskeep/decoy-engine/blob/main/docs/security/de-02-keyprovider-design.md): the tech-lead decision brief behind the current key-derivation model. Excluded from the built docs site (`docs/conf.py`); linked here for discoverability.
 

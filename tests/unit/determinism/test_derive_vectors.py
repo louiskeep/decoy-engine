@@ -56,7 +56,7 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 #
 # Computed value (regenerated at the v5 -> v6 bump for the F2/F3
 # generation-determinism rewrite, 2026-06-26; pinned thereafter):
-EXPECTED_HEX_V6 = "05eaf09c4e22b5fd91ed25d0298416be5dfd525341a4d6637727dc71f4becb06"
+EXPECTED_HEX_V7 = "7445c944cfa43a6ffff2e1f5784ed115f0474cc77e99d3752b275d64cec1831b"
 
 _SEED = b"\x00" * 8
 _NS = "audit-test-namespace"
@@ -64,21 +64,21 @@ _SRC = b"audit-test-source"
 
 
 @pytest.mark.golden
-class TestDeriveReferenceVectorV6:
-    def test_seed_protocol_version_is_six(self) -> None:
+class TestDeriveReferenceVectorV7:
+    def test_seed_protocol_version_is_seven(self) -> None:
         """Guard: if someone bumps SEED_PROTOCOL_VERSION without updating
         the reference vector, both this assertion AND the next one fire
         together. Catches half-finished bumps."""
-        assert SEED_PROTOCOL_VERSION == 6
+        assert SEED_PROTOCOL_VERSION == 7
 
-    def test_v6_envelope_matches_reference_vector(self) -> None:
+    def test_v7_envelope_matches_reference_vector(self) -> None:
         """The contract pin. Any unintentional envelope change breaks
         this test. Intentional shifts require a SEED_PROTOCOL_VERSION
         bump in the same PR."""
         actual = derive(_SEED, _NS, _SRC).hex()
-        assert actual == EXPECTED_HEX_V6, (
-            f"v6 envelope drift: expected {EXPECTED_HEX_V6}, got {actual}. "
+        assert actual == EXPECTED_HEX_V7, (
+            f"v7 envelope drift: expected {EXPECTED_HEX_V7}, got {actual}. "
             "Either the envelope shape changed (HKDF salt, length-prefix, "
             "version byte, byte-order) or SEED_PROTOCOL_VERSION needs bumping "
-            "with a same-PR update to EXPECTED_HEX_V6."
+            "with a same-PR update to EXPECTED_HEX_V7."
         )

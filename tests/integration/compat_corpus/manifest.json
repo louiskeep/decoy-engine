@@ -7,7 +7,7 @@
       "kind": "vault",
       "synthetic": true,
       "produced_by_engine_version": "0.1.0",
-      "seed_protocol_version": 6,
+      "seed_protocol_version": 7,
       "path": "decoy-vault-v2__synthetic.vault",
       "job_seed_hex": "c0ffee0badc0de01",
       "entries_written": 5,

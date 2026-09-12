@@ -11,12 +11,16 @@ Closed (fail closed -> `StrategyError` at the execution boundary):
   - `preserve_separators=false` with any out-of-charset char: the pre-fix path
     returned the value UNCHANGED (a silent cleartext no-op).
   - too-short checksum value (`npi<10`): the pre-fix path `return`ed it unchanged.
+  - a sub-minimum-domain column (in-charset domain below the FF1 minimum
+    admissible domain, ~1,000,000): under FF1 (Task 5.2) this is no longer a
+    residual-risk warning, it is a fail-closed `StrategyError` (code
+    `fpe_unencryptable_domain`) raised before any value in the column is
+    encrypted.
 
 Preserved + surfaced (documented residual risk, NOT closed this sprint):
   - a partial out-of-charset format prefix (`M` in `M000001`) still passes in the
     clear, but now rides a structured `fpe_partial_plaintext_disclosure`
     QualityWarning (fail-pre/pass-post: pre-fix the SAME leak had no signal).
-  - a sub-minimum-domain column rides `fpe_sub_minimum_domain`.
 
 Healthy: the dashed-SSN mask -> unmask round-trip stays byte-exact.
 """
@@ -31,7 +35,7 @@ import pytest
 
 from decoy_engine import run_pipeline
 from decoy_engine.config import PipelineConfig
-from decoy_engine.errors import FpeChecksumError
+from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.out_of_core._mask_group_b import fpe_array
@@ -93,7 +97,9 @@ class TestFailClosed:
         with pytest.raises(ExecutionError) as exc:
             _run(cfg, df, tmp_path)
         assert exc.value.code == "fpe_unencryptable_value"
-        assert "田中 太郎" in exc.value.message
+        # P7: the message reports the value's length, never its content.
+        assert "5-character value" in exc.value.message
+        assert "田中 太郎" not in exc.value.message
 
     def test_all_out_of_charset_orphan_key_fails_closed(self, tmp_path) -> None:
         """An out-of-charset orphan-style key (all uppercase + hyphen) fails closed."""
@@ -122,6 +128,17 @@ class TestFailClosed:
         with pytest.raises(ExecutionError) as exc:
             _run(cfg, df, tmp_path)
         assert exc.value.code == "fpe_checksum_unsupported"
+
+    def test_sub_minimum_domain_fails_closed(self, tmp_path) -> None:
+        """A column whose in-charset domain is below the FF1 minimum admissible
+        domain (~1,000,000) fails closed instead of masking under an
+        undefined-security domain (Task 5.2; this used to be a residual-risk
+        `fpe_sub_minimum_domain` warning under the pre-FF1 Feistel cipher)."""
+        cfg = _config([_fpe_col("tier", "ALPHANUM")], tmp_path)
+        df = pd.DataFrame({"tier": ["HI", "MD", "LO", "HI"]})  # 2-char, radix 62 -> 3844 < 1M
+        with pytest.raises(ExecutionError) as exc:
+            _run(cfg, df, tmp_path)
+        assert exc.value.code == "fpe_unencryptable_domain"
 
 
 # ---------------------------------------------------------------------------
@@ -178,17 +195,21 @@ class TestChecksumLengthFailClosed:
             _run(cfg, df, tmp_path)
         assert exc.value.code == "fpe_checksum_unsupported"
 
-    def test_empty_string_checksum_value_passes_through(self) -> None:
-        """Empty string (length 0) is PRESERVED, not failed closed (Codex follow-up).
-
-        Engine convention: a missing value carries no PII to protect and has
-        nothing to permute, so it passes through -- the same deliberate no-op nulls
-        get (skipped via na_mask before the value layer). This is distinct from the
-        len-1 fail-closed case above: empty is the ONLY passthrough, a non-empty
-        invalid length still raises.
+    def test_empty_string_checksum_value_fails_closed(self) -> None:
+        """Empty string (length 0) now fails closed too (plan P2, round-2
+        BLOCKER remediation): it is not a null (nulls never reach the value
+        layer; they are skipped via `na_mask` one layer up), and its domain
+        is below the FF1 floor like any other sub-floor value. The pipeline
+        itself still tolerates a genuinely empty CELL (see
+        `test_empty_and_null_checksum_cells_pass_through_pipeline` below) --
+        that tolerance now lives explicitly at the strategy boundary, not as
+        a silent carve-out inside the value function every direct caller
+        inherits.
         """
         for scheme in ("npi", "isbn13", "vin", "luhn"):
-            assert fpe_encrypt_value("", _KEY, _DIGITS, b"t", checksum=scheme) == ""
+            with pytest.raises(FpeUnencryptableError) as exc:
+                fpe_encrypt_value("", _KEY, _DIGITS, b"t", checksum=scheme)
+            assert exc.value.code == "fpe.unencryptable_domain"
 
     def test_empty_and_null_checksum_cells_pass_through_pipeline(self, tmp_path) -> None:
         """A checksum column with empty + null cells masks the valid rows and
@@ -256,23 +277,15 @@ class TestResidualRiskWarnings:
         result = _run(cfg, df, tmp_path)
         out = result.outputs[_TABLE].column("member_id").to_pylist()
         assert all(v.startswith("M") for v in out), "partial prefix preserved (unchanged behavior)"
-        assert all(v != s for v, s in zip(out, df["member_id"], strict=True)), "digits permuted"
+        # A fixed point on any one row is legal for a permutation, so the no-op
+        # guard is aggregate across the three rows, not a universal per-row claim.
+        assert any(v != s for v, s in zip(out, df["member_id"], strict=True)), "digits permuted"
         warn = next(
             (w for w in result.warnings if w.code == "fpe_partial_plaintext_disclosure"), None
         )
         assert warn is not None, "partial-prefix disclosure must be surfaced"
         assert warn.column == "member_id"
         assert warn.detail["affected_values"] == 3
-
-    def test_sub_minimum_domain_warns(self, tmp_path) -> None:
-        """A column whose in-charset domain is below the ~1M FF1 minimum warns."""
-        cfg = _config([_fpe_col("tier", "ALPHANUM")], tmp_path)
-        df = pd.DataFrame({"tier": ["HI", "MD", "LO", "HI"]})  # 2-char, radix 62 -> 3844 < 1M
-        result = _run(cfg, df, tmp_path)
-        warn = next((w for w in result.warnings if w.code == "fpe_sub_minimum_domain"), None)
-        assert warn is not None
-        assert warn.detail["min_length"] == 4  # 62 ** 4 >= 1_000_000 > 62 ** 3
-        assert warn.detail["sub_minimum_values"] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -324,9 +337,10 @@ class TestOutOfCoreFailClosed:
             cfg={"charset": "digits"},
         ).to_pylist()
         assert out[2] is None  # nulls preserved
-        assert all(
-            v is not None and v != s for v, s in zip(out[:2], ["123456", "654321"], strict=True)
-        )
+        assert all(v is not None for v in out[:2])
+        # A fixed point on either row is legal for a permutation; the no-op
+        # guard is aggregate, not a universal per-row claim.
+        assert any(v != s for v, s in zip(out[:2], ["123456", "654321"], strict=True))
 
 
 class TestHealthyRoundTrip:
@@ -339,7 +353,9 @@ class TestHealthyRoundTrip:
         masked_ssn = masked.column("ssn").to_pylist()
         # Dashes preserved in place; digits changed.
         assert all(v[3] == "-" and v[6] == "-" for v in masked_ssn)
-        assert all(v != s for v, s in zip(masked_ssn, df["ssn"], strict=True))
+        # A fixed point on any one SSN is legal for a permutation; the no-op
+        # guard is aggregate across the three rows.
+        assert any(v != s for v, s in zip(masked_ssn, df["ssn"], strict=True))
         # Unmask recovers the source exactly.
         recovered = unmask_pipeline(cfg, {_TABLE: masked})
         rec_ssn = recovered.outputs[_TABLE].column("ssn").to_pylist()
