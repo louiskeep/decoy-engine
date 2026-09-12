@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
@@ -74,7 +75,8 @@ from decoy_engine.execution.out_of_core._emit import (
     reconcile_batch,
 )
 from decoy_engine.execution.out_of_core._join import orphan_fk_error, orphan_fk_warning
-from decoy_engine.execution.out_of_core._mask import mask_batch
+from decoy_engine.execution.out_of_core._mask import mask_batch, table_seed
+from decoy_engine.execution.out_of_core._mask_group_c import text_mask_sub_floor_warning
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
 from decoy_engine.execution.out_of_core._payload_store import (
     PayloadStore,
@@ -205,6 +207,11 @@ def stream_table(
     # Evidence is resolved from plan+schema before any row is read; the commit
     # is deferred until the stream has seen a non-missing value per column.
     code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
+    # Round-2 MEDIUM-1: one accumulator per table, reused across every
+    # `mask_batch` call below (phase 1 is the only source pass), so the
+    # aggregate `text_mask_sub_floor_span_handled` QualityWarning covers the
+    # whole stream, matching the full-frame handler's per-column aggregate.
+    text_mask_sub_floor_totals: dict[str, dict[str, int]] = {}
     # Phase-local caps (Part A + HIGH): a resident-path joiner stays live
     # through this table's own build, so it opens at the build's cap; sink-ness
     # selects the joiner cap here since memory_limit is fixed at open.
@@ -330,6 +337,7 @@ def stream_table(
                 skip_columns=skip_columns,
                 mask_key=mask_key,
                 code_set_corpus_records=code_set_corpus_records,
+                sub_floor_totals=text_mask_sub_floor_totals,
             )
             for col in payload_masked_observed:
                 idx = masked_batch.schema.get_field_index(col)
@@ -465,6 +473,23 @@ def stream_table(
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
             if joiner.orphan_total and edge.orphan_policy is OrphanPolicy.WARN:
                 warnings.append(orphan_fk_warning(edge, joiner.orphan_total))
+        # Round-2 MEDIUM-1: same deferred-commit reasoning as the code_set
+        # block above -- phase 1 (the only source pass) is done, so
+        # `text_mask_sub_floor_totals` holds the table's true aggregate.
+        if text_mask_sub_floor_totals:
+            table_column_seed = table_seed(plan, table_name)
+            if table_column_seed is not None:
+                for column, column_seed in table_column_seed.per_column:
+                    by_detector = text_mask_sub_floor_totals.get(column)
+                    if not by_detector:
+                        continue
+                    cfg = provider_config_to_dict(column_seed.provider_config)
+                    policy = cfg.get("sub_floor_span")
+                    warnings.append(
+                        text_mask_sub_floor_warning(
+                            column, str(policy) if policy is not None else None, by_detector
+                        )
+                    )
     finally:
         # Best-effort cleanup: every resource release below is INDEPENDENTLY
         # guarded so a failure in one (e.g. a `finalize_staging` that raises on

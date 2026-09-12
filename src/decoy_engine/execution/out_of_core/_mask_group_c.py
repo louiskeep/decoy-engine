@@ -79,6 +79,7 @@ import pyarrow as pa
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
+from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.storm.detectors import Span
@@ -101,6 +102,34 @@ if TYPE_CHECKING:
 GROUP_C_STRATEGIES = frozenset({"text_mask", "code_set", "bucket_perturb"})
 
 
+def text_mask_sub_floor_warning(
+    column: str, policy: str | None, by_detector: dict[str, int]
+) -> QualityWarning:
+    """The aggregate `text_mask_sub_floor_span_handled` QualityWarning
+    (round-2 MEDIUM-1), shared so the out-of-core runners
+    (`_runner.run_fk_out_of_core`, `_stream_driver.stream_table`) emit the
+    IDENTICAL shape the full-frame handler
+    (`_strategies/_text_mask.TextMaskHandler.run`) does, from the SAME
+    accumulated `sub_floor_notices` dict `_text_mask_array` threads through
+    `mask_cell` for every batch of a table."""
+    return QualityWarning(
+        code="text_mask_sub_floor_span_handled",
+        provider="text_mask",
+        column=column,
+        detail={
+            "policy": policy,
+            "by_detector": dict(by_detector),
+            "total": sum(by_detector.values()),
+            "note": (
+                "these spans' domain was below the FF1 minimum admissible "
+                "domain, or failed checksum validation, and could not be "
+                "FF1-encrypted; they were handled under the configured "
+                "sub_floor_span policy instead (non-reversible)."
+            ),
+        },
+    )
+
+
 def group_c_array(
     values: pa.Array | pa.ChunkedArray,
     seed: ColumnSeed,
@@ -109,15 +138,25 @@ def group_c_array(
     column: str | None,
     cfg: dict[str, Any],
     corpus_record: _CorpusRecord | None = None,
+    sub_floor_notices: dict[str, int] | None = None,
 ) -> pa.Array:
     """Dispatch one admitted Group (c) strategy to its per-value kernel.
 
     `corpus_record` (Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE
     remediation) is forwarded only to the `code_set` kernel -- see
-    `_code_set_array`'s docstring. The other Group (c) kernels ignore it.
+    `_code_set_array`'s docstring. `sub_floor_notices` (round-2 MEDIUM-1) is
+    forwarded only to the `text_mask` kernel -- see `_text_mask_array`'s
+    docstring. Every other Group (c) kernel ignores both.
     """
     if seed.strategy == "text_mask":
-        return _text_mask_array(values, seed, job_seed=job_seed, cfg=cfg, column=column)
+        return _text_mask_array(
+            values,
+            seed,
+            job_seed=job_seed,
+            cfg=cfg,
+            column=column,
+            sub_floor_notices=sub_floor_notices,
+        )
     if seed.strategy == "code_set":
         return _code_set_array(
             values,
@@ -146,6 +185,7 @@ def _text_mask_array(
     job_seed: bytes,
     cfg: dict[str, Any],
     column: str | None = None,
+    sub_floor_notices: dict[str, int] | None = None,
 ) -> pa.Array:
     """Span-level PII mask each non-null cell, byte-identical to the oracle.
 
@@ -157,13 +197,17 @@ def _text_mask_array(
     (or whose checksum fails validation) now fails closed via
     `FpeUnencryptableError` when no `sub_floor_span` policy is configured
     (Task 5.2 plan P3-final removed the old catch-all token fallback), so this
-    route can raise where it previously never did. Known accepted gap
-    (mirrors the `fpe_join_group_active` gap `_mask_group_b.py` documents):
-    this kernel has no static per-column emission point wired to the runner's
-    `warnings` list, so a sub-floor span handled here produces the same
-    log-level notice as the full-frame route but not the aggregate
-    `text_mask_sub_floor_span_handled` QualityWarning; `outputs` stay
-    byte-identical either way.
+    route can raise where it previously never did.
+
+    `sub_floor_notices` (round-2 MEDIUM-1, was a documented accepted gap):
+    the SAME mutable `{detector_id: count}` accumulator `mask_cell` already
+    threads through the full-frame handler, passed straight through here so
+    the caller (`mask_table`/`mask_batch`, one dict reused across every batch
+    of a table) can aggregate across the whole out-of-core stream and emit
+    the identical `text_mask_sub_floor_span_handled` QualityWarning the
+    full-frame route emits -- this kernel no longer diverges on the
+    warning channel while `outputs` stays byte-identical either way, since
+    `mask_cell`'s per-span log line at WARNING was always emitted regardless.
     """
     detectors_raw = cfg.get("detectors")
     detector_ids: list[str] | None
@@ -213,6 +257,7 @@ def _text_mask_array(
                 token=token,
                 cfg=extra or None,
                 sub_floor_span_policy=sub_floor_span_policy,
+                sub_floor_notices=sub_floor_notices,
             )
     except FpeUnencryptableError as exc:
         # Matches the full-frame handler's fail-closed mapping
