@@ -85,10 +85,13 @@ class TestAllOutOfCharsetFailsClosed:
                 f"Normal FPE output {result!r} contains non-charset chars."
             )
 
-    def test_empty_string_passthrough(self) -> None:
-        """Empty string is a no-op (nothing to encrypt, nothing to leak)."""
-        result = fpe_encrypt_value("", _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
-        assert result == ""
+    def test_empty_string_fails_closed(self) -> None:
+        """An empty value is not a null; its domain (radix**0 == 1) is below
+        the FF1 floor like any other sub-floor value, so it now fails closed
+        (plan P2) rather than passing through as a silent no-op."""
+        with pytest.raises(FpeUnencryptableError) as exc:
+            fpe_encrypt_value("", _KEY, _ALPHANUM, _TWEAK, preserve_separators=True)
+        assert exc.value.code == "fpe.unencryptable_domain"
 
     def test_fpe_partial_prefix_preserved(self) -> None:
         """PARTIAL out-of-charset (in-charset body + out-of-charset prefix) is preserved.

@@ -35,7 +35,7 @@ import pytest
 
 from decoy_engine import run_pipeline
 from decoy_engine.config import PipelineConfig
-from decoy_engine.errors import FpeChecksumError
+from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.out_of_core._mask_group_b import fpe_array
@@ -195,17 +195,21 @@ class TestChecksumLengthFailClosed:
             _run(cfg, df, tmp_path)
         assert exc.value.code == "fpe_checksum_unsupported"
 
-    def test_empty_string_checksum_value_passes_through(self) -> None:
-        """Empty string (length 0) is PRESERVED, not failed closed (Codex follow-up).
-
-        Engine convention: a missing value carries no PII to protect and has
-        nothing to permute, so it passes through -- the same deliberate no-op nulls
-        get (skipped via na_mask before the value layer). This is distinct from the
-        len-1 fail-closed case above: empty is the ONLY passthrough, a non-empty
-        invalid length still raises.
+    def test_empty_string_checksum_value_fails_closed(self) -> None:
+        """Empty string (length 0) now fails closed too (plan P2, round-2
+        BLOCKER remediation): it is not a null (nulls never reach the value
+        layer; they are skipped via `na_mask` one layer up), and its domain
+        is below the FF1 floor like any other sub-floor value. The pipeline
+        itself still tolerates a genuinely empty CELL (see
+        `test_empty_and_null_checksum_cells_pass_through_pipeline` below) --
+        that tolerance now lives explicitly at the strategy boundary, not as
+        a silent carve-out inside the value function every direct caller
+        inherits.
         """
         for scheme in ("npi", "isbn13", "vin", "luhn"):
-            assert fpe_encrypt_value("", _KEY, _DIGITS, b"t", checksum=scheme) == ""
+            with pytest.raises(FpeUnencryptableError) as exc:
+                fpe_encrypt_value("", _KEY, _DIGITS, b"t", checksum=scheme)
+            assert exc.value.code == "fpe.unencryptable_domain"
 
     def test_empty_and_null_checksum_cells_pass_through_pipeline(self, tmp_path) -> None:
         """A checksum column with empty + null cells masks the valid rows and

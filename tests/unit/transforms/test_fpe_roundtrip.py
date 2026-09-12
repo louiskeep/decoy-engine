@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
     _luhn_check_digit,
@@ -114,10 +115,17 @@ class TestPlainRoundTrip:
             "depend on the tweak"
         )
 
-    def test_empty_string_passes_through(self) -> None:
+    def test_empty_string_fails_closed(self) -> None:
+        """Plan P2: an empty value is not a null (nulls are filtered one layer
+        up); its domain is below the FF1 floor, so it fails closed like any
+        other sub-floor value rather than passing through as a no-op."""
         cs = _CHARSETS["digits"]
-        assert fpe_encrypt_value("", _KEY, cs, _TWEAK) == ""
-        assert fpe_decrypt_value("", _KEY, cs, _TWEAK) == ""
+        with pytest.raises(FpeUnencryptableError) as enc_exc:
+            fpe_encrypt_value("", _KEY, cs, _TWEAK)
+        assert enc_exc.value.code == "fpe.unencryptable_domain"
+        with pytest.raises(FpeUnencryptableError) as dec_exc:
+            fpe_decrypt_value("", _KEY, cs, _TWEAK)
+        assert dec_exc.value.code == "fpe.unencryptable_domain"
 
 
 class TestSeparatorRoundTrip:

@@ -319,14 +319,13 @@ def _fpe_pure_value(
     The pre-WS1 shape (permute all n chars, overwrite the last with the check
     digit) discarded one encrypted character and was therefore not invertible;
     the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
-    # Empty-string preserve (engine convention, made explicit here): a missing
-    # value carries no PII to protect and has nothing to permute, so it passes
-    # through as-is. This is the same deliberate no-op nulls get -- they are
-    # skipped via `na_mask` at the strategy handler before ever reaching the value
-    # layer -- applied to the empty string. It is NOT the fail-closed case: a
-    # NON-empty value of an invalid length still fails closed below (an invalid
-    # checksum length raises in `_fpe_checksum_permute`; an all-out-of-charset or
-    # preserve_separators=false out-of-charset value raises in `_fpe_value`).
+    # Defense-in-depth only: `_fpe_value` (this function's only caller) now
+    # rejects an empty value with `FpeUnencryptableError` before ever reaching
+    # here (plan P2), so `s` is unreachable-empty on both its call sites --
+    # empty passed straight through, empty out-of-charset positions raised
+    # earlier, and the non-preserve-separators path already required `val`
+    # itself non-empty. Kept as a guard against a hypothetical future direct
+    # caller of this "pure" leaf, not as documented empty-string policy.
     if not s:
         return s
     if checksum is not None:
@@ -379,14 +378,22 @@ def _fpe_value(
     prefix carries is surfaced by the handler as a `QualityWarning`; full
     coverage is a further follow-up (structured/typed-subfield FPE), independent
     of the FF1 primitive swap (Task 5.2)."""
-    # Empty-string preserve (engine convention): a missing value has no PII to
-    # protect and nothing to encrypt, so it passes through -- the same deliberate
-    # no-op nulls get (skipped via na_mask before the value layer). A NON-empty
-    # value that is un-encryptable (all-out-of-charset, or preserve_separators=
-    # false with out-of-charset chars, or an invalid checksum length) still fails
-    # closed below; empty is the ONLY passthrough.
+    # Empty-string reject (plan P2): a present-but-empty value is NOT a null --
+    # nulls never reach this layer at all (skipped via na_mask one layer up) --
+    # so an empty string here is a genuine zero-length value with a zero-length
+    # (radix**0 == 1) in-charset domain, below the FF1 minimum admissible domain
+    # exactly like any other sub-floor value. The engine used to pass this
+    # through unchanged (a silent cleartext no-op distinct from every other
+    # unencryptable case below, which all fail closed); that carve-out is gone.
     if not val:
-        return val
+        raise FpeUnencryptableError(
+            "fpe cannot encrypt an empty (zero-length) value: its in-charset "
+            "domain is below the FF1 minimum admissible domain. An empty "
+            "string is not a null (nulls never reach this layer) and carries "
+            "no format-preserving domain to permute over.",
+            value=val,
+            code="fpe.unencryptable_domain",
+        )
     charset_set = set(charset)
     if preserve_separators:
         positions = [i for i, ch in enumerate(val) if ch in charset_set]

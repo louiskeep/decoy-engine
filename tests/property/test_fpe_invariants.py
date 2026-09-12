@@ -510,26 +510,31 @@ def test_resolve_fpe_charset_named_vs_literal() -> None:
 
 
 @given(_charset(), _KEYS, _TWEAKS, st.booleans(), st.booleans())
-def test_empty_string_is_the_only_documented_passthrough(
-    cs, key, tweak, preserve_sep, validate_luhn
-) -> None:
-    """`_fpe_value`/`_fpe_pure_value` docstrings: an empty value carries no
-    PII and is explicitly passed through unchanged, the ONLY passthrough
-    this module allows (every other unencryptable case fails closed, see
-    the domain-validation properties above)."""
-    assert fpe_encrypt_value("", key, cs, tweak, preserve_sep, validate_luhn) == ""
-    assert fpe_decrypt_value("", key, cs, tweak, preserve_sep, validate_luhn) == ""
+def test_empty_non_null_value_fails_closed(cs, key, tweak, preserve_sep, validate_luhn) -> None:
+    """Plan P2: a present-but-empty value is not a null (nulls never reach
+    this layer; they are skipped one layer up via `na_mask`) and its
+    in-charset domain is `radix**0 == 1`, below the FF1 minimum admissible
+    domain like any other sub-floor value. The engine used to pass this
+    through unchanged as a documented carve-out; that carve-out is gone --
+    empty now fails closed the same as every other unencryptable case."""
+    with pytest.raises(FpeUnencryptableError) as enc_ei:
+        fpe_encrypt_value("", key, cs, tweak, preserve_sep, validate_luhn)
+    assert enc_ei.value.code == "fpe.unencryptable_domain"
+    with pytest.raises(FpeUnencryptableError) as dec_ei:
+        fpe_decrypt_value("", key, cs, tweak, preserve_sep, validate_luhn)
+    assert dec_ei.value.code == "fpe.unencryptable_domain"
 
 
 @given(_KEYS, _TWEAKS, st.data())
-def test_validate_luhn_at_length_zero_is_the_empty_passthrough_regardless(key, tweak, data) -> None:
-    """At length 0, `validate_luhn` cannot change anything: the empty-string
-    passthrough in `_fpe_pure_value` runs before the `validate_luhn` check is
-    ever reached."""
+def test_validate_luhn_at_length_zero_fails_closed_regardless(key, tweak, data) -> None:
+    """At length 0, `validate_luhn` cannot change anything: the empty-value
+    rejection in `_fpe_value` runs before `_fpe_pure_value`'s `validate_luhn`
+    check is ever reached, for both settings."""
     digits = _CHARSETS["digits"]
-    with_luhn = fpe_encrypt_value("", key, digits, tweak, validate_luhn=True)
-    without_luhn = fpe_encrypt_value("", key, digits, tweak, validate_luhn=False)
-    assert with_luhn == without_luhn == ""
+    for validate_luhn in (True, False):
+        with pytest.raises(FpeUnencryptableError) as ei:
+            fpe_encrypt_value("", key, digits, tweak, validate_luhn=validate_luhn)
+        assert ei.value.code == "fpe.unencryptable_domain"
 
 
 @given(_KEYS, _TWEAKS, st.data())

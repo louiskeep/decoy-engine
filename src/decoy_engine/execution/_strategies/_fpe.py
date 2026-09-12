@@ -172,12 +172,25 @@ class FpeStrategyHandler:
 
         source = df[column]
         na_mask = source.isna().to_numpy()
-        non_na_positions = np.where(~na_mask)[0]
         # Vectorized non-null materialization: numpy boolean-select (C-level) then
         # str() each, NOT a per-row pandas `.iloc[int(i)]` scalar-access loop (that
         # paid O(n) pandas-indexing overhead V1's C-level astype never did; Dennis
         # S13 FPE-port finding). str() semantics + order are preserved exactly.
-        non_na_values = [str(v) for v in source.to_numpy(dtype=object)[~na_mask]]
+        raw_non_na = [str(v) for v in source.to_numpy(dtype=object)[~na_mask]]
+        non_na_positions = np.where(~na_mask)[0]
+        # Empty string is not null (`na_mask` misses it), but `fpe_encrypt_value`
+        # now fails closed on it (plan P2: an empty value's in-charset domain,
+        # radix**0 == 1, is below the FF1 floor like any other sub-floor value).
+        # Treat it like null at THIS per-cell missing-data boundary -- preserved
+        # as `""`, never sent to the cipher -- so a column with legitimate empty
+        # cells (the same nullable-data shape a real source table has) does not
+        # fail the whole run. This is a strategy-level missing-data policy, not
+        # a crypto-layer carve-out: the value function's own contract stays
+        # honestly fail-closed for any other caller that reaches it with "".
+        empty_local_mask = np.array([v == "" for v in raw_non_na])
+        encrypt_positions = non_na_positions[~empty_local_mask]
+        empty_positions = non_na_positions[empty_local_mask]
+        non_na_values = [v for v, is_empty in zip(raw_non_na, empty_local_mask) if not is_empty]
         # DE-01 cluster-C (2026-07-14): value-level fail-closed raises
         # (`FpeUnencryptableError` for an all-out-of-charset value or a
         # preserve_separators=false out-of-charset value; `FpeChecksumError` for a
@@ -204,7 +217,9 @@ class FpeStrategyHandler:
             ) from exc
 
         out: list[object] = [None] * len(source)
-        for offset, position in enumerate(non_na_positions):
+        for position in empty_positions:
+            out[int(position)] = ""
+        for offset, position in enumerate(encrypt_positions):
             out[int(position)] = encrypted[offset]
         df[column] = out
 

@@ -162,9 +162,20 @@ def fpe_array(
             if _is_missing(value):
                 out.append(None)
                 continue
+            str_value = str(value)
+            if str_value == "":
+                # Empty string is not null (`_is_missing` misses it), but
+                # `fpe_encrypt_value` now fails closed on it (plan P2: its
+                # in-charset domain, radix**0 == 1, is below the FF1 floor).
+                # Treat it like null at this per-cell missing-data boundary --
+                # preserved as "", never sent to the cipher -- matching the
+                # full-frame handler (`_strategies/_fpe.FpeStrategyHandler.run`)
+                # so both routes stay byte-identical for a legitimately empty cell.
+                out.append("")
+                continue
             out.append(
                 fpe_encrypt_value(
-                    str(value), key, charset, tweak, preserve_sep, validate_luhn, checksum
+                    str_value, key, charset, tweak, preserve_sep, validate_luhn, checksum
                 )
             )
     except FpeUnencryptableError as exc:
