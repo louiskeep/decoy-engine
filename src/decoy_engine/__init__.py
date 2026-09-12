@@ -15,7 +15,7 @@ Public API (the contract CLI and platform code depend on):
                       (decoy_engine.plan)
     ExecutionAdapter / PandasExecutionAdapter / PolarsExecutionAdapter /
     select_execution_adapter / get_default_executor:
-                      the plan-to-data execution boundary; the Polars adapter is
+                      the plan-to-data execution boundary; the pandas adapter is
                       the default substrate. The caller runs
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
@@ -42,7 +42,7 @@ under the ``decoy_v2_clean_break`` PO directive (the final V1 graph-runner and
 V1-only transform deletion landed in S22, 2026-05-30). The engine is now
 plan-first: a caller validates a ``PipelineConfig`` at the choke-point, profiles
 the source, calls ``compile_plan`` to produce a frozen ``Plan``, and hands the
-plan to an ``ExecutionAdapter`` (Polars by default) for a MASK job, or to
+plan to an ``ExecutionAdapter`` (pandas by default) for a MASK job, or to
 ``generation.synthesize.generate_tables`` for a GENERATE job. See
 ``api/jobs/v2_runner.py`` for the platform-side spine and
 ``tests/integration/golden/test_execution_e2e.py`` for the canonical end-to-end
