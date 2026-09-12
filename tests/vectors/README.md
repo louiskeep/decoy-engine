@@ -36,8 +36,9 @@ ACVP), not carried over from memory of the original import.
   already represented by an earlier (lower-`tcId`) case, so skipping them
   loses per-length redundancy, not length-range coverage. Separately
   excluded outright (not part of the 3,317 pool): every `keySize: 128`
-  and `keySize: 192` group (2,896 and 2,833 tests respectively across the
-  four files -- the deployed profile is AES-256 only, `FF1_KEY_BYTES == 32`);
+  and `keySize: 192` group (3,372 and 3,309 valid tests respectively across
+  the four files, verified against the pinned upstream commit below -- the
+  deployed profile is AES-256 only, `FF1_KEY_BYTES == 32`);
   every `result: "invalid"`-flagged case (`InvalidMessageSize`,
   `InvalidKeySize`, `InvalidPlaintext`, and the malformed non-`FpeStrTest`
   auxiliary groups) -- see `ff1_wycheproof_invalid_kat.json` below, which
@@ -53,11 +54,12 @@ ACVP), not carried over from memory of the original import.
 
 New in round 2 (BLOCKER-2c: committed malformed-input boundary coverage).
 Same upstream, license, and four source files as above, same commit pins.
-Pulls every `result: "invalid"` case flagged `InvalidKeySize` (11 cases: key
-sizes 0/8/64/160/320 bits, none of which is 128/192/256) or
-`InvalidMessageSize` (33 cases: an empty message, or a single-numeral
+Pulls every `result: "invalid"` case flagged `InvalidKeySize` (20 cases: key
+sizes such as 0/8/64/160/320 bits, none of which is 128/192/256) or
+`InvalidMessageSize` (24 cases: an empty message, or a single-numeral
 message -- both violate the `n >= 2` NIST FF1 precondition `_ff1.py`
-enforces directly), across all four files. Every one of the 44 was replayed
+enforces directly), across all four files (20 + 24 = the 44 committed cases;
+counts verified against the committed file, `flags` field). Every one of the 44 was replayed
 against the production `_ff1.encrypt` while writing this file: all 44 raise
 `Ff1Error`, none silently succeeds. `InvalidPlaintext` (an out-of-alphabet
 character) is Wycheproof's third invalid-input flag but is NOT pulled in
@@ -106,3 +108,21 @@ translate to a numeral-list input directly.
   production `_ff1.encrypt`/`_ff1.decrypt` while writing this file (both
   directions, independent of the case's own recorded `direction`): all 250
   match exactly, 0 failures.
+
+## Committed-file digests (reproducibility anchor)
+
+The exact bytes under test are pinned by SHA-256 of each committed corpus (the
+upstream sources are pinned by the commit hashes above; these digests pin the
+derived, committed vectors so a reviewer can confirm nothing drifted):
+
+```
+ff1_wycheproof_kat.json          a9e6e8ecbdc6f952568c9c92aedc2fb67d4b5531f3f0427daafca00c14b612f7
+ff1_wycheproof_invalid_kat.json  c5009c4a5d5dbf8e7dcbe112a06d2e264cc02b8f05954fc3dcdd5231e2ba45c9
+ff1_acvp_aes256_kat.json         78ca4bec0b0ef9682eee8f0a14b75dc62faa4fb7bacd782442689efcaf8d2559
+```
+
+Recompute with `sha256sum tests/vectors/ff1_*.json`. Because the selection is a
+subset heuristic (documented above) rather than a fully re-derivable algorithm,
+the committed file plus its digest is the reproducible artifact of record; each
+vector's `src`/`tcId` maps back to the pinned upstream file for independent
+re-verification.
