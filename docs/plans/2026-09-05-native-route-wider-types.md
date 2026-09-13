@@ -1,6 +1,17 @@
-Status: plan
+Status: current
 
 # Q3 slice 2: widen the native lane to integer, boolean, and timestamp columns
+
+> IMPLEMENTED and shipped in commit `cd6e993d` (PR #126), together with slice 1. The widened lane
+> (integer / boolean / timestamp) is functional end to end through `run_pipeline`
+> (`native_route_enabled=True`): `classify_and_preflight` (`execution/_native_route_preflight.py`) is the
+> live admission gate, the normative admission matrix (§3), the four-state resolver, the BLAKE2b
+> source-snapshot digest (§4), the per-batch + empty-second-read schema-drift guards (§5), and the
+> non-utf8 scalar-kernel paths are all present. Every §7 acceptance test exists and passes
+> (`tests/parity/native/test_native_route_wider_types.py` + `tests/unit/execution/test_native_route_preflight_units.py`,
+> 295 tests green). The §8 "Out" items (faker, keyed hash + Rust companion, default-on flip, resident /
+> `source_loader` admission) remain out of scope for this slice, as planned. This header was corrected
+> 2026-09-13 (the plan had been left at `Status: plan` after the implementation landed).
 
 Slice 1 shipped the single-pass streaming native lane for `passthrough` / `redact` /
 `truncate` on `utf8` columns only. It stayed single-pass by admitting exactly the type whose
