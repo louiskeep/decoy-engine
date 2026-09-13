@@ -1277,3 +1277,22 @@ meets goal #4 ("yes it does"). Phase 2 exit-gate PASSED. PR #129 (Phase 1 + Phas
 (merge commit 8d833c30), CI green. Design decision on companion-absent Faker: two-way
 native(with-companion)/oracle(without), NO pure-Python native-faker path (Cam "go with recommended").
 Proceeding to Phase 3 Task 3.1. -->
+
+<!-- Phase 3 Task 3.2 outcome (2026-09-13): DONE + MERGED. Native companion bundled in the production
+image + fail-closed worker gate (3.2a, right-sized; 3.2b supply-chain hardening deferred as beyond the
+single-org threat model). Engine probe decoy-engine#135 -> engine main 712aa1ea; platform 3.2a
+decoy-platform#45 -> platform main 0e13b607. Both double-gated (dennis + Codex); platform CI incl. a
+docker-image build proving the companion loads + gate fires; platform main CI green. -->
+
+<!-- Phase 4 Task 4.1 outcome (2026-09-13): APPROVED by Cam on the ARCHITECTURE basis. Design at
+docs/plans/2026-09-13-physical-plan-design.md (v3, Status: record). Two-level table-driver/node-operator
+model, 5 masking drivers + synthesis stage, invariants, obligations, total field mapping. dennis GO
+(round 3, 0 blocker/high/medium, 2 LOW applied). Codex confirmed the MODEL across 3 rounds; its round-3
+NO-GO was solely on paper-exhaustiveness of the compiler input set + code-for-code rejection catalog.
+Cam decision: approve the architecture now; relocate the exhaustive input-set + catalog freeze to Task
+4.3 (compiler build, enumerated in code) + Task 4.4 shadow-mode code-for-code verification, per the
+design's section 12 binding punch-list (adds registry/exact-sink-type/resident-schema-facts/companion-
+probe-outcome inputs; codes for forced-mode ConfigErrors, planner runtime-source + relationship reasons,
+remaining chunked_* codes, pool_size_location_conflict). NOT merged (design branch
+design/physical-plan-task4.1 @ d383b803; docs-only, awaits a push decision). Task 4.2 (adapters) is
+unblocked. -->
