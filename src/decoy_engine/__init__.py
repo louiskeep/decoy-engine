@@ -104,6 +104,10 @@ from decoy_engine.execution import (
     select_execution_adapter,
 )
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution.native._companion_status import (
+    NativeCompanionStatus,
+    native_companion_status,
+)
 from decoy_engine.generation.composite import (
     BundlePool,
     CompositeAdapter,
@@ -333,6 +337,7 @@ __all__ = [
     "NamespaceBinding",
     "NamespaceConfigError",
     "NamespaceRegistry",
+    "NativeCompanionStatus",
     "NullCount",
     "OrphanPolicy",
     "PandasExecutionAdapter",
@@ -403,6 +408,7 @@ __all__ = [
     "load_custom_providers",
     "load_vault",
     "make_key_resolver",
+    "native_companion_status",
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",

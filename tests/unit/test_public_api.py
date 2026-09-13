@@ -217,6 +217,12 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
+        # Task 3.2a (2026-09-13): the public native-companion probe. Platform
+        # startup gates depend on this rather than the private crypto/index
+        # loaders, so a fail-closed check crosses the in-process boundary
+        # (ADR-0001) through a stable name.
+        "NativeCompanionStatus",
+        "native_companion_status",
     }
     assert set(decoy_engine.__all__) == expected
 

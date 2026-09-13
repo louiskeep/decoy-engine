@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (public native-companion probe, 2026-09-13)
+
+`decoy_engine.native_companion_status()` reports whether the optional `decoy-engine-native`
+compiled companion is usable, without loading a kernel or raising. It returns a frozen
+`NativeCompanionStatus` (`present`, `ok`, `abi_expected`, `abi_actual`, `version`, `reason`,
+`cause`) with `reason` one of `present-ok` / `absent` / `abi-mismatch` / `kat-corrupt` /
+`load-error`. It checks both the crypto and index kernels, so a companion where only one
+loads is reported `ok=False`, never `present-ok`. `cause` is populated on every failure: a
+real loader exception where one exists, or a synthesized `NativeCompanionCheckError`
+otherwise, so a caller can `raise RuntimeError(...) from status.cause` for a fail-closed
+startup gate. Platform code should depend on this public probe rather than the private
+`execution.native._crypto_ext` / `_index_ext` loaders.
+
 ### Changed (FPE cipher: NIST SP 800-38G FF1 replaces the home-rolled Feistel construction, 2026-09-11)
 
 Cryptographic contract change (Task 5.2, DE-01 resolution). The `fpe` strategy's cipher, and the
