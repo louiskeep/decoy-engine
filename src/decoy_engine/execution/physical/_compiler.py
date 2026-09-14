@@ -45,6 +45,7 @@ from decoy_engine.execution.physical._plan import (
     RejectedAlternative,
     SynthesisStage,
 )
+from decoy_engine.execution.physical._shadow_bindings import execution_binding_for_slice_node
 from decoy_engine.execution.physical._types import DriverId
 
 if TYPE_CHECKING:
@@ -351,6 +352,9 @@ def _build_nodes(table: str, inputs: PhysicalPlanInputs) -> tuple[PhysicalNode, 
             else None
         )
         node_id = f"{table}:{'+'.join(work_node.columns)}:{work_node.kind}:{work_node.strategy}"
+        execution = execution_binding_for_slice_node(
+            work_node, table=table, inputs=inputs, requirements=requirements
+        )
         nodes.append(
             PhysicalNode(
                 node_id=node_id,
@@ -360,6 +364,7 @@ def _build_nodes(table: str, inputs: PhysicalPlanInputs) -> tuple[PhysicalNode, 
                 strategy=work_node.strategy,
                 fallback_policy=policy,
                 provider_class=provider_class,
+                execution=execution,
             )
         )
     return tuple(nodes)
