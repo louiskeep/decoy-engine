@@ -33,12 +33,35 @@ Package layout:
   `_protocols`      -- the `BatchOperator` family protocols (design doc
                        section 5 / plan C2) and the `TableDriver` protocol.
   `drivers/`        -- the six delegating adapters (plan D2).
+  `_reasons`        -- Task 4.3 D3: the frozen decision-code catalog.
+  `_inputs`         -- Task 4.3 D1: `PhysicalPlanInputs`, the native-
+                       admission captured fact, and the OOC routing facts.
+  `_plan`           -- Task 4.3 D2 output records: `PhysicalPlan` /
+                       `PhysicalTable` / `PhysicalNode` / `SynthesisStage`.
+  `_compiler`       -- Task 4.3 D2: `compile_physical_plan`, pure, not wired
+                       into `run_pipeline`.
+  `_snapshot`        -- Task 4.3 D1: `capture_physical_plan_inputs`, the
+                       real (non-synthesized) preflight-only snapshot builder.
 """
 
 from __future__ import annotations
 
 from decoy_engine.execution.physical._capabilities import CAPABILITIES, DriverCapabilities
+from decoy_engine.execution.physical._compiler import DriverSelection, compile_physical_plan
 from decoy_engine.execution.physical._context import SeamContext
+from decoy_engine.execution.physical._inputs import (
+    NativeAdmissionFact,
+    OutOfCoreRoutingFacts,
+    PhysicalPlanInputs,
+    capture_native_admission_fact,
+)
+from decoy_engine.execution.physical._plan import (
+    PhysicalNode,
+    PhysicalPlan,
+    PhysicalTable,
+    RejectedAlternative,
+    SynthesisStage,
+)
 from decoy_engine.execution.physical._protocols import (
     BoundedPythonOperator,
     NativeScalarKeyedOperator,
@@ -47,6 +70,7 @@ from decoy_engine.execution.physical._protocols import (
     PandasScalarOperator,
     TableDriver,
 )
+from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.execution.physical._types import (
     DriverId,
     ExecutionScope,
@@ -61,15 +85,27 @@ __all__ = [
     "BoundedPythonOperator",
     "DriverCapabilities",
     "DriverId",
+    "DriverSelection",
     "ExecutionScope",
+    "NativeAdmissionFact",
     "NativeScalarKeyedOperator",
     "OperatorFamily",
+    "OutOfCoreRoutingFacts",
     "PandasCompositeOperator",
     "PandasFkResolveOperator",
     "PandasScalarOperator",
+    "PhysicalNode",
+    "PhysicalPlan",
+    "PhysicalPlanInputs",
+    "PhysicalTable",
     "PublicationMode",
+    "RejectedAlternative",
     "Residency",
     "SeamContext",
     "Substrate",
+    "SynthesisStage",
     "TableDriver",
+    "capture_native_admission_fact",
+    "capture_physical_plan_inputs",
+    "compile_physical_plan",
 ]
