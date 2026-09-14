@@ -770,6 +770,13 @@ module = [
     "decoy_engine.execution.physical.drivers._native_stream",
     "decoy_engine.execution.physical.drivers._out_of_core",
     "decoy_engine.execution.physical.drivers._synthesis",
+    # Task 4.3: the physical-plan compiler + its input snapshot, records, and
+    # decision-code catalog. Same strict bar as the rest of the seam.
+    "decoy_engine.execution.physical._compiler",
+    "decoy_engine.execution.physical._inputs",
+    "decoy_engine.execution.physical._plan",
+    "decoy_engine.execution.physical._reasons",
+    "decoy_engine.execution.physical._snapshot",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

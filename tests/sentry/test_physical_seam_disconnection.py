@@ -14,12 +14,28 @@ Part 2/2 (the exact-diff gate: production execution modules carry zero
 behavioral diff versus `origin/main`) lives in this same file below, since
 both checks answer the same question -- "did this task touch anything it
 was not supposed to."
+
+Task 4.3 (the physical-plan compiler, `_compiler.py` / `_inputs.py` /
+`_snapshot.py` / `_reasons.py` / `_plan.py`) extends this same disconnection
+proof rather than adding a parallel one: `GUARDED_MODULES` already covers
+every module the compiler's own snapshot builder (`capture_physical_plan_
+inputs`) imports from (`_pipeline_routing`, `_planner`, `_native_route`,
+`_native_route_preflight`, ...), so the existing static regex sweep and the
+exact-diff gate already re-verify 4.3's disconnection unmodified. The one
+genuine addition below (`test_compile_physical_plan_is_unreachable_from_a_
+fresh_import_of_run_pipeline`) is DYNAMIC rather than static: it proves, in
+a fresh subprocess, that importing `decoy_engine.execution.run_pipeline`
+never pulls `execution.physical` into `sys.modules` -- a complementary check
+the regex sweep (which only reads source text) cannot make, since a hidden
+dynamic/conditional import would not appear as a matchable `import`
+statement at all.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -152,4 +168,39 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "Files under src/decoy_engine/execution changed versus origin/main outside "
         "the new execution/physical/ package (Task 4.2 must not touch production "
         "execution behavior):\n  - " + "\n  - ".join(unexpected)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.3 addition: a DYNAMIC check, in a fresh subprocess, that importing
+# `run_pipeline` never pulls `execution.physical` into `sys.modules`.
+# ---------------------------------------------------------------------------
+
+_FRESH_IMPORT_PROBE = (
+    "import sys\n"
+    "from decoy_engine.execution import run_pipeline\n"
+    "assert callable(run_pipeline)\n"
+    "hits = [name for name in sys.modules if name.startswith('decoy_engine.execution.physical')]\n"
+    "print(','.join(sorted(hits)))\n"
+)
+
+
+def test_compile_physical_plan_is_unreachable_from_a_fresh_import_of_run_pipeline() -> None:
+    """A fresh interpreter that imports only `decoy_engine.execution.
+    run_pipeline` (production's real entry point) must never end up with any
+    `decoy_engine.execution.physical*` module in `sys.modules` -- proof by
+    dynamic observation, not source-text pattern matching, that nothing on
+    the real import path reaches the compiler package."""
+    result = subprocess.run(
+        [sys.executable, "-c", _FRESH_IMPORT_PROBE],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    hits = [name for name in result.stdout.strip().split(",") if name]
+    assert not hits, (
+        "Importing decoy_engine.execution.run_pipeline in a fresh interpreter "
+        "pulled in execution.physical module(s), which must stay unreachable "
+        "from production until Task 4.5+:\n  - " + "\n  - ".join(hits)
     )
