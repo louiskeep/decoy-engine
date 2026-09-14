@@ -36,8 +36,10 @@ masked.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
@@ -45,6 +47,55 @@ import pyarrow as pa
 from decoy_engine.execution._native_route import peek_and_admit, static_candidacy
 from decoy_engine.execution._native_route_preflight import classify_and_preflight
 from decoy_engine.profile._readers import LazySource
+
+
+def deep_freeze_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Recursively detach + freeze a config mapping so the stored snapshot is
+    genuinely immutable (D1's "frozen" contract). `PhysicalPlanInputs` is a
+    frozen dataclass, but that only stops REASSIGNING the field, not mutating
+    the dict it points at: `run_pipeline` never mutates config post-compile,
+    but a caller holding the same dict could, and the compiler re-reads its
+    contents via `classify_job` at compile time -- so a config mutated after
+    capture would change the compiled driver while `plan_hash` (a snapshot
+    taken at capture) stayed put. Freezing to nested `MappingProxyType` /
+    tuple makes that mutation raise instead. `thaw_config` reverses it for the
+    live `classify_job` call, which wants an ordinary mutable `dict`."""
+    return MappingProxyType({k: _deep_freeze_value(v) for k, v in config.items()})
+
+
+def _deep_freeze_value(obj: Any) -> Any:
+    if isinstance(obj, Mapping):
+        return MappingProxyType({k: _deep_freeze_value(v) for k, v in obj.items()})
+    if isinstance(obj, (list, tuple)):
+        return tuple(_deep_freeze_value(v) for v in obj)
+    return obj
+
+
+def thaw_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Reverse `deep_freeze_config`: a fresh, fully-mutable `dict`/`list` tree
+    for handing to a live function (`classify_job`) that expects one. Pure
+    over the frozen content, so it introduces no drift from the hashed
+    representation."""
+    return {k: _deep_thaw_value(v) for k, v in config.items()}
+
+
+def _deep_thaw_value(obj: Any) -> Any:
+    if isinstance(obj, Mapping):
+        return {k: _deep_thaw_value(v) for k, v in obj.items()}
+    if isinstance(obj, tuple):
+        return [_deep_thaw_value(v) for v in obj]
+    return obj
+
+
+def _canonical_config_json(config: Mapping[str, Any]) -> str:
+    """A stable, key-sorted serialization of the FULL config the compiler
+    consumes, for `plan_hash`. `Plan.pipeline_config_hash` covers only the
+    config fields `compile_plan` folds in; `classify_job` reads others (e.g.
+    per-column `when` filters) that a mutation could change without moving
+    `pipeline_config_hash` -- so the identity hash pins the exact config
+    content instead. `default=repr` keeps any non-JSON scalar deterministic."""
+    return json.dumps(thaw_config(config), sort_keys=True, default=repr)
+
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -392,6 +443,10 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
     parts: tuple[object, ...] = (
         inputs.plan.pipeline_config_hash,
         inputs.plan.profile_hash,
+        # The FULL config content the compiler consumes (`classify_job` reads
+        # `inputs.config` directly), not just the subset `pipeline_config_hash`
+        # folds in -- so a config field mutated after capture changes the hash.
+        _canonical_config_json(inputs.config),
         # Resident-source measured facts (H1): `pipeline_config_hash` /
         # `profile_hash` cover the DECLARED config/schema, not the actual
         # resident row/null content `classify_job` reads at capture time --

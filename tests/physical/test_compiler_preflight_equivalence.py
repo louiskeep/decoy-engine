@@ -289,9 +289,13 @@ def _expected_chunked_alternative(inputs: Any) -> tuple[DriverId, str, bool]:
     if not (inputs.auto_chunk and inputs.has_mask_table):
         return (DriverId.CHUNKED, "auto_chunk_disabled_or_no_mask_table", False)
     from decoy_engine.execution._planner import classify_job
+    from decoy_engine.execution.physical._inputs import thaw_config
 
     decision = classify_job(
-        dict(inputs.config),
+        # Match the compiler: `inputs.config` is deep-frozen, so thaw a
+        # mutable dict/list tree for `classify_job` (which is list-shape
+        # sensitive) exactly as `layer2_chunk_decision` does.
+        thaw_config(inputs.config),
         plan=inputs.plan,
         registry=inputs.registry,
         relationship_graph=inputs.graph,
@@ -1080,26 +1084,74 @@ def test_native_admission_reasons_stay_in_the_known_catalog(
 
 
 def test_native_admission_catalog_is_bidirectional() -> None:
-    """H4 #3's bidirectional close: every family-prefix the catalog declares
-    corresponds to a real reachable reason above (not just "no known prefix
-    ever returns unknown"). The four codes this remediation added
-    (`redact_with_not_string` + the three `check_truncate_config` codes) are
-    reachable exclusively through `redact_config_rejection` /
-    `truncate_config_rejection` (`native/_requirements.py`), called only
-    from `static_candidacy` (`_native_route.py`) for an ALLOWED_STRATEGIES
-    redact/truncate column -- confirmed by reading both call sites, since a
-    bounded corpus fixture cannot itself enumerate every `check_truncate_
-    config` failure mode.
+    """H4 #3's bidirectional close (Codex final-gate MEDIUM): the catalog must
+    equal the reviewed set of REACHABLE native-admission prefixes EXACTLY --
+    not merely contain the four this remediation added. A membership-only
+    check let a dead prefix injected into `NATIVE_STATIC_CODE_PREFIXES` pass
+    the audit; full set equality rejects an extra (dead) entry AND a missing
+    (uncatalogued-reachable) one. The two expected sets below are enumerated
+    directly from the live producers -- `static_candidacy` /
+    `redact_config_rejection` / `truncate_config_rejection`
+    (`_native_route.py`, `native/_requirements.py`) for STATIC, and
+    `classify_and_preflight` / `peek_and_admit` (`_native_route_preflight.py`)
+    for SCAN -- so any catalog change must be mirrored here, forcing a review
+    that a new prefix is genuinely reachable (and in the right family).
     """
-    from decoy_engine.execution.physical._reasons import NATIVE_STATIC_CODE_PREFIXES
+    from decoy_engine.execution.physical._reasons import (
+        NATIVE_SCAN_CODE_PREFIXES,
+        NATIVE_STATIC_CODE_PREFIXES,
+    )
 
+    expected_static = frozenset(
+        {
+            "execution_mode_not_auto",
+            "non_pandas_substrate",
+            "generation_table_present",
+            "multi_table_job",
+            "fk_relationship_present",
+            "source_loader_present",
+            "non_lazy_source",
+            "fidelity_report_requested",
+            "validators_present",
+            "quarantine_configured",
+            "unsupported_sink",
+            "no_columns_configured",
+            "invalid_column_config",
+            "vault_column",
+            "unsupported_strategy",
+            "native_route_disabled_or_no_mask_table",
+            "redact_with_not_string",
+            "truncate_length_invalid",
+            "truncate_keep_invalid",
+            "truncate_mask_char_invalid",
+        }
+    )
+    expected_scan = frozenset(
+        {
+            "zero_row_source",
+            "unsupported_projection",
+            "non_utf8_column",
+            "native_preflight_schema_drift",
+            "native_preflight_reroute",
+            "native_preflight_strategy_unresolved",
+            "native_source_snapshot_digest_mismatch",
+            "native_chunk_schema_drift",
+            "columns_changed",
+            "type_changed",
+        }
+    )
+    assert expected_static == NATIVE_STATIC_CODE_PREFIXES
+    assert expected_scan == NATIVE_SCAN_CODE_PREFIXES
+    # The two families must stay disjoint, or a prefix's family is ambiguous.
+    assert not (NATIVE_STATIC_CODE_PREFIXES & NATIVE_SCAN_CODE_PREFIXES)
+    # The four codes this remediation added resolve to STATIC (spot-check the
+    # classifier, not just set membership).
     for code in (
         "redact_with_not_string",
         "truncate_length_invalid",
         "truncate_keep_invalid",
         "truncate_mask_char_invalid",
     ):
-        assert code in NATIVE_STATIC_CODE_PREFIXES
         assert native_reason_code_family(f"{code}:note") == "static"
 
 

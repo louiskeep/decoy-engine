@@ -118,11 +118,14 @@ def layer2_chunk_decision(inputs: PhysicalPlanInputs) -> tuple[ExecutionPlan | N
     `PhysicalPlanInputs`.
     """
     from decoy_engine.execution._planner import classify_job
+    from decoy_engine.execution.physical._inputs import thaw_config
 
     if not (inputs.auto_chunk and inputs.has_mask_table):
         return None, False
     decision = classify_job(
-        dict(inputs.config),
+        # `inputs.config` is deep-frozen (D1's immutability contract); thaw a
+        # fresh mutable dict/list tree for `classify_job`, which expects one.
+        thaw_config(inputs.config),
         plan=inputs.plan,
         registry=inputs.registry,
         relationship_graph=inputs.graph,

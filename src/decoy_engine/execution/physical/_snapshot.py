@@ -30,6 +30,7 @@ from decoy_engine.execution.physical._inputs import (
     OutOfCoreRoutingFacts,
     PhysicalPlanInputs,
     capture_native_admission_fact,
+    deep_freeze_config,
 )
 from decoy_engine.profile._readers import LazySource
 
@@ -237,7 +238,12 @@ def capture_physical_plan_inputs(
     )
 
     return PhysicalPlanInputs(
-        config=config,
+        # Deep-frozen so the stored snapshot is genuinely immutable: the
+        # compiler re-reads config content via `classify_job`, so a config
+        # mutated after capture would change the driver while `plan_hash`
+        # stayed put (Codex final-gate HIGH). `thaw_config` reverses it at
+        # the one compile-time consumer.
+        config=deep_freeze_config(config),
         plan=plan,
         profile=profile,
         registry=resolved_registry,

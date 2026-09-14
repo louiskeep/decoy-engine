@@ -125,6 +125,61 @@ def test_plan_hash_changes_with_native_route_enabled(tmp_path: Path) -> None:
     assert inputs_off.plan_hash() != inputs_on.plan_hash()
 
 
+def test_captured_config_is_immutable(tmp_path: Path) -> None:
+    """Codex final-gate HIGH: the stored `config` must be genuinely immutable
+    -- a frozen dataclass stops reassigning the field but not mutating the
+    dict it points at, and the compiler re-reads config content via
+    `classify_job`, so a post-capture mutation would change the driver while
+    `plan_hash` (taken at capture) stayed put. Deep-frozen to
+    `MappingProxyType`, so item assignment at any nesting level raises."""
+    inputs = _flat_inputs(tmp_path)
+    with pytest.raises(TypeError):
+        inputs.config["injected"] = "x"  # type: ignore[index]
+    # Nested mappings are frozen too, not just the top level.
+    with pytest.raises(TypeError):
+        inputs.config["global_settings"]["seed"] = 999  # type: ignore[index]
+
+
+def test_plan_hash_covers_full_config_content(tmp_path: Path) -> None:
+    """Codex final-gate HIGH: the identity hash must pin the FULL config the
+    compiler consumes (`_canonical_config_json`), not just the subset
+    `pipeline_config_hash` folds in -- so two jobs differing in ANY config
+    content hash differently. Here the second table masks a second column;
+    the immutability test above proves the complementary half (a post-capture
+    mutation cannot happen at all)."""
+    source = pa.table(
+        {
+            "note": pa.array(["s1", "s2"], type=pa.string()),
+            "memo": pa.array(["m1", "m2"], type=pa.string()),
+        }
+    )
+    path = _write(tmp_path, source, "t")
+
+    def _inputs_with_columns(columns: list[dict[str, Any]]) -> Any:
+        config = PipelineConfig.model_validate(
+            {
+                "version": 1,
+                "global_settings": {"seed": 1},
+                "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / "t.out.parquet"),
+                    }
+                },
+                "tables": [{"name": "t", "columns": columns}],
+            }
+        ).model_dump()
+        return capture_physical_plan_inputs(config, {"t": source}, engine_version="unit-test")
+
+    one_col = _inputs_with_columns([{"name": "note", "strategy": "redact"}])
+    two_col = _inputs_with_columns(
+        [{"name": "note", "strategy": "redact"}, {"name": "memo", "strategy": "redact"}]
+    )
+    assert one_col.plan_hash() != two_col.plan_hash()
+
+
 def test_registry_fingerprint_stable_for_the_same_registry(tmp_path: Path) -> None:
     inputs = _flat_inputs(tmp_path)
     assert inputs.registry_fingerprint() == inputs.registry_fingerprint()
@@ -297,7 +352,10 @@ def test_plan_hash_digest_construction_is_pinned(tmp_path: Path) -> None:
     """
     import hashlib
 
-    from decoy_engine.execution.physical._inputs import _resident_source_fact
+    from decoy_engine.execution.physical._inputs import (
+        _canonical_config_json,
+        _resident_source_fact,
+    )
 
     inputs = _flat_inputs(tmp_path)
     facts = inputs.out_of_core_facts
@@ -305,6 +363,7 @@ def test_plan_hash_digest_construction_is_pinned(tmp_path: Path) -> None:
     parts: tuple[object, ...] = (
         inputs.plan.pipeline_config_hash,
         inputs.plan.profile_hash,
+        _canonical_config_json(inputs.config),
         tuple(
             _resident_source_fact(name, inputs.caller_sources[name])
             for name in sorted(inputs.caller_sources)
