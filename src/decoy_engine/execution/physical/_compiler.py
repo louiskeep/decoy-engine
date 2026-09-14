@@ -206,11 +206,13 @@ def _chunked_rejected_entry(decision: ExecutionPlan | None) -> RejectedAlternati
         return RejectedAlternative(
             DriverId.CHUNKED, _reasons.DRIVER_REASON_CHUNKED_ADMITTED, attempted=True
         )
+    # `translate_chunked_rejection` always returns at least one code (its own
+    # `unclassified_chunked_rejection:` fallback when nothing matches), so
+    # `codes` is never empty here -- no separate empty-join fallback needed.
     codes = _reasons.translate_chunked_rejection(
         decision.rejections.get("chunked", decision.reason)
     )
-    reason = ";".join(codes) if codes else "chunked_not_admitted"
-    return RejectedAlternative(DriverId.CHUNKED, reason, attempted=True)
+    return RejectedAlternative(DriverId.CHUNKED, ";".join(codes), attempted=True)
 
 
 def select_driver(inputs: PhysicalPlanInputs) -> DriverSelection:
@@ -218,12 +220,12 @@ def select_driver(inputs: PhysicalPlanInputs) -> DriverSelection:
     route, route_reason = layer1_route(inputs)
 
     if route == "sequential":
-        rejected = (
+        sequential_rejected: tuple[RejectedAlternative, ...] = (
             RejectedAlternative(
                 DriverId.OUT_OF_CORE, out_of_core_not_ready_reason(inputs), attempted=True
             ),
         )
-        return DriverSelection(DriverId.SEQUENTIAL, route_reason, None, rejected)
+        return DriverSelection(DriverId.SEQUENTIAL, route_reason, None, sequential_rejected)
 
     if route == "out_of_core":
         return DriverSelection(DriverId.OUT_OF_CORE, route_reason, None, ())
@@ -234,31 +236,34 @@ def select_driver(inputs: PhysicalPlanInputs) -> DriverSelection:
     admission = inputs.native_admission
 
     if applies and admission.admitted:
-        rejected = (
+        native_rejected: tuple[RejectedAlternative, ...] = (
             *_relationship_alternatives(inputs, route_reason),
             _chunked_rejected_entry(decision),
         )
         return DriverSelection(
-            DriverId.NATIVE_STREAM, _reasons.DRIVER_REASON_NATIVE_ADMITTED, None, rejected
+            DriverId.NATIVE_STREAM, _reasons.DRIVER_REASON_NATIVE_ADMITTED, None, native_rejected
         )
 
     if route_chunked:
         if decision is None:  # pragma: no cover - route_chunked implies decision is not None
             raise AssertionError("route_chunked is True but classify_job produced no decision")
-        rejected = (
+        chunked_rejected: tuple[RejectedAlternative, ...] = (
             *_relationship_alternatives(inputs, route_reason),
             _native_rejected_entry(applies, admission),
         )
         return DriverSelection(
-            DriverId.CHUNKED, _reasons.DRIVER_REASON_CHUNKED_ADMITTED, decision.reason, rejected
+            DriverId.CHUNKED,
+            _reasons.DRIVER_REASON_CHUNKED_ADMITTED,
+            decision.reason,
+            chunked_rejected,
         )
 
-    rejected = (
+    full_frame_rejected: tuple[RejectedAlternative, ...] = (
         *_relationship_alternatives(inputs, route_reason),
         _native_rejected_entry(applies, admission),
         _chunked_rejected_entry(decision),
     )
-    return DriverSelection(DriverId.FULL_FRAME, route_reason, None, rejected)
+    return DriverSelection(DriverId.FULL_FRAME, route_reason, None, full_frame_rejected)
 
 
 def relationship_role(

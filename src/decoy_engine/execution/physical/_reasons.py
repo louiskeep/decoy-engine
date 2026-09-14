@@ -248,7 +248,7 @@ _POLARS_NONNATIVE_RE: Final = re.compile(r"non-polars-native work: ([^;]+)")
 CODE_NO_MASK_WORK: Final = "no_mask_work"
 CODE_FK_RESOLUTION: Final = "fk_resolution"
 
-_POLARS_PATTERNS: Final[tuple[re.Pattern[str], str]] = (
+_POLARS_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (
         re.compile(r"no mask-kind work; the polars-native loop masks existing data"),
         CODE_NO_MASK_WORK,
@@ -291,7 +291,7 @@ CODE_CHUNKED_SOURCE_BELOW_THRESHOLD: Final = "chunked_source_below_threshold"
 CODE_CHUNKED_SOURCE_DTYPE_UNSTABLE: Final = "chunked_source_dtype_unstable"
 CODE_CHUNKED_LAZY_SOURCE_UNSUPPORTED: Final = "chunked_lazy_source_unsupported"
 
-_CHUNKED_PATTERNS: Final[tuple[re.Pattern[str], str]] = (
+_CHUNKED_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (re.compile(r"no mask-kind tables to stream"), CODE_NO_MASK_TABLES),
     (
         re.compile(
