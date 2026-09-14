@@ -13,6 +13,8 @@ invoked. Nothing here masks a row.
 
 from __future__ import annotations
 
+import shutil
+import types
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -82,15 +84,26 @@ def capture_physical_plan_inputs(
     (`_pipeline_finalize` / `_planner` constants) so an unspecified knob here
     captures the same routing facts an unspecified `run_pipeline` kwarg would.
     """
+    from decoy_engine.execution import _pipeline_route_exec
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._pipeline_routing_signals import (
         out_of_core_routing_signals,
         resolve_full_frame_fits_estimate,
         resolve_probe_recovery,
     )
-    from decoy_engine.execution._substrate import resolve_substrate
+    from decoy_engine.execution._substrate import (
+        require_bool,
+        require_positive_int,
+        resolve_substrate,
+        select_execution_adapter,
+    )
+    from decoy_engine.execution.native._companion_status import native_companion_status
     from decoy_engine.execution.out_of_core import resolve_budget
-    from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
+    from decoy_engine.execution.out_of_core._route_policy import (
+        _MERGE_FAN_IN_DEFAULT,
+        resolve_reorder_threshold_rows,
+    )
+    from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
     from decoy_engine.profile import profile_source
@@ -102,17 +115,48 @@ def capture_physical_plan_inputs(
         check_orphan_fk_policy_completeness,
     )
 
+    # Submit-boundary validation (Task 4.3 remediation MED): the SAME live
+    # checks `run_pipeline` runs at `_pipeline.py:264-283`, in the SAME
+    # order, BEFORE any preflight work below -- so an invalid knob (a string
+    # `auto_chunk`, a non-positive count) raises the identical coded
+    # `ExecutionError` here that `run_pipeline` would raise, instead of
+    # silently producing a compilable snapshot. `select_execution_adapter`'s
+    # construction is cheap and side-effect-free (it does not execute), so
+    # calling it purely for its validation side effect matches production's
+    # own "adapter selection runs up front" comment.
     resolved_substrate = resolve_substrate(substrate)
+    select_execution_adapter(
+        substrate=resolved_substrate,
+        fpe_chunk_count=fpe_chunk_count,
+        max_workers=max_workers,
+        fallback_to_pandas=fallback_to_pandas,
+    )
+    require_bool("auto_chunk", auto_chunk)
+    require_positive_int("chunk_size_rows", chunk_size_rows)
+    require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
+    require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
+    require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
+    if out_of_core_budget_bytes is not None:
+        require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
+    require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
+    require_bool("use_probe_routing", use_probe_routing)
+    require_bool("native_route_enabled", native_route_enabled)
+    resolved_reorder_threshold = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
+
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
-    resolved_reorder_threshold = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
     # Validators are a config-only, route-affecting input (a truthy list disqualifies
     # the bounded routes via _sequential_eligible -> "validators_present"). run_pipeline
     # reads them only from config (`_pipeline.py`: validators=config.get("validators") or []),
     # so the snapshot must too -- never from a caller kwarg, which could diverge.
     config_validators = list(config.get("validators") or [])
 
-    table_kinds = classify_table_kinds(config)
+    # Frozen against post-capture mutation (Task 4.3 remediation H1): a plain
+    # dict returned by `classify_table_kinds` is otherwise mutable in place,
+    # which would silently invalidate `plan_hash`'s snapshot-content
+    # contract. `pa.Table` / `Plan` stay un-copied (heavy, unnecessary --
+    # `plan_hash` now covers their route-affecting content directly).
+    table_kinds: Mapping[str, str] = types.MappingProxyType(classify_table_kinds(config))
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
 
     job_seed = _normalize_job_seed_int(config)
@@ -158,6 +202,28 @@ def capture_physical_plan_inputs(
     )
     resolved_budget = resolve_budget(out_of_core_budget_bytes)
 
+    # OOC-inner host-budget facts (Task 4.3 remediation H3): pre-execution-
+    # resolvable exactly like `resolved_budget` above -- a free-disk stat, no
+    # masking -- mirroring `_pipeline_route_exec.py`'s own resilience
+    # contract (undetectable free disk leaves the runtime cap unset rather
+    # than blocking a job the route would otherwise run). The per-table
+    # reorder-vs-batch_join DECISION stays out of scope (see
+    # `OutOfCoreRoutingFacts`'s docstring): it also needs the deduplicated
+    # parent-key count and max sort-payload width, both execution-produced.
+    temp_disk_budget_bytes: int | None = None
+    try:
+        free_bytes = shutil.disk_usage(default_ooc_temp_root()).free
+        temp_disk_budget_bytes = int(
+            free_bytes * _pipeline_route_exec._TEMP_DISK_SAFETY_FRACTION
+        )
+    except OSError:
+        pass
+
+    # Native companion probe outcome (Task 4.3 remediation H3; design doc
+    # section 12 punch-list): read-only, never-raises, no-masking (see
+    # `PhysicalPlanInputs.native_companion_reason`'s docstring for scope).
+    native_companion_reason = native_companion_status().reason
+
     native_admission: NativeAdmissionFact = capture_native_admission_fact(
         has_mask_table=has_mask_table,
         native_route_enabled=native_route_enabled,
@@ -183,6 +249,8 @@ def capture_physical_plan_inputs(
         probe_recovers_full_frame=probe_recovers_full_frame,
         budget_bytes=resolved_budget.budget_bytes,
         reorder_threshold_rows=resolved_reorder_threshold,
+        temp_disk_budget_bytes=temp_disk_budget_bytes,
+        merge_fan_in=_MERGE_FAN_IN_DEFAULT,
     )
 
     return PhysicalPlanInputs(
@@ -213,5 +281,6 @@ def capture_physical_plan_inputs(
         fallback_to_pandas=fallback_to_pandas,
         out_of_core_facts=out_of_core_facts,
         native_admission=native_admission,
+        native_companion_reason=native_companion_reason,
         engine_version=engine_version,
     )
