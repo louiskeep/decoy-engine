@@ -642,7 +642,6 @@ def test_out_of_core_routing_facts_replace_smoke() -> None:
         probe_recovers_full_frame=None,
         budget_bytes=None,
         reorder_threshold_rows=2_000_000,
-        temp_disk_budget_bytes=None,
         merge_fan_in=16,
     )
     replaced = replace(facts, compatible=True)

@@ -219,21 +219,23 @@ class OutOfCoreRoutingFacts:
     and never re-derives them (`resolve_budget` reads the cgroup/host
     memory ceiling, a real host fact, not a re-derivable pure computation).
 
-    `temp_disk_budget_bytes` / `merge_fan_in` (Task 4.3 remediation H3): the
-    OOC-inner driver's own reorder-vs-batch_join route selection
-    (`out_of_core._route_policy.decide_route`) additionally consumes these
-    two host-budget facts, both resolvable pre-execution exactly like
-    `budget_bytes` -- free disk space under the OOC temp root (a `statvfs`
-    call, no masking) and the fixed merge-fan-in default. They are captured
-    here and hashed so a host with a different disk budget produces a
-    different `plan_hash`, but the route_policy per-table DECISION
-    (`RouteDecision`/`ReorderCaps`) itself is NOT reproduced: it additionally
-    needs the deduplicated parent-key relation row count and the measured
-    max sort-payload row width, both read from generated-relation Parquet
-    metadata BUILT DURING the OOC run (`_route_policy._parent_key_count`) --
-    execution-produced, not pre-execution-observable, so that per-table
-    decision is deferred to Task 4.4's execution shadow, exactly like probe-
-    recovery. See TASK-4.3-PLAN.md's D1 section for the recorded split.
+    `merge_fan_in` (Task 4.3 remediation H3): the OOC-inner driver's own
+    reorder-vs-batch_join route selection (`out_of_core._route_policy.
+    decide_route`) consumes the fixed merge-fan-in default, a stable
+    config-derived cap captured here. The route_policy per-table DECISION
+    (`RouteDecision`/`ReorderCaps`) itself is NOT reproduced at 4.3: it needs
+    the free-disk budget, the deduplicated parent-key relation row count, and
+    the measured max sort-payload row width. Those three are DEFERRED to Task
+    4.4's execution shadow, alongside probe-recovery, for two distinct
+    reasons: the parent-key count and payload width are execution-produced
+    (read from generated-relation Parquet metadata BUILT DURING the OOC run,
+    `_route_policy._parent_key_count`, not pre-execution-observable); the
+    free-disk budget (`shutil.disk_usage(...).free`) is a fluctuating
+    point-in-time measurement, not a stable host cap like `budget_bytes` (the
+    cgroup/host memory CEILING) -- capturing it would make `plan_hash`
+    nondeterministic for identical inputs, and 4.4 must re-measure it at
+    execution time anyway, so 4.3 does not capture it at all. See
+    TASK-4.3-PLAN.md's D1 section for the recorded split.
     """
 
     compatible: bool
@@ -244,7 +246,6 @@ class OutOfCoreRoutingFacts:
     probe_recovers_full_frame: bool | None
     budget_bytes: int | None
     reorder_threshold_rows: int
-    temp_disk_budget_bytes: int | None
     merge_fan_in: int
 
 
@@ -427,7 +428,6 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         facts.probe_recovers_full_frame,
         facts.budget_bytes,
         facts.reorder_threshold_rows,
-        facts.temp_disk_budget_bytes,
         facts.merge_fan_in,
         admission.table,
         admission.static_candidate,

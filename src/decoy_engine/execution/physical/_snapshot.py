@@ -13,7 +13,6 @@ invoked. Nothing here masks a row.
 
 from __future__ import annotations
 
-import shutil
 import types
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
@@ -84,7 +83,6 @@ def capture_physical_plan_inputs(
     (`_pipeline_finalize` / `_planner` constants) so an unspecified knob here
     captures the same routing facts an unspecified `run_pipeline` kwarg would.
     """
-    from decoy_engine.execution import _pipeline_route_exec
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._pipeline_routing_signals import (
         out_of_core_routing_signals,
@@ -103,7 +101,6 @@ def capture_physical_plan_inputs(
         _MERGE_FAN_IN_DEFAULT,
         resolve_reorder_threshold_rows,
     )
-    from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._seed import _normalize_job_seed_int
     from decoy_engine.profile import profile_source
@@ -206,21 +203,6 @@ def capture_physical_plan_inputs(
     )
     resolved_budget = resolve_budget(out_of_core_budget_bytes)
 
-    # OOC-inner host-budget facts (Task 4.3 remediation H3): pre-execution-
-    # resolvable exactly like `resolved_budget` above -- a free-disk stat, no
-    # masking -- mirroring `_pipeline_route_exec.py`'s own resilience
-    # contract (undetectable free disk leaves the runtime cap unset rather
-    # than blocking a job the route would otherwise run). The per-table
-    # reorder-vs-batch_join DECISION stays out of scope (see
-    # `OutOfCoreRoutingFacts`'s docstring): it also needs the deduplicated
-    # parent-key count and max sort-payload width, both execution-produced.
-    temp_disk_budget_bytes: int | None = None
-    try:
-        free_bytes = shutil.disk_usage(default_ooc_temp_root()).free
-        temp_disk_budget_bytes = int(free_bytes * _pipeline_route_exec._TEMP_DISK_SAFETY_FRACTION)
-    except OSError:
-        pass
-
     # Native companion probe outcome (Task 4.3 remediation H3; design doc
     # section 12 punch-list): read-only, never-raises, no-masking (see
     # `PhysicalPlanInputs.native_companion_reason`'s docstring for scope).
@@ -251,7 +233,6 @@ def capture_physical_plan_inputs(
         probe_recovers_full_frame=probe_recovers_full_frame,
         budget_bytes=resolved_budget.budget_bytes,
         reorder_threshold_rows=resolved_reorder_threshold,
-        temp_disk_budget_bytes=temp_disk_budget_bytes,
         merge_fan_in=_MERGE_FAN_IN_DEFAULT,
     )
 

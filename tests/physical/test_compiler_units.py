@@ -520,38 +520,6 @@ def test_table_kinds_is_immutable_after_capture(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_out_of_core_facts_temp_disk_budget_matches_live_disk_stat(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import shutil
-
-    from decoy_engine.execution import _pipeline_route_exec
-    from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
-
-    class _FakeUsage:
-        free = 1_000_000_000
-
-    monkeypatch.setattr(shutil, "disk_usage", lambda _path: _FakeUsage())
-    inputs = _flat_inputs(tmp_path)
-    expected = int(_FakeUsage.free * _pipeline_route_exec._TEMP_DISK_SAFETY_FRACTION)
-    assert inputs.out_of_core_facts.temp_disk_budget_bytes == expected
-    # Sanity: the captured value used the SAME root production spills under.
-    assert default_ooc_temp_root() is not None
-
-
-def test_out_of_core_facts_temp_disk_budget_none_on_undetectable_disk(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import shutil
-
-    def _raise(_path: object) -> None:
-        raise OSError("undetectable")
-
-    monkeypatch.setattr(shutil, "disk_usage", _raise)
-    inputs = _flat_inputs(tmp_path)
-    assert inputs.out_of_core_facts.temp_disk_budget_bytes is None
-
-
 def test_out_of_core_facts_merge_fan_in_matches_route_policy_default(tmp_path: Path) -> None:
     from decoy_engine.execution.out_of_core._route_policy import _MERGE_FAN_IN_DEFAULT
 
@@ -571,15 +539,6 @@ def test_plan_hash_changes_with_native_companion_reason(tmp_path: Path) -> None:
 
     inputs = _flat_inputs(tmp_path)
     mutated = replace(inputs, native_companion_reason="abi-mismatch")
-    assert inputs.plan_hash() != mutated.plan_hash()
-
-
-def test_plan_hash_changes_with_temp_disk_budget_bytes(tmp_path: Path) -> None:
-    from dataclasses import replace
-
-    inputs = _flat_inputs(tmp_path)
-    mutated_facts = replace(inputs.out_of_core_facts, temp_disk_budget_bytes=123)
-    mutated = replace(inputs, out_of_core_facts=mutated_facts)
     assert inputs.plan_hash() != mutated.plan_hash()
 
 
