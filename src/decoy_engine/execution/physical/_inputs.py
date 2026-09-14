@@ -210,12 +210,30 @@ class OutOfCoreRoutingFacts:
     """The `(out_of_core_compatible, reject_code, largest_table_rows,
     largest_table_rows_exact)` signal `_pipeline_routing_signals.
     out_of_core_routing_signals` computes, plus the B1b/B2 byte-estimate and
-    probe-recovery verdicts and the resolved OOC memory budget -- every
-    value `decide_execution_route` consumes that is not itself a pure
-    function of `(profile, plan, registry, graph)` alone. Captured once by
+    probe-recovery verdicts and the resolved OOC memory/disk host budget --
+    every value `decide_execution_route` consumes, plus the pre-execution-
+    resolvable subset of the OOC-inner-driver's own host budget (design doc
+    section 3, section 12 punch-list), that is not itself a pure function of
+    `(profile, plan, registry, graph)` alone. Captured once by
     `capture_physical_plan_inputs`; the compiler is pure over these values
     and never re-derives them (`resolve_budget` reads the cgroup/host
     memory ceiling, a real host fact, not a re-derivable pure computation).
+
+    `temp_disk_budget_bytes` / `merge_fan_in` (Task 4.3 remediation H3): the
+    OOC-inner driver's own reorder-vs-batch_join route selection
+    (`out_of_core._route_policy.decide_route`) additionally consumes these
+    two host-budget facts, both resolvable pre-execution exactly like
+    `budget_bytes` -- free disk space under the OOC temp root (a `statvfs`
+    call, no masking) and the fixed merge-fan-in default. They are captured
+    here and hashed so a host with a different disk budget produces a
+    different `plan_hash`, but the route_policy per-table DECISION
+    (`RouteDecision`/`ReorderCaps`) itself is NOT reproduced: it additionally
+    needs the deduplicated parent-key relation row count and the measured
+    max sort-payload row width, both read from generated-relation Parquet
+    metadata BUILT DURING the OOC run (`_route_policy._parent_key_count`) --
+    execution-produced, not pre-execution-observable, so that per-table
+    decision is deferred to Task 4.4's execution shadow, exactly like probe-
+    recovery. See TASK-4.3-PLAN.md's D1 section for the recorded split.
     """
 
     compatible: bool
@@ -226,6 +244,8 @@ class OutOfCoreRoutingFacts:
     probe_recovers_full_frame: bool | None
     budget_bytes: int | None
     reorder_threshold_rows: int
+    temp_disk_budget_bytes: int | None
+    merge_fan_in: int
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +259,22 @@ class PhysicalPlanInputs:
     of (D1). See this module's docstring for why real objects (`Plan`,
     `Profile`, `RelationshipGraph`, `ProviderRegistry`, `caller_sources`) are
     held directly rather than re-extracted into parallel metadata fields.
+
+    `native_companion_reason` (Task 4.3 remediation H3; design doc section 12
+    punch-list "native companion probe OUTCOME"): the normalized
+    `NativeCompanionStatus.reason` from `native._companion_status.
+    native_companion_status()` -- a read-only, never-raises, no-masking probe
+    of the optional compiled `decoy-engine-native` companion (present / absent
+    / abi-mismatch / kat-corrupt / load-error), captured because it is
+    resolvable at decision time exactly like the native-stream admission
+    chain. It is NOT yet consumed by any Task 4.3 driver-selection decision --
+    the per-node native_chunk-vs-oracle dispatch that DOES key off it
+    (`native/_dispatch.py`'s companion-load try/except) is per-node dispatch,
+    explicitly deferred to Task 4.4 (this module's docstring; TASK-4.3-
+    REMEDIATION.md's 4.3/4.4 boundary line). It is captured and hashed now so
+    4.4 can consume it directly from the frozen snapshot without widening the
+    shape -- the same "capture now, consume later" precedent D1 already set
+    for probe recovery.
     """
 
     config: Mapping[str, Any]
@@ -268,6 +304,7 @@ class PhysicalPlanInputs:
     fallback_to_pandas: bool
     out_of_core_facts: OutOfCoreRoutingFacts
     native_admission: NativeAdmissionFact
+    native_companion_reason: str
     engine_version: str
 
     @property
@@ -287,12 +324,51 @@ class PhysicalPlanInputs:
         doc section 3's "a work/capability FINGERPRINT from registry"),
         rather than hashing the `ProviderRegistry` object itself (not a
         stable-content-hash contract). `known_providers()` is the registry's
-        own public, stable enumeration accessor."""
-        names = ",".join(sorted(self.registry.known_providers()))
-        return hashlib.sha256(names.encode("utf-8")).hexdigest()
+        own public, stable enumeration accessor.
+
+        Hashes the CAPABILITY MATRIX per provider (Task 4.3 remediation H1),
+        not just the sorted name list: `_build_nodes` (`_compiler.py`) and
+        `classify_provider` (`native/_provider_class.py`) both consult
+        `get_capabilities(provider)` -- a `CapabilityMatrix` -- to build
+        `PhysicalNode.provider_class`, so two same-name registries whose
+        matrices differ (e.g. one `poolable=True`, the other `False`) route
+        to different node shapes but, pre-fix, hashed identically. Every
+        `CapabilityMatrix` field is a frozen, required Pydantic field
+        (`providers_v2/_adapter.py`), so `model_dump()` is a complete,
+        stable-keyed serialization of exactly what `_build_nodes` /
+        `classify_provider` can observe -- no field selection needed.
+        """
+        parts = tuple(
+            (name, tuple(sorted(self.registry.get_capabilities(name).model_dump().items())))
+            for name in sorted(self.registry.known_providers())
+        )
+        return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
     def plan_hash(self) -> str:
         return compute_plan_hash(self)
+
+
+def _resident_source_fact(name: str, source: pa.Table | LazySource) -> tuple[object, ...]:
+    """One source's route-affecting measured content (Task 4.3 remediation
+    H1; design doc section 12's "resident-source measured facts"): for a
+    resident `pa.Table`, its row count plus ordered `(column, type,
+    null_count)` triples -- exactly what `_planner.py`'s runtime-source
+    gates read (`_runtime_source_rejections`: row count against the
+    auto-chunk threshold, schema + per-column null state against the
+    chunk-dtype-stability gate) and what `classify_job`/`layer2_chunk_
+    decision` therefore branches on. A `LazySource` carries no resident rows
+    to measure, so it contributes a stable marker instead -- its own route-
+    affecting content (path, schema) is out of scope for THIS fact family
+    (the native-admission chain already captures what it reads from a lazy
+    source, in `NativeAdmissionFact`).
+    """
+    if isinstance(source, LazySource):
+        return (name, "lazy_source")
+    columns = tuple(
+        (field.name, str(field.type), source.column(field.name).null_count)
+        for field in source.schema
+    )
+    return (name, source.num_rows, columns)
 
 
 def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
@@ -308,9 +384,21 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
     """
     facts = inputs.out_of_core_facts
     admission = inputs.native_admission
+    resident_source_facts = tuple(
+        _resident_source_fact(name, inputs.caller_sources[name])
+        for name in sorted(inputs.caller_sources)
+    )
     parts: tuple[object, ...] = (
         inputs.plan.pipeline_config_hash,
         inputs.plan.profile_hash,
+        # Resident-source measured facts (H1): `pipeline_config_hash` /
+        # `profile_hash` cover the DECLARED config/schema, not the actual
+        # resident row/null content `classify_job` reads at capture time --
+        # a 2-row vs 4-row resident input on the identical config hashed
+        # identically pre-fix, despite routing `full_frame` vs `chunked`.
+        # Sorted by table name, so an extra/missing source frame (a changed
+        # key set, not just changed content) also changes the hash.
+        resident_source_facts,
         inputs.resolved_substrate,
         inputs.sink_class_token,
         inputs.source_loader_present,
@@ -339,6 +427,8 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         facts.probe_recovers_full_frame,
         facts.budget_bytes,
         facts.reorder_threshold_rows,
+        facts.temp_disk_budget_bytes,
+        facts.merge_fan_in,
         admission.table,
         admission.static_candidate,
         admission.static_reason,
@@ -346,6 +436,7 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         admission.lane,
         admission.admitted,
         admission.reason,
+        inputs.native_companion_reason,
     )
     digest = hashlib.sha256()
     for part in parts:
