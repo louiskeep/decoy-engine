@@ -155,8 +155,12 @@ def capture_physical_plan_inputs(
     # dict returned by `classify_table_kinds` is otherwise mutable in place,
     # which would silently invalidate `plan_hash`'s snapshot-content
     # contract. `pa.Table` / `Plan` stay un-copied (heavy, unnecessary --
-    # `plan_hash` now covers their route-affecting content directly).
-    table_kinds: Mapping[str, str] = types.MappingProxyType(classify_table_kinds(config))
+    # `plan_hash` now covers their route-affecting content directly). Kept
+    # as a plain `dict` through this function's own preflight calls below
+    # (several live signature `dict[str, str]` invariantly, not `Mapping`)
+    # and frozen into a `MappingProxyType` only at the final `PhysicalPlan
+    # Inputs` construction.
+    table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
 
     job_seed = _normalize_job_seed_int(config)
@@ -213,9 +217,7 @@ def capture_physical_plan_inputs(
     temp_disk_budget_bytes: int | None = None
     try:
         free_bytes = shutil.disk_usage(default_ooc_temp_root()).free
-        temp_disk_budget_bytes = int(
-            free_bytes * _pipeline_route_exec._TEMP_DISK_SAFETY_FRACTION
-        )
+        temp_disk_budget_bytes = int(free_bytes * _pipeline_route_exec._TEMP_DISK_SAFETY_FRACTION)
     except OSError:
         pass
 
@@ -259,7 +261,7 @@ def capture_physical_plan_inputs(
         profile=profile,
         registry=resolved_registry,
         graph=graph,
-        table_kinds=table_kinds,
+        table_kinds=types.MappingProxyType(table_kinds),
         caller_sources=caller_sources,
         source_loader_present=source_loader is not None,
         resolved_substrate=resolved_substrate,

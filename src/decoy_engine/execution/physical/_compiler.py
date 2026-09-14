@@ -188,10 +188,7 @@ def out_of_core_not_ready_reason(inputs: PhysicalPlanInputs) -> str:
     if facts.largest_table_rows is None:
         return _reasons.OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL
     if facts.largest_table_rows < inputs.out_of_core_threshold_rows:
-        return (
-            f"{_reasons.OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX}:"
-            f"{facts.largest_table_rows}"
-        )
+        return f"{_reasons.OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX}:{facts.largest_table_rows}"
     return _reasons.OUT_OF_CORE_READY_CONTRADICTION  # pragma: no cover
 
 

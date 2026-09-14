@@ -41,10 +41,10 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution.physical import (
     DriverId,
+    _reasons,
     capture_physical_plan_inputs,
     compile_physical_plan,
 )
-from decoy_engine.execution.physical import _reasons
 from decoy_engine.execution.physical._plan import PhysicalTable, RejectedAlternative
 from decoy_engine.execution.physical._reasons import (
     FORCED_MODE_BRANCH_IDENTITIES,
@@ -246,9 +246,7 @@ def _expected_out_of_core_not_ready_reason(inputs: Any) -> str:
     if facts.largest_table_rows is None:
         return _reasons.OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL
     if facts.largest_table_rows < inputs.out_of_core_threshold_rows:
-        return (
-            f"{_reasons.OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX}:{facts.largest_table_rows}"
-        )
+        return f"{_reasons.OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX}:{facts.largest_table_rows}"
     return _reasons.OUT_OF_CORE_READY_CONTRADICTION  # pragma: no cover
 
 
@@ -992,8 +990,13 @@ def test_native_admission_reasons_stay_in_the_known_catalog(
     path = _write(tmp_path, source, "t")
     config = _single_table_config(tmp_path, source)
     scenarios.append(
-        ("utf8_admitted", config, {"t": LazySource(path=path)}, {"native_route_enabled": True},
-         _assert_utf8_admitted)
+        (
+            "utf8_admitted",
+            config,
+            {"t": LazySource(path=path)},
+            {"native_route_enabled": True},
+            _assert_utf8_admitted,
+        )
     )
 
     def _assert_unsupported_strategy(inputs: Any) -> None:
@@ -1008,8 +1011,13 @@ def test_native_admission_reasons_stay_in_the_known_catalog(
     hash_config = _single_table_config(tmp_path, hash_source, strategy="hash")
     hash_config["tables"][0]["columns"][0]["namespace"] = "n"
     scenarios.append(
-        ("unsupported_strategy", hash_config, {"t": LazySource(path=hash_path)},
-         {"native_route_enabled": True}, _assert_unsupported_strategy)
+        (
+            "unsupported_strategy",
+            hash_config,
+            {"t": LazySource(path=hash_path)},
+            {"native_route_enabled": True},
+            _assert_unsupported_strategy,
+        )
     )
 
     def _assert_route_disabled(inputs: Any) -> None:
