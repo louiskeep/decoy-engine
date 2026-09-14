@@ -107,8 +107,12 @@ def _assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
     # nullable-int handling), while the single-column table round-trip matches
     # the oracle's per-column inference by construction for every admitted type
     # (large_string -> string, all-null bool/string -> null, int+null ->
-    # float64, big-int/uint, empty -> pandas' own inference). Values are
-    # unchanged, so this reconciles only the schema, never the data.
+    # float64, big-int/uint, empty -> pandas' own inference). The output equals
+    # the ORACLE's output, not necessarily the source: passthrough itself never
+    # masks, but the oracle's float64 promotion of a null-bearing integer loses
+    # precision beyond 2**53 (e.g. 2**53+1 -> 2**53), and this reproduces that
+    # exactly. So it reconciles the shadow to the oracle, never to the raw
+    # source.
     normalized = pa.Table.from_pandas(pa.table({"c": combined}).to_pandas(), preserve_index=False)
     return normalized.column("c").combine_chunks()
 
