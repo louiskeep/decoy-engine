@@ -24,6 +24,7 @@ from decoy_engine.execution.physical._shadow_coordinator import (
     _batches,
 )
 from decoy_engine.execution.physical._shadow_diff_codes import (
+    DUPLICATE_NODE_DECLARATION,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     ShadowDifference,
 )
@@ -79,6 +80,27 @@ def _plan_with_one_node(
 # ---------------------------------------------------------------------------
 # No sink/publisher/target surface (C1, C7).
 # ---------------------------------------------------------------------------
+
+
+def test_duplicate_node_id_raises_coded_difference() -> None:
+    """Codex final-gate MEDIUM: two nodes with the same node_id (a config
+    declaring the same column+strategy twice, which config accepts) would
+    collapse into one route_evidence record + one output column. The
+    coordinator must surface it with DUPLICATE_NODE_DECLARATION, not hide it."""
+    from dataclasses import replace
+
+    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    node = plan.tables[0].nodes[0]
+    table = replace(plan.tables[0], nodes=(node, node))  # same node_id twice
+    plan = replace(plan, tables=(table,))
+
+    snapshot = capture_shadow_snapshot(
+        {"t": pa.table({"c": pa.array(["a", "b"], type=pa.string())})}
+    )
+    ctx = ShadowContext(mask_key=b"\x03" * 32)
+    with pytest.raises(ShadowDifference) as exc:
+        ShadowCoordinator(ctx=ctx).run(plan, snapshot)
+    assert exc.value.code == DUPLICATE_NODE_DECLARATION
 
 
 def test_shadow_coordinator_has_no_sink_or_publisher_parameter() -> None:

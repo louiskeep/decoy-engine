@@ -138,6 +138,31 @@ def test_config_column_order_differs_from_source_matches_oracle(tmp_path: Path) 
     _verify(tmp_path, "t", source, columns, name="config_order_permuted")
 
 
+def test_passthrough_large_string_normalizes_to_string_matches_oracle(tmp_path: Path) -> None:
+    """Codex final-gate HIGH: a non-empty large_string passthrough column
+    round-trips through the pandas oracle as `string`; the shadow assembly
+    must match, not emit `large_string`. Driven through the LIVE oracle."""
+    source = pa.table({"c": pa.array(["x", "y", "z"], type=pa.large_string())})
+    _verify(tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_large_str")
+
+
+def test_passthrough_all_null_bool_normalizes_to_null_matches_oracle(tmp_path: Path) -> None:
+    """Codex final-gate HIGH: an all-null bool passthrough column round-trips
+    through the pandas oracle as `null`, not `bool`. Driven through the LIVE
+    oracle so a future pandas promotion change is caught by the real compare."""
+    source = pa.table({"c": pa.array([None, None, None], type=pa.bool_())})
+    _verify(
+        tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_allnull_bool"
+    )
+
+
+def test_passthrough_all_null_string_normalizes_to_null_matches_oracle(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array([None, None], type=pa.string())})
+    _verify(
+        tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_allnull_str"
+    )
+
+
 def test_passthrough_partial_null_int_upcasts_to_float_matches_oracle(tmp_path: Path) -> None:
     """dennis MEDIUM-1: drive the int64+null -> float64 passthrough oracle
     quirk through the LIVE oracle comparison, not just a pinned unit test. If a

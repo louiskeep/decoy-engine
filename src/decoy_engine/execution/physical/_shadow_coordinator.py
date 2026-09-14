@@ -25,6 +25,7 @@ import pyarrow as pa
 from decoy_engine.execution.physical._plan import PhysicalPlan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
+    DUPLICATE_NODE_DECLARATION,
     OPERATOR_NOT_EXECUTED,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     RESOURCE_LIMIT_BREACH,
@@ -90,29 +91,24 @@ def _assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
     """
     combined = pa.concat_arrays(parts)
     n = len(combined)
-    native_type = combined.type
-    if n == 0:
-        if strategy in _TOKENIZING_STRATEGIES:
-            return pa.array([], type=pa.float64())
-        # passthrough: an empty STRING column round-trips through pandas as
-        # `null`-typed; every other type (int, bool, ...) stays exactly as
-        # loaded, since passthrough never touches the underlying values.
-        if pa.types.is_string(native_type) or pa.types.is_large_string(native_type):
-            return pa.array([], type=pa.null())
-        return combined
-    null_count = combined.null_count
-    all_null = null_count == n
     if strategy in _TOKENIZING_STRATEGIES:
-        return pa.nulls(n, type=pa.null()) if all_null else combined
-    # passthrough: pandas upcasts an integer column to float64 the moment
-    # ANY value in it is null (no nullable-Int64 extension dtype in play,
-    # standard pandas int+NaN promotion); an all-null string column
-    # round-trips as `null`-typed, matching the empty case above.
-    if pa.types.is_integer(native_type) and null_count > 0:
-        return combined.cast(pa.float64())
-    if (pa.types.is_string(native_type) or pa.types.is_large_string(native_type)) and all_null:
-        return pa.nulls(n, type=pa.null())
-    return combined
+        # redact / truncate / hash emit strings the native kernel produced: an
+        # empty column round-trips through the pandas oracle as `float64`, an
+        # all-null one as `null`, a normal one stays exactly as produced.
+        if n == 0:
+            return pa.array([], type=pa.float64())
+        return pa.nulls(n, type=pa.null()) if combined.null_count == n else combined
+    # passthrough is value-identity, so its OUTPUT SCHEMA is exactly whatever
+    # the pandas full-frame oracle infers when the table round-trips
+    # `table.to_pandas()` -> `from_pandas`. Reproduce that per column with the
+    # same round-trip (`pa.array(array.to_pandas())`) so EVERY admitted type
+    # matches by construction -- large_string -> string, all-null bool/string
+    # -> null, int+null -> float64, empty -> pandas' own inference -- instead
+    # of hand-listing individual quirks, which kept missing shapes (Codex
+    # final-gate: all-null bool, non-empty large_string). Verified equal to the
+    # live oracle for every admitted passthrough type; values are unchanged, so
+    # this reconciles only the schema, never the data.
+    return pa.array(combined.to_pandas())
 
 
 @dataclass
@@ -137,6 +133,14 @@ class ShadowCoordinator:
                     # native-admission miss); nothing to run for this node.
                     continue
                 column = node.columns[0]
+                if node.node_id in route_evidence:
+                    # A duplicate column+strategy declaration (config accepts it)
+                    # collides on node_id and would collapse two nodes into one
+                    # evidence record + one output column. Surface it, don't hide it.
+                    raise ShadowDifference(
+                        code=DUPLICATE_NODE_DECLARATION,
+                        detail=f"{table.table}: duplicate node_id {node.node_id!r}",
+                    )
                 evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
                 route_evidence[node.node_id] = evidence
 

@@ -31,6 +31,7 @@ _EXPECTED_CODES = frozenset(
         "resource-limit-breach",
         "publication-attempt",
         "native_companion_unavailable",
+        "duplicate-node-declaration",
     }
 )
 

@@ -16,6 +16,7 @@ __all__ = [
     "CELL_VALUE_DIFF",
     "DIAGNOSTICS_DIFF",
     "DIFFERENCE_CODES",
+    "DUPLICATE_NODE_DECLARATION",
     "NATIVE_COMPANION_UNAVAILABLE",
     "NULL_MASK_DIFF",
     "OPERATOR_NOT_EXECUTED",
@@ -40,6 +41,12 @@ OPERATOR_NOT_EXECUTED: Final = "operator-not-executed"
 SNAPSHOT_IDENTITY_DIFF: Final = "snapshot-identity-diff"
 RESOURCE_LIMIT_BREACH: Final = "resource-limit-breach"
 PUBLICATION_ATTEMPT: Final = "publication-attempt"
+# A plan whose nodes carry a duplicate `node_id` (a config declaring the same
+# column + strategy twice; config accepts it). Two such nodes would collapse
+# into one `route_evidence` record and one output column, hiding a node. The
+# bounded slice treats a duplicate declaration as malformed and surfaces it
+# with this code rather than silently masking the collision.
+DUPLICATE_NODE_DECLARATION: Final = "duplicate-node-declaration"
 # The coded shadow FAILURE for a missing/ABI-incompatible compiled hash
 # companion (C2): the coordinator translates `CryptoExtensionUnavailableError`
 # (`native/_crypto_ext.py:110`) into this code and never falls back to the
@@ -61,6 +68,7 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         RESOURCE_LIMIT_BREACH,
         PUBLICATION_ATTEMPT,
         NATIVE_COMPANION_UNAVAILABLE,
+        DUPLICATE_NODE_DECLARATION,
     }
 )
 
