@@ -215,6 +215,145 @@ def test_plan_hash_changes_with_extra_source_frame(tmp_path: Path) -> None:
     assert inputs_bare.plan_hash() != inputs_extra.plan_hash()
 
 
+def test_resident_source_fact_lazy_source_marker_is_exact(tmp_path: Path) -> None:
+    from decoy_engine.execution.physical._inputs import _resident_source_fact
+    from decoy_engine.profile._readers import LazySource
+
+    path = tmp_path / "t.parquet"
+    pq.write_table(pa.table({"note": pa.array(["s1"], type=pa.string())}), path)
+    assert _resident_source_fact("t", LazySource(path=path)) == ("t", "lazy_source")
+
+
+def test_resident_source_fact_resident_table_is_exact() -> None:
+    """Direct, exact-value pin on `_resident_source_fact` -- name, num_rows,
+    and the ordered (column, type, null_count) triples -- so a mutation to
+    any one of those (the table name, `columns` dropped, or `str(type)`
+    corrupted) fails immediately rather than only showing up as SOME
+    difference several layers up in `plan_hash`."""
+    from decoy_engine.execution.physical._inputs import _resident_source_fact
+
+    table = pa.table(
+        {
+            "id": pa.array([1, 2, None], type=pa.int64()),
+            "note": pa.array(["a", None, "c"], type=pa.string()),
+        }
+    )
+    assert _resident_source_fact("t", table) == (
+        "t",
+        3,
+        (("id", "int64", 1), ("note", "string", 1)),
+    )
+
+
+def test_plan_hash_changes_when_a_source_is_renamed_with_identical_content(
+    tmp_path: Path,
+) -> None:
+    """Kills the mutant that drops the table NAME from `_resident_source_
+    fact`'s returned tuple: two otherwise-identical single-source jobs whose
+    only difference is which table the SAME content is keyed under must not
+    collide (the source's identity is itself route-affecting -- it is what
+    `classify_job`'s `source_tables.get(table)` keys off)."""
+    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
+
+    def _config_and_inputs(table_name: str) -> Any:
+        path = _write(tmp_path, source, table_name)
+        config = PipelineConfig.model_validate(
+            {
+                "version": 1,
+                "global_settings": {"seed": 1},
+                "sources": {table_name: {"type": "file", "format": "parquet", "path": str(path)}},
+                "targets": {
+                    table_name: {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(tmp_path / f"{table_name}.out.parquet"),
+                    }
+                },
+                "tables": [
+                    {"name": table_name, "columns": [{"name": "note", "strategy": "redact"}]}
+                ],
+            }
+        ).model_dump()
+        return capture_physical_plan_inputs(
+            config, {table_name: source}, engine_version="unit-test"
+        )
+
+    inputs_t = _config_and_inputs("t")
+    inputs_u = _config_and_inputs("u")
+    assert inputs_t.plan_hash() != inputs_u.plan_hash()
+
+
+def test_plan_hash_digest_construction_is_pinned(tmp_path: Path) -> None:
+    """Golden-value pin on `compute_plan_hash`'s byte-level construction
+    (UTF-8 encoding, the `\\x1f` part separator): an inequality-only
+    assertion cannot distinguish a mutant that corrupts the separator or
+    encoding IDENTICALLY across every part (still self-consistent, still
+    differs when inputs differ) from the correct implementation -- only an
+    exact digest value can. Recomputes the identical byte sequence
+    `compute_plan_hash` documents itself as constructing (repr + UTF-8 +
+    `\\x1f` per part) directly from the frozen snapshot's own fields, so
+    this pins the ENCODING, not a duplicate of the field SELECTION (which
+    the collision tests above already cover).
+    """
+    import hashlib
+
+    from decoy_engine.execution.physical._inputs import _resident_source_fact
+
+    inputs = _flat_inputs(tmp_path)
+    facts = inputs.out_of_core_facts
+    admission = inputs.native_admission
+    parts: tuple[object, ...] = (
+        inputs.plan.pipeline_config_hash,
+        inputs.plan.profile_hash,
+        tuple(
+            _resident_source_fact(name, inputs.caller_sources[name])
+            for name in sorted(inputs.caller_sources)
+        ),
+        inputs.resolved_substrate,
+        inputs.sink_class_token,
+        inputs.source_loader_present,
+        inputs.execution_mode,
+        inputs.fidelity_report,
+        inputs.vault_writer_present,
+        len(inputs.validators),
+        inputs.auto_chunk,
+        inputs.chunk_size_rows,
+        inputs.auto_chunk_threshold_rows,
+        inputs.out_of_core_threshold_rows,
+        inputs.full_frame_reject_rows,
+        inputs.use_byte_estimate_routing,
+        inputs.use_probe_routing,
+        inputs.native_route_enabled,
+        inputs.fpe_chunk_count,
+        inputs.max_workers,
+        inputs.fallback_to_pandas,
+        inputs.registry_fingerprint(),
+        tuple(sorted(inputs.table_kinds.items())),
+        facts.compatible,
+        facts.reject_code,
+        facts.largest_table_rows,
+        facts.largest_table_rows_exact,
+        facts.full_frame_fits_estimate,
+        facts.probe_recovers_full_frame,
+        facts.budget_bytes,
+        facts.reorder_threshold_rows,
+        facts.merge_fan_in,
+        admission.table,
+        admission.static_candidate,
+        admission.static_reason,
+        admission.sink_mode,
+        admission.lane,
+        admission.admitted,
+        admission.reason,
+        inputs.native_companion_reason,
+    )
+    expected = hashlib.sha256()
+    for part in parts:
+        expected.update(repr(part).encode("utf-8"))
+        expected.update(b"\x1f")
+    assert inputs.plan_hash() == expected.hexdigest()
+
+
 def test_registry_fingerprint_changes_with_capability_matrix(tmp_path: Path) -> None:
     """H1 counterexample: two registries that declare the SAME provider name
     but different capability matrices must NOT collide -- pre-fix,
@@ -371,6 +510,58 @@ def test_out_of_core_not_ready_reason_validators_disqualify_before_compat_check(
     assert out_of_core_not_ready_reason(inputs) != "validators_present"
     inputs = replace(inputs, validators=({"name": "fk_intact"},))
     assert out_of_core_not_ready_reason(inputs) == "validators_present"
+
+
+def test_out_of_core_not_ready_reason_fidelity_report_disqualifies(tmp_path: Path) -> None:
+    """Kills mutants that drop `fidelity_report` from the forwarded
+    `_sequential_eligible` call (`out_of_core_not_ready_reason` mutating it
+    to `None` still passes a falsy value through, silently un-disqualifying
+    a fidelity-report job)."""
+    from dataclasses import replace
+
+    inputs = _fk_inputs(tmp_path, use_byte_estimate_routing=False)
+    assert out_of_core_not_ready_reason(inputs) != "fidelity_report_requested"
+    inputs = replace(inputs, fidelity_report=True)
+    assert out_of_core_not_ready_reason(inputs) == "fidelity_report_requested"
+
+
+def test_out_of_core_not_ready_reason_vault_writer_disqualifies(tmp_path: Path) -> None:
+    """Kills mutants that force `vault_writer_sentinel`/`vault_writer` to
+    `None` regardless of `inputs.vault_writer_present`."""
+    from dataclasses import replace
+
+    inputs = _fk_inputs(tmp_path, use_byte_estimate_routing=False)
+    assert out_of_core_not_ready_reason(inputs) != "vault_writer_requested"
+    inputs = replace(inputs, vault_writer_present=True)
+    assert out_of_core_not_ready_reason(inputs) == "vault_writer_requested"
+
+
+def test_out_of_core_not_ready_reason_generate_plus_mask_disqualifies(tmp_path: Path) -> None:
+    """Kills mutants that drop `has_generate_table` from the forwarded call.
+    `has_generate_table` is a property derived from `table_kinds`, so a
+    generate-kind table is added to an otherwise-unchanged FK snapshot."""
+    from dataclasses import replace
+
+    inputs = _fk_inputs(tmp_path, use_byte_estimate_routing=False)
+    assert out_of_core_not_ready_reason(inputs) != "generate_plus_mask"
+    mutated_kinds = dict(inputs.table_kinds)
+    mutated_kinds["extra_generated"] = "generate"
+    inputs = replace(inputs, table_kinds=mutated_kinds)
+    assert inputs.has_generate_table is True
+    assert out_of_core_not_ready_reason(inputs) == "generate_plus_mask"
+
+
+def test_out_of_core_not_ready_reason_non_pandas_substrate_disqualifies(tmp_path: Path) -> None:
+    """Kills mutants that drop `resolved_substrate` from the forwarded call
+    (the compiler's own `resolved_substrate=inputs.resolved_substrate`
+    kwarg omitted falls back to `_sequential_eligible`'s `"pandas"`
+    default, silently un-disqualifying a polars job)."""
+    from dataclasses import replace
+
+    inputs = _fk_inputs(tmp_path, use_byte_estimate_routing=False)
+    assert out_of_core_not_ready_reason(inputs) != "non_pandas_substrate_requested"
+    inputs = replace(inputs, resolved_substrate="polars")
+    assert out_of_core_not_ready_reason(inputs) == "non_pandas_substrate_requested"
 
 
 def test_out_of_core_not_ready_reason_reports_below_threshold(tmp_path: Path) -> None:
