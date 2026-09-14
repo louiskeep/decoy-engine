@@ -76,7 +76,6 @@ def capture_physical_plan_inputs(
     out_of_core_reorder_threshold_rows: int | None = None,
     native_route_enabled: bool = False,
     vault_writer: Any = None,
-    validators: list[Any] | None = None,
 ) -> PhysicalPlanInputs:
     """Build a `PhysicalPlanInputs` snapshot for `config`/`sources` by running
     the real preflight sequence. Argument defaults mirror `run_pipeline`'s own
@@ -107,6 +106,11 @@ def capture_physical_plan_inputs(
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
     resolved_reorder_threshold = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
+    # Validators are a config-only, route-affecting input (a truthy list disqualifies
+    # the bounded routes via _sequential_eligible -> "validators_present"). run_pipeline
+    # reads them only from config (`_pipeline.py`: validators=config.get("validators") or []),
+    # so the snapshot must too -- never from a caller kwarg, which could diverge.
+    config_validators = list(config.get("validators") or [])
 
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
@@ -195,7 +199,7 @@ def capture_physical_plan_inputs(
         execution_mode=execution_mode,
         fidelity_report=fidelity_report,
         vault_writer_present=vault_writer is not None,
-        validators=tuple(validators or ()),
+        validators=tuple(config_validators),
         auto_chunk=auto_chunk,
         chunk_size_rows=chunk_size_rows,
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,

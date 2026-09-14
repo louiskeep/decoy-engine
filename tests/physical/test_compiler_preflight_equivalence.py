@@ -228,6 +228,31 @@ def test_full_frame_fk_byte_estimate_fits(tmp_path: Path, monkeypatch: pytest.Mo
     _assert_equivalent(monkeypatch, config, {"parent": parent, "child": child})
 
 
+def test_validators_present_disqualifies_bounded_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A config-level `validators:` list makes `_sequential_eligible` return
+    `validators_present`, disqualifying the bounded routes: an FK pure-mask
+    job that would otherwise route `sequential` (byte-estimate off) is pushed
+    to `full_frame`. Validators are a config-only, route-affecting input;
+    the snapshot must read them from config exactly as `run_pipeline` does,
+    or the compiler diverges from live dispatch on any validators-bearing job.
+    """
+    parent = pa.table({"id": pa.array(["p1", "p2"], type=pa.string())})
+    child = pa.table({"pid": pa.array(["p1", "p2"], type=pa.string())})
+    config = _fk_config(tmp_path, parent, child)
+    config["validators"] = [{"name": "fk_intact"}]
+    # Sanity: the SAME job without validators routes sequential under these knobs
+    # (see test_sequential_small_fk_byte_estimate_off), so full_frame here is
+    # attributable to the validators input, not the job shape.
+    _assert_equivalent(
+        monkeypatch,
+        config,
+        {"parent": parent, "child": child},
+        use_byte_estimate_routing=False,
+    )
+
+
 def test_out_of_core_forced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     parent = pa.table({"id": pa.array(["p1", "p2"], type=pa.string())})
     child = pa.table({"pid": pa.array(["p1", "p2"], type=pa.string())})
@@ -505,20 +530,45 @@ def test_reject_before_read_large_fk_no_bounded_route(
     assert compiler_exc.value.code == live_exc.value.code == "fk_full_frame_oom_risk_rejected"
 
 
+def _assert_forced_mode_equivalent(
+    monkeypatch: pytest.MonkeyPatch,
+    config: dict[str, Any],
+    sources: Any,
+    *,
+    must_contain: str,
+    **kwargs: Any,
+) -> None:
+    """Both sides must raise `ConfigError` with the IDENTICAL message (the
+    normalized branch identity D3 promised, not merely the same exception
+    type). `must_contain` pins which forced-mode branch fired so a fixture
+    can't silently drift onto a different branch that also raises ConfigError.
+    """
+    inputs = capture_physical_plan_inputs(config, sources, engine_version="d4-corpus", **kwargs)
+    with pytest.raises(ConfigError) as compiler_exc:
+        compile_physical_plan(inputs)
+    with pytest.raises(ConfigError) as live_exc:
+        with _patched_dispatch(monkeypatch):
+            run_pipeline(config, sources, engine_version="d4-oracle", **kwargs)
+    assert str(compiler_exc.value) == str(live_exc.value), (
+        f"forced-mode message diverged:\n  compiler: {compiler_exc.value}\n  live:     {live_exc.value}"
+    )
+    assert must_contain in str(compiler_exc.value), (
+        f"expected branch discriminator {must_contain!r} in {str(compiler_exc.value)!r}"
+    )
+
+
 def test_forced_sequential_ineligible_no_relationships(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
     config = _single_table_config(tmp_path, source)
-    sources = {"t": source}
-    kwargs: dict[str, Any] = dict(execution_mode="sequential")
-
-    inputs = capture_physical_plan_inputs(config, sources, engine_version="d4-corpus", **kwargs)
-    with pytest.raises(ConfigError):
-        compile_physical_plan(inputs)
-    with pytest.raises(ConfigError):
-        with _patched_dispatch(monkeypatch):
-            run_pipeline(config, sources, engine_version="d4-oracle", **kwargs)
+    _assert_forced_mode_equivalent(
+        monkeypatch,
+        config,
+        {"t": source},
+        must_contain="not sequential-eligible",
+        execution_mode="sequential",
+    )
 
 
 def test_forced_out_of_core_no_mask_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -544,15 +594,153 @@ def test_forced_out_of_core_no_mask_table(tmp_path: Path, monkeypatch: pytest.Mo
             ],
         }
     ).model_dump()
-    sources: dict[str, Any] = {}
-    kwargs: dict[str, Any] = dict(execution_mode="out_of_core")
+    _assert_forced_mode_equivalent(
+        monkeypatch,
+        config,
+        {},
+        must_contain="mask-kind table to run through the out-of-core path",
+        execution_mode="out_of_core",
+    )
 
-    inputs = capture_physical_plan_inputs(config, sources, engine_version="d4-corpus", **kwargs)
-    with pytest.raises(ConfigError):
-        compile_physical_plan(inputs)
-    with pytest.raises(ConfigError):
-        with _patched_dispatch(monkeypatch):
-            run_pipeline(config, sources, engine_version="d4-oracle", **kwargs)
+
+def test_forced_out_of_core_ineligible_single_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-table pure-mask job (no relationships) forced to out_of_core:
+    has a mask table but is not out-of-core-eligible."""
+    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
+    config = _single_table_config(tmp_path, source)
+    _assert_forced_mode_equivalent(
+        monkeypatch,
+        config,
+        {"t": source},
+        must_contain="not out-of-core-eligible",
+        execution_mode="out_of_core",
+    )
+
+
+def test_forced_out_of_core_incompatible_recipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An FK job that IS out-of-core-eligible but carries a strategy the
+    out-of-core path does not support: reaches the incompatibility branch."""
+    parent = pa.table(
+        {
+            "id": pa.array(["p1", "p2"], type=pa.string()),
+            "extra": pa.array(["x", "y"], type=pa.string()),
+        }
+    )
+    child = pa.table({"pid": pa.array(["p1", "p2"], type=pa.string())})
+    parent_path = _write(tmp_path, parent, "parent")
+    child_path = _write(tmp_path, child, "child")
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {
+                "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
+                "child": {"type": "file", "format": "parquet", "path": str(child_path)},
+            },
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "format": "parquet",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                },
+                "child": {
+                    "type": "file",
+                    "format": "parquet",
+                    "path": str(tmp_path / "child.out.parquet"),
+                },
+            },
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        {"name": "id", "strategy": "hash", "namespace": "n"},
+                        {"name": "extra", "strategy": "synthetic"},
+                    ],
+                },
+                {
+                    "name": "child",
+                    "columns": [{"name": "pid", "strategy": "hash", "namespace": "n"}],
+                },
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["pid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                }
+            ],
+        }
+    ).model_dump()
+    _assert_forced_mode_equivalent(
+        monkeypatch,
+        config,
+        {"parent": parent, "child": child},
+        must_contain="not out-of-core-compatible",
+        execution_mode="out_of_core",
+    )
+
+
+def test_forced_sequential_cyclic_fk_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cyclic FK mask graph (A <-> B) IS sequential-eligible but cannot be
+    ordered: reaches the forced-sequential cyclic branch."""
+    a = pa.table(
+        {
+            "id": pa.array(["a0", "a1"], type=pa.string()),
+            "bid": pa.array(["b0", "b1"], type=pa.string()),
+        }
+    )
+    b = pa.table(
+        {
+            "id": pa.array(["b0", "b1"], type=pa.string()),
+            "aid": pa.array(["a0", "a1"], type=pa.string()),
+        }
+    )
+    a_path = _write(tmp_path, a, "a")
+    b_path = _write(tmp_path, b, "b")
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {
+                "a": {"type": "file", "format": "parquet", "path": str(a_path)},
+                "b": {"type": "file", "format": "parquet", "path": str(b_path)},
+            },
+            "targets": {
+                "a": {"type": "file", "format": "parquet", "path": str(tmp_path / "a.out.parquet")},
+                "b": {"type": "file", "format": "parquet", "path": str(tmp_path / "b.out.parquet")},
+            },
+            "tables": [
+                {"name": "a", "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}]},
+                {"name": "b", "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["aid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "a", "columns": ["bid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                },
+            ],
+        }
+    ).model_dump()
+    _assert_forced_mode_equivalent(
+        monkeypatch,
+        config,
+        {"a": a, "b": b},
+        must_contain="cross-table cycle",
+        execution_mode="sequential",
+    )
 
 
 # ---------------------------------------------------------------------------
