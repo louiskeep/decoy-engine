@@ -483,6 +483,11 @@ ignore = [
 # driving git / mutmut / pytest subprocesses with fully code-constructed args
 # (S603/S607 subprocess with a partial path are intentional and trusted).
 "scripts/native-testing/python_mutation_pilot.py" = ["S603", "S607"]
+# Physical-seam disconnection sentry (Task 4.2, D4): the exact-diff gate
+# shells out to `git diff` with fully code-constructed, non-user-controlled
+# args to compare this checkout against origin/main (S603/S607 partial-path
+# subprocess call is intentional and trusted, matching the harnesses above).
+"tests/sentry/test_physical_seam_disconnection.py" = ["S603", "S607"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;
@@ -751,6 +756,20 @@ module = [
     "decoy_engine.reference_tables._loader",
     # SP-09 / P5.S.code_set.1/2/3: code_set strategy + corpus loader.
     "decoy_engine.transforms.code_set",
+    # Task 4.2 (execution-consolidation Phase 4): the physical-execution
+    # adapter seam. New code; same strict bar as the rest of decoy_engine.execution.
+    "decoy_engine.execution.physical",
+    "decoy_engine.execution.physical._types",
+    "decoy_engine.execution.physical._context",
+    "decoy_engine.execution.physical._capabilities",
+    "decoy_engine.execution.physical._protocols",
+    "decoy_engine.execution.physical.drivers",
+    "decoy_engine.execution.physical.drivers._full_frame",
+    "decoy_engine.execution.physical.drivers._sequential",
+    "decoy_engine.execution.physical.drivers._chunked",
+    "decoy_engine.execution.physical.drivers._native_stream",
+    "decoy_engine.execution.physical.drivers._out_of_core",
+    "decoy_engine.execution.physical.drivers._synthesis",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
