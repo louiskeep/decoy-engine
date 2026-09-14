@@ -144,16 +144,55 @@ def native_applies(inputs: PhysicalPlanInputs) -> bool:
 def out_of_core_not_ready_reason(inputs: PhysicalPlanInputs) -> str:
     """Why `out_of_core` was not `out_of_core_ready` in `decide_execution_
     route`'s own terms, for a job that reached `sequential` or `full_frame`
-    instead. Mirrors that function's own `out_of_core_ready` conjunction,
-    inverted."""
+    instead.
+
+    Reproduces the COMPLETE live `out_of_core_ready` conjunction
+    (`_pipeline_routing.decide_execution_route`) -- `eligible and not cyclic
+    and has_mask_table and out_of_core_compatible and largest_table_rows is
+    not None and rows >= out_of_core_threshold_rows` -- by DELEGATING to the
+    same live sub-decision functions that conjunction calls
+    (`_sequential_eligible`, `_has_cross_table_fk_cycle`), not by re-deriving
+    them from a narrower subset (Task 4.3 remediation H2). The pre-fix
+    version reconstructed the conjunction from only `(compatible, size,
+    threshold)`, omitting `eligible`/`cyclic`/`has_mask_table` entirely, so a
+    validators-disqualified FK job (ineligible on the FIRST operand) fell
+    through every check here and reached the `out_of_core_ready`
+    contradiction fallback -- a false "the alternative was ready" reason
+    packaged into `rejected_alternatives` for a route that was never in
+    contention. Returns the FIRST failing operand, in the live function's own
+    order, so the two can never read differently for the same inputs.
+    """
+    from decoy_engine.execution._pipeline_routing import (
+        _has_cross_table_fk_cycle,
+        _sequential_eligible,
+    )
+
+    vault_writer_sentinel = object() if inputs.vault_writer_present else None
+    eligible, eligibility_reason = _sequential_eligible(
+        inputs.profile,
+        has_generate_table=inputs.has_generate_table,
+        validators=list(inputs.validators),
+        fidelity_report=inputs.fidelity_report,
+        vault_writer=vault_writer_sentinel,
+        resolved_substrate=inputs.resolved_substrate,
+    )
+    if not eligible:
+        return eligibility_reason
+    if _has_cross_table_fk_cycle(inputs.graph):
+        return _reasons.OUT_OF_CORE_NOT_READY_CYCLIC
+    if not inputs.has_mask_table:
+        return _reasons.OUT_OF_CORE_NOT_READY_NO_MASK_TABLE
     facts = inputs.out_of_core_facts
     if not facts.compatible:
-        return facts.reject_code or "out_of_core_incompatible"
+        return facts.reject_code or _reasons.OUT_OF_CORE_NOT_READY_INCOMPATIBLE
     if facts.largest_table_rows is None:
-        return "out_of_core_no_size_signal"
+        return _reasons.OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL
     if facts.largest_table_rows < inputs.out_of_core_threshold_rows:
-        return f"out_of_core_below_threshold:{facts.largest_table_rows}"
-    return "out_of_core_ready"  # pragma: no cover - contradicts the caller's own route
+        return (
+            f"{_reasons.OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX}:"
+            f"{facts.largest_table_rows}"
+        )
+    return _reasons.OUT_OF_CORE_READY_CONTRADICTION  # pragma: no cover
 
 
 def _relationship_alternatives(

@@ -65,6 +65,32 @@ ROUTE_BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE: Final = "byte_estimate_bounded_out_of_c
 ROUTE_OUT_OF_CORE_LARGE_FK: Final = "out_of_core_large_fk"
 ROUTE_CROSS_TABLE_CYCLE: Final = "cross_table_cycle"
 
+# ---------------------------------------------------------------------------
+# `out_of_core_not_ready_reason` codes (`_compiler.py`): the first-failing-
+# operand tokens for the live `out_of_core_ready` conjunction
+# (`_pipeline_routing.decide_execution_route`) -- eligible and not cyclic and
+# has_mask_table and out_of_core_compatible and largest_table_rows is not
+# None and rows >= out_of_core_threshold_rows. `_sequential_eligible`'s own
+# disqualifier tokens (`ROUTE_*` above) cover the first operand; these cover
+# the remaining ones the pre-H2 compiler omitted (Task 4.3 remediation H2).
+# ---------------------------------------------------------------------------
+
+OUT_OF_CORE_NOT_READY_CYCLIC: Final = "out_of_core_cross_table_cycle"
+OUT_OF_CORE_NOT_READY_NO_MASK_TABLE: Final = "out_of_core_no_mask_table"
+OUT_OF_CORE_NOT_READY_INCOMPATIBLE: Final = "out_of_core_incompatible"
+OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL: Final = "out_of_core_no_size_signal"
+OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX: Final = "out_of_core_below_threshold"
+OUT_OF_CORE_READY_CONTRADICTION: Final = "out_of_core_ready"
+
+OUT_OF_CORE_NOT_READY_CODES: Final[frozenset[str]] = frozenset(
+    {
+        OUT_OF_CORE_NOT_READY_CYCLIC,
+        OUT_OF_CORE_NOT_READY_NO_MASK_TABLE,
+        OUT_OF_CORE_NOT_READY_INCOMPATIBLE,
+        OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL,
+    }
+)
+
 ROUTE_REASON_CODES: Final[frozenset[str]] = frozenset(
     {
         ROUTE_NO_RELATIONSHIPS,
@@ -393,6 +419,13 @@ __all__ = [
     "FORCED_SEQUENTIAL_NO_MASK_TABLE",
     "NATIVE_SCAN_CODE_PREFIXES",
     "NATIVE_STATIC_CODE_PREFIXES",
+    "OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX",
+    "OUT_OF_CORE_NOT_READY_CODES",
+    "OUT_OF_CORE_NOT_READY_CYCLIC",
+    "OUT_OF_CORE_NOT_READY_INCOMPATIBLE",
+    "OUT_OF_CORE_NOT_READY_NO_MASK_TABLE",
+    "OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL",
+    "OUT_OF_CORE_READY_CONTRADICTION",
     "PRECOMPILATION_EXCLUDED_CODES",
     "ROUTE_BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE",
     "ROUTE_BYTE_ESTIMATE_FULL_FRAME_FITS",
