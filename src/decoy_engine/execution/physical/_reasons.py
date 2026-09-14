@@ -204,6 +204,16 @@ NATIVE_STATIC_CODE_PREFIXES: Final[frozenset[str]] = frozenset(
         "vault_column",
         "unsupported_strategy",
         "native_route_disabled_or_no_mask_table",
+        # `redact_config_rejection` / `truncate_config_rejection`
+        # (`native/_requirements.py`), called from `static_candidacy`
+        # (`_native_route.py`) for an ALLOWED_STRATEGIES redact/truncate
+        # column whose config itself cannot run on the native kernel --
+        # config-gate checks, no I/O, so STATIC not SCAN (Task 4.3
+        # remediation H4 #3: previously uncatalogued, classified "unknown").
+        "redact_with_not_string",
+        "truncate_length_invalid",
+        "truncate_keep_invalid",
+        "truncate_mask_char_invalid",
     }
 )
 
