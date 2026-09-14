@@ -217,6 +217,15 @@ NATIVE_STATIC_CODE_PREFIXES: Final[frozenset[str]] = frozenset(
     }
 )
 
+# Only the native-lane reasons the preflight RETURNS as an admission verdict
+# (`reason=` on a `RouteAdmission`/`NativeBatchAdmission` in `_native_route.py`
+# / `_native_route_preflight.py`), so `native_reason_code_family` classifies
+# exactly the reasons a captured `NativeAdmissionFact.reason` can carry. Codes
+# that RAISE (`code=` on an `ExecutionError`) or are produced only during
+# execution are runtime codes, not admission reasons -- see
+# `NATIVE_RUNTIME_ERROR_CODES` below; nested DETAIL suffixes
+# (`columns_changed` / `type_changed`, which only ever appear AFTER a top-level
+# `native_preflight_schema_drift:` prefix) are `NATIVE_DETAIL_SUFFIXES`.
 NATIVE_SCAN_CODE_PREFIXES: Final[frozenset[str]] = frozenset(
     {
         "zero_row_source",
@@ -224,9 +233,30 @@ NATIVE_SCAN_CODE_PREFIXES: Final[frozenset[str]] = frozenset(
         "non_utf8_column",
         "native_preflight_schema_drift",
         "native_preflight_reroute",
-        "native_preflight_strategy_unresolved",
-        "native_source_snapshot_digest_mismatch",
-        "native_chunk_schema_drift",
+    }
+)
+
+# Native-lane codes that RAISE an `ExecutionError` (`code=`) rather than being
+# returned as an admission verdict -- runtime/execution codes (D3's runtime
+# category), never a captured `NativeAdmissionFact.reason`, so deliberately
+# EXCLUDED from the admission catalog above. Named here so the audit can prove
+# they are runtime codes (raised, not returned) against their live producers,
+# not silently dropped.
+NATIVE_RUNTIME_ERROR_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "native_preflight_strategy_unresolved",  # _native_route_preflight.py:314
+        "native_source_snapshot_digest_mismatch",  # _native_route_preflight.py:261
+        "native_chunk_schema_drift",  # _native_route_exec.py:305 / _preflight.py:419
+    }
+)
+
+# Nested DETAIL suffixes: these only ever appear as the `:<detail>` tail of a
+# top-level `native_preflight_schema_drift:` reason (`_native_route_preflight.
+# py:143/147`), never as a top-level prefix, so `native_reason_code_family`
+# (which splits on the FIRST `:`) classifies the whole reason by its
+# `native_preflight_schema_drift` prefix and these need no catalog entry.
+NATIVE_DETAIL_SUFFIXES: Final[frozenset[str]] = frozenset(
+    {
         "columns_changed",
         "type_changed",
     }
@@ -427,6 +457,8 @@ __all__ = [
     "FORCED_SEQUENTIAL_CYCLIC",
     "FORCED_SEQUENTIAL_INELIGIBLE",
     "FORCED_SEQUENTIAL_NO_MASK_TABLE",
+    "NATIVE_DETAIL_SUFFIXES",
+    "NATIVE_RUNTIME_ERROR_CODES",
     "NATIVE_SCAN_CODE_PREFIXES",
     "NATIVE_STATIC_CODE_PREFIXES",
     "OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX",

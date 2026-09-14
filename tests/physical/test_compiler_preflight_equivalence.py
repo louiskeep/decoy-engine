@@ -1098,6 +1098,8 @@ def test_native_admission_catalog_is_bidirectional() -> None:
     that a new prefix is genuinely reachable (and in the right family).
     """
     from decoy_engine.execution.physical._reasons import (
+        NATIVE_DETAIL_SUFFIXES,
+        NATIVE_RUNTIME_ERROR_CODES,
         NATIVE_SCAN_CODE_PREFIXES,
         NATIVE_STATIC_CODE_PREFIXES,
     )
@@ -1126,6 +1128,10 @@ def test_native_admission_catalog_is_bidirectional() -> None:
             "truncate_mask_char_invalid",
         }
     )
+    # ONLY the reasons the preflight RETURNS as an admission verdict (`reason=`
+    # on a RouteAdmission / NativeBatchAdmission). Codes that raise, or are
+    # produced only during execution, or are nested detail suffixes are NOT
+    # admission reasons and are audited separately below.
     expected_scan = frozenset(
         {
             "zero_row_source",
@@ -1133,17 +1139,33 @@ def test_native_admission_catalog_is_bidirectional() -> None:
             "non_utf8_column",
             "native_preflight_schema_drift",
             "native_preflight_reroute",
-            "native_preflight_strategy_unresolved",
-            "native_source_snapshot_digest_mismatch",
-            "native_chunk_schema_drift",
-            "columns_changed",
-            "type_changed",
         }
     )
     assert expected_static == NATIVE_STATIC_CODE_PREFIXES
     assert expected_scan == NATIVE_SCAN_CODE_PREFIXES
-    # The two families must stay disjoint, or a prefix's family is ambiguous.
+    # The two admission families must stay disjoint, or a prefix's family is
+    # ambiguous.
     assert not (NATIVE_STATIC_CODE_PREFIXES & NATIVE_SCAN_CODE_PREFIXES)
+    # Runtime-error and detail codes are NOT admission reasons and must never
+    # leak into the admission catalog (that was the membership-only audit's
+    # gap: it accepted a set padded with non-admission codes). They classify as
+    # "unknown" on their own -- correct, since they are not admission verdicts.
+    assert not (
+        NATIVE_RUNTIME_ERROR_CODES & (NATIVE_STATIC_CODE_PREFIXES | NATIVE_SCAN_CODE_PREFIXES)
+    )
+    assert not (NATIVE_DETAIL_SUFFIXES & (NATIVE_STATIC_CODE_PREFIXES | NATIVE_SCAN_CODE_PREFIXES))
+    for runtime_code in NATIVE_RUNTIME_ERROR_CODES:
+        assert native_reason_code_family(runtime_code) == "unknown"
+    # A real captured schema-drift reason carrying a `columns_changed` /
+    # `type_changed` detail tail still resolves to "scan" via its top-level
+    # prefix, so the detail codes need no catalog entry of their own.
+    assert (
+        native_reason_code_family("native_preflight_schema_drift:columns_changed:missing=[x]")
+        == "scan"
+    )
+    assert (
+        native_reason_code_family("native_preflight_schema_drift:type_changed:c:int->str") == "scan"
+    )
     # The four codes this remediation added resolve to STATIC (spot-check the
     # classifier, not just set membership).
     for code in (

@@ -29,11 +29,17 @@ def test_native_reason_code_family_classifies_scan_codes() -> None:
         _reasons.native_reason_code_family("native_preflight_reroute:n:redact:integer:partial_null")
         == "scan"
     )
-    assert _reasons.native_reason_code_family("native_chunk_schema_drift") == "scan"
+    assert _reasons.native_reason_code_family("native_preflight_schema_drift:columns_changed") == (
+        "scan"
+    )
 
 
 def test_native_reason_code_family_flags_unknown_codes() -> None:
     assert _reasons.native_reason_code_family("something_never_seen_before") == "unknown"
+    # Runtime-error codes RAISE (`code=`), they are never a returned admission
+    # reason, so they are correctly NOT in the admission catalog -> "unknown".
+    assert _reasons.native_reason_code_family("native_chunk_schema_drift") == "unknown"
+    assert _reasons.native_reason_code_family("native_preflight_strategy_unresolved") == "unknown"
 
 
 def test_translate_polars_rejection_no_mask_work() -> None:
