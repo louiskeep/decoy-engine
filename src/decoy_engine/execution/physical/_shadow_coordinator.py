@@ -28,6 +28,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     OPERATOR_NOT_EXECUTED,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     RESOURCE_LIMIT_BREACH,
+    SCHEMA_DIFF,
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
@@ -168,6 +169,23 @@ class ShadowCoordinator:
                 columns[column] = _assemble_column(node.strategy, parts)
 
             if columns:
-                outputs[table.table] = pa.table(columns)
+                # Assemble in SOURCE-SCHEMA order -- the pandas full-frame
+                # oracle preserves the source column order, NOT the node/config
+                # declaration order this loop iterates in (Codex final-gate
+                # HIGH: source [a,b] with config [b,a] otherwise diverged). For
+                # the bounded slice EVERY source column must be configured with
+                # an in-slice strategy, so the assembled set must equal the
+                # source set exactly; a missing (unconfigured source column) or
+                # unexpected column is a coded difference, not a silent drop.
+                source_order = source.column_names
+                if set(columns) != set(source_order):
+                    raise ShadowDifference(
+                        code=SCHEMA_DIFF,
+                        detail=(
+                            f"{table.table}: assembled columns {sorted(columns)} "
+                            f"!= source columns {sorted(source_order)}"
+                        ),
+                    )
+                outputs[table.table] = pa.table({name: columns[name] for name in source_order})
 
         return ShadowRunResult(outputs=outputs, route_evidence=route_evidence)

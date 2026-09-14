@@ -120,6 +120,24 @@ def test_passthrough_alone(tmp_path: Path) -> None:
     )
 
 
+def test_config_column_order_differs_from_source_matches_oracle(tmp_path: Path) -> None:
+    """Codex final-gate HIGH: the pandas oracle preserves SOURCE column order,
+    not config/node declaration order. Source is [a, b] but the config lists
+    the columns [b, a]; both sides must still emit [a, b]. Pre-fix the shadow
+    assembled in config order and diverged with a schema-diff."""
+    source = pa.table(
+        {
+            "a": pa.array(["a0", "a1", "a2"], type=pa.string()),
+            "b": pa.array(["b0", "b1", "b2"], type=pa.string()),
+        }
+    )
+    columns = [
+        {"name": "b", "strategy": "redact"},
+        {"name": "a", "strategy": "hash", "namespace": "n"},
+    ]
+    _verify(tmp_path, "t", source, columns, name="config_order_permuted")
+
+
 def test_passthrough_partial_null_int_upcasts_to_float_matches_oracle(tmp_path: Path) -> None:
     """dennis MEDIUM-1: drive the int64+null -> float64 passthrough oracle
     quirk through the LIVE oracle comparison, not just a pinned unit test. If a
