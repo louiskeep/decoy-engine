@@ -777,6 +777,13 @@ module = [
     "decoy_engine.execution.physical._plan",
     "decoy_engine.execution.physical._reasons",
     "decoy_engine.execution.physical._snapshot",
+    # Task 4.4: the shadow coordinator. Same strict bar as the rest of the seam.
+    "decoy_engine.execution.physical._shadow_bindings",
+    "decoy_engine.execution.physical._shadow_context",
+    "decoy_engine.execution.physical._shadow_coordinator",
+    "decoy_engine.execution.physical._shadow_diff_codes",
+    "decoy_engine.execution.physical._shadow_operators",
+    "decoy_engine.execution.physical._shadow_snapshot",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

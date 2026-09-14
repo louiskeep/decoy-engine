@@ -16,17 +16,73 @@ resource estimate, determinism binding, or diagnostic-obligation set here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
+
+import pyarrow as pa
 
 from decoy_engine.execution.physical._types import DriverId
 
 __all__ = [
+    "ExecutionBinding",
+    "KeyBinding",
     "PhysicalNode",
     "PhysicalPlan",
     "PhysicalTable",
     "RejectedAlternative",
     "SynthesisStage",
 ]
+
+
+@dataclass(frozen=True)
+class KeyBinding:
+    """Non-secret key reference for a keyed slice node (Task 4.4 C0).
+
+    Carries ONLY the `KeySource` TOKEN (`native/_capabilities.py:51`'s
+    `Literal["mask_key", "generation_seed"]`) plus the column's namespace --
+    never a `KeyProvider` object and never key bytes. The resolved
+    `KeyProvider` and the resolved mask-key bytes live EXCLUSIVELY in the
+    runtime `ShadowContext` (`_shadow_context.py`), passed at execution, never
+    stored on this frozen binding or the plan it hangs off of (guarded by
+    `tests/physical/test_shadow_no_secret_serialization.py`).
+    """
+
+    key_source: str
+    namespace: str
+
+
+@dataclass(frozen=True)
+class ExecutionBinding:
+    """Slice-only immutable execution binding attached to a `PhysicalNode` at
+    COMPILE time (Task 4.4 C0; design doc section 8.1's per-node field list,
+    scoped to the four strategies this task shadows -- passthrough, redact,
+    truncate, keyed hash). Populated only when the node's compiled config was
+    admitted to the corresponding native kernel; every other node leaves
+    `PhysicalNode.execution` unset (out of scope for this task's slice).
+
+    `resolved_config` is the node's fully-resolved provider-config as a
+    sorted tuple of (key, value) pairs (e.g. truncate's `length`/`keep`,
+    including the legacy `from_end` -> `keep` resolution) -- never raw
+    key/secret material. `determinism_family`/`determinism_version` name the
+    draw-site family (`native/_capabilities.capabilities_for(strategy).
+    draw_family`, `None` for the three unkeyed transforms) and the plan's
+    `seed_protocol_version`. `key_binding` is set only for the keyed-hash
+    node. `diagnostic_obligations` mirrors `NodeRequirements.
+    diagnostic_reducers` (empty for this slice's zero-diagnostic strategies).
+    `batch_estimate` is the resident source table's row count when known, for
+    reporting only -- it does not gate anything.
+    """
+
+    operator_id: str
+    operator_reason: str
+    resolved_config: tuple[tuple[str, Any], ...]
+    input_schema: pa.Schema
+    output_schema: pa.Schema
+    determinism_family: str | None
+    determinism_version: int
+    key_binding: KeyBinding | None
+    diagnostic_obligations: tuple[str, ...]
+    required_prepasses: tuple[str, ...]
+    batch_estimate: int | None
 
 
 @dataclass(frozen=True)
@@ -57,6 +113,10 @@ class PhysicalNode:
     strategy: str
     fallback_policy: Literal["native", "python_only"]
     provider_class: str | None
+    # Task 4.4 C0: set only for the four slice strategies this task shadows,
+    # and only when the node's resolved config was admitted to the matching
+    # native kernel. `None` for every other node (out of scope for 4.4).
+    execution: ExecutionBinding | None = None
 
 
 @dataclass(frozen=True)
