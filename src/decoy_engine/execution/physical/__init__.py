@@ -42,6 +42,19 @@ Package layout:
                        into `run_pipeline`.
   `_snapshot`        -- Task 4.3 D1: `capture_physical_plan_inputs`, the
                        real (non-synthesized) preflight-only snapshot builder.
+  `_shadow_bindings` -- Task 4.4 C0: slice-only `ExecutionBinding`
+                       construction for `PhysicalNode`, called from the
+                       compiler.
+  `_shadow_context`  -- Task 4.4 C0: `ShadowContext`, the runtime-only
+                       carrier for the resolved mask key + resource budget.
+  `_shadow_operators` -- Task 4.4 C2: direct dispatch to the four native
+                       slice kernels, plus per-node route evidence.
+  `_shadow_snapshot` -- Task 4.4 C5: `ShadowSnapshot` + its non-sensitive
+                       snapshot-identity digest.
+  `_shadow_coordinator` -- Task 4.4 C1/C6: `ShadowCoordinator`, the
+                       no-publish shadow-mode coordinator.
+  `_shadow_diff_codes` -- Task 4.4 C4: the frozen shadow difference/failure
+                       code catalog + `ShadowDifference`.
 """
 
 from __future__ import annotations
@@ -56,6 +69,8 @@ from decoy_engine.execution.physical._inputs import (
     capture_native_admission_fact,
 )
 from decoy_engine.execution.physical._plan import (
+    ExecutionBinding,
+    KeyBinding,
     PhysicalNode,
     PhysicalPlan,
     PhysicalTable,
@@ -70,6 +85,15 @@ from decoy_engine.execution.physical._protocols import (
     PandasScalarOperator,
     TableDriver,
 )
+from decoy_engine.execution.physical._shadow_context import ShadowContext
+from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator, ShadowRunResult
+from decoy_engine.execution.physical._shadow_diff_codes import DIFFERENCE_CODES, ShadowDifference
+from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
+from decoy_engine.execution.physical._shadow_snapshot import (
+    ShadowSnapshot,
+    capture_shadow_snapshot,
+    snapshot_identity,
+)
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.execution.physical._types import (
     DriverId,
@@ -82,13 +106,17 @@ from decoy_engine.execution.physical._types import (
 
 __all__ = [
     "CAPABILITIES",
+    "DIFFERENCE_CODES",
     "BoundedPythonOperator",
     "DriverCapabilities",
     "DriverId",
     "DriverSelection",
+    "ExecutionBinding",
     "ExecutionScope",
+    "KeyBinding",
     "NativeAdmissionFact",
     "NativeScalarKeyedOperator",
+    "OperatorCallEvidence",
     "OperatorFamily",
     "OutOfCoreRoutingFacts",
     "PandasCompositeOperator",
@@ -102,10 +130,18 @@ __all__ = [
     "RejectedAlternative",
     "Residency",
     "SeamContext",
+    "ShadowContext",
+    "ShadowCoordinator",
+    "ShadowDifference",
+    "ShadowRunResult",
+    "ShadowSnapshot",
     "Substrate",
     "SynthesisStage",
     "TableDriver",
     "capture_native_admission_fact",
     "capture_physical_plan_inputs",
+    "capture_shadow_snapshot",
     "compile_physical_plan",
+    "run_operator",
+    "snapshot_identity",
 ]
