@@ -75,7 +75,9 @@ def execution_binding_for_slice_node(
     # non-global draw sites); a future strategy added to SLICE_STRATEGIES
     # without updating the shadow coordinator's "no prepasses" contract
     # (C1) must fail loudly here rather than bind silently.
-    if requirements.required_prepasses:
+    if (
+        requirements.required_prepasses
+    ):  # pragma: no cover - unreachable while SLICE_STRATEGIES stays prepass-free
         raise AssertionError(
             f"{table}:{work_node.columns!r}: strategy {work_node.strategy!r} declared "
             f"required prepasses {requirements.required_prepasses!r}, which the Task 4.4 "

@@ -45,10 +45,51 @@ def test_passthrough_node_gets_a_native_passthrough_binding(tmp_path: Path) -> N
     assert node.execution is not None
     binding = node.execution
     assert binding.operator_id == "native_passthrough"
+    assert binding.operator_reason == "slice_native_admitted:passthrough"
     assert binding.key_binding is None
     assert binding.determinism_family is None
     assert binding.output_schema.field("c").type == pa.string()
+    assert binding.input_schema.field("c").type == pa.string()
+    assert binding.diagnostic_obligations == ()
     assert binding.required_prepasses == ()
+    assert binding.batch_estimate == 2
+
+
+def test_binding_resolves_the_real_input_arrow_type_not_always_string(tmp_path: Path) -> None:
+    """Guards `resolve_input_arrow_type`'s call arguments and the `or
+    pa.string()` fallback: a real int column must resolve to int64 on
+    `input_schema`, never be forced to string."""
+    source = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())})
+    plan = _plan_for(tmp_path, source, [{"name": "c", "strategy": "passthrough"}])
+    node = plan.tables[0].nodes[0]
+    assert node.execution is not None
+    assert node.execution.input_schema.field("c").type == pa.int64()
+    assert node.execution.batch_estimate == 3
+
+
+def test_hash_int_binding_resolves_int_input_type(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array([1, 22, 333], type=pa.int64())})
+    plan = _plan_for(tmp_path, source, [{"name": "c", "strategy": "hash", "namespace": "n"}])
+    node = plan.tables[0].nodes[0]
+    assert node.execution is not None
+    assert node.execution.input_schema.field("c").type == pa.int64()
+
+
+def test_redact_with_non_string_value_is_not_slice_bound(tmp_path: Path) -> None:
+    """`redact_with` must be a string for the native kernel (`native_redact`
+    pins its output to `pa.string()`); a non-string value fails the
+    config gate (`fallback_policy="python_only"`) while `redact`'s static
+    output type stays determinate -- the exact combination that could slip
+    past an `and`-weakened admission guard."""
+    source = pa.table({"c": pa.array(["a", "b"], type=pa.string())})
+    plan = _plan_for(
+        tmp_path,
+        source,
+        [{"name": "c", "strategy": "redact", "provider_config": {"redact_with": 123}}],
+    )
+    node = plan.tables[0].nodes[0]
+    assert node.fallback_policy == "python_only"
+    assert node.execution is None
 
 
 def test_redact_node_binding(tmp_path: Path) -> None:

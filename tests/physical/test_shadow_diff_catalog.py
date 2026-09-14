@@ -84,7 +84,32 @@ def test_crypto_extension_unavailable_maps_to_native_companion_unavailable(
     with pytest.raises(ShadowDifference) as excinfo:
         run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
     assert excinfo.value.code == NATIVE_COMPANION_UNAVAILABLE
+    assert "native_keyed_hash" in excinfo.value.detail
     assert isinstance(excinfo.value.__cause__, CryptoExtensionUnavailableError)
     # Never falls back: no evidence of a successful call is recorded.
     assert evidence.executed is False
     assert evidence.compiled_kernel_executed is False
+
+
+def test_native_threads_reaches_the_compiled_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards against a dropped forwarding hop: `ctx.native_threads` must
+    reach the compiled kernel's own `native_threads` kwarg unchanged."""
+    seen: list[object] = []
+
+    class _StubKernel:
+        def derive_batch(self, values, *, mask_key, namespace, truncate, native_threads=None):
+            seen.append(native_threads)
+            return pa.array(["x"] * len(values), type=pa.string())
+
+    monkeypatch.setattr(
+        "decoy_engine.execution.native._kernels_keyed.load_compiled_crypto_kernel",
+        lambda: _StubKernel(),
+    )
+    ctx = ShadowContext(mask_key=b"\x04" * 32, native_threads=4)
+    binding = _hash_binding()
+    evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
+    array = pa.array(["a", "b"], type=pa.string())
+
+    run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
+    assert seen == [4]
+    assert evidence.compiled_kernel_executed is True

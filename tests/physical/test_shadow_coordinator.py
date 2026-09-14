@@ -27,6 +27,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     ShadowDifference,
 )
+from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._types import DriverId
 
@@ -217,3 +218,49 @@ def test_assemble_column_partial_null_int_passthrough_upcasts_to_float() -> None
     out = _assemble_column("passthrough", parts)
     assert out.type.equals(pa.float64())
     assert out.to_pylist() == [1.0, None, 3.0]
+
+
+# ---------------------------------------------------------------------------
+# run_operator's own default resolution + batch-count bookkeeping.
+# ---------------------------------------------------------------------------
+
+
+def test_run_operator_truncate_defaults_keep_to_head_when_config_omits_it() -> None:
+    """`resolved_config` normally always carries `keep` (`_shadow_bindings`
+    resolves it at compile time); `run_operator`'s own `cfg.get("keep",
+    "head")` fallback is a second, independently testable default."""
+    from decoy_engine.execution.physical._shadow_operators import run_operator
+
+    binding = _binding("native_truncate", resolved_config=(("length", 3),))
+    ctx = ShadowContext(mask_key=b"\x05" * 32)
+    evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
+    array = pa.array(["abcdef"], type=pa.string())
+
+    out = run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
+    assert out.to_pylist() == ["abc"]  # head-kept, not tail
+
+
+def test_run_operator_truncate_falls_back_to_length_zero_which_fails_closed() -> None:
+    """When `resolved_config` carries no valid int `length`, the fallback
+    must be `0` (which `native_truncate` itself rejects), not `1` (which
+    would silently succeed with a 1-char truncation instead of failing)."""
+    from decoy_engine.execution._errors import StrategyError
+    from decoy_engine.execution.physical._shadow_operators import run_operator
+
+    binding = _binding("native_truncate", resolved_config=())
+    ctx = ShadowContext(mask_key=b"\x06" * 32)
+    evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
+    array = pa.array(["abcdef"], type=pa.string())
+
+    with pytest.raises(StrategyError, match="truncate_length_invalid"):
+        run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
+
+
+def test_route_evidence_batches_run_counts_every_batch() -> None:
+    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    source = pa.table({"c": pa.array(list(range(7)), type=pa.int64())})
+    snapshot = capture_shadow_snapshot({"t": source})
+    ctx = ShadowContext(mask_key=b"\x07" * 32, batch_size_rows=3)
+
+    result = ShadowCoordinator(ctx=ctx).run(plan, snapshot)
+    assert result.route_evidence["t:c:scalar:passthrough"].batches_run == 3  # 3, 3, 1
