@@ -91,6 +91,30 @@ def _walk(obj: Any, *, _seen: set[int] | None = None, _depth: int = 0) -> list[A
         for item in obj:
             leaves.extend(_walk(item, _seen=_seen, _depth=_depth + 1))
         return leaves
+    # Defensive (dennis LOW-1): a decoy_engine object that is NOT a dataclass
+    # could still hold a `KeyProvider` or secret in a plain / `__slots__`
+    # attribute and would otherwise be visited as one opaque leaf. Crawl our
+    # own objects' attributes one level deeper (bounded by `_depth`), while
+    # leaving FOREIGN objects (pyarrow tables/schemas, stdlib) opaque so the
+    # walk does not descend huge production data structures. The object itself
+    # is still yielded as a leaf so the `isinstance(..., KeyProvider)` scan
+    # fires on it too.
+    if (type(obj).__module__ or "").startswith("decoy_engine"):
+        attrs: dict[str, Any] = {}
+        if hasattr(obj, "__dict__"):
+            attrs.update(vars(obj))
+        for slot in getattr(type(obj), "__slots__", ()) or ():
+            if hasattr(obj, slot):
+                attrs[slot] = getattr(obj, slot)
+        if attrs:
+            oid = id(obj)
+            if oid in _seen:
+                return []
+            _seen.add(oid)
+            leaves.append(obj)
+            for value in attrs.values():
+                leaves.extend(_walk(value, _seen=_seen, _depth=_depth + 1))
+            return leaves
     return [obj]
 
 

@@ -31,13 +31,9 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     ROW_COUNT_DIFF,
     ROW_ORDER_DIFF,
     SCHEMA_DIFF,
-    SNAPSHOT_IDENTITY_DIFF,
     ShadowDifference,
 )
-from decoy_engine.execution.physical._shadow_snapshot import (
-    capture_shadow_snapshot,
-    snapshot_identity,
-)
+from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.keyprovider import KeyProvider
 
@@ -84,7 +80,6 @@ class ShadowRun:
     shadow: ShadowRunResult
     oracle: ExecutionResult
     shadow_identity: str
-    oracle_identity: str
 
 
 def run_shadow_and_oracle(
@@ -126,7 +121,6 @@ def run_shadow_and_oracle(
         shadow=shadow_result,
         oracle=oracle_result,
         shadow_identity=snapshot.identity(table_name),
-        oracle_identity=snapshot_identity(source),
     )
 
 
@@ -157,12 +151,16 @@ def assert_shadow_matches_oracle(run: ShadowRun) -> None:
     enforced inside `ShadowCoordinator.run` itself) planned==actual operator
     per node. Raises the first coded `ShadowDifference` found.
     """
-    if run.shadow_identity != run.oracle_identity:
-        raise ShadowDifference(
-            code=SNAPSHOT_IDENTITY_DIFF,
-            detail=f"shadow={run.shadow_identity!r} oracle={run.oracle_identity!r}",
-        )
-
+    # Same-input is a property of the fixture, not a cross-check here: the
+    # harness hands the IDENTICAL resident `pa.Table` object to both the shadow
+    # and the oracle, and the fixture file is made read-only (see
+    # `run_shadow_and_oracle` / the read-only fixture test). Re-hashing that one
+    # `source` for "both sides" would be tautological (dennis MEDIUM-2), so the
+    # snapshot digest is recorded (`run.shadow_identity`) but not cross-asserted
+    # here; the value/null/order/row-count/schema hard-compare below is what
+    # actually proves the two masked identical bytes. `SNAPSHOT_IDENTITY_DIFF`
+    # stays a catalog code for the Task 4.5 single-open production reader, where
+    # the two sides read the source independently and the check is non-circular.
     assert_diagnostics_multisets_equal(run.shadow.warnings, tuple(run.oracle.warnings), "warnings")
     assert_diagnostics_multisets_equal(
         run.shadow.row_errors, tuple(run.oracle.row_errors), "row_errors"

@@ -120,6 +120,16 @@ def test_passthrough_alone(tmp_path: Path) -> None:
     )
 
 
+def test_passthrough_partial_null_int_upcasts_to_float_matches_oracle(tmp_path: Path) -> None:
+    """dennis MEDIUM-1: drive the int64+null -> float64 passthrough oracle
+    quirk through the LIVE oracle comparison, not just a pinned unit test. If a
+    future pandas/pyarrow bump changes the oracle's int+null promotion, the
+    coordinator's output-assembly must drift WITH it or this fails on the real
+    schema/value compare (a hardcoded unit expectation would silently pass)."""
+    source = pa.table({"c": pa.array([1, None, 3], type=pa.int64())})
+    _verify(tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_int_null")
+
+
 def test_redact_alone(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     _verify(tmp_path, "t", source, [{"name": "c", "strategy": "redact"}], name="redact_alone")
