@@ -163,6 +163,30 @@ def test_passthrough_all_null_string_normalizes_to_null_matches_oracle(tmp_path:
     )
 
 
+def test_passthrough_int64_above_2pow53_with_null_matches_oracle(tmp_path: Path) -> None:
+    """Codex final re-gate: an int64 passthrough carrying a value beyond
+    float64's exact-integer range (2**53) together with a null. The oracle's
+    table-level pandas round-trip decides the output type/precision; the shadow
+    must reproduce it exactly (verified live: both emit float64 here). Guards
+    against an array-vs-table round-trip divergence across pandas versions."""
+    source = pa.table({"c": pa.array([2**53 + 1, None, 7], type=pa.int64())})
+    _verify(
+        tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_bigint_null"
+    )
+
+
+def test_passthrough_int64_above_2pow53_no_null_matches_oracle(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array([2**53 + 1, 2, 3], type=pa.int64())})
+    _verify(tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_bigint")
+
+
+def test_passthrough_uint64_with_null_matches_oracle(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array([1, None, 3], type=pa.uint64())})
+    _verify(
+        tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}], name="pt_uint64_null"
+    )
+
+
 def test_passthrough_partial_null_int_upcasts_to_float_matches_oracle(tmp_path: Path) -> None:
     """dennis MEDIUM-1: drive the int64+null -> float64 passthrough oracle
     quirk through the LIVE oracle comparison, not just a pinned unit test. If a

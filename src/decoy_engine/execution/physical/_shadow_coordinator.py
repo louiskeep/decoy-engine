@@ -100,15 +100,17 @@ def _assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
         return pa.nulls(n, type=pa.null()) if combined.null_count == n else combined
     # passthrough is value-identity, so its OUTPUT SCHEMA is exactly whatever
     # the pandas full-frame oracle infers when the table round-trips
-    # `table.to_pandas()` -> `from_pandas`. Reproduce that per column with the
-    # same round-trip (`pa.array(array.to_pandas())`) so EVERY admitted type
-    # matches by construction -- large_string -> string, all-null bool/string
-    # -> null, int+null -> float64, empty -> pandas' own inference -- instead
-    # of hand-listing individual quirks, which kept missing shapes (Codex
-    # final-gate: all-null bool, non-empty large_string). Verified equal to the
-    # live oracle for every admitted passthrough type; values are unchanged, so
-    # this reconciles only the schema, never the data.
-    return pa.array(combined.to_pandas())
+    # `table.to_pandas()` -> `from_pandas(preserve_index=False)` (the oracle's
+    # own mechanism, `_pandas_adapter.py`). Reproduce THAT -- a TABLE-level
+    # round-trip, not an array-level `array.to_pandas()`: the two can diverge on
+    # metadata-carrying dtypes across pandas versions (Codex final-gate:
+    # nullable-int handling), while the single-column table round-trip matches
+    # the oracle's per-column inference by construction for every admitted type
+    # (large_string -> string, all-null bool/string -> null, int+null ->
+    # float64, big-int/uint, empty -> pandas' own inference). Values are
+    # unchanged, so this reconciles only the schema, never the data.
+    normalized = pa.Table.from_pandas(pa.table({"c": combined}).to_pandas(), preserve_index=False)
+    return normalized.column("c").combine_chunks()
 
 
 @dataclass
