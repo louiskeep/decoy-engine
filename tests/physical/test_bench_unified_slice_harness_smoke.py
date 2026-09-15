@@ -229,7 +229,11 @@ def _fp_tier(cols: list[str], *, wall: float = 1.0) -> dict:
 
 
 def test_check_tier_fails_on_missing_workload_fingerprint(bench_compare: ModuleType) -> None:
-    bare = {"wall_median_s": 1.0, "wall_p95of_s": 1.0, "raw_reps": [{"wall_s": 1.0, "out_rows": 1000}]}
+    bare = {
+        "wall_median_s": 1.0,
+        "wall_p95of_s": 1.0,
+        "raw_reps": [{"wall_s": 1.0, "out_rows": 1000}],
+    }
     failures = bench_compare._check_tier(1000, bare, bare)
     assert any("workload_fingerprint" in f for f in failures), failures
 
@@ -237,82 +241,3 @@ def test_check_tier_fails_on_missing_workload_fingerprint(bench_compare: ModuleT
 def test_check_tier_fails_when_arms_masked_different_workloads(bench_compare: ModuleType) -> None:
     failures = bench_compare._check_tier(1000, _fp_tier(["a"]), _fp_tier(["a", "b"]))
     assert any("different workloads" in f for f in failures), failures
-
-
-def test_check_old_vs_baseline_fails_on_fingerprint_mismatch(bench_compare: ModuleType) -> None:
-    cur = {"1000": _fp_tier(["a"])}
-    base = {"1000": _fp_tier(["a", "b"])}
-    failures = bench_compare._check_old_vs_baseline(cur, base)
-    assert failures and "different workloads" in failures[0], failures
-
-
-def test_check_old_vs_baseline_flags_a_regression_past_one_percent(
-    bench_compare: ModuleType,
-) -> None:
-    old_results = {"10000": _fp_tier(["a"], wall=1.02)}
-    baseline = {"10000": _fp_tier(["a"], wall=1.0)}
-    failures = bench_compare._check_old_vs_baseline(old_results, baseline)
-    assert failures and "10000" in failures[0]
-
-
-def test_check_old_vs_baseline_passes_within_one_percent(bench_compare: ModuleType) -> None:
-    old_results = {"10000": _fp_tier(["a"], wall=1.005)}
-    baseline = {"10000": _fp_tier(["a"], wall=1.0)}
-    assert bench_compare._check_old_vs_baseline(old_results, baseline) == []
-
-
-def test_check_old_vs_baseline_skips_a_tier_the_baseline_never_measured(
-    bench_compare: ModuleType,
-) -> None:
-    old_results = {"10000": {"wall_median_s": 5.0}}
-    baseline = {"999999": {"wall_median_s": 1.0}}
-    assert bench_compare._check_old_vs_baseline(old_results, baseline) == []
-
-
-def test_baseline_old_flag_is_wired_into_main(
-    bench_compare: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The docstring names `--baseline-old` as a real option; proves argparse
-    accepts it and `main()` actually consults it (a regressed baseline
-    fails the gate) rather than merely parsing and ignoring the flag."""
-    fp = {"n_rows": 1000, "columns": ["c"]}
-    baseline_path = tmp_path / "baseline_old.json"
-    # The baseline must carry the SAME workload fingerprint as this run's
-    # flag-off arm, else the fingerprint guard (not the regression) would fire.
-    baseline_path.write_text(
-        json.dumps({"1000": {"wall_median_s": 1.0, "raw_reps": [{"workload_fingerprint": fp}]}})
-    )
-
-    def _fake_run_driver(
-        tiers: str, reps: int, warmup: int, worker: str, out_path: Path, flag: str = "on"
-    ) -> dict:
-        rec = {
-            "wall_s": 2.0,
-            "peak_rss_kb": 1000,
-            "out_rows": int(tiers),
-            "workload_fingerprint": fp,
-        }
-        # A blown-out 2x regression vs the 1.0s baseline recorded above.
-        return {tiers: {"wall_median_s": 2.0, "wall_p95of_s": 2.0, "raw_reps": [rec]}}
-
-    monkeypatch.setattr(bench_compare, "_run_driver", _fake_run_driver)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "bench_compare.py",
-            "--tiers",
-            "1000",
-            "--reps",
-            "1",
-            "--warmup",
-            "0",
-            "--out-dir",
-            str(tmp_path),
-            "--baseline-old",
-            str(baseline_path),
-        ],
-    )
-    with pytest.raises(SystemExit) as excinfo:
-        bench_compare.main()
-    assert excinfo.value.code == 1

@@ -11,10 +11,17 @@ the ratio reflects the lane and nothing else. Then it checks the D9 thresholds:
   - 100k & 1M: median new/old wall <= 1.10, p95 <= 1.15
   - 10k: median regression <= max(10%, 50 ms)
   - peak RSS <= 1.10x at every tier
-  - flag-off overhead vs main <= 1% median: pass `--baseline-old` a prior
-    flag-off (legacy-arm) result recorded on `origin/main` with the SAME
-    nine-column worker; the fingerprints must match across revisions or the
-    check fails rather than comparing two different workloads.
+
+The D9 "flag-off overhead vs main <= 1%" cross-revision check is DEFERRED
+(Cam 2026-09-15): measuring today's flag-off arm against a baseline recorded
+on the pre-task `main` is version-skewed (that revision predates the
+`unified_slice_enabled` kwarg) and the number it produces is already
+guaranteed structurally -- with the flag off the lane returns at its flag
+check before importing or running anything, proven by
+`tests/physical/test_unified_slice_inertness.py` (a flag-off run pulls in no
+`execution.physical` module at all). We care about the correctness of the
+expected output while the lane improves, not a tie to a specific older
+baseline; a version-compatible baseline recorder is a separate later task.
 
 Every trial's output row count is compared as a coarse equality signal
 (`out_rows` matching); a full byte-for-byte cell comparison across
@@ -57,7 +64,6 @@ _TEN_K_RELATIVE_REGRESSION = 0.10
 _RSS_RATIO_THRESHOLD = 1.10
 _BOOTSTRAP_RESAMPLES = 2000
 _BOOTSTRAP_CONFIDENCE = 0.95
-_OLD_VS_BASELINE_MAX_REGRESSION = 0.01  # the "flag-off overhead vs main <= 1%" claim above
 
 
 def _run_driver(
@@ -199,50 +205,12 @@ def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
     return failures
 
 
-def _check_old_vs_baseline(old_results: dict, baseline: dict) -> list[str]:
-    """The docstring's 4th claim: the "old" (flag-off) arm of THIS run must
-    not have regressed more than 1% median versus `--baseline-old`, a prior
-    `bench_driver.py` results JSON. The baseline MUST have been recorded with
-    the SAME nine-column flag-off worker (`UNIFIED_BENCH_FLAG=off
-    bench_worker_unified.py`): the per-tier workload fingerprints must match, or
-    the comparison is apples-to-oranges (e.g. a legacy ten-column worker that
-    also masked `pt_ts`) and the check fails rather than reporting a false
-    regression number. A tier missing from the baseline is skipped, not failed."""
-    failures: list[str] = []
-    for tier_key, cur in old_results.items():
-        base = baseline.get(tier_key)
-        if base is None:
-            continue
-        fp_failures = _fingerprint_failures(int(tier_key), "this-run off", cur, "baseline", base)
-        if fp_failures:
-            failures.extend(fp_failures)
-            continue
-        ratio = cur["wall_median_s"] / base["wall_median_s"]
-        if ratio > 1 + _OLD_VS_BASELINE_MAX_REGRESSION:
-            failures.append(
-                f"n={tier_key}: flag-off arm regressed {(ratio - 1) * 100:.2f}% vs "
-                f"--baseline-old (median {cur['wall_median_s']:.3f}s vs "
-                f"{base['wall_median_s']:.3f}s, {_OLD_VS_BASELINE_MAX_REGRESSION:.0%} allowed)"
-            )
-    return failures
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tiers", default="10000,100000,1000000")
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--out-dir", default="/tmp/unified_slice_bench")  # noqa: S108 fixed local bench scratch dir
-    ap.add_argument(
-        "--baseline-old",
-        default=None,
-        help=(
-            "path to a bench_driver.py results JSON recorded for the unmodified "
-            "bench_worker.py oracle on a prior commit (e.g. origin/main); when given, "
-            "checks this run's flag-off ('old') arm against it for the <=1%% median "
-            "regression the D9 gate requires"
-        ),
-    )
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -277,10 +245,6 @@ def main() -> None:
     for tier_key in old_results:
         n_rows = int(tier_key)
         all_failures.extend(_check_tier(n_rows, old_results[tier_key], new_results[tier_key]))
-
-    if args.baseline_old is not None:
-        baseline = json.loads(Path(args.baseline_old).read_text())
-        all_failures.extend(_check_old_vs_baseline(old_results, baseline))
 
     print("\n=== D9 performance gate ===")
     if all_failures:
