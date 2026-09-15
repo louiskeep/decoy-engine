@@ -188,7 +188,10 @@ def apply_gates(
 # Strict worker-record validation (plan §5) -- pure, no subprocess.
 # ---------------------------------------------------------------------------
 
-_BENCH_JSON_RE = re.compile(r"^BENCH_JSON (.*)$", re.MULTILINE)
+# Matches ONE marker line and captures its payload (>= 1 char): a bare
+# `BENCH_JSON` with no payload does not match, so it is caught as a
+# no-payload error rather than silently ignored.
+_BENCH_JSON_RE = re.compile(r"^BENCH_JSON (.+)$")
 
 # The frozen worker's admitted 9-column shape (bench_worker_unified.py
 # module docstring: 3 hash + 2 passthrough + 2 redact + 2 truncate, pt_ts
@@ -227,12 +230,21 @@ def validate_worker_record(
     buffer (never a partial one -- see `run_child_process`'s drain-
     completeness contract). Raises `FailClosedError` on the first violation;
     every check is a real `if: raise`, never `assert`."""
-    matches = _BENCH_JSON_RE.findall(stdout)
-    if len(matches) != 1:
-        raise FailClosedError(f"expected exactly one BENCH_JSON line, found {len(matches)}")
+    # Count a line that IS the bare marker OR starts with the marker+space, not
+    # only lines carrying a payload: a stray bare `BENCH_JSON` second line must
+    # still trip the cardinality check. This layer exists to distrust worker
+    # output, so a near-marker fails rather than being silently ignored.
+    marker_lines = [
+        ln for ln in stdout.splitlines() if ln == "BENCH_JSON" or ln.startswith("BENCH_JSON ")
+    ]
+    if len(marker_lines) != 1:
+        raise FailClosedError(f"expected exactly one BENCH_JSON line, found {len(marker_lines)}")
+    payload_match = _BENCH_JSON_RE.match(marker_lines[0])
+    if payload_match is None:
+        raise FailClosedError("the BENCH_JSON line carries no payload")
 
     try:
-        record = json.loads(matches[0], parse_constant=_reject_nonfinite_constant)
+        record = json.loads(payload_match.group(1), parse_constant=_reject_nonfinite_constant)
     except json.JSONDecodeError as exc:
         raise FailClosedError(f"BENCH_JSON line is not valid JSON: {exc}") from exc
     if not isinstance(record, dict):
@@ -267,6 +279,18 @@ def validate_worker_record(
     fingerprint = record["workload_fingerprint"]
     if fingerprint is None:
         raise FailClosedError("worker record workload_fingerprint is null")
+    if not isinstance(fingerprint, dict):
+        raise FailClosedError(
+            f"worker record workload_fingerprint is not an object: {fingerprint!r}"
+        )
+    # `type(x) is int` before the dict `==`: `{"n_rows": 10000.0}` and
+    # `{"n_rows": True}` compare equal to the int-keyed expected dict under
+    # ordinary equality, so a float/bool row count would slip through unchecked.
+    fp_n_rows = fingerprint.get("n_rows")
+    if type(fp_n_rows) is not int:
+        raise FailClosedError(
+            f"worker record workload_fingerprint n_rows must be int, got {fp_n_rows!r}"
+        )
     expected_fp = _expected_fingerprint(expected_n_rows)
     if fingerprint != expected_fp:
         raise FailClosedError(

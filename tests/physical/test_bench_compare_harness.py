@@ -412,6 +412,29 @@ def test_fail_closed_fingerprint_mismatch_between_arms() -> None:
     _assert_fails_closed([off], [on])
 
 
+def test_fail_closed_bare_bench_json_second_marker() -> None:
+    """A valid record followed by a stray bare `BENCH_JSON` line (no payload)
+    must still trip the exactly-one-marker check -- the marker count is over
+    lines, not only lines carrying a payload."""
+    line = _record_json(500, False)
+    _assert_fails_closed([_raw_ok(f"{line}\nBENCH_JSON\n")], [])
+
+
+def test_fail_closed_fingerprint_n_rows_non_int() -> None:
+    """A float or bool `n_rows` inside the fingerprint compares equal to the
+    int-keyed expected dict under ordinary `==`; the structural type check
+    rejects it."""
+    cols = list(bc._EXPECTED_ADMITTED_COLUMNS)
+    off_float = _raw_ok(
+        _record_json(500, False, workload_fingerprint={"n_rows": 500.0, "columns": cols})
+    )
+    _assert_fails_closed([off_float], [])
+    off_bool = _raw_ok(
+        _record_json(500, False, workload_fingerprint={"n_rows": True, "columns": cols})
+    )
+    _assert_fails_closed([off_bool], [])
+
+
 def test_fail_closed_missing_ru_maxrss() -> None:
     off = _raw_ok(_record_json(500, False), ru_maxrss_kb=None)
     _assert_fails_closed([off], [])

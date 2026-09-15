@@ -83,6 +83,25 @@ does not attempt.
 - **Statistics:** median, p95, and a bootstrap CI on the paired ratio; the CI
   upper bound is itself gated, not just reported.
 
+## Known limitations from the dennis review (carry-forwards, not blocking the harness)
+
+- **Off-arm lane identity is worker-self-reported, not observed (MEDIUM-2).** The
+  harness trusts the worker's `execution_mode` / `unified_slice_activated` fields
+  to prove the off arm ran the legacy route. If the unified lane ever executed
+  under `unified_slice_enabled=False`, the off arm would still self-report
+  `legacy_full_frame` / `False` and both arms could benchmark the same lane. The
+  worker is frozen (out of scope for this harness) and flag-off inertness is
+  proven separately by `tests/physical/test_unified_slice_inertness.py`, so this
+  is a known residual, not a false claim in shipped output. Making the harness
+  observe (rather than trust) the off-arm route is a worker + harness change.
+- **RSS gate compares max-of-max (MEDIUM-3).** The peak-RSS gate is
+  `max_on_ru_maxrss <= 1.10 * max_off_ru_maxrss`, matching the Codex-gated spec.
+  Under non-physical per-rep variance (one off rep spiking to match on's peak) a
+  paired memory regression could be masked. Peak RSS of this fixed deterministic
+  workload is near-constant across reps, so a real consistent regression still
+  trips the gate; paired per-rep RSS deltas would be strictly more sensitive and
+  are a possible spec follow-up, not a defect in the current implementation.
+
 ## Separate follow-up: FOLLOWUP-BENCH-DRIVER-HARDEN
 
 `scripts/native-baseline/bench_driver.py` is a SHARED driver used by other perf
