@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (D9 statistical bench harness, 2026-09-15)
+
+`scripts/bench-unified-slice/bench_compare.py`: the Task 4.5 FOLLOWUP-BENCH-D9
+statistical comparison driver, required before Task 4.6 activates the
+unified-slice lane for a real caller. Dev/bench tooling only -- ships in the
+repo, not in the PyPI distribution, and changes no package behavior. Runs the
+frozen `bench_worker_unified.py` off/on at the same revision across the
+10k/100k/1M tiers, alternating arm order per rep, and gates on a paired-ratio
+median/p95, a seeded bootstrap CI, and a peak-RSS ratio (fail-closed if any
+evidence is missing). A `run_ok`/`d9_certified` split keeps a tiny smoke run
+honestly labelled (never a false `D9 PASSED`); `d9_certified` stays false until
+the real offline 10k/100k/1M sweep is run on a bench node and passes. The old
+cross-revision "flag-off vs main" baseline is descoped (Cam, 2026-09-15): see
+`scripts/bench-unified-slice/README.md` for that limitation and the full
+requirement list. Covered by `tests/physical/test_bench_compare_harness.py`.
+
 ### Added (public native-companion probe, 2026-09-13)
 
 `decoy_engine.native_companion_status()` reports whether the optional `decoy-engine-native`
