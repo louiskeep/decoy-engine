@@ -56,6 +56,7 @@ _TEN_K_RELATIVE_REGRESSION = 0.10
 _RSS_RATIO_THRESHOLD = 1.10
 _BOOTSTRAP_RESAMPLES = 2000
 _BOOTSTRAP_CONFIDENCE = 0.95
+_OLD_VS_BASELINE_MAX_REGRESSION = 0.01  # the "flag-off overhead vs main <= 1%" claim above
 
 
 def _run_driver(tiers: str, reps: int, warmup: int, worker: str, out_path: Path) -> dict:
@@ -154,32 +155,81 @@ def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
     return failures
 
 
+def _check_old_vs_baseline(old_results: dict, baseline: dict) -> list[str]:
+    """The docstring's 4th claim: the "old" (flag-off) arm of THIS run must
+    not have regressed more than 1% median versus `--baseline-old`, a prior
+    `bench_driver.py` results JSON recorded for the unmodified oracle (e.g.
+    on `origin/main`). A tier missing from the baseline is skipped, not
+    failed -- comparing against a baseline that never measured it would be a
+    false claim, not a real check."""
+    failures: list[str] = []
+    for tier_key, cur in old_results.items():
+        base = baseline.get(tier_key)
+        if base is None:
+            continue
+        ratio = cur["wall_median_s"] / base["wall_median_s"]
+        if ratio > 1 + _OLD_VS_BASELINE_MAX_REGRESSION:
+            failures.append(
+                f"n={tier_key}: flag-off arm regressed {(ratio - 1) * 100:.2f}% vs "
+                f"--baseline-old (median {cur['wall_median_s']:.3f}s vs "
+                f"{base['wall_median_s']:.3f}s, {_OLD_VS_BASELINE_MAX_REGRESSION:.0%} allowed)"
+            )
+    return failures
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tiers", default="10000,100000,1000000")
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--out-dir", default="/tmp/unified_slice_bench")  # noqa: S108 fixed local bench scratch dir
+    ap.add_argument(
+        "--baseline-old",
+        default=None,
+        help=(
+            "path to a bench_driver.py results JSON recorded for the unmodified "
+            "bench_worker.py oracle on a prior commit (e.g. origin/main); when given, "
+            "checks this run's flag-off ('old') arm against it for the <=1%% median "
+            "regression the D9 gate requires"
+        ),
+    )
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    old_results = _run_driver(
-        args.tiers, args.reps, args.warmup, "bench_worker.py", out_dir / "old.json"
-    )
-    new_results = _run_driver(
-        args.tiers,
-        args.reps,
-        args.warmup,
-        "../bench-unified-slice/bench_worker_unified.py",
-        out_dir / "new.json",
-    )
+    tiers = [int(x) for x in args.tiers.split(",")]
+    old_results: dict[str, dict] = {}
+    new_results: dict[str, dict] = {}
+    # ALTERNATE old/new per tier (not a full old sweep followed by a full new
+    # sweep): a host load spike lasting less than one tier's own sweep would
+    # otherwise land entirely inside one arm and bias that arm's numbers.
+    for n_rows in tiers:
+        tier_arg = str(n_rows)
+        old_tier = _run_driver(
+            tier_arg, args.reps, args.warmup, "bench_worker.py", out_dir / f"old_{n_rows}.json"
+        )
+        new_tier = _run_driver(
+            tier_arg,
+            args.reps,
+            args.warmup,
+            "../bench-unified-slice/bench_worker_unified.py",
+            out_dir / f"new_{n_rows}.json",
+        )
+        old_results.update(old_tier)
+        new_results.update(new_tier)
+
+    (out_dir / "old.json").write_text(json.dumps(old_results, indent=2))
+    (out_dir / "new.json").write_text(json.dumps(new_results, indent=2))
 
     all_failures: list[str] = []
     for tier_key in old_results:
         n_rows = int(tier_key)
         all_failures.extend(_check_tier(n_rows, old_results[tier_key], new_results[tier_key]))
+
+    if args.baseline_old is not None:
+        baseline = json.loads(Path(args.baseline_old).read_text())
+        all_failures.extend(_check_old_vs_baseline(old_results, baseline))
 
     print("\n=== D9 performance gate ===")
     if all_failures:

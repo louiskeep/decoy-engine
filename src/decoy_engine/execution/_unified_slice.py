@@ -136,6 +136,7 @@ def _execute_admitted(
     key_provider: KeyProvider | None,
     route_reason: str,
     substrate: str | None,
+    resolved_substrate: str,
     explain_plan: bool,
     execution_plan_decision: ExecutionPlan | None,
 ) -> ExecutionResult | None:
@@ -145,18 +146,24 @@ def _execute_admitted(
     through the 4.4 coordinator and assemble the returned `ExecutionResult`.
     First `execution.physical` reach in this module's call chain.
 
-    Re-derives `resolved_substrate` (`resolve_substrate(substrate)`) and
-    `adapter` (`select_execution_adapter(...)`) from the raw knobs already
-    required for `stamp_execution_metrics` parity, rather than accepting
-    them as separate parameters -- both are pure/side-effect-free (`_pipeline
-    .py`'s own comment on `select_execution_adapter` already documents this),
-    so recomputing them here from the caller's identical raw inputs is not a
-    re-derivation risk, and it keeps `_pipeline.py`'s one call site to fewer
-    duplicate pointers into the same state.
+    Accepts `resolved_substrate` from the caller rather than re-deriving it:
+    `run_pipeline` resolves the substrate exactly ONCE (`_pipeline.py`'s own
+    `resolved_substrate = resolve_substrate(substrate)`), and a second
+    `resolve_substrate(substrate)` call here would re-read `DECOY_SUBSTRATE`
+    from the process environment a second time -- a TOCTOU window where an
+    env change mid-run could disagree with what admission already gated on.
+    `adapter` (`select_execution_adapter(...)`) is still built here from the
+    now-single `resolved_substrate` value plus the other raw knobs already
+    required for `stamp_execution_metrics` parity: it is a pure function of
+    its arguments, not a second env read, so building it here (rather than
+    accepting a third parameter) costs nothing and keeps `_pipeline.py`'s
+    one call site to fewer duplicate pointers into the same state.
     """
+    import pyarrow as pa
+
     from decoy_engine.execution import _pipeline_finalize, _pipeline_route_exec
     from decoy_engine.execution._adapter import ExecutionResult
-    from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
+    from decoy_engine.execution._substrate import select_execution_adapter
     from decoy_engine.execution.physical._activation import build_unified_slice_activation
     from decoy_engine.execution.physical._compiler import compile_physical_plan
     from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
@@ -165,7 +172,6 @@ def _execute_admitted(
     from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
     from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 
-    resolved_substrate = resolve_substrate(substrate)
     adapter = select_execution_adapter(
         substrate=resolved_substrate,
         fpe_chunk_count=fpe_chunk_count,
@@ -279,6 +285,20 @@ def _execute_admitted(
         }
 
     outputs = dict(shadow_result.outputs)
+    # D9 (Codex final-gate BLOCKER): the coordinator assembles its output table with `pa.table(
+    # {...})` (`_shadow_coordinator.py:199`), which carries no schema
+    # metadata, while the legacy adapter builds its output via `pa.Table.
+    # from_pandas(f, preserve_index=False)` (`_pandas_adapter.py:325`), which
+    # attaches pandas' own schema metadata (the `b"pandas"` key). Reproducing
+    # the SAME round-trip here -- rather than hand-copying the metadata bytes
+    # -- makes the two byte-identical by construction. Cheap admission
+    # already declined any relationship-bearing job, so the admitted table
+    # has no FK columns and this plain `to_pandas()`/`from_pandas()` pair is
+    # exactly what the legacy adapter's own `to_pandas_fk_safe` reduces to
+    # here (its nullable-dtype protection only ever applies to FK columns).
+    outputs[candidate.table] = pa.Table.from_pandas(
+        outputs[candidate.table].to_pandas(), preserve_index=False
+    )
     quality_metrics: dict[str, Any] = {}
     _pipeline_finalize.stamp_execution_metrics(
         quality_metrics,
@@ -354,6 +374,7 @@ def maybe_run_unified_slice(
     native_route_enabled: bool,
     registry: ProviderRegistry,
     substrate: str | None,
+    resolved_substrate: str,
     fpe_chunk_count: int,
     max_workers: int,
     fallback_to_pandas: bool,
@@ -398,16 +419,18 @@ def maybe_run_unified_slice(
     if not (has_mask_table and unified_slice_enabled):
         return None
 
-    # Resolve the substrate for the admission gate (D3). `_substrate` is a
-    # sibling execution module, not `execution.physical`, so importing it on
-    # the flag-on path does not breach the seam-disconnection contract.
-    from decoy_engine.execution._substrate import resolve_substrate
-
+    # D1 (Codex final-gate BLOCKER): `resolved_substrate` is `run_pipeline`'s ONE resolution of
+    # the substrate (`_pipeline.py`'s own `resolve_substrate(substrate)`
+    # call), threaded straight through -- never re-read here. A second
+    # `resolve_substrate(substrate)` call in this module would re-read
+    # `DECOY_SUBSTRATE` from the process environment a second time, opening a
+    # TOCTOU window where an env change between `run_pipeline`'s resolution
+    # and this admission gate could disagree with what was already decided.
     candidate = _admission.cheap_admission(
         route=route,
         route_chunked=route_chunked,
         native_route_enabled=native_route_enabled,
-        resolved_substrate=resolve_substrate(substrate),
+        resolved_substrate=resolved_substrate,
         sink=sink,
         source_loader=source_loader,
         fidelity_report=fidelity_report,
@@ -449,6 +472,7 @@ def maybe_run_unified_slice(
         key_provider=key_provider,
         route_reason=route_reason,
         substrate=substrate,
+        resolved_substrate=resolved_substrate,
         explain_plan=explain_plan,
         execution_plan_decision=execution_plan_decision,
     )

@@ -498,6 +498,7 @@ def run_pipeline(
         native_route_enabled=native_route_enabled,
         registry=resolved_registry,
         substrate=substrate,
+        resolved_substrate=resolved_substrate,
         fpe_chunk_count=fpe_chunk_count,
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,

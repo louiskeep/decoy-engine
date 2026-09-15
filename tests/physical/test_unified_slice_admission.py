@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pyarrow as pa
+import pytest
 
 from decoy_engine.execution import _unified_slice_admission
 from decoy_engine.execution.physical._activation import build_unified_slice_activation
@@ -222,6 +223,60 @@ def test_cheap_admission_declines_vault_column(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source) is None
 
 
+def test_cheap_admission_declines_when_gated_column(tmp_path: Path) -> None:
+    """Codex final-gate BLOCKER: a `when:` predicate gates masking to only
+    the matching rows (`_pandas_adapter.py:405`'s `run_with_when_gate`); the
+    coordinator masks the whole array with no row gate, so an admitted
+    `when:` column would over-mask. `when` is not a declared `ColumnConfig`
+    field (unreachable through `PipelineConfig.model_validate` today, same
+    gap the `dtype` field docstring in `config/_tables.py` documents), so
+    the raw dict is mutated post-validation to exercise the admission check
+    in isolation, matching `test_cheap_admission_declines_duplicate_column_
+    declaration`'s established pattern for this exact situation."""
+    source = pa.table(
+        {
+            "c": pa.array(["a", "b", "c"], type=pa.string()),
+            "flag": pa.array([1, 0, 1], type=pa.int64()),
+        }
+    )
+    config, source = _build(
+        tmp_path,
+        [{"name": "c", "strategy": "redact"}, {"name": "flag", "strategy": "passthrough"}],
+        source,
+    )
+    config = dict(config)
+    config["tables"][0]["columns"][0]["when"] = "flag == 1"
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is None
+
+
+def test_cheap_admission_declines_blank_when_left_admitted(tmp_path: Path) -> None:
+    """A present-but-blank `when` (the compiler's own `None`-normalization
+    shape, `_seed_envelope.py`'s `when_raw if isinstance(...) and when_raw.
+    strip() else None`) is not a real gate and must not spuriously decline."""
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    config = dict(config)
+    config["tables"][0]["columns"][0]["when"] = "   "
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is not None
+
+
+def test_cheap_admission_declines_extra_caller_source(tmp_path: Path) -> None:
+    """Codex final-gate BLOCKER: the legacy adapter echoes every resident
+    source frame in `outputs` (`_pipeline.py:588`), so a caller that loaded
+    an extra table alongside the configured mask table keeps that extra
+    table (plus its projection warning) on the old route. This lane returns
+    only the admitted table, so it must decline rather than silently drop
+    the extra source."""
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    extra = pa.table({"x": pa.array([1, 2, 3], type=pa.int64())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is not None
+    assert _cheap_ok(config, profile, source, caller_sources={"t": source, "extra": extra}) is None
+
+
 def test_cheap_admission_declines_quarantine_configured(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
@@ -320,6 +375,81 @@ def test_null_bearing_int_declines_admission(tmp_path: Path) -> None:
         table="t",
     )
     assert ok is False
+
+
+def _hash_admission_with_mismatched_resident_source(tmp_path: Path, live_source: pa.Table) -> bool:
+    """Builds config/profile/plan from a NORMAL string-column fixture (so the
+    profile-driven compiler binds the hash node to `native_keyed_hash`, per
+    the compiler's own coarse dtype label -> admitted-type mapping), then
+    compiles the LIVE physical plan against `live_source` instead -- the
+    exact shape a resident caller-supplied table with an exotic Arrow type
+    produces: the compiler's operator binding is profile-driven, so it
+    cannot see that the RESIDENT array is not what the profile sample
+    showed. Mirrors `keyed_hash_and_null_int_admission`'s real call site in
+    `_unified_slice._execute_admitted`, which compiles against the live
+    source too."""
+    profile_source_table = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, _ = _build(
+        tmp_path, [{"name": "c", "strategy": "hash", "namespace": "n"}], profile_source_table
+    )
+    profile, plan = _profile_and_plan(config, profile_source_table)
+    registry = get_default_registry()
+    physical_plan, _registry = _compile(config, profile, plan, live_source)
+    return _unified_slice_admission.keyed_hash_and_null_int_admission(
+        physical_plan.tables[0],
+        plan=plan,
+        source=live_source,
+        registry=registry,
+        graph=RelationshipGraph(edges=(), ordering=()),
+        table="t",
+    )
+
+
+def test_all_null_resident_hash_column_declines_admission(tmp_path: Path) -> None:
+    """Codex final-gate BLOCKER: a real all-null `pa.null()` resident column
+    profiles as "object" (admitted) but is NOT in the compiled hash kernel's
+    admitted-type set (`_requirements._ADMITTED_NATIVE_HASH_TYPES`); the
+    profile-only admission check cannot see this, only a check against the
+    RESIDENT Arrow dtype can."""
+    live_source = pa.table({"c": pa.array([None, None, None], type=pa.null())})
+    assert _hash_admission_with_mismatched_resident_source(tmp_path, live_source) is False
+
+
+def test_dictionary_encoded_resident_hash_column_declines_admission(tmp_path: Path) -> None:
+    """Codex final-gate BLOCKER: a dictionary-encoded (categorical) Parquet
+    hash column profiles as "category" -> "object" (admitted) but the
+    compiled kernel's allowlist has no dictionary type entry."""
+    live_source = pa.table({"c": pa.array(["a", "b", "a"], type=pa.string()).dictionary_encode()})
+    assert _hash_admission_with_mismatched_resident_source(tmp_path, live_source) is False
+
+
+def test_resolved_substrate_env_change_after_resolution_does_not_flip_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex final-gate BLOCKER (TOCTOU): `cheap_admission` takes
+    `resolved_substrate` as an already-resolved value, never re-reading
+    `DECOY_SUBSTRATE` itself. Proves an env change AFTER resolution cannot
+    flip the admission decision either way -- the caller's ONE resolution is
+    the only thing that matters."""
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+
+    monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+    admitted_pre = _cheap_ok(config, profile, source, resolved_substrate="pandas")
+    assert admitted_pre is not None
+
+    # Flip the env AFTER the caller already resolved "pandas"; admission
+    # must still admit -- it never reads the env itself.
+    monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
+    admitted_post = _cheap_ok(config, profile, source, resolved_substrate="pandas")
+    assert admitted_post is not None
+
+    # And the reverse: a resolved "polars" value must still decline even
+    # though the env now (again) says something else.
+    monkeypatch.setenv("DECOY_SUBSTRATE", "pandas")
+    declined = _cheap_ok(config, profile, source, resolved_substrate="polars")
+    assert declined is None
 
 
 # ---------------------------------------------------------------------------

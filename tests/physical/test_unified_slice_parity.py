@@ -89,6 +89,14 @@ def _assert_outputs_cell_identical(off: ExecutionResult, on: ExecutionResult) ->
         for name in off_table.column_names:
             assert off_table.schema.field(name).type == on_table.schema.field(name).type
             assert off_table.column(name).to_pylist() == on_table.column(name).to_pylist()
+        # D9 (Codex final-gate BLOCKER): the legacy route builds its output via
+        # `Table.from_pandas` (`_pandas_adapter.py:325`), which attaches
+        # pandas' own schema metadata (the `b"pandas"` key); a metadata-free
+        # table off this lane would silently diverge from what a schema-
+        # consuming caller (the platform) sees. Schema equality with
+        # `check_metadata=True` catches both a missing key and a byte
+        # mismatch, not just a present/absent check.
+        assert off_table.schema.equals(on_table.schema, check_metadata=True)
 
 
 def _assert_quality_metrics_parity(off: ExecutionResult, on: ExecutionResult) -> dict[str, Any]:

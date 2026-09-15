@@ -22,14 +22,36 @@ The D7 activation assertion at the end is the vacuity guard D9 requires:
 a benchmark that silently fell back to the legacy oracle (a regression in
 admission, an unavailable native companion) must FAIL LOUD here, not report
 a misleadingly-fast "unified slice" number that never actually ran one.
+
+Per-strategy timing (Codex final-gate HIGH): the 4.4 shadow coordinator
+carries no per-node elapsed-time evidence (`OperatorCallEvidence`,
+`execution/physical/_shadow_operators.py`, has no timing field), unlike the
+legacy oracle's `TimingCollector` (`result.timings`, consumed by `bench_
+worker.py`'s own per-strategy breakdown) or the native route's `kernel_
+elapsed_s` (consumed by `bench_worker_native.py`). Splitting the combined
+run's wall time by strategy would be a fabricated number, not a real one, so
+`hash_ms` / `redact_ms` / `truncate_ms` / `passthrough_ms` are each measured
+by a SEPARATE isolated unified-slice run over just that strategy's own
+columns, at the same row count -- a real, directly-measured wall-clock
+number per strategy, at the cost of running the pipeline five times per rep
+instead of once. This is bench-script-only instrumentation; it does not
+touch the lane or the shared 4.4 coordinator.
+
+Usage: python bench_worker_unified.py <n_rows>
 """
 
 from __future__ import annotations
 
+import csv
 import json
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
+from typing import Any
+
+import pyarrow as pa
 
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.keyprovider import SecretKeyProvider
@@ -42,12 +64,77 @@ from decoy_engine.keyprovider import SecretKeyProvider
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "native-baseline"))
 from bench_worker import FIXED_MASK_KEY, build_config, build_sources
 
+# Strategy -> its column subset in the frozen W2 schema (`bench_worker.
+# build_config`); restated here (not derived from the config) so a schema
+# change in `bench_worker.py` fails this module's own lookups loudly rather
+# than silently timing an empty subset.
+_STRATEGY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "hash": ("h_email", "h_token", "h_uid"),
+    "passthrough": ("pt_amount", "pt_flag", "pt_ts"),
+    "redact": ("rd_ssn", "rd_notes"),
+    "truncate": ("tr_phone", "tr_card"),
+}
+
+
+def _write_sample_csv(src: pa.Table, columns: tuple[str, ...], suffix: str) -> str:
+    """A small representative CSV of just `columns`, for profiling only (the
+    masking pass reads the resident Arrow subset directly) -- mirrors
+    `main()`'s own sampling for the full 10-column config."""
+    fd, path = tempfile.mkstemp(prefix=f"w2_unified_{suffix}_", suffix=".csv")
+    os.close(fd)
+    sample_n = min(src.num_rows, 2000)
+    src.select(list(columns)).slice(0, sample_n).to_pandas().to_csv(
+        path, index=False, quoting=csv.QUOTE_MINIMAL
+    )
+    return path
+
+
+def _time_strategy(
+    strategy: str, columns: tuple[str, ...], src: pa.Table, key_provider: SecretKeyProvider
+) -> float:
+    """Real, isolated wall-clock milliseconds for masking ONLY `columns`
+    (one strategy's own columns) through the unified-slice lane, at the same
+    row count as the main combined run. Raises loudly (matching the D7
+    vacuity guard below) if this isolated run does not itself activate the
+    unified slice, rather than recording a legacy-oracle fallback as a
+    unified-slice number."""
+    sample_path = _write_sample_csv(src, columns, strategy)
+    try:
+        cfg = build_config(sample_path)
+        cfg["tables"][0]["columns"] = [
+            col for col in cfg["tables"][0]["columns"] if col["name"] in columns
+        ]
+        sub_source = src.select(list(columns))
+        t0 = time.perf_counter()
+        result = run_pipeline(
+            cfg,
+            {"w2": sub_source},
+            engine_version="unified-slice-4.5-bench",
+            substrate="pandas",
+            execution_mode="full_frame",
+            auto_chunk=False,
+            key_provider=key_provider,
+            use_byte_estimate_routing=False,
+            use_probe_routing=False,
+            unified_slice_enabled=True,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    finally:
+        try:
+            os.unlink(sample_path)
+        except OSError:
+            pass
+
+    activation = result.quality_metrics.get("unified_slice_activation")
+    if activation is None:
+        raise SystemExit(
+            f"unified-slice isolated {strategy!r} timing run did not activate the "
+            "unified slice -- refusing to record a fabricated per-strategy number."
+        )
+    return elapsed_ms
+
 
 def main() -> None:
-    import csv
-    import os
-    import tempfile
-
     n_rows = int(sys.argv[1])
     key_provider = SecretKeyProvider(secret=FIXED_MASK_KEY, key_version="v1")
     src = build_sources(n_rows)
@@ -87,28 +174,23 @@ def main() -> None:
             raise SystemExit(f"node {node_id!r} reports executed=False in its own evidence")
 
     out = result.outputs["w2"]
-    hash_ms = 0.0
-    hash_cols = 0
-    redact_ms = 0.0
-    truncate_ms = 0.0
-    passthrough_ms = 0.0
-    for node_id in activation["nodes"]:
-        # `activation["nodes"]` keys are `f"{table}:{columns}:{kind}:{strategy}"`
-        # (see PhysicalNode.node_id); the strategy is the last colon-segment.
-        strategy = node_id.rsplit(":", 1)[-1]
-        if strategy == "hash":
-            hash_cols += 1
+    hash_cols = sum(1 for node_id in activation["nodes"] if node_id.rsplit(":", 1)[-1] == "hash")
 
-    rec = {
+    per_strategy_ms: dict[str, float] = {
+        strategy: _time_strategy(strategy, columns, src, key_provider)
+        for strategy, columns in _STRATEGY_COLUMNS.items()
+    }
+
+    rec: dict[str, Any] = {
         "n_rows": n_rows,
         "wall_s": t1 - t0,
         "out_rows": out.num_rows,
         "execution_mode": "unified_slice",
-        "hash_ms": hash_ms,
+        "hash_ms": per_strategy_ms["hash"],
         "hash_cols": hash_cols,
-        "redact_ms": redact_ms,
-        "truncate_ms": truncate_ms,
-        "passthrough_ms": passthrough_ms,
+        "redact_ms": per_strategy_ms["redact"],
+        "truncate_ms": per_strategy_ms["truncate"],
+        "passthrough_ms": per_strategy_ms["passthrough"],
         "unified_slice_activated": True,
         "plan_hash": activation["plan_hash"],
     }

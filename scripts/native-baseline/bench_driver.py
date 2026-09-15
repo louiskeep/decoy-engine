@@ -113,6 +113,24 @@ def run_rep(n_rows: int, worker: Path, worker_args: list[str]) -> dict:
     return rec
 
 
+def _format_tier_summary(n_rows: int, summ: dict) -> str:
+    """The human summary line for one tier, None-safe for every metric a
+    worker may legitimately omit (a `hash_tput_median_rows_s` of `None`
+    happens whenever no rep reported a positive `hash_ms`/`hash_cols` pair
+    -- a worker with no hash columns, or (before the D9 remediation) a
+    worker that only ever emitted a hard-coded `hash_ms=0.0`). Formatting
+    `None` with a numeric spec (`:.0f`) raises `TypeError` -- the crash this
+    helper exists to make impossible, not just less likely."""
+    hash_tput = summ["hash_tput_median_rows_s"]
+    hash_tput_str = f"{hash_tput:.0f}rows/s" if hash_tput is not None else "n/a"
+    return (
+        f"  SUMMARY n={n_rows}: median={summ['wall_median_s']:.2f}s "
+        f"IQR={summ['wall_iqr_s']:.2f}s p95={summ['wall_p95of_s']:.2f}s "
+        f"rss_max={summ['peak_rss_max_mb']}MB "
+        f"hash_tput={hash_tput_str}\n"
+    )
+
+
 def summarize(n_rows: int, reps: list[dict]) -> dict:
     walls = sorted(r["wall_s"] for r in reps)
     rss = [r["peak_rss_kb"] for r in reps if r["peak_rss_kb"] is not None]
@@ -217,12 +235,7 @@ def main() -> None:
             sys.stderr.flush()
         summ = summarize(n_rows, reps)
         all_results[str(n_rows)] = summ
-        sys.stderr.write(
-            f"  SUMMARY n={n_rows}: median={summ['wall_median_s']:.2f}s "
-            f"IQR={summ['wall_iqr_s']:.2f}s p95={summ['wall_p95of_s']:.2f}s "
-            f"rss_max={summ['peak_rss_max_mb']}MB "
-            f"hash_tput={summ['hash_tput_median_rows_s']:.0f}rows/s\n"
-        )
+        sys.stderr.write(_format_tier_summary(n_rows, summ))
         sys.stderr.flush()
         if source_path is not None:
             source_path.unlink(missing_ok=True)

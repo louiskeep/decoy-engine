@@ -459,7 +459,14 @@ ALLOWLIST: dict[str, int] = {
     # routing-dispatch target: bundle the pass-through execution/OOC knobs
     # into one shared context object both call sites can pass in a single
     # line when the next execution-route batch lands.
-    "src/decoy_engine/execution/_pipeline.py": 690,
+    # Task 4.5 Codex final-gate remediation (2026-09-15): +1 LOC (690 -> 691) --
+    # the "deliberately dropped `resolved_substrate`" decision above was the
+    # BUG: re-resolving it inside `_unified_slice.py` re-read `DECOY_SUBSTRATE`
+    # a second time, a TOCTOU window against this module's own single
+    # resolution above. This call site now passes the already-resolved value
+    # instead (the `adapter` re-derivation stays pure/local, unaffected).
+    # Same decomposition target stands.
+    "src/decoy_engine/execution/_pipeline.py": 691,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table

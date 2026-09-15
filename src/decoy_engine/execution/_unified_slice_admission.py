@@ -29,6 +29,7 @@ import pyarrow as pa
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution.native._companion_status import native_companion_status
+from decoy_engine.execution.native._requirements import is_admitted_native_hash_type
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -122,6 +123,14 @@ def cheap_admission(
         return None
     table = mask_tables[0]
 
+    if set(caller_sources) != {table}:
+        # D3: the legacy adapter echoes every resident source frame in
+        # `outputs` (`_pipeline.py:588`'s own comment); a caller that loaded
+        # an EXTRA table alongside the configured mask table would keep that
+        # extra table (and a projection warning) in the old route's outputs
+        # and lose it here, since this lane returns only the admitted table.
+        return None
+
     source = caller_sources.get(table)
     if not isinstance(source, pa.Table):
         # Excludes both "absent" and a `LazySource` placeholder (TB-1): the
@@ -145,8 +154,20 @@ def cheap_admission(
         return None
     if any(bool(col.get("vault", False)) for col in columns_cfg):
         return None
+    if any(_has_when_gate(col) for col in columns_cfg):
+        # D3: a `when:` predicate gates masking to matching rows only
+        # (`_pandas_adapter.py:405`'s `run_with_when_gate`); the coordinator
+        # masks the whole array with no row gate, so an admitted `when:`
+        # column would over-mask. Decline until the physical path implements
+        # `when` gating (`_seed_envelope.py`'s `ColumnSeed.when`).
+        return None
 
     return CheapCandidate(table=table, source=source)
+
+
+def _has_when_gate(col: Mapping[str, Any]) -> bool:
+    when = col.get("when")
+    return isinstance(when, str) and bool(when.strip())
 
 
 def compiled_plan_admission(
@@ -196,21 +217,33 @@ def keyed_hash_and_null_int_admission(
     graph: RelationshipGraph,
     table: str,
 ) -> bool:
-    """The two admission checks that need real data or a real host probe,
-    not just the compiled plan's static shape (D3): a hash node's compiled
+    """The admission checks that need real data or a real host probe, not
+    just the compiled plan's static shape (D3): a hash node's compiled
     native companion must actually be loadable (`native_kernel_rejection`
     is a strategy-name-only static check -- it says nothing about whether
-    the compiled companion is present at THIS host), and no hash/truncate
-    column may carry a null-bearing integer (`_pandas_adapter.py:186-191`'s
-    own reject, re-run here on the admitted source so the unified slice
-    declines to the identical old-route failure rather than diverging).
-    Returns True when both hold."""
-    has_hash_node = any(
-        node.execution is not None and node.execution.operator_id == HASH_OPERATOR_ID
+    the compiled companion is present at THIS host); a hash node's RESIDENT
+    Arrow column must itself be in the compiled kernel's admitted-type set
+    (`_requirements.is_admitted_native_hash_type`) -- the compiled plan's
+    operator binding was resolved from the PROFILE's dtype label, which
+    coarsens (e.g. both a real all-null `pa.null()` column and a plain
+    string column profile as "object" -> admitted), so a profile-admitted
+    hash node can still carry a resident array the kernel actually rejects
+    (an all-null column, a dictionary-encoded Parquet column); and no
+    hash/truncate column may carry a null-bearing integer (`_pandas_adapter.
+    py:186-191`'s own reject, re-run here on the admitted source so the
+    unified slice declines to the identical old-route failure rather than
+    diverging). Returns True when every check holds."""
+    hash_nodes = [
+        node
         for node in physical_table.nodes
-    )
-    if has_hash_node and not native_companion_status().ok:
+        if node.execution is not None and node.execution.operator_id == HASH_OPERATOR_ID
+    ]
+    if hash_nodes and not native_companion_status().ok:
         return False
+    for node in hash_nodes:
+        column = node.columns[0]
+        if not is_admitted_native_hash_type(source.schema.field(column).type):
+            return False
     try:
         reject_null_bearing_int(plan, {table: source}, registry, graph)
     except ExecutionError:
