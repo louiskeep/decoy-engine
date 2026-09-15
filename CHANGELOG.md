@@ -111,6 +111,18 @@ Slice 1 admitted only `utf8` columns because their output type never depends on 
 - Integer covers all signed/unsigned widths; timestamp covers all units, tz-aware and tz-naive.
 - No engine version bump: additive widening (new modules, new preflight discipline), backward-compatible routing surface.
 
+### Added (Task 4.5: unified-slice production-readiness lane, 2026-09-15)
+
+The execution-consolidation program's physical-plan compiler (Tasks 4.2-4.4) was proven correct but disconnected. Task 4.5 gates a single production entry: a default-OFF per-run flag that routes bounded non-FK single-table masks on already-resident Parquet sources through the physical plan and coordinator, returning an ExecutionResult byte-identical to the pandas path. Caller activation (Task 4.6) is deferred. The lane proves the plan + coordinator on a conservative total-allowlist over resident-type domain, then reconstructs output to match pandas metadata by construction.
+
+- **`execution/_unified_slice.py` (new module):** Routing entry point and orchestrator. Diverts inside `run_pipeline` after layer-2 FK routing, runs 4.3 physical plan against 4.4 coordinator, returns ExecutionResult. Fail-closed on admission failure (reroutes to pandas oracle).
+- **`execution/_unified_slice_admission.py` (new module):** D3 conservative total allowlist over resident-type domain (D1 strategy eligibility check). Validates substrate, source residency, strategy support, profile alignment.
+- **`execution/physical/_live_inputs.py` (new module):** Constructs PhysicalPlanInputs from `run_pipeline`'s already-computed profile + plan facts (no re-profiling, no re-planning). Caller builds activation overlay (_activation.py) from live inputs, then coordinator consumes it.
+- **`execution/physical/_activation.py` (new module):** Frozen production-readiness activation overlay (`UnifiedSliceActivation`, `AdmittedNode`). Captures the coordinator's pre-execution decision set over admitted nodes.
+- **`unified_slice_enabled: bool = False`** (new `run_pipeline` kwarg): toggles the unified-slice lane on; default OFF.
+- Output parity: byte-identical to pandas oracle by construction. Metadata reconstructed (dtypes, nullability, index, columns) to match pandas schema.
+- No engine version bump: engine-ready (new modules), caller activation deferred (Task 4.6). Pre-GA hard-delete caveat: the lane's default-OFF posture carries forward; caller-facing default is a later decision.
+
 ### Added (Phase 4 engine-efficiency bundle: bounded-parent split-dedup, auto-routed reorder driver, Polars-hash parity, cascade safety tightening, and out-of-core module decomposition, 2026-09-04 to 2026-09-06)
 
 Phase 4 is a six-slice efficiency and correctness initiative: five user-facing slices plus one hygiene slice. All slices are double-gated (dennis + Codex cross-model review), landed on `feat/native-phase3`, and held pending merge signoff. Phase-4 slices are byte-parity-preserving against the pinned pandas oracle for all masking output.
