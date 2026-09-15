@@ -1,20 +1,20 @@
 """Task 4.5 D9 performance gate: the paired old/new benchmark comparison.
 
-Runs `scripts/native-baseline/bench_driver.py` twice per tier -- once
-against the unmodified pandas-oracle `bench_worker.py` ("old"), once
-against this program's `bench_worker_unified.py` ("new") -- ALTERNATING
-tier by tier so a host load spike does not land entirely inside one arm,
-then checks the D9 thresholds:
+Runs `scripts/native-baseline/bench_driver.py` twice per tier over the SAME
+nine-column `bench_worker_unified.py` source -- once with the lane OFF (the
+legacy route, `UNIFIED_BENCH_FLAG=off`, the "old" arm) and once with it ON
+(the unified lane, the "new" arm) -- ALTERNATING tier by tier so a host load
+spike does not land entirely inside one arm. Both arms therefore mask one
+identical workload (a per-tier `workload_fingerprint` is asserted equal), so
+the ratio reflects the lane and nothing else. Then it checks the D9 thresholds:
 
   - 100k & 1M: median new/old wall <= 1.10, p95 <= 1.15
   - 10k: median regression <= max(10%, 50 ms)
   - peak RSS <= 1.10x at every tier
-  - flag-off overhead vs main <= 1% median (the "old" arm here already
-    passes `unified_slice_enabled` at its default False through
-    `bench_worker.py`'s own call, unmodified, so this comparison itself
-    doubles as that check: any regression in the OLD arm's own numbers
-    versus a baseline run recorded on `origin/main` would show up in
-    `--baseline-old`)
+  - flag-off overhead vs main <= 1% median: pass `--baseline-old` a prior
+    flag-off (legacy-arm) result recorded on `origin/main` with the SAME
+    nine-column worker; the fingerprints must match across revisions or the
+    check fails rather than comparing two different workloads.
 
 Every trial's output row count is compared as a coarse equality signal
 (`out_rows` matching); a full byte-for-byte cell comparison across
@@ -110,6 +110,38 @@ def _bootstrap_ratio_ci(
     return lo, hi
 
 
+_NULL_FINGERPRINT = json.dumps(None)
+
+
+def _fingerprint_set(tier_result: dict) -> set[str]:
+    """The distinct workload fingerprints recorded across a tier's reps."""
+    return {
+        json.dumps(r.get("workload_fingerprint"), sort_keys=True)
+        for r in tier_result.get("raw_reps", [])
+    }
+
+
+def _fingerprint_failures(n_rows: int, a_label: str, a: dict, b_label: str, b: dict) -> list[str]:
+    """Reject a missing/null fingerprint, a fingerprint that varies within an
+    arm, or a mismatch between arms -- so a comparison over two DIFFERENT
+    workloads (or over reps that never recorded what they masked) fails loudly
+    instead of passing vacuously."""
+    a_fp, b_fp = _fingerprint_set(a), _fingerprint_set(b)
+    if _NULL_FINGERPRINT in a_fp or _NULL_FINGERPRINT in b_fp:
+        return [
+            f"n={n_rows}: a rep recorded no workload_fingerprint ({a_label}={a_fp} {b_label}={b_fp})"
+        ]
+    if len(a_fp) != 1 or len(b_fp) != 1:
+        return [
+            f"n={n_rows}: workload_fingerprint varies within an arm ({a_label}={a_fp} {b_label}={b_fp})"
+        ]
+    if a_fp != b_fp:
+        return [
+            f"n={n_rows}: {a_label} and {b_label} masked different workloads ({a_fp} vs {b_fp})"
+        ]
+    return []
+
+
 def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
     failures: list[str] = []
     old_walls = [r["wall_s"] for r in old["raw_reps"]]
@@ -157,10 +189,7 @@ def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
 
     # Both arms must have masked the IDENTICAL workload; otherwise the ratio is
     # meaningless (a heavier arm looks slower for a reason that is not the lane).
-    old_fp = {json.dumps(r.get("workload_fingerprint"), sort_keys=True) for r in old["raw_reps"]}
-    new_fp = {json.dumps(r.get("workload_fingerprint"), sort_keys=True) for r in new["raw_reps"]}
-    if old_fp != new_fp:
-        failures.append(f"n={n_rows}: workload fingerprints differ old={old_fp} new={new_fp}")
+    failures.extend(_fingerprint_failures(n_rows, "off arm", old, "on arm", new))
 
     print(
         f"n={n_rows}: old_median={old['wall_median_s']:.3f}s new_median={new['wall_median_s']:.3f}s "
@@ -173,14 +202,20 @@ def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
 def _check_old_vs_baseline(old_results: dict, baseline: dict) -> list[str]:
     """The docstring's 4th claim: the "old" (flag-off) arm of THIS run must
     not have regressed more than 1% median versus `--baseline-old`, a prior
-    `bench_driver.py` results JSON recorded for the unmodified oracle (e.g.
-    on `origin/main`). A tier missing from the baseline is skipped, not
-    failed -- comparing against a baseline that never measured it would be a
-    false claim, not a real check."""
+    `bench_driver.py` results JSON. The baseline MUST have been recorded with
+    the SAME nine-column flag-off worker (`UNIFIED_BENCH_FLAG=off
+    bench_worker_unified.py`): the per-tier workload fingerprints must match, or
+    the comparison is apples-to-oranges (e.g. a legacy ten-column worker that
+    also masked `pt_ts`) and the check fails rather than reporting a false
+    regression number. A tier missing from the baseline is skipped, not failed."""
     failures: list[str] = []
     for tier_key, cur in old_results.items():
         base = baseline.get(tier_key)
         if base is None:
+            continue
+        fp_failures = _fingerprint_failures(int(tier_key), "this-run off", cur, "baseline", base)
+        if fp_failures:
+            failures.extend(fp_failures)
             continue
         ratio = cur["wall_median_s"] / base["wall_median_s"]
         if ratio > 1 + _OLD_VS_BASELINE_MAX_REGRESSION:

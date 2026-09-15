@@ -735,6 +735,29 @@ def test_cheap_admission_declines_transplanted_lying_pandas_metadata(tmp_path: P
     assert _cheap_ok(config, profile, lying) is None
 
 
+def test_cheap_admission_declines_non_parquet_source(tmp_path: Path) -> None:
+    # D3 scopes the slice to a single non-FK PARQUET file source; csv,
+    # fixed_width, and non-file sources profile under a different reader than the
+    # resident Arrow table and must decline to the legacy route.
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+
+    def _with_source(**changes: Any) -> dict:
+        cfg = dict(config)
+        cfg["sources"] = {t: {**config["sources"][t], **changes} for t in config["sources"]}
+        return cfg
+
+    assert _cheap_ok(config, profile, source) is not None  # baseline: parquet admits
+    assert _cheap_ok(_with_source(format="csv"), profile, source) is None
+    assert _cheap_ok(_with_source(format="fixed_width"), profile, source) is None
+    assert _cheap_ok(_with_source(type="s3"), profile, source) is None
+    # A missing source descriptor for the table also declines.
+    cfg_no_src = dict(config)
+    cfg_no_src["sources"] = {}
+    assert _cheap_ok(cfg_no_src, profile, source) is None
+
+
 def test_cheap_admission_declines_when_to_pandas_raises_on_invalid_metadata(
     tmp_path: Path,
 ) -> None:

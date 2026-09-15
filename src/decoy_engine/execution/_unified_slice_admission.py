@@ -165,6 +165,20 @@ def cheap_admission(
         return None
     table = mask_tables[0]
 
+    source_descriptor = (config.get("sources") or {}).get(table)
+    if (
+        not isinstance(source_descriptor, dict)
+        or source_descriptor.get("type") != "file"
+        or source_descriptor.get("format") != "parquet"
+    ):
+        # D3 scopes the initial slice to a single non-FK PARQUET file source
+        # (plan "Initial slice"). A csv / fixed_width / non-file source profiles
+        # under a different (often loosely-typed) reader than the resident Arrow
+        # table this lane masks, so its compiled plan can diverge from what the
+        # legacy route would have run. Anything but the sanctioned Parquet file
+        # shape declines to the unchanged old route.
+        return None
+
     if set(caller_sources) != {table}:
         # D3: the legacy adapter echoes every resident source frame in
         # `outputs` (`_pipeline.py:588`'s own comment); a caller that loaded
