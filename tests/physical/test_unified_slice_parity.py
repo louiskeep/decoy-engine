@@ -151,6 +151,51 @@ def test_null_density_passthrough_admits_and_matches(tmp_path: Path) -> None:
     _assert_full_parity(off, on)
 
 
+def test_empty_admitted_table_matches(tmp_path: Path) -> None:
+    """A zero-row resident table across all four strategies -- the shadow
+    coordinator's own C6 zero-row-batch contract (`_shadow_coordinator.
+    _batches`) must still reassemble a schema-identical empty output."""
+    source = pa.table(
+        {
+            "p": pa.array([], type=pa.string()),
+            "r": pa.array([], type=pa.string()),
+            "tr": pa.array([], type=pa.string()),
+            "h": pa.array([], type=pa.string()),
+        }
+    )
+    columns = [
+        {"name": "p", "strategy": "passthrough"},
+        {"name": "r", "strategy": "redact"},
+        {"name": "tr", "strategy": "truncate", "provider_config": {"length": 2}},
+        {"name": "h", "strategy": "hash", "namespace": "n"},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    _assert_outputs_cell_identical(off, on)
+    assert on.outputs["t"].num_rows == 0
+
+
+def test_all_null_admitted_table_matches(tmp_path: Path) -> None:
+    """An all-null (non-empty) resident column per strategy; hash is exempt
+    (an all-null hash column has no non-null value to derive, but is
+    otherwise a normal null-free-int/string check -- covered separately by
+    the null-density case above for string, and `reject_null_bearing_int`
+    for int)."""
+    source = pa.table(
+        {
+            "p": pa.array([None, None, None], type=pa.string()),
+            "r": pa.array([None, None, None], type=pa.string()),
+            "tr": pa.array([None, None, None], type=pa.string()),
+        }
+    )
+    columns = [
+        {"name": "p", "strategy": "passthrough"},
+        {"name": "r", "strategy": "redact"},
+        {"name": "tr", "strategy": "truncate", "provider_config": {"length": 2}},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    _assert_full_parity(off, on)
+
+
 def test_mixed_four_strategy_fixed_schema_case_generator(tmp_path: Path) -> None:
     """Reuses the 4.4 corpus's fixed mixed-strategy schema as a case
     generator ONLY -- assertions are this module's own. Requires the
