@@ -298,9 +298,11 @@ jobs:
       # unified-slice hash lane route through the compiled kernel; without it their
       # hash cases skip, so the companion-absent full-suite legs (regression-gate,
       # substrate-matrix) never assert them. This is the one job that installs the
-      # companion, so it must run these physical files.
+      # companion, so it must run these physical files. The D9 harness's own
+      # real-worker integration test (test_bench_compare_harness.py) is
+      # companion-guarded the same way, so it belongs in this job too.
       - name: Physical shadow corpus + unified-slice hash equivalence (companion-present case)
-        run: pytest tests/physical/test_shadow_corpus.py tests/physical/test_shadow_coordinator.py tests/physical/test_unified_slice_parity.py tests/physical/test_unified_slice_admission.py tests/physical/test_bench_unified_slice_harness_smoke.py -v --tb=short
+        run: pytest tests/physical/test_shadow_corpus.py tests/physical/test_shadow_coordinator.py tests/physical/test_unified_slice_parity.py tests/physical/test_unified_slice_admission.py tests/physical/test_bench_unified_slice_harness_smoke.py tests/physical/test_bench_compare_harness.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A

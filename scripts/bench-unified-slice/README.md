@@ -1,9 +1,12 @@
-# Unified-slice benchmark (Task 4.5 D9): DEFERRED, not yet statistically certified
+# Unified-slice benchmark (Task 4.5 D9): harness BUILT, certification still owed
 
-Status: **deferred**. The large-tier statistical performance claim for the Task
-4.5 unified-slice lane is **not measured or certified yet**. This directory holds
-only the frozen workload substrate; the statistical comparison harness is owed as
-a follow-up.
+Status: the statistical comparison harness (`bench_compare.py`) is **built** and
+covered by its own fast test suite
+(`tests/physical/test_bench_compare_harness.py`). D9 itself is **still
+uncertified**: `d9_certified` only ever flips true after the harness's real
+10k/100k/1M sweep runs on a bench node and every gate passes there. That sweep
+is a deliberate offline invocation (multi-minute per arm), never a CI step, and
+has not been run yet.
 
 ## What is here now
 
@@ -14,42 +17,71 @@ a follow-up.
   environment flag, and prints one `BENCH_JSON` record (per-strategy timing,
   `out_rows`, `unified_slice_activated`, `workload_fingerprint`). It is
   smoke-tested end-to-end by `tests/physical/test_bench_unified_slice_harness_smoke.py`.
+- `bench_compare.py` -- the statistical comparison driver. Runs the worker as a
+  fresh subprocess per arm per rep, alternating off/on order by rep parity, and
+  reports a paired per-rep ratio (median + inclusive p95), a seeded bootstrap
+  CI, and a peak-RSS ratio (`ru_maxrss` from `os.wait4`, the authoritative
+  terminal source) per tier. Every tier is gated by size (the 100k/1M ratio
+  rule, or the 10k point-difference-plus-50ms-floor rule), and RSS is gated at
+  every tier. A `run_ok`/`d9_certified` two-state model keeps a tiny smoke
+  invocation (`--tiers 200 --reps 2 --warmup 1`) honestly labelled
+  `SMOKE COMPLETE (d9_certified=false)` -- it can never print `D9 PASSED`.
+  `--require-cert` makes a non-certifying run exit non-zero, for the offline
+  cert invocation to use.
 
-## What is DEFERRED (the follow-up: FOLLOWUP-BENCH-D9)
+## Owed: the offline D9 certification run
 
-The statistical comparison driver (`bench_compare.py`) was removed: a
-half-implemented version can print a false "D9 PASSED", which is worse than not
-shipping it. Build it properly as a separate task, **required before Task 4.6
-caller activation** (a default-off engine lane can merge without it; activating
-the lane for a real caller cannot).
+Before Task 4.6 caller activation, run the harness for real:
 
-The rebuilt harness MUST honor every D9 requirement below (do not weaken any):
+```
+python scripts/bench-unified-slice/bench_compare.py --require-cert \
+    --out d9_cert_results.json
+```
+
+on a quiet bench node (the default tiers/reps/warmup/bootstrap already match
+the cert minima: 10k/100k/1M rows, 20 reps, 3 warmups, 10000 bootstrap
+resamples). `d9_certified: true` in the output plus the `D9 PASSED` banner is
+the certification; anything else (including a clean exit without
+`--require-cert`) is not.
+
+## Cam's cross-revision-baseline descope (2026-09-15)
+
+The "flag-off overhead vs main <= 1%" cross-revision check described in an
+earlier version of this document is **descoped**. Cam: "we can descope the old
+baseline then... not tied to a specific older baseline." `bench_compare.py`
+compares flag-off vs flag-on at the SAME revision only.
+
+**Limitation this leaves on record:** a same-revision off-vs-on comparison does
+not certify historical flag-off performance, nor a regression that hits both
+arms equally (a common-mode regression neither side of the comparison would
+show up as a ratio change). Codex confirmed this is an acceptable gap for
+Task 4.6's narrow decision, given the separate structural proof that flag-off
+is inert at this revision: flag-off returns at the flag check before importing
+any `execution.physical` code
+(`tests/physical/test_unified_slice_inertness.py`), so the added cost from the
+flag itself is a bounded constant, not per-row work -- it is not, however, a
+substitute for an actual historical-baseline measurement, which this harness
+does not attempt.
+
+## The full D9 requirement (unchanged, now implemented)
 
 - **Tiers:** 10k, 100k, 1M rows. **Warmups:** >= 3 discarded. **Reps:** >= 20 timed.
 - **Per-repetition pairing/alternation:** alternate the off (legacy) and on
   (unified) arms at the REPETITION level, not whole-arm sweeps, so a short host
   load spike cannot land entirely inside one arm.
-- **Identical workload, enforced:** both arms run this same worker/source; assert
-  the `workload_fingerprint` matches between arms AND that every rep's `out_rows`
-  equals the requested `n_rows` (a worker that silently masks the wrong row count
-  must fail, not pass).
+- **Identical workload, enforced:** both arms run this same worker/source; the
+  harness asserts the `workload_fingerprint` matches between arms AND that every
+  rep's `out_rows` equals the requested `n_rows` (a worker that silently masks
+  the wrong row count fails, not passes).
 - **Activation, enforced:** the `on` arm must actually activate the unified slice
-  (`unified_slice_activated == True`); a silent legacy fallback must fail.
+  (`unified_slice_activated is True`); a silent legacy fallback fails closed.
 - **Thresholds:** 100k & 1M median new/old wall <= 1.10 and p95 <= 1.15; 10k median
   regression <= max(10%, 50 ms); peak RSS <= 1.10x at every tier.
 - **Fail-closed RSS:** a missing peak-RSS sample (per rep OR aggregate) is a
   FAILURE -- the RSS bound cannot be certified without the evidence, so the harness
-  must never silently drop it and report PASS.
-- **Statistics:** report median, p95, and a bootstrap CI on the new/old ratio; the
-  CI upper bound must also sit within the applicable threshold.
-- **Flag-off-overhead-vs-main (unresolved):** the "flag-off overhead vs main <=
-  1%" cross-revision check is NOT yet solved -- measuring today's flag-off arm
-  against a baseline on pre-task `main` is version-skewed (that revision predates
-  the `unified_slice_enabled` kwarg). It is unmeasured residual risk with strong
-  structural evidence (flag-off returns at the flag check before importing any
-  `execution.physical` code, proven by `tests/physical/test_unified_slice_inertness.py`),
-  so the added cost is a bounded constant, not per-row work. A version-compatible
-  baseline recorder is part of this follow-up.
+  never silently drops it and reports PASS.
+- **Statistics:** median, p95, and a bootstrap CI on the paired ratio; the CI
+  upper bound is itself gated, not just reported.
 
 ## Separate follow-up: FOLLOWUP-BENCH-DRIVER-HARDEN
 
