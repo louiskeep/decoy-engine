@@ -41,6 +41,7 @@ def _cheap_ok(config, profile, source, **overrides):
         route="full_frame",
         route_chunked=False,
         native_route_enabled=False,
+        resolved_substrate="pandas",
         sink=None,
         source_loader=None,
         fidelity_report=False,
@@ -82,6 +83,18 @@ def test_cheap_admission_declines_when_native_route_enabled(tmp_path: Path) -> N
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
     assert _cheap_ok(config, profile, source, native_route_enabled=True) is None
+
+
+def test_cheap_admission_declines_non_pandas_substrate(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    # The lane returns a result identical to the PANDAS full-frame route only.
+    # A polars-substrate job runs a different legacy adapter that stamps its own
+    # provenance telemetry (executed_substrate, pa<->pl conversion timings), so
+    # admitting it would diverge on the caller-consumed quality_metrics. It must
+    # fall through to the unchanged old route.
+    assert _cheap_ok(config, profile, source, resolved_substrate="polars") is None
 
 
 def test_cheap_admission_declines_sink_present(tmp_path: Path) -> None:

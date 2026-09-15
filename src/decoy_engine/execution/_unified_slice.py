@@ -398,10 +398,16 @@ def maybe_run_unified_slice(
     if not (has_mask_table and unified_slice_enabled):
         return None
 
+    # Resolve the substrate for the admission gate (D3). `_substrate` is a
+    # sibling execution module, not `execution.physical`, so importing it on
+    # the flag-on path does not breach the seam-disconnection contract.
+    from decoy_engine.execution._substrate import resolve_substrate
+
     candidate = _admission.cheap_admission(
         route=route,
         route_chunked=route_chunked,
         native_route_enabled=native_route_enabled,
+        resolved_substrate=resolve_substrate(substrate),
         sink=sink,
         source_loader=source_loader,
         fidelity_report=fidelity_report,

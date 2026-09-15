@@ -285,3 +285,89 @@ def test_null_bearing_int_under_hash_fails_identically_both_flags(tmp_path: Path
     on_exc = _call(True)
     assert off_exc.code == on_exc.code == "null_bearing_int_unsupported"
     assert str(off_exc) == str(on_exc)
+
+
+# ---------------------------------------------------------------------------
+# Substrate gate: the lane is parity-guaranteed against the PANDAS full-frame
+# route only. A polars-substrate job must decline to the unchanged old route
+# (it runs a different legacy adapter with its own provenance telemetry).
+# ---------------------------------------------------------------------------
+
+
+def test_polars_substrate_declines_to_legacy_route(tmp_path: Path) -> None:
+    pytest.importorskip("polars")
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    path = write_read_only_fixture(tmp_path, source, "fixture")
+    config = build_config(tmp_path, "t", path, [{"name": "c", "strategy": "passthrough"}])
+
+    on = run_pipeline(
+        config,
+        {"t": pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=True,
+        substrate="polars",
+    )
+    # No activation leaf => the lane declined and the polars legacy route ran.
+    assert QUALITY_METRICS_KEY not in on.quality_metrics
+    assert on.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
+
+
+# ---------------------------------------------------------------------------
+# Batch boundary: a table larger than the coordinator's 50k internal batch
+# but below the 100k auto-chunk threshold both ACTIVATES the lane and spans
+# multiple coordinator batches, exercising per-batch reassembly. Non-hash so
+# it needs no compiled companion and always activates.
+# ---------------------------------------------------------------------------
+
+
+def test_multi_batch_table_admits_and_matches(tmp_path: Path) -> None:
+    n = 80_000  # > ShadowContext.batch_size_rows (50k), < auto_chunk_threshold (100k)
+    source = pa.table(
+        {
+            "p": pa.array([f"p{i % 97}" for i in range(n)], type=pa.string()),
+            "r": pa.array([f"s{i % 13}" for i in range(n)], type=pa.string()),
+            "tr": pa.array([f"abcdef{i % 7}" for i in range(n)], type=pa.string()),
+        }
+    )
+    columns = [
+        {"name": "p", "strategy": "passthrough"},
+        {"name": "r", "strategy": "redact"},
+        {"name": "tr", "strategy": "truncate", "provider_config": {"length": 3}},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    _assert_full_parity(off, on)
+    assert on.outputs["t"].num_rows == n
+
+
+# ---------------------------------------------------------------------------
+# Non-string dtypes: redact/truncate/passthrough admit arbitrary (non-null)
+# dtypes; assert cell AND dtype identity vs the legacy route so a type-
+# coercion regression (e.g. redact-int64 -> string) cannot ship uncaught.
+# ---------------------------------------------------------------------------
+
+
+def test_non_string_dtype_columns_admit_and_match(tmp_path: Path) -> None:
+    source = pa.table(
+        {
+            "ri": pa.array([1, 2, 3], type=pa.int64()),
+            "rf": pa.array([1.5, 2.5, 3.5], type=pa.float64()),
+            "rb": pa.array([True, False, True], type=pa.bool_()),
+            "ti": pa.array([100, 200, 300], type=pa.int64()),
+            "pf": pa.array([1.1, 2.2, 3.3], type=pa.float64()),
+            "pts": pa.array([1, 2, 3], type=pa.timestamp("us")),
+        }
+    )
+    columns = [
+        {"name": "ri", "strategy": "redact"},
+        {"name": "rf", "strategy": "redact"},
+        {"name": "rb", "strategy": "redact"},
+        {"name": "ti", "strategy": "truncate", "provider_config": {"length": 2}},
+        {"name": "pf", "strategy": "passthrough"},
+        {"name": "pts", "strategy": "passthrough"},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    # `_assert_outputs_cell_identical` (inside `_assert_full_parity`) compares
+    # the per-column Arrow type as well as the values, so a dtype divergence
+    # between the lane and the legacy route fails here.
+    _assert_full_parity(off, on)

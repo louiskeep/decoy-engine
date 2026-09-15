@@ -82,6 +82,7 @@ def cheap_admission(
     route: str,
     route_chunked: bool,
     native_route_enabled: bool,
+    resolved_substrate: str,
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
     fidelity_report: bool,
@@ -97,6 +98,15 @@ def cheap_admission(
     (the coded reason is a nice-to-have for a future telemetry pass, not a
     D9 requirement, so it is not threaded through here)."""
     if route != "full_frame" or route_chunked or native_route_enabled:
+        return None
+    if resolved_substrate != "pandas":
+        # D3: this lane returns a result identical to the PANDAS full-frame
+        # route only. A non-pandas substrate (e.g. the polars opt-in) runs a
+        # different legacy adapter and stamps its own provenance telemetry
+        # (executed_substrate, pa<->pl conversion timings), so admitting it
+        # would diverge on the caller-consumed quality_metrics. Decline to the
+        # unchanged old route. `resolved_substrate` is post-resolve_substrate,
+        # so substrate=None + DECOY_SUBSTRATE=polars is caught here too.
         return None
     if sink is not None or source_loader is not None:
         return None
