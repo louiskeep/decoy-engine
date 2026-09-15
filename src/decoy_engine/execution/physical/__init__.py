@@ -55,10 +55,23 @@ Package layout:
                        no-publish shadow-mode coordinator.
   `_shadow_diff_codes` -- Task 4.4 C4: the frozen shadow difference/failure
                        code catalog + `ShadowDifference`.
+  `_activation`      -- Task 4.5 D6: `UnifiedSliceActivation`, the frozen
+                       PLANNED activation overlay the unified-slice
+                       production lane builds before executing.
+  `_live_inputs`     -- Task 4.5 D4: `build_live_physical_plan_inputs`, the
+                       unified slice's own `PhysicalPlanInputs` constructor
+                       (built from `run_pipeline`'s already-produced facts,
+                       never by re-running `profile_source`/`compile_plan`).
 """
 
 from __future__ import annotations
 
+from decoy_engine.execution.physical._activation import (
+    ACTIVATION_VERSION,
+    AdmittedNode,
+    UnifiedSliceActivation,
+    build_unified_slice_activation,
+)
 from decoy_engine.execution.physical._capabilities import CAPABILITIES, DriverCapabilities
 from decoy_engine.execution.physical._compiler import DriverSelection, compile_physical_plan
 from decoy_engine.execution.physical._context import SeamContext
@@ -68,6 +81,7 @@ from decoy_engine.execution.physical._inputs import (
     PhysicalPlanInputs,
     capture_native_admission_fact,
 )
+from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
     KeyBinding,
@@ -105,8 +119,10 @@ from decoy_engine.execution.physical._types import (
 )
 
 __all__ = [
+    "ACTIVATION_VERSION",
     "CAPABILITIES",
     "DIFFERENCE_CODES",
+    "AdmittedNode",
     "BoundedPythonOperator",
     "DriverCapabilities",
     "DriverId",
@@ -138,6 +154,9 @@ __all__ = [
     "Substrate",
     "SynthesisStage",
     "TableDriver",
+    "UnifiedSliceActivation",
+    "build_live_physical_plan_inputs",
+    "build_unified_slice_activation",
     "capture_native_admission_fact",
     "capture_physical_plan_inputs",
     "capture_shadow_snapshot",

@@ -784,6 +784,10 @@ module = [
     "decoy_engine.execution.physical._shadow_diff_codes",
     "decoy_engine.execution.physical._shadow_operators",
     "decoy_engine.execution.physical._shadow_snapshot",
+    # Task 4.5: the unified-slice activation overlay + live-facts
+    # PhysicalPlanInputs constructor. Same strict bar as the rest of the seam.
+    "decoy_engine.execution.physical._activation",
+    "decoy_engine.execution.physical._live_inputs",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

@@ -447,7 +447,19 @@ ALLOWLIST: dict[str, int] = {
     # requires the standard VaultWriter contract (isinstance) so a duck-typed
     # writer without the key-match method cannot silently bypass the fail-closed
     # net. Same routing-dispatch decomposition target stands.
-    "src/decoy_engine/execution/_pipeline.py": 645,
+    # Task 4.5 (engine production-readiness, 2026-09-15): +45 LOC (645 -> 690) --
+    # the unified-slice production lane's one call site, placed at the same
+    # post-routing spot the Q3 native lane already occupies (the module already
+    # docstrings why routing dispatch lives here, not in a sibling). The call
+    # passes ~30 already-computed local facts the lane needs for exact D9
+    # quality_metrics parity with the legacy route; `resolved_substrate` /
+    # `adapter` were deliberately dropped from the list (re-derived pure
+    # inside `_unified_slice.py` from values already passed) to keep this to
+    # the minimum genuinely-irreducible set. Decompose alongside the existing
+    # routing-dispatch target: bundle the pass-through execution/OOC knobs
+    # into one shared context object both call sites can pass in a single
+    # line when the next execution-route batch lands.
+    "src/decoy_engine/execution/_pipeline.py": 690,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table

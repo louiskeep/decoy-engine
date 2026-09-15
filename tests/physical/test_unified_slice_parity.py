@@ -1,0 +1,287 @@
+"""Task 4.5 D9: the end-to-end unified-slice differential harness.
+
+Drives REAL `run_pipeline` twice per case -- flag off, flag on -- each arm
+freshly re-reading the identical Parquet fixture bytes and constructing a
+fresh key provider (no state carried between arms). Reuses the 4.4 shadow
+corpus's fixed mixed-strategy schema (`tests/physical/test_shadow_corpus.
+_FIXED_COLUMNS`) ONLY as a case generator, per the plan -- the assertions
+here are new and specific to the unified-slice lane's return contract.
+
+Asserts, per D9:
+  (a) the D7 completed-execution evidence is present flag-on / absent
+      flag-off;
+  (b) `outputs` are cell-identical;
+  (c) `warnings` / `table_kinds` / `row_errors` are equal;
+  (d) `quality_metrics` is equal EXACTLY once the one named D7 leaf is
+      removed, with that leaf itself checked separately in both arms.
+`timings` / `boundary_conversion_ms` are explicitly NOT compared (D9 allows
+them to differ).
+
+A hash-bearing case is included per the plan's "mixed-four-strategy and a
+hash-heavy table" requirement; it needs the optional compiled
+`decoy-engine-native` companion to actually EXECUTE through the unified
+lane (the same environmental dependency `tests/physical/test_shadow_corpus.
+py`'s own hash cases already carry) -- absent it, the admission predicate's
+own companion preflight correctly declines and the case still passes as a
+pure parity check (both arms take the legacy route and agree), just without
+exercising the D7 leaf. The dedicated `test_hash_case_stamps_positive_
+kernel_evidence_when_companion_available` below is the one that specifically
+needs the companion and is skipped without it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
+
+from decoy_engine.execution import _pandas_adapter, run_pipeline
+from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
+from decoy_engine.execution.native._companion_status import native_companion_status
+from decoy_engine.keyprovider import SecretKeyProvider
+from tests.physical._shadow_helpers import build_config, write_read_only_fixture
+from tests.physical.test_shadow_corpus import _FIXED_COLUMNS, _build_fixed_source
+
+ENGINE_VERSION = "unified-slice-parity-test"
+_MASK_KEY = bytes(range(32))
+
+
+def _key_provider() -> SecretKeyProvider:
+    return SecretKeyProvider(secret=_MASK_KEY, key_version="v1")
+
+
+def _run_both(
+    tmp_path: Path, table_name: str, source: pa.Table, columns: list[dict[str, Any]]
+) -> tuple[ExecutionResult, ExecutionResult]:
+    """Each arm freshly re-reads the fixture Parquet bytes and builds a
+    fresh key provider -- no state (a table object, a provider instance) is
+    shared between arms."""
+    path = write_read_only_fixture(tmp_path, source, "fixture")
+    config = build_config(tmp_path, table_name, path, columns)
+
+    off = run_pipeline(
+        config,
+        {table_name: pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=False,
+    )
+    on = run_pipeline(
+        config,
+        {table_name: pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=True,
+    )
+    return off, on
+
+
+def _assert_outputs_cell_identical(off: ExecutionResult, on: ExecutionResult) -> None:
+    assert set(off.outputs) == set(on.outputs)
+    for table in off.outputs:
+        off_table, on_table = off.outputs[table], on.outputs[table]
+        assert off_table.column_names == on_table.column_names
+        assert off_table.num_rows == on_table.num_rows
+        for name in off_table.column_names:
+            assert off_table.schema.field(name).type == on_table.schema.field(name).type
+            assert off_table.column(name).to_pylist() == on_table.column(name).to_pylist()
+
+
+def _assert_quality_metrics_parity(off: ExecutionResult, on: ExecutionResult) -> dict[str, Any]:
+    assert QUALITY_METRICS_KEY not in off.quality_metrics
+    assert QUALITY_METRICS_KEY in on.quality_metrics
+    on_leaf = on.quality_metrics[QUALITY_METRICS_KEY]
+    on_without_leaf = {k: v for k, v in on.quality_metrics.items() if k != QUALITY_METRICS_KEY}
+    assert on_without_leaf == off.quality_metrics
+    assert on_leaf["activated"] is True
+    assert on_leaf["nodes"], "activation evidence must cover at least one node"
+    for evidence in on_leaf["nodes"].values():
+        assert evidence["executed"] is True
+    return on_leaf
+
+
+def _assert_full_parity(off: ExecutionResult, on: ExecutionResult) -> dict[str, Any]:
+    _assert_outputs_cell_identical(off, on)
+    assert tuple(off.warnings) == tuple(on.warnings)
+    assert off.table_kinds == on.table_kinds
+    assert tuple(off.row_errors) == tuple(on.row_errors)
+    return _assert_quality_metrics_parity(off, on)
+
+
+def test_passthrough_alone_admits_and_matches(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    off, on = _run_both(tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}])
+    _assert_full_parity(off, on)
+
+
+def test_redact_and_truncate_mixed_admits_and_matches(tmp_path: Path) -> None:
+    source = pa.table(
+        {
+            "p": pa.array(["x", "y", "z"], type=pa.string()),
+            "r": pa.array(["s1", "s2", "s3"], type=pa.string()),
+            "tr": pa.array(["abcdef", "ghijkl", "mnopqr"], type=pa.string()),
+        }
+    )
+    columns = [
+        {"name": "p", "strategy": "passthrough"},
+        {"name": "r", "strategy": "redact"},
+        {"name": "tr", "strategy": "truncate", "provider_config": {"length": 3}},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    _assert_full_parity(off, on)
+
+
+def test_null_density_passthrough_admits_and_matches(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", None, "b", None, "c"], type=pa.string())})
+    off, on = _run_both(tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}])
+    _assert_full_parity(off, on)
+
+
+def test_mixed_four_strategy_fixed_schema_case_generator(tmp_path: Path) -> None:
+    """Reuses the 4.4 corpus's fixed mixed-strategy schema as a case
+    generator ONLY -- assertions are this module's own. Requires the
+    compiled native companion for the hash column to actually execute
+    through the unified lane; when the companion is absent, admission
+    correctly declines (both arms take the legacy route) and the outputs
+    still match, just without a D7 leaf to assert."""
+    source = _build_fixed_source(23)
+    path = write_read_only_fixture(tmp_path, source, "fixed_schema")
+    config = build_config(tmp_path, "w", path, _FIXED_COLUMNS)
+
+    off = run_pipeline(
+        config,
+        {"w": pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=False,
+    )
+    on = run_pipeline(
+        config,
+        {"w": pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=True,
+    )
+    _assert_outputs_cell_identical(off, on)
+    assert tuple(off.warnings) == tuple(on.warnings)
+    assert tuple(off.row_errors) == tuple(on.row_errors)
+    if QUALITY_METRICS_KEY in on.quality_metrics:
+        _assert_quality_metrics_parity(off, on)
+
+
+@pytest.mark.skipif(
+    not native_companion_status().ok, reason="compiled decoy-engine-native companion unavailable"
+)
+def test_hash_case_stamps_positive_kernel_evidence_when_companion_available(
+    tmp_path: Path,
+) -> None:
+    source = pa.table({"c": pa.array(["a@x.com", "b@x.com", "c@x.com"], type=pa.string())})
+    columns = [{"name": "c", "strategy": "hash", "namespace": "n"}]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    leaf = _assert_full_parity(off, on)
+    (evidence,) = leaf["nodes"].values()
+    assert evidence["operator"] == "native_keyed_hash"
+    assert evidence["compiled_kernel_executed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Non-vacuity: poison the legacy pandas adapter on the flag-on admitted path.
+# ---------------------------------------------------------------------------
+
+
+def test_flag_on_admitted_run_never_calls_the_legacy_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D7/D9: poisons `PandasExecutionAdapter.run` so any accidental legacy
+    execution on an ADMITTED flag-on path fails loudly instead of silently
+    passing parity against itself."""
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    path = write_read_only_fixture(tmp_path, source, "fixture")
+    config = build_config(tmp_path, "t", path, [{"name": "c", "strategy": "passthrough"}])
+
+    def _poisoned_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            "the legacy PandasExecutionAdapter.run must not be called on an "
+            "admitted unified-slice run"
+        )
+
+    monkeypatch.setattr(_pandas_adapter.PandasExecutionAdapter, "run", _poisoned_run)
+
+    on = run_pipeline(
+        config,
+        {"t": pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=True,
+    )
+    assert QUALITY_METRICS_KEY in on.quality_metrics
+    assert on.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
+
+
+def test_flag_off_run_still_calls_the_legacy_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mirror of the poison test above: with the flag off, the SAME
+    admissible config must still take the legacy route -- proving the
+    poison itself is a meaningful signal, not a fixture that never
+    reaches the adapter either way."""
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    path = write_read_only_fixture(tmp_path, source, "fixture")
+    config = build_config(tmp_path, "t", path, [{"name": "c", "strategy": "passthrough"}])
+
+    calls: list[int] = []
+    real_run = _pandas_adapter.PandasExecutionAdapter.run
+
+    def _counting_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(_pandas_adapter.PandasExecutionAdapter, "run", _counting_run)
+
+    run_pipeline(
+        config,
+        {"t": pq.read_table(path)},
+        engine_version=ENGINE_VERSION,
+        key_provider=_key_provider(),
+        unified_slice_enabled=False,
+    )
+    assert calls == [1]
+
+
+# ---------------------------------------------------------------------------
+# Failure parity: a config both routes reject IDENTICALLY. The unified
+# lane's own admission declines this shape (a null-bearing int under hash),
+# so the flag-on call takes the SAME legacy code path the flag-off call
+# does -- proving type/code/message parity by construction, not by
+# reproducing the message by hand.
+# ---------------------------------------------------------------------------
+
+
+def test_null_bearing_int_under_hash_fails_identically_both_flags(tmp_path: Path) -> None:
+    from decoy_engine.execution._errors import ExecutionError
+
+    source = pa.table({"c": pa.array([1, None, 3], type=pa.int64())})
+    path = write_read_only_fixture(tmp_path, source, "fixture")
+    config = build_config(
+        tmp_path, "t", path, [{"name": "c", "strategy": "hash", "namespace": "n"}]
+    )
+
+    def _call(flag: bool) -> ExecutionError:
+        with pytest.raises(ExecutionError) as excinfo:
+            run_pipeline(
+                config,
+                {"t": pq.read_table(path)},
+                engine_version=ENGINE_VERSION,
+                key_provider=_key_provider(),
+                unified_slice_enabled=flag,
+            )
+        return excinfo.value
+
+    off_exc = _call(False)
+    on_exc = _call(True)
+    assert off_exc.code == on_exc.code == "null_bearing_int_unsupported"
+    assert str(off_exc) == str(on_exc)
