@@ -153,3 +153,16 @@ def test_flag_off_never_imports_execution_physical_in_a_fresh_process(tmp_path: 
     assert not hits, (
         f"A flag-off run_pipeline call pulled execution.physical module(s) into sys.modules: {hits}"
     )
+
+
+def test_run_from_pipeline_locals_flag_off_ignores_every_other_local() -> None:
+    """`run_from_pipeline_locals` reads ONLY the stable `unified_slice_enabled`
+    run_pipeline parameter on the flag-off path and returns before indexing any
+    of the other forwarded locals. Passing a mapping that contains ONLY the
+    flag proves a future rename of one of those locals cannot break a default
+    (flag-off) customer run: if the helper indexed them, this would KeyError."""
+    from decoy_engine.execution._unified_slice import run_from_pipeline_locals
+
+    assert run_from_pipeline_locals({"unified_slice_enabled": False}) is None
+    # A wholly empty mapping (`.get()` -> None -> falsy) is likewise inert.
+    assert run_from_pipeline_locals({}) is None

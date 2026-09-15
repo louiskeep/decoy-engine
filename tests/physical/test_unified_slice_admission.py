@@ -710,3 +710,41 @@ def test_activation_hash_includes_the_flag(tmp_path: Path) -> None:
         physical_plan, table="t", legacy_disposition="full_frame", unified_slice_enabled=False
     )
     assert on.activation_hash != off.activation_hash
+
+
+def _lying_metadata() -> bytes:
+    """The `b"pandas"` schema metadata pandas writes for a StringDtype column,
+    for transplanting onto a physically-int64 table."""
+    df = pd.DataFrame({"c": pd.array(["1", "2", "3"], dtype="string")})
+    return pa.Table.from_pandas(df, preserve_index=False).schema.metadata
+
+
+def test_cheap_admission_declines_transplanted_lying_pandas_metadata(tmp_path: Path) -> None:
+    # A resident int64 column carrying StringDtype metadata reconstructs to
+    # strings under to_pandas(); the legacy route would hash those strings while
+    # the native kernel hashes the physical integers, so identical schemas
+    # produce different tokens. The physical-consistency guard must decline it.
+    plain = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())})
+    config, _ = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], plain)
+    profile, _ = _profile_and_plan(config, plain)
+    lying = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())}).replace_schema_metadata(
+        _lying_metadata()
+    )
+    # Sanity: the metadata really does make to_pandas reinterpret the ints as strings.
+    assert list(lying.to_pandas()["c"]) == ["1", "2", "3"]
+    assert _cheap_ok(config, profile, lying) is None
+
+
+def test_cheap_admission_declines_when_to_pandas_raises_on_invalid_metadata(
+    tmp_path: Path,
+) -> None:
+    # Malformed b"pandas" metadata makes to_pandas() raise a JSONDecodeError.
+    # Admission must be total-to-decline (fall through to the legacy route's own
+    # coded guards), never let that raw error escape.
+    plain = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())})
+    config, _ = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], plain)
+    profile, _ = _profile_and_plan(config, plain)
+    invalid = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())}).replace_schema_metadata(
+        {b"pandas": b"{invalid json"}
+    )
+    assert _cheap_ok(config, profile, invalid) is None

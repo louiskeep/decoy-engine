@@ -167,10 +167,12 @@ def test_main_alternates_old_and_new_per_tier_instead_of_sweeping_each_arm_fully
     actually running benchmarks (a live double-driver sweep is exactly the
     real wall-clock cost this deferred script exists to avoid paying on
     every test run), and asserts the calls interleave old/new per tier."""
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str]] = []
 
-    def _fake_run_driver(tiers: str, reps: int, warmup: int, worker: str, out_path: Path) -> dict:
-        calls.append((tiers, worker))
+    def _fake_run_driver(
+        tiers: str, reps: int, warmup: int, worker: str, out_path: Path, flag: str = "on"
+    ) -> dict:
+        calls.append((tiers, worker, flag))
         rec = {"wall_s": 1.0, "peak_rss_kb": 1000, "out_rows": int(tiers)}
         return {tiers: {"wall_median_s": 1.0, "wall_p95of_s": 1.0, "raw_reps": [rec]}}
 
@@ -192,14 +194,19 @@ def test_main_alternates_old_and_new_per_tier_instead_of_sweeping_each_arm_fully
     )
     bench_compare.main()
 
-    tier_order = [tiers for tiers, _worker in calls]
+    tier_order = [tiers for tiers, _worker, _flag in calls]
     assert tier_order == ["1000", "1000", "2000", "2000"], (
         "expected old(1000), new(1000), old(2000), new(2000) -- got "
         f"{tier_order}, not a per-tier alternation"
     )
-    worker_order = [worker for _tiers, worker in calls]
-    assert worker_order[0] == "bench_worker.py"
-    assert worker_order[1] == "../bench-unified-slice/bench_worker_unified.py"
+    # Both arms run the SAME nine-column unified worker; only the env flag
+    # (legacy "off" vs unified "on") differs, so the comparison is one workload.
+    unified_worker = "../bench-unified-slice/bench_worker_unified.py"
+    assert all(worker == unified_worker for _t, worker, _f in calls)
+    flag_order = [flag for _t, _w, flag in calls]
+    assert flag_order == ["off", "on", "off", "on"], (
+        f"expected per-tier legacy(off) then unified(on); got {flag_order}"
+    )
 
 
 def test_check_old_vs_baseline_flags_a_regression_past_one_percent(
@@ -234,7 +241,9 @@ def test_baseline_old_flag_is_wired_into_main(
     baseline_path = tmp_path / "baseline_old.json"
     baseline_path.write_text(json.dumps({"1000": {"wall_median_s": 1.0}}))
 
-    def _fake_run_driver(tiers: str, reps: int, warmup: int, worker: str, out_path: Path) -> dict:
+    def _fake_run_driver(
+        tiers: str, reps: int, warmup: int, worker: str, out_path: Path, flag: str = "on"
+    ) -> dict:
         rec = {"wall_s": 2.0, "peak_rss_kb": 1000, "out_rows": int(tiers)}
         # A blown-out 2x regression vs the 1.0s baseline recorded above.
         return {tiers: {"wall_median_s": 2.0, "wall_p95of_s": 2.0, "raw_reps": [rec]}}

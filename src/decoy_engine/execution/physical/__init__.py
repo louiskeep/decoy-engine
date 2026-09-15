@@ -43,8 +43,9 @@ Package layout:
                        admission captured fact, and the OOC routing facts.
   `_plan`           -- Task 4.3 D2 output records: `PhysicalPlan` /
                        `PhysicalTable` / `PhysicalNode` / `SynthesisStage`.
-  `_compiler`       -- Task 4.3 D2: `compile_physical_plan`, pure, not wired
-                       into `run_pipeline`.
+  `_compiler`       -- Task 4.3 D2: `compile_physical_plan`, pure; reached in
+                       production only via the Task 4.5 default-OFF unified-
+                       slice lane, never any other route.
   `_snapshot`        -- Task 4.3 D1: `capture_physical_plan_inputs`, the
                        real (non-synthesized) preflight-only snapshot builder.
   `_shadow_bindings` -- Task 4.4 C0: slice-only `ExecutionBinding`

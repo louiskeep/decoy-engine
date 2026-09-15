@@ -227,7 +227,16 @@ def cheap_admission(
     # above, so `fk_columns` is always empty); doing it once, here, and
     # carrying the frame forward on `CheapCandidate` means `_unified_slice.
     # _execute_admitted`'s source-shaped output assembly never re-converts.
-    frame = source.to_pandas()
+    try:
+        frame = source.to_pandas()
+    except Exception:
+        # Total-to-decline: any Arrow->pandas failure declines to the legacy
+        # route rather than raising a different error than legacy's own coded
+        # guards. Malformed `b"pandas"` schema metadata, for instance, can make
+        # `to_pandas()` raise a JSONDecodeError here, where the legacy route
+        # would instead reach its own reject-before-read guard (e.g.
+        # `null_bearing_int_unsupported`). Declining preserves failure parity.
+        return None
     if frame.index.name is not None or not frame.index.equals(pd.RangeIndex(len(frame))):
         # A named index (possibly reconstructed purely from the resident
         # table's own `b"pandas"` schema metadata, with no physical index
@@ -239,6 +248,32 @@ def cheap_admission(
         # column out of `frame.columns` and into `frame.index`, so the
         # column set no longer matches the resident schema.
         return None
+
+    # The resident `b"pandas"` metadata can LIE about a column's logical type:
+    # e.g. an int64 array carrying transplanted StringDtype metadata reconstructs
+    # to strings under `to_pandas()`. The legacy route masks THAT reconstructed
+    # frame (hashing the strings), while the native coordinator masks the resident
+    # physical array (hashing the integers), so identical schemas produce
+    # different tokens. Require every column's pandas-to-Arrow round trip to be
+    # type- AND value-identical to the resident input, so both routes operate on
+    # the same values; decline any column where the metadata disagrees with the
+    # physical buffer. (Ignore schema metadata here -- this is a physical-
+    # consistency gate, distinct from the D9 output-metadata parity assertion.)
+    try:
+        round_trip = pa.Table.from_pandas(frame, preserve_index=False)
+    except Exception:
+        return None
+    for name in source.column_names:
+        resident_col = source.column(name).combine_chunks()
+        if resident_col.null_count == len(resident_col):
+            # An all-null column masks to all-null on either route regardless of
+            # how pandas reconstructs its (value-free) type, so it cannot diverge.
+            # pandas collapses an all-null column to the object/null dtype, which
+            # would otherwise trip the type check below with no real divergence.
+            continue
+        rt_col = round_trip.column(name).combine_chunks()
+        if rt_col.type != resident_col.type or not rt_col.equals(resident_col):
+            return None
 
     return CheapCandidate(table=table, source=source, source_frame=frame)
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -59,7 +60,9 @@ _BOOTSTRAP_CONFIDENCE = 0.95
 _OLD_VS_BASELINE_MAX_REGRESSION = 0.01  # the "flag-off overhead vs main <= 1%" claim above
 
 
-def _run_driver(tiers: str, reps: int, warmup: int, worker: str, out_path: Path) -> dict:
+def _run_driver(
+    tiers: str, reps: int, warmup: int, worker: str, out_path: Path, flag: str = "on"
+) -> dict:
     cmd = [
         str(VENV_PY),
         str(NATIVE_BASELINE_DIR / "bench_driver.py"),
@@ -74,7 +77,12 @@ def _run_driver(tiers: str, reps: int, warmup: int, worker: str, out_path: Path)
         "--out",
         str(out_path),
     ]
-    subprocess.run(cmd, check=True)  # noqa: S603 fixed local benchmark command
+    # Select the arm this driver's worker times. Both arms run the SAME
+    # nine-column unified-slice worker/source; `flag` only toggles whether that
+    # worker routes through the unified lane ("on") or the legacy route ("off"),
+    # so the comparison is over one identical workload rather than two.
+    env = {**os.environ, "UNIFIED_BENCH_FLAG": flag}
+    subprocess.run(cmd, check=True, env=env)  # noqa: S603 fixed local benchmark command
     return json.loads(out_path.read_text())
 
 
@@ -147,6 +155,13 @@ def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
     if old_out_rows != new_out_rows:
         failures.append(f"n={n_rows}: out_rows differ old={old_out_rows} new={new_out_rows}")
 
+    # Both arms must have masked the IDENTICAL workload; otherwise the ratio is
+    # meaningless (a heavier arm looks slower for a reason that is not the lane).
+    old_fp = {json.dumps(r.get("workload_fingerprint"), sort_keys=True) for r in old["raw_reps"]}
+    new_fp = {json.dumps(r.get("workload_fingerprint"), sort_keys=True) for r in new["raw_reps"]}
+    if old_fp != new_fp:
+        failures.append(f"n={n_rows}: workload fingerprints differ old={old_fp} new={new_fp}")
+
     print(
         f"n={n_rows}: old_median={old['wall_median_s']:.3f}s new_median={new['wall_median_s']:.3f}s "
         f"ratio={median_ratio:.3f} (95% CI [{lo:.3f}, {hi:.3f}]) p95_ratio={p95_ratio:.3f} "
@@ -204,17 +219,18 @@ def main() -> None:
     # ALTERNATE old/new per tier (not a full old sweep followed by a full new
     # sweep): a host load spike lasting less than one tier's own sweep would
     # otherwise land entirely inside one arm and bias that arm's numbers.
+    unified_worker = "../bench-unified-slice/bench_worker_unified.py"
     for n_rows in tiers:
         tier_arg = str(n_rows)
+        # Both arms are the SAME nine-column unified-slice worker; the env flag
+        # only routes it through the legacy ("off") vs unified ("on") path, so
+        # neither arm does more work than the other (the pt_ts column the old
+        # 10-column worker used to carry systematically favored the new arm).
         old_tier = _run_driver(
-            tier_arg, args.reps, args.warmup, "bench_worker.py", out_dir / f"old_{n_rows}.json"
+            tier_arg, args.reps, args.warmup, unified_worker, out_dir / f"old_{n_rows}.json", "off"
         )
         new_tier = _run_driver(
-            tier_arg,
-            args.reps,
-            args.warmup,
-            "../bench-unified-slice/bench_worker_unified.py",
-            out_dir / f"new_{n_rows}.json",
+            tier_arg, args.reps, args.warmup, unified_worker, out_dir / f"new_{n_rows}.json", "on"
         )
         old_results.update(old_tier)
         new_results.update(new_tier)

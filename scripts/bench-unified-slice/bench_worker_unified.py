@@ -103,6 +103,11 @@ _STRATEGY_COLUMNS: dict[str, tuple[str, ...]] = {
 # 1:1 with the resident schema (cheap_admission's own D3 requirement).
 _UNADMITTED_COLUMN = "pt_ts"
 
+# Which arm this worker times, selected by `bench_compare.py` via the environment
+# so BOTH arms run this SAME nine-column source/config (a fair comparison): "on"
+# = the unified-slice lane, "off" = the identical shape through the legacy route.
+_FLAG_ON = os.environ.get("UNIFIED_BENCH_FLAG", "on").strip().lower() != "off"
+
 
 def _write_sample_parquet(src: pa.Table, columns: tuple[str, ...], suffix: str) -> str:
     """A small representative Parquet sample of just `columns`, for
@@ -118,14 +123,20 @@ def _write_sample_parquet(src: pa.Table, columns: tuple[str, ...], suffix: str) 
 
 
 def _time_strategy(
-    strategy: str, columns: tuple[str, ...], src: pa.Table, key_provider: SecretKeyProvider
+    strategy: str,
+    columns: tuple[str, ...],
+    src: pa.Table,
+    key_provider: SecretKeyProvider,
+    *,
+    flag_on: bool,
 ) -> float:
     """Real, isolated wall-clock milliseconds for masking ONLY `columns`
-    (one strategy's own columns) through the unified-slice lane, at the same
-    row count as the main combined run. Raises loudly (matching the D7
-    vacuity guard below) if this isolated run does not itself activate the
-    unified slice, rather than recording a legacy-oracle fallback as a
-    unified-slice number."""
+    (one strategy's own columns) at the same row count as the main combined
+    run, on the SAME source for both arms. With `flag_on` it runs through the
+    unified-slice lane (and raises loudly, matching the D7 vacuity guard, if
+    that isolated run does not itself activate the slice); with `flag_on`
+    False it runs the identical shape through the legacy route, so the two arms
+    are compared over the same nine-column workload rather than different ones."""
     sample_path = _write_sample_parquet(src, columns, strategy)
     try:
         cfg = build_config(sample_path)
@@ -145,7 +156,7 @@ def _time_strategy(
             key_provider=key_provider,
             use_byte_estimate_routing=False,
             use_probe_routing=False,
-            unified_slice_enabled=True,
+            unified_slice_enabled=flag_on,
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
     finally:
@@ -154,8 +165,7 @@ def _time_strategy(
         except OSError:
             pass
 
-    activation = result.quality_metrics.get("unified_slice_activation")
-    if activation is None:
+    if flag_on and result.quality_metrics.get("unified_slice_activation") is None:
         raise SystemExit(
             f"unified-slice isolated {strategy!r} timing run did not activate the "
             "unified slice -- refusing to record a fabricated per-strategy number."
@@ -192,42 +202,47 @@ def main() -> None:
         key_provider=key_provider,
         use_byte_estimate_routing=False,
         use_probe_routing=False,
-        unified_slice_enabled=True,
+        unified_slice_enabled=_FLAG_ON,
     )
     t1 = time.perf_counter()
 
     activation = result.quality_metrics.get("unified_slice_activation")
-    if activation is None:
-        raise SystemExit(
-            "unified-slice benchmark worker did not actually execute the unified "
-            "slice (quality_metrics carries no 'unified_slice_activation' leaf) -- "
-            "refusing to record a silent legacy-oracle fallback as a unified-slice "
-            "result. Check admission (native companion availability, config shape)."
-        )
-    for node_id, evidence in activation["nodes"].items():
-        if not evidence["executed"]:
-            raise SystemExit(f"node {node_id!r} reports executed=False in its own evidence")
+    if _FLAG_ON:
+        if activation is None:
+            raise SystemExit(
+                "unified-slice benchmark worker did not actually execute the unified "
+                "slice (quality_metrics carries no 'unified_slice_activation' leaf) -- "
+                "refusing to record a silent legacy-oracle fallback as a unified-slice "
+                "result. Check admission (native companion availability, config shape)."
+            )
+        for node_id, evidence in activation["nodes"].items():
+            if not evidence["executed"]:
+                raise SystemExit(f"node {node_id!r} reports executed=False in its own evidence")
 
     out = result.outputs["w2"]
-    hash_cols = sum(1 for node_id in activation["nodes"] if node_id.rsplit(":", 1)[-1] == "hash")
+    hash_cols = len(_STRATEGY_COLUMNS["hash"])
 
     per_strategy_ms: dict[str, float] = {
-        strategy: _time_strategy(strategy, columns, src, key_provider)
+        strategy: _time_strategy(strategy, columns, src, key_provider, flag_on=_FLAG_ON)
         for strategy, columns in _STRATEGY_COLUMNS.items()
     }
 
+    # Both arms run this same nine-column source/config; the fingerprint lets
+    # bench_compare.py assert that equality per tier rather than trust it.
+    admitted_columns = sorted(c for cols in _STRATEGY_COLUMNS.values() for c in cols)
     rec: dict[str, Any] = {
         "n_rows": n_rows,
         "wall_s": t1 - t0,
         "out_rows": out.num_rows,
-        "execution_mode": "unified_slice",
+        "execution_mode": "unified_slice" if _FLAG_ON else "legacy_full_frame",
         "hash_ms": per_strategy_ms["hash"],
         "hash_cols": hash_cols,
         "redact_ms": per_strategy_ms["redact"],
         "truncate_ms": per_strategy_ms["truncate"],
         "passthrough_ms": per_strategy_ms["passthrough"],
-        "unified_slice_activated": True,
-        "plan_hash": activation["plan_hash"],
+        "unified_slice_activated": _FLAG_ON,
+        "plan_hash": activation["plan_hash"] if _FLAG_ON and activation is not None else None,
+        "workload_fingerprint": {"n_rows": n_rows, "columns": admitted_columns},
     }
     print("BENCH_JSON " + json.dumps(rec))
     try:

@@ -556,8 +556,38 @@ def run_from_pipeline_locals(local_vars: Mapping[str, Any]) -> ExecutionResult |
     the two exceptions named in `_PIPELINE_RESOLVED_NAMES`), so forwarding
     its own `locals()` verbatim keeps that call site itself to one line
     instead of the argument block this function now owns.
+
+    Flag-off (the default, every normal run) reads ONLY the stable
+    `unified_slice_enabled` run_pipeline parameter and returns before indexing
+    any other local. So a future rename of one of the forwarded locals can only
+    break the opt-in flag-on path -- caught loudly by the flag-on test matrix
+    and the import-time `_assert_forwarding_covers_signature` check below -- and
+    never a default customer run.
     """
+    if not local_vars.get("unified_slice_enabled"):
+        return None
     kwargs: dict[str, Any] = {name: local_vars[name] for name in _PIPELINE_LOCAL_KWARGS}
     for kwarg_name, local_name in _PIPELINE_RESOLVED_NAMES.items():
         kwargs[kwarg_name] = local_vars[local_name]
     return maybe_run_unified_slice(**kwargs)
+
+
+def _assert_forwarding_covers_signature() -> None:
+    """Fail at IMPORT if the `locals()` forwarding drifts from
+    `maybe_run_unified_slice`'s own parameters. The forwarding is invisible to
+    mypy (a `Mapping[str, Any]`), so this runtime coverage check is the
+    lightweight stand-in for a typed carrier: a renamed, added, or removed
+    keyword that the forwarding lists no longer reflect is a bug that must fail
+    now, at import, not silently mis-forward at runtime."""
+    import inspect
+
+    params = set(inspect.signature(maybe_run_unified_slice).parameters)
+    forwarded = set(_PIPELINE_LOCAL_KWARGS) | set(_PIPELINE_RESOLVED_NAMES)
+    if params != forwarded:
+        raise AssertionError(
+            "unified-slice pipeline forwarding drifted from maybe_run_unified_slice's "
+            f"signature: missing={sorted(params - forwarded)}, extra={sorted(forwarded - params)}"
+        )
+
+
+_assert_forwarding_covers_signature()
