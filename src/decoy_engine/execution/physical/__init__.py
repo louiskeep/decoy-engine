@@ -1,11 +1,11 @@
 """The physical-execution adapter seam (Task 4.2 of the execution-consolidation
 program, docs/plans/2026-09-09-execution-consolidation-and-native-throughput.md).
 
-REPRESENTATION-ONLY, ADDITIVE, DISCONNECTED. This package models today's six
-table drivers (docs/plans/2026-09-13-physical-plan-design.md section 4) and
-their node-operator families (section 5) as a parallel seam that Tasks 4.3
-(compiler) and 4.4 (shadow coordinator) will build against. It changes NOTHING
-about masked output, determinism, publication, or route selection:
+REPRESENTATION-ONLY, ADDITIVE. This package models today's six table drivers
+(docs/plans/2026-09-13-physical-plan-design.md section 4) and their node-
+operator families (section 5) as a parallel seam that Tasks 4.3 (compiler) and
+4.4 (shadow coordinator) build against. It changes NOTHING about masked output,
+determinism, publication, or route selection:
 
   * every adapter here PURE-DELEGATES to the exact production entry point it
     names (`_pandas_adapter.PandasExecutionAdapter.run` / the selected
@@ -16,9 +16,14 @@ about masked output, determinism, publication, or route selection:
     run_fk_out_of_core`, `generation._plan_entry.generate_tables`) and returns
     its result UNCHANGED -- no re-aggregation, no result mutation, no
     fallback/publication ownership taken over;
-  * `run_pipeline` and every current route/coordinator/executor module never
-    import this package (enforced by `tests/sentry/test_physical_seam_
-    disconnection.py`); production activation is a later task (4.5+).
+  * Task 4.5 (engine production-readiness) adds a single sanctioned production
+    connection: `execution/_unified_slice.py` diverts bounded non-FK single-
+    Parquet-table masks (strategies passthrough/redact/truncate/keyed-hash on
+    resident pa.Table sources) inside `run_pipeline` to route through the
+    physical plan + coordinator, returning an ExecutionResult identical to the
+    pandas path. The lane is default-OFF per-run flag; caller activation is
+    Task 4.6. Every other route/coordinator/executor module remains disconnected
+    (enforced by `tests/sentry/test_physical_seam_disconnection.py`).
 
 Package layout:
   `_types`         -- seam identifiers: `DriverId`, `ExecutionScope`,
@@ -38,8 +43,9 @@ Package layout:
                        admission captured fact, and the OOC routing facts.
   `_plan`           -- Task 4.3 D2 output records: `PhysicalPlan` /
                        `PhysicalTable` / `PhysicalNode` / `SynthesisStage`.
-  `_compiler`       -- Task 4.3 D2: `compile_physical_plan`, pure, not wired
-                       into `run_pipeline`.
+  `_compiler`       -- Task 4.3 D2: `compile_physical_plan`, pure; reached in
+                       production only via the Task 4.5 default-OFF unified-
+                       slice lane, never any other route.
   `_snapshot`        -- Task 4.3 D1: `capture_physical_plan_inputs`, the
                        real (non-synthesized) preflight-only snapshot builder.
   `_shadow_bindings` -- Task 4.4 C0: slice-only `ExecutionBinding`
@@ -55,10 +61,23 @@ Package layout:
                        no-publish shadow-mode coordinator.
   `_shadow_diff_codes` -- Task 4.4 C4: the frozen shadow difference/failure
                        code catalog + `ShadowDifference`.
+  `_activation`      -- Task 4.5 D6: `UnifiedSliceActivation`, the frozen
+                       PLANNED activation overlay the unified-slice
+                       production lane builds before executing.
+  `_live_inputs`     -- Task 4.5 D4: `build_live_physical_plan_inputs`, the
+                       unified slice's own `PhysicalPlanInputs` constructor
+                       (built from `run_pipeline`'s already-produced facts,
+                       never by re-running `profile_source`/`compile_plan`).
 """
 
 from __future__ import annotations
 
+from decoy_engine.execution.physical._activation import (
+    ACTIVATION_VERSION,
+    AdmittedNode,
+    UnifiedSliceActivation,
+    build_unified_slice_activation,
+)
 from decoy_engine.execution.physical._capabilities import CAPABILITIES, DriverCapabilities
 from decoy_engine.execution.physical._compiler import DriverSelection, compile_physical_plan
 from decoy_engine.execution.physical._context import SeamContext
@@ -68,6 +87,7 @@ from decoy_engine.execution.physical._inputs import (
     PhysicalPlanInputs,
     capture_native_admission_fact,
 )
+from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
     KeyBinding,
@@ -105,8 +125,10 @@ from decoy_engine.execution.physical._types import (
 )
 
 __all__ = [
+    "ACTIVATION_VERSION",
     "CAPABILITIES",
     "DIFFERENCE_CODES",
+    "AdmittedNode",
     "BoundedPythonOperator",
     "DriverCapabilities",
     "DriverId",
@@ -138,6 +160,9 @@ __all__ = [
     "Substrate",
     "SynthesisStage",
     "TableDriver",
+    "UnifiedSliceActivation",
+    "build_live_physical_plan_inputs",
+    "build_unified_slice_activation",
     "capture_native_admission_fact",
     "capture_physical_plan_inputs",
     "capture_shadow_snapshot",

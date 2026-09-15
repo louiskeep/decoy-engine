@@ -11,6 +11,7 @@ import inspect
 import pyarrow as pa
 import pytest
 
+from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
     PhysicalNode,
@@ -129,6 +130,10 @@ def test_batches_covers_a_ragged_final_chunk() -> None:
     assert [b.num_rows for b in batches] == [3, 3, 1]
 
 
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
 def test_coordinator_runs_the_hash_kernel_over_the_synthesized_empty_batch() -> None:
     plan = _plan_with_one_node("hash", "native_keyed_hash", resolved_config=())
     # Rebind with a real KeyBinding (the fixture above uses key_binding=None).

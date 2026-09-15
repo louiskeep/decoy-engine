@@ -1,14 +1,17 @@
-"""Task 4.4 C5: `ShadowSnapshot` -- the resident, in-memory input the shadow
-side profiles, plus its non-sensitive snapshot-identity digest.
+"""Task 4.4 C5: `ShadowSnapshot` -- the resident in-memory tables the shadow
+coordinator consumes, plus a non-sensitive snapshot-identity digest.
 
-Scope decision (TASK-4.4-PLAN.md C5): this is a shadow-test-scoped capture
-over an immutable Parquet fixture, not a production single-open seam (that
-is deferred to Task 4.5, when the coordinator becomes the real production
-reader of a possibly-mutable source). `capture_shadow_snapshot` is handed
-the SAME resident `pa.Table` object the test harness also passes to the
-oracle's `run_pipeline(sources=...)` call, so both sides consume
-byte-identical input by construction; `snapshot_identity` is the recorded
-proof of that, not the mechanism that makes it true.
+This is a test-harness-facing capture over immutable `pa.Table` objects.
+`capture_shadow_snapshot` receives the SAME resident object the oracle's test
+also consumes, so both sides see byte-identical input by construction.
+`snapshot_identity` records a proof of that identity for test validation.
+
+Task 4.5 activates the ShadowCoordinator (that uses this snapshot) as the
+production engine for the unified-slice lane (bounded non-FK single-table masks
+on already-resident sources). The production lane itself builds PhysicalPlanInputs
+via `_live_inputs.py` (from run_pipeline facts), not via `_snapshot.py`
+(which remains the shadow/test builder), so production readers never re-profile
+or re-plan against a source.
 """
 
 from __future__ import annotations

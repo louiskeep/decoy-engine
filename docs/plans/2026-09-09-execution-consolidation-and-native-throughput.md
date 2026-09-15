@@ -1296,3 +1296,20 @@ probe-outcome inputs; codes for forced-mode ConfigErrors, planner runtime-source
 remaining chunked_* codes, pool_size_location_conflict). NOT merged (design branch
 design/physical-plan-task4.1 @ d383b803; docs-only, awaits a push decision). Task 4.2 (adapters) is
 unblocked. -->
+
+<!-- Phase 4 Tasks 4.2-4.5 outcome (2026-09-15): 4.2 adapter seam (PR #138), 4.3 physical-plan compiler
+(PR #139), 4.4 shadow coordinator (PR #140) all MERGED to main. Task 4.5 (activate one vertical slice) is
+DOUBLE-GATED GREEN + ready for merge on branch feat/unified-slice-4.5 @ cb2fc12d (off main c617b47a),
+awaiting Cam's merge authorization. 4.5 landed as engine-ready (NOT caller-activated: a default-OFF per-run
+flag `unified_slice_enabled`; caller activation is Task 4.6). Scope: one bounded non-FK single-table Parquet
+mask, resident pa.Table, passthrough/redact/truncate/keyed-hash, a total resident-dtype allowlist; returns an
+ExecutionResult byte-identical to the pandas full-frame route (source-shaped output; b"pandas" metadata by
+construction). Gate history was long but converged: the production lane was Codex-confirmed correct for the
+final ~4 rounds; the long tail was entirely the DEFERRED statistical bench harness, descoped (Cam + Codex
+consult) to scripts/bench-unified-slice/README.md as FOLLOWUP-BENCH-D9 (required before 4.6 activation).
+Final artifact double-gated: dennis APPROVE (0 blocker/high/medium, 2 LOW: changelog wording fixed +
+FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY tracked for 4.6) + Codex final GO (zero findings); full engine suite
+13696 passed / 0 failed. Deferred-to-4.6 prerequisites: FOLLOWUP-BENCH-D9 (statistical perf certification),
+FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY (widen the fail-closed boundary beyond ShadowDifference),
+FOLLOWUP-BENCH-DRIVER-HARDEN (shared bench_driver.py None-safety + fail-closed RSS). -->
+

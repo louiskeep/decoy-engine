@@ -447,6 +447,17 @@ ALLOWLIST: dict[str, int] = {
     # requires the standard VaultWriter contract (isinstance) so a duck-typed
     # writer without the key-match method cannot silently bypass the fail-closed
     # net. Same routing-dispatch decomposition target stands.
+    # Task 4.5 hardened remediation (2026-09-15): the unified-slice call site
+    # regrew this module past its 645 ceiling twice (690, then 691) before
+    # this fix. CHANGE 4 of the Codex determination moved the call site's own
+    # ~30-keyword argument block OUT of this module entirely -- `_unified_
+    # slice.run_from_pipeline_locals` now owns it, taking `run_pipeline`'s own
+    # `locals()` (already every fact the lane needs, by the time this line
+    # runs) instead of a hand-listed keyword block. This module's own net
+    # growth is the seven lines a feature flag genuinely cannot avoid: the
+    # import, the `unified_slice_enabled` parameter, its require_bool call,
+    # and the three-line call site itself. Ceiling restored to 645; do not
+    # let this call site regrow past it.
     "src/decoy_engine/execution/_pipeline.py": 645,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters

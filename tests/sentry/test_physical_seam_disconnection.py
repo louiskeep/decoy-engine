@@ -1,6 +1,6 @@
 """D4 disconnection proof, part 1/2: the physical-execution adapter seam
 (Task 4.2, `decoy_engine.execution.physical`) is REACHED BY NOTHING in
-production.
+production -- except the one sanctioned Task 4.5 connection point.
 
 Mirrors `test_public_import_boundary.py`'s regex-sentry pattern for the
 opposite direction: that file guards the public boundary from reaching INTO
@@ -29,6 +29,19 @@ never pulls `execution.physical` into `sys.modules` -- a complementary check
 the regex sweep (which only reads source text) cannot make, since a hidden
 dynamic/conditional import would not appear as a matchable `import`
 statement at all.
+
+Task 4.5 (engine production-readiness) is the connection this test's own
+docstring always named as the point the seam stops being fully disconnected:
+a single new module, `execution/_unified_slice.py`, is now the ONE place
+outside `execution/physical/` allowed to import it -- behind a default-OFF
+per-run flag it checks BEFORE ever reaching for the seam (see that module's
+own docstring). `DELIBERATELY_CONNECTED_MODULES` below is that one-file
+allowlist; every OTHER production module stays exactly as disconnected as
+`GUARDED_MODULES` + the broad sweep already proved. `run_pipeline`
+(`_pipeline.py`) itself is unchanged in this respect: it imports
+`_unified_slice`, a sibling execution module, never `execution.physical`
+directly, so it still passes the static regex sweep below with no
+modification.
 """
 
 from __future__ import annotations
@@ -80,6 +93,20 @@ GUARDED_MODULES: tuple[str, ...] = (
     "generation/synthesize.py",
 )
 
+
+# Task 4.5's sanctioned connection points: the ONLY files outside
+# `execution/physical/` itself permitted to import the seam. Widening this
+# is a deliberate, reviewed decision (the next task after 4.5 to touch
+# production routing), never an incidental add. `_unified_slice_admission.py`
+# is the D3 admission-predicate module `_unified_slice.py` was split out of
+# to hold the ~600-LOC orchestration cap; its `resident_contract_admission`
+# reaches for `execution.physical._types.DriverId`, lazily, behind the same
+# flag-checked-before-import discipline.
+DELIBERATELY_CONNECTED_MODULES: tuple[str, ...] = (
+    "execution/_unified_slice.py",
+    "execution/_unified_slice_admission.py",
+)
+
 _PHYSICAL_IMPORT_RE = re.compile(
     r"^\s*(?:from\s+decoy_engine\.execution\.physical(?:\.\S+)?\s+import\b|"
     r"import\s+decoy_engine\.execution\.physical(?:\.\S+)?\b)",
@@ -113,19 +140,35 @@ def test_no_production_module_imports_the_physical_seam() -> None:
 
 def test_no_module_anywhere_under_src_imports_the_physical_seam_except_itself() -> None:
     """Broader sweep than `GUARDED_MODULES`: NOTHING under `src/decoy_engine`
-    outside the `execution/physical/` package itself may import it. Catches a
-    future module this list has not been updated to name yet."""
+    outside the `execution/physical/` package itself -- or the one Task 4.5
+    `DELIBERATELY_CONNECTED_MODULES` entry -- may import it. Catches a future
+    module neither list has been updated to name yet."""
     offenders: list[str] = []
     for path in ENGINE_ROOT.rglob("*.py"):
         rel = path.relative_to(ENGINE_ROOT).as_posix()
-        if rel.startswith("execution/physical/"):
+        if rel.startswith("execution/physical/") or rel in DELIBERATELY_CONNECTED_MODULES:
             continue
         if _imports_physical(path):
             offenders.append(rel)
     assert not offenders, (
-        "Modules outside execution/physical/ importing "
-        "decoy_engine.execution.physical:\n  - " + "\n  - ".join(offenders)
+        "Modules outside execution/physical/ (and outside "
+        "DELIBERATELY_CONNECTED_MODULES) importing decoy_engine.execution.physical:\n  - "
+        + "\n  - ".join(offenders)
     )
+
+
+def test_deliberately_connected_modules_exist_and_do_import_physical() -> None:
+    """The flip side of the sweep above: every allowlisted module must both
+    exist and actually import the seam, so the allowlist cannot silently
+    become stale (a removed/renamed file that no longer needs the
+    exemption) without a test failure pointing at it."""
+    for rel in DELIBERATELY_CONNECTED_MODULES:
+        path = ENGINE_ROOT / rel
+        assert path.exists(), f"DELIBERATELY_CONNECTED_MODULES entry does not exist: {rel}"
+        assert _imports_physical(path), (
+            f"{rel} is listed in DELIBERATELY_CONNECTED_MODULES but does not import "
+            "decoy_engine.execution.physical; remove it from the allowlist if that is intended"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -152,9 +195,12 @@ def _origin_main_available() -> bool:
     not _origin_main_available(), reason="origin/main not reachable in this checkout"
 )
 def test_production_execution_modules_are_byte_identical_to_origin_main() -> None:
-    """Task 4.2 is additive: every file under `src/decoy_engine/execution`
-    that existed before this task must be untouched. The only permitted diff
-    is new files under `execution/physical/` (this task's package)."""
+    """Tasks 4.2-4.4 are additive: every file under `src/decoy_engine/execution`
+    that existed before this program must be untouched, with two Task 4.5
+    exceptions -- the new `_unified_slice.py` connection module, and
+    `_pipeline.py` itself, whose only permitted diff is the flag kwarg +
+    the single guarded call site this task adds (`maybe_run_unified_slice`).
+    Every other file's diff is still restricted to `execution/physical/`."""
     # Diff against the MERGE-BASE, not origin/main's tip: if origin/main advances
     # with unrelated execution/ changes before this branch merges, a raw
     # origin/main..HEAD diff would raise a false positive. The merge-base is the
@@ -163,11 +209,20 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
     diff_names = _git(
         "diff", "--name-only", base, "HEAD", "--", "src/decoy_engine/execution"
     ).splitlines()
-    unexpected = [name for name in diff_names if "/execution/physical/" not in name]
+    permitted_non_physical = {
+        f"src/decoy_engine/{rel}" for rel in DELIBERATELY_CONNECTED_MODULES
+    } | {
+        "src/decoy_engine/execution/_pipeline.py",
+    }
+    unexpected = [
+        name
+        for name in diff_names
+        if "/execution/physical/" not in name and name not in permitted_non_physical
+    ]
     assert not unexpected, (
         "Files under src/decoy_engine/execution changed versus origin/main outside "
-        "the new execution/physical/ package (Task 4.2 must not touch production "
-        "execution behavior):\n  - " + "\n  - ".join(unexpected)
+        "execution/physical/ and outside the Task 4.5 permitted exceptions "
+        f"({sorted(permitted_non_physical)}):\n  - " + "\n  - ".join(unexpected)
     )
 
 

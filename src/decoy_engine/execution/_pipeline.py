@@ -86,6 +86,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -162,6 +163,7 @@ def run_pipeline(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     native_route_enabled: bool = False,
+    unified_slice_enabled: bool = False,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -239,8 +241,8 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
-    `native_route_enabled` (default False): opt-in routing control, not a
-    `GlobalSettings` field; see `_native_route.maybe_run_native_route`.
+    `native_route_enabled` / `unified_slice_enabled` (both default False): see
+    `_native_route.maybe_run_native_route` / `_unified_slice.maybe_run_unified_slice`.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -285,6 +287,7 @@ def run_pipeline(
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("native_route_enabled", native_route_enabled)
+    require_bool("unified_slice_enabled", unified_slice_enabled)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
@@ -468,6 +471,9 @@ def run_pipeline(
     )
     if native_result is not None:
         return native_result
+    unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
+    if unified_slice_result is not None:
+        return unified_slice_result
 
     # TB-1: only full_frame / auto-chunk below needs every source resident.
     resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)

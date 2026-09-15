@@ -1,7 +1,10 @@
 """D2: `compile_physical_plan(inputs) -> PhysicalPlan` -- the pure compiler.
 
-Executes nothing; not wired into `run_pipeline` (D5's sentries enforce the
-disconnection). The frozen SELECTION PRECEDENCE (TASK-4.3-PLAN.md D2), from
+Executes nothing itself. As of Task 4.5 it is reached in production only from
+the one sanctioned connection point, the default-OFF unified-slice lane
+(`execution/_unified_slice.py`); every OTHER production path stays disconnected
+from `execution.physical` (the D5 seam sentries enforce that single-exception
+allowlist). The frozen SELECTION PRECEDENCE (TASK-4.3-PLAN.md D2), from
 `_pipeline.py`'s call order:
 
   0. Submit-boundary substrate resolution + adapter validation happen BEFORE
