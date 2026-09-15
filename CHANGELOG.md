@@ -120,7 +120,7 @@ The execution-consolidation program's physical-plan compiler (Tasks 4.2-4.4) was
 - **`execution/physical/_live_inputs.py` (new module):** Constructs PhysicalPlanInputs from `run_pipeline`'s already-computed profile + plan facts (no re-profiling, no re-planning). Caller builds activation overlay (_activation.py) from live inputs, then coordinator consumes it.
 - **`execution/physical/_activation.py` (new module):** Frozen production-readiness activation overlay (`UnifiedSliceActivation`, `AdmittedNode`). Captures the coordinator's pre-execution decision set over admitted nodes.
 - **`unified_slice_enabled: bool = False`** (new `run_pipeline` kwarg): toggles the unified-slice lane on; default OFF.
-- Output parity: byte-identical to pandas oracle by construction. Metadata reconstructed (dtypes, nullability, index, columns) to match pandas schema.
+- Output parity: byte-identical to pandas oracle by construction. Schema metadata (the b"pandas" dtype/nullability/index info) is attached by the same `from_pandas(preserve_index=False)` conversion the legacy route uses, not hand-reconstructed, so it matches by construction.
 - No engine version bump: engine-ready (new modules), caller activation deferred (Task 4.6). Pre-GA hard-delete caveat: the lane's default-OFF posture carries forward; caller-facing default is a later decision.
 
 ### Added (Phase 4 engine-efficiency bundle: bounded-parent split-dedup, auto-routed reorder driver, Polars-hash parity, cascade safety tightening, and out-of-core module decomposition, 2026-09-04 to 2026-09-06)

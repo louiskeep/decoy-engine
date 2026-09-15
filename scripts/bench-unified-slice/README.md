@@ -58,3 +58,16 @@ programs (native-baseline). Task 4.5 reverted its changes rather than modify
 shared tooling unilaterally. Harden it with its own consumers in scope: None-safe
 tier-summary formatting (a `None` `hash_tput` must not crash the summary line) and
 fail-closed per-rep RSS aggregation.
+
+## Separate follow-up: FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY (before Task 4.6)
+
+The lane's fail-closed boundary in `src/decoy_engine/execution/_unified_slice.py`
+catches only `ShadowDifference`. For an ALREADY-ADMITTED job, an unexpected raise
+from `compile_physical_plan`, a `build_live_physical_plan_inputs` helper, or the
+native kernel mid-batch would propagate to the caller (flag-on) rather than reroute
+to the legacy route. No known trigger exists given how narrow admission is, and the
+lane is default-off with caller activation deferred, so this does not block the 4.5
+merge. Before Task 4.6 flips any caller default on, widen the boundary so any
+unexpected exception on an admitted job also fails closed (reroute to the legacy
+route, or raise `UnifiedSliceInvariantError`), never a raw compiler/kernel type.
+(dennis final-review LOW-1, 2026-09-15.)
