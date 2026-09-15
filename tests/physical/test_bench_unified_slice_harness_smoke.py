@@ -19,6 +19,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from decoy_engine.execution.native._companion_status import native_companion_status
+
 ENGINE_ROOT = Path(__file__).resolve().parents[2]
 BENCH_DIR = ENGINE_ROOT / "scripts" / "bench-unified-slice"
 VENV_PY = Path(sys.executable)
@@ -27,10 +31,18 @@ _WORKER_ENV = {**__import__("os").environ, "PYTHONPATH": str(ENGINE_ROOT / "src"
 _SMOKE_N_ROWS = 1_000
 
 
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
 def test_worker_emits_real_positive_per_strategy_timing() -> None:
     """A real subprocess run at a tiny row count: proves the worker script is
     runnable end-to-end and that `hash_ms` (and every other per-strategy
-    metric) is a real measured number, not the old hard-coded `0.0`."""
+    metric) is a real measured number, not the old hard-coded `0.0`.
+
+    The worker activates the hash lane, which needs the compiled kernel, so this
+    skips on the companion-absent legs and runs in the companion-present job.
+    """
     proc = subprocess.run(  # noqa: S603 fixed local benchmark command, no untrusted input
         [str(VENV_PY), str(BENCH_DIR / "bench_worker_unified.py"), str(_SMOKE_N_ROWS)],
         cwd=str(ENGINE_ROOT),

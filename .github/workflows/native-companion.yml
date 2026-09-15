@@ -294,6 +294,13 @@ jobs:
       # own metadata to resolve).
       - name: Companion __version__ test (companion-present case)
         run: pytest tests/native/test_native_version.py -v --tb=short
+      # The Task 4.4 shadow corpus + coordinator hash equivalence and the Task 4.5
+      # unified-slice hash lane route through the compiled kernel; without it their
+      # hash cases skip, so the companion-absent full-suite legs (regression-gate,
+      # substrate-matrix) never assert them. This is the one job that installs the
+      # companion, so it must run these physical files.
+      - name: Physical shadow corpus + unified-slice hash equivalence (companion-present case)
+        run: pytest tests/physical/test_shadow_corpus.py tests/physical/test_shadow_coordinator.py tests/physical/test_unified_slice_parity.py tests/physical/test_unified_slice_admission.py tests/physical/test_bench_unified_slice_harness_smoke.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A

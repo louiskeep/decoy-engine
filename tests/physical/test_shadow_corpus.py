@@ -19,6 +19,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
+from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.keyprovider import SecretKeyProvider
 from tests.physical._shadow_helpers import (
     assert_every_node_bound,
@@ -39,6 +40,12 @@ def _key_provider() -> SecretKeyProvider:
 def _verify(
     tmp_path: Path, table_name: str, source: pa.Table, columns: list[dict], *, name: str
 ) -> None:
+    # A hash node routes through the compiled native kernel, which the
+    # companion-absent CI legs (regression-gate, substrate-matrix) do not build;
+    # skip there. The companion-present job runs this file, so the hash corpus
+    # is still exercised with the kernel installed.
+    if not native_companion_status().ok and any(c.get("strategy") == "hash" for c in columns):
+        pytest.skip("compiled decoy-engine-native companion unavailable")
     path = write_read_only_fixture(tmp_path, source, name)
     config = build_config(tmp_path, table_name, path, columns)
     run = run_shadow_and_oracle(config, table_name, source, key_provider=_key_provider())
@@ -92,6 +99,10 @@ _BATCH_SIZES = (1, 4, 11)
 _ORDERS = (False, True)  # natural, then a fixed reversal
 
 
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
 @pytest.mark.parametrize("reverse", _ORDERS, ids=["natural_order", "reversed_order"])
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES, ids=[f"batch_{b}" for b in _BATCH_SIZES])
 def test_mixed_four_strategy_table_batch_size_x_row_order_matrix(

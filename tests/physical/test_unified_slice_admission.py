@@ -15,6 +15,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import _unified_slice_admission
+from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.physical._activation import build_unified_slice_activation
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
@@ -636,8 +637,16 @@ def test_unencodable_hash_namespace_declines(tmp_path: Path, values: list[str | 
     assert _resident_contract(physical_plan, plan, source, registry=registry) is None
 
 
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
 def test_encodable_hash_namespace_admits(tmp_path: Path) -> None:
-    """The positive control for the unencodable-namespace tests above."""
+    """The positive control for the unencodable-namespace tests above.
+
+    Hash admission preflights the compiled kernel, so it only admits with the
+    companion installed; skip on the companion-absent legs.
+    """
     source = pa.table({"c": pa.array(["a@x.com", "b@x.com", "c@x.com"], type=pa.string())})
     config, source = _build(
         tmp_path, [{"name": "c", "strategy": "hash", "namespace": "ns"}], source
