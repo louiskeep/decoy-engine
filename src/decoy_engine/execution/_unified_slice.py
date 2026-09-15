@@ -26,11 +26,17 @@ split out to hold this module's own size under the ~600-LOC orchestration
 cap (CLAUDE.md "Engineering best practices"); this module owns D6/D7/D8's
 execution + activation + exception-boundary concerns and the one
 `run_pipeline` call site.
+
+CHANGE 4 (Codex determination, module-size ratchet remediation):
+`run_from_pipeline_locals` -- not `maybe_run_unified_slice` itself -- is
+`_pipeline.py`'s actual call site now, so that module's own 645-LOC ceiling
+(`tests/sentry/test_module_size.py`) does not have to carry this lane's
+~30-keyword argument block. See `run_from_pipeline_locals`'s docstring.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution import _unified_slice_admission as _admission
@@ -52,7 +58,11 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
-__all__ = ["UnifiedSliceInvariantError", "maybe_run_unified_slice"]
+__all__ = [
+    "UnifiedSliceInvariantError",
+    "maybe_run_unified_slice",
+    "run_from_pipeline_locals",
+]
 
 # The one quality_metrics leaf D7's completed-execution evidence lands
 # under; the differential parity harness (D9) asserts it present flag-on,
@@ -209,19 +219,15 @@ def _execute_admitted(
     )
     physical_plan = compile_physical_plan(inputs)
 
-    physical_table = _admission.compiled_plan_admission(
-        physical_plan, table=candidate.table, source=candidate.source
-    )
-    if physical_table is None:
-        return None
-    if not _admission.keyed_hash_and_null_int_admission(
-        physical_table,
-        plan=plan,
+    physical_table = _admission.resident_contract_admission(
+        physical_plan,
+        table=candidate.table,
         source=candidate.source,
+        plan=plan,
         registry=registry,
         graph=graph,
-        table=candidate.table,
-    ):
+    )
+    if physical_table is None:
         return None
 
     activation = build_unified_slice_activation(
@@ -255,7 +261,7 @@ def _execute_admitted(
     node_evidence: dict[str, dict[str, Any]] = {}
     for node in physical_table.nodes:
         binding = node.execution
-        if binding is None:  # pragma: no cover - compiled_plan_admission already excluded this
+        if binding is None:  # pragma: no cover - resident_contract_admission already excluded this
             raise UnifiedSliceInvariantError(
                 f"unified slice: node {node.node_id!r} lost its admitted binding "
                 "between admission and execution."
@@ -284,21 +290,31 @@ def _execute_admitted(
             "compiled_kernel_executed": evidence.compiled_kernel_executed,
         }
 
-    outputs = dict(shadow_result.outputs)
-    # D9 (Codex final-gate BLOCKER): the coordinator assembles its output table with `pa.table(
-    # {...})` (`_shadow_coordinator.py:199`), which carries no schema
-    # metadata, while the legacy adapter builds its output via `pa.Table.
-    # from_pandas(f, preserve_index=False)` (`_pandas_adapter.py:325`), which
-    # attaches pandas' own schema metadata (the `b"pandas"` key). Reproducing
-    # the SAME round-trip here -- rather than hand-copying the metadata bytes
-    # -- makes the two byte-identical by construction. Cheap admission
-    # already declined any relationship-bearing job, so the admitted table
-    # has no FK columns and this plain `to_pandas()`/`from_pandas()` pair is
-    # exactly what the legacy adapter's own `to_pandas_fk_safe` reduces to
-    # here (its nullable-dtype protection only ever applies to FK columns).
-    outputs[candidate.table] = pa.Table.from_pandas(
-        outputs[candidate.table].to_pandas(), preserve_index=False
-    )
+    # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
+    # trip of the coordinator's own metadata-free output. `candidate.
+    # source_frame` is the SAME source-aware pandas conversion the legacy
+    # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`,
+    # which reduces to a plain `to_pandas()` here since cheap admission
+    # already declined any relationship-bearing job); leaving a passthrough
+    # column untouched on it reproduces the legacy `PassthroughHandler`
+    # exactly (it is a literal no-op, `_strategies/_passthrough.py`), and
+    # overlaying a masked column's `to_pylist()` POSITIONALLY reproduces
+    # every tokenizing handler's own `df[column] = masked.to_pylist()`
+    # assignment (`_redact.py` / `_truncate.py` / `_hash.py`). The closing
+    # `pa.Table.from_pandas(frame, preserve_index=False)` is then EXACTLY
+    # the legacy adapter's own conversion (`_pandas_adapter.py:325`),
+    # attaching the identical `b"pandas"` schema metadata by construction --
+    # not by hand-copying bytes. `candidate.source_frame` is single-use
+    # (admission built it once for this call only), so mutating it in place
+    # costs no extra conversion beyond the one admission already paid for.
+    frame = candidate.source_frame
+    masked_table = shadow_result.outputs[candidate.table]
+    for node in physical_table.nodes:
+        if node.strategy == "passthrough":
+            continue
+        column = node.columns[0]
+        frame[column] = masked_table.column(column).to_pylist()
+    outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
     quality_metrics: dict[str, Any] = {}
     _pipeline_finalize.stamp_execution_metrics(
         quality_metrics,
@@ -476,3 +492,72 @@ def maybe_run_unified_slice(
         explain_plan=explain_plan,
         execution_plan_decision=execution_plan_decision,
     )
+
+
+# CHANGE 4: the two `maybe_run_unified_slice` keyword names whose value
+# lives under a DIFFERENT name in `run_pipeline`'s own locals (both are that
+# function's one-time-resolved value, `resolved_registry` / `resolved_
+# key_provider` -- its own naming convention for them, not this lane's).
+# Every other keyword below is a bare same-name pass-through.
+_PIPELINE_RESOLVED_NAMES: Final[dict[str, str]] = {
+    "registry": "resolved_registry",
+    "key_provider": "resolved_key_provider",
+}
+
+# Every OTHER `maybe_run_unified_slice` keyword: `run_pipeline` binds a
+# local of the identical name by the time it reaches this lane's call site.
+_PIPELINE_LOCAL_KWARGS: Final[tuple[str, ...]] = (
+    "unified_slice_enabled",
+    "config",
+    "plan",
+    "profile",
+    "graph",
+    "table_kinds",
+    "caller_sources",
+    "source_loader",
+    "sink",
+    "fidelity_report",
+    "vault_writer",
+    "route",
+    "route_chunked",
+    "native_route_enabled",
+    "substrate",
+    "resolved_substrate",
+    "fpe_chunk_count",
+    "max_workers",
+    "fallback_to_pandas",
+    "auto_chunk",
+    "chunk_size_rows",
+    "auto_chunk_threshold_rows",
+    "out_of_core_threshold_rows",
+    "full_frame_reject_rows",
+    "use_byte_estimate_routing",
+    "use_probe_routing",
+    "out_of_core_budget_bytes",
+    "out_of_core_reorder_threshold_rows",
+    "execution_mode",
+    "explain_plan",
+    "execution_plan_decision",
+    "route_reason",
+    "engine_version",
+)
+
+
+def run_from_pipeline_locals(local_vars: Mapping[str, Any]) -> ExecutionResult | None:
+    """`_pipeline.py`'s actual call site for this lane (CHANGE 4, Codex
+    determination): that module's module-size sentry allowlist is SHRINK-
+    ONLY (`tests/sentry/test_module_size.py:14`, "update the census only by
+    shrinking, never by raising") and was already at its 645-LOC ceiling
+    before this task, so this lane's own ~30-keyword call cannot live there.
+
+    By the time `run_pipeline` reaches its `maybe_run_unified_slice` call it
+    has already bound every fact this lane needs as an ordinary local
+    variable (most under the IDENTICAL name this lane's own keyword uses,
+    the two exceptions named in `_PIPELINE_RESOLVED_NAMES`), so forwarding
+    its own `locals()` verbatim keeps that call site itself to one line
+    instead of the argument block this function now owns.
+    """
+    kwargs: dict[str, Any] = {name: local_vars[name] for name in _PIPELINE_LOCAL_KWARGS}
+    for kwarg_name, local_name in _PIPELINE_RESOLVED_NAMES.items():
+        kwargs[kwarg_name] = local_vars[local_name]
+    return maybe_run_unified_slice(**kwargs)

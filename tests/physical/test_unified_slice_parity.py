@@ -31,9 +31,11 @@ needs the companion and is skipped without it.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -349,33 +351,118 @@ def test_multi_batch_table_admits_and_matches(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Non-string dtypes: redact/truncate/passthrough admit arbitrary (non-null)
-# dtypes; assert cell AND dtype identity vs the legacy route so a type-
-# coercion regression (e.g. redact-int64 -> string) cannot ship uncaught.
+# Domain boundary (CHANGE 3, Codex determination): the fixed per-strategy
+# admitted-type matrix is {string,int64,bool} for passthrough, {string} for
+# redact/truncate, {string, null-free int64} for hash. A type outside a
+# strategy's own set must FALL BACK to the legacy route (both arms still
+# agree, since both take the same route), never admit and mis-execute.
 # ---------------------------------------------------------------------------
 
 
-def test_non_string_dtype_columns_admit_and_match(tmp_path: Path) -> None:
+def test_out_of_domain_dtype_columns_decline_to_the_legacy_route(tmp_path: Path) -> None:
+    """The narrowed replacement for the old (incorrect) "non-string dtypes
+    admit" assumption: every column below is outside its strategy's fixed
+    matrix, so the whole table must decline -- both arms take the legacy
+    route and trivially agree, with no D7 activation evidence at all."""
     source = pa.table(
         {
-            "ri": pa.array([1, 2, 3], type=pa.int64()),
             "rf": pa.array([1.5, 2.5, 3.5], type=pa.float64()),
             "rb": pa.array([True, False, True], type=pa.bool_()),
-            "ti": pa.array([100, 200, 300], type=pa.int64()),
             "pf": pa.array([1.1, 2.2, 3.3], type=pa.float64()),
             "pts": pa.array([1, 2, 3], type=pa.timestamp("us")),
         }
     )
     columns = [
-        {"name": "ri", "strategy": "redact"},
         {"name": "rf", "strategy": "redact"},
         {"name": "rb", "strategy": "redact"},
-        {"name": "ti", "strategy": "truncate", "provider_config": {"length": 2}},
         {"name": "pf", "strategy": "passthrough"},
         {"name": "pts", "strategy": "passthrough"},
     ]
     off, on = _run_both(tmp_path, "t", source, columns)
-    # `_assert_outputs_cell_identical` (inside `_assert_full_parity`) compares
-    # the per-column Arrow type as well as the values, so a dtype divergence
-    # between the lane and the legacy route fails here.
+    _assert_outputs_cell_identical(off, on)
+    assert QUALITY_METRICS_KEY not in on.quality_metrics
+
+
+def test_passthrough_int64_and_bool_admit_and_match(tmp_path: Path) -> None:
+    """The positive control: int64/bool ARE in passthrough's admitted
+    matrix (unlike float64/timestamp above) and must activate + match."""
+    source = pa.table(
+        {
+            "pi": pa.array([1, 2, 3], type=pa.int64()),
+            "pb": pa.array([True, False, True], type=pa.bool_()),
+        }
+    )
+    columns = [
+        {"name": "pi", "strategy": "passthrough"},
+        {"name": "pb", "strategy": "passthrough"},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
     _assert_full_parity(off, on)
+
+
+@pytest.mark.skipif(
+    not native_companion_status().ok, reason="compiled decoy-engine-native companion unavailable"
+)
+def test_hash_int64_admits_and_matches(tmp_path: Path) -> None:
+    """hash's matrix admits null-free int64 too, not just string."""
+    source = pa.table({"c": pa.array([10, 20, 30], type=pa.int64())})
+    columns = [{"name": "c", "strategy": "hash", "namespace": "n"}]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    leaf = _assert_full_parity(off, on)
+    (evidence,) = leaf["nodes"].values()
+    assert evidence["compiled_kernel_executed"] is True
+
+
+# ---------------------------------------------------------------------------
+# CHANGE 2 proof: source-shaped output assembly preserves provenance a
+# generic coordinator-output round-trip would lose. A `StringDtype`-backed
+# resident column (its Arrow table carries `numpy_type: "string"` pandas
+# metadata, not the plain-`object` default) is left untouched for
+# passthrough, so its metadata survives by construction; the OLD design
+# (round-tripping the coordinator's own metadata-free `pa.table(...)`
+# output) could not have reproduced this.
+# ---------------------------------------------------------------------------
+
+
+def test_string_dtype_column_matches_exact_metadata_while_activated(tmp_path: Path) -> None:
+    frame = pd.DataFrame({"c": pd.array(["a", "b", "c"], dtype="string")})
+    source = pa.Table.from_pandas(frame, preserve_index=False)
+    off, on = _run_both(tmp_path, "t", source, [{"name": "c", "strategy": "passthrough"}])
+    leaf = _assert_full_parity(off, on)
+    assert leaf["activated"] is True
+    meta = json.loads(on.outputs["t"].schema.metadata[b"pandas"])
+    (col_meta,) = [c for c in meta["columns"] if c["name"] == "c"]
+    assert col_meta["numpy_type"] == "string"
+
+
+# ---------------------------------------------------------------------------
+# Exact Parquet read-back parity for an admitted case (D9): a real
+# write-then-read round trip on BOTH arms' outputs, not just the in-memory
+# `ExecutionResult.outputs` table objects.
+# ---------------------------------------------------------------------------
+
+
+def test_admitted_case_matches_after_a_parquet_round_trip(tmp_path: Path) -> None:
+    source = pa.table(
+        {
+            "p": pa.array(["x", "y", "z"], type=pa.string()),
+            "r": pa.array(["s1", "s2", "s3"], type=pa.string()),
+        }
+    )
+    columns = [
+        {"name": "p", "strategy": "passthrough"},
+        {"name": "r", "strategy": "redact"},
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    _assert_full_parity(off, on)
+
+    off_path = tmp_path / "off_roundtrip.parquet"
+    on_path = tmp_path / "on_roundtrip.parquet"
+    pq.write_table(off.outputs["t"], off_path)
+    pq.write_table(on.outputs["t"], on_path)
+    off_back = pq.read_table(off_path)
+    on_back = pq.read_table(on_path)
+    assert off_back.schema.equals(on_back.schema, check_metadata=True)
+    assert set(off_back.column_names) == set(on_back.column_names)
+    for name in off_back.column_names:
+        assert off_back.column(name).to_pylist() == on_back.column(name).to_pylist()

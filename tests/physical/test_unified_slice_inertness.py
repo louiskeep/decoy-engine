@@ -1,11 +1,11 @@
 """Task 4.5 D9: FLAG-OFF INERTNESS.
 
 Poisons every new unified-slice call site (the cheap admission check, the
-compiled-plan admission check, the keyed-hash/null-int guard, and the full
-execution path) and proves NONE fire when `unified_slice_enabled` defaults
-False, then proves -- in a fresh subprocess, so a hidden dynamic import
-cannot hide from a source-text sweep -- that `decoy_engine.execution.
-physical` is never imported on that path either.
+dominating resident-contract check, and the full execution path) and proves
+NONE fire when `unified_slice_enabled` defaults False, then proves -- in a
+fresh subprocess, so a hidden dynamic import cannot hide from a source-text
+sweep -- that `decoy_engine.execution.physical` is never imported on that
+path either.
 """
 
 from __future__ import annotations
@@ -62,27 +62,15 @@ def test_flag_off_never_calls_execute_admitted(
     _run_flag_off(config, source)
 
 
-def test_flag_off_never_calls_compiled_plan_admission(
+def test_flag_off_never_calls_resident_contract_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, source = _admissible_config_and_source(tmp_path)
 
     def _poisoned(*args: object, **kwargs: object) -> object:
-        raise AssertionError("compiled_plan_admission must not run when the flag is off")
+        raise AssertionError("resident_contract_admission must not run when the flag is off")
 
-    monkeypatch.setattr(_unified_slice_admission, "compiled_plan_admission", _poisoned)
-    _run_flag_off(config, source)
-
-
-def test_flag_off_never_calls_keyed_hash_and_null_int_admission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config, source = _admissible_config_and_source(tmp_path)
-
-    def _poisoned(*args: object, **kwargs: object) -> object:
-        raise AssertionError("keyed_hash_and_null_int_admission must not run when the flag is off")
-
-    monkeypatch.setattr(_unified_slice_admission, "keyed_hash_and_null_int_admission", _poisoned)
+    monkeypatch.setattr(_unified_slice_admission, "resident_contract_admission", _poisoned)
     _run_flag_off(config, source)
 
 

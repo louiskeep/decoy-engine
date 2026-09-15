@@ -99,7 +99,7 @@ GUARDED_MODULES: tuple[str, ...] = (
 # is a deliberate, reviewed decision (the next task after 4.5 to touch
 # production routing), never an incidental add. `_unified_slice_admission.py`
 # is the D3 admission-predicate module `_unified_slice.py` was split out of
-# to hold the ~600-LOC orchestration cap; its `compiled_plan_admission`
+# to hold the ~600-LOC orchestration cap; its `resident_contract_admission`
 # reaches for `execution.physical._types.DriverId`, lazily, behind the same
 # flag-checked-before-import discipline.
 DELIBERATELY_CONNECTED_MODULES: tuple[str, ...] = (

@@ -1,7 +1,15 @@
 """Task 4.5 D9 performance gate: ONE rep of the unified-slice production
 lane, over the SAME frozen W2 workload `scripts/native-baseline/bench_
-worker.py` masks (10 columns: 3 keyed-hash, 3 passthrough, 2 redact, 2
-truncate) -- the mixed-strategy, hash-heavy shape D9 requires.
+worker.py` masks, minus `pt_ts` (9 columns: 3 keyed-hash, 2 passthrough, 2
+redact, 2 truncate) -- the mixed-strategy, hash-heavy shape D9 requires.
+
+`pt_ts` is a timestamp column: the hardened admission domain (Codex
+determination, CHANGE 1) admits only `{string, int64, bool}` for
+passthrough, deliberately excluding every temporal type until it is a
+separately-proven slice. Dropping it here (never touching the shared
+`bench_worker.py` builder the native-route perf gate also reads) is what
+keeps this worker's "real execution" vacuity guard below meaningful instead
+of permanently unsatisfiable.
 
 Run with `scripts/native-baseline/bench_driver.py --worker
 ../bench-unified-slice/bench_worker_unified.py` for the SAME external wall-
@@ -37,12 +45,25 @@ number per strategy, at the cost of running the pipeline five times per rep
 instead of once. This is bench-script-only instrumentation; it does not
 touch the lane or the shared 4.4 coordinator.
 
+Sampled profiling reads Parquet, not CSV (Codex determination remediation):
+`build_config` declares its source as CSV, but `tr_phone`/`tr_card` are
+digit-only strings (`bench_worker.py`'s own `"512" + digits`), and a CSV
+round-trip's default type sniffing reads an all-digit sampled column back as
+int64 -- a genuine profile/resident TYPE MISMATCH the hardened admission
+(CHANGE 1) now catches and correctly declines (previously invisible: no
+prior check compared a non-hash node's resident type against anything). The
+resident masking data was never affected (`sources` reads the Arrow table
+directly, never the sample file); only the PROFILE the sample feeds was
+wrong. Every worker call below writes its own Parquet sample and overrides
+`cfg["sources"]["w2"]["format"]` to `"parquet"` post-`build_config` so the
+profiler sees the SAME lossless types the resident source carries, matching
+`_time_strategy`'s own sub-selection.
+
 Usage: python bench_worker_unified.py <n_rows>
 """
 
 from __future__ import annotations
 
-import csv
 import json
 import os
 import sys
@@ -52,6 +73,7 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.keyprovider import SecretKeyProvider
@@ -67,25 +89,31 @@ from bench_worker import FIXED_MASK_KEY, build_config, build_sources
 # Strategy -> its column subset in the frozen W2 schema (`bench_worker.
 # build_config`); restated here (not derived from the config) so a schema
 # change in `bench_worker.py` fails this module's own lookups loudly rather
-# than silently timing an empty subset.
+# than silently timing an empty subset. `pt_ts` is excluded from passthrough
+# (module docstring): outside the hardened admission domain.
 _STRATEGY_COLUMNS: dict[str, tuple[str, ...]] = {
     "hash": ("h_email", "h_token", "h_uid"),
-    "passthrough": ("pt_amount", "pt_flag", "pt_ts"),
+    "passthrough": ("pt_amount", "pt_flag"),
     "redact": ("rd_ssn", "rd_notes"),
     "truncate": ("tr_phone", "tr_card"),
 }
+# The one W2 column the hardened admission domain declines; dropped from
+# both the resident source and the config before every unified-slice run
+# below (main() and _time_strategy() alike) so the config's columns stay
+# 1:1 with the resident schema (cheap_admission's own D3 requirement).
+_UNADMITTED_COLUMN = "pt_ts"
 
 
-def _write_sample_csv(src: pa.Table, columns: tuple[str, ...], suffix: str) -> str:
-    """A small representative CSV of just `columns`, for profiling only (the
-    masking pass reads the resident Arrow subset directly) -- mirrors
-    `main()`'s own sampling for the full 10-column config."""
-    fd, path = tempfile.mkstemp(prefix=f"w2_unified_{suffix}_", suffix=".csv")
+def _write_sample_parquet(src: pa.Table, columns: tuple[str, ...], suffix: str) -> str:
+    """A small representative Parquet sample of just `columns`, for
+    profiling only (the masking pass reads the resident Arrow subset
+    directly) -- mirrors `main()`'s own sampling for the full config.
+    Parquet, not CSV (module docstring): preserves the resident Arrow type
+    exactly, so the profile the sample feeds never disagrees with it."""
+    fd, path = tempfile.mkstemp(prefix=f"w2_unified_{suffix}_", suffix=".parquet")
     os.close(fd)
     sample_n = min(src.num_rows, 2000)
-    src.select(list(columns)).slice(0, sample_n).to_pandas().to_csv(
-        path, index=False, quoting=csv.QUOTE_MINIMAL
-    )
+    pq.write_table(src.select(list(columns)).slice(0, sample_n), path)
     return path
 
 
@@ -98,9 +126,10 @@ def _time_strategy(
     vacuity guard below) if this isolated run does not itself activate the
     unified slice, rather than recording a legacy-oracle fallback as a
     unified-slice number."""
-    sample_path = _write_sample_csv(src, columns, strategy)
+    sample_path = _write_sample_parquet(src, columns, strategy)
     try:
         cfg = build_config(sample_path)
+        cfg["sources"]["w2"]["format"] = "parquet"
         cfg["tables"][0]["columns"] = [
             col for col in cfg["tables"][0]["columns"] if col["name"] in columns
         ]
@@ -137,14 +166,20 @@ def _time_strategy(
 def main() -> None:
     n_rows = int(sys.argv[1])
     key_provider = SecretKeyProvider(secret=FIXED_MASK_KEY, key_version="v1")
-    src = build_sources(n_rows)
+    # Drop the one column outside the hardened admission domain (module
+    # docstring) so the resident source and the config stay 1:1.
+    src = build_sources(n_rows).drop_columns([_UNADMITTED_COLUMN])
     sources = {"w2": src}
 
     sample_n = min(n_rows, 2000)
-    fd, source_path = tempfile.mkstemp(prefix="w2_unified_sample_", suffix=".csv")
+    fd, source_path = tempfile.mkstemp(prefix="w2_unified_sample_", suffix=".parquet")
     os.close(fd)
-    src.slice(0, sample_n).to_pandas().to_csv(source_path, index=False, quoting=csv.QUOTE_MINIMAL)
+    pq.write_table(src.slice(0, sample_n), source_path)
     cfg = build_config(source_path)
+    cfg["sources"]["w2"]["format"] = "parquet"
+    cfg["tables"][0]["columns"] = [
+        col for col in cfg["tables"][0]["columns"] if col["name"] != _UNADMITTED_COLUMN
+    ]
 
     t0 = time.perf_counter()
     result = run_pipeline(

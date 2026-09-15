@@ -447,26 +447,18 @@ ALLOWLIST: dict[str, int] = {
     # requires the standard VaultWriter contract (isinstance) so a duck-typed
     # writer without the key-match method cannot silently bypass the fail-closed
     # net. Same routing-dispatch decomposition target stands.
-    # Task 4.5 (engine production-readiness, 2026-09-15): +45 LOC (645 -> 690) --
-    # the unified-slice production lane's one call site, placed at the same
-    # post-routing spot the Q3 native lane already occupies (the module already
-    # docstrings why routing dispatch lives here, not in a sibling). The call
-    # passes ~30 already-computed local facts the lane needs for exact D9
-    # quality_metrics parity with the legacy route; `resolved_substrate` /
-    # `adapter` were deliberately dropped from the list (re-derived pure
-    # inside `_unified_slice.py` from values already passed) to keep this to
-    # the minimum genuinely-irreducible set. Decompose alongside the existing
-    # routing-dispatch target: bundle the pass-through execution/OOC knobs
-    # into one shared context object both call sites can pass in a single
-    # line when the next execution-route batch lands.
-    # Task 4.5 Codex final-gate remediation (2026-09-15): +1 LOC (690 -> 691) --
-    # the "deliberately dropped `resolved_substrate`" decision above was the
-    # BUG: re-resolving it inside `_unified_slice.py` re-read `DECOY_SUBSTRATE`
-    # a second time, a TOCTOU window against this module's own single
-    # resolution above. This call site now passes the already-resolved value
-    # instead (the `adapter` re-derivation stays pure/local, unaffected).
-    # Same decomposition target stands.
-    "src/decoy_engine/execution/_pipeline.py": 691,
+    # Task 4.5 hardened remediation (2026-09-15): the unified-slice call site
+    # regrew this module past its 645 ceiling twice (690, then 691) before
+    # this fix. CHANGE 4 of the Codex determination moved the call site's own
+    # ~30-keyword argument block OUT of this module entirely -- `_unified_
+    # slice.run_from_pipeline_locals` now owns it, taking `run_pipeline`'s own
+    # `locals()` (already every fact the lane needs, by the time this line
+    # runs) instead of a hand-listed keyword block. This module's own net
+    # growth is the seven lines a feature flag genuinely cannot avoid: the
+    # import, the `unified_slice_enabled` parameter, its require_bool call,
+    # and the three-line call site itself. Ceiling restored to 645; do not
+    # let this call site regrow past it.
+    "src/decoy_engine/execution/_pipeline.py": 645,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table

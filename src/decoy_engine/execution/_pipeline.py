@@ -78,12 +78,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.execution import (
-    _native_route,
-    _pipeline_finalize,
-    _pipeline_routing,
-    _unified_slice,
-)
+from decoy_engine.execution import _native_route, _pipeline_finalize, _pipeline_routing
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
@@ -91,6 +86,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -245,12 +241,8 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
-    `native_route_enabled` (default False): opt-in routing control, not a
-    `GlobalSettings` field; see `_native_route.maybe_run_native_route`.
-
-    `unified_slice_enabled` (default False; Task 4.5): a separate per-run
-    opt-in for the 4.3/4.4 physical-plan lane, admitted only for a
-    conservative bounded slice; see `_unified_slice.maybe_run_unified_slice`.
+    `native_route_enabled` / `unified_slice_enabled` (both default False): see
+    `_native_route.maybe_run_native_route` / `_unified_slice.maybe_run_unified_slice`.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -479,45 +471,7 @@ def run_pipeline(
     )
     if native_result is not None:
         return native_result
-
-    # Task 4.5 unified-slice lane; see maybe_run_unified_slice's docstring.
-    unified_slice_result = _unified_slice.maybe_run_unified_slice(
-        unified_slice_enabled=unified_slice_enabled,
-        config=config,
-        plan=plan,
-        profile=profile,
-        graph=graph,
-        table_kinds=table_kinds,
-        caller_sources=caller_sources,
-        source_loader=source_loader,
-        sink=sink,
-        fidelity_report=fidelity_report,
-        vault_writer=vault_writer,
-        route=route,
-        route_chunked=route_chunked,
-        native_route_enabled=native_route_enabled,
-        registry=resolved_registry,
-        substrate=substrate,
-        resolved_substrate=resolved_substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-        auto_chunk=auto_chunk,
-        chunk_size_rows=chunk_size_rows,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        out_of_core_threshold_rows=out_of_core_threshold_rows,
-        full_frame_reject_rows=full_frame_reject_rows,
-        use_byte_estimate_routing=use_byte_estimate_routing,
-        use_probe_routing=use_probe_routing,
-        out_of_core_budget_bytes=out_of_core_budget_bytes,
-        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
-        execution_mode=execution_mode,
-        explain_plan=explain_plan,
-        execution_plan_decision=execution_plan_decision,
-        route_reason=route_reason,
-        key_provider=resolved_key_provider,
-        engine_version=engine_version,
-    )
+    unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
     if unified_slice_result is not None:
         return unified_slice_result
 

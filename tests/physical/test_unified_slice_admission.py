@@ -6,8 +6,11 @@ overlay, unit-tested directly against the private helpers (no full
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -15,10 +18,11 @@ from decoy_engine.execution import _unified_slice_admission
 from decoy_engine.execution.physical._activation import build_unified_slice_activation
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
+from decoy_engine.execution.physical._plan import PhysicalTable
 from decoy_engine.execution.physical._types import DriverId
 from decoy_engine.plan import compile_plan
 from decoy_engine.profile import profile_source
-from decoy_engine.providers_v2 import get_default_registry
+from decoy_engine.providers_v2 import ProviderRegistry, get_default_registry
 from decoy_engine.relationships import RelationshipGraph
 from tests.physical._shadow_helpers import build_config, write_read_only_fixture
 
@@ -296,6 +300,106 @@ def test_cheap_admission_declines_run_storm(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# CHANGE 1: dominating resident admission -- the cheap-admission half.
+# ---------------------------------------------------------------------------
+
+
+class _FakeProfileNoRelationships:
+    relationships: tuple[object, ...] = ()
+
+
+def test_cheap_admission_declines_duplicate_resident_field_names(tmp_path: Path) -> None:
+    """Root-cause fix: the coordinator dispatches by NAME-keyed lookup
+    (`_shadow_coordinator.py:133-160`), so a duplicate resident field name is
+    unsafe regardless of config, and must be caught BEFORE any set-equality
+    comparison trusts the resident names as a set. `profile_source` itself
+    already rejects a duplicate-named DataFrame (`profile/_walk.py:98`)
+    before `run_pipeline` ever reaches admission, so this exercises
+    `cheap_admission` directly against a stub profile -- a defense-in-depth
+    invariant for any future caller that supplies its OWN Profile alongside
+    a duplicate-named resident table, not a reachable real-pipeline shape."""
+    source = pa.table([pa.array(["a", "b", "c"]), pa.array(["x", "y", "z"])], names=["c", "c"])
+    table_cfg = {"name": "t", "columns": [{"name": "c", "strategy": "passthrough"}]}
+    config = {"tables": [table_cfg]}
+    assert _cheap_ok(config, _FakeProfileNoRelationships(), source) is None
+
+
+def test_cheap_admission_declines_metadata_only_named_index(tmp_path: Path) -> None:
+    """A resident table whose `b"pandas"` schema metadata designates a
+    RANGE index carrying a NAME (`index_columns: [{"kind": "range", "name":
+    "myidx", ...}]`) reconstructs a named index on `to_pandas()` with no
+    physical index column at all -- `source.column_names` and
+    `frame.columns` both still equal the configured surface exactly, so
+    only an explicit index-name check catches it. A named index would
+    become an extra output column on the legacy route."""
+    base = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    meta = {
+        "index_columns": [{"kind": "range", "name": "myidx", "start": 0, "stop": 3, "step": 1}],
+        "column_indexes": [],
+        "columns": [
+            {
+                "name": "c",
+                "field_name": "c",
+                "pandas_type": "unicode",
+                "numpy_type": "object",
+                "metadata": None,
+            }
+        ],
+        "attributes": {},
+        "creator": {"library": "pyarrow", "version": "24.0.0"},
+        "pandas_version": "2.3.3",
+    }
+    schema = base.schema.with_metadata({b"pandas": json.dumps(meta).encode()})
+    source = base.cast(schema)
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is None
+
+
+def test_cheap_admission_declines_physical_named_index(tmp_path: Path) -> None:
+    """A resident table whose metadata designates an EXISTING data column as
+    the index (`index_columns: ["c"]`, no extra physical field): `source.
+    column_names` still equals the configured surface exactly (nothing
+    "extra" to catch via the undeclared-column check), but `to_pandas()`
+    pulls `c` out of `frame.columns` entirely, leaving zero columns."""
+    base = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    meta = {
+        "index_columns": ["c"],
+        "column_indexes": [],
+        "columns": [
+            {
+                "name": "c",
+                "field_name": "c",
+                "pandas_type": "unicode",
+                "numpy_type": "object",
+                "metadata": None,
+            }
+        ],
+        "attributes": {},
+        "creator": {"library": "pyarrow", "version": "24.0.0"},
+        "pandas_version": "2.3.3",
+    }
+    schema = base.schema.with_metadata({b"pandas": json.dumps(meta).encode()})
+    source = base.cast(schema)
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is None
+
+
+def test_cheap_admission_admits_a_default_range_index(tmp_path: Path) -> None:
+    """The positive control for the two decline tests above: an ordinary
+    resident table (no pandas index metadata at all) must still admit."""
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    candidate = _cheap_ok(config, profile, source)
+    assert candidate is not None
+    assert list(candidate.source_frame.columns) == ["c"]
+    assert candidate.source_frame.index.equals(pd.RangeIndex(3))
+    assert candidate.source_frame.index.name is None
+
+
+# ---------------------------------------------------------------------------
 # Compiled-plan-level admission (needs a real compiled PhysicalPlan).
 # ---------------------------------------------------------------------------
 
@@ -333,94 +437,214 @@ def _compile(config: dict, profile, plan, source: pa.Table):
     return compile_physical_plan(inputs), registry
 
 
-def test_compiled_plan_admission_admits_the_golden_shape(tmp_path: Path) -> None:
+def _resident_contract(
+    physical_plan,
+    plan,
+    source: pa.Table,
+    *,
+    registry: ProviderRegistry | None = None,
+    table: str = "t",
+) -> PhysicalTable | None:
+    return _unified_slice_admission.resident_contract_admission(
+        physical_plan,
+        table=table,
+        source=source,
+        plan=plan,
+        registry=registry if registry is not None else get_default_registry(),
+        graph=RelationshipGraph(edges=(), ordering=()),
+    )
+
+
+def test_resident_contract_admission_admits_the_golden_shape(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, plan = _profile_and_plan(config, source)
-    physical_plan, _registry = _compile(config, profile, plan, source)
-    admitted = _unified_slice_admission.compiled_plan_admission(
-        physical_plan, table="t", source=source
-    )
+    physical_plan, registry = _compile(config, profile, plan, source)
+    admitted = _resident_contract(physical_plan, plan, source, registry=registry)
     assert admitted is not None
     assert admitted.driver == DriverId.FULL_FRAME
     assert len(admitted.nodes) == 1
     assert admitted.nodes[0].execution is not None
 
 
-def test_compiled_plan_admission_declines_an_unsupported_strategy(tmp_path: Path) -> None:
+def test_resident_contract_admission_declines_an_unsupported_strategy(tmp_path: Path) -> None:
     """`fpe` has no entry in the four-operator allowlist, so its node
-    compiles with `execution is None` -- the compiled-plan check must
+    compiles with `execution is None` -- the resident-contract check must
     decline, not admit a partial slice."""
     source = pa.table({"c": pa.array(["12345", "23456", "34567"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "fpe"}], source)
     profile, plan = _profile_and_plan(config, source)
-    physical_plan, _registry = _compile(config, profile, plan, source)
-    assert (
-        _unified_slice_admission.compiled_plan_admission(physical_plan, table="t", source=source)
-        is None
-    )
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
 
 
 def test_null_bearing_int_declines_admission(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array([1, None, 3], type=pa.int64())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "hash", "namespace": "n"}], source)
     profile, plan = _profile_and_plan(config, source)
-    registry = get_default_registry()
-    ok = _unified_slice_admission.keyed_hash_and_null_int_admission(
-        _compile(config, profile, plan, source)[0].tables[0],
-        plan=plan,
-        source=source,
-        registry=registry,
-        graph=RelationshipGraph(edges=(), ordering=()),
-        table="t",
-    )
-    assert ok is False
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
 
 
-def _hash_admission_with_mismatched_resident_source(tmp_path: Path, live_source: pa.Table) -> bool:
+def _admitted_column(
+    strategy: str, provider_config: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    col: dict[str, Any] = {"name": "c", "strategy": strategy}
+    if strategy == "hash":
+        col["namespace"] = "n"
+    if provider_config is not None:
+        col["provider_config"] = provider_config
+    return col
+
+
+def _admission_with_mismatched_resident_source(
+    tmp_path: Path,
+    strategy: str,
+    live_source: pa.Table,
+    *,
+    provider_config: dict[str, Any] | None = None,
+) -> PhysicalTable | None:
     """Builds config/profile/plan from a NORMAL string-column fixture (so the
-    profile-driven compiler binds the hash node to `native_keyed_hash`, per
-    the compiler's own coarse dtype label -> admitted-type mapping), then
-    compiles the LIVE physical plan against `live_source` instead -- the
-    exact shape a resident caller-supplied table with an exotic Arrow type
-    produces: the compiler's operator binding is profile-driven, so it
-    cannot see that the RESIDENT array is not what the profile sample
-    showed. Mirrors `keyed_hash_and_null_int_admission`'s real call site in
-    `_unified_slice._execute_admitted`, which compiles against the live
-    source too."""
+    profile-driven compiler binds the node's `input_schema` off a plain
+    string label), then compiles the LIVE physical plan against
+    `live_source` instead -- the exact shape a resident caller-supplied
+    table with an exotic or mismatched Arrow type produces: the compiler's
+    operator binding is profile-driven, so it cannot see that the RESIDENT
+    array is not what the profile sample showed. Mirrors `resident_contract_
+    admission`'s real call site in `_unified_slice._execute_admitted`, which
+    compiles against the live source too."""
     profile_source_table = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, _ = _build(
-        tmp_path, [{"name": "c", "strategy": "hash", "namespace": "n"}], profile_source_table
+        tmp_path, [_admitted_column(strategy, provider_config)], profile_source_table
     )
     profile, plan = _profile_and_plan(config, profile_source_table)
-    registry = get_default_registry()
-    physical_plan, _registry = _compile(config, profile, plan, live_source)
-    return _unified_slice_admission.keyed_hash_and_null_int_admission(
-        physical_plan.tables[0],
-        plan=plan,
-        source=live_source,
-        registry=registry,
-        graph=RelationshipGraph(edges=(), ordering=()),
-        table="t",
+    physical_plan, registry = _compile(config, profile, plan, live_source)
+    return _resident_contract(physical_plan, plan, live_source, registry=registry)
+
+
+@pytest.mark.parametrize(
+    "strategy,provider_config",
+    [("passthrough", None), ("redact", None), ("truncate", {"length": 2}), ("hash", None)],
+)
+def test_profile_resident_mismatch_declines_for_every_strategy(
+    tmp_path: Path, strategy: str, provider_config: dict[str, Any] | None
+) -> None:
+    """CHANGE 3: a resident/profile TYPE mismatch declines regardless of
+    which of the four strategies is bound -- not just hash (the prior
+    guard's only check)."""
+    live_source = pa.table({"c": pa.array(["a", "b", "a"], type=pa.string()).dictionary_encode()})
+    assert (
+        _admission_with_mismatched_resident_source(
+            tmp_path, strategy, live_source, provider_config=provider_config
+        )
+        is None
     )
 
 
-def test_all_null_resident_hash_column_declines_admission(tmp_path: Path) -> None:
-    """Codex final-gate BLOCKER: a real all-null `pa.null()` resident column
-    profiles as "object" (admitted) but is NOT in the compiled hash kernel's
-    admitted-type set (`_requirements._ADMITTED_NATIVE_HASH_TYPES`); the
-    profile-only admission check cannot see this, only a check against the
-    RESIDENT Arrow dtype can."""
-    live_source = pa.table({"c": pa.array([None, None, None], type=pa.null())})
-    assert _hash_admission_with_mismatched_resident_source(tmp_path, live_source) is False
+_FIXED_SIZE_LIST = pa.array([[1, 2], [3, 4], [5, 6]], type=pa.list_(pa.int64(), 2))
+_DICTIONARY = pa.array(["a", "b", "a"], type=pa.string()).dictionary_encode()
+_SPARSE_UNION = pa.UnionArray.from_sparse(
+    pa.array([0, 1, 0], type=pa.int8()),
+    [pa.array([1.1, 2.2, 3.3], type=pa.float64()), pa.array([True, False, True], type=pa.bool_())],
+)
+_DENSE_UNION = pa.UnionArray.from_dense(
+    pa.array([0, 1, 0], type=pa.int8()),
+    pa.array([0, 0, 1], type=pa.int32()),
+    [pa.array([1.1, 2.2], type=pa.float64()), pa.array([True], type=pa.bool_())],
+)
+_NESTED_STRUCT = pa.array([{"a": 1}, {"a": 2}, {"a": 3}], type=pa.struct([("a", pa.int64())]))
+_NESTED_LIST = pa.array([[1], [2], [3]], type=pa.list_(pa.int64()))
 
 
-def test_dictionary_encoded_resident_hash_column_declines_admission(tmp_path: Path) -> None:
-    """Codex final-gate BLOCKER: a dictionary-encoded (categorical) Parquet
-    hash column profiles as "category" -> "object" (admitted) but the
-    compiled kernel's allowlist has no dictionary type entry."""
-    live_source = pa.table({"c": pa.array(["a", "b", "a"], type=pa.string()).dictionary_encode()})
-    assert _hash_admission_with_mismatched_resident_source(tmp_path, live_source) is False
+@pytest.mark.parametrize(
+    "live_array",
+    [_FIXED_SIZE_LIST, _DICTIONARY, _SPARSE_UNION, _DENSE_UNION, _NESTED_STRUCT, _NESTED_LIST],
+    ids=[
+        "fixed_size_list",
+        "dictionary",
+        "sparse_union",
+        "dense_union",
+        "nested_struct",
+        "nested_list",
+    ],
+)
+def test_reject_representative_exotic_types(tmp_path: Path, live_array: pa.Array) -> None:
+    """CHANGE 1: every one of these types must decline against passthrough
+    (the type-preserving strategy, so a same-type profile/resident agreement
+    is the ONLY thing at stake) -- none is in the fixed admitted matrix, and
+    none equals the compiled `input_schema` type (plain `pa.string()`)
+    either."""
+    live_source = pa.table({"c": live_array})
+    assert _admission_with_mismatched_resident_source(tmp_path, "passthrough", live_source) is None
+
+
+@pytest.mark.parametrize(
+    "strategy,provider_config,arrow_type,values",
+    [
+        ("redact", None, pa.int64(), [1, 2, 3]),
+        ("truncate", {"length": 2}, pa.int64(), [100, 200, 300]),
+        ("passthrough", None, pa.float64(), [1.1, 2.2, 3.3]),
+        ("passthrough", None, pa.timestamp("us"), [1, 2, 3]),
+        ("hash", None, pa.bool_(), [True, False, True]),
+    ],
+    ids=[
+        "redact_int64",
+        "truncate_int64",
+        "passthrough_float64",
+        "passthrough_timestamp",
+        "hash_bool",
+    ],
+)
+def test_domain_matrix_declines_out_of_domain_agreement(
+    tmp_path: Path,
+    strategy: str,
+    provider_config: dict[str, Any] | None,
+    arrow_type: pa.DataType,
+    values: list[Any],
+) -> None:
+    """CHANGE 1: the fixed per-strategy matrix declines even when the
+    resident type EXACTLY matches the compiled `input_schema` type (both
+    profile and resident genuinely agree on the same out-of-domain type) --
+    the exact-match check alone is not sufficient (the compiler gates
+    redact/truncate on CONFIG only, never on input type; `hash_bool` proves
+    the matrix is STRICTER than the prior `is_admitted_native_hash_type`
+    check, which admitted bool)."""
+    source = pa.table({"c": pa.array(values, type=arrow_type)})
+    config, source = _build(tmp_path, [_admitted_column(strategy, provider_config)], source)
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+
+
+@pytest.mark.parametrize(
+    "values",
+    [[], [None, None, None], ["a@x.com", "b@x.com", "c@x.com"]],
+    ids=["empty", "all_null", "value_bearing"],
+)
+def test_unencodable_hash_namespace_declines(tmp_path: Path, values: list[str | None]) -> None:
+    """CHANGE 1: the compiled kernel consumes the namespace at every batch
+    invocation, even for an empty/all-null column (unlike the legacy
+    per-value `derive()` call, which only ever sees the namespace for a
+    non-null value) -- so an unencodable namespace must decline in all
+    three data shapes, not only the value-bearing one."""
+    source = pa.table({"c": pa.array(values, type=pa.string())})
+    config, source = _build(
+        tmp_path, [{"name": "c", "strategy": "hash", "namespace": "\ud800bad"}], source
+    )
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+
+
+def test_encodable_hash_namespace_admits(tmp_path: Path) -> None:
+    """The positive control for the unencodable-namespace tests above."""
+    source = pa.table({"c": pa.array(["a@x.com", "b@x.com", "c@x.com"], type=pa.string())})
+    config, source = _build(
+        tmp_path, [{"name": "c", "strategy": "hash", "namespace": "ns"}], source
+    )
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is not None
 
 
 def test_resolved_substrate_env_change_after_resolution_does_not_flip_admission(
