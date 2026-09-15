@@ -13,8 +13,9 @@ of permanently unsatisfiable.
 
 Run with `scripts/native-baseline/bench_driver.py --worker
 ../bench-unified-slice/bench_worker_unified.py` for the SAME external wall-
-clock + VmHWM measurement the native-route perf gate uses. `bench_compare.py`
-runs THIS worker for BOTH arms of its comparison, selected by the
+clock + VmHWM measurement the native-route perf gate uses. The DEFERRED
+comparison harness (see this directory's `README.md`) will run THIS worker
+for BOTH arms of its comparison, selected by the
 `UNIFIED_BENCH_FLAG` environment variable ("off" = the legacy full-frame
 route, "on" = the unified lane), so both arms mask one identical nine-column
 workload and only the executed lane differs.
@@ -105,9 +106,10 @@ _STRATEGY_COLUMNS: dict[str, tuple[str, ...]] = {
 # 1:1 with the resident schema (cheap_admission's own D3 requirement).
 _UNADMITTED_COLUMN = "pt_ts"
 
-# Which arm this worker times, selected by `bench_compare.py` via the environment
-# so BOTH arms run this SAME nine-column source/config (a fair comparison): "on"
-# = the unified-slice lane, "off" = the identical shape through the legacy route.
+# Which arm this worker times, selected by the deferred comparison harness
+# (see README.md) via the environment so BOTH arms run this SAME nine-column
+# source/config (a fair comparison): "on" = the unified-slice lane, "off" =
+# the identical shape through the legacy route.
 _FLAG_ON = os.environ.get("UNIFIED_BENCH_FLAG", "on").strip().lower() != "off"
 
 
@@ -230,7 +232,8 @@ def main() -> None:
     }
 
     # Both arms run this same nine-column source/config; the fingerprint lets
-    # bench_compare.py assert that equality per tier rather than trust it.
+    # the deferred comparison harness assert that equality per tier rather than
+    # trust it (see README.md).
     admitted_columns = sorted(c for cols in _STRATEGY_COLUMNS.values() for c in cols)
     rec: dict[str, Any] = {
         "n_rows": n_rows,

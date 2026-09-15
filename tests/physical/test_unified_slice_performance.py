@@ -5,16 +5,21 @@ functional sanity check (the unified slice actually runs, its output
 matches the legacy oracle, timing is in the right ballpark) at ~2,000 rows,
 never the statistical claim D9 requires at 10k/100k/1M rows (>=20 alternating
 trials, bootstrap CI, peak-RSS ratio via external process measurement).
-That claim is a SEPARATE deferred script:
+That statistical claim is DEFERRED to a separate, not-yet-built follow-up
+task, specified in:
 
-    scripts/bench-unified-slice/bench_compare.py
+    scripts/bench-unified-slice/README.md
 
-which drives `scripts/native-baseline/bench_driver.py` per tier with real
-external wall-clock + VmHWM sampling and checks the exact D9 thresholds. It
-is not run automatically here because a >=20-rep 1M-row sweep is a
-multi-minute-per-arm cost, inappropriate for every CI run; a human (or a
-scheduled perf job) runs it directly. This module's job is only to catch a
-gross correctness/perf regression fast, on every test run.
+The frozen workload substrate for that future harness
+(`bench_worker_unified.py`) is committed and smoke-tested
+(`test_bench_unified_slice_harness_smoke.py`), but the statistical
+comparison driver itself is not built here: a >=20-rep 1M-row sweep is a
+multi-minute-per-arm cost, inappropriate for every CI run, and the README
+records the exact D9 requirements (tiers, warmups, per-rep pairing,
+fail-closed RSS, thresholds) it must meet. That run is owed BEFORE Task 4.6
+caller activation, not before merging this default-off engine lane. This
+module's job is only to catch a gross correctness/perf regression fast, on
+every test run.
 """
 
 from __future__ import annotations
@@ -100,7 +105,7 @@ def test_smoke_tier_output_matches_and_is_not_grossly_slower(tmp_path: Path) -> 
     # A generous smoke-tier bound (2x median), not the D9 statistical bar --
     # this only catches a gross regression (an accidental O(n^2) path, a
     # forgotten re-derivation), leaving the tight 1.10x/1.15x claim to the
-    # deferred script's real statistical protocol.
+    # deferred benchmark spec's real statistical protocol (README.md).
     off_median = statistics.median(off_walls)
     on_median = statistics.median(on_walls)
     assert on_median <= max(off_median * 2.0, 0.05), (
