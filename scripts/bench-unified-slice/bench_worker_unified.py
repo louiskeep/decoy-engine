@@ -13,18 +13,20 @@ of permanently unsatisfiable.
 
 Run with `scripts/native-baseline/bench_driver.py --worker
 ../bench-unified-slice/bench_worker_unified.py` for the SAME external wall-
-clock + VmHWM measurement the native-route perf gate uses, so the two arms
-(this worker vs. the unmodified `bench_worker.py` oracle) are measured
-identically and only the executed lane differs.
+clock + VmHWM measurement the native-route perf gate uses. `bench_compare.py`
+runs THIS worker for BOTH arms of its comparison, selected by the
+`UNIFIED_BENCH_FLAG` environment variable ("off" = the legacy full-frame
+route, "on" = the unified lane), so both arms mask one identical nine-column
+workload and only the executed lane differs.
 
 `auto_chunk=False` here is load-bearing (D9): a resident table at or above
 `auto_chunk_threshold_rows` (default ~100k) is otherwise chunk-eligible, and
 the unified slice declines a chunked disposition by construction -- forcing
 `auto_chunk=False` is what makes the 100k/1M tiers a genuine full_frame,
 non-chunked comparison instead of both arms silently taking the OLD chunked
-route. `execution_mode="full_frame"` mirrors the oracle worker's own forced
-route so `layer1_route`'s live re-derivation (inside the compiler) lands on
-the identical disposition both workers were measured under.
+route. `execution_mode="full_frame"` forces the same full_frame route on both
+arms so `layer1_route`'s live re-derivation (inside the compiler) lands on
+the identical disposition the off and on arms were measured under.
 
 The D7 activation assertion at the end is the vacuity guard D9 requires:
 a benchmark that silently fell back to the legacy oracle (a regression in

@@ -4,13 +4,13 @@ bench_driver.py` was broken -- `bench_worker_unified.py` hard-coded
 `hash_ms=0.0`, which made `bench_driver.py`'s `hash_tput_median_rows_s`
 compute `None`, which then crashed the summary line's `:.0f}` format;
 `bench_compare.py`'s docstring claimed an alternating old/new sweep and a
-`--baseline-old` option neither existed in code.
+baseline-comparison option that did not exist in code.
 
 This module is the "harness is proven runnable" proof the remediation
 requires: ONE real, tiny, end-to-end subprocess run of the worker and the
 driver together (proving the fixed real timing survives the fixed None-safe
 formatting with no crash), plus fast in-process unit coverage of `bench_
-compare.py`'s alternating scheduling and `--baseline-old` check (a live
+compare.py`'s alternating scheduling and workload-fingerprint guard (a live
 double-driver subprocess run for that piece would cost real wall-clock
 minutes even at a tiny tier -- exactly the cost `bench_compare.py`'s own
 docstring says this deferred script exists to avoid paying on every run).
@@ -149,7 +149,7 @@ def test_summarize_leaves_hash_tput_none_when_every_rep_reports_zero_hash_ms(
 
 
 # ---------------------------------------------------------------------------
-# bench_compare.py: alternating tiers + --baseline-old.
+# bench_compare.py: alternating tiers + workload-fingerprint guard.
 # ---------------------------------------------------------------------------
 
 
@@ -179,7 +179,14 @@ def test_main_alternates_old_and_new_per_tier_instead_of_sweeping_each_arm_fully
             "out_rows": int(tiers),
             "workload_fingerprint": {"n_rows": int(tiers), "columns": ["c"]},
         }
-        return {tiers: {"wall_median_s": 1.0, "wall_p95of_s": 1.0, "raw_reps": [rec]}}
+        return {
+            tiers: {
+                "wall_median_s": 1.0,
+                "wall_p95of_s": 1.0,
+                "peak_rss_max_kb": 1000,
+                "raw_reps": [rec],
+            }
+        }
 
     monkeypatch.setattr(bench_compare, "_run_driver", _fake_run_driver)
     monkeypatch.setattr(
@@ -214,16 +221,21 @@ def test_main_alternates_old_and_new_per_tier_instead_of_sweeping_each_arm_fully
     )
 
 
-def _fp_tier(cols: list[str], *, wall: float = 1.0) -> dict:
+def _fp_tier(
+    cols: list[str], *, wall: float = 1.0, reps_cols: list[list[str]] | None = None
+) -> dict:
+    reps = reps_cols if reps_cols is not None else [cols]
     return {
         "wall_median_s": wall,
         "wall_p95of_s": wall,
+        "peak_rss_max_kb": 1000,
         "raw_reps": [
             {
                 "wall_s": wall,
                 "out_rows": 1000,
-                "workload_fingerprint": {"n_rows": 1000, "columns": cols},
+                "workload_fingerprint": {"n_rows": 1000, "columns": c},
             }
+            for c in reps
         ],
     }
 
@@ -232,6 +244,7 @@ def test_check_tier_fails_on_missing_workload_fingerprint(bench_compare: ModuleT
     bare = {
         "wall_median_s": 1.0,
         "wall_p95of_s": 1.0,
+        "peak_rss_max_kb": 1000,
         "raw_reps": [{"wall_s": 1.0, "out_rows": 1000}],
     }
     failures = bench_compare._check_tier(1000, bare, bare)
@@ -241,3 +254,30 @@ def test_check_tier_fails_on_missing_workload_fingerprint(bench_compare: ModuleT
 def test_check_tier_fails_when_arms_masked_different_workloads(bench_compare: ModuleType) -> None:
     failures = bench_compare._check_tier(1000, _fp_tier(["a"]), _fp_tier(["a", "b"]))
     assert any("different workloads" in f for f in failures), failures
+
+
+def test_check_tier_fails_when_fingerprint_varies_within_one_arm(bench_compare: ModuleType) -> None:
+    # Two reps of the SAME arm recorded different workloads -- the intra-arm
+    # variation branch must reject it (a benchmark whose own reps disagree on
+    # what they masked is not a trustworthy measurement).
+    varying = _fp_tier(["a"], reps_cols=[["a"], ["a", "b"]])
+    failures = bench_compare._check_tier(1000, varying, _fp_tier(["a"]))
+    assert any("varies within an arm" in f for f in failures), failures
+
+
+def test_check_tier_fails_on_missing_peak_rss(bench_compare: ModuleType) -> None:
+    # The RSS gate fails closed: a run lacking the peak-RSS measurement cannot
+    # certify the <= 1.10x bound, so it must report a failure rather than skip.
+    no_rss = {
+        "wall_median_s": 1.0,
+        "wall_p95of_s": 1.0,
+        "raw_reps": [
+            {
+                "wall_s": 1.0,
+                "out_rows": 1000,
+                "workload_fingerprint": {"n_rows": 1000, "columns": ["a"]},
+            }
+        ],
+    }
+    failures = bench_compare._check_tier(1000, no_rss, no_rss)
+    assert any("peak-RSS" in f for f in failures), failures

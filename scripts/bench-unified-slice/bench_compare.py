@@ -15,11 +15,14 @@ the ratio reflects the lane and nothing else. Then it checks the D9 thresholds:
 The D9 "flag-off overhead vs main <= 1%" cross-revision check is DEFERRED
 (Cam 2026-09-15): measuring today's flag-off arm against a baseline recorded
 on the pre-task `main` is version-skewed (that revision predates the
-`unified_slice_enabled` kwarg) and the number it produces is already
-guaranteed structurally -- with the flag off the lane returns at its flag
-check before importing or running anything, proven by
-`tests/physical/test_unified_slice_inertness.py` (a flag-off run pulls in no
-`execution.physical` module at all). We care about the correctness of the
+`unified_slice_enabled` kwarg), so the number is not produced here. This is
+UNMEASURED residual risk with strong structural evidence, not a proven
+numerical bound: the flag-off path still runs the submit-boundary flag
+validation and the one guarded `maybe_run_unified_slice` call site, but it
+returns at the flag check before importing or running any `execution.physical`
+code (`tests/physical/test_unified_slice_inertness.py` proves a flag-off run
+pulls in no `execution.physical` module at all), so the added cost is a
+bounded constant, not per-row work. We care about the correctness of the
 expected output while the lane improves, not a tie to a specific older
 baseline; a version-compatible baseline recorder is a separate later task.
 
@@ -173,10 +176,18 @@ def _check_tier(n_rows: int, old: dict, new: dict) -> list[str]:
 
     old_rss = old.get("peak_rss_max_kb")
     new_rss = new.get("peak_rss_max_kb")
-    if old_rss and new_rss:
-        rss_ratio = new_rss / old_rss
-        if rss_ratio > _RSS_RATIO_THRESHOLD:
-            failures.append(f"n={n_rows}: peak RSS ratio {rss_ratio:.3f} > {_RSS_RATIO_THRESHOLD}")
+    if not old_rss or not new_rss:
+        # Fail closed: the driver permits a missing peak-RSS measurement, but the
+        # D9 gate requires the <= 1.10x RSS bound, so a run that lacks the
+        # evidence cannot report PASS on it.
+        failures.append(
+            f"n={n_rows}: missing peak-RSS measurement (old={old_rss} new={new_rss}); "
+            "the RSS gate cannot certify the <= 1.10x bound without it"
+        )
+    elif new_rss / old_rss > _RSS_RATIO_THRESHOLD:
+        failures.append(
+            f"n={n_rows}: peak RSS ratio {new_rss / old_rss:.3f} > {_RSS_RATIO_THRESHOLD}"
+        )
 
     lo, hi = _bootstrap_ratio_ci(
         old_walls, new_walls, resamples=_BOOTSTRAP_RESAMPLES, confidence=_BOOTSTRAP_CONFIDENCE
