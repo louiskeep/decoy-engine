@@ -17,7 +17,6 @@ disposition (chunked vs. full_frame) for the strategies already admitted.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pyarrow as pa
@@ -117,8 +116,39 @@ def _run_chunked(tmp_path: Path, name: str, source: pa.Table, columns: list[dict
 # ---------------------------------------------------------------------------
 
 
-def test_unkeyed_multi_chunk_parity_always_run(tmp_path: Path) -> None:
+def test_unkeyed_multi_chunk_parity_always_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert _N_ROWS % _CHUNK_SIZE_ROWS != 0  # the fixture's whole point: a ragged final chunk
+
+    # Record the ACTUAL executed chunk lengths on both sides. The quality-metric
+    # chunk_count is computed as ceil(rows/width), so asserting against it only
+    # restates the formula and never proves execution really chunked. These
+    # spies capture the real batch/chunk lengths the two executions produced --
+    # the behavioural proof that both crossed identical (50,50,50,50,30)
+    # boundaries. Test-layer only (monkeypatch); no production code changes.
+    import decoy_engine.execution._chunked as _chunked_mod
+    import decoy_engine.execution.physical._shadow_coordinator as _sc_mod
+
+    shadow_batches: list[list[int]] = []
+    _orig_batches = _sc_mod._batches
+
+    def _spy_batches(table: pa.Table, batch_size_rows: int) -> list[pa.Table]:
+        parts = _orig_batches(table, batch_size_rows)
+        shadow_batches.append([p.num_rows for p in parts])
+        return parts
+
+    monkeypatch.setattr(_sc_mod, "_batches", _spy_batches)
+
+    oracle_chunks: list[int] = []
+    _orig_rmpc = _chunked_mod.run_mask_pipeline_chunked
+
+    def _spy_rmpc(*args: object, **kwargs: object):
+        for masked_chunk in _orig_rmpc(*args, **kwargs):
+            oracle_chunks.append(masked_chunk.num_rows)
+            yield masked_chunk
+
+    monkeypatch.setattr(_chunked_mod, "run_mask_pipeline_chunked", _spy_rmpc)
 
     run = _run_chunked(
         tmp_path, "unkeyed_multi_chunk", _build_multi_chunk_source(_N_ROWS), _UNKEYED_COLUMNS
@@ -130,20 +160,22 @@ def test_unkeyed_multi_chunk_parity_always_run(tmp_path: Path) -> None:
     for table in run.plan.tables:
         assert table.driver == DriverId.CHUNKED
 
+    # The core behavioural proof: both executions actually chunked into the SAME
+    # (50,50,50,50,30) boundaries -- OBSERVED, not computed. The oracle's lazy
+    # masker yielded one masked chunk per source chunk; the shadow coordinator
+    # called `_batches` once per node, each returning the identical split.
+    expected = [_CHUNK_SIZE_ROWS] * (_EXPECTED_CHUNK_COUNT - 1) + [_EXPECTED_LAST_CHUNK_SIZE]
+    assert oracle_chunks == expected
+    assert shadow_batches and all(sizes == expected for sizes in shadow_batches)
+    assert oracle_chunks == shadow_batches[0]  # identical boundaries on both sides
+    assert oracle_chunks[-1] < _CHUNK_SIZE_ROWS  # the final chunk is genuinely ragged
+    assert sum(oracle_chunks) == _N_ROWS  # no row dropped at a boundary
+
+    # Supplementary: the reported metric agrees with what actually executed.
     auto_chunk_block = run.oracle.quality_metrics["auto_chunk"]
     assert auto_chunk_block["mode"] == "chunked"
-    assert auto_chunk_block["chunk_count"] == _EXPECTED_CHUNK_COUNT
-    # Behavioural, not constant-arithmetic: tie the OBSERVED chunk_count to the
-    # OBSERVED output row count and the width we set, and confirm the final
-    # chunk is genuinely ragged. A different chunking (wrong width, a dropped
-    # boundary, a silent full_frame) breaks these; the old assertion only
-    # restated the test's own constants.
-    out_rows = run.oracle.outputs["t"].num_rows
-    assert out_rows == _N_ROWS  # every row survived across the ragged boundary
-    assert auto_chunk_block["chunk_count"] == math.ceil(out_rows / _CHUNK_SIZE_ROWS)
-    observed_last_chunk = out_rows - (auto_chunk_block["chunk_count"] - 1) * _CHUNK_SIZE_ROWS
-    assert observed_last_chunk == _EXPECTED_LAST_CHUNK_SIZE
-    assert 0 < observed_last_chunk < _CHUNK_SIZE_ROWS  # genuinely ragged
+    assert auto_chunk_block["chunk_count"] == len(oracle_chunks) == _EXPECTED_CHUNK_COUNT
+    assert run.oracle.outputs["t"].num_rows == _N_ROWS
 
 
 # ---------------------------------------------------------------------------
