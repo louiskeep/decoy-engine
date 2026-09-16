@@ -365,9 +365,12 @@ def test_faker_non_string_registry_override_is_declined() -> None:
     before `sample_faker_array`'s string-only Arrow cast ever runs.
 
     Calls `_resolve_pool` directly rather than a full `ShadowCoordinator.run`:
-    the guard fires during the pool BUILD itself, entirely before the
-    compiled index kernel is loaded or touched, so this exercises the exact
-    fix without needing the native companion.
+    the guard lives in pool resolution, which this isolated call reaches
+    without loading the compiled index kernel at all, so it exercises the
+    exact fix without the native companion. (In a full run the kernel is
+    loaded lazily on the first bound faker node, before its pool is built, so
+    the guard there fires right after pool resolution, with the kernel already
+    loaded; the ordering only differs because this test drives one step.)
     """
     default_registry = get_default_registry()
     custom_registry = default_registry.override(
