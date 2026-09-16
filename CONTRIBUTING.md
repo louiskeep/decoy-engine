@@ -27,6 +27,15 @@ pytest tests/integration/
 
 The full suite is large; running only the modules you touched plus their nearest integration neighbors is the expected scope for most PRs.
 
+To run the whole suite locally, install the parallel runner and use all cores:
+
+```
+pip install -e ".[dev,xdist]"
+pytest tests/ -n auto
+```
+
+The suite is parallel-safe and finishes in roughly 10 minutes this way, versus over 25 minutes serial on a 4-core machine. `xdist` is a separate extra on purpose (it stays out of the certified DP profile); CI still runs the suite serially.
+
 ## Pull requests
 
 - One topic per PR. Smaller diffs land faster.

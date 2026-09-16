@@ -1322,8 +1322,14 @@ via the same resolve_faker_pool_identity + per-run registry the oracle uses, cel
 design (no production allowlist change, no default flip). Slice 2 (single-table CHUNKED masking parity)
 MERGED (PR #144, merge 794c684e): TEST-LAYER ONLY (no production src change) -- extends run_shadow_and_oracle
 to compile a DriverId.CHUNKED plan and proves cell-for-cell parity vs the chunked oracle across identical
-chunk boundaries, over the five shadow strategies. Both double-gated (dennis APPROVE + Codex final GO). NEXT:
-slice 3 (DuckDB out-of-core FK), a materially harder step -- FK relationships + out-of-core are both new to
-the current shadow scope (4.4/4.5/slices 1-2 are all single-table non-FK). Then slices 4-6, then route
-activation (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
+chunk boundaries, over the five shadow strategies. Slice 3 (DuckDB out-of-core FK route parity) MERGED
+(PR #145, merge 4d211ffa): the coordinator DISPATCHES an OUT_OF_CORE FK job through the existing Task 4.2
+OutOfCoreAdapter (delegating to run_fk_out_of_core), forwarding seed-plan/sources/registry/graph/key-
+provider/batch-rows, and proves cell-for-cell parity vs the pandas full-frame oracle over config-backed
+single-edge/chain/fan-out FK fixtures. FK machinery stays single-owner in _runner.py/out_of_core/ (the
+approved "wrap today's executors" design, NOT a coordinator reimplementation). First 4.6 slice with a real
+(dormant) production src change: a {OUT_OF_CORE}-exact dispatch branch + runtime-only ShadowContext carriers
++ three new difference codes. All three slices double-gated (dennis APPROVE + Codex final GO); slice-3 also
+full-engine-suite green (13544 passed under xdist). NEXT: slice 4 (bounded Group B/C operators). Then slices
+5-6, then route activation (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
 
