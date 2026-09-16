@@ -559,10 +559,11 @@ def _arrow_ipc_stream_bytes(table: pa.Table) -> bytes:
     parity over an artifact of the oracle's pandas boundary. Only the
     `pandas` key is removed, not all schema metadata: any other (semantic)
     schema metadata a future output attaches stays compared. The round-trip
-    is byte-stable for the shapes the mixed gate admits (non-nullable
-    generate columns -- see `_shadow_mixed._require_nonnullable_generate_
-    columns`); a nullable numeric round-trip is NOT byte-stable and is
-    declined at admission, not papered over here.
+    is byte-stable for the shapes the mixed gate admits (see
+    `_shadow_mixed._require_roundtrip_stable_generate_outputs`, which inspects
+    the materialized generate output and declines any null, floating NaN, or
+    nested column); those unstable shapes are declined on the produced tables,
+    not papered over here.
     """
     combined = table.combine_chunks()
     metadata = combined.schema.metadata

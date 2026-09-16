@@ -605,36 +605,65 @@ def test_decline_disqualifying_runtime_carrier(tmp_path: Path, ctx_kwargs: dict[
 @pytest.mark.parametrize(
     "generate_columns",
     [
-        [{"name": "id", "type": "sequence", "start": 1, "step": 1, "null_probability": 0.5}],
-        [{"name": "code", "type": "categorical", "categories": [1, 2, 3], "null_probability": 0.5}],
-        [{"name": "amt", "type": "categorical", "categories": [1.5, 2.5], "null_probability": 0.5}],
+        # null_probability knob (deterministic all-null at 1.0), across the
+        # admitted generator/category types.
+        [{"name": "id", "type": "sequence", "start": 1, "step": 1, "null_probability": 1.0}],
+        [{"name": "code", "type": "categorical", "categories": [1, 2, 3], "null_probability": 1.0}],
         [
             {
                 "name": "tier",
                 "type": "categorical",
                 "categories": ["A", "B"],
-                "null_probability": 0.5,
+                "null_probability": 1.0,
             }
         ],
+        # Instability that BYPASSES the knob, reaching the output through the
+        # category VALUES (dennis re-review BLOCKER): a None in `categories`
+        # (weights force it) -> nulls; a NaN in `categories` -> the oracle's
+        # pandas echo folds it to null; a nested category -> element-type
+        # widening. All admitted-and-divergent under a knob-only gate; all
+        # caught by gating on the materialized output.
+        [
+            {
+                "name": "code",
+                "type": "categorical",
+                "categories": [10, 20, None],
+                "weights": [0, 0, 1],
+            }
+        ],
+        [
+            {
+                "name": "amt",
+                "type": "categorical",
+                "categories": [float("nan"), 1.0],
+                "weights": [1, 0],
+            }
+        ],
+        [{"name": "tags", "type": "categorical", "categories": [[1, 2], [3, 4]]}],
     ],
     ids=[
-        "sequence_int_null",
-        "categorical_int_null",
-        "categorical_float_null",
-        "categorical_str_null",
+        "sequence_null_prob",
+        "categorical_int_null_prob",
+        "categorical_str_null_prob",
+        "categories_contain_none",
+        "categories_contain_nan",
+        "categories_are_nested",
     ],
 )
-def test_decline_nullable_generate_column_in_mixed(
-    tmp_path: Path, generate_columns: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+def test_decline_unstable_generate_output_in_mixed(
+    tmp_path: Path, generate_columns: list[dict[str, Any]]
 ) -> None:
-    """BLOCKER remediation: in a mixed job the oracle echoes the generate
-    output back through its pandas mask adapter and lets it win the Step-3
-    tie, so the oracle's final generate bytes are pandas-round-tripped while
-    this shadow dispatch stitches raw native Arrow. A nullable numeric column
-    diverges (int+null widens to double; float+null NaN-fill vs zero-fill),
-    so the gate declines EVERY nullable generate column at admission -- even a
-    stable string+null one -- admitting only the provably non-null domain and
-    deferring the rest. The decline fires before generation runs."""
+    """BLOCKER remediation (dennis re-review): in a mixed job the oracle
+    echoes the generate output back through its pandas mask adapter and lets
+    it win the Step-3 tie, so the oracle's final generate bytes are
+    pandas-round-tripped while this shadow dispatch stitches raw native Arrow.
+    A null (int widens to double), a floating NaN (pandas folds it to null),
+    or a nested type (element widening) all diverge -- and instability reaches
+    the output through the `null_probability` knob OR the `categories` values
+    alike. The gate inspects the MATERIALIZED output (after generation runs,
+    inertly) and declines every such shape, admitting only the provably
+    round-trip-stable domain. Generation is allowed to run here (nothing is
+    published); the decline fires on the produced tables."""
     accounts = _accounts_source()
     config = _mixed_config(
         tmp_path,
@@ -650,11 +679,6 @@ def test_decline_nullable_generate_column_in_mixed(
         plan=inputs.plan, key_provider=None, relationship_graph=inputs.graph
     )
     snapshot = capture_shadow_snapshot({"accounts": accounts})
-
-    def _bomb_generate(self: SynthesisStageAdapter, *a: Any, **k: Any) -> dict[str, pa.Table]:
-        raise AssertionError("generate_tables must not be invoked for a declined mixed plan")
-
-    monkeypatch.setattr(SynthesisStageAdapter, "run", _bomb_generate)
 
     with pytest.raises(ShadowDifference) as excinfo:
         ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)

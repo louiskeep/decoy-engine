@@ -13,12 +13,12 @@ eligibility gate") admits iff:
      coordinator's own branch condition before this is called; re-asserted
      here as a total guard);
   2. the generate half's shape is admitted (`_shadow_generation.
-     require_generation_shape`, the same identity/column-shape core the
-     pure gate uses), AND no generate column is nullable
-     (`_require_nonnullable_generate_columns` -- a nullable generate output
-     is not byte-stable through the oracle's pandas echo in a mixed job; see
-     that function for the full "why". Mixed-specific: the pure gate does not
-     apply it);
+     require_generation_shape`, the same identity/column-shape core the pure
+     gate uses), AND its MATERIALIZED output is round-trip-stable through the
+     oracle's pandas echo (`_require_roundtrip_stable_generate_outputs`,
+     checked in `dispatch_mixed` AFTER generation, not here -- it declines any
+     null, floating NaN, or nested generate output; see that function for the
+     full "why". Mixed-specific: the pure path never reaches it);
   3. every mask-table driver is in the already-proven scalar/full_frame/
      chunked admitted set -- OUT_OF_CORE is REJECTED (OOC-mask + generation
      is out of scope for this slice, deferred to 5b-ii+);
@@ -71,6 +71,9 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
+import pyarrow as pa
+import pyarrow.compute as pc
+
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution.physical._shadow_diff_codes import (
     GENERATION_SHAPE_UNSUPPORTED,
@@ -117,6 +120,15 @@ def dispatch_mixed(
     plan_obj = require_independent_mixed_shadowable(ctx, plan, snapshot)
 
     generate_outputs, generate_seam = run_synthesis_adapter(ctx, plan_obj, plan.synthesis)
+    # Gate on the ACTUAL generated output, not on config knobs: a mixed job's
+    # generate output is echoed back through the oracle's pandas mask adapter
+    # and wins the Step-3 tie, so a column that is not byte-stable through
+    # that round-trip diverges from this dispatch's raw native Arrow. This
+    # runs AFTER generation (which already happened, inertly -- nothing is
+    # published) precisely so it catches instability from ANY source -- the
+    # `null_probability` knob, a `None`/NaN in `categories`, a nested category
+    # type -- rather than trying to predict it from the config (whack-a-mole).
+    _require_roundtrip_stable_generate_outputs(generate_outputs)
 
     # Reuse `ShadowCoordinator.run` itself for the mask half, UNCHANGED: a
     # plan with `synthesis` stripped off falls straight through this
@@ -159,7 +171,9 @@ def require_independent_mixed_shadowable(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="plan is not a mixed generate+mask shape"
         )
     plan_obj, config, generate_table_names = require_generation_shape(ctx, plan.synthesis)
-    _require_nonnullable_generate_columns(config, generate_table_names)
+    # Note: round-trip stability of the generate OUTPUT is checked in
+    # `dispatch_mixed` after generation runs, not here -- it is a property of
+    # the materialized Arrow tables, not of the pre-generation config shape.
 
     mask_table_names = _table_name_set(plan)
     _require_admitted_mask_drivers(plan)
@@ -168,58 +182,92 @@ def require_independent_mixed_shadowable(
     return plan_obj
 
 
-def _require_nonnullable_generate_columns(
-    config: dict[str, object], generate_table_names: frozenset[str]
-) -> None:
-    """A mixed job's generate outputs are echoed back through the oracle's
-    pandas mask adapter (`_pipeline.py` merges `generate_outputs` into
-    `merged_sources`, `_pandas_adapter` round-trips every source frame
-    through `to_pandas`/`from_pandas`) and WIN the Step-3 name tie, so the
-    oracle's FINAL generate-table output is the pandas-round-tripped copy --
-    while this shadow dispatch stitches the RAW native-Arrow generate output.
-    That round-trip is byte-stable only when the column has no nulls: a
-    nullable numeric column either widens (int + null -> pandas double) or
-    fills its null slots differently (pandas NaN-fill vs Arrow zero-fill), so
-    shadow and oracle diverge under the byte comparator even after the
-    metadata strip. A non-null output of any admitted type round-trips
-    identically. So the mixed gate admits only NON-nullable generate columns;
-    a nullable generate column in a mixed job is a tracked exclusion deferred
-    to a later slice, declined coded here.
+def _require_roundtrip_stable_generate_outputs(generate_outputs: dict[str, pa.Table]) -> None:
+    """Decline a mixed job whose GENERATED output is not byte-stable through
+    the oracle's pandas echo.
 
-    The PURE gate (`require_pure_generation_shadowable`) deliberately does NOT
-    apply this: a pure-generate job has no mask adapter to echo through, so
-    both sides emit raw native Arrow and slice 5a's nullable generate columns
-    stay byte-stable there. This restriction is mixed-specific by
-    construction.
+    In a mixed job the oracle merges `generate_outputs` into `merged_sources`,
+    the pandas mask adapter round-trips every source frame through
+    `to_pandas`/`from_pandas`, and Step-3 lets that echoed copy WIN the name
+    tie -- so the oracle's final generate-table output is pandas-round-tripped
+    while this shadow dispatch stitches the RAW native-Arrow output. That
+    round-trip is NOT the identity for three column shapes, each of which
+    genuinely diverges under the byte comparator:
+
+      * any null (`null_count > 0`): an integer column widens to double
+        (pandas has no nullable-int in the boundary path) and null slots
+        refill differently;
+      * a floating NaN (even with `null_count == 0`): `from_pandas` folds a
+        NaN back to an Arrow null on re-import, so shadow (NaN) != oracle
+        (null);
+      * a nested type (`list`/`struct`/`map`/union): the element/field type
+        widens through pandas the same way a top-level numeric does
+        (`list<int64>` -> `list<double>`).
+
+    Gating on the MATERIALIZED output rather than the config knobs is
+    deliberate (dennis BLOCKER re-review): nullability/instability reaches the
+    output through `null_probability`, a `None`/NaN in `categories`, or a
+    nested category alike, and only the actual Arrow tables capture all of
+    them in one check. The check runs after generation (inert -- nothing is
+    published) and declines coded. Non-null, NaN-free, non-nested output of
+    any admitted type round-trips identically and is admitted. Nullable/
+    unstable generate columns in a mixed job are a tracked exclusion deferred
+    to a later slice. The PURE path (slice 5a) never reaches here -- it has no
+    mask adapter to echo through, so its nullable columns stay byte-stable.
     """
-    tables = config.get("tables")
-    if not isinstance(tables, list):  # pragma: no cover - validated by require_generation_shape
-        return
-    for table in tables:
-        if not isinstance(table, dict):  # pragma: no cover - validated upstream
-            continue
-        name = table.get("name")
-        if name not in generate_table_names:
-            continue
-        generate_columns = table.get("generate_columns")
-        if not isinstance(generate_columns, list):  # pragma: no cover - validated upstream
-            continue
-        for column in generate_columns:
-            if not isinstance(column, dict):  # pragma: no cover - validated upstream
-                continue
-            # Truthy null_probability => the column can emit nulls. 0 / 0.0 /
-            # absent are falsy (no nulls -> admit); any positive probability
-            # (or a malformed truthy value) declines, erring toward the safe
-            # side since only a proven-non-null column round-trips stably.
-            if column.get("null_probability"):
+    for table_name, table in generate_outputs.items():
+        for column_name in table.column_names:
+            column = table.column(column_name)
+            field_type = column.type
+            if _is_nested_arrow_type(field_type):
                 raise ShadowDifference(
                     code=GENERATION_SHAPE_UNSUPPORTED,
                     detail=(
-                        f"table={name!r}: a generate column sets null_probability; nullable "
-                        "generate columns are not round-trip-stable through the oracle's pandas "
+                        f"table={table_name!r} column={column_name!r}: nested generate output "
+                        f"type {field_type} is not round-trip-stable through the oracle's pandas "
                         "echo in a mixed job (deferred)"
                     ),
                 )
+            if column.null_count > 0:
+                raise ShadowDifference(
+                    code=GENERATION_SHAPE_UNSUPPORTED,
+                    detail=(
+                        f"table={table_name!r} column={column_name!r}: a nullable generate output "
+                        "is not round-trip-stable through the oracle's pandas echo in a mixed job "
+                        "(deferred)"
+                    ),
+                )
+            if pa.types.is_floating(field_type) and _float_column_has_nan(column):
+                raise ShadowDifference(
+                    code=GENERATION_SHAPE_UNSUPPORTED,
+                    detail=(
+                        f"table={table_name!r} column={column_name!r}: a floating generate output "
+                        "carries NaN, which the oracle's pandas echo folds to null (not "
+                        "round-trip-stable in a mixed job; deferred)"
+                    ),
+                )
+
+
+def _is_nested_arrow_type(field_type: pa.DataType) -> bool:
+    return (
+        pa.types.is_list(field_type)
+        or pa.types.is_large_list(field_type)
+        or pa.types.is_fixed_size_list(field_type)
+        or pa.types.is_struct(field_type)
+        or pa.types.is_map(field_type)
+        or pa.types.is_union(field_type)
+    )
+
+
+def _float_column_has_nan(column: pa.ChunkedArray) -> bool:
+    # A NaN is distinct from a null in Arrow, so `null_count` misses it; the
+    # oracle's `from_pandas` re-import folds NaN -> null, so a NaN-bearing
+    # shadow column diverges from the oracle. `pc.is_nan` is defined only on
+    # floating input (guarded by the caller), and returns null for null slots
+    # -- `pc.any(..., skip_nulls=True)` treats those as "no NaN here".
+    return bool(
+        pc.any(pc.is_nan(column), skip_nulls=True).as_py()  # type: ignore[attr-defined, unused-ignore]
+    )
 
 
 def _table_name_set(plan: PhysicalPlan) -> frozenset[str]:
