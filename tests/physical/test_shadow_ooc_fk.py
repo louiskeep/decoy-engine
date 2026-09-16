@@ -92,6 +92,7 @@ def _key_provider() -> SecretKeyProvider:
 def _write(tmp_path: Path, table: pa.Table, name: str) -> Path:
     path = tmp_path / f"{name}.parquet"
     pq.write_table(table, path)
+    path.chmod(0o444)  # C5 read-only discipline: an accidental in-test rewrite is impossible
     return path
 
 
@@ -403,8 +404,9 @@ def test_single_edge_ooc_parity_always_run(tmp_path: Path) -> None:
     _assert_all_ooc(run.plan)
     assert_ooc_shadow_matches_oracle(run)
 
-    # Delegate-vs-adapted schema-identity: the coordinator's adaptation must
-    # not reshape what the delegate produced.
+    # Shadow-vs-oracle exact-schema parity: stronger than the OOC comparator's
+    # width-tolerant fold. (Delegate-vs-adapted object identity is proven
+    # separately by test_adapt_ooc_result_preserves_identity.)
     for table, tbl in run.shadow.outputs.items():
         assert tbl.schema.equals(run.oracle.outputs[table].schema)
 
