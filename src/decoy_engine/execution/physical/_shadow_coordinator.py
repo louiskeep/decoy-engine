@@ -296,6 +296,15 @@ class ShadowCoordinator:
                 "shadow caller must thread the resolved ProviderRegistry (inputs.registry) "
                 "for any run admitting a faker node."
             )
+        if self.ctx.job_seed == b"":
+            # Symmetric to the registry guard: a bound faker node with the
+            # empty-default job_seed would build a wrong-but-passing pool
+            # (job_seed governs pool content). from_key_provider always
+            # supplies the real value, so this only fires on a mis-wired caller.
+            raise AssertionError(
+                "a faker node is bound but ShadowContext.job_seed is empty; the shadow "
+                "caller must build the context via from_key_provider so job_seed is set."
+            )
         builder = PoolBuilder(self.registry)
         pool_size, locale, build_config, identity = resolve_faker_pool_identity(
             builder=builder,

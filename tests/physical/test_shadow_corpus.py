@@ -428,6 +428,13 @@ def test_faker_alone(tmp_path: Path) -> None:
     _verify(tmp_path, "t", source, [_faker_column()], name="faker_alone")
 
 
+def test_faker_large_string_source_matches_oracle(tmp_path: Path) -> None:
+    """large_string is an admitted faker source type; exercise it against the
+    oracle, not only in the binding test (dennis LOW-2)."""
+    source = pa.table({"c": pa.array([f"src_{i % 4}" for i in range(9)], type=pa.large_string())})
+    _verify(tmp_path, "t", source, [_faker_column()], name="faker_large_string")
+
+
 _FAKER_MIXED_COLUMNS = [
     {"name": "h_email", "strategy": "hash", "namespace": "ns_email"},
     {"name": "pt_amount", "strategy": "passthrough"},

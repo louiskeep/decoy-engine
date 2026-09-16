@@ -105,6 +105,11 @@ def _resident_source_type(
     source = inputs.caller_sources.get(table)
     if not isinstance(source, pa.Table):
         return None
+    if column not in source.schema.names:
+        # An uncovered faker column (config names a column the resident source
+        # lacks) declines to bind here, exactly like the hash path, and defers
+        # to the same downstream coverage gate -- never a bare KeyError.
+        return None
     return source.schema.field(column).type
 
 

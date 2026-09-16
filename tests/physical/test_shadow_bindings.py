@@ -241,6 +241,15 @@ def test_deterministic_reuse_c1_faker_column_binds(tmp_path: Path) -> None:
     assert binding.required_prepasses == ()
 
 
+def test_faker_column_absent_from_source_declines_without_crashing(tmp_path: Path) -> None:
+    """A faker column the resident source lacks declines to bind (like the hash
+    path), never a bare KeyError from the resident-type probe (dennis MEDIUM-1)."""
+    source = pa.table({"other": pa.array(["a", "b", "c"], type=pa.string())})
+    plan = _plan_for(tmp_path, source, [_faker_column(name="c")])
+    node = plan.tables[0].nodes[0]
+    assert node.execution is None
+
+
 def test_faker_when_gated_column_is_unbound(tmp_path: Path) -> None:
     """`ColumnConfig` has no `when` field (`extra="forbid"`), so a validated
     config can never carry one -- but `compile_plan`/`_seed_envelope.py` read
