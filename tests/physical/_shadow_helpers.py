@@ -375,12 +375,23 @@ def _comparable_ooc(table: pa.Table) -> dict[str, list[object]]:
     return {name: [_fold_nan(v) for v in col] for name, col in table.to_pydict().items()}
 
 
+# The route-invariant quality_metrics subset (Task 4.6 slice 4, HIGH-2): the
+# only key the OOC route and the pandas full_frame oracle are asserted to
+# agree on. `code_set_corpora` is corpus-provenance evidence (which corpus,
+# how many rows) that both routes compute from the SAME masked output, so it
+# must match; no other quality_metrics key is currently populated by a
+# Group B/C strategy reachable through this slice's fixtures, so there is
+# nothing else in scope to compare.
+_ROUTE_INVARIANT_QUALITY_METRIC_KEYS = ("code_set_corpora",)
+
+
 def assert_ooc_shadow_matches_oracle(run: ShadowRun) -> None:
     """The OUT_OF_CORE-specific parity comparator (Task 4.6 slice 3):
     value-equal vs the full_frame oracle under the two representational
     normalizations `test_out_of_core_fk_parity.py` documents (Arrow width
     drift is already invisible at `to_pydict()`; NaN folds to None), plus the
-    diagnostic-multiset check `assert_shadow_matches_oracle` also runs.
+    diagnostic-multiset check `assert_shadow_matches_oracle` also runs, plus
+    (Task 4.6 slice 4) route-invariant `quality_metrics` parity.
 
     Deliberately NOT a reuse of `assert_shadow_matches_oracle`: that
     comparator demands the oracle's EXACT Arrow schema (`schema.field(...)
@@ -392,6 +403,29 @@ def assert_ooc_shadow_matches_oracle(run: ShadowRun) -> None:
     assert_diagnostics_multisets_equal(
         run.shadow.row_errors, tuple(run.oracle.row_errors), "row_errors"
     )
+    for key in _ROUTE_INVARIANT_QUALITY_METRIC_KEYS:
+        # `code_set_corpora` is a list of per-(table, column) evidence dicts;
+        # `test_out_of_core_group_c_parity.py` compares it order-independently
+        # (both routes build it by iterating their own work list, which need
+        # not agree on order), so fold each entry through `_canonicalize` (the
+        # same order-independent canonicalization diagnostics use above)
+        # rather than a raw list `!=`, which would fail on a same-content
+        # reorder.
+        shadow_entries = Counter(
+            _canonicalize(e) for e in (run.shadow.quality_metrics.get(key) or ())
+        )
+        oracle_entries = Counter(
+            _canonicalize(e) for e in (run.oracle.quality_metrics.get(key) or ())
+        )
+        if shadow_entries != oracle_entries:
+            raise ShadowDifference(
+                code=DIAGNOSTICS_DIFF,
+                detail=(
+                    f"quality_metrics[{key!r}]: "
+                    f"missing={list((oracle_entries - shadow_entries).elements())} "
+                    f"extra={list((shadow_entries - oracle_entries).elements())}"
+                ),
+            )
 
     shadow_tables, oracle_tables = set(run.shadow.outputs), set(run.oracle.outputs)
     if shadow_tables != oracle_tables:

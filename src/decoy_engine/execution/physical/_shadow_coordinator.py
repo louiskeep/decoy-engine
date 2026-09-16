@@ -36,7 +36,7 @@ with a synthesis stage, is refused rather than dispatched partially.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -99,6 +99,15 @@ class ShadowRunResult:
     its own masking), so there is no per-node evidence to report -- the
     coordinator does not widen `route_evidence`'s per-node contract to fake
     one.
+
+    `quality_metrics` (Task 4.6 slice 4) carries `ExecutionResult.quality_
+    metrics` through, by reference, for the OOC branch only -- the same type
+    `ExecutionResult` itself declares it (`dict[str, Any]`), so a comparator
+    can assert the coordinator preserves route-scoped evidence (e.g.
+    code_set's corpus-provenance entries) rather than silently dropping it in
+    the ExecutionResult -> ShadowRunResult adaptation. The scalar/chunked/
+    faker loop below never produces a metric-bearing strategy in this slice,
+    so it keeps the empty default -- behaviorally unchanged.
     """
 
     outputs: dict[str, pa.Table]
@@ -106,6 +115,7 @@ class ShadowRunResult:
     warnings: tuple[object, ...] = ()
     row_errors: tuple[object, ...] = ()
     driver_invocation: SeamContext | None = None
+    quality_metrics: dict[str, Any] = field(default_factory=dict)
 
 
 def _pool_values_are_string_valued(values: np.ndarray[Any, Any]) -> bool:
@@ -202,7 +212,10 @@ def _adapt_ooc_result(
     through `outputs`, so a value-equal fold in a comparison harness could
     never hide a mutation this step introduced -- there is none to hide.
     `route_evidence` is empty (an OOC table's nodes carry `execution=None` by
-    construction; there is no per-node evidence to report).
+    construction; there is no per-node evidence to report). `quality_metrics`
+    (Task 4.6 slice 4) forwards by reference, same as `warnings`/`row_errors`
+    -- `run_fk_out_of_core`'s code_set corpus-provenance evidence would
+    otherwise be silently dropped here, the one real gap this slice closes.
     """
     return ShadowRunResult(
         outputs=dict(execution_result.outputs),
@@ -210,6 +223,7 @@ def _adapt_ooc_result(
         warnings=execution_result.warnings,
         row_errors=execution_result.row_errors,
         driver_invocation=seam_context,
+        quality_metrics=execution_result.quality_metrics,
     )
 
 
