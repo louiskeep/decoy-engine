@@ -196,11 +196,19 @@ def _origin_main_available() -> bool:
 )
 def test_production_execution_modules_are_byte_identical_to_origin_main() -> None:
     """Tasks 4.2-4.4 are additive: every file under `src/decoy_engine/execution`
-    that existed before this program must be untouched, with two Task 4.5
-    exceptions -- the new `_unified_slice.py` connection module, and
-    `_pipeline.py` itself, whose only permitted diff is the flag kwarg +
-    the single guarded call site this task adds (`maybe_run_unified_slice`).
-    Every other file's diff is still restricted to `execution/physical/`."""
+    that existed before this program must be untouched, with three exceptions --
+    the Task 4.5 `_unified_slice.py` connection module; `_pipeline.py` itself,
+    whose only permitted diff is the flag kwarg + the single guarded call site
+    that task adds (`maybe_run_unified_slice`); and (Task 4.6 slice 1)
+    `execution/native/_chunk_masking.py`, where `_sample_faker_chunk` is
+    promoted to the shared, importable `sample_faker_array` helper so the
+    native chunked route and the new physical-plan shadow faker operator run
+    the IDENTICAL selection code rather than two copies that could drift --
+    a deliberate, reviewed touch, not incidental scope creep (its one caller,
+    `_mask_chunk_native`, is updated to match; native output is unchanged,
+    proven by the existing `tests/parity/native/test_c1_faker_parity.py` /
+    `tests/native/test_dispatch_faker.py` staying green unmodified). Every
+    other file's diff is still restricted to `execution/physical/`."""
     # Diff against the MERGE-BASE, not origin/main's tip: if origin/main advances
     # with unrelated execution/ changes before this branch merges, a raw
     # origin/main..HEAD diff would raise a false positive. The merge-base is the
@@ -213,6 +221,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         f"src/decoy_engine/{rel}" for rel in DELIBERATELY_CONNECTED_MODULES
     } | {
         "src/decoy_engine/execution/_pipeline.py",
+        "src/decoy_engine/execution/native/_chunk_masking.py",
     }
     unexpected = [
         name
