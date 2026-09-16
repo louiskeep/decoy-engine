@@ -18,8 +18,11 @@ __all__ = [
     "DIFFERENCE_CODES",
     "DUPLICATE_NODE_DECLARATION",
     "FAKER_POOL_NON_STRING_OUTPUT",
+    "MIXED_DRIVER_UNSUPPORTED",
     "NATIVE_COMPANION_UNAVAILABLE",
     "NULL_MASK_DIFF",
+    "OOC_DISPATCH_MISSING_DEPENDENCY",
+    "OOC_FK_PARITY_DIFF",
     "OPERATOR_NOT_EXECUTED",
     "PLANNED_VS_ACTUAL_ROUTE_DIFF",
     "PUBLICATION_ATTEMPT",
@@ -61,6 +64,23 @@ NATIVE_COMPANION_UNAVAILABLE: Final = "native_companion_unavailable"
 # values, which would otherwise crash the Arrow cast instead of diverging
 # through a coded, privacy-safe difference.
 FAKER_POOL_NON_STRING_OUTPUT: Final = "faker-pool-non-string-output"
+# Task 4.6 slice 3: a compiled plan whose mask-table driver set is not exactly
+# `{OUT_OF_CORE}` but still contains it (mixed with another masking driver, or
+# paired with a synthesis stage) -- the coordinator refuses to dispatch part of
+# a plan through the OOC adapter and mask the rest scalar, rather than silently
+# picking one. `detail` names the driver set only (never a table/column value).
+MIXED_DRIVER_UNSUPPORTED: Final = "mixed-driver-unsupported"
+# The runtime OOC carriers (`ShadowContext.plan`/`.relationship_graph`, or the
+# coordinator's `registry`) are declared `| None` for back-compat with the
+# scalar/chunked callers that never set them, but a `{OUT_OF_CORE}` dispatch
+# genuinely requires all three. This code names which carrier was absent
+# instead of the dispatch failing on a bare, uncoded `None` downstream.
+OOC_DISPATCH_MISSING_DEPENDENCY: Final = "ooc-dispatch-missing-dependency"
+# The OOC-specific comparator's value-equal check against the full_frame
+# oracle (distinct from the five FULL_FRAME/CHUNKED diff codes above, which a
+# reused comparator cannot express for OOC's documented normalizations).
+# `detail` carries a column name + a count, never a cell value.
+OOC_FK_PARITY_DIFF: Final = "ooc-fk-parity-diff"
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -78,6 +98,9 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         NATIVE_COMPANION_UNAVAILABLE,
         DUPLICATE_NODE_DECLARATION,
         FAKER_POOL_NON_STRING_OUTPUT,
+        MIXED_DRIVER_UNSUPPORTED,
+        OOC_DISPATCH_MISSING_DEPENDENCY,
+        OOC_FK_PARITY_DIFF,
     }
 )
 

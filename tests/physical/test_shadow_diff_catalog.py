@@ -33,6 +33,9 @@ _EXPECTED_CODES = frozenset(
         "native_companion_unavailable",
         "duplicate-node-declaration",
         "faker-pool-non-string-output",
+        "mixed-driver-unsupported",
+        "ooc-dispatch-missing-dependency",
+        "ooc-fk-parity-diff",
     }
 )
 
