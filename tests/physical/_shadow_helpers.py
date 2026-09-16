@@ -18,8 +18,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.execution import run_pipeline
+from decoy_engine.execution import _pipeline_finalize, run_pipeline
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import PhysicalPlan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -91,6 +92,9 @@ def run_shadow_and_oracle(
     key_provider: KeyProvider | None = None,
     batch_size_rows: int = 50_000,
     registry: ProviderRegistry | None = None,
+    auto_chunk: bool = False,
+    auto_chunk_threshold_rows: int | None = None,
+    chunk_size_rows: int | None = None,
 ) -> ShadowRun:
     """Run the shadow coordinator and the pinned oracle over the SAME
     resident `source` object (C5's same-input proof: both sides are handed
@@ -103,14 +107,47 @@ def run_shadow_and_oracle(
     registry, not only the module singleton. `None` (the default) leaves
     both sides resolving their own default registry, which is the same
     singleton object either way.
+
+    `auto_chunk` / `auto_chunk_threshold_rows` / `chunk_size_rows` (Task 4.6
+    slice 2) drive the CHUNKED disposition. ONE `chunk_size_rows` value feeds
+    all three places that must cross IDENTICAL chunk boundaries for the
+    parity claim to mean anything: `capture_physical_plan_inputs` (so the
+    compiler stamps `DriverId.CHUNKED`), `ShadowContext.batch_size_rows` (so
+    the coordinator's own resource-bounded batching lines up with the
+    oracle's chunk width instead of the unrelated `batch_size_rows` knob),
+    and the oracle's own `run_pipeline(auto_chunk=...)` call. `auto_chunk=
+    False` (the default) reproduces prior behavior exactly: the oracle stays
+    full_frame and `batch_size_rows` keeps its old, chunking-unrelated role
+    (the batch-size x row-order matrix).
     """
+    if auto_chunk and chunk_size_rows is None:
+        raise ValueError("auto_chunk=True requires an explicit chunk_size_rows")
+
+    resolved_chunk_size = (
+        chunk_size_rows
+        if chunk_size_rows is not None
+        else _pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT
+    )
+    resolved_threshold = (
+        auto_chunk_threshold_rows
+        if auto_chunk_threshold_rows is not None
+        else AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+    )
+    effective_batch_size_rows = resolved_chunk_size if auto_chunk else batch_size_rows
+
     inputs = capture_physical_plan_inputs(
-        config, {table_name: source}, engine_version=ENGINE_VERSION, registry=registry
+        config,
+        {table_name: source},
+        engine_version=ENGINE_VERSION,
+        registry=registry,
+        auto_chunk=auto_chunk,
+        chunk_size_rows=resolved_chunk_size,
+        auto_chunk_threshold_rows=resolved_threshold,
     )
     plan = compile_physical_plan(inputs)
 
     ctx = ShadowContext.from_key_provider(
-        plan=inputs.plan, key_provider=key_provider, batch_size_rows=batch_size_rows
+        plan=inputs.plan, key_provider=key_provider, batch_size_rows=effective_batch_size_rows
     )
     snapshot = capture_shadow_snapshot({table_name: source})
     shadow_result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
@@ -121,7 +158,9 @@ def run_shadow_and_oracle(
         engine_version=ENGINE_VERSION,
         substrate="pandas",
         execution_mode="full_frame",
-        auto_chunk=False,
+        auto_chunk=auto_chunk,
+        chunk_size_rows=resolved_chunk_size,
+        auto_chunk_threshold_rows=resolved_threshold,
         native_route_enabled=False,
         key_provider=key_provider,
         registry=registry,
