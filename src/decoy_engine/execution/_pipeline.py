@@ -86,6 +86,7 @@ from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.profile._readers import LazySource
 
@@ -587,11 +588,10 @@ def run_pipeline(
                 now_iso=now_iso,
             )
 
-    # Step 3: stitch the outputs together. Mask wins ties (every name in
-    # the config maps to one kind by construction, so no real conflicts).
-    outputs: dict[str, pa.Table] = {}
-    outputs.update(generate_outputs)
-    outputs.update(mask_outputs)
+    # Step 3: stitch the outputs together via the shared helper both this
+    # oracle and the shadow coordinator's mixed dispatch call, so "mask wins
+    # ties" cannot drift between the two (Task 4.6 slice 5b-i).
+    outputs: dict[str, pa.Table] = stitch_generate_mask_outputs(generate_outputs, mask_outputs)
 
     # BF1: namespace the fidelity reports under the existing free-form
     # quality_metrics dict (already plumbed to the platform manifest).

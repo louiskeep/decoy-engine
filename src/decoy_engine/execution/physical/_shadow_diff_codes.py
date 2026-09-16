@@ -20,6 +20,7 @@ __all__ = [
     "FAKER_POOL_NON_STRING_OUTPUT",
     "GENERATION_SHAPE_UNSUPPORTED",
     "MIXED_DRIVER_UNSUPPORTED",
+    "MIXED_FK_CROSS_GENERATE_UNSUPPORTED",
     "NATIVE_COMPANION_UNAVAILABLE",
     "NULL_MASK_DIFF",
     "OOC_DISPATCH_MISSING_DEPENDENCY",
@@ -65,11 +66,15 @@ NATIVE_COMPANION_UNAVAILABLE: Final = "native_companion_unavailable"
 # values, which would otherwise crash the Arrow cast instead of diverging
 # through a coded, privacy-safe difference.
 FAKER_POOL_NON_STRING_OUTPUT: Final = "faker-pool-non-string-output"
-# Task 4.6 slice 3: a compiled plan whose mask-table driver set is not exactly
-# `{OUT_OF_CORE}` but still contains it (mixed with another masking driver, or
-# paired with a synthesis stage) -- the coordinator refuses to dispatch part of
-# a plan through the OOC adapter and mask the rest scalar, rather than silently
-# picking one. `detail` names the driver set only (never a table/column value).
+# Task 4.6 slice 3 (widened by slice 5b-i): a compiled plan whose mask-table
+# driver set is not exactly `{OUT_OF_CORE}` but still contains it -- mixed
+# with another masking driver, or (slice 5b-i) present at all on an
+# otherwise-admitted independent generate+mask dispatch, where OOC-mask +
+# generation is out of scope for this slice (deferred). The coordinator
+# refuses to dispatch part of a plan through the OOC adapter and mask the
+# rest scalar, or to dispatch a mixed job whose mask half needs OOC, rather
+# than silently picking one. `detail` names the driver set only (never a
+# table/column value).
 MIXED_DRIVER_UNSUPPORTED: Final = "mixed-driver-unsupported"
 # The runtime OOC carriers (`ShadowContext.plan`/`.relationship_graph`, or the
 # coordinator's `registry`) are declared `| None` for back-compat with the
@@ -82,17 +87,32 @@ OOC_DISPATCH_MISSING_DEPENDENCY: Final = "ooc-dispatch-missing-dependency"
 # reused comparator cannot express for OOC's documented normalizations).
 # `detail` carries a column name + a count, never a cell value.
 OOC_FK_PARITY_DIFF: Final = "ooc-fk-parity-diff"
-# Task 4.6 slice 5a: a pure-generate plan's shape falls outside the admitted
-# domain for the coordinator's synthesis dispatch (`_shadow_coordinator.
-# _require_generation_shadowable`) -- a synthesis+mask mix, a missing/
-# malformed/mismatched `ShadowContext.plan`, an unsupported generate-column
-# type, `determinism: fresh`, a non-empty sources/relationships/namespaces/
-# subset/transforms/validators/quarantine/run_storm/mask_secret_ref, or a
-# non-admitted runtime carrier (derive_key/instance_default_locale/
-# key_provider/sink/source_loader/vault_writer/fidelity_report). `detail`
-# names the failed structural check + a table/field LOCATION only, never a
-# leaf knob's value (the gate never inspects one).
+# Task 4.6 slice 5a (widened by slice 5b-i): a generate-bearing plan's shape
+# falls outside the admitted domain for one of the coordinator's two
+# synthesis-owning gates -- `_shadow_generation.require_pure_generation_
+# shadowable` (no mask tables at all) or `_shadow_mixed.require_independent_
+# mixed_shadowable` (mask tables present, independent of the generate half).
+# Both share the same identity/column-shape core (`require_generation_
+# shape`): a missing/malformed/mismatched `ShadowContext.plan`, an
+# unsupported generate-column type, or `determinism: fresh`. The pure gate
+# additionally requires an empty sources/relationships/namespaces/subset/
+# transforms/validators/quarantine/run_storm/mask_secret_ref and every
+# runtime carrier at its admitted value; the mixed gate instead requires no
+# job-level validators/quarantine/vault-writer/fidelity-reporting/mask_
+# secret_ref, no sink/source_loader, and (via `ShadowContext.relationship_
+# graph`) that the graph itself is present. `detail` names the failed
+# structural check + a table/field LOCATION only, never a leaf knob's value
+# (neither gate inspects one).
 GENERATION_SHAPE_UNSUPPORTED: Final = "generation-shape-unsupported"
+# Task 4.6 slice 5b-i: an independent-mixed dispatch's relationship graph
+# carries a `generate-parent -> mask-child` edge -- the generate side's
+# output would need to feed the mask side's FK pool for that column, which
+# this slice does not implement (the merged-source read is slice 5b-ii
+# territory). `detail` names the parent/child table LOCATION, never a row
+# value. The reverse direction (a mask-parent referenced by a generate
+# child) is already rejected upstream, at generation-config validation, so
+# it never reaches this gate.
+MIXED_FK_CROSS_GENERATE_UNSUPPORTED: Final = "mixed-fk-cross-generate-unsupported"
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -114,6 +134,7 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         OOC_DISPATCH_MISSING_DEPENDENCY,
         OOC_FK_PARITY_DIFF,
         GENERATION_SHAPE_UNSUPPORTED,
+        MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
     }
 )
 

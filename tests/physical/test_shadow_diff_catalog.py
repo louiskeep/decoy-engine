@@ -37,6 +37,7 @@ _EXPECTED_CODES = frozenset(
         "ooc-dispatch-missing-dependency",
         "ooc-fk-parity-diff",
         "generation-shape-unsupported",
+        "mixed-fk-cross-generate-unsupported",
     }
 )
 

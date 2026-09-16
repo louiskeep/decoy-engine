@@ -198,8 +198,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
     """Tasks 4.2-4.4 are additive: every file under `src/decoy_engine/execution`
     that existed before this program must be untouched, with three exceptions --
     the Task 4.5 `_unified_slice.py` connection module; `_pipeline.py` itself,
-    whose only permitted diff is the flag kwarg + the single guarded call site
-    that task adds (`maybe_run_unified_slice`); and (Task 4.6 slice 1)
+    whose permitted diffs are the Task 4.5 flag kwarg + the single guarded
+    call site (`maybe_run_unified_slice`) and the Task 4.6 slice-5b-i Step-3
+    extraction (its inline generate+mask output stitch now delegates to the
+    shared `execution/_stitch.py::stitch_generate_mask_outputs`, a new
+    parent-level module both it and the shadow mixed dispatch call so the
+    "mask wins ties" precedence cannot drift); and (Task 4.6 slice 1)
     `execution/native/_chunk_masking.py`, where `_sample_faker_chunk` is
     promoted to the shared, importable `sample_faker_array` helper so the
     native chunked route and the new physical-plan shadow faker operator run
@@ -222,6 +226,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
     } | {
         "src/decoy_engine/execution/_pipeline.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
+        # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
+        # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
+        # so the "mask wins ties" precedence cannot drift between the two.
+        # Lives at the PARENT `execution` level specifically so `_pipeline.py`
+        # never has to import the physical seam to reach it -- it imports
+        # NOTHING from `execution.physical` itself (confirmed by the sweeps
+        # above), it is simply a new file outside that package.
+        "src/decoy_engine/execution/_stitch.py",
     }
     unexpected = [
         name
