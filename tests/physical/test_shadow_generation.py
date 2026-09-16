@@ -27,6 +27,7 @@ import dataclasses
 import hashlib
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
@@ -44,6 +45,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     MIXED_DRIVER_UNSUPPORTED,
     ShadowDifference,
 )
+from decoy_engine.execution.physical._shadow_generation import require_generation_shadowable
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._types import DriverId, ExecutionScope
 from decoy_engine.execution.physical.drivers._synthesis import SynthesisStageAdapter
@@ -744,3 +746,34 @@ def test_decline_non_admitted_key_provider(monkeypatch: pytest.MonkeyPatch) -> N
     provider = SecretKeyProvider(secret=b"\x02" * 32, key_version="v1")
     ctx = ShadowContext.from_key_provider(plan=plan, key_provider=provider)
     _assert_declines(physical_plan, ctx, monkeypatch)
+
+
+def test_gate_declines_unencodable_config_json() -> None:
+    """A surrogate `config_json` declines coded, never raises a raw
+    UnicodeEncodeError during digest computation (Codex final-gate MEDIUM).
+    Such a value cannot come from a compiled plan, so the gate is exercised
+    directly with a stub plan carrying it."""
+    ctx = ShadowContext(
+        mask_key=b"\x00" * 32,
+        plan=SimpleNamespace(generation=SimpleNamespace(config_json="\ud800")),
+    )
+    stage = SynthesisStage(tables=("t",), config_digest="unused")
+    with pytest.raises(ShadowDifference) as excinfo:
+        require_generation_shadowable(ctx, stage, capture_shadow_snapshot({}))
+    assert excinfo.value.code == GENERATION_SHAPE_UNSUPPORTED
+
+
+def test_gate_declines_unhashable_column_type() -> None:
+    """A decoded generate column whose `type` is unhashable (e.g. a list)
+    declines coded, never raises TypeError on the frozenset membership check
+    (Codex final-gate MEDIUM)."""
+    config_json = json.dumps({"tables": [{"name": "t", "generate_columns": [{"type": []}]}]})
+    digest = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+    ctx = ShadowContext(
+        mask_key=b"\x00" * 32,
+        plan=SimpleNamespace(generation=SimpleNamespace(config_json=config_json)),
+    )
+    stage = SynthesisStage(tables=("t",), config_digest=digest)
+    with pytest.raises(ShadowDifference) as excinfo:
+        require_generation_shadowable(ctx, stage, capture_shadow_snapshot({}))
+    assert excinfo.value.code == GENERATION_SHAPE_UNSUPPORTED

@@ -122,7 +122,16 @@ def require_generation_shadowable(
         raise ShadowDifference(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="generation.config_json is not a string"
         )
-    digest = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+    try:
+        config_bytes = config_json.encode("utf-8")
+    except UnicodeError:
+        # A surrogate/un-encodable config_json is a coded decline, not a raw
+        # UnicodeEncodeError escaping the total-guarded gate.
+        raise ShadowDifference(
+            code=GENERATION_SHAPE_UNSUPPORTED,
+            detail="generation.config_json is not UTF-8 encodable",
+        ) from None
+    digest = hashlib.sha256(config_bytes).hexdigest()
     if digest != physical_synthesis.config_digest:
         raise ShadowDifference(code=GENERATION_SHAPE_UNSUPPORTED, detail="config_digest mismatch")
     config = _decode_generation_config_shallow(config_json)
@@ -236,7 +245,12 @@ def _require_pure_generation_shape(config: dict[str, Any]) -> frozenset[str]:
                     detail=f"table={name!r}: a generate column is not a mapping",
                 )
             column_type = column.get("type")
-            if column_type not in _ADMITTED_GENERATE_COLUMN_TYPES:
+            # `isinstance(str)` first: an unhashable value (e.g. a list) must
+            # decline coded, not raise TypeError on the frozenset membership.
+            if (
+                not isinstance(column_type, str)
+                or column_type not in _ADMITTED_GENERATE_COLUMN_TYPES
+            ):
                 raise ShadowDifference(
                     code=GENERATION_SHAPE_UNSUPPORTED,
                     detail=f"table={name!r}: generate column type {column_type!r} is not admitted",
