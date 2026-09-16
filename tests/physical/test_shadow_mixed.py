@@ -311,6 +311,24 @@ def test_positive_generate_to_generate_edge_with_independent_mask_graph(tmp_path
     assert_generation_outputs_arrow_ipc_equal(run)
 
 
+def test_positive_numeric_generate_column_without_nulls_is_admitted(tmp_path: Path) -> None:
+    """The mixed gate's nullability restriction is about NULLS, not numeric
+    type: a numeric (int-categorical) generate column WITHOUT
+    `null_probability` round-trips byte-stably through the oracle's pandas
+    echo (int64 with no nulls stays int64, no widening or NaN-fill), so it is
+    admitted and whole-job parity holds. Pins the boundary the decline test
+    below sits just past."""
+    accounts = _accounts_source()
+    config = _mixed_config(
+        tmp_path,
+        mask_sources={"accounts": accounts},
+        mask_table_columns={"accounts": [{"name": "acct_id", "strategy": "passthrough"}]},
+        generate_columns=[{"name": "code", "type": "categorical", "categories": [1, 2, 3]}],
+    )
+    run = run_shadow_and_oracle(config, sources={"accounts": accounts})
+    assert_generation_outputs_arrow_ipc_equal(run)
+
+
 # ---------------------------------------------------------------------------
 # (c) Malformed differential matrix: identical rejection with STAGE-RAISED
 # attribution.
@@ -578,6 +596,65 @@ def test_decline_disqualifying_runtime_carrier(tmp_path: Path, ctx_kwargs: dict[
     )
     ctx = dataclasses.replace(admitted_ctx, **ctx_kwargs)
     snapshot = capture_shadow_snapshot({"accounts": accounts})
+
+    with pytest.raises(ShadowDifference) as excinfo:
+        ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
+    assert excinfo.value.code == GENERATION_SHAPE_UNSUPPORTED
+
+
+@pytest.mark.parametrize(
+    "generate_columns",
+    [
+        [{"name": "id", "type": "sequence", "start": 1, "step": 1, "null_probability": 0.5}],
+        [{"name": "code", "type": "categorical", "categories": [1, 2, 3], "null_probability": 0.5}],
+        [{"name": "amt", "type": "categorical", "categories": [1.5, 2.5], "null_probability": 0.5}],
+        [
+            {
+                "name": "tier",
+                "type": "categorical",
+                "categories": ["A", "B"],
+                "null_probability": 0.5,
+            }
+        ],
+    ],
+    ids=[
+        "sequence_int_null",
+        "categorical_int_null",
+        "categorical_float_null",
+        "categorical_str_null",
+    ],
+)
+def test_decline_nullable_generate_column_in_mixed(
+    tmp_path: Path, generate_columns: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKER remediation: in a mixed job the oracle echoes the generate
+    output back through its pandas mask adapter and lets it win the Step-3
+    tie, so the oracle's final generate bytes are pandas-round-tripped while
+    this shadow dispatch stitches raw native Arrow. A nullable numeric column
+    diverges (int+null widens to double; float+null NaN-fill vs zero-fill),
+    so the gate declines EVERY nullable generate column at admission -- even a
+    stable string+null one -- admitting only the provably non-null domain and
+    deferring the rest. The decline fires before generation runs."""
+    accounts = _accounts_source()
+    config = _mixed_config(
+        tmp_path,
+        mask_sources={"accounts": accounts},
+        mask_table_columns={"accounts": [{"name": "acct_id", "strategy": "passthrough"}]},
+        generate_columns=generate_columns,
+    )
+    inputs = capture_physical_plan_inputs(
+        config, {"accounts": accounts}, engine_version=ENGINE_VERSION, execution_mode="full_frame"
+    )
+    plan = compile_physical_plan(inputs)
+    ctx = ShadowContext.from_key_provider(
+        plan=inputs.plan, key_provider=None, relationship_graph=inputs.graph
+    )
+    snapshot = capture_shadow_snapshot({"accounts": accounts})
+
+    def _bomb_generate(self: SynthesisStageAdapter, *a: Any, **k: Any) -> dict[str, pa.Table]:
+        raise AssertionError("generate_tables must not be invoked for a declined mixed plan")
+
+    monkeypatch.setattr(SynthesisStageAdapter, "run", _bomb_generate)
 
     with pytest.raises(ShadowDifference) as excinfo:
         ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)

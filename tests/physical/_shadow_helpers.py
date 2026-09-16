@@ -541,24 +541,34 @@ def assert_every_node_bound(plan: PhysicalPlan) -> None:
 
 def _arrow_ipc_stream_bytes(table: pa.Table) -> bytes:
     """`table.combine_chunks()` written as one Arrow IPC stream, for an
-    exact-bytes comparison that covers field order, schema, null positions,
-    row order, and every value in one check.
+    exact-bytes comparison that covers field order, schema types, null
+    positions, row order, and every value in one check.
 
-    Schema-level metadata is stripped first (Task 4.6 slice 5b-i): a
-    GENERATE-kind table's output is pure Arrow on both sides (never
-    round-tripped through pandas), so its metadata is empty either way and
-    stripping it is a no-op there -- unaffected from 5a. A MASK-kind
-    table's oracle side always round-trips through
-    `pa.Table.from_pandas`/`to_pandas` (`_pandas_adapter.py`), which embeds
-    a `pandas` index-metadata blob the shadow's native-kernel path
-    structurally never produces; that blob carries no row data and slices
-    1-4's own mask-parity comparator (`assert_shadow_matches_oracle`)
-    already never compares it (schema TYPE equality, not raw metadata
-    bytes). Stripping it here keeps this byte comparator generalizable to
-    a mixed job's full output union without re-litigating settled mask
-    parity over an artifact of the oracle's pandas boundary.
+    The `pandas` schema-metadata key is dropped first (Task 4.6 slice 5b-i).
+    Any table an oracle mask/echo path produces round-trips through
+    `pa.Table.from_pandas`/`to_pandas` (`_pandas_adapter.py`), which embeds a
+    `pandas` index-metadata blob the shadow's native-kernel path structurally
+    never produces. That blob carries no row data, and slices 1-4's own
+    mask-parity comparator (`assert_shadow_matches_oracle`) already never
+    compared it (schema TYPE equality, not raw metadata bytes). In a mixed
+    job the oracle even echoes the GENERATE outputs back through that same
+    pandas boundary (`_pipeline.py` merged_sources -> Step-3 mask-wins-tie),
+    so a generate table's final oracle bytes also carry the blob while the
+    shadow's raw output does not -- dropping it keeps this byte comparator
+    generalizable to the mixed output union without re-litigating settled
+    parity over an artifact of the oracle's pandas boundary. Only the
+    `pandas` key is removed, not all schema metadata: any other (semantic)
+    schema metadata a future output attaches stays compared. The round-trip
+    is byte-stable for the shapes the mixed gate admits (non-nullable
+    generate columns -- see `_shadow_mixed._require_nonnullable_generate_
+    columns`); a nullable numeric round-trip is NOT byte-stable and is
+    declined at admission, not papered over here.
     """
-    combined = table.combine_chunks().replace_schema_metadata(None)
+    combined = table.combine_chunks()
+    metadata = combined.schema.metadata
+    if metadata and b"pandas" in metadata:
+        trimmed = {k: v for k, v in metadata.items() if k != b"pandas"}
+        combined = combined.replace_schema_metadata(trimmed or None)
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, combined.schema) as writer:
         writer.write_table(combined)

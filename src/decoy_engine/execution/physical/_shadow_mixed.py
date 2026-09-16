@@ -14,7 +14,11 @@ eligibility gate") admits iff:
      here as a total guard);
   2. the generate half's shape is admitted (`_shadow_generation.
      require_generation_shape`, the same identity/column-shape core the
-     pure gate uses);
+     pure gate uses), AND no generate column is nullable
+     (`_require_nonnullable_generate_columns` -- a nullable generate output
+     is not byte-stable through the oracle's pandas echo in a mixed job; see
+     that function for the full "why". Mixed-specific: the pure gate does not
+     apply it);
   3. every mask-table driver is in the already-proven scalar/full_frame/
      chunked admitted set -- OUT_OF_CORE is REJECTED (OOC-mask + generation
      is out of scope for this slice, deferred to 5b-ii+);
@@ -155,12 +159,67 @@ def require_independent_mixed_shadowable(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="plan is not a mixed generate+mask shape"
         )
     plan_obj, config, generate_table_names = require_generation_shape(ctx, plan.synthesis)
+    _require_nonnullable_generate_columns(config, generate_table_names)
 
     mask_table_names = _table_name_set(plan)
     _require_admitted_mask_drivers(plan)
     _require_no_generate_to_mask_fk_edge(ctx, generate_table_names, mask_table_names)
     _require_no_disqualifying_job_settings(ctx, config)
     return plan_obj
+
+
+def _require_nonnullable_generate_columns(
+    config: dict[str, object], generate_table_names: frozenset[str]
+) -> None:
+    """A mixed job's generate outputs are echoed back through the oracle's
+    pandas mask adapter (`_pipeline.py` merges `generate_outputs` into
+    `merged_sources`, `_pandas_adapter` round-trips every source frame
+    through `to_pandas`/`from_pandas`) and WIN the Step-3 name tie, so the
+    oracle's FINAL generate-table output is the pandas-round-tripped copy --
+    while this shadow dispatch stitches the RAW native-Arrow generate output.
+    That round-trip is byte-stable only when the column has no nulls: a
+    nullable numeric column either widens (int + null -> pandas double) or
+    fills its null slots differently (pandas NaN-fill vs Arrow zero-fill), so
+    shadow and oracle diverge under the byte comparator even after the
+    metadata strip. A non-null output of any admitted type round-trips
+    identically. So the mixed gate admits only NON-nullable generate columns;
+    a nullable generate column in a mixed job is a tracked exclusion deferred
+    to a later slice, declined coded here.
+
+    The PURE gate (`require_pure_generation_shadowable`) deliberately does NOT
+    apply this: a pure-generate job has no mask adapter to echo through, so
+    both sides emit raw native Arrow and slice 5a's nullable generate columns
+    stay byte-stable there. This restriction is mixed-specific by
+    construction.
+    """
+    tables = config.get("tables")
+    if not isinstance(tables, list):  # pragma: no cover - validated by require_generation_shape
+        return
+    for table in tables:
+        if not isinstance(table, dict):  # pragma: no cover - validated upstream
+            continue
+        name = table.get("name")
+        if name not in generate_table_names:
+            continue
+        generate_columns = table.get("generate_columns")
+        if not isinstance(generate_columns, list):  # pragma: no cover - validated upstream
+            continue
+        for column in generate_columns:
+            if not isinstance(column, dict):  # pragma: no cover - validated upstream
+                continue
+            # Truthy null_probability => the column can emit nulls. 0 / 0.0 /
+            # absent are falsy (no nulls -> admit); any positive probability
+            # (or a malformed truthy value) declines, erring toward the safe
+            # side since only a proven-non-null column round-trips stably.
+            if column.get("null_probability"):
+                raise ShadowDifference(
+                    code=GENERATION_SHAPE_UNSUPPORTED,
+                    detail=(
+                        f"table={name!r}: a generate column sets null_probability; nullable "
+                        "generate columns are not round-trip-stable through the oracle's pandas "
+                        "echo in a mixed job (deferred)"
+                    ),
+                )
 
 
 def _table_name_set(plan: PhysicalPlan) -> frozenset[str]:
