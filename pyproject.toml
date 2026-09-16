@@ -190,6 +190,16 @@ mutation = [
     "pytest-cov>=5.0",
     "mutmut>=3.0",
 ]
+# Parallel local test runs (2026-09-16). Kept OUT of `dev` on purpose, exactly
+# like `mutation` above: the certified DP profile syncs dev+lint+vault and its
+# 77-dist fingerprint (895b9a20) must stay exact, so pytest-xdist and its
+# execnet transitive dep live in this separate extra the cert gate never
+# installs. Install `.[dev,xdist]`, then `pytest tests/ -n auto`: the full suite
+# is parallel-safe and finishes in ~10 min versus over 25 min serial on a
+# 4-core box. Local convenience only; CI still runs the suite serially.
+xdist = [
+    "pytest-xdist>=3.0",
+]
 # Linters are exact-pinned, not floored. ruff and mypy both ship new
 # rules / error categories in minor releases that turn previously-green
 # code red with no code change. CI (.github/workflows/ci.yml) installs

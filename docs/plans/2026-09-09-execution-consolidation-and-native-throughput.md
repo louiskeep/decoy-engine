@@ -1297,19 +1297,39 @@ remaining chunked_* codes, pool_size_location_conflict). NOT merged (design bran
 design/physical-plan-task4.1 @ d383b803; docs-only, awaits a push decision). Task 4.2 (adapters) is
 unblocked. -->
 
-<!-- Phase 4 Tasks 4.2-4.5 outcome (2026-09-15): 4.2 adapter seam (PR #138), 4.3 physical-plan compiler
-(PR #139), 4.4 shadow coordinator (PR #140) all MERGED to main. Task 4.5 (activate one vertical slice) is
-DOUBLE-GATED GREEN + ready for merge on branch feat/unified-slice-4.5 @ cb2fc12d (off main c617b47a),
-awaiting Cam's merge authorization. 4.5 landed as engine-ready (NOT caller-activated: a default-OFF per-run
-flag `unified_slice_enabled`; caller activation is Task 4.6). Scope: one bounded non-FK single-table Parquet
-mask, resident pa.Table, passthrough/redact/truncate/keyed-hash, a total resident-dtype allowlist; returns an
-ExecutionResult byte-identical to the pandas full-frame route (source-shaped output; b"pandas" metadata by
-construction). Gate history was long but converged: the production lane was Codex-confirmed correct for the
-final ~4 rounds; the long tail was entirely the DEFERRED statistical bench harness, descoped (Cam + Codex
-consult) to scripts/bench-unified-slice/README.md as FOLLOWUP-BENCH-D9 (required before 4.6 activation).
-Final artifact double-gated: dennis APPROVE (0 blocker/high/medium, 2 LOW: changelog wording fixed +
-FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY tracked for 4.6) + Codex final GO (zero findings); full engine suite
-13696 passed / 0 failed. Deferred-to-4.6 prerequisites: FOLLOWUP-BENCH-D9 (statistical perf certification),
-FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY (widen the fail-closed boundary beyond ShadowDifference),
-FOLLOWUP-BENCH-DRIVER-HARDEN (shared bench_driver.py None-safety + fail-closed RSS). -->
+<!-- Phase 4 Tasks 4.2-4.5 outcome (2026-09-15, updated 2026-09-16): 4.2 adapter seam (PR #138), 4.3
+physical-plan compiler (PR #139), 4.4 shadow coordinator (PR #140), and 4.5 unified-slice production lane
+(PR #141, merge 90b49abf) all MERGED to main. 4.5 landed as engine-ready (NOT caller-activated: a default-OFF
+per-run flag `unified_slice_enabled`; caller activation is Task 4.6). Scope: one bounded non-FK single-table
+Parquet mask, resident pa.Table, passthrough/redact/truncate/keyed-hash, a total resident-dtype allowlist;
+returns an ExecutionResult byte-identical to the pandas full-frame route (source-shaped output; b"pandas"
+metadata by construction). Final artifact double-gated: dennis APPROVE (0 blocker/high/medium, 2 LOW:
+changelog wording fixed + FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY tracked for 4.6) + Codex final GO (zero
+findings); full engine suite 13696 passed / 0 failed. -->
+
+<!-- FOLLOWUP-BENCH-D9 outcome (2026-09-15): the statistical perf-cert harness MERGED (PR #142, merge
+54120b97): scripts/bench-unified-slice/bench_compare.py, a two-arm (flag off/on) driver over the frozen
+worker, paired ratio + inclusive p95 + seeded bootstrap CI + peak-RSS ratio, run_ok/d9_certified two-state
+model. Built but NOT run: the offline 10k/100k/1M cert run on a bench node is still owed before any 4.6 route
+activation. Sibling prerequisites still unbuilt: FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY (widen the fail-closed
+boundary beyond ShadowDifference), FOLLOWUP-BENCH-DRIVER-HARDEN (shared bench_driver.py None-safety +
+fail-closed RSS). -->
+
+<!-- Phase 4 Task 4.6 outcome (2026-09-16): migrate routes to the coordinator in dependency order as
+SHADOW-first parity proofs (production activation deferred, D9-cert-gated). Slice 1 (deterministic-Faker
+shadow operator) MERGED (PR #143, merge 42b5e16f): native_faker_select in the shadow coordinator, pools built
+via the same resolve_faker_pool_identity + per-run registry the oracle uses, cell-for-cell parity; dormant by
+design (no production allowlist change, no default flip). Slice 2 (single-table CHUNKED masking parity)
+MERGED (PR #144, merge 794c684e): TEST-LAYER ONLY (no production src change) -- extends run_shadow_and_oracle
+to compile a DriverId.CHUNKED plan and proves cell-for-cell parity vs the chunked oracle across identical
+chunk boundaries, over the five shadow strategies. Slice 3 (DuckDB out-of-core FK route parity) MERGED
+(PR #145, merge 4d211ffa): the coordinator DISPATCHES an OUT_OF_CORE FK job through the existing Task 4.2
+OutOfCoreAdapter (delegating to run_fk_out_of_core), forwarding seed-plan/sources/registry/graph/key-
+provider/batch-rows, and proves cell-for-cell parity vs the pandas full-frame oracle over config-backed
+single-edge/chain/fan-out FK fixtures. FK machinery stays single-owner in _runner.py/out_of_core/ (the
+approved "wrap today's executors" design, NOT a coordinator reimplementation). First 4.6 slice with a real
+(dormant) production src change: a {OUT_OF_CORE}-exact dispatch branch + runtime-only ShadowContext carriers
++ three new difference codes. All three slices double-gated (dennis APPROVE + Codex final GO); slice-3 also
+full-engine-suite green (13544 passed under xdist). NEXT: slice 4 (bounded Group B/C operators). Then slices
+5-6, then route activation (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
 
