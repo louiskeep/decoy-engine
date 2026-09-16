@@ -342,7 +342,7 @@ def test_text_mask_sub_floor_warning_forwarded_with_parity(tmp_path: Path) -> No
     ],
     ids=["faker", "bucketize"],
 )
-def test_deferred_group_bc_payload_does_not_route_ooc(
+def test_unadmitted_group_bc_payload_does_not_route_ooc(
     tmp_path: Path,
     payload_col_cfg: dict[str, Any],
     payload_vals: list[str | None],
