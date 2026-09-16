@@ -1,5 +1,5 @@
-"""Task 4.4 C1/C2/C6 (extended by Task 4.6 slice 1): `ShadowCoordinator` --
-the unified batch coordinator, run in SHADOW mode, for the bounded slice
+"""Task 4.4 C1/C2/C6 (extended by Task 4.6 slices 1 and 3): `ShadowCoordinator`
+-- the unified batch coordinator, run in SHADOW mode, for the bounded slice
 (design doc section 8.3's actions minus publish).
 
 `ShadowCoordinator` has no sink, publisher, or target argument anywhere in
@@ -24,6 +24,14 @@ an identity share one build), backed by a FRESH `PoolCache` scoped to this
 one `run()` call, never the module-global default cache (whose identity
 space omits the registry/backend version, so a stale cross-run hit could
 silently pass as a build).
+
+Task 4.6 slice 3 adds an OUT_OF_CORE dispatch branch: when a compiled plan's
+mask-table driver set is exactly `{DriverId.OUT_OF_CORE}`, `run()` skips the
+per-node loop entirely and dispatches the whole relationship-JOB through the
+existing Task 4.2 `OutOfCoreAdapter`, which delegates to `run_fk_out_of_core`
+-- the FK machinery stays single-owner there, never reimplemented here. A
+driver set mixing OUT_OF_CORE with any other masking driver, or pairing it
+with a synthesis stage, is refused rather than dispatched partially.
 """
 
 from __future__ import annotations
@@ -39,12 +47,15 @@ from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
     load_compiled_index_kernel,
 )
+from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
     FAKER_POOL_NON_STRING_OUTPUT,
+    MIXED_DRIVER_UNSUPPORTED,
     NATIVE_COMPANION_UNAVAILABLE,
+    OOC_DISPATCH_MISSING_DEPENDENCY,
     OPERATOR_NOT_EXECUTED,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     RESOURCE_LIMIT_BREACH,
@@ -53,11 +64,15 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
 )
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
 from decoy_engine.execution.physical._shadow_snapshot import ShadowSnapshot
+from decoy_engine.execution.physical._types import DriverId
 from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
 from decoy_engine.generation.pool._identity import PoolIdentity, resolve_faker_pool_identity
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.relationships import RelationshipGraph
 
 __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 
@@ -75,12 +90,22 @@ class ShadowRunResult:
     diagnostics. `warnings`/`row_errors` exist for shape parity with the
     oracle's `ExecutionResult` so a comparison harness can multiset-compare
     them uniformly even though every slice strategy is zero-diagnostic.
+
+    `driver_invocation` (Task 4.6 slice 3) is the `SeamContext` the
+    OUT_OF_CORE dispatch branch recorded, or `None` for every other
+    disposition (the per-node scalar/chunked loop has no single adapter
+    invocation to name). `route_evidence` stays empty on the OOC branch: an
+    OOC table's nodes carry `execution=None` by construction (the driver runs
+    its own masking), so there is no per-node evidence to report -- the
+    coordinator does not widen `route_evidence`'s per-node contract to fake
+    one.
     """
 
     outputs: dict[str, pa.Table]
     route_evidence: dict[str, OperatorCallEvidence]
     warnings: tuple[object, ...] = ()
     row_errors: tuple[object, ...] = ()
+    driver_invocation: SeamContext | None = None
 
 
 def _pool_values_are_string_valued(values: np.ndarray[Any, Any]) -> bool:
@@ -162,6 +187,32 @@ def _assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
     return normalized.column("c").combine_chunks()
 
 
+def _privacy_safe_driver_set(drivers: set[DriverId]) -> str:
+    """A `MIXED_DRIVER_UNSUPPORTED` detail: driver NAMES only, sorted for a
+    stable message -- never a table or column identifier."""
+    return ",".join(sorted(d.value for d in drivers))
+
+
+def _adapt_ooc_result(
+    execution_result: ExecutionResult, seam_context: SeamContext
+) -> ShadowRunResult:
+    """Pure `ExecutionResult` -> `ShadowRunResult` conversion for the
+    OUT_OF_CORE dispatch branch (Task 4.6 slice 3). Reshapes nothing: the
+    SAME `pa.Table` objects `OutOfCoreAdapter.run` produced pass straight
+    through `outputs`, so a value-equal fold in a comparison harness could
+    never hide a mutation this step introduced -- there is none to hide.
+    `route_evidence` is empty (an OOC table's nodes carry `execution=None` by
+    construction; there is no per-node evidence to report).
+    """
+    return ShadowRunResult(
+        outputs=dict(execution_result.outputs),
+        route_evidence={},
+        warnings=execution_result.warnings,
+        row_errors=execution_result.row_errors,
+        driver_invocation=seam_context,
+    )
+
+
 @dataclass
 class ShadowCoordinator:
     """Runs a C0-extended `PhysicalPlan` over a resident `ShadowSnapshot`.
@@ -184,6 +235,29 @@ class ShadowCoordinator:
     registry: ProviderRegistry | None = None
 
     def run(self, plan: PhysicalPlan, snapshot: ShadowSnapshot) -> ShadowRunResult:
+        # Task 4.6 slice 3: an OUT_OF_CORE mask-table plan dispatches through
+        # the Task 4.2 `OutOfCoreAdapter` (which owns the FK machinery via
+        # `run_fk_out_of_core`) rather than running this loop -- the driver
+        # set is computed ONCE, up front, so every existing scalar/chunked
+        # plan (whose driver set never contains OUT_OF_CORE) falls straight
+        # through to the loop below, byte-unchanged.
+        mask_drivers = {table.driver for table in plan.tables}
+        if mask_drivers == {DriverId.OUT_OF_CORE}:
+            if plan.synthesis is not None:
+                # Defensive: a handcrafted plan could pair OOC masking with a
+                # synthesis stage; the adapter has no synthesis path, so this
+                # is refused rather than dispatched partially.
+                raise ShadowDifference(
+                    code=MIXED_DRIVER_UNSUPPORTED, detail="out_of_core+synthesis"
+                )
+            return self._dispatch_out_of_core(plan, snapshot)
+        if DriverId.OUT_OF_CORE in mask_drivers:
+            # OUT_OF_CORE mixed with any other masking driver: never mask
+            # part of a plan through the adapter and the rest scalar.
+            raise ShadowDifference(
+                code=MIXED_DRIVER_UNSUPPORTED, detail=_privacy_safe_driver_set(mask_drivers)
+            )
+
         outputs: dict[str, pa.Table] = {}
         route_evidence: dict[str, OperatorCallEvidence] = {}
         # Loaded at most once per run, lazily, the moment the first bound
@@ -292,6 +366,64 @@ class ShadowCoordinator:
                 outputs[table.table] = pa.table({name: columns[name] for name in source_order})
 
         return ShadowRunResult(outputs=outputs, route_evidence=route_evidence)
+
+    def _dispatch_out_of_core(
+        self, plan: PhysicalPlan, snapshot: ShadowSnapshot
+    ) -> ShadowRunResult:
+        """Dispatch a `{OUT_OF_CORE}` plan through the Task 4.2
+        `OutOfCoreAdapter`, which delegates to `run_fk_out_of_core` -- the FK
+        machinery stays single-owner there, never re-implemented here. The
+        adapter is constructed locally (never on `self`), matching every
+        other driver adapter's per-call lifecycle.
+        """
+        # Imported here, not at module scope: this is the ONE place inside
+        # `execution.physical` that reaches into the `drivers/` subpackage,
+        # kept lazy so a caller that never takes the OOC branch never pays
+        # for (or risks) importing DuckDB-backed machinery.
+        from decoy_engine.execution.physical.drivers._out_of_core import OutOfCoreAdapter
+
+        seed_plan, graph, registry = self._require_ooc_deps()
+        adapter = OutOfCoreAdapter()
+        result = adapter.run(
+            seed_plan,
+            {t: snapshot.tables[t] for t in snapshot.tables},
+            registry=registry,
+            relationship_graph=graph,
+            sink=None,  # resident compare only, never publication (C1/C7)
+            batch_rows=self.ctx.batch_size_rows,  # the coordinator's own budget
+            key_provider=self.ctx.key_provider,  # legitimately optional (unkeyed job)
+        )
+        seam_context = adapter.last_invocation
+        if seam_context is None:  # pragma: no cover - last_invocation is always set first
+            # `last_invocation` is set unconditionally, before delegation
+            # (`_out_of_core.py`), so a successful `.run()` return always
+            # leaves it non-None; this is a type-narrowing guard against a
+            # future adapter change, not a reachable branch today.
+            raise AssertionError("OutOfCoreAdapter.run returned without setting last_invocation")
+        return _adapt_ooc_result(result, seam_context)
+
+    def _require_ooc_deps(self) -> tuple[Plan, RelationshipGraph, ProviderRegistry]:
+        """Type-narrow the runtime OOC carriers, raising a coded difference
+        naming whichever is absent -- never a bare `None` reaching the
+        adapter/delegate uncoded. `ctx.plan` / `ctx.relationship_graph` /
+        `self.registry` are declared `| None` for back-compat with every
+        scalar/chunked/faker caller, which never sets or reads them; an
+        OUT_OF_CORE dispatch genuinely requires all three.
+        """
+        if self.ctx.plan is None:
+            raise ShadowDifference(
+                code=OOC_DISPATCH_MISSING_DEPENDENCY, detail="ShadowContext.plan is None"
+            )
+        if self.ctx.relationship_graph is None:
+            raise ShadowDifference(
+                code=OOC_DISPATCH_MISSING_DEPENDENCY,
+                detail="ShadowContext.relationship_graph is None",
+            )
+        if self.registry is None:
+            raise ShadowDifference(
+                code=OOC_DISPATCH_MISSING_DEPENDENCY, detail="ShadowCoordinator.registry is None"
+            )
+        return self.ctx.plan, self.ctx.relationship_graph, self.registry
 
     def _resolve_pool(
         self,

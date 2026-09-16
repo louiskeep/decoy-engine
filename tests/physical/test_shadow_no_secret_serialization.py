@@ -161,9 +161,16 @@ def test_shadow_context_is_the_only_place_the_secret_lives(tmp_path: Path) -> No
 
     # ShadowContext itself legitimately carries a derived key (HKDF over the
     # secret, per `SecretKeyProvider.mask_key()` -- never the raw secret
-    # bytes themselves, and never the provider object).
+    # bytes themselves). Task 4.6 slice 3: for an OUT_OF_CORE dispatch,
+    # `ctx.key_provider` DOES retain the provider object itself (the OOC
+    # delegate needs it to derive key material for every column it masks,
+    # not only the one `mask_key` already covers) -- a deliberate, scoped
+    # exception to "never the provider object" for the scalar slices, kept
+    # safe because both `mask_key` and `key_provider` are `field(repr=False)`
+    # (see the next test) and never reach the frozen plan/snapshot below.
     assert isinstance(ctx.mask_key, bytes)
     assert not isinstance(ctx, KeyProvider)
+    assert ctx.key_provider is provider
 
     # The plan/snapshot built independently of `ctx` still carry nothing.
     leaves = _walk(plan) + _walk(inputs)
@@ -172,3 +179,44 @@ def test_shadow_context_is_the_only_place_the_secret_lives(tmp_path: Path) -> No
         if isinstance(leaf, (bytes, bytearray)):
             assert bytes(leaf) != _SECRET
             assert bytes(leaf) != ctx.mask_key
+
+
+class _LeakyKeyProvider:
+    """A deliberately non-redacting `KeyProvider` implementation: its default
+    repr would dump the raw secret if `ShadowContext`'s own repr ever
+    embedded it. Used to prove the redaction guarantee holds regardless of
+    what a caller-supplied `KeyProvider` implementation does, not only for
+    the well-behaved `SecretKeyProvider`/`SeedKeyProvider` built-ins (which
+    already redact themselves)."""
+
+    def __init__(self, secret: bytes) -> None:
+        self._secret = secret
+
+    @property
+    def key_version(self) -> str:
+        return "leaky"
+
+    def mask_key(self) -> bytes:
+        return self._secret
+
+    def __repr__(self) -> str:
+        return f"_LeakyKeyProvider(secret={self._secret!r})"
+
+
+def test_shadow_context_repr_excludes_the_secret_and_the_key_provider() -> None:
+    """`mask_key` and `key_provider` are both declared `field(repr=False)`
+    (Task 4.6 slice 3): the default dataclass repr must never render the
+    derived key bytes, `ctx.mask_key` itself, or a key-provider repr --
+    including one from a custom `KeyProvider` implementation that does not
+    redact itself, so the guarantee does not depend on every implementation
+    being well-behaved.
+    """
+    leaky = _LeakyKeyProvider(_SECRET)
+    ctx = ShadowContext(mask_key=b"\xaa" * 32, key_provider=leaky)
+
+    rendered = repr(ctx)
+
+    assert repr(_SECRET) not in rendered
+    assert repr(ctx.mask_key) not in rendered
+    assert "_LeakyKeyProvider" not in rendered
+    assert repr(leaky) not in rendered

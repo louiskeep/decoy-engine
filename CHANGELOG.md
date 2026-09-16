@@ -9,6 +9,32 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (Task 4.6 slice 3: out-of-core FK route parity through the unified coordinator, 2026-09-16)
+
+The physical-plan shadow coordinator gains an OUT_OF_CORE dispatch branch: when a compiled
+plan's mask tables are driven uniformly by `DriverId.OUT_OF_CORE` (a pure-mask FK job routed
+large), `ShadowCoordinator.run` dispatches the whole relationship-JOB through the existing Task
+4.2 `OutOfCoreAdapter`, which delegates to `run_fk_out_of_core`, instead of running its per-node
+scalar/chunked loop. The FK machinery stays single-owner in `execution/_runner.py` and
+`execution/out_of_core/`; nothing is reimplemented in the coordinator. A plan whose driver set
+mixes `OUT_OF_CORE` with any other masking driver, or pairs it with a synthesis stage, is
+rejected rather than partially dispatched. `ShadowContext` gains three optional runtime-only
+carriers the dispatch needs (`plan`, `relationship_graph`, `key_provider`) -- all default to
+`None`, so every existing scalar/chunked/faker construction is unchanged; `mask_key` and
+`key_provider` are both excluded from the dataclass repr. `ShadowRunResult` gains
+`driver_invocation: SeamContext | None`, recording which driver/scope/table-set the dispatch
+went through.
+
+Dormant by design: no production allowlist changes, no default flip -- this is a SHADOW-only
+parity proof that the coordinator can faithfully dispatch and adapt an out-of-core FK job,
+producing output cell-for-cell equal to the pandas full_frame oracle across single-edge, chain,
+and fan-out FK shapes, plus a keyed-hash payload case that regresses if `key_provider` forwarding
+is ever dropped. Coordinator ownership of the OOC route at activation is a later, separately-gated
+step. Covered by the new `tests/physical/test_shadow_ooc_fk.py`, plus updates to
+`test_shadow_diff_catalog.py` (three new coded differences: `mixed-driver-unsupported`,
+`ooc-dispatch-missing-dependency`, `ooc-fk-parity-diff`) and
+`test_shadow_no_secret_serialization.py` (the `ShadowContext` repr redaction guarantee).
+
 ### Added (Task 4.6 slice 1: deterministic-faker shadow operator, 2026-09-16)
 
 The physical-plan shadow coordinator (Task 4.4's four scalar operators) gains a fifth admitted

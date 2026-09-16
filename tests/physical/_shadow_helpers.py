@@ -8,9 +8,11 @@ object, and asserts the two are identical -- coded per
 
 from __future__ import annotations
 
+import math
 import os
 from collections import Counter
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     CELL_VALUE_DIFF,
     DIAGNOSTICS_DIFF,
     NULL_MASK_DIFF,
+    OOC_FK_PARITY_DIFF,
     ROW_COUNT_DIFF,
     ROW_ORDER_DIFF,
     SCHEMA_DIFF,
@@ -81,24 +84,41 @@ class ShadowRun:
     plan: PhysicalPlan
     shadow: ShadowRunResult
     oracle: ExecutionResult
-    shadow_identity: str
+    # A legacy single-source run sets `shadow_identity` and leaves
+    # `shadow_identities` empty; a multi-source run (Task 4.6 slice 3) sets
+    # `shadow_identity=None` and populates `shadow_identities` with EVERY
+    # table's identity -- the old field is never silently derived from one
+    # table out of several.
+    shadow_identity: str | None = None
+    shadow_identities: dict[str, str] = field(default_factory=dict)
 
 
 def run_shadow_and_oracle(
     config: dict[str, Any],
-    table_name: str,
-    source: pa.Table,
+    table_name: str | None = None,
+    source: pa.Table | None = None,
     *,
+    sources: Mapping[str, pa.Table] | None = None,
     key_provider: KeyProvider | None = None,
     batch_size_rows: int = 50_000,
     registry: ProviderRegistry | None = None,
     auto_chunk: bool = False,
     auto_chunk_threshold_rows: int | None = None,
     chunk_size_rows: int | None = None,
+    out_of_core_threshold_rows: int | None = None,
+    use_byte_estimate_routing: bool = True,
 ) -> ShadowRun:
     """Run the shadow coordinator and the pinned oracle over the SAME
-    resident `source` object (C5's same-input proof: both sides are handed
-    the identical `pa.Table` instance).
+    resident source object(s) (C5's same-input proof: both sides are handed
+    the identical `pa.Table` instance(s)).
+
+    Two mutually exclusive calling modes (Task 4.6 slice 3 widens this
+    additively; the original single-source shape is unchanged for existing
+    callers): the legacy positional PAIR `(table_name, source)`, both
+    present, for a one-table job; or `sources=` alone, a `{table: pa.Table}`
+    mapping, for a multi-table job (an FK parent+child set). Passing both
+    modes, neither, or one half of the legacy pair without the other all
+    raise `ValueError` -- there is no silent "pick one" fallback.
 
     `registry` (Task 4.6 slice 1), when given, is threaded to BOTH sides --
     `capture_physical_plan_inputs` (so the compiled plan's faker admission
@@ -124,7 +144,30 @@ def run_shadow_and_oracle(
     way), but a hypothetical at-or-above-threshold, chunk-stable fixture that
     omitted `auto_chunk` would have compiled CHUNKED under the old default and
     now compiles FULL_FRAME.
+
+    `out_of_core_threshold_rows` / `use_byte_estimate_routing` (Task 4.6
+    slice 3) drive the OUT_OF_CORE disposition, forwarded only to
+    `capture_physical_plan_inputs` -- never to the oracle's `run_pipeline`
+    call, which always passes `execution_mode="full_frame"` and so returns
+    before OOC selection runs regardless of these knobs (the oracle stays
+    the pandas full-frame path no matter how the shadow side routes).
+    `out_of_core_threshold_rows=None` (the default) leaves
+    `capture_physical_plan_inputs`'s own default in effect.
     """
+    legacy_pair_given = table_name is not None or source is not None
+    if legacy_pair_given and (table_name is None or source is None):
+        raise ValueError(
+            "table_name and source must both be given together (the legacy pair), or both omitted"
+        )
+    if legacy_pair_given and sources is not None:
+        raise ValueError("pass either the legacy (table_name, source) pair or sources=, not both")
+    if not legacy_pair_given and sources is None:
+        raise ValueError("must pass either the legacy (table_name, source) pair or sources=")
+
+    resolved_sources: dict[str, pa.Table] = (
+        dict(sources) if sources is not None else {table_name: source}  # type: ignore[dict-item]
+    )
+
     if auto_chunk and chunk_size_rows is None:
         raise ValueError("auto_chunk=True requires an explicit chunk_size_rows")
 
@@ -140,26 +183,32 @@ def run_shadow_and_oracle(
     )
     effective_batch_size_rows = resolved_chunk_size if auto_chunk else batch_size_rows
 
-    inputs = capture_physical_plan_inputs(
-        config,
-        {table_name: source},
+    capture_kwargs: dict[str, Any] = dict(
         engine_version=ENGINE_VERSION,
         registry=registry,
         auto_chunk=auto_chunk,
         chunk_size_rows=resolved_chunk_size,
         auto_chunk_threshold_rows=resolved_threshold,
+        use_byte_estimate_routing=use_byte_estimate_routing,
     )
+    if out_of_core_threshold_rows is not None:
+        capture_kwargs["out_of_core_threshold_rows"] = out_of_core_threshold_rows
+
+    inputs = capture_physical_plan_inputs(config, resolved_sources, **capture_kwargs)
     plan = compile_physical_plan(inputs)
 
     ctx = ShadowContext.from_key_provider(
-        plan=inputs.plan, key_provider=key_provider, batch_size_rows=effective_batch_size_rows
+        plan=inputs.plan,
+        key_provider=key_provider,
+        batch_size_rows=effective_batch_size_rows,
+        relationship_graph=inputs.graph,
     )
-    snapshot = capture_shadow_snapshot({table_name: source})
+    snapshot = capture_shadow_snapshot(resolved_sources)
     shadow_result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
 
     oracle_result = run_pipeline(
         config,
-        {table_name: source},
+        resolved_sources,
         engine_version=ENGINE_VERSION,
         substrate="pandas",
         execution_mode="full_frame",
@@ -172,19 +221,61 @@ def run_shadow_and_oracle(
         sink=None,
     )
 
+    if legacy_pair_given:
+        assert table_name is not None  # narrowed by the validation above
+        return ShadowRun(
+            plan=plan,
+            shadow=shadow_result,
+            oracle=oracle_result,
+            shadow_identity=snapshot.identity(table_name),
+        )
     return ShadowRun(
         plan=plan,
         shadow=shadow_result,
         oracle=oracle_result,
-        shadow_identity=snapshot.identity(table_name),
+        shadow_identity=None,
+        shadow_identities={name: snapshot.identity(name) for name in resolved_sources},
     )
+
+
+def _canonicalize(value: Any) -> Any:
+    """Recursively turn `value` into a hashable, order-appropriate shape so a
+    diagnostic record's (possibly nested) fields can serve as a `Counter`
+    key (Task 4.6 slice 3 fix: the OOC WARN-orphan payload nests a `dict`
+    with `list` values -- `QualityWarning.detail` -- which the old
+    `tuple(sorted(vars(item).items()))` key could not hash at all).
+
+    `str`/`bytes` are scalar leaves (never iterated character-by-character).
+    A `Mapping`'s items and any `set`/`frozenset` become a `frozenset`: both
+    are unordered by definition, so two logically-equal-but-differently-
+    ordered instances must produce the same key. A `list`/`tuple` keeps its
+    position order (a sequence's order IS part of its value) as a plain
+    `tuple`. Every branch is wrapped in a type-tag tuple so a `dict` and a
+    same-shaped `set`/`list` never collide on the same canonical value.
+    Never sorts a value's own contents directly -- only the outer field
+    dict, keyed by field NAME (always a unique string), which sorts without
+    ever comparing two heterogeneous values against each other.
+    """
+    if isinstance(value, (str, bytes)):
+        return value
+    if isinstance(value, Mapping):
+        return ("dict", frozenset((_canonicalize(k), _canonicalize(v)) for k, v in value.items()))
+    if isinstance(value, (set, frozenset)):
+        return ("set", frozenset(_canonicalize(v) for v in value))
+    if isinstance(value, (list, tuple)):
+        return ("seq", tuple(_canonicalize(v) for v in value))
+    return value
 
 
 def _diag_key(item: Any) -> tuple[Any, ...]:
     # Order-independent multiset key for a warning or row-error record: every
     # field except a wall-clock timing one (this slice's zero-diagnostic
     # strategies never emit either, but the key stays generic on purpose).
-    return tuple(sorted(vars(item).items())) if hasattr(item, "__dict__") else (repr(item),)
+    # Sorted by field NAME (a unique string per record), so the sort never
+    # needs to compare two canonicalized values against each other.
+    if not hasattr(item, "__dict__"):
+        return (repr(item),)
+    return tuple(sorted((name, _canonicalize(val)) for name, val in vars(item).items()))
 
 
 def assert_diagnostics_multisets_equal(
@@ -265,6 +356,70 @@ def assert_shadow_matches_oracle(run: ShadowRun) -> None:
                     code=ROW_ORDER_DIFF, detail=f"{table}.{name}: same values, different order"
                 )
             raise ShadowDifference(code=CELL_VALUE_DIFF, detail=f"{table}.{name}: values differ")
+
+
+def _fold_nan(value: object) -> object:
+    """Fold IEEE NaN -> None, mirroring `test_out_of_core_fk_parity.py`'s own
+    documented normalization: the oracle round-trips every frame through
+    pandas (folding NaN to null), while the out-of-core route never touches
+    pandas and can leave a genuine float NaN in place. Both mean "missing"."""
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
+
+
+def _comparable_ooc(table: pa.Table) -> dict[str, list[object]]:
+    """Column -> Python values, NaN folded to None. `to_pydict()` already
+    collapses Arrow width drift (`string` vs `large_string`, etc.) to the
+    same Python scalar, so nothing else needs normalizing here."""
+    return {name: [_fold_nan(v) for v in col] for name, col in table.to_pydict().items()}
+
+
+def assert_ooc_shadow_matches_oracle(run: ShadowRun) -> None:
+    """The OUT_OF_CORE-specific parity comparator (Task 4.6 slice 3):
+    value-equal vs the full_frame oracle under the two representational
+    normalizations `test_out_of_core_fk_parity.py` documents (Arrow width
+    drift is already invisible at `to_pydict()`; NaN folds to None), plus the
+    diagnostic-multiset check `assert_shadow_matches_oracle` also runs.
+
+    Deliberately NOT a reuse of `assert_shadow_matches_oracle`: that
+    comparator demands the oracle's EXACT Arrow schema (`schema.field(...)
+    .type.equals(...)`), which OOC's documented, benign normalizations
+    legitimately diverge from -- reusing it unchanged would fail a genuinely
+    parity-equal OOC result on a representational difference, not a real one.
+    """
+    assert_diagnostics_multisets_equal(run.shadow.warnings, tuple(run.oracle.warnings), "warnings")
+    assert_diagnostics_multisets_equal(
+        run.shadow.row_errors, tuple(run.oracle.row_errors), "row_errors"
+    )
+
+    shadow_tables, oracle_tables = set(run.shadow.outputs), set(run.oracle.outputs)
+    if shadow_tables != oracle_tables:
+        raise ShadowDifference(
+            code=SCHEMA_DIFF,
+            detail=f"output table set differs: shadow={sorted(shadow_tables)} oracle={sorted(oracle_tables)}",
+        )
+
+    for table in sorted(oracle_tables):
+        shadow_values = _comparable_ooc(run.shadow.outputs[table])
+        oracle_values = _comparable_ooc(run.oracle.outputs[table])
+        column_diff = set(shadow_values) ^ set(oracle_values)
+        if column_diff:
+            raise ShadowDifference(
+                code=OOC_FK_PARITY_DIFF, detail=f"{table}: {len(column_diff)} column(s) differ"
+            )
+        for name, oracle_column in oracle_values.items():
+            shadow_column = shadow_values[name]
+            if shadow_column == oracle_column:
+                continue
+            if len(shadow_column) != len(oracle_column):
+                raise ShadowDifference(
+                    code=OOC_FK_PARITY_DIFF, detail=f"{table}.{name}: row count differs"
+                )
+            mismatched = sum(1 for a, b in zip(shadow_column, oracle_column, strict=True) if a != b)
+            raise ShadowDifference(
+                code=OOC_FK_PARITY_DIFF, detail=f"{table}.{name}: {mismatched} row(s) differ"
+            )
 
 
 def assert_route_evidence_matches_plan(run: ShadowRun) -> None:
