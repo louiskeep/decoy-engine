@@ -1343,7 +1343,20 @@ bind. Design = Codex's own recommendation, adopted after the exhaustive-validati
 Cam (2026-09-16) scoped slice 5 as the coordinator GENUINELY OWNING generation (dispatch + mixed
 generate+mask + the generate->mask stitch; "generation is equally important as masking"); decomposed into
 5a (done), 5a-faker (frozen-provider faker generation), 5b-i (mixed no-FK + output stitch), 5b-ii (mixed FK
-+ merged-source pool + stitch precedence). All 4.6 slices double-gated (dennis APPROVE + Codex final GO).
-NEXT: 5b (mixed generate+mask + stitch), then slice 6 (approved global/hard-tail), then route activation
++ merged-source pool + stitch precedence). Slice 5b-i (INDEPENDENT mixed generate+mask + output stitch)
+MERGED (PR #150, merge 6315b897): the coordinator dispatches a job with both generate and mask tables (no
+generate->mask FK edge), running generation first then reusing its own per-node mask loop (recurse into
+run() with synthesis stripped), and stitches the two outputs via a NEW shared execution/_stitch.py helper
+that both run_pipeline (Step 3, "mask wins ties") and the shadow mixed dispatch call, so the precedence
+cannot drift; parent-level so production never imports the physical seam (disconnection sentry green). The
+5a generation predicate is split (require_generation_shape shared + require_pure_generation_shadowable +
+require_independent_mixed_shadowable). Key correctness lesson (dennis found + 2 remediations): in a mixed
+job the oracle echoes the generate output back through its pandas mask adapter and mask wins the Step-3 tie,
+so the oracle's final generate output is pandas-round-tripped while the shadow stitches raw native Arrow;
+non-round-trip-stable generate columns (null_count>0, floating NaN, nested type) diverge. Fixed by gating on
+the MATERIALIZED generate output (require_roundtrip_stable_generate_outputs), NOT config knobs -- nullable/
+unstable generate columns in a mixed job are a tracked deferral. Mask half confirmed parity-safe. All 4.6
+slices double-gated (dennis APPROVE + Codex final GO). NEXT: 5b-ii (mixed generate-parent->mask-child FK
+pool read + stitch precedence), 5a-faker, then slice 6 (approved global/hard-tail), then route activation
 (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
 
