@@ -42,7 +42,8 @@ Package layout:
   `_inputs`         -- Task 4.3 D1: `PhysicalPlanInputs`, the native-
                        admission captured fact, and the OOC routing facts.
   `_plan`           -- Task 4.3 D2 output records: `PhysicalPlan` /
-                       `PhysicalTable` / `PhysicalNode` / `SynthesisStage`.
+                       `PhysicalTable` / `PhysicalNode` / `SynthesisStage`,
+                       plus (Task 4.6 slice 1) the faker-only `PoolBinding`.
   `_compiler`       -- Task 4.3 D2: `compile_physical_plan`, pure; reached in
                        production only via the Task 4.5 default-OFF unified-
                        slice lane, never any other route.
@@ -94,6 +95,7 @@ from decoy_engine.execution.physical._plan import (
     PhysicalNode,
     PhysicalPlan,
     PhysicalTable,
+    PoolBinding,
     RejectedAlternative,
     SynthesisStage,
 )
@@ -148,6 +150,7 @@ __all__ = [
     "PhysicalPlan",
     "PhysicalPlanInputs",
     "PhysicalTable",
+    "PoolBinding",
     "PublicationMode",
     "RejectedAlternative",
     "Residency",

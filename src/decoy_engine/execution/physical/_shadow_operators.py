@@ -1,5 +1,5 @@
-"""Task 4.4 C2: direct native operator dispatch for the four slice
-strategies.
+"""Task 4.4 C2 (extended by Task 4.6 slice 1): direct native operator
+dispatch for the shadow-admitted slice strategies.
 
 Calls the low-level native kernels DIRECTLY -- never `run_native_or_oracle_
 chunked` (`native/_dispatch.py:431`), which does whole-table admission and
@@ -12,10 +12,11 @@ of failing, and the comparison would "pass" against itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
@@ -30,23 +31,29 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     ShadowDifference,
 )
 
+if TYPE_CHECKING:
+    from decoy_engine.execution.native._index_ext import IndexDerivationKernel
+    from decoy_engine.generation.pool import ValuePool
+
 __all__ = ["OperatorCallEvidence", "run_operator"]
 
 _PASSTHROUGH: Final = "native_passthrough"
 _REDACT: Final = "native_redact"
 _TRUNCATE: Final = "native_truncate"
 _KEYED_HASH: Final = "native_keyed_hash"
+_FAKER_SELECT: Final = "native_faker_select"
 
 
 @dataclass
 class OperatorCallEvidence:
     """Per-node route evidence the coordinator accumulates across a table's
     batches (design doc section 7's route-evidence record, scoped to what
-    4.4 shadows). `compiled_kernel_executed` is set ONLY after
-    `native_keyed_hash` itself returns successfully -- the same positive-
-    evidence contract `_chunk_masking._mask_chunk_native` uses for its own
-    `NativeRouteEvidence.compiled_kernel_executed` flag -- so a hash node's
-    "the Rust kernel really ran" claim is never inferred, only observed.
+    the shadow coordinator runs). `compiled_kernel_executed` is set ONLY
+    after `native_keyed_hash` or (Task 4.6 slice 1) `derive_index_batch`
+    itself returns successfully -- the same positive-evidence contract
+    `_chunk_masking._mask_chunk_native` uses for its own `NativeRouteEvidence.
+    compiled_kernel_executed` flag -- so a hash or faker node's "the compiled
+    kernel really ran" claim is never inferred, only observed.
     """
 
     planned_operator: str
@@ -62,11 +69,19 @@ def run_operator(
     binding: ExecutionBinding,
     ctx: ShadowContext,
     evidence: OperatorCallEvidence,
+    pool: ValuePool | None = None,
+    index_kernel: IndexDerivationKernel | None = None,
 ) -> pa.Array:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
     back to the oracle -- when the compiled hash companion is missing or
     ABI-incompatible (C2/C4).
+
+    `pool` and `index_kernel` are used ONLY by the faker branch (Task 4.6
+    slice 1): the coordinator resolves the pool once per node and loads the
+    index kernel once per run, then threads both explicitly here so every
+    faker batch shares the identical verified kernel wrapper (mirroring the
+    native chunked route's own preflight-once, thread-through contract).
     """
     cfg = dict(binding.resolved_config)
     if binding.operator_id == _PASSTHROUGH:
@@ -98,7 +113,26 @@ def run_operator(
                 detail=f"operator={binding.operator_id!r}: compiled hash companion unavailable",
             ) from exc
         evidence.compiled_kernel_executed = True
-    else:  # pragma: no cover - C0 only ever binds the four slice operators
+    elif binding.operator_id == _FAKER_SELECT:
+        if binding.key_binding is None or binding.pool_binding is None:
+            # pragma: no cover - C0 always binds both together for faker
+            raise AssertionError("faker node reached run_operator with no KeyBinding/PoolBinding")
+        if pool is None or index_kernel is None:
+            # pragma: no cover - the coordinator always resolves both before
+            # calling run_operator for a faker-bound node
+            raise AssertionError(
+                "faker node reached run_operator with no resolved pool/index_kernel"
+            )
+        out = sample_faker_array(
+            array,
+            pool=pool,
+            namespace=binding.key_binding.namespace,
+            mask_key=ctx.mask_key,
+            index_kernel=index_kernel,
+            native_threads=ctx.native_threads,
+        )
+        evidence.compiled_kernel_executed = True
+    else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
         raise AssertionError(f"unbound operator id {binding.operator_id!r}")
     evidence.actual_operator = binding.operator_id
     evidence.executed = True

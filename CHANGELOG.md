@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (Task 4.6 slice 1: deterministic-faker shadow operator, 2026-09-16)
+
+The physical-plan shadow coordinator (Task 4.4's four scalar operators) gains a fifth admitted
+operator, `native_faker_select`: a deterministic-reuse `person_first_name`/`person_last_name`
+faker column, single-table and non-FK, now proves cell-for-cell parity against the pandas oracle
+under the shadow coordinator, on the same shadow-only (never-publishes) contract the four scalar
+operators already use. `PoolBinding` (`provider` + `plan_pool_size`, no locale or secret material)
+joins `KeyBinding` on `ExecutionBinding`; the compiled index kernel loads once per shadow run and
+each faker node's pool builds once per identity, backed by a fresh run-scoped `PoolCache`, never
+the module-global default. `_sample_faker_chunk` is promoted to the shared `sample_faker_array`
+helper so the native production route and the new shadow operator run the identical selection
+code -- no change to native production output.
+
+Dormant by design: no production allowlist changes, no default flip. The unified-slice publish
+lane (`_unified_slice.py`) still declines any table carrying a faker column, exactly as before;
+activating faker on that lane is a later, separately-gated slice. Covered by
+`tests/physical/test_shadow_corpus.py`, `test_shadow_bindings.py`, `test_shadow_faker_lifecycle.py`,
+`test_shadow_no_secret_serialization.py`, and `tests/native/test_sample_faker_array.py`.
+
 ### Added (D9 statistical bench harness, 2026-09-15)
 
 `scripts/bench-unified-slice/bench_compare.py`: the Task 4.5 FOLLOWUP-BENCH-D9

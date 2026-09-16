@@ -32,6 +32,7 @@ _EXPECTED_CODES = frozenset(
         "publication-attempt",
         "native_companion_unavailable",
         "duplicate-node-declaration",
+        "faker-pool-non-string-output",
     }
 )
 

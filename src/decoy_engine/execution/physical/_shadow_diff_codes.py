@@ -17,6 +17,7 @@ __all__ = [
     "DIAGNOSTICS_DIFF",
     "DIFFERENCE_CODES",
     "DUPLICATE_NODE_DECLARATION",
+    "FAKER_POOL_NON_STRING_OUTPUT",
     "NATIVE_COMPANION_UNAVAILABLE",
     "NULL_MASK_DIFF",
     "OPERATOR_NOT_EXECUTED",
@@ -53,6 +54,13 @@ DUPLICATE_NODE_DECLARATION: Final = "duplicate-node-declaration"
 # oracle. Underscored (not hyphenated) to match the live exception's own
 # code-naming convention, since it is a direct translation of it.
 NATIVE_COMPANION_UNAVAILABLE: Final = "native_companion_unavailable"
+# The shadow faker operator (`sample_faker_array`) always emits `pa.string()`;
+# admission only checks the provider NAME + poolability + string SOURCE type,
+# never the pool's actual value type. A custom `ProviderRegistry.override()`
+# can rebind an allowlisted name to a poolable adapter that yields non-string
+# values, which would otherwise crash the Arrow cast instead of diverging
+# through a coded, privacy-safe difference.
+FAKER_POOL_NON_STRING_OUTPUT: Final = "faker-pool-non-string-output"
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -69,6 +77,7 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         PUBLICATION_ATTEMPT,
         NATIVE_COMPANION_UNAVAILABLE,
         DUPLICATE_NODE_DECLARATION,
+        FAKER_POOL_NON_STRING_OUTPUT,
     }
 )
 

@@ -1,6 +1,6 @@
-"""Task 4.4 C1/C2/C6: `ShadowCoordinator` -- the unified batch coordinator,
-run in SHADOW mode, for the bounded slice (design doc section 8.3's actions
-minus publish).
+"""Task 4.4 C1/C2/C6 (extended by Task 4.6 slice 1): `ShadowCoordinator` --
+the unified batch coordinator, run in SHADOW mode, for the bounded slice
+(design doc section 8.3's actions minus publish).
 
 `ShadowCoordinator` has no sink, publisher, or target argument anywhere in
 its constructor or `run` -- not a stubbed no-op, an argument that does not
@@ -14,18 +14,37 @@ column and an all-null (non-empty) column. Both are pinned from a real
 `tests/physical/test_shadow_corpus.py` re-verifies every one of them against
 the live oracle -- this module never redefines the oracle's answer, it
 reproduces it.
+
+Task 4.6 slice 1 adds the deterministic-faker lifecycle: the compiled index
+kernel is loaded at most ONCE per `run()` call, lazily, the first time a
+bound faker node is reached, and BEFORE that node's pool is built; every
+faker node's pool is resolved ONCE per unique `PoolIdentity` via a
+run-scoped map (never per batch, never keyed by node_id -- two nodes sharing
+an identity share one build), backed by a FRESH `PoolCache` scoped to this
+one `run()` call, never the module-global default cache (whose identity
+space omits the registry/backend version, so a stale cross-run hit could
+silently pass as a build).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pyarrow as pa
 
-from decoy_engine.execution.physical._plan import PhysicalPlan
+from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.native._index_ext import (
+    IndexDerivationKernel,
+    load_compiled_index_kernel,
+)
+from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
+    FAKER_POOL_NON_STRING_OUTPUT,
+    NATIVE_COMPANION_UNAVAILABLE,
     OPERATOR_NOT_EXECUTED,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     RESOURCE_LIMIT_BREACH,
@@ -34,13 +53,18 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
 )
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
 from decoy_engine.execution.physical._shadow_snapshot import ShadowSnapshot
+from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
+from decoy_engine.generation.pool._identity import PoolIdentity, resolve_faker_pool_identity
+
+if TYPE_CHECKING:
+    from decoy_engine.providers_v2 import ProviderRegistry
 
 __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 
 # Strategies whose masked output is a tokenized string regardless of input
-# type (redact/truncate/hash); passthrough is the one type-preserving
+# type (redact/truncate/hash/faker); passthrough is the one type-preserving
 # strategy and gets its own assembly branch below.
-_TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash"})
+_TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker"})
 
 
 @dataclass(frozen=True)
@@ -57,6 +81,27 @@ class ShadowRunResult:
     route_evidence: dict[str, OperatorCallEvidence]
     warnings: tuple[object, ...] = ()
     row_errors: tuple[object, ...] = ()
+
+
+def _pool_values_are_string_valued(values: np.ndarray[Any, Any]) -> bool:
+    """True iff every value `values` holds is a string.
+
+    `sample_faker_array` (`native/_chunk_masking.py`) always casts the
+    gathered selection to `pa.string()`; a pool built from a custom-registry
+    adapter that yields non-string values (an int, a float) would otherwise
+    reach that cast and raise an uncoded `ArrowTypeError` instead of a coded
+    shadow difference. A native numpy string dtype (`U`/`S`) is always fine;
+    an object-dtype array (how `PoolBuilder.build` always stores pool
+    values) is fine only when every non-null element is actually a `str` --
+    a numeric dtype, or an object array holding a non-str/non-None element,
+    fails the check.
+    """
+    kind = values.dtype.kind
+    if kind in ("U", "S"):
+        return True
+    if kind != "O":
+        return False
+    return all(v is None or isinstance(v, str) for v in values.tolist())
 
 
 def _batches(table: pa.Table, batch_size_rows: int) -> list[pa.Table]:
@@ -122,20 +167,43 @@ class ShadowCoordinator:
     """Runs a C0-extended `PhysicalPlan` over a resident `ShadowSnapshot`.
     Carries no sink/publisher/target dependency at all -- neither the
     constructor nor `run` accepts one.
+
+    `registry` (Task 4.6 slice 1) is the EXACT resolved `ProviderRegistry` a
+    bound faker node's pool must build against -- the SAME registry the
+    oracle used for the same job, never `get_default_registry()` (a
+    caller-overridden registry builds different values under the same
+    provider name, so falling back to the default would silently diverge
+    from a custom-registry oracle run). Optional, defaulting to `None`, so
+    the pre-existing unified-slice production caller (`_unified_slice.py`,
+    which never admits a faker node in this slice) constructs
+    `ShadowCoordinator(ctx=ctx)` unchanged; a bound faker node asserts the
+    registry is present rather than silently masking with the wrong one.
     """
 
     ctx: ShadowContext
+    registry: ProviderRegistry | None = None
 
     def run(self, plan: PhysicalPlan, snapshot: ShadowSnapshot) -> ShadowRunResult:
         outputs: dict[str, pa.Table] = {}
         route_evidence: dict[str, OperatorCallEvidence] = {}
+        # Loaded at most once per run, lazily, the moment the first bound
+        # faker node is reached -- and before that node's pool is built.
+        index_kernel: IndexDerivationKernel | None = None
+        # The authoritative build-once-per-identity store for this run,
+        # keyed by `PoolIdentity` (NOT node_id): two nodes sharing an
+        # identity share one build, and an A->B->A node order cannot rebuild
+        # A. Backed by a fresh, run-scoped `PoolCache` -- never the
+        # module-global default (see the module docstring).
+        pools_by_identity: dict[PoolIdentity, ValuePool] = {}
+        pool_cache = PoolCache()
+
         for table in plan.tables:
             source = snapshot.tables[table.table]
             columns: dict[str, pa.Array] = {}
             for node in table.nodes:
                 binding = node.execution
                 if binding is None:
-                    # Out of the 4.4 slice (a different strategy, or a
+                    # Out of the slice (a different strategy, or a
                     # native-admission miss); nothing to run for this node.
                     continue
                 column = node.columns[0]
@@ -150,6 +218,24 @@ class ShadowCoordinator:
                 evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
                 route_evidence[node.node_id] = evidence
 
+                pool: ValuePool | None = None
+                if binding.pool_binding is not None:
+                    if index_kernel is None:
+                        try:
+                            index_kernel = load_compiled_index_kernel()
+                        except CryptoExtensionUnavailableError as exc:
+                            raise ShadowDifference(
+                                code=NATIVE_COMPANION_UNAVAILABLE,
+                                detail=(
+                                    f"node={node.node_id!r}: compiled index companion unavailable"
+                                ),
+                            ) from exc
+                    pool = self._resolve_pool(
+                        binding=binding,
+                        pools_by_identity=pools_by_identity,
+                        pool_cache=pool_cache,
+                    )
+
                 parts: list[pa.Array] = []
                 for batch in _batches(source, self.ctx.batch_size_rows):
                     if batch.num_rows > self.ctx.batch_size_rows:  # pragma: no cover
@@ -159,7 +245,14 @@ class ShadowCoordinator:
                         )
                     array = batch.column(column)
                     parts.append(
-                        run_operator(array, binding=binding, ctx=self.ctx, evidence=evidence)
+                        run_operator(
+                            array,
+                            binding=binding,
+                            ctx=self.ctx,
+                            evidence=evidence,
+                            pool=pool,
+                            index_kernel=index_kernel,
+                        )
                     )
 
                 if not evidence.executed:  # pragma: no cover - run_operator always sets this
@@ -199,3 +292,83 @@ class ShadowCoordinator:
                 outputs[table.table] = pa.table({name: columns[name] for name in source_order})
 
         return ShadowRunResult(outputs=outputs, route_evidence=route_evidence)
+
+    def _resolve_pool(
+        self,
+        *,
+        binding: ExecutionBinding,
+        pools_by_identity: dict[PoolIdentity, ValuePool],
+        pool_cache: PoolCache,
+    ) -> ValuePool:
+        """Resolve one faker node's pool, ONCE, outside the batch loop:
+        consult the run-scoped identity map first (the authoritative
+        build-once store -- an LRU-backed cache alone could evict an entry
+        between two nodes sharing an identity and force a spurious rebuild),
+        then the per-run `PoolCache`, and build via `PoolBuilder` only on a
+        genuine miss on both. Uses the SAME `resolve_faker_pool_identity`
+        the oracle and the native chunked route use, so all three can never
+        compute different identities for one column.
+        """
+        if binding.pool_binding is None or binding.key_binding is None:
+            # pragma: no cover - only ever called for a faker-bound node,
+            # which C0 always binds both together for.
+            raise AssertionError("_resolve_pool called without a pool_binding/key_binding")
+        if self.registry is None:
+            raise AssertionError(
+                "a faker node is bound but ShadowCoordinator.registry is None; the "
+                "shadow caller must thread the resolved ProviderRegistry (inputs.registry) "
+                "for any run admitting a faker node."
+            )
+        if self.ctx.job_seed == b"":
+            # Symmetric to the registry guard: a bound faker node with the
+            # empty-default job_seed would build a wrong-but-passing pool
+            # (job_seed governs pool content). from_key_provider always
+            # supplies the real value, so this only fires on a mis-wired caller.
+            raise AssertionError(
+                "a faker node is bound but ShadowContext.job_seed is empty; the shadow "
+                "caller must build the context via from_key_provider so job_seed is set."
+            )
+        builder = PoolBuilder(self.registry)
+        pool_size, locale, build_config, identity = resolve_faker_pool_identity(
+            builder=builder,
+            provider=binding.pool_binding.provider,
+            plan_pool_size=binding.pool_binding.plan_pool_size,
+            namespace=binding.key_binding.namespace,
+            job_seed=self.ctx.job_seed,
+            cfg=dict(binding.resolved_config),
+        )
+        pool: ValuePool
+        cached_pool = pools_by_identity.get(identity)
+        if cached_pool is not None:
+            pool = cached_pool
+        else:
+            from_secondary_cache = pool_cache.get(identity)
+            built = from_secondary_cache if isinstance(from_secondary_cache, ValuePool) else None
+            if built is None:
+                built = builder.build(
+                    provider=binding.pool_binding.provider,
+                    size=pool_size,
+                    job_seed=self.ctx.job_seed,
+                    locale=locale,
+                    config=build_config,
+                    namespace=binding.key_binding.namespace,
+                )
+                pool_cache.put(built)
+            pool = built
+            pools_by_identity[identity] = pool
+
+        # Admission (`_faker_pool_bindable`) proves only the provider NAME is
+        # allowlisted and poolable; it never inspects what the bound adapter
+        # actually produces. A custom-registry override can rebind that name
+        # to a poolable adapter yielding non-string values, so the pool's
+        # real value type is checked here, at the one point it is known,
+        # rather than trusting admission's weaker guarantee.
+        if not _pool_values_are_string_valued(pool.values):
+            raise ShadowDifference(
+                code=FAKER_POOL_NON_STRING_OUTPUT,
+                detail=(
+                    f"provider={binding.pool_binding.provider!r}: pool values are not "
+                    "all string-valued, which the shadow faker operator requires"
+                ),
+            )
+        return pool
