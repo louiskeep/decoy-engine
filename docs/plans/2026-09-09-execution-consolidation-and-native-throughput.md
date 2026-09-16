@@ -1330,6 +1330,20 @@ single-edge/chain/fan-out FK fixtures. FK machinery stays single-owner in _runne
 approved "wrap today's executors" design, NOT a coordinator reimplementation). First 4.6 slice with a real
 (dormant) production src change: a {OUT_OF_CORE}-exact dispatch branch + runtime-only ShadowContext carriers
 + three new difference codes. All three slices double-gated (dennis APPROVE + Codex final GO); slice-3 also
-full-engine-suite green (13544 passed under xdist). NEXT: slice 4 (bounded Group B/C operators). Then slices
-5-6, then route activation (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
+full-engine-suite green (13544 passed under xdist). Slice 4 (bounded Group B/C operators) MERGED (PR #147,
+merge 5a79825b): adds Group B/C payload columns (fpe/text_redact/categorical/text_mask/code_set/
+bucket_perturb) to the shadow FK fixtures at batch_size_rows=1 (real batch boundaries) and proves parity vs
+the oracle on values + diagnostics + quality-metrics; the one small src change carries quality_metrics
+(code_set corpus-provenance) through _adapt_ooc_result. Slice 5a (pure-generate parity) MERGED (PR #148,
+merge 161c9524): FIRST unit of the generation arc -- the coordinator dispatches a generate-only synthesis
+stage through the Task 4.2 SynthesisStageAdapter and proves a PHASE-BOUND DIFFERENTIAL PARITY vs
+run_pipeline (exact Arrow-IPC bytes on success; failure fingerprint + phase-entry spies on identical
+rejection), for approved generators sequence+categorical; SynthesisStage gains a config_digest identity
+bind. Design = Codex's own recommendation, adopted after the exhaustive-validation approach proved unbounded.
+Cam (2026-09-16) scoped slice 5 as the coordinator GENUINELY OWNING generation (dispatch + mixed
+generate+mask + the generate->mask stitch; "generation is equally important as masking"); decomposed into
+5a (done), 5a-faker (frozen-provider faker generation), 5b-i (mixed no-FK + output stitch), 5b-ii (mixed FK
++ merged-source pool + stitch precedence). All 4.6 slices double-gated (dennis APPROVE + Codex final GO).
+NEXT: 5b (mixed generate+mask + stitch), then slice 6 (approved global/hard-tail), then route activation
+(Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
 
