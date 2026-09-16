@@ -116,9 +116,14 @@ def run_shadow_and_oracle(
     the coordinator's own resource-bounded batching lines up with the
     oracle's chunk width instead of the unrelated `batch_size_rows` knob),
     and the oracle's own `run_pipeline(auto_chunk=...)` call. `auto_chunk=
-    False` (the default) reproduces prior behavior exactly: the oracle stays
-    full_frame and `batch_size_rows` keeps its old, chunking-unrelated role
-    (the batch-size x row-order matrix).
+    False` (the default) keeps every existing caller full_frame and
+    `batch_size_rows` in its old, chunking-unrelated role (the batch-size x
+    row-order matrix). One nuance: this now passes `auto_chunk=False` to the
+    capture layer, whose own default was True. That is inert for every current
+    fixture (all sub-threshold, so `classify_job` returns full_frame either
+    way), but a hypothetical at-or-above-threshold, chunk-stable fixture that
+    omitted `auto_chunk` would have compiled CHUNKED under the old default and
+    now compiles FULL_FRAME.
     """
     if auto_chunk and chunk_size_rows is None:
         raise ValueError("auto_chunk=True requires an explicit chunk_size_rows")

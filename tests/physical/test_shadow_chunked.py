@@ -17,6 +17,7 @@ disposition (chunked vs. full_frame) for the strategies already admitted.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pyarrow as pa
@@ -132,8 +133,17 @@ def test_unkeyed_multi_chunk_parity_always_run(tmp_path: Path) -> None:
     auto_chunk_block = run.oracle.quality_metrics["auto_chunk"]
     assert auto_chunk_block["mode"] == "chunked"
     assert auto_chunk_block["chunk_count"] == _EXPECTED_CHUNK_COUNT
-    last_chunk_size = _N_ROWS - (_EXPECTED_CHUNK_COUNT - 1) * _CHUNK_SIZE_ROWS
-    assert last_chunk_size == _EXPECTED_LAST_CHUNK_SIZE
+    # Behavioural, not constant-arithmetic: tie the OBSERVED chunk_count to the
+    # OBSERVED output row count and the width we set, and confirm the final
+    # chunk is genuinely ragged. A different chunking (wrong width, a dropped
+    # boundary, a silent full_frame) breaks these; the old assertion only
+    # restated the test's own constants.
+    out_rows = run.oracle.outputs["t"].num_rows
+    assert out_rows == _N_ROWS  # every row survived across the ragged boundary
+    assert auto_chunk_block["chunk_count"] == math.ceil(out_rows / _CHUNK_SIZE_ROWS)
+    observed_last_chunk = out_rows - (auto_chunk_block["chunk_count"] - 1) * _CHUNK_SIZE_ROWS
+    assert observed_last_chunk == _EXPECTED_LAST_CHUNK_SIZE
+    assert 0 < observed_last_chunk < _CHUNK_SIZE_ROWS  # genuinely ragged
 
 
 # ---------------------------------------------------------------------------
