@@ -18,6 +18,7 @@ __all__ = [
     "DIFFERENCE_CODES",
     "DUPLICATE_NODE_DECLARATION",
     "FAKER_POOL_NON_STRING_OUTPUT",
+    "GENERATION_SHAPE_UNSUPPORTED",
     "MIXED_DRIVER_UNSUPPORTED",
     "NATIVE_COMPANION_UNAVAILABLE",
     "NULL_MASK_DIFF",
@@ -81,6 +82,17 @@ OOC_DISPATCH_MISSING_DEPENDENCY: Final = "ooc-dispatch-missing-dependency"
 # reused comparator cannot express for OOC's documented normalizations).
 # `detail` carries a column name + a count, never a cell value.
 OOC_FK_PARITY_DIFF: Final = "ooc-fk-parity-diff"
+# Task 4.6 slice 5a: a pure-generate plan's shape falls outside the admitted
+# domain for the coordinator's synthesis dispatch (`_shadow_coordinator.
+# _require_generation_shadowable`) -- a synthesis+mask mix, a missing/
+# malformed/mismatched `ShadowContext.plan`, an unsupported generate-column
+# type, `determinism: fresh`, a non-empty sources/relationships/namespaces/
+# subset/transforms/validators/quarantine/run_storm/mask_secret_ref, or a
+# non-admitted runtime carrier (derive_key/instance_default_locale/
+# key_provider/sink/source_loader/vault_writer/fidelity_report). `detail`
+# names the failed structural check + a table/field LOCATION only, never a
+# leaf knob's value (the gate never inspects one).
+GENERATION_SHAPE_UNSUPPORTED: Final = "generation-shape-unsupported"
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -101,6 +113,7 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         MIXED_DRIVER_UNSUPPORTED,
         OOC_DISPATCH_MISSING_DEPENDENCY,
         OOC_FK_PARITY_DIFF,
+        GENERATION_SHAPE_UNSUPPORTED,
     }
 )
 

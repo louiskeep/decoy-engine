@@ -36,6 +36,7 @@ _EXPECTED_CODES = frozenset(
         "mixed-driver-unsupported",
         "ooc-dispatch-missing-dependency",
         "ooc-fk-parity-diff",
+        "generation-shape-unsupported",
     }
 )
 
