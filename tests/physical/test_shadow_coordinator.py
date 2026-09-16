@@ -8,30 +8,37 @@ from __future__ import annotations
 
 import inspect
 
+import numpy as np
 import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
+    KeyBinding,
     PhysicalNode,
     PhysicalPlan,
     PhysicalTable,
+    PoolBinding,
 )
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_coordinator import (
     ShadowCoordinator,
     _assemble_column,
     _batches,
+    _pool_values_are_string_valued,
 )
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
+    FAKER_POOL_NON_STRING_OUTPUT,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._types import DriverId
+from decoy_engine.generation.pool import PoolCache
+from decoy_engine.providers_v2 import get_default_registry
 
 
 def _binding(operator_id: str, *, resolved_config: tuple = ()) -> ExecutionBinding:
@@ -291,3 +298,100 @@ def test_route_evidence_batches_run_counts_every_batch() -> None:
 
     result = ShadowCoordinator(ctx=ctx).run(plan, snapshot)
     assert result.route_evidence["t:c:scalar:passthrough"].batches_run == 3  # 3, 3, 1
+
+
+# ---------------------------------------------------------------------------
+# Faker pool build-time string-output guard (Codex final-gate HIGH):
+# admission only checks the provider NAME + poolability + string SOURCE
+# type, never what the bound adapter's pool actually contains. A custom
+# `ProviderRegistry.override()` can rebind an allowlisted name to a poolable
+# adapter that yields non-string values; the shadow faker operator always
+# casts to `pa.string()`, so an unchecked pool would crash there instead of
+# surfacing a coded difference.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        (np.array(["a", "bb", "ccc"], dtype="<U3"), True),
+        (np.array([1, 2, 3], dtype=np.int64), False),
+        (np.array([1.0, 2.0], dtype=np.float64), False),
+        (np.array([True, False], dtype=np.bool_), False),
+        (np.array(["a", None, "b"], dtype=object), True),
+        (np.array(["a", 1, "b"], dtype=object), False),
+    ],
+    ids=[
+        "numpy_string_dtype_ok",
+        "numpy_int_dtype_rejected",
+        "numpy_float_dtype_rejected",
+        "numpy_bool_dtype_rejected",
+        "object_dtype_of_str_with_none_ok",
+        "object_dtype_with_an_int_rejected",
+    ],
+)
+def test_pool_values_are_string_valued(values: np.ndarray, expected: bool) -> None:
+    assert _pool_values_are_string_valued(values) is expected
+
+
+class _IntSentinelAdapter:
+    """A minimal `BackendAdapter` that declares itself (via the registry
+    entry's own `CapabilityMatrix`, unchanged) exactly as poolable as the
+    real Faker-bound provider it replaces, but whose `generate_batch`
+    yields INTEGERS -- the shape admission's provider-name + poolable-flag +
+    string-source check cannot see, since it never inspects the adapter's
+    actual output type.
+    """
+
+    backend_type = "faker"
+    backend_version = "sentinel-1"
+
+    def generate(self, provider: str, *, spec: object, source_value: bytes | None = None) -> int:
+        return 0
+
+    def generate_batch(self, provider: str, *, spec: object, count: int) -> list[int]:
+        return list(range(count))
+
+    def capability_matrix(self, provider: str) -> object:
+        return get_default_registry().get_capabilities(provider)
+
+
+def test_faker_non_string_registry_override_is_declined() -> None:
+    """Codex final-gate HIGH, direct regression test: a custom registry
+    rebinds the allowlisted `person_first_name` provider to a poolable
+    adapter that outputs int64 values. Admission would still bind this node
+    (the name is allowlisted, the registry says poolable, the source is
+    string-typed); the guard in `_resolve_pool` is what has to catch it,
+    before `sample_faker_array`'s string-only Arrow cast ever runs.
+
+    Calls `_resolve_pool` directly rather than a full `ShadowCoordinator.run`:
+    the guard fires during the pool BUILD itself, entirely before the
+    compiled index kernel is loaded or touched, so this exercises the exact
+    fix without needing the native companion.
+    """
+    default_registry = get_default_registry()
+    custom_registry = default_registry.override(
+        "person_first_name",
+        _IntSentinelAdapter(),
+        default_registry.get_capabilities("person_first_name"),
+    )
+    binding = ExecutionBinding(
+        operator_id="native_faker_select",
+        operator_reason="slice_native_admitted:faker",
+        resolved_config=(),
+        input_schema=pa.schema([pa.field("c", pa.string())]),
+        output_schema=pa.schema([pa.field("c", pa.string())]),
+        determinism_family=None,
+        determinism_version=2,
+        key_binding=KeyBinding(key_source="mask_key", namespace="ns_int_override"),
+        diagnostic_obligations=(),
+        required_prepasses=(),
+        batch_estimate=None,
+        pool_binding=PoolBinding(provider="person_first_name", plan_pool_size=5),
+    )
+    ctx = ShadowContext(mask_key=b"\x09" * 32, job_seed=b"12345678")
+    coordinator = ShadowCoordinator(ctx=ctx, registry=custom_registry)
+
+    with pytest.raises(ShadowDifference) as excinfo:
+        coordinator._resolve_pool(binding=binding, pools_by_identity={}, pool_cache=PoolCache())
+    assert excinfo.value.code == FAKER_POOL_NON_STRING_OUTPUT

@@ -44,6 +44,32 @@ def _key_provider() -> SecretKeyProvider:
     return SecretKeyProvider(secret=_MASK_KEY, key_version="v1")
 
 
+class _StringSentinelAdapter:
+    """A minimal `BackendAdapter` whose batch output is deterministic,
+    string-valued, and unmistakably distinct from any real Faker name.
+
+    Used to rebind an allowlisted faker provider name to something whose
+    VALUES a fallback-to-default-registry bug would visibly get wrong (real
+    first names instead of these sentinels), unlike the prior version of
+    `test_faker_non_default_registry_parity`, which swapped in another
+    allowlisted name's OWN `FakerAdapter` instance -- same singleton, same
+    capabilities, so a silent default-registry fallback would have produced
+    identical output and gone undetected.
+    """
+
+    backend_type = "faker"
+    backend_version = "sentinel-1"
+
+    def generate(self, provider: str, *, spec: object, source_value: bytes | None = None) -> str:
+        return "OVR-0"
+
+    def generate_batch(self, provider: str, *, spec: object, count: int) -> list[str]:
+        return [f"OVR-{i}" for i in range(count)]
+
+    def capability_matrix(self, provider: str) -> object:
+        return get_default_registry().get_capabilities(provider)
+
+
 def _faker_column(
     name: str = "c",
     *,
@@ -519,25 +545,38 @@ def test_pool_identity_determinism_two_identical_faker_columns_select_identicall
 
 def test_faker_non_default_registry_parity(tmp_path: Path) -> None:
     """HIGH-2: shadow and oracle, both threaded the SAME non-default
-    `ProviderRegistry` (one provider's binding swapped via `.override`), must
-    still match cell-for-cell. A coordinator that silently fell back to
+    `ProviderRegistry` (`person_first_name` rebound via `.override` to a
+    sentinel adapter whose values are deterministic, string-valued, and
+    unlike any real first name), must still match cell-for-cell AND emit
+    those sentinel values. A coordinator that silently fell back to
     `get_default_registry()` instead of the threaded `inputs.registry` would
-    diverge here, since the oracle is given the identical custom registry.
+    produce real first names here instead, since the oracle is given the
+    identical custom registry and would diverge from it.
     """
+    if not native_companion_status().ok:
+        pytest.skip("compiled decoy-engine-native companion unavailable")
     default_registry = get_default_registry()
     custom_registry: ProviderRegistry = default_registry.override(
         "person_first_name",
-        default_registry.get_adapter("person_last_name"),
+        _StringSentinelAdapter(),
         default_registry.get_capabilities("person_first_name"),
     )
     source = pa.table({"c": pa.array([f"src_{i % 5}" for i in range(12)], type=pa.string())})
-    _verify(
-        tmp_path,
-        "t",
-        source,
-        [_faker_column(namespace="ns_custom_registry")],
-        name="faker_custom_registry",
-        registry=custom_registry,
+    columns = [_faker_column(namespace="ns_custom_registry")]
+    path = write_read_only_fixture(tmp_path, source, "faker_custom_registry")
+    config = build_config(tmp_path, "t", path, columns)
+    run = run_shadow_and_oracle(
+        config, "t", source, key_provider=_key_provider(), registry=custom_registry
+    )
+    assert_every_node_bound(run.plan)
+    assert_shadow_matches_oracle(run)
+    assert_route_evidence_matches_plan(run)
+
+    values = run.shadow.outputs["t"].column("c").to_pylist()
+    assert all(v.startswith("OVR-") for v in values), (
+        "expected the shadow's faker output to use the THREADED custom registry's "
+        f"sentinel values, got {values!r} -- a fallback to the default registry "
+        "would produce real first names here instead"
     )
 
 

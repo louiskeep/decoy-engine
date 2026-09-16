@@ -29,8 +29,9 @@ silently pass as a build).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
@@ -42,6 +43,7 @@ from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
+    FAKER_POOL_NON_STRING_OUTPUT,
     NATIVE_COMPANION_UNAVAILABLE,
     OPERATOR_NOT_EXECUTED,
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
@@ -79,6 +81,27 @@ class ShadowRunResult:
     route_evidence: dict[str, OperatorCallEvidence]
     warnings: tuple[object, ...] = ()
     row_errors: tuple[object, ...] = ()
+
+
+def _pool_values_are_string_valued(values: np.ndarray[Any, Any]) -> bool:
+    """True iff every value `values` holds is a string.
+
+    `sample_faker_array` (`native/_chunk_masking.py`) always casts the
+    gathered selection to `pa.string()`; a pool built from a custom-registry
+    adapter that yields non-string values (an int, a float) would otherwise
+    reach that cast and raise an uncoded `ArrowTypeError` instead of a coded
+    shadow difference. A native numpy string dtype (`U`/`S`) is always fine;
+    an object-dtype array (how `PoolBuilder.build` always stores pool
+    values) is fine only when every non-null element is actually a `str` --
+    a numeric dtype, or an object array holding a non-str/non-None element,
+    fails the check.
+    """
+    kind = values.dtype.kind
+    if kind in ("U", "S"):
+        return True
+    if kind != "O":
+        return False
+    return all(v is None or isinstance(v, str) for v in values.tolist())
 
 
 def _batches(table: pa.Table, batch_size_rows: int) -> list[pa.Table]:
@@ -314,20 +337,38 @@ class ShadowCoordinator:
             job_seed=self.ctx.job_seed,
             cfg=dict(binding.resolved_config),
         )
+        pool: ValuePool
         cached_pool = pools_by_identity.get(identity)
         if cached_pool is not None:
-            return cached_pool
-        from_secondary_cache = pool_cache.get(identity)
-        pool = from_secondary_cache if isinstance(from_secondary_cache, ValuePool) else None
-        if pool is None:
-            pool = builder.build(
-                provider=binding.pool_binding.provider,
-                size=pool_size,
-                job_seed=self.ctx.job_seed,
-                locale=locale,
-                config=build_config,
-                namespace=binding.key_binding.namespace,
+            pool = cached_pool
+        else:
+            from_secondary_cache = pool_cache.get(identity)
+            built = from_secondary_cache if isinstance(from_secondary_cache, ValuePool) else None
+            if built is None:
+                built = builder.build(
+                    provider=binding.pool_binding.provider,
+                    size=pool_size,
+                    job_seed=self.ctx.job_seed,
+                    locale=locale,
+                    config=build_config,
+                    namespace=binding.key_binding.namespace,
+                )
+                pool_cache.put(built)
+            pool = built
+            pools_by_identity[identity] = pool
+
+        # Admission (`_faker_pool_bindable`) proves only the provider NAME is
+        # allowlisted and poolable; it never inspects what the bound adapter
+        # actually produces. A custom-registry override can rebind that name
+        # to a poolable adapter yielding non-string values, so the pool's
+        # real value type is checked here, at the one point it is known,
+        # rather than trusting admission's weaker guarantee.
+        if not _pool_values_are_string_valued(pool.values):
+            raise ShadowDifference(
+                code=FAKER_POOL_NON_STRING_OUTPUT,
+                detail=(
+                    f"provider={binding.pool_binding.provider!r}: pool values are not "
+                    "all string-valued, which the shadow faker operator requires"
+                ),
             )
-            pool_cache.put(pool)
-        pools_by_identity[identity] = pool
         return pool
