@@ -37,13 +37,22 @@ Task 4.6 slice 5a adds a PURE-GENERATE dispatch branch: when a compiled
 plan has no mask tables at all (`plan.tables` empty) and does carry a
 synthesis stage, `run()` skips both the per-node loop and the OOC branch and
 dispatches through the existing Task 4.2 `SynthesisStageAdapter`, which
-delegates to `generate_tables` -- never reimplemented here. A plan that
-mixes a synthesis stage with ANY mask tables (OOC included) is 5b territory
-(the generate->mask stitch is not owned here yet) and is declined rather
-than silently masking only the mask half. The admission gate + adapter call
-themselves live in `_shadow_generation.py` (split out to keep this module
-under the 600-LOC orchestration cap); `_dispatch_synthesis` below is a thin
-wrap of it.
+delegates to `generate_tables` -- never reimplemented here. The admission
+gate + adapter call themselves live in `_shadow_generation.py` (split out to
+keep this module under the 600-LOC orchestration cap); `_dispatch_synthesis`
+below is a thin wrap of it.
+
+Task 4.6 slice 5b-i adds the INDEPENDENT-MIXED dispatch branch: when a
+compiled plan has BOTH mask tables and a synthesis stage, `run()` dispatches
+through `_shadow_mixed.dispatch_mixed`, which admits the job via its own
+contract (no generate->mask FK edge, no OUT_OF_CORE mask driver, no
+validators/quarantine/vault/fidelity), runs generation via the same adapter
+path slice 5a uses, reuses THIS class's own per-node loop for the mask half
+(by recursing into `run()` with `synthesis` stripped off the plan), and
+stitches the two outputs via the shared `execution._stitch` helper. A shape
+that dispatch does not admit (a generate->mask FK coupling, an OOC mask
+driver, ...) declines coded rather than silently masking only part of the
+job -- see `_shadow_mixed.py` for the full contract.
 """
 
 from __future__ import annotations
@@ -270,14 +279,15 @@ class ShadowCoordinator:
         # straight through, byte-unchanged.
         if not plan.tables and plan.synthesis is not None:
             return self._dispatch_synthesis(plan.synthesis, snapshot)
-        if plan.synthesis is not None:
-            # A synthesis stage paired with ANY mask tables (OOC included) is
-            # 5b territory: the generate->mask stitch is not owned here yet,
-            # so this declines rather than silently masking only the mask
-            # half and dropping the generate half (this is also where the
-            # slice-3 out_of_core+synthesis case lands, since it always has
-            # mask tables -- same code, no behavior change for it).
-            raise ShadowDifference(code=MIXED_DRIVER_UNSUPPORTED, detail="synthesis+mask")
+        if plan.tables and plan.synthesis is not None:
+            # Task 4.6 slice 5b-i: an INDEPENDENT-mixed plan (both present).
+            # `_dispatch_mixed` admits via its own contract, runs generation,
+            # reuses THIS loop for the mask half (by recursing into `run()`
+            # with `synthesis` stripped), and stitches the two outputs -- see
+            # `_shadow_mixed.py`. A not-yet-admitted shape (a generate->mask
+            # FK edge, an OOC mask driver, ...) declines coded from inside
+            # that gate rather than reaching the branches below.
+            return self._dispatch_mixed(plan, snapshot)
 
         # Task 4.6 slice 3: an OUT_OF_CORE mask-table plan dispatches through
         # the Task 4.2 `OutOfCoreAdapter` (which owns the FK machinery via
@@ -423,6 +433,17 @@ class ShadowCoordinator:
         return ShadowRunResult(
             outputs=dict(outputs), route_evidence={}, driver_invocation=seam_context
         )
+
+    def _dispatch_mixed(self, plan: PhysicalPlan, snapshot: ShadowSnapshot) -> ShadowRunResult:
+        """Thin wrap of `_shadow_mixed.dispatch_mixed` (moved out to keep
+        this module under the 600-LOC orchestration cap; see that module's
+        docstring for the admission gate + generate/mask/stitch sequence).
+        Passes `self` (not just `self.ctx`) since the mask half needs to
+        recurse into this class's own `run()` for its per-node loop.
+        """
+        from decoy_engine.execution.physical._shadow_mixed import dispatch_mixed
+
+        return dispatch_mixed(self, plan, snapshot)
 
     def _dispatch_out_of_core(
         self, plan: PhysicalPlan, snapshot: ShadowSnapshot

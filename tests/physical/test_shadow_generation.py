@@ -45,7 +45,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     MIXED_DRIVER_UNSUPPORTED,
     ShadowDifference,
 )
-from decoy_engine.execution.physical._shadow_generation import require_generation_shadowable
+from decoy_engine.execution.physical._shadow_generation import require_pure_generation_shadowable
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._types import DriverId, ExecutionScope
 from decoy_engine.execution.physical.drivers._synthesis import SynthesisStageAdapter
@@ -681,16 +681,21 @@ def test_decline_table_name_set_mismatch(monkeypatch: pytest.MonkeyPatch) -> Non
     _assert_declines(physical_plan, ctx, monkeypatch)
 
 
-def test_decline_mixed_synthesis_and_mask_tables(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A synthesis stage paired with ANY mask tables is 5b territory (the
-    coordinator never stitches generate+mask output in this slice)."""
+def test_decline_mixed_out_of_core_mask_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A synthesis stage paired with an OUT_OF_CORE mask driver is 5b-ii+
+    territory (the coordinator's slice 5b-i mixed dispatch admits only
+    scalar/full_frame/chunked mask drivers, never OOC -- see
+    `_shadow_mixed.require_independent_mixed_shadowable`). An
+    independent-mixed job with an admitted (non-OOC) mask driver and no
+    generate->mask FK edge is covered by `test_shadow_mixed.py` instead;
+    this guard is what stays declined post-5b-i."""
     from decoy_engine.execution.physical._plan import PhysicalTable
 
     config = _generate_config()
     plan, ctx, snapshot = _admitted_dispatch(config)
     mask_table = PhysicalTable(
         table="masked",
-        driver=DriverId.FULL_FRAME,
+        driver=DriverId.OUT_OF_CORE,
         driver_reason="test",
         driver_reason_detail=None,
         rejected_alternatives=(),
@@ -759,7 +764,7 @@ def test_gate_declines_unencodable_config_json() -> None:
     )
     stage = SynthesisStage(tables=("t",), config_digest="unused")
     with pytest.raises(ShadowDifference) as excinfo:
-        require_generation_shadowable(ctx, stage, capture_shadow_snapshot({}))
+        require_pure_generation_shadowable(ctx, stage, capture_shadow_snapshot({}))
     assert excinfo.value.code == GENERATION_SHAPE_UNSUPPORTED
 
 
@@ -775,5 +780,5 @@ def test_gate_declines_unhashable_column_type() -> None:
     )
     stage = SynthesisStage(tables=("t",), config_digest=digest)
     with pytest.raises(ShadowDifference) as excinfo:
-        require_generation_shadowable(ctx, stage, capture_shadow_snapshot({}))
+        require_pure_generation_shadowable(ctx, stage, capture_shadow_snapshot({}))
     assert excinfo.value.code == GENERATION_SHAPE_UNSUPPORTED

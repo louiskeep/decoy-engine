@@ -222,6 +222,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
     } | {
         "src/decoy_engine/execution/_pipeline.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
+        # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
+        # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
+        # so the "mask wins ties" precedence cannot drift between the two.
+        # Lives at the PARENT `execution` level specifically so `_pipeline.py`
+        # never has to import the physical seam to reach it -- it imports
+        # NOTHING from `execution.physical` itself (confirmed by the sweeps
+        # above), it is simply a new file outside that package.
+        "src/decoy_engine/execution/_stitch.py",
     }
     unexpected = [
         name

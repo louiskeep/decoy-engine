@@ -541,9 +541,24 @@ def assert_every_node_bound(plan: PhysicalPlan) -> None:
 
 def _arrow_ipc_stream_bytes(table: pa.Table) -> bytes:
     """`table.combine_chunks()` written as one Arrow IPC stream, for an
-    exact-bytes comparison that covers field order, schema, metadata, null
-    positions, row order, and every value in one check."""
-    combined = table.combine_chunks()
+    exact-bytes comparison that covers field order, schema, null positions,
+    row order, and every value in one check.
+
+    Schema-level metadata is stripped first (Task 4.6 slice 5b-i): a
+    GENERATE-kind table's output is pure Arrow on both sides (never
+    round-tripped through pandas), so its metadata is empty either way and
+    stripping it is a no-op there -- unaffected from 5a. A MASK-kind
+    table's oracle side always round-trips through
+    `pa.Table.from_pandas`/`to_pandas` (`_pandas_adapter.py`), which embeds
+    a `pandas` index-metadata blob the shadow's native-kernel path
+    structurally never produces; that blob carries no row data and slices
+    1-4's own mask-parity comparator (`assert_shadow_matches_oracle`)
+    already never compares it (schema TYPE equality, not raw metadata
+    bytes). Stripping it here keeps this byte comparator generalizable to
+    a mixed job's full output union without re-litigating settled mask
+    parity over an artifact of the oracle's pandas boundary.
+    """
+    combined = table.combine_chunks().replace_schema_metadata(None)
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, combined.schema) as writer:
         writer.write_table(combined)
@@ -736,6 +751,256 @@ def assert_generation_failures_match(run: GenerationDifferentialRun) -> None:
     )
     assert run.shadow_entered_generate, "shadow side failed before entering generate_tables"
     assert run.oracle_entered_generate, "oracle side failed before entering generate_tables"
+    shadow_fingerprint = _failure_fingerprint(shadow_exc)
+    oracle_fingerprint = _failure_fingerprint(oracle_exc)
+    assert shadow_fingerprint == oracle_fingerprint, (
+        f"failure fingerprints differ: shadow={shadow_fingerprint} oracle={oracle_fingerprint}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.6 slice 5b-i: independent-mixed (generate + mask) differential
+# harness.
+#
+# Positive parity for a mixed job reuses `run_shadow_and_oracle` +
+# `assert_generation_tables_arrow_ipc_equal` unchanged -- both are already
+# generic over an arbitrary output-table union, not generation-specific, so
+# no new comparator is needed for the success/success case (plan §7 "the
+# byte comparator, generalized to the mixed output union").
+#
+# The failure/failure case needs more than the pure-generate harness above:
+# a malformed generate leaf still funnels through the ONE shared
+# `_generate_tables_from_config` call (Codex #5's "RAISED, not merely
+# entered" -- the spy below now distinguishes the two), but a malformed MASK
+# leaf has no equivalent shared function -- the shadow's native operators
+# (`_shadow_coordinator.run_operator`) and the oracle's pandas strategy
+# handlers are two independent implementations by design (that
+# independence is the whole point of the slices 1-4 parity proof). So
+# "did the mask stage raise" is proven by ELIMINATION plus a dispatch
+# counter, not a shared-function spy: the oracle is generate-first
+# (`_pipeline.py:481` then `505`), so a job that fails without the
+# generate-phase spy ever raising, AND with at least one mask dispatch
+# observed, is attributable to MASK; a job that fails with the generate
+# spy raising, before any mask dispatch, is attributable to GENERATE. The
+# dispatch counter also proves the "ZERO mask dispatches" half of the
+# dual-fault requirement (plan §3) directly, rather than assuming it from
+# the oracle's linear control flow alone.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MixedDifferentialRun:
+    """One side's outcome is either `*_tables` (success) or `*_exception`
+    (failure), never both. `*_stage` is `"generate"` / `"mask"` / `None`
+    (never raised) -- see the section docstring above for how it is
+    attributed. `*_mask_dispatch_count` is how many times that side's mask
+    implementation was actually invoked (0 for a GENERATE-stage failure,
+    which proves the dual-fault "zero mask dispatches" requirement rather
+    than assuming it).
+    """
+
+    plan: PhysicalPlan
+    shadow_tables: dict[str, pa.Table] | None
+    shadow_exception: Exception | None
+    shadow_stage: str | None
+    shadow_mask_dispatch_count: int
+    oracle_tables: dict[str, pa.Table] | None
+    oracle_exception: Exception | None
+    oracle_stage: str | None
+    oracle_mask_dispatch_count: int
+
+
+def _arm_generate_raised_spy(patcher: pytest.MonkeyPatch) -> Callable[[], bool]:
+    """Arms the shared generate-phase entry point with a spy that records
+    whether THIS call RAISED (the exception propagated through it), not
+    merely whether it was entered -- a job that fails in the MASK phase,
+    after generation already returned successfully, must not be
+    misattributed to GENERATE just because generation ran earlier in the
+    same call. Returns a zero-arg accessor for the recorded verdict."""
+    raised = False
+    original = _plan_entry_module._generate_tables_from_config
+
+    def _spy(*args: Any, **kwargs: Any) -> dict[str, pa.Table]:
+        nonlocal raised
+        try:
+            return original(*args, **kwargs)
+        except Exception:
+            raised = True
+            raise
+
+    patcher.setattr(_plan_entry_module, "_generate_tables_from_config", _spy)
+    return lambda: raised
+
+
+def _arm_shadow_mask_dispatch_counter(patcher: pytest.MonkeyPatch) -> Callable[[], int]:
+    """Counts calls to the shadow coordinator's own mask-operator dispatch
+    point (`_shadow_coordinator.run_operator`, the bound name the
+    per-node loop actually calls -- patching the origin module
+    `_shadow_operators` would miss it, same lesson as the generate spy's
+    own module-binding note)."""
+    from decoy_engine.execution.physical import _shadow_coordinator as _coordinator_module
+
+    count = 0
+    original = _coordinator_module.run_operator  # type: ignore[attr-defined]
+
+    def _spy(*args: Any, **kwargs: Any) -> pa.Array:
+        nonlocal count
+        count += 1
+        return original(*args, **kwargs)
+
+    patcher.setattr(_coordinator_module, "run_operator", _spy)
+    return lambda: count
+
+
+def _arm_oracle_mask_dispatch_counter(patcher: pytest.MonkeyPatch) -> Callable[[], int]:
+    """Counts calls to the oracle's full_frame mask entrypoint
+    (`PandasExecutionAdapter.run`, what `_pipeline.py`'s Step 2 calls as
+    `adapter.run(...)` when `substrate="pandas"` -- every mixed test in this
+    harness always passes that substrate)."""
+    from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+
+    count = 0
+    original = PandasExecutionAdapter.run
+
+    def _spy(self: PandasExecutionAdapter, *args: Any, **kwargs: Any) -> Any:
+        nonlocal count
+        count += 1
+        return original(self, *args, **kwargs)
+
+    patcher.setattr(PandasExecutionAdapter, "run", _spy)
+    return lambda: count
+
+
+def _run_mixed_side(
+    fn: Callable[[], dict[str, pa.Table]],
+    arm_mask_counter: Callable[[pytest.MonkeyPatch], Callable[[], int]],
+) -> tuple[dict[str, pa.Table] | None, Exception | None, str | None, int]:
+    """Run `fn` under the generate-raised spy plus the given side's own
+    mask-dispatch counter, and classify the outcome. Catches `Exception`,
+    never `BaseException`: an interrupt or other process-control signal is
+    not a parity outcome."""
+    with pytest.MonkeyPatch.context() as patcher:
+        generate_raised = _arm_generate_raised_spy(patcher)
+        mask_dispatch_count = arm_mask_counter(patcher)
+        try:
+            result = fn()
+        except Exception as exc:
+            count = mask_dispatch_count()
+            stage = "generate" if generate_raised() else ("mask" if count > 0 else None)
+            return None, exc, stage, count
+        return result, None, None, mask_dispatch_count()
+
+
+def run_mixed_shadow_and_oracle(
+    config: dict[str, Any],
+    sources: Mapping[str, pa.Table],
+    *,
+    key_provider: KeyProvider | None = None,
+    registry: ProviderRegistry | None = None,
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
+) -> MixedDifferentialRun:
+    """The independent-mixed differential entry (Task 4.6 slice 5b-i):
+    builds the physical plan + `ShadowContext` the same way `run_shadow_
+    and_oracle` does for a mask job (`sources` covers the mask-kind tables
+    only; the generate-kind tables need none), then runs the coordinator's
+    mixed dispatch and the public `run_pipeline` oracle UNDER the stage-
+    raised spies above, each side's outcome classified independently.
+    """
+    resolved_sources = dict(sources)
+    inputs = capture_physical_plan_inputs(
+        config,
+        resolved_sources,
+        engine_version=ENGINE_VERSION,
+        registry=registry,
+        execution_mode="full_frame",
+    )
+    plan = compile_physical_plan(inputs)
+    ctx = ShadowContext.from_key_provider(
+        plan=inputs.plan,
+        key_provider=key_provider,
+        relationship_graph=inputs.graph,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+    )
+    snapshot = capture_shadow_snapshot(resolved_sources)
+
+    def _run_shadow() -> dict[str, pa.Table]:
+        result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
+        return dict(result.outputs)
+
+    def _run_oracle() -> dict[str, pa.Table]:
+        oracle_result = run_pipeline(
+            config,
+            resolved_sources,
+            engine_version=ENGINE_VERSION,
+            substrate="pandas",
+            execution_mode="full_frame",
+            derive_key=derive_key,
+            instance_default_locale=instance_default_locale,
+            key_provider=key_provider,
+            registry=registry,
+            sink=None,
+        )
+        return dict(oracle_result.outputs)
+
+    shadow_tables, shadow_exc, shadow_stage, shadow_mask_count = _run_mixed_side(
+        _run_shadow, _arm_shadow_mask_dispatch_counter
+    )
+    oracle_tables, oracle_exc, oracle_stage, oracle_mask_count = _run_mixed_side(
+        _run_oracle, _arm_oracle_mask_dispatch_counter
+    )
+
+    return MixedDifferentialRun(
+        plan=plan,
+        shadow_tables=shadow_tables,
+        shadow_exception=shadow_exc,
+        shadow_stage=shadow_stage,
+        shadow_mask_dispatch_count=shadow_mask_count,
+        oracle_tables=oracle_tables,
+        oracle_exception=oracle_exc,
+        oracle_stage=oracle_stage,
+        oracle_mask_dispatch_count=oracle_mask_count,
+    )
+
+
+def assert_mixed_failures_match(run: MixedDifferentialRun) -> None:
+    """The failure/failure comparator for a mixed job: an asymmetric
+    outcome is an unconditional parity failure; a symmetric failure must
+    have BOTH sides attributed to the SAME stage (never a silent
+    cross-stage "faithful" rejection -- Codex #5), and, for a GENERATE-
+    stage failure specifically, zero mask dispatches on both sides (the
+    dual-fault requirement); the failure fingerprints must match."""
+    shadow_failed = run.shadow_exception is not None
+    oracle_failed = run.oracle_exception is not None
+    assert shadow_failed == oracle_failed, (
+        f"asymmetric outcome: shadow_exception={run.shadow_exception!r} "
+        f"oracle_exception={run.oracle_exception!r}"
+    )
+    shadow_exc, oracle_exc = run.shadow_exception, run.oracle_exception
+    assert shadow_exc is not None and oracle_exc is not None, (
+        "expected both sides to fail; both succeeded"
+    )
+    assert run.shadow_stage is not None, (
+        f"shadow side failed but no stage raised it (mask_dispatch_count="
+        f"{run.shadow_mask_dispatch_count}); the failure happened outside "
+        "both spied phases"
+    )
+    assert run.oracle_stage is not None, (
+        f"oracle side failed but no stage raised it (mask_dispatch_count="
+        f"{run.oracle_mask_dispatch_count}); the failure happened outside "
+        "both spied phases"
+    )
+    assert run.shadow_stage == run.oracle_stage, (
+        f"stage mismatch: shadow={run.shadow_stage!r} oracle={run.oracle_stage!r}"
+    )
+    if run.shadow_stage == "generate":
+        assert run.shadow_mask_dispatch_count == 0, (
+            "shadow dispatched mask work despite a GENERATE-stage failure"
+        )
+        assert run.oracle_mask_dispatch_count == 0, (
+            "oracle dispatched mask work despite a GENERATE-stage failure"
+        )
     shadow_fingerprint = _failure_fingerprint(shadow_exc)
     oracle_fingerprint = _failure_fingerprint(oracle_exc)
     assert shadow_fingerprint == oracle_fingerprint, (

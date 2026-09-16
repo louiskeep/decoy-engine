@@ -49,6 +49,7 @@ from decoy_engine.execution.physical._shadow_coordinator import (
     _adapt_ooc_result,
 )
 from decoy_engine.execution.physical._shadow_diff_codes import (
+    GENERATION_SHAPE_UNSUPPORTED,
     MIXED_DRIVER_UNSUPPORTED,
     OOC_DISPATCH_MISSING_DEPENDENCY,
     ShadowDifference,
@@ -550,6 +551,16 @@ def test_mixed_driver_plan_is_rejected() -> None:
 
 
 def test_ooc_plus_synthesis_plan_is_rejected() -> None:
+    """Task 4.6 slice 5b-i widens the coordinator to admit an INDEPENDENT
+    generate+mask plan, so a bare synthesis+mask combo no longer declines
+    unconditionally the moment `run()` sees both -- the mixed dispatch's own
+    gate decides. With this minimal `ctx` (no `ctx.plan`), the FIRST check
+    that gate reaches is the shared generation-identity/shape check
+    (`_shadow_generation.require_generation_shape`), which declines
+    `GENERATION_SHAPE_UNSUPPORTED` before ever inspecting the mask side's
+    OUT_OF_CORE driver. The mixed contract's OWN OOC-driver decline
+    (`MIXED_DRIVER_UNSUPPORTED`, over a fully-admitted generation shape) is
+    covered by `tests/physical/test_shadow_mixed.py` instead."""
     from decoy_engine.execution.physical._plan import SynthesisStage
 
     plan = PhysicalPlan(
@@ -563,7 +574,7 @@ def test_ooc_plus_synthesis_plan_is_rejected() -> None:
 
     with pytest.raises(ShadowDifference) as excinfo:
         ShadowCoordinator(ctx=ctx).run(plan, snapshot)
-    assert excinfo.value.code == MIXED_DRIVER_UNSUPPORTED
+    assert excinfo.value.code == GENERATION_SHAPE_UNSUPPORTED
 
 
 # ---------------------------------------------------------------------------
