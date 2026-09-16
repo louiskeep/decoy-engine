@@ -11,13 +11,14 @@ from __future__ import annotations
 import math
 import os
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import _pipeline_finalize, run_pipeline
@@ -39,8 +40,12 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
 )
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+from decoy_engine.generation import _plan_entry as _plan_entry_module
 from decoy_engine.keyprovider import KeyProvider
 from decoy_engine.providers_v2 import ProviderRegistry
+
+if TYPE_CHECKING:
+    from decoy_engine.execution._transactional_sink import TransactionalSink
 
 ENGINE_VERSION = "shadow-coordinator-4.4"
 
@@ -107,6 +112,12 @@ def run_shadow_and_oracle(
     chunk_size_rows: int | None = None,
     out_of_core_threshold_rows: int | None = None,
     use_byte_estimate_routing: bool = True,
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
+    sink: TransactionalSink | None = None,
+    source_loader: Callable[[str], pa.Table] | None = None,
+    vault_writer: Any = None,
+    fidelity_report: bool = False,
 ) -> ShadowRun:
     """Run the shadow coordinator and the pinned oracle over the SAME
     resident source object(s) (C5's same-input proof: both sides are handed
@@ -153,6 +164,16 @@ def run_shadow_and_oracle(
     the pandas full-frame path no matter how the shadow side routes).
     `out_of_core_threshold_rows=None` (the default) leaves
     `capture_physical_plan_inputs`'s own default in effect.
+
+    `derive_key` / `instance_default_locale` / `sink` / `source_loader` /
+    `vault_writer` / `fidelity_report` (Task 4.6 slice 5a) are threaded
+    IDENTICALLY to `capture_physical_plan_inputs`, `ShadowContext.from_key_
+    provider` (which turns `sink`/`source_loader`/`vault_writer` into
+    presence-only booleans for the generation admission gate), and the
+    oracle `run_pipeline` call, so a generate-only caller's shadow and
+    oracle sides always see the SAME settings. All six default to the value
+    every pre-existing (mask/OOC) caller already got implicitly (`None`/
+    `False`), so this is additive.
     """
     legacy_pair_given = table_name is not None or source is not None
     if legacy_pair_given and (table_name is None or source is None):
@@ -190,6 +211,10 @@ def run_shadow_and_oracle(
         chunk_size_rows=resolved_chunk_size,
         auto_chunk_threshold_rows=resolved_threshold,
         use_byte_estimate_routing=use_byte_estimate_routing,
+        sink=sink,
+        source_loader=source_loader,
+        vault_writer=vault_writer,
+        fidelity_report=fidelity_report,
     )
     if out_of_core_threshold_rows is not None:
         capture_kwargs["out_of_core_threshold_rows"] = out_of_core_threshold_rows
@@ -202,6 +227,12 @@ def run_shadow_and_oracle(
         key_provider=key_provider,
         batch_size_rows=effective_batch_size_rows,
         relationship_graph=inputs.graph,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+        sink=sink,
+        source_loader=source_loader,
+        vault_writer=vault_writer,
+        fidelity_report=fidelity_report,
     )
     snapshot = capture_shadow_snapshot(resolved_sources)
     shadow_result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
@@ -218,7 +249,12 @@ def run_shadow_and_oracle(
         native_route_enabled=False,
         key_provider=key_provider,
         registry=registry,
-        sink=None,
+        sink=sink,
+        source_loader=source_loader,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+        vault_writer=vault_writer,
+        fidelity_report=fidelity_report,
     )
 
     if legacy_pair_given:
@@ -486,3 +522,222 @@ def assert_every_node_bound(plan: PhysicalPlan) -> None:
                 f"{node.node_id!r} (strategy={node.strategy!r}) did not reach native "
                 "admission; the acceptance corpus must only use native-admissible configs"
             )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.6 slice 5a: pure-generate phase-bound differential parity harness.
+#
+# The mask/OOC comparators above let a coordinator-side exception propagate
+# straight out of `run_shadow_and_oracle` (the oracle call never even runs).
+# The generation admission gate's whole point is different: it admits a
+# malformed-but-in-shape job on PURPOSE and requires BOTH sides to fail with
+# the SAME fingerprint, each proven (by a phase-entry spy) to have failed
+# INSIDE `generate_tables`, not before it. That needs each side run and
+# caught independently, which the linear shadow-then-oracle helper above
+# cannot express without changing behavior for its ~100 existing (mask/OOC)
+# callers -- so this is a dedicated entry point, not a new mode of that one.
+# ---------------------------------------------------------------------------
+
+
+def _arrow_ipc_stream_bytes(table: pa.Table) -> bytes:
+    """`table.combine_chunks()` written as one Arrow IPC stream, for an
+    exact-bytes comparison that covers field order, schema, metadata, null
+    positions, row order, and every value in one check."""
+    combined = table.combine_chunks()
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, combined.schema) as writer:
+        writer.write_table(combined)
+    return sink.getvalue().to_pybytes()
+
+
+def assert_generation_tables_arrow_ipc_equal(
+    shadow_outputs: dict[str, pa.Table], oracle_outputs: dict[str, pa.Table]
+) -> None:
+    """The success/success comparator (Task 4.6 slice 5a §3): table-key sets
+    match, and each table's Arrow IPC stream bytes (after `combine_chunks()`)
+    are byte-identical. Shared by the primary positive matrix and the bounded
+    fuzz sweeps so both enforce byte equality, not `Table.equals()` (which can
+    miss schema-metadata / field-order differences)."""
+    shadow_tables, oracle_tables = set(shadow_outputs), set(oracle_outputs)
+    if shadow_tables != oracle_tables:
+        raise ShadowDifference(
+            code=SCHEMA_DIFF,
+            detail=f"output table set differs: shadow={sorted(shadow_tables)} oracle={sorted(oracle_tables)}",
+        )
+    for table in sorted(oracle_tables):
+        if _arrow_ipc_stream_bytes(shadow_outputs[table]) != _arrow_ipc_stream_bytes(
+            oracle_outputs[table]
+        ):
+            raise ShadowDifference(
+                code=CELL_VALUE_DIFF, detail=f"{table}: Arrow IPC stream bytes differ"
+            )
+
+
+def assert_generation_outputs_arrow_ipc_equal(run: ShadowRun) -> None:
+    """Success/success comparator over a `ShadowRun` (delegates to
+    `assert_generation_tables_arrow_ipc_equal`)."""
+    assert_generation_tables_arrow_ipc_equal(run.shadow.outputs, run.oracle.outputs)
+
+
+@dataclass(frozen=True)
+class GenerationDifferentialRun:
+    """One side's outcome is either `*_tables` (success) or `*_exception`
+    (failure), never both -- `run_generation_shadow_and_oracle` guarantees
+    this. `*_entered_generate` is the phase-entry spy's verdict: did this
+    side's call reach `synthesize._generate_tables_from_config` (the one
+    function both `SynthesisStageAdapter` and the oracle's direct
+    `generate_tables` call funnel through) before it returned or raised.
+    """
+
+    plan: PhysicalPlan
+    shadow_tables: dict[str, pa.Table] | None
+    shadow_exception: Exception | None
+    shadow_entered_generate: bool
+    oracle_tables: dict[str, pa.Table] | None
+    oracle_exception: Exception | None
+    oracle_entered_generate: bool
+
+
+def _call_with_generate_phase_spy(
+    fn: Callable[[], dict[str, pa.Table]],
+) -> tuple[dict[str, pa.Table] | None, Exception | None, bool]:
+    """Run `fn` (a zero-arg call into either dispatch path) with a spy on the
+    ONE function both paths funnel through, so a caught failure can be
+    proven to have happened INSIDE generation rather than before it. Catches
+    `Exception`, never `BaseException` (Task 4.6 slice 5a §3): an interrupt
+    or other process-control signal is not a parity outcome.
+
+    Patches `_plan_entry._generate_tables_from_config` specifically -- the
+    NAME `generation._plan_entry.generate_tables` actually calls (bound at
+    `_plan_entry` import time via `from ...synthesize import
+    _generate_tables_from_config`), not `synthesize`'s own module
+    attribute, which `_plan_entry`'s call site never looks up through.
+    """
+    entered = False
+    original = _plan_entry_module._generate_tables_from_config
+
+    def _spy(*args: Any, **kwargs: Any) -> dict[str, pa.Table]:
+        nonlocal entered
+        entered = True
+        return original(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(_plan_entry_module, "_generate_tables_from_config", _spy)
+        try:
+            result = fn()
+        except Exception as exc:  # captured for a differential comparison, never swallowed silently
+            return None, exc, entered
+    return result, None, entered
+
+
+def run_generation_shadow_and_oracle(
+    config: dict[str, Any],
+    *,
+    key_provider: KeyProvider | None = None,
+    registry: ProviderRegistry | None = None,
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
+) -> GenerationDifferentialRun:
+    """The generate-only differential entry (Task 4.6 slice 5a): builds the
+    physical plan + `ShadowContext` exactly as `run_shadow_and_oracle` does
+    for a mask job (no sources; `capture_physical_plan_inputs(config, {})`
+    gives `tables == ()` and a non-null `synthesis`), then runs the
+    coordinator's synthesis dispatch and the public `run_pipeline` oracle
+    UNDER phase-entry spies, each side's exception (if any) caught
+    independently -- the phase-bound differential parity proof (plan §0/§3).
+    """
+    inputs = capture_physical_plan_inputs(
+        config,
+        {},
+        engine_version=ENGINE_VERSION,
+        registry=registry,
+        execution_mode="full_frame",
+    )
+    plan = compile_physical_plan(inputs)
+    ctx = ShadowContext.from_key_provider(
+        plan=inputs.plan,
+        key_provider=key_provider,
+        relationship_graph=inputs.graph,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+    )
+    snapshot = capture_shadow_snapshot({})
+
+    def _run_shadow() -> dict[str, pa.Table]:
+        result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
+        return dict(result.outputs)
+
+    def _run_oracle() -> dict[str, pa.Table]:
+        oracle_result = run_pipeline(
+            config,
+            {},
+            engine_version=ENGINE_VERSION,
+            substrate="pandas",
+            execution_mode="full_frame",
+            derive_key=derive_key,
+            instance_default_locale=instance_default_locale,
+            key_provider=key_provider,
+            registry=registry,
+            sink=None,
+        )
+        return dict(oracle_result.outputs)
+
+    shadow_tables, shadow_exc, shadow_entered = _call_with_generate_phase_spy(_run_shadow)
+    oracle_tables, oracle_exc, oracle_entered = _call_with_generate_phase_spy(_run_oracle)
+
+    return GenerationDifferentialRun(
+        plan=plan,
+        shadow_tables=shadow_tables,
+        shadow_exception=shadow_exc,
+        shadow_entered_generate=shadow_entered,
+        oracle_tables=oracle_tables,
+        oracle_exception=oracle_exc,
+        oracle_entered_generate=oracle_entered,
+    )
+
+
+def _failure_fingerprint(exc: BaseException) -> tuple[tuple[str, Any, Any, str], ...]:
+    """A recursive identity of one exception chain (Task 4.6 slice 5a §3):
+    fully-qualified class, `.code` / `.path` when present, exact `str(exc)`,
+    and the same recursively down `__cause__` -- so "different wrapper, same
+    cause" is a real mismatch (the oracle never wraps), never accepted as a
+    faithful rejection."""
+    chain: list[tuple[str, Any, Any, str]] = []
+    current: BaseException | None = exc
+    while current is not None:
+        cls = type(current)
+        chain.append(
+            (
+                f"{cls.__module__}.{cls.__qualname__}",
+                getattr(current, "code", None),
+                getattr(current, "path", None),
+                str(current),
+            )
+        )
+        current = current.__cause__
+    return tuple(chain)
+
+
+def assert_generation_failures_match(run: GenerationDifferentialRun) -> None:
+    """The failure/failure comparator (Task 4.6 slice 5a §3): an asymmetric
+    outcome (one side succeeded, the other failed) is an unconditional
+    parity failure; a symmetric failure must carry matching fingerprints AND
+    both phase-entry spies must have fired (never a false faithful-rejection
+    from two different phases)."""
+    shadow_failed = run.shadow_exception is not None
+    oracle_failed = run.oracle_exception is not None
+    assert shadow_failed == oracle_failed, (
+        f"asymmetric outcome: shadow_exception={run.shadow_exception!r} "
+        f"oracle_exception={run.oracle_exception!r}"
+    )
+    shadow_exc, oracle_exc = run.shadow_exception, run.oracle_exception
+    assert shadow_exc is not None and oracle_exc is not None, (
+        "expected both sides to fail; both succeeded"
+    )
+    assert run.shadow_entered_generate, "shadow side failed before entering generate_tables"
+    assert run.oracle_entered_generate, "oracle side failed before entering generate_tables"
+    shadow_fingerprint = _failure_fingerprint(shadow_exc)
+    oracle_fingerprint = _failure_fingerprint(oracle_exc)
+    assert shadow_fingerprint == oracle_fingerprint, (
+        f"failure fingerprints differ: shadow={shadow_fingerprint} oracle={oracle_fingerprint}"
+    )

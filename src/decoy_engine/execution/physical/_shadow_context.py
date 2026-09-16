@@ -12,14 +12,40 @@ delegate through `OutOfCoreAdapter` -- see `_shadow_coordinator.py`'s
 `_require_ooc_deps`. All default to `None`, so every pre-existing scalar/
 chunked/faker construction (none of which reach the OOC dispatch branch)
 stays valid unchanged.
+
+Task 4.6 slice 5a adds `derive_key` / `instance_default_locale` (the
+synthesis dispatch's own runtime deps, mirroring what the harness passes to
+the oracle `run_pipeline` call) plus a runtime-admission record: `sink_
+requested` / `source_loader_requested` / `vault_writer_requested` /
+`fidelity_report`. The generation admission gate (`_shadow_coordinator.
+_require_generation_shadowable`) cannot observe any of these from the plan
+or snapshot alone -- a non-None `vault_writer`, for instance, changes the
+ORACLE's pre-generation key validation (`_pipeline.py`) while the
+coordinator itself never sees it -- so the harness mirrors its own oracle
+call's settings onto `ctx`, and the gate declines any non-admitted value
+before constructing the adapter. The record is PRESENCE-ONLY (booleans, not
+the sink/loader/writer objects themselves): `ShadowContext`/`ShadowCoordinator`
+must never accept a parameter literally named `sink` (`test_shadow_
+disconnection.py`'s "no target descriptor reaches this class" sentry, C1/C7
+-- structurally proving publication stays impossible from this seam), so
+this record cannot hold, or even be shaped like, an actual publication
+channel; `from_key_provider` still takes the real objects positionally and
+converts each to `is not None` at construction. All seven default to the
+admitted value (`None`/`False`), so every pre-existing construction is
+unchanged.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pyarrow as pa
+
+    from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships import RelationshipGraph
@@ -59,6 +85,20 @@ class ShadowContext:
     otherwise render secret bytes (`mask_key`) or, for a custom `KeyProvider`
     implementation that does not redact itself, raw key material
     (`key_provider`).
+
+    `derive_key` / `instance_default_locale` (Task 4.6 slice 5a) are the
+    synthesis dispatch's own runtime deps, threaded straight through to
+    `SynthesisStageAdapter.run` -> `generate_tables`. `derive_key` is
+    `repr=False` for the same reason `key_provider` is: it is a caller
+    resolver CALLABLE that could close over key material, so the default
+    dataclass repr must never render it. `sink_requested` / `source_loader_
+    requested` / `vault_writer_requested` / `fidelity_report` are the
+    runtime-admission record (r5 finding-1): PRESENCE-ONLY booleans the
+    generation admission gate declines on when set, never the actual sink/
+    loader/writer object (which this class must never hold -- see the
+    module docstring). The harness sets each to mirror exactly what it
+    passes to its own oracle `run_pipeline` call. All seven default to the
+    admitted value, so every pre-existing construction is unchanged.
     """
 
     mask_key: bytes = field(repr=False)
@@ -68,6 +108,12 @@ class ShadowContext:
     plan: Plan | None = None
     relationship_graph: RelationshipGraph | None = None
     key_provider: KeyProvider | None = field(default=None, repr=False)
+    derive_key: Any = field(default=None, repr=False)
+    instance_default_locale: str | None = None
+    sink_requested: bool = False
+    source_loader_requested: bool = False
+    vault_writer_requested: bool = False
+    fidelity_report: bool = False
 
     def __post_init__(self) -> None:
         if self.batch_size_rows < 1:
@@ -84,6 +130,12 @@ class ShadowContext:
         batch_size_rows: int = _DEFAULT_BATCH_SIZE_ROWS,
         native_threads: int | None = None,
         relationship_graph: RelationshipGraph | None = None,
+        derive_key: Any = None,
+        instance_default_locale: str | None = None,
+        sink: TransactionalSink | None = None,
+        source_loader: Callable[[str], pa.Table] | None = None,
+        vault_writer: Any = None,
+        fidelity_report: bool = False,
     ) -> ShadowContext:
         """Resolve `mask_key` the same way `run_pipeline` does
         (`keyprovider.resolve_mask_key`), so the shadow side and the oracle,
@@ -95,6 +147,17 @@ class ShadowContext:
         `OutOfCoreAdapter.run` needs. A caller that never reaches the OOC
         branch (every scalar/chunked/faker caller today) simply never reads
         these three fields.
+
+        `derive_key` / `instance_default_locale` / `sink` / `source_loader` /
+        `vault_writer` / `fidelity_report` (Task 4.6 slice 5a) all default to
+        the admitted (`None`/`False`) value; a caller building a generation
+        harness passes the SAME values it hands its own oracle `run_pipeline`
+        call, so the admission gate's decline stays truthful to what the
+        oracle actually saw. `sink` / `source_loader` / `vault_writer` are
+        accepted here as the real objects (matching `run_pipeline`'s own
+        kwarg names, for a natural call site) but stored on `ShadowContext`
+        as PRESENCE-ONLY booleans -- see the class docstring for why the
+        objects themselves never land on this frozen carrier.
         """
         from decoy_engine.keyprovider import resolve_mask_key
 
@@ -107,4 +170,10 @@ class ShadowContext:
             plan=plan,
             relationship_graph=relationship_graph,
             key_provider=key_provider,
+            derive_key=derive_key,
+            instance_default_locale=instance_default_locale,
+            sink_requested=sink is not None,
+            source_loader_requested=source_loader is not None,
+            vault_writer_requested=vault_writer is not None,
+            fidelity_report=fidelity_report,
         )

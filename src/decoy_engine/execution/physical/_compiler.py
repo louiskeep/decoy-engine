@@ -37,6 +37,7 @@ guidance the plan cites).
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -373,6 +374,26 @@ def _build_nodes(table: str, inputs: PhysicalPlanInputs) -> tuple[PhysicalNode, 
     return tuple(nodes)
 
 
+def _generation_config_digest(inputs: PhysicalPlanInputs) -> str:
+    """`SynthesisStage.config_digest` (Task 4.6 slice 5a): `sha256` of the
+    exact UTF-8 `Plan.generation.config_json` bytes -- see `SynthesisStage`'s
+    docstring for why this, not `pipeline_config_hash`, is the identity bind.
+
+    `has_generate_table` and `Plan.generation` both derive from the identical
+    `generate_columns`-presence check (`classify_table_kinds` here,
+    `plan._generation.build_generation_plan` at compile time), so a
+    generate-table job always carries a non-None `Plan.generation` by
+    construction; the guard below is a defensive invariant check, not a
+    reachable branch.
+    """
+    generation = inputs.plan.generation
+    if generation is None:  # pragma: no cover - see docstring
+        raise AssertionError(
+            "compile_physical_plan: has_generate_table is True but Plan.generation is None"
+        )
+    return hashlib.sha256(generation.config_json.encode("utf-8")).hexdigest()
+
+
 def compile_physical_plan(inputs: PhysicalPlanInputs) -> PhysicalPlan:
     """The pure compiler (D2). Executes nothing; raises the same exception a
     live `run_pipeline` call would raise for this snapshot (reject-before-
@@ -382,7 +403,8 @@ def compile_physical_plan(inputs: PhysicalPlanInputs) -> PhysicalPlan:
         SynthesisStage(
             tables=tuple(
                 sorted(name for name, kind in inputs.table_kinds.items() if kind == "generate")
-            )
+            ),
+            config_digest=_generation_config_digest(inputs),
         )
         if inputs.has_generate_table
         else None

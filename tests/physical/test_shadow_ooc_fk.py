@@ -28,6 +28,7 @@ actually exercised.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -554,7 +555,7 @@ def test_ooc_plus_synthesis_plan_is_rejected() -> None:
     plan = PhysicalPlan(
         engine_version=ENGINE_VERSION,
         plan_hash="h",
-        synthesis=SynthesisStage(tables=("gen",)),
+        synthesis=SynthesisStage(tables=("gen",), config_digest=hashlib.sha256(b"{}").hexdigest()),
         tables=(_bare_table("a", DriverId.OUT_OF_CORE),),
     )
     ctx = ShadowContext(mask_key=b"\x01" * 32)

@@ -32,6 +32,18 @@ existing Task 4.2 `OutOfCoreAdapter`, which delegates to `run_fk_out_of_core`
 -- the FK machinery stays single-owner there, never reimplemented here. A
 driver set mixing OUT_OF_CORE with any other masking driver, or pairing it
 with a synthesis stage, is refused rather than dispatched partially.
+
+Task 4.6 slice 5a adds a PURE-GENERATE dispatch branch: when a compiled
+plan has no mask tables at all (`plan.tables` empty) and does carry a
+synthesis stage, `run()` skips both the per-node loop and the OOC branch and
+dispatches through the existing Task 4.2 `SynthesisStageAdapter`, which
+delegates to `generate_tables` -- never reimplemented here. A plan that
+mixes a synthesis stage with ANY mask tables (OOC included) is 5b territory
+(the generate->mask stitch is not owned here yet) and is declined rather
+than silently masking only the mask half. The admission gate + adapter call
+themselves live in `_shadow_generation.py` (split out to keep this module
+under the 600-LOC orchestration cap); `_dispatch_synthesis` below is a thin
+wrap of it.
 """
 
 from __future__ import annotations
@@ -48,7 +60,7 @@ from decoy_engine.execution.native._index_ext import (
     load_compiled_index_kernel,
 )
 from decoy_engine.execution.physical._context import SeamContext
-from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan
+from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan, SynthesisStage
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
@@ -249,6 +261,24 @@ class ShadowCoordinator:
     registry: ProviderRegistry | None = None
 
     def run(self, plan: PhysicalPlan, snapshot: ShadowSnapshot) -> ShadowRunResult:
+        # Task 4.6 slice 5a: a PURE-GENERATE plan (no mask tables at all)
+        # dispatches through the Task 4.2 SynthesisStageAdapter instead of
+        # every branch below -- see _dispatch_synthesis. Checked first, and
+        # unconditionally on plan.tables being empty, so every existing
+        # scalar/chunked/OOC plan (which never has an empty table list AND a
+        # synthesis stage at once outside the mixed case handled next) falls
+        # straight through, byte-unchanged.
+        if not plan.tables and plan.synthesis is not None:
+            return self._dispatch_synthesis(plan.synthesis, snapshot)
+        if plan.synthesis is not None:
+            # A synthesis stage paired with ANY mask tables (OOC included) is
+            # 5b territory: the generate->mask stitch is not owned here yet,
+            # so this declines rather than silently masking only the mask
+            # half and dropping the generate half (this is also where the
+            # slice-3 out_of_core+synthesis case lands, since it always has
+            # mask tables -- same code, no behavior change for it).
+            raise ShadowDifference(code=MIXED_DRIVER_UNSUPPORTED, detail="synthesis+mask")
+
         # Task 4.6 slice 3: an OUT_OF_CORE mask-table plan dispatches through
         # the Task 4.2 `OutOfCoreAdapter` (which owns the FK machinery via
         # `run_fk_out_of_core`) rather than running this loop -- the driver
@@ -257,13 +287,6 @@ class ShadowCoordinator:
         # through to the loop below, byte-unchanged.
         mask_drivers = {table.driver for table in plan.tables}
         if mask_drivers == {DriverId.OUT_OF_CORE}:
-            if plan.synthesis is not None:
-                # Defensive: a handcrafted plan could pair OOC masking with a
-                # synthesis stage; the adapter has no synthesis path, so this
-                # is refused rather than dispatched partially.
-                raise ShadowDifference(
-                    code=MIXED_DRIVER_UNSUPPORTED, detail="out_of_core+synthesis"
-                )
             return self._dispatch_out_of_core(plan, snapshot)
         if DriverId.OUT_OF_CORE in mask_drivers:
             # OUT_OF_CORE mixed with any other masking driver: never mask
@@ -380,6 +403,26 @@ class ShadowCoordinator:
                 outputs[table.table] = pa.table({name: columns[name] for name in source_order})
 
         return ShadowRunResult(outputs=outputs, route_evidence=route_evidence)
+
+    def _dispatch_synthesis(
+        self, physical_synthesis: SynthesisStage, snapshot: ShadowSnapshot
+    ) -> ShadowRunResult:
+        """Thin wrap of `_shadow_generation.dispatch_synthesis` (moved out to
+        keep this module under the 600-LOC orchestration cap; see that
+        module's docstring for the admission gate + dispatch contract) into
+        this class's own `ShadowRunResult` shape. The SAME table objects
+        `SynthesisStageAdapter.run` produced pass straight through
+        `outputs`; `route_evidence`/`warnings`/`row_errors`/`quality_metrics`
+        stay at their empty defaults -- this slice's admitted shape
+        (sequence/categorical, no validators/quarantine) produces none of
+        any of them on either side.
+        """
+        from decoy_engine.execution.physical._shadow_generation import dispatch_synthesis
+
+        outputs, seam_context = dispatch_synthesis(self.ctx, physical_synthesis, snapshot)
+        return ShadowRunResult(
+            outputs=dict(outputs), route_evidence={}, driver_invocation=seam_context
+        )
 
     def _dispatch_out_of_core(
         self, plan: PhysicalPlan, snapshot: ShadowSnapshot

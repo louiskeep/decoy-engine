@@ -149,9 +149,21 @@ class SynthesisStage:
     """The `generate_tables()` stage (design doc section 4): generate-kind
     tables, produced before masking, merged into the mask stage's sources.
     Operators map to `Plan.generation`, never `NativePlanNode`/
-    `NodeRequirements` (which exclude generation by construction)."""
+    `NodeRequirements` (which exclude generation by construction).
+
+    `config_digest` (Task 4.6 slice 5a) is
+    `sha256(Plan.generation.config_json.encode("utf-8")).hexdigest()`,
+    populated by the compiler. The shadow coordinator's generation-dispatch
+    admission gate recomputes the same digest from `ShadowContext.plan.
+    generation.config_json` at dispatch time and requires an exact match --
+    closing an identity hole `pipeline_config_hash` cannot (that hash
+    deliberately excludes sources/targets, so two Plans compiled from
+    different generate configs but the same table names could otherwise
+    collide there).
+    """
 
     tables: tuple[str, ...]
+    config_digest: str
 
 
 @dataclass(frozen=True)

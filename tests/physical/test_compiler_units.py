@@ -855,3 +855,38 @@ def test_capture_matches_live_run_pipeline_rejection_for_invalid_knob(tmp_path: 
     with pytest.raises(ExecutionError) as live_exc:
         run_pipeline(config, {"t": source}, engine_version="unit-test", auto_chunk="false")
     assert compiler_exc.value.code == live_exc.value.code == "invalid_execution_knob"
+
+
+def test_synthesis_stage_config_digest_is_sha256_of_generation_config_json(tmp_path: Path) -> None:
+    """Task 4.6 slice 5a (r5 finding-2): `SynthesisStage.config_digest` must
+    equal `sha256` of the EXACT UTF-8 bytes of `Plan.generation.config_json`
+    -- the identity bind the generation-dispatch admission gate recomputes
+    at dispatch time (`_shadow_coordinator._require_generation_shadowable`)."""
+    import hashlib
+
+    from decoy_engine.execution.physical._compiler import compile_physical_plan
+
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {},
+            "targets": {"people": {"type": "file", "format": "csv", "path": "out.csv"}},
+            "tables": [
+                {
+                    "name": "people",
+                    "row_count": 3,
+                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
+                }
+            ],
+        }
+    ).model_dump()
+    inputs = capture_physical_plan_inputs(
+        config, {}, engine_version="unit-test", execution_mode="full_frame"
+    )
+    plan = compile_physical_plan(inputs)
+
+    assert plan.synthesis is not None
+    assert inputs.plan.generation is not None
+    expected = hashlib.sha256(inputs.plan.generation.config_json.encode("utf-8")).hexdigest()
+    assert plan.synthesis.config_digest == expected
