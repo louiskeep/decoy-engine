@@ -36,6 +36,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.keyprovider import KeyProvider
+from decoy_engine.providers_v2 import ProviderRegistry
 
 ENGINE_VERSION = "shadow-coordinator-4.4"
 
@@ -89,12 +90,22 @@ def run_shadow_and_oracle(
     *,
     key_provider: KeyProvider | None = None,
     batch_size_rows: int = 50_000,
+    registry: ProviderRegistry | None = None,
 ) -> ShadowRun:
     """Run the shadow coordinator and the pinned oracle over the SAME
     resident `source` object (C5's same-input proof: both sides are handed
-    the identical `pa.Table` instance)."""
+    the identical `pa.Table` instance).
+
+    `registry` (Task 4.6 slice 1), when given, is threaded to BOTH sides --
+    `capture_physical_plan_inputs` (so the compiled plan's faker admission
+    and `ShadowCoordinator.registry` see it) and the oracle `run_pipeline`
+    call -- so a faker parity case can prove agreement under a NON-default
+    registry, not only the module singleton. `None` (the default) leaves
+    both sides resolving their own default registry, which is the same
+    singleton object either way.
+    """
     inputs = capture_physical_plan_inputs(
-        config, {table_name: source}, engine_version=ENGINE_VERSION
+        config, {table_name: source}, engine_version=ENGINE_VERSION, registry=registry
     )
     plan = compile_physical_plan(inputs)
 
@@ -102,7 +113,7 @@ def run_shadow_and_oracle(
         plan=inputs.plan, key_provider=key_provider, batch_size_rows=batch_size_rows
     )
     snapshot = capture_shadow_snapshot({table_name: source})
-    shadow_result = ShadowCoordinator(ctx=ctx).run(plan, snapshot)
+    shadow_result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
 
     oracle_result = run_pipeline(
         config,
@@ -113,6 +124,7 @@ def run_shadow_and_oracle(
         auto_chunk=False,
         native_route_enabled=False,
         key_provider=key_provider,
+        registry=registry,
         sink=None,
     )
 
@@ -222,9 +234,11 @@ def assert_route_evidence_matches_plan(run: ShadowRun) -> None:
             assert evidence.planned_operator == node.execution.operator_id
             assert evidence.actual_operator == node.execution.operator_id
             assert evidence.executed is True
-            if node.execution.operator_id == "native_keyed_hash":
-                # Positive Rust-call evidence (C2): a hash node must show the
-                # compiled kernel actually ran, never inferred from success alone.
+            if node.execution.operator_id in ("native_keyed_hash", "native_faker_select"):
+                # Positive compiled-kernel-call evidence (C2; Task 4.6 slice
+                # 1 extends it to faker's derive_index_batch call): the
+                # node must show the compiled kernel actually ran, never
+                # inferred from success alone.
                 assert evidence.compiled_kernel_executed is True
 
 

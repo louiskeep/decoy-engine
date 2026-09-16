@@ -51,17 +51,25 @@ def _resolve_truncate_keep(cfg: dict[str, Any]) -> str:
     return "tail" if bool(cfg.get("from_end", False)) else "head"
 
 
-def _sample_faker_chunk(
+def sample_faker_array(
     source: pa.Array | pa.ChunkedArray,
     *,
     pool: ValuePool,
-    col_seed: Any,
+    namespace: str,
     mask_key: bytes | None,
     index_kernel: IndexDerivationKernel,
     native_threads: int | None,
 ) -> pa.Array:
-    """Select one chunk's faker values from the already-built `pool` via the
+    """Select one batch's faker values from the already-built `pool` via the
     preflight-verified compiled index kernel (Task 2.3 Phase 3).
+
+    Promoted (Task 4.6 slice 1) to a shared helper importable by BOTH the
+    native chunked route (`_mask_chunk_native`) and the physical-plan shadow
+    operator (`_shadow_operators.run_operator`), so the two call the
+    IDENTICAL selection code -- never two independently-written copies that
+    could drift. `namespace` is passed explicitly (rather than a `col_seed`
+    object) since the shadow side has only a `KeyBinding.namespace`, not a
+    compiled `ColumnSeed`.
 
     Reproduces `FakerStrategyHandler.run`'s deterministic-reuse selection
     exactly, scoped to the ONE JC-5-admitted variant
@@ -70,9 +78,9 @@ def _sample_faker_chunk(
     reached the native route): `select_seed` is always `mask_key` (the DE-02
     seam re-keys deterministic selection onto the keyed IKM; pool BUILD stays
     on job_seed, resolved once before the chunk loop by `_resolve_faker_pools`).
-    `pool_size` is `pool.size` -- the pool as actually BUILT -- never
-    `col_seed.pool_size` (the compiled config value the build may have
-    resolved differently), matching the oracle's own `PoolSampler._deterministic`.
+    `pool_size` is `pool.size` -- the pool as actually BUILT -- never the
+    compiled config's own pool-size value (the build may have resolved it
+    differently), matching the oracle's own `PoolSampler._deterministic`.
 
     One batch call derives every row's pool index; the gather is then a
     null-safe NumPy lookup into `pool.values`, never a per-row Python loop.
@@ -90,7 +98,7 @@ def _sample_faker_chunk(
     idx = index_kernel.derive_index_batch(
         col,
         mask_key=mask_key,
-        namespace=col_seed.namespace,
+        namespace=namespace,
         pool_size=pool.size,
         native_threads=native_threads,
     )
@@ -200,10 +208,10 @@ def _mask_chunk_native(
                     "preflight's index probe should have loaded one for any admitted "
                     "faker node."
                 )
-            arrays[name] = _sample_faker_chunk(
+            arrays[name] = sample_faker_array(
                 source,
                 pool=pool_by_column[name],
-                col_seed=col_seed,
+                namespace=col_seed.namespace,
                 mask_key=mask_key,
                 index_kernel=index_kernel,
                 native_threads=native_threads,

@@ -258,7 +258,7 @@ class NativePreflight:
     admits no faker node -- there is nothing to select, so nothing was loaded.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
     per chunk; the verified wrapper is threaded through `_mask_native` ->
-    `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
+    `_mask_chunk_native` -> `sample_faker_array` so each faker column-chunk
     makes exactly one real batch call.
     """
 
@@ -379,7 +379,7 @@ def _mask_native(
     column's pool is resolved here too (Task 3.1 Step 2), before any chunk
     is masked, so the pool is built exactly once per invocation. `index_kernel`
     is the preflight-verified compiled index kernel (Task 2.3), threaded
-    through to `_mask_chunk_native` -> `_sample_faker_chunk` so every faker
+    through to `_mask_chunk_native` -> `sample_faker_array` so every faker
     column-chunk selection makes exactly one real batch call; it is `None`
     whenever the admitted table has no faker node."""
     from decoy_engine.keyprovider import require_mask_key

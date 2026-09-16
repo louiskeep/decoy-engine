@@ -172,7 +172,7 @@ def test_planned_vs_actual_route_diff_is_raised_on_mismatch(
     snapshot = capture_shadow_snapshot({"t": source})
     ctx = ShadowContext(mask_key=b"\x03" * 32)
 
-    def _wrong_operator(array, *, binding, ctx, evidence):
+    def _wrong_operator(array, *, binding, ctx, evidence, **_kwargs):
         evidence.actual_operator = "not-the-planned-operator"
         evidence.executed = True
         return array

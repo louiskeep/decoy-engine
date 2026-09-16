@@ -1,7 +1,7 @@
-"""Task 4.4 C3/C6: the acceptance corpus.
+"""Task 4.4 C3/C6 (extended by Task 4.6 slice 1): the acceptance corpus.
 
-One fixed slice schema mixing all four strategies (passthrough, redact,
-truncate, hash) drives the batch-size x row-order matrix
+One fixed slice schema mixing all four scalar strategies (passthrough,
+redact, truncate, hash) drives the batch-size x row-order matrix
 (`tests/parity/native/test_phase2_gate.py:213`'s established pattern) and
 doubles as the mixed-4-strategy case; separate minimal single-column
 configs cover each strategy alone, redact/truncate variants, hash
@@ -9,7 +9,13 @@ truncation, and the null-density/all-null/empty degenerate shapes. Every
 job runs through `run_shadow_and_oracle` + `assert_shadow_matches_oracle`
 (C3's exit gate: value/null/order/row-count/schema hard failures,
 diagnostics as multisets, planned==actual route evidence, positive
-compiled-kernel call evidence for every hash node).
+compiled-kernel call evidence for every hash/faker node).
+
+Task 4.6 slice 1 adds the deterministic-faker cases: faker alone, faker
+alongside the four scalar strategies in the same matrix, faker's own
+null-density/all-null/empty shapes, pool-identity determinism (two columns
+sharing one identity select identically), and parity under a non-default
+`ProviderRegistry`.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import pytest
 
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.keyprovider import SecretKeyProvider
+from decoy_engine.providers_v2 import ProviderRegistry, get_default_registry
 from tests.physical._shadow_helpers import (
     assert_every_node_bound,
     assert_route_evidence_matches_plan,
@@ -37,18 +44,47 @@ def _key_provider() -> SecretKeyProvider:
     return SecretKeyProvider(secret=_MASK_KEY, key_version="v1")
 
 
+def _faker_column(
+    name: str = "c",
+    *,
+    provider: str = "person_first_name",
+    namespace: str = "ns_faker",
+    pool_size: int = 30,
+) -> dict:
+    # The one deterministic-reuse, C1-allowlisted faker shape the shadow
+    # slice admits (Task 4.6 slice 1's JC-5 + allowlist predicate).
+    return {
+        "name": name,
+        "strategy": "faker",
+        "provider": provider,
+        "deterministic": True,
+        "namespace": namespace,
+        "pool_size": pool_size,
+    }
+
+
 def _verify(
-    tmp_path: Path, table_name: str, source: pa.Table, columns: list[dict], *, name: str
+    tmp_path: Path,
+    table_name: str,
+    source: pa.Table,
+    columns: list[dict],
+    *,
+    name: str,
+    registry: ProviderRegistry | None = None,
 ) -> None:
-    # A hash node routes through the compiled native kernel, which the
+    # A hash or faker node routes through a compiled native kernel, which the
     # companion-absent CI legs (regression-gate, substrate-matrix) do not build;
-    # skip there. The companion-present job runs this file, so the hash corpus
-    # is still exercised with the kernel installed.
-    if not native_companion_status().ok and any(c.get("strategy") == "hash" for c in columns):
+    # skip there. The companion-present job runs this file, so the hash/faker
+    # corpus is still exercised with the kernel installed.
+    if not native_companion_status().ok and any(
+        c.get("strategy") in ("hash", "faker") for c in columns
+    ):
         pytest.skip("compiled decoy-engine-native companion unavailable")
     path = write_read_only_fixture(tmp_path, source, name)
     config = build_config(tmp_path, table_name, path, columns)
-    run = run_shadow_and_oracle(config, table_name, source, key_provider=_key_provider())
+    run = run_shadow_and_oracle(
+        config, table_name, source, key_provider=_key_provider(), registry=registry
+    )
     assert_every_node_bound(run.plan)
     assert_shadow_matches_oracle(run)
     assert_route_evidence_matches_plan(run)
@@ -315,8 +351,14 @@ def test_hash_admitted_int_type(tmp_path: Path) -> None:
             pa.string(),
             [{"name": "c", "strategy": "hash", "namespace": "n"}],
         ),
+        (
+            "faker",
+            ["src_a", None, "src_b"],
+            pa.string(),
+            [_faker_column(namespace="ns_nulldensity")],
+        ),
     ],
-    ids=["passthrough", "redact", "truncate", "hash"],
+    ids=["passthrough", "redact", "truncate", "hash", "faker"],
 )
 def test_null_density(tmp_path, strategy, values, arrow_type, columns) -> None:
     source = pa.table({"c": pa.array(values, type=arrow_type)})
@@ -335,8 +377,9 @@ def test_null_density(tmp_path, strategy, values, arrow_type, columns) -> None:
             [{"name": "c", "strategy": "truncate", "provider_config": {"length": 3}}],
         ),
         ("hash", pa.string(), [{"name": "c", "strategy": "hash", "namespace": "n"}]),
+        ("faker", pa.string(), [_faker_column(namespace="ns_allnull")]),
     ],
-    ids=["passthrough_str", "passthrough_int", "redact", "truncate", "hash"],
+    ids=["passthrough_str", "passthrough_int", "redact", "truncate", "hash", "faker"],
 )
 def test_all_null(tmp_path, strategy, arrow_type, columns) -> None:
     source = pa.table({"c": pa.array([None, None], type=arrow_type)})
@@ -357,6 +400,7 @@ def test_all_null(tmp_path, strategy, arrow_type, columns) -> None:
         ),
         ("hash", pa.string(), [{"name": "c", "strategy": "hash", "namespace": "n"}]),
         ("hash", pa.int64(), [{"name": "c", "strategy": "hash", "namespace": "n"}]),
+        ("faker", pa.string(), [_faker_column(namespace="ns_empty")]),
     ],
     ids=[
         "passthrough_str",
@@ -366,8 +410,139 @@ def test_all_null(tmp_path, strategy, arrow_type, columns) -> None:
         "truncate",
         "hash_str",
         "hash_int",
+        "faker_str",
     ],
 )
 def test_empty(tmp_path, strategy, arrow_type, columns) -> None:
     source = pa.table({"c": pa.array([], type=arrow_type)})
     _verify(tmp_path, "t", source, columns, name=f"empty_{strategy}_{arrow_type}")
+
+
+# ---------------------------------------------------------------------------
+# Task 4.6 slice 1: deterministic faker.
+# ---------------------------------------------------------------------------
+
+
+def test_faker_alone(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array([f"src_{i % 4}" for i in range(9)], type=pa.string())})
+    _verify(tmp_path, "t", source, [_faker_column()], name="faker_alone")
+
+
+_FAKER_MIXED_COLUMNS = [
+    {"name": "h_email", "strategy": "hash", "namespace": "ns_email"},
+    {"name": "pt_amount", "strategy": "passthrough"},
+    {"name": "pt_note", "strategy": "passthrough"},
+    {"name": "rd_ssn", "strategy": "redact"},
+    {"name": "tr_phone", "strategy": "truncate", "provider_config": {"length": 3, "keep": "head"}},
+    _faker_column("fk_first", namespace="ns_first"),
+]
+
+
+def _build_faker_mixed_source(n_rows: int, *, reverse: bool = False) -> pa.Table:
+    idx = list(range(n_rows))
+    if reverse:
+        idx = list(reversed(idx))
+    _str = pa.string()
+    return pa.table(
+        {
+            "h_email": pa.array([f"user{i}@example.com" for i in idx], type=_str),
+            "pt_amount": pa.array([(i * 13) % 1_000_000 for i in idx], type=pa.int64()),
+            # Same null density as the 4.4 fixed schema's own passthrough
+            # column, exercised here alongside the faker column.
+            "pt_note": pa.array([None if i % 5 == 0 else f"note-{i}" for i in idx], type=_str),
+            "rd_ssn": pa.array([f"5{i % 900:03d}-11-2222" for i in idx], type=_str),
+            "tr_phone": pa.array([f"512{i % 9000:04d}" for i in idx], type=_str),
+            "fk_first": pa.array(
+                [None if i % 7 == 0 else f"first_src_{i % 6}" for i in idx], type=_str
+            ),
+        }
+    )
+
+
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
+@pytest.mark.parametrize("reverse", _ORDERS, ids=["natural_order", "reversed_order"])
+@pytest.mark.parametrize("batch_size", _BATCH_SIZES, ids=[f"batch_{b}" for b in _BATCH_SIZES])
+def test_faker_plus_four_scalar_mixed_batch_size_x_row_order_matrix(
+    tmp_path: Path, batch_size: int, reverse: bool
+) -> None:
+    source = _build_faker_mixed_source(_N_ROWS, reverse=reverse)
+    path = write_read_only_fixture(tmp_path, source, f"faker_mixed_{batch_size}_{reverse}")
+    config = build_config(tmp_path, "w", path, _FAKER_MIXED_COLUMNS)
+    run = run_shadow_and_oracle(
+        config, "w", source, key_provider=_key_provider(), batch_size_rows=batch_size
+    )
+    assert_every_node_bound(run.plan)
+    assert_shadow_matches_oracle(run)
+    assert_route_evidence_matches_plan(run)
+
+
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
+def test_pool_identity_determinism_two_identical_faker_columns_select_identically(
+    tmp_path: Path,
+) -> None:
+    """Two columns sharing provider + namespace + pool_size + config resolve
+    to ONE `PoolIdentity` (`resolve_faker_pool_identity`); over identical
+    source values they must select identically, on both sides."""
+    source = pa.table(
+        {
+            "c1": pa.array(["a", "b", "c", "a", None], type=pa.string()),
+            "c2": pa.array(["a", "b", "c", "a", None], type=pa.string()),
+        }
+    )
+    columns = [
+        _faker_column("c1", namespace="ns_shared_identity"),
+        _faker_column("c2", namespace="ns_shared_identity"),
+    ]
+    path = write_read_only_fixture(tmp_path, source, "faker_pool_identity")
+    config = build_config(tmp_path, "t", path, columns)
+    run = run_shadow_and_oracle(config, "t", source, key_provider=_key_provider())
+    assert_every_node_bound(run.plan)
+    assert_shadow_matches_oracle(run)
+    assert_route_evidence_matches_plan(run)
+
+    out = run.shadow.outputs["t"]
+    assert out.column("c1").to_pylist() == out.column("c2").to_pylist()
+
+
+def test_faker_non_default_registry_parity(tmp_path: Path) -> None:
+    """HIGH-2: shadow and oracle, both threaded the SAME non-default
+    `ProviderRegistry` (one provider's binding swapped via `.override`), must
+    still match cell-for-cell. A coordinator that silently fell back to
+    `get_default_registry()` instead of the threaded `inputs.registry` would
+    diverge here, since the oracle is given the identical custom registry.
+    """
+    default_registry = get_default_registry()
+    custom_registry: ProviderRegistry = default_registry.override(
+        "person_first_name",
+        default_registry.get_adapter("person_last_name"),
+        default_registry.get_capabilities("person_first_name"),
+    )
+    source = pa.table({"c": pa.array([f"src_{i % 5}" for i in range(12)], type=pa.string())})
+    _verify(
+        tmp_path,
+        "t",
+        source,
+        [_faker_column(namespace="ns_custom_registry")],
+        name="faker_custom_registry",
+        registry=custom_registry,
+    )
+
+
+def test_faker_non_default_locale_resolves_the_same_pool_identity_on_both_sides(
+    tmp_path: Path,
+) -> None:
+    """`resolve_faker_pool_identity` folds `provider_config["locale"]` into
+    the pool identity/build on both sides (`_builder.py`'s `_derive_pool_
+    seed`); a non-default locale must still match cell-for-cell, proving the
+    shadow reads the SAME config the oracle does, not a locale-blind copy."""
+    source = pa.table({"c": pa.array([f"src_{i % 4}" for i in range(9)], type=pa.string())})
+    columns = [
+        {**_faker_column(namespace="ns_locale"), "provider_config": {"locale": "de_DE"}},
+    ]
+    _verify(tmp_path, "t", source, columns, name="faker_locale")

@@ -36,6 +36,9 @@ def _build_plan_and_inputs(tmp_path: Path):
         {
             "h": pa.array(["a", "b", "c"], type=pa.string()),
             "r": pa.array(["x", "y", "z"], type=pa.string()),
+            # Task 4.6 slice 1: a real, admitted faker column, so the walk
+            # below also crawls a live `PoolBinding` -- not just KeyBinding.
+            "f": pa.array(["alice", "bob", "carol"], type=pa.string()),
         }
     )
     path = tmp_path / "t.parquet"
@@ -54,6 +57,14 @@ def _build_plan_and_inputs(tmp_path: Path):
                     "columns": [
                         {"name": "h", "strategy": "hash", "namespace": "n"},
                         {"name": "r", "strategy": "redact"},
+                        {
+                            "name": "f",
+                            "strategy": "faker",
+                            "provider": "person_first_name",
+                            "deterministic": True,
+                            "namespace": "ns_f",
+                            "pool_size": 20,
+                        },
                     ],
                 }
             ],
@@ -62,6 +73,18 @@ def _build_plan_and_inputs(tmp_path: Path):
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=_ENGINE_VERSION)
     plan = compile_physical_plan(inputs)
     return plan, inputs
+
+
+def test_faker_node_binds_a_real_pool_binding(tmp_path: Path) -> None:
+    """Guards the fixture above against silently going vacuous: the faker
+    column must actually reach admission (a real `PoolBinding`), or the
+    no-secret walk below would be crawling nothing new."""
+    plan, _ = _build_plan_and_inputs(tmp_path)
+    node = next(n for table in plan.tables for n in table.nodes if n.strategy == "faker")
+    assert node.execution is not None
+    assert node.execution.pool_binding is not None
+    assert node.execution.pool_binding.provider == "person_first_name"
+    assert node.execution.pool_binding.plan_pool_size == 20
 
 
 def _walk(obj: Any, *, _seen: set[int] | None = None, _depth: int = 0) -> list[Any]:

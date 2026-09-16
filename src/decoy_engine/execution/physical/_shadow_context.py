@@ -27,9 +27,18 @@ class ShadowContext:
     (never the plan or snapshot) plus the batch/thread budget the coordinator
     enforces (TASK-4.4-PLAN.md's Resource policy: hard-gate only a batch-size
     or thread-budget CONTRACT breach, never relative performance).
+
+    `job_seed` (Task 4.6 slice 1) is the plan's `seed_envelope.job_seed`: the
+    non-secret pool-BUILD seed a faker node's `PoolBuilder.build` call needs
+    (mask_key re-keys the deterministic SELECTION only, per the DE-02 seam --
+    see `generation/pool/_builder.py`). Defaults to `b""` so every
+    pre-existing direct `ShadowContext(...)` construction across the Task 4.4
+    test suite (none of which bind a faker node) stays valid unchanged;
+    `from_key_provider` always supplies the real 8-byte value from the plan.
     """
 
     mask_key: bytes
+    job_seed: bytes = b""
     batch_size_rows: int = _DEFAULT_BATCH_SIZE_ROWS
     native_threads: int | None = None
 
@@ -56,5 +65,8 @@ class ShadowContext:
 
         mask_key = resolve_mask_key(plan=plan, key_provider=key_provider)
         return cls(
-            mask_key=mask_key, batch_size_rows=batch_size_rows, native_threads=native_threads
+            mask_key=mask_key,
+            job_seed=plan.seed_envelope.job_seed,
+            batch_size_rows=batch_size_rows,
+            native_threads=native_threads,
         )

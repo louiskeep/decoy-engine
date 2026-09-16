@@ -28,6 +28,7 @@ __all__ = [
     "PhysicalNode",
     "PhysicalPlan",
     "PhysicalTable",
+    "PoolBinding",
     "RejectedAlternative",
     "SynthesisStage",
 ]
@@ -51,13 +52,31 @@ class KeyBinding:
 
 
 @dataclass(frozen=True)
+class PoolBinding:
+    """Non-secret pool reference for a faker slice node (Task 4.6 slice 1).
+
+    Carries ONLY `provider` and `plan_pool_size` -- the two facts a pool's
+    IDENTITY is not otherwise recoverable from at execution time. Locale and
+    build_config are NOT duplicated here: they are resolved solely inside
+    `resolve_faker_pool_identity` from `dict(binding.resolved_config)`, the
+    same way the native chunked route resolves them, so there is exactly one
+    place that split lives. Namespace is reused from `KeyBinding.namespace`,
+    never copied a second time onto this binding.
+    """
+
+    provider: str
+    plan_pool_size: int
+
+
+@dataclass(frozen=True)
 class ExecutionBinding:
     """Slice-only immutable execution binding attached to a `PhysicalNode` at
     COMPILE time (Task 4.4 C0; design doc section 8.1's per-node field list,
-    scoped to the four strategies this task shadows -- passthrough, redact,
-    truncate, keyed hash). Populated only when the node's compiled config was
-    admitted to the corresponding native kernel; every other node leaves
-    `PhysicalNode.execution` unset (out of scope for this task's slice).
+    scoped to the five strategies the shadow coordinator admits -- passthrough,
+    redact, truncate, keyed hash, and (Task 4.6 slice 1) deterministic faker
+    over the frozen C1 provider allowlist). Populated only when the node's
+    compiled config was admitted to the corresponding native kernel or pool
+    route; every other node leaves `PhysicalNode.execution` unset.
 
     `resolved_config` is the node's fully-resolved provider-config as a
     sorted tuple of (key, value) pairs (e.g. truncate's `length`/`keep`,
@@ -65,11 +84,14 @@ class ExecutionBinding:
     key/secret material. `determinism_family`/`determinism_version` name the
     draw-site family (`native/_capabilities.capabilities_for(strategy).
     draw_family`, `None` for the three unkeyed transforms) and the plan's
-    `seed_protocol_version`. `key_binding` is set only for the keyed-hash
-    node. `diagnostic_obligations` mirrors `NodeRequirements.
-    diagnostic_reducers` (empty for this slice's zero-diagnostic strategies).
-    `batch_estimate` is the resident source table's row count when known, for
-    reporting only -- it does not gate anything.
+    `seed_protocol_version`. `key_binding` is set for the keyed-hash node and
+    the faker node (both draw from `mask_key`). `pool_binding` is set only
+    for the faker node -- `None` for every other operator, so the four
+    scalar operators built before Task 4.6 carry an unchanged shape.
+    `diagnostic_obligations` mirrors `NodeRequirements.diagnostic_reducers`
+    (empty for this slice's zero-diagnostic strategies). `batch_estimate` is
+    the resident source table's row count when known, for reporting only --
+    it does not gate anything.
     """
 
     operator_id: str
@@ -83,6 +105,9 @@ class ExecutionBinding:
     diagnostic_obligations: tuple[str, ...]
     required_prepasses: tuple[str, ...]
     batch_estimate: int | None
+    # Task 4.6 slice 1: LAST field, defaulted to None, so every pre-existing
+    # ExecutionBinding construction (the four scalar operators) is unchanged.
+    pool_binding: PoolBinding | None = None
 
 
 @dataclass(frozen=True)
