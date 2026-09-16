@@ -550,23 +550,33 @@ def _arrow_ipc_stream_bytes(table: pa.Table) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
-def assert_generation_outputs_arrow_ipc_equal(run: ShadowRun) -> None:
+def assert_generation_tables_arrow_ipc_equal(
+    shadow_outputs: dict[str, pa.Table], oracle_outputs: dict[str, pa.Table]
+) -> None:
     """The success/success comparator (Task 4.6 slice 5a §3): table-key sets
     match, and each table's Arrow IPC stream bytes (after `combine_chunks()`)
-    are byte-identical to the oracle's."""
-    shadow_tables, oracle_tables = set(run.shadow.outputs), set(run.oracle.outputs)
+    are byte-identical. Shared by the primary positive matrix and the bounded
+    fuzz sweeps so both enforce byte equality, not `Table.equals()` (which can
+    miss schema-metadata / field-order differences)."""
+    shadow_tables, oracle_tables = set(shadow_outputs), set(oracle_outputs)
     if shadow_tables != oracle_tables:
         raise ShadowDifference(
             code=SCHEMA_DIFF,
             detail=f"output table set differs: shadow={sorted(shadow_tables)} oracle={sorted(oracle_tables)}",
         )
     for table in sorted(oracle_tables):
-        shadow_bytes = _arrow_ipc_stream_bytes(run.shadow.outputs[table])
-        oracle_bytes = _arrow_ipc_stream_bytes(run.oracle.outputs[table])
-        if shadow_bytes != oracle_bytes:
+        if _arrow_ipc_stream_bytes(shadow_outputs[table]) != _arrow_ipc_stream_bytes(
+            oracle_outputs[table]
+        ):
             raise ShadowDifference(
                 code=CELL_VALUE_DIFF, detail=f"{table}: Arrow IPC stream bytes differ"
             )
+
+
+def assert_generation_outputs_arrow_ipc_equal(run: ShadowRun) -> None:
+    """Success/success comparator over a `ShadowRun` (delegates to
+    `assert_generation_tables_arrow_ipc_equal`)."""
+    assert_generation_tables_arrow_ipc_equal(run.shadow.outputs, run.oracle.outputs)
 
 
 @dataclass(frozen=True)

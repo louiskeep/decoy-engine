@@ -203,6 +203,25 @@ class _LeakyKeyProvider:
         return f"_LeakyKeyProvider(secret={self._secret!r})"
 
 
+_DERIVE_SECRET = bytes(range(64, 96))  # 32 known bytes, distinct from _SECRET
+
+
+class _LeakyDeriveKey:
+    """A `derive_key` callable whose own repr leaks its secret. `ShadowContext.
+    derive_key` is `field(repr=False)`, so it must never render -- even for an
+    ill-behaved implementation. This is the forward guard for 5b, which threads
+    a live `derive_key` that can close over key material."""
+
+    def __init__(self, secret: bytes) -> None:
+        self._secret = secret
+
+    def __call__(self, *args: object, **kwargs: object) -> bytes:
+        return self._secret
+
+    def __repr__(self) -> str:
+        return f"_LeakyDeriveKey(secret={self._secret!r})"
+
+
 def test_shadow_context_repr_excludes_the_secret_and_the_key_provider() -> None:
     """`mask_key` and `key_provider` are both declared `field(repr=False)`
     (Task 4.6 slice 3): the default dataclass repr must never render the
@@ -212,7 +231,8 @@ def test_shadow_context_repr_excludes_the_secret_and_the_key_provider() -> None:
     being well-behaved.
     """
     leaky = _LeakyKeyProvider(_SECRET)
-    ctx = ShadowContext(mask_key=b"\xaa" * 32, key_provider=leaky)
+    leaky_derive = _LeakyDeriveKey(_DERIVE_SECRET)
+    ctx = ShadowContext(mask_key=b"\xaa" * 32, key_provider=leaky, derive_key=leaky_derive)
 
     rendered = repr(ctx)
 
@@ -220,3 +240,7 @@ def test_shadow_context_repr_excludes_the_secret_and_the_key_provider() -> None:
     assert repr(ctx.mask_key) not in rendered
     assert "_LeakyKeyProvider" not in rendered
     assert repr(leaky) not in rendered
+    # derive_key (field(repr=False), Task 4.6 slice 5a) -- forward guard for 5b.
+    assert repr(_DERIVE_SECRET) not in rendered
+    assert "_LeakyDeriveKey" not in rendered
+    assert repr(leaky_derive) not in rendered

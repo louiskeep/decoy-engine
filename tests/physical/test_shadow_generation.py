@@ -54,6 +54,7 @@ from tests.physical._shadow_helpers import (
     ENGINE_VERSION,
     assert_generation_failures_match,
     assert_generation_outputs_arrow_ipc_equal,
+    assert_generation_tables_arrow_ipc_equal,
     run_generation_shadow_and_oracle,
     run_shadow_and_oracle,
 )
@@ -441,8 +442,10 @@ def _assert_success_or_matching_failure(config: dict[str, Any]) -> None:
     if diff.shadow_exception is None and diff.oracle_exception is None:
         assert diff.shadow_tables is not None
         assert diff.oracle_tables is not None
-        for name, oracle_table in diff.oracle_tables.items():
-            assert diff.shadow_tables[name].equals(oracle_table)
+        # Same Arrow-IPC-byte comparator as the primary positive matrix, so an
+        # incidental fuzz success is held to byte equality (not Table.equals,
+        # which can miss schema-metadata / field-order drift).
+        assert_generation_tables_arrow_ipc_equal(diff.shadow_tables, diff.oracle_tables)
         return
     assert_generation_failures_match(diff)
 
