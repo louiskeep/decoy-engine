@@ -44,13 +44,17 @@ partitionable.
 
 ## Summary
 
-- 30 catalogued draw sites (plus 46 mirror call sites: V1/V2 engines,
+- 32 catalogued draw sites (plus 47 mirror call sites: V1/V2 engines,
   pandas/polars substrates, the out-of-core batched path, the delegation
   handlers, and the 9 identifier provider adapters).
-- 19 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 12, `numpy_pcg64` 8, `faker_seed_instance`
-  3, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
+- 20 partitionable, 12 not.
+- Family breakdown: `source_keyed_hmac` 12, `numpy_pcg64` 9, `faker_seed_instance`
+  4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
+- GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
+  generation-local pool bridge for a closed allowlist of scalar `faker_type`
+  columns (`generation/_faker_pool.py`), separate from the V2 PoolBuilder seam
+  `gen.pool_build_faker` / `gen.pool_nondeterministic` serve.
 - 1 site flagged uncertain: `mask.windowed_date` (per-row seed keys on the
   enumerate index, so partitionability depends on the native executor pinning a
   global row number; see that section).
@@ -186,7 +190,7 @@ valid `derive` IKM lengths. Wired into output via the provider registry
 
 ---
 
-## Family: numpy_pcg64 (8 sites)
+## Family: numpy_pcg64 (9 sites)
 
 Draws from a `numpy.random.Generator` (`default_rng`, PCG64). Most are
 whole-column vector draws and are therefore NOT partitionable. The exception is
@@ -237,6 +241,15 @@ Numeric, categorical, and datetime samplers all draw whole-column vectors
 `np.random.default_rng(int.from_bytes(seed, "big"))` then
 `integers(0, pool.size, size=n)` or `permutation(...)[:k]`. Seeded but
 stream-positional across the whole output, so NOT partitionable.
+
+### gen.faker_pool_selection
+`generation/_faker_pool.py:148`. GP2's generation-local pool REUSE selection:
+`selection_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_selection")[:8]`
+seeds `default_rng` for `integers(0, pool.size, size=n)` -- mechanically the same
+whole-column draw as `gen.pool_nondeterministic`, but keyed from the column's OWN
+`GenDeriveContext` root rather than `job_seed` directly, so two pooled columns
+with different config never collapse onto one selection stream. Seeded but
+stream-positional, so NOT partitionable. Mirror: `generation/pool/_sampler.py:122`.
 
 ### gen.identifier_nondeterministic
 `providers_v2/identifiers/_ssn.py:165`. Every identifier adapter has two unseeded
@@ -307,7 +320,7 @@ within a row, but the per-row reseed contains it.
 
 ---
 
-## Family: faker_seed_instance (3 sites)
+## Family: faker_seed_instance (4 sites)
 
 `Faker.seed_instance(seed)` detaches the instance onto its own `random.Random`
 and reseeds it, then a provider method draws. Draw count per call varies by
@@ -337,6 +350,21 @@ physical seed happens in the provider adapter: `providers_v2/_faker_adapter.py:2
 (`fake.seed_instance(int.from_bytes(spec.seed, "big"))`) and, for the Mimesis
 adapter, a fresh `Generic(locale, seed=int.from_bytes(spec.seed))` per batch
 (`providers_v2/mimesis/_adapter.py:167`). Both are catalogued as mirrors here.
+
+### gen.faker_pool_build
+`generation/_faker_pool.py:132`. GP2's generation-local pool BUILD -- NOT
+`gen.pool_build_faker` above (that's the V2 PoolBuilder/ProviderRegistry seam
+masking's `faker` strategy uses; generation's raw `faker_type` values, like
+`first_name` or `city`, are not V2-registered providers). Closed allowlist only
+(`_faker_pool.POOL_ELIGIBLE_FAKER_TYPES`), gated by a locked resolver snapshot for
+custom-override/locale availability. Seed:
+`build_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_build")[:8]`,
+then ONE `faker.seed_instance(int.from_bytes(build_seed, "big"))` on a fresh
+instance seeds a batch of `pool_size` provider calls. Keyed off the column's OWN
+root (fingerprint-derived), so rename-invariant per R3.10 and independent of every
+other column's pool. Partitionable (pool identity is a pure function of that root).
+Paired with `gen.faker_pool_selection` (`numpy_pcg64` family, above) for the REUSE
+draw.
 
 ---
 
@@ -430,10 +458,10 @@ Task 0.3 builds one `DrawSiteProvider` per catalogued site
 (`tests/native/test_determinism_goldens.py`) that each provider reproduces what
 the current engine draws at that site. Every gate test invokes the REAL shipped
 transform / handler / primitive (never a second copy of the same formula) and
-drives the provider on the same identity. 19 draw sites route through the
+drives the provider on the same identity. 21 draw sites route through the
 shipped code:
 
-- 18 reproduce the shipped OUTPUT byte-for-byte: `mask.shuffle`
+- 20 reproduce the shipped OUTPUT byte-for-byte: `mask.shuffle`
   (`ShuffleStrategyHandler`), `mask.hash` (`hash_array`), `mask.group_key`
   (`apply_group_key`), `mask.bucket_perturb` (`apply_bucket_perturb`),
   `mask.date_shift` (`DateShiftStrategyHandler`), `mask.categorical_deterministic`
@@ -444,7 +472,8 @@ shipped code:
   `mask.grouped_series_monotone_walk` (`_apply_monotone_walk`), `mask.windowed_date`
   (`apply_windowed_date`), `gen.categorical` / `gen.reference` /
   `gen.null_probability` / `gen.faker_per_row` (`synthesize.py`),
-  `gen.statistical_per_row` (`sample_column`).
+  `gen.statistical_per_row` (`sample_column`), `gen.faker_pool_build` +
+  `gen.faker_pool_selection` (`_faker_pool.build_and_sample`).
 - 1 is keyed-material: `mask.fpe`. The provider emits the per-column FF1 KEY
   (`derive(mask_key, namespace, FF1_KEY_LABEL)`); the ciphertext is reproduced by
   driving that key through the shipped `fpe_encrypt_value` and matching the real
@@ -473,18 +502,20 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (30 sites; 19
-partitionable, 11 not). An import-time invariant fails if the registry drifts
+Registry: exactly one provider per catalogued `draw_site_id` (32 sites; 20
+partitionable, 12 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
 | --------------------------------- | ------------------- | ------------- | --------------------------------------------------------------- |
 | gen.faker_per_row                 | faker_seed_instance | yes           | seed_protocol_v7 (GenDeriveContext); Faker seed_instance |
+| gen.faker_pool_build              | faker_seed_instance | yes           | seed_protocol_v7 (GenDeriveContext.family_bytes); Faker seed_instance |
 | gen.pool_build_faker              | faker_seed_instance | yes           | seed_protocol_v7 (pool_seed via derive); Faker/provider adapter |
 | mask.text_mask_faker              | faker_seed_instance | yes           | Faker (seed_instance detaches a per-instance random.Random) |
 | gen.derive_context                | gen_derive_context  | yes           | seed_protocol_v7 |
 | gen.composite_build_pool          | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
 | gen.distribution_snapshot         | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
+| gen.faker_pool_selection          | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext.family_bytes); numpy NEP-19 PCG64 |
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
 | gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |

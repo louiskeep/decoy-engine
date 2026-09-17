@@ -4,7 +4,9 @@ Produces synthetic tables from a generate-mode ``PipelineConfig``: for each gene
 table (``generate_columns`` + ``row_count``, no source), build ``row_count`` rows,
 each declared column filled by its per-column generator. This is the v2 analogue of
 V1 ``DataGenerator`` (``decoy_engine.generators``); it is PARITY-FROZEN to V1 under a
-fixed seed (Reading B) -- we reproduce V1 output, we do not extend it.
+fixed seed (Reading B) -- we reproduce V1 output, we do not extend it. GP2 is the one
+declared exception: an eligible pooled ``faker`` column (closed allowlist, `_faker_pool`)
+deliberately breaks V1 byte-parity for the rows it pools -- see ``_faker`` below.
 
 S6-ENG-1 landed the spine + the ``sequence`` generator. S6-ENG-2 adds parity-frozen
 ``categorical`` (and on the next sub-commits, ``faker`` / ``formula``); S6-ENG-3 adds
@@ -37,6 +39,7 @@ import numpy as np
 import pyarrow as pa
 from faker import Faker
 
+from decoy_engine.generation import _faker_pool
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -442,7 +445,7 @@ def _faker(
     instance_default_locale: str | None = None,
 ) -> list[Any]:
     """Faker-driven values, parity-frozen vs V1 ``_generate_faker_column``
-    (``columns.py:205-276``).
+    (``columns.py:205-276``) -- WITH ONE GP2 EXCEPTION below.
 
     Pattern (mirror V1): pick the Faker instance (fresh per-locale when ``locale``
     is set, otherwise a shared instance), look up the provider by ``faker_type``
@@ -454,9 +457,43 @@ def _faker(
 
     ``faker_kwargs`` is optional; non-dict values are dropped (matches V1's silent
     drop, ``columns.py:253-259``).
+
+    GP2 exception: for a CLOSED ALLOWLIST of exact-semantic types
+    (``_faker_pool.POOL_ELIGIBLE_FAKER_TYPES``) at ``n >= _faker_pool.N_THRESHOLD``
+    and not opted out via ``pooled: false``, this tries the pool bridge FIRST
+    (`_faker_pool.build_and_sample`) and returns its result -- deliberately NOT
+    byte-identical to the per-row loop below (a different draw mechanism, on
+    purpose, for throughput; see ``_faker_pool``'s module docstring for the
+    determinism contract that replaces per-row parity for those columns). The
+    bridge returns ``None`` (never raises) when its locked resolver snapshot
+    finds a custom override or a locale-unavailable name, and every other column
+    -- below threshold, non-allowlisted, or explicitly opted out -- falls through
+    to the per-row loop UNCHANGED, so non-pooled output stays byte-identical to
+    pre-GP2.
     """
     faker_type = col.get("faker_type", "word")
     locale = col.get("locale")
+    raw_kwargs = col.get("faker_kwargs") or {}
+    faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
+    gen_ctx = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    )
+
+    if _faker_pool.pool_eligible(faker_type, n, opted_out=col.get("pooled") is False):
+        effective_locale = locale or instance_default_locale
+        pooled = _faker_pool.build_and_sample(
+            faker_type=faker_type,
+            faker_kwargs=faker_kwargs,
+            n=n,
+            gen_ctx=gen_ctx,
+            effective_locale=effective_locale,
+        )
+        if pooled is not None:
+            return pooled
+        # Locked-resolver snapshot forced a per-row fallback (custom override
+        # present, or faker_type unavailable for effective_locale) -- fall
+        # through to the unchanged per-row loop below.
+
     if locale:
         faker_inst = make_faker(locale)
         pre_seed: int | None = None
@@ -474,11 +511,6 @@ def _faker(
         pre_seed = seed
     providers = get_faker_providers(faker_inst)
     provider_func = providers.get(faker_type) or providers["word"]
-    raw_kwargs = col.get("faker_kwargs") or {}
-    faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
-    gen_ctx = GenDeriveContext.for_column(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
-    )
     out: list[Any] = []
     # No lock: every path above yields an instance no other thread touches
     # (thread-local default, or a fresh make_faker construction), so the

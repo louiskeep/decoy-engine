@@ -9,6 +9,28 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (GP2: pool-based faker generation, 2026-09-17)
+
+`type: faker` generate columns now auto-pool for a closed allowlist of exact-semantic
+types (`first_name`, `last_name`, `name`, `prefix`, `suffix`, `city`, `state`, `country`,
+`job`, `company`) once a table's row count reaches 1,000 rows: instead of reseeding Faker
+per row, the engine builds a bounded value pool once and vector-samples from it, matching
+the throughput masking's `faker` strategy already gets from pooling. Everything else --
+non-allowlisted types, below-threshold tables, a custom-overridden or locale-unavailable
+provider name -- keeps the unchanged per-row path.
+
+New per-column YAML key: `pooled: false` opts a column out of auto-pooling and keeps the
+exact pre-GP2 per-row bytes; `pooled: true` is accepted but is not a forcing knob (an
+ineligible type stays per-row regardless). Omitting the key auto-pools when eligible.
+
+Determinism: pool build and pool selection are two INDEPENDENT draw sites
+(`gen.faker_pool_build`, `gen.faker_pool_selection`), both keyed off the column's own
+`GenDeriveContext` root via disjoint HMAC label domains -- rename-invariant (R3.10) and
+independent across columns, cross-process reproducible, non-partitionable (generation is
+full-frame). A pooled column's output is a deliberate, one-time byte break from V1 parity
+for that column; everything that doesn't pool stays byte-identical to pre-GP2 output and
+seed root (the new `pooled` field is excluded from the seed fingerprint).
+
 ### Added (Task 4.6 slice 3: out-of-core FK route parity through the unified coordinator, 2026-09-16)
 
 The physical-plan shadow coordinator gains an OUT_OF_CORE dispatch branch: when a compiled

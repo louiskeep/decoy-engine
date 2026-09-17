@@ -156,6 +156,16 @@ class GenerateColumnConfig(BaseModel):
         "group_key",
     ]
 
+    # GP2 (Codex round-2 spec A/G7): the ONLY validated `type: faker` knob.
+    # `None` (omitted) and explicit `False` are both "no pool" -- generation
+    # auto-pools an eligible column above threshold either way; `False` is
+    # the one operator-facing opt-out. A typed field (not `extra="allow"`)
+    # so `pooled: "yes"` fails validation instead of silently no-op'ing.
+    # `strategy_config_fingerprint` excludes this field on purpose (derivation.py):
+    # it is a build-strategy toggle, not a value-affecting strategy knob, so a
+    # column with `pooled` unset keeps the exact pre-GP2 seed root and bytes.
+    pooled: bool | None = None
+
     @model_validator(mode="after")
     def _reference_params_required(self) -> GenerateColumnConfig:
         """A ``reference`` column must declare its parent: ``reference_table`` +
