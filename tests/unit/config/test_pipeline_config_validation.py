@@ -491,6 +491,28 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
         cfg = self._wrap({"name": "city", "type": "faker", "faker_type": "city", "pooled": True})
         PipelineConfig.model_validate(cfg)  # no raise
 
+    @pytest.mark.parametrize("bad", ["false", "true", "yes", "no", 0, 1])
+    def test_pooled_coercible_non_bool_rejected(self, bad):
+        """Codex FINAL gate finding 2: `pooled` is StrictBool, so a coercible
+        non-bool must be REJECTED, not silently coerced. Plain `bool | None`
+        turned `pooled: "false"` into `False` and quietly disabled pooling on
+        an eligible column; the strict field rejects string/numeric input."""
+        cfg = self._wrap({"name": "city", "type": "faker", "faker_type": "city", "pooled": bad})
+        with pytest.raises(ValidationError):
+            PipelineConfig.model_validate(cfg)
+
+    def test_pooled_explicit_null_on_non_faker_accepted_roundtrip_safe(self):
+        """Codex FINAL gate finding 1 (rebutted): an explicit `pooled: null`
+        carries no directive and must stay legal on a non-faker column, since
+        `model_dump()` stamps `pooled: null` on every generate column. A
+        field-presence check would reject a dumped-then-revalidated column and
+        break config round-trip; `is not None` keeps it round-trip-safe."""
+        cfg = self._wrap({"name": "id", "type": "sequence", "start": 1, "pooled": None})
+        validated = PipelineConfig.model_validate(cfg)  # no raise
+        # Full round-trip: dump (stamps pooled: null on the sequence col) then
+        # re-validate must also pass.
+        PipelineConfig.model_validate(validated.model_dump())  # no raise
+
     def test_reference_validator_unchanged_still_raises_on_missing_table(self):
         """Existing _reference_params_required validator still works
         alongside the new _type_params_present validator."""
