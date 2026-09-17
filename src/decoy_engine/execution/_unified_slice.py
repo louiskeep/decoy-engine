@@ -1,41 +1,36 @@
-"""Task 4.5: the unified-slice production lane -- a DEFAULT-OFF, per-run-flag
-route that runs one bounded slice (a single non-FK Parquet mask table, the
-four native scalar strategies, a resident `pa.Table` source) through the 4.3
-physical plan + 4.4 shadow coordinator, returning `ExecutionResult(outputs=
-...)` identically to the pandas full-frame route -- no sink, no caller
+"""Task 4.5: the unified-slice production lane -- a DEFAULT-OFF, per-run-flag route that runs one
+bounded slice (a single non-FK Parquet mask table, the four native scalar strategies, a resident
+`pa.Table` source) through the 4.3 physical plan + 4.4 shadow coordinator, returning
+`ExecutionResult(outputs= ...)` identically to the pandas full-frame route -- no sink, no caller
 change.
 
-Structurally parallel to the Q3 native lane (`_native_route.py`): a per-run
-flag, a conservative admission predicate, an early return of a complete
-`ExecutionResult` when admitted, `None` (this lane returns a single value,
-not a tuple -- see `maybe_run_unified_slice`'s docstring) when not.
+Structurally parallel to the Q3 native lane (`_native_route.py`): a per-run flag, a conservative
+admission predicate, an early return of a complete `ExecutionResult` when admitted, `None` (this
+lane returns a single value, not a tuple -- see `maybe_run_unified_slice`'s docstring) when not.
 
-D1 (CRITICAL, Codex): `_native_route.py`'s own `maybe_run_native_route`
-imports its executor BEFORE its off-check (`_native_route.py:347-353`); this
-module does not repeat that. Every function below that reaches into
-`decoy_engine.execution.physical` (which imports eagerly,
-`physical/__init__.py:62-97`) does so import-local, and NONE of those
-functions run before `maybe_run_unified_slice` has already confirmed the
-flag is on and `_unified_slice_admission.cheap_admission` (which has zero
-`execution.physical` reach) has already admitted. A flag-off caller
-therefore never imports `execution.physical` at all -- proved by
-`tests/physical/test_unified_slice_inertness.py`.
+D1 (CRITICAL, Codex): `_native_route.py`'s own `maybe_run_native_route` imports its executor
+BEFORE its off-check (`_native_route.py:347-353`); this module does not repeat that. Every
+function below that reaches into `decoy_engine.execution.physical` (which imports eagerly,
+`physical/__init__.py:62-97`) does so import-local, and NONE of those functions run before
+`maybe_run_unified_slice` has already confirmed the flag is on and
+`_unified_slice_admission.cheap_admission` (which has zero `execution.physical` reach) has
+already admitted. A flag-off caller therefore never imports `execution.physical` at all --
+proved by `tests/physical/test_unified_slice_inertness.py`.
 
-The admission predicate itself (D3) lives in `_unified_slice_admission.py`,
-split out to hold this module's own size under the ~600-LOC orchestration
-cap (CLAUDE.md "Engineering best practices"); this module owns D6/D7/D8's
-execution + activation + exception-boundary concerns and the one
-`run_pipeline` call site.
+The admission predicate itself (D3) lives in `_unified_slice_admission.py`, split out to hold
+this module's own size under the ~600-LOC orchestration cap (CLAUDE.md "Engineering best
+practices"); this module owns D6/D7/D8's execution + activation + exception-boundary concerns
+and the one `run_pipeline` call site.
 
-CHANGE 4 (Codex determination, module-size ratchet remediation):
-`run_from_pipeline_locals` -- not `maybe_run_unified_slice` itself -- is
-`_pipeline.py`'s actual call site now, so that module's own 645-LOC ceiling
-(`tests/sentry/test_module_size.py`) does not have to carry this lane's
-~30-keyword argument block. See `run_from_pipeline_locals`'s docstring.
+CHANGE 4 (Codex determination, module-size ratchet remediation): `run_from_pipeline_locals` --
+not `maybe_run_unified_slice` itself -- is `_pipeline.py`'s actual call site now, so that
+module's own 645-LOC ceiling (`tests/sentry/test_module_size.py`) does not have to carry this
+lane's ~30-keyword argument block. See `run_from_pipeline_locals`'s docstring.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Final
 
 from decoy_engine.errors import DecoyError
@@ -68,6 +63,9 @@ __all__ = [
 # under; the differential parity harness (D9) asserts it present flag-on,
 # absent flag-off, and compares every OTHER quality_metrics leaf exactly.
 QUALITY_METRICS_KEY = "unified_slice_activation"
+
+_logger = logging.getLogger(__name__)
+_REROUTE_LOG = "unified_slice_unexpected_exception_reroute exc_type=%s table=%s"
 
 
 class UnifiedSliceInvariantError(DecoyError):
@@ -182,194 +180,200 @@ def _execute_admitted(
     from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
     from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 
-    adapter = select_execution_adapter(
-        substrate=resolved_substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-    )
-
-    inputs = build_live_physical_plan_inputs(
-        config=config,
-        plan=plan,
-        profile=profile,
-        registry=registry,
-        graph=graph,
-        table_kinds=table_kinds,
-        caller_sources=caller_sources,
-        resolved_substrate=resolved_substrate,
-        execution_mode=execution_mode,
-        fidelity_report=fidelity_report,
-        vault_writer_present=vault_writer is not None,
-        validators=tuple(config.get("validators") or ()),
-        auto_chunk=auto_chunk,
-        chunk_size_rows=chunk_size_rows,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        out_of_core_threshold_rows=out_of_core_threshold_rows,
-        full_frame_reject_rows=full_frame_reject_rows,
-        use_byte_estimate_routing=use_byte_estimate_routing,
-        use_probe_routing=use_probe_routing,
-        native_route_enabled=native_route_enabled,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
-        out_of_core_budget_bytes=out_of_core_budget_bytes,
-        engine_version=engine_version,
-    )
-    physical_plan = compile_physical_plan(inputs)
-
-    physical_table = _admission.resident_contract_admission(
-        physical_plan,
-        table=candidate.table,
-        source=candidate.source,
-        plan=plan,
-        registry=registry,
-        graph=graph,
-    )
-    if physical_table is None:
-        return None
-
-    activation = build_unified_slice_activation(
-        physical_plan,
-        table=candidate.table,
-        legacy_disposition="full_frame",
-        unified_slice_enabled=True,
-    )
-
-    ctx = ShadowContext.from_key_provider(plan=plan, key_provider=key_provider)
-    snapshot = capture_shadow_snapshot({candidate.table: candidate.source})
-
     try:
-        shadow_result = ShadowCoordinator(ctx=ctx).run(physical_plan, snapshot)
-    except ShadowDifference as exc:
-        # D8: an admitted job's execution boundary. Admission already
-        # preflighted companion availability, node binding, coverage, and
-        # invariants, so reaching a coded `ShadowDifference` here means the
-        # admission predicate has a gap, not that this job is ineligible --
-        # fail closed with a non-shadow type rather than leak the shadow
-        # exception or return a partial `outputs` dict.
-        raise UnifiedSliceInvariantError(
-            f"unified slice: coded shadow difference {exc.code!r} on an admitted "
-            f"table {candidate.table!r}; this indicates an admission-predicate gap, "
-            "not a normal execution outcome."
-        ) from exc
+        adapter = select_execution_adapter(
+            substrate=resolved_substrate,
+            fpe_chunk_count=fpe_chunk_count,
+            max_workers=max_workers,
+            fallback_to_pandas=fallback_to_pandas,
+        )
 
-    # D7: stamp completed-execution evidence ONLY from the successfully-
-    # returned, already-validated coordinator result -- never from the
-    # pre-execution activation overlay alone (Settled decision 1).
-    node_evidence: dict[str, dict[str, Any]] = {}
-    for node in physical_table.nodes:
-        binding = node.execution
-        if binding is None:  # pragma: no cover - resident_contract_admission already excluded this
+        inputs = build_live_physical_plan_inputs(
+            config=config,
+            plan=plan,
+            profile=profile,
+            registry=registry,
+            graph=graph,
+            table_kinds=table_kinds,
+            caller_sources=caller_sources,
+            resolved_substrate=resolved_substrate,
+            execution_mode=execution_mode,
+            fidelity_report=fidelity_report,
+            vault_writer_present=vault_writer is not None,
+            validators=tuple(config.get("validators") or ()),
+            auto_chunk=auto_chunk,
+            chunk_size_rows=chunk_size_rows,
+            auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+            out_of_core_threshold_rows=out_of_core_threshold_rows,
+            full_frame_reject_rows=full_frame_reject_rows,
+            use_byte_estimate_routing=use_byte_estimate_routing,
+            use_probe_routing=use_probe_routing,
+            native_route_enabled=native_route_enabled,
+            fpe_chunk_count=fpe_chunk_count,
+            max_workers=max_workers,
+            fallback_to_pandas=fallback_to_pandas,
+            out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
+            out_of_core_budget_bytes=out_of_core_budget_bytes,
+            engine_version=engine_version,
+        )
+        physical_plan = compile_physical_plan(inputs)
+
+        physical_table = _admission.resident_contract_admission(
+            physical_plan,
+            table=candidate.table,
+            source=candidate.source,
+            plan=plan,
+            registry=registry,
+            graph=graph,
+        )
+        if physical_table is None:
+            return None
+
+        activation = build_unified_slice_activation(
+            physical_plan,
+            table=candidate.table,
+            legacy_disposition="full_frame",
+            unified_slice_enabled=True,
+        )
+
+        ctx = ShadowContext.from_key_provider(plan=plan, key_provider=key_provider)
+        snapshot = capture_shadow_snapshot({candidate.table: candidate.source})
+
+        try:
+            shadow_result = ShadowCoordinator(ctx=ctx).run(physical_plan, snapshot)
+        except ShadowDifference as exc:
+            # D8: an admitted job's execution boundary. Admission already
+            # preflighted companion availability, node binding, coverage, and
+            # invariants, so reaching a coded `ShadowDifference` here means the
+            # admission predicate has a gap, not that this job is ineligible --
+            # fail closed with a non-shadow type rather than leak the shadow
+            # exception or return a partial `outputs` dict.
             raise UnifiedSliceInvariantError(
-                f"unified slice: node {node.node_id!r} lost its admitted binding "
-                "between admission and execution."
-            )
-        evidence = shadow_result.route_evidence.get(node.node_id)
-        if (
-            evidence is None
-            or not evidence.executed
-            or evidence.actual_operator != binding.operator_id
-        ):
-            raise UnifiedSliceInvariantError(
-                f"unified slice: node {node.node_id!r} completed without matching "
-                "completed-execution evidence."
-            )
-        if (
-            binding.operator_id == _admission.HASH_OPERATOR_ID
-            and not evidence.compiled_kernel_executed
-        ):
-            raise UnifiedSliceInvariantError(
-                f"unified slice: hash node {node.node_id!r} completed without positive "
-                "compiled-kernel evidence."
-            )
-        node_evidence[node.node_id] = {
-            "operator": evidence.actual_operator,
-            "executed": evidence.executed,
-            "compiled_kernel_executed": evidence.compiled_kernel_executed,
+                f"unified slice: coded shadow difference {exc.code!r} on an admitted "
+                f"table {candidate.table!r}; this indicates an admission-predicate gap, "
+                "not a normal execution outcome."
+            ) from exc
+
+        # D7: stamp completed-execution evidence ONLY from the successfully-
+        # returned, already-validated coordinator result -- never from the
+        # pre-execution activation overlay alone (Settled decision 1).
+        node_evidence: dict[str, dict[str, Any]] = {}
+        for node in physical_table.nodes:
+            binding = node.execution
+            if binding is None:  # pragma: no cover - excluded by resident_contract_admission
+                raise UnifiedSliceInvariantError(
+                    f"unified slice: node {node.node_id!r} lost its admitted binding "
+                    "between admission and execution."
+                )
+            evidence = shadow_result.route_evidence.get(node.node_id)
+            if (
+                evidence is None
+                or not evidence.executed
+                or evidence.actual_operator != binding.operator_id
+            ):
+                raise UnifiedSliceInvariantError(
+                    f"unified slice: node {node.node_id!r} completed without matching "
+                    "completed-execution evidence."
+                )
+            if (
+                binding.operator_id == _admission.HASH_OPERATOR_ID
+                and not evidence.compiled_kernel_executed
+            ):
+                raise UnifiedSliceInvariantError(
+                    f"unified slice: hash node {node.node_id!r} completed without positive "
+                    "compiled-kernel evidence."
+                )
+            node_evidence[node.node_id] = {
+                "operator": evidence.actual_operator,
+                "executed": evidence.executed,
+                "compiled_kernel_executed": evidence.compiled_kernel_executed,
+            }
+
+        # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
+        # trip of the coordinator's own metadata-free output. `candidate.
+        # source_frame` is the SAME source-aware pandas conversion the legacy
+        # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`,
+        # which reduces to a plain `to_pandas()` here since cheap admission
+        # already declined any relationship-bearing job); leaving a passthrough
+        # column untouched on it reproduces the legacy `PassthroughHandler`
+        # exactly (it is a literal no-op, `_strategies/_passthrough.py`), and
+        # overlaying a masked column's `to_pylist()` POSITIONALLY reproduces
+        # every tokenizing handler's own `df[column] = masked.to_pylist()`
+        # assignment (`_redact.py` / `_truncate.py` / `_hash.py`). The closing
+        # `pa.Table.from_pandas(frame, preserve_index=False)` is then EXACTLY
+        # the legacy adapter's own conversion (`_pandas_adapter.py:325`),
+        # attaching the identical `b"pandas"` schema metadata by construction --
+        # not by hand-copying bytes. `candidate.source_frame` is single-use
+        # (admission built it once for this call only), so mutating it in place
+        # costs no extra conversion beyond the one admission already paid for.
+        frame = candidate.source_frame
+        masked_table = shadow_result.outputs[candidate.table]
+        for node in physical_table.nodes:
+            if node.strategy == "passthrough":
+                continue
+            column = node.columns[0]
+            frame[column] = masked_table.column(column).to_pylist()
+        outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
+        quality_metrics: dict[str, Any] = {}
+        _pipeline_finalize.stamp_execution_metrics(
+            quality_metrics,
+            adapter=adapter,
+            substrate=substrate,
+            resolved_substrate=resolved_substrate,
+            fpe_chunk_count=fpe_chunk_count,
+            max_workers=max_workers,
+            fallback_to_pandas=fallback_to_pandas,
+            route_chunked=False,
+            auto_chunk=auto_chunk,
+            chunk_size_rows=chunk_size_rows,
+            auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+            table_kinds=table_kinds,
+            caller_sources={candidate.table: candidate.source},
+            execution_plan_decision=execution_plan_decision,
+        )
+        outputs = _pipeline_finalize.finalize_validators_and_quarantine(
+            outputs,
+            config=config,
+            caller_sources={candidate.table: candidate.source},
+            mask_row_errors=tuple(shadow_result.row_errors),
+            quality_metrics=quality_metrics,
+        )
+        if explain_plan and execution_plan_decision is not None:
+            quality_metrics["execution_plan"] = {
+                "mode": execution_plan_decision.mode,
+                "reason": execution_plan_decision.reason,
+                "rejections": dict(execution_plan_decision.rejections),
+            }
+        quality_metrics["execution"] = _pipeline_route_exec.execution_telemetry(
+            route="full_frame",
+            route_reason=route_reason,
+            sink=None,
+            source_loader=None,
+            sources_resident=True,
+        )
+        quality_metrics[QUALITY_METRICS_KEY] = {
+            "activated": True,
+            "table": candidate.table,
+            "activation_hash": activation.activation_hash,
+            "plan_hash": physical_plan.plan_hash,
+            "nodes": node_evidence,
         }
 
-    # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
-    # trip of the coordinator's own metadata-free output. `candidate.
-    # source_frame` is the SAME source-aware pandas conversion the legacy
-    # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`,
-    # which reduces to a plain `to_pandas()` here since cheap admission
-    # already declined any relationship-bearing job); leaving a passthrough
-    # column untouched on it reproduces the legacy `PassthroughHandler`
-    # exactly (it is a literal no-op, `_strategies/_passthrough.py`), and
-    # overlaying a masked column's `to_pylist()` POSITIONALLY reproduces
-    # every tokenizing handler's own `df[column] = masked.to_pylist()`
-    # assignment (`_redact.py` / `_truncate.py` / `_hash.py`). The closing
-    # `pa.Table.from_pandas(frame, preserve_index=False)` is then EXACTLY
-    # the legacy adapter's own conversion (`_pandas_adapter.py:325`),
-    # attaching the identical `b"pandas"` schema metadata by construction --
-    # not by hand-copying bytes. `candidate.source_frame` is single-use
-    # (admission built it once for this call only), so mutating it in place
-    # costs no extra conversion beyond the one admission already paid for.
-    frame = candidate.source_frame
-    masked_table = shadow_result.outputs[candidate.table]
-    for node in physical_table.nodes:
-        if node.strategy == "passthrough":
-            continue
-        column = node.columns[0]
-        frame[column] = masked_table.column(column).to_pylist()
-    outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
-    quality_metrics: dict[str, Any] = {}
-    _pipeline_finalize.stamp_execution_metrics(
-        quality_metrics,
-        adapter=adapter,
-        substrate=substrate,
-        resolved_substrate=resolved_substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-        route_chunked=False,
-        auto_chunk=auto_chunk,
-        chunk_size_rows=chunk_size_rows,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        table_kinds=table_kinds,
-        caller_sources={candidate.table: candidate.source},
-        execution_plan_decision=execution_plan_decision,
-    )
-    outputs = _pipeline_finalize.finalize_validators_and_quarantine(
-        outputs,
-        config=config,
-        caller_sources={candidate.table: candidate.source},
-        mask_row_errors=tuple(shadow_result.row_errors),
-        quality_metrics=quality_metrics,
-    )
-    if explain_plan and execution_plan_decision is not None:
-        quality_metrics["execution_plan"] = {
-            "mode": execution_plan_decision.mode,
-            "reason": execution_plan_decision.reason,
-            "rejections": dict(execution_plan_decision.rejections),
-        }
-    quality_metrics["execution"] = _pipeline_route_exec.execution_telemetry(
-        route="full_frame",
-        route_reason=route_reason,
-        sink=None,
-        source_loader=None,
-        sources_resident=True,
-    )
-    quality_metrics[QUALITY_METRICS_KEY] = {
-        "activated": True,
-        "table": candidate.table,
-        "activation_hash": activation.activation_hash,
-        "plan_hash": physical_plan.plan_hash,
-        "nodes": node_evidence,
-    }
-
-    return ExecutionResult(
-        outputs=outputs,
-        timings=(),
-        boundary_conversion_ms=0.0,
-        warnings=_typed_warnings(shadow_result.warnings),
-        quality_metrics=quality_metrics,
-        table_kinds=dict(table_kinds),
-        row_errors=_typed_row_errors(shadow_result.row_errors),
-        native_route=None,
-    )
+        return ExecutionResult(
+            outputs=outputs,
+            timings=(),
+            boundary_conversion_ms=0.0,
+            warnings=_typed_warnings(shadow_result.warnings),
+            quality_metrics=quality_metrics,
+            table_kinds=dict(table_kinds),
+            row_errors=_typed_row_errors(shadow_result.row_errors),
+            native_route=None,
+        )
+    except UnifiedSliceInvariantError:
+        raise
+    except Exception as exc:
+        _logger.warning(_REROUTE_LOG, type(exc).__name__, candidate.table)
+        return None
 
 
 def maybe_run_unified_slice(
