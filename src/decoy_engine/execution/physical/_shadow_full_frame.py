@@ -261,10 +261,21 @@ def _require_admitted_substrate(table: PhysicalTable, adapter: ExecutionAdapter)
             code=FULL_FRAME_SUBSTRATE_UNSUPPORTED,
             detail=f"compiled table substrate={table.substrate!r}",
         )
-    if adapter.adapter_name != "pandas":
+    # Total-guard the attribute read (dennis LOW): a malformed injected adapter
+    # with no readable `adapter_name` declines coded, never a raw AttributeError
+    # escaping the gate -- matching the module's stated "every check is
+    # total-guarded" invariant.
+    try:
+        adapter_name = adapter.adapter_name
+    except AttributeError as exc:
         raise ShadowDifference(
             code=FULL_FRAME_SUBSTRATE_UNSUPPORTED,
-            detail=f"injected adapter adapter_name={adapter.adapter_name!r}",
+            detail="injected adapter has no readable adapter_name",
+        ) from exc
+    if adapter_name != "pandas":
+        raise ShadowDifference(
+            code=FULL_FRAME_SUBSTRATE_UNSUPPORTED,
+            detail=f"injected adapter adapter_name={adapter_name!r}",
         )
 
 
