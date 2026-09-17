@@ -112,6 +112,11 @@ python scripts/native-baseline/bench_driver.py \
   --out scripts/native-baseline/results_native_100m.json
 ```
 
+`bench_driver.py` fails closed on RSS by default: a timed rep with no per-rep
+VmHWM sample raises before that tier's summary is written, so this invocation
+(no `--allow-missing-rss`) never persists a partial RSS aggregate under the
+cert's result file.
+
 One rep, no discarded warmup: the 1x/4x/16x runs (`results_native_1x_4x.json`,
 `results_native_16x.json`) already established sub-second-scale variance (IQR 0.05-4.4s across
 5/5/3 reps) and a linear wall/flat-RSS fit up to 16M rows; a calibration run at 5,000,000 rows
