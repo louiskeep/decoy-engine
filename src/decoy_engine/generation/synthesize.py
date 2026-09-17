@@ -37,6 +37,7 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
+from decoy_engine.generation._statistical_column import statistical_generate
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -87,8 +88,9 @@ def _generate_tables_from_config(
 
     ``statistical_specs`` is ``{(table_name, column_name): StatisticalSpec}``,
     already validated and pinned at compile time (guide section 4.7/4.8):
-    the ``statistical`` dispatch below (``_statistical``) consumes it
-    directly and never reopens a snapshot path. ``snapshot_index_for_
+    the ``statistical`` dispatch below (``_statistical_column.
+    statistical_generate``) consumes it directly and never reopens a
+    snapshot path. ``snapshot_index_for_
     column``/``snapshot_artifacts`` feed the fidelity gate the same pinned
     artifacts, keyed the same way. ``provider_snapshot`` (5a-faker) forwards
     to every ``_generate_column`` call; ``None`` (the default) resolves
@@ -175,7 +177,7 @@ def _generate_tables_from_config(
         # 2026-06-12): score statistical columns against their source
         # snapshot and warn below global_settings.fidelity_warn_threshold.
         # Warn-only; output bytes are untouched. Lazy import mirrors the
-        # `_statistical` dispatch so non-statistical configs never pay it.
+        # `statistical` dispatch so non-statistical configs never pay it.
         if any(c.get("type") == "statistical" for c in gcols):
             from decoy_engine.generation._fidelity_gate import (
                 fidelity_warn_threshold,
@@ -273,7 +275,7 @@ def _generate_column(
     elif kind == "reference":
         values = _reference(col, n, seed, derive_key, pools or {})
     elif kind == "statistical":
-        values = _statistical(
+        values = statistical_generate(
             col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}
         )
     elif kind == "derived":
@@ -321,69 +323,6 @@ def _sequence(col: dict[str, Any], n: int) -> list[str]:
         value_str = str(value).zfill(pad) if pad > 0 else str(value)
         out.append(f"{prefix}{value_str}{suffix}")
     return out
-
-
-def _statistical(
-    col: dict[str, Any],
-    n: int,
-    seed: int,
-    derive_key: Any,
-    generated: dict[str, list[Any]],
-    table_name: str,
-    statistical_specs: dict[tuple[str, str], StatisticalSpec],
-) -> list[Any]:
-    """WS3 statistical synthesis: sample from a distribution-snapshot/v1
-    artifact (see generation/statistical for the methodology + privacy
-    gate). ADDITIVE generator type -- the existing types stay
-    parity-frozen to V1. `generated` carries the table's already-built
-    columns so `condition_on` can read its conditioning sibling
-    (declared-order sequential conditional sampling).
-
-    DPS Scope B (guide section 4.8): the spec comes from the Plan's
-    already-validated, already-pinned ``statistical_specs`` mapping, keyed
-    by ``(table_name, column_name)`` -- this function never opens a
-    snapshot path itself. The mapping is built once by ``generate_tables``
-    from ``GenerationPlan.statistical_specs``, which `compile_plan` froze
-    from the exact bytes it read at compile time (guide section 4.7),
-    closing the TOCTOU window a raw ``load_spec(col)`` call would reopen.
-    """
-    from decoy_engine.generation.statistical import sample_column
-    from decoy_engine.generation.statistical._spec import StatisticalSpecError
-
-    col_name = str(col.get("name"))
-    spec = statistical_specs.get((table_name, col_name))
-    if spec is None:
-        raise StatisticalSpecError(
-            code="statistical_spec_not_pinned",
-            message=(
-                f"statistical column {col_name!r} in table {table_name!r} has no pinned "
-                "spec in this Plan's GenerationPlan. This should be unreachable through "
-                "compile_plan -- every type: statistical column that compiles "
-                "successfully is pinned."
-            ),
-        )
-    parent_values: list[Any] | None = None
-    if spec.condition_on is not None:
-        parent_values = generated.get(spec.condition_on)
-        if parent_values is None:
-            raise StatisticalSpecError(
-                code="statistical_condition_column_unavailable",
-                message=(
-                    f"statistical column {spec.column!r} conditions on "
-                    f"{spec.condition_on!r}, which is not generated yet. Declare "
-                    f"{spec.condition_on!r} BEFORE {spec.column!r} in generate_columns."
-                ),
-            )
-    # Reuse the Plan's already-pinned digest (guide section 4.7/4.8, defect
-    # F4) instead of letting the fingerprint step reopen snapshot_file.
-    digest = f"sha256:{spec.snapshot_digest}" if spec.snapshot_digest else None
-    col_seed = GenDeriveContext.for_column(
-        derive_key=derive_key,
-        column_config=col,
-        fallback_seed=seed,
-        snapshot_content_digest=digest,
-    ).base_int("np")
-    return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
 
 
 def _derived_generate(

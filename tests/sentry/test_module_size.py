@@ -97,8 +97,13 @@ ALLOWLIST: dict[str, int] = {
     # captured custom-faker-provider registry snapshot instead of two live
     # reads a concurrent register/unregister could straddle. Additive only:
     # `None` (every existing caller) reads the live registry exactly as
-    # before. Same decomposition target stands.
-    "src/decoy_engine/generation/synthesize.py": 693,
+    # before. gen-5a-faker dennis re-gate (2026-09-17): the ceiling raise
+    # above violated this sentry's own shrink-only rule, so the same commit
+    # pays down the standing decomposition target instead of deferring it
+    # again: `_statistical` moved to `generation/_statistical_column.py`
+    # (`statistical_generate`), a pure code move with no logic change,
+    # landing this file at 632 (693 -> 632). Ceiling lowered accordingly.
+    "src/decoy_engine/generation/synthesize.py": 632,
     "src/decoy_engine/storm/detectors.py": 1049,
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,
@@ -434,45 +439,17 @@ ALLOWLIST: dict[str, int] = {
     # it into `StrategyContext` construction. Same FK-resolution-helper
     # decomposition target stands.
     "src/decoy_engine/execution/_pandas_adapter.py": 675,
-    # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
-    # generate-echo exemption set once and threads them into every emission route
-    # (+15 LOC). The orchestration spine already owns route selection; this is the
-    # one place that can see both `config` (for the policy) and `table_kinds` (for
-    # the exemption), so the resolution belongs here. The module was exactly at
-    # the cap (600) when this landed; decompose the routing-dispatch block into a
-    # sibling when the next execution-route batch lands.
-    # DE-02 (2026-07-14): +21 LOC. run_pipeline is the one place that sees both the
-    # compiled `plan` (to detect keyed strategies) and `config` (for the
-    # `mask_secret_ref`), so the fail-closed gate + one-time provider resolution
-    # live here and thread the resolved provider into every execution route. The
-    # gate must run before any table/vault/manifest is written -> spine-owned.
-    # Same routing-dispatch decomposition target stands.
-    # DE-02 review round (Codex BLOCKER 5, 2026-07-14): +9 LOC -- run_pipeline now
-    # fails closed if a caller-supplied vault writer is keyed differently from the
-    # resolved mask key (the vault holds reversible plaintext PII and must be
-    # encrypted under the run secret). Same routing-dispatch decomposition target.
-    # DE-02 dennis re-gate (LOW L3, 2026-07-14): +12 LOC -- the vault-key guard now
-    # requires the standard VaultWriter contract (isinstance) so a duck-typed
-    # writer without the key-match method cannot silently bypass the fail-closed
-    # net. Same routing-dispatch decomposition target stands.
-    # Task 4.5 hardened remediation (2026-09-15): the unified-slice call site
-    # regrew this module past its 645 ceiling twice (690, then 691) before
-    # this fix. CHANGE 4 of the Codex determination moved the call site's own
-    # ~30-keyword argument block OUT of this module entirely -- `_unified_
-    # slice.run_from_pipeline_locals` now owns it, taking `run_pipeline`'s own
-    # `locals()` (already every fact the lane needs, by the time this line
-    # runs) instead of a hand-listed keyword block. This module's own net
-    # growth is the seven lines a feature flag genuinely cannot avoid: the
-    # import, the `unified_slice_enabled` parameter, its require_bool call,
-    # and the three-line call site itself. Ceiling restored to 645; do not
-    # let this call site regrow past it.
-    # gen-5a-faker (2026-09-17): +15 LOC (645 -> 660) adding the private,
-    # keyword-only `_provider_snapshot` parameter and forwarding it to the
-    # `generate_tables` call -- the shadow-parity harness's own hook for
-    # pinning this oracle call to the same captured custom-faker-provider
-    # snapshot its coordinator-side call reads (see `generation/synthesize.py`'s
-    # matching entry above). `None` for every real caller; additive only.
-    "src/decoy_engine/execution/_pipeline.py": 660,
+    # gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
+    # allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
+    # decomposition target, +15 more at gen-5a-faker for `_provider_
+    # snapshot` reaching 660), but that last growth's ceiling raise
+    # violated this sentry's own shrink-only rule. Remediation moved
+    # Steps 1-2 (generate-kind tables, then mask-kind tables) to
+    # `execution/_pipeline_generate_mask.py` (`run_generate_and_mask_steps`),
+    # a pure code move with no logic change, landing the file at 599 --
+    # at/under LIMIT, so per this module's own docstring the entry is
+    # deleted rather than kept with a lowered ceiling. A future regrowth
+    # past 600 re-enters the allowlist through the normal cross-LIMIT path.
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table

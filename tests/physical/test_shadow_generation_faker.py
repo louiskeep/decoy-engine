@@ -12,9 +12,9 @@ structure, scoped to the faker-specific admission surface it does not cover:
 (c) the registry-snapshot race: a custom provider registered between the
     snapshot capture and the shadow run, then unregistered before the oracle
     run, must not desync either side from the captured (built-in) snapshot.
-(d) the default-`None` contract: `generate_tables(plan)` ==
-    `generate_tables(plan, provider_snapshot=None)`, and `None` still
-    observes live registrations (not an accidentally-empty snapshot).
+(d) the default-`None` contract: omitting `provider_snapshot` still observes
+    a live registration (not an accidentally-empty snapshot), per-row and
+    pooled -- `None` means "read the live registry", not "no registry".
 (e) mixed jobs: an allowlisted faker column alongside a sequence column is
     admitted; a non-allowlisted faker column declines the whole table.
 """
@@ -366,18 +366,14 @@ def test_race_custom_provider_mutation_uses_captured_snapshot_not_live(row_count
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "row_count", [PER_ROW_ROW_COUNT, POOLED_ROW_COUNT], ids=["per_row", "pooled"]
-)
-def test_default_none_provider_snapshot_is_byte_unchanged(row_count: int) -> None:
-    config = _generate_config(
-        columns=[{"name": "f", "type": "faker", "faker_type": "city"}],
-        row_count=row_count,
-    )
-    plan = _compiled_plan(config)
-    implicit = generate_tables(plan)
-    explicit_none = generate_tables(plan, provider_snapshot=None)
-    assert_generation_tables_arrow_ipc_equal(implicit, explicit_none)
+# A prior version of this module had a test here comparing
+# `generate_tables(plan)` against `generate_tables(plan, provider_snapshot=None)`:
+# since the keyword defaults to `None`, both calls run the identical code
+# path and the assertion could never fail. The real default-None binding is
+# `test_default_none_still_observes_live_registry` below (per-row) and
+# `test_default_none_observes_live_registry_pooled` (pooled, >=50k rows),
+# plus `scripts/test_flight.py`'s golden fingerprints, which exercise the
+# generate path with the argument omitted on every run.
 
 
 def test_default_none_still_observes_live_registry() -> None:
@@ -399,6 +395,40 @@ def test_default_none_still_observes_live_registry() -> None:
 
     assert (
         with_custom["people"].column("f").to_pylist() == ["LIVE-OBSERVED-CITY"] * PER_ROW_ROW_COUNT
+    )
+    assert (
+        with_custom["people"].column("f").to_pylist() != builtin["people"].column("f").to_pylist()
+    )
+
+
+def test_default_none_observes_live_registry_pooled() -> None:
+    """The pooled-path counterpart to `test_default_none_still_observes_
+    live_registry`: at >=N_THRESHOLD rows, `city` is normally pool-eligible
+    (`_faker_pool.POOL_ELIGIBLE_FAKER_TYPES`), but a live custom override
+    makes `resolve_pool_provider` report `custom_override_present`, so
+    `try_pool` returns `None` and `_faker` degrades to its per-row loop for
+    the whole column -- which must still resolve the override against the
+    LIVE registry with no `provider_snapshot` argument at all. This closes
+    the LOW-2 coverage gap: the only existing pooled-row-count coverage of
+    `provider_snapshot=None` was the byte-parity default (now dropped as
+    tautological, see the comment above) and the race test, neither of
+    which exercises a plain default-None call against a live override."""
+    config = _generate_config(
+        columns=[{"name": "f", "type": "faker", "faker_type": "city"}],
+        row_count=POOLED_ROW_COUNT,
+    )
+    plan = _compiled_plan(config)
+    builtin = generate_tables(plan)
+
+    register_faker_provider("city", lambda fake: "LIVE-OBSERVED-CITY-POOLED")
+    try:
+        with_custom = generate_tables(plan)
+    finally:
+        unregister_faker_provider("city")
+
+    assert (
+        with_custom["people"].column("f").to_pylist()
+        == ["LIVE-OBSERVED-CITY-POOLED"] * POOLED_ROW_COUNT
     )
     assert (
         with_custom["people"].column("f").to_pylist() != builtin["people"].column("f").to_pylist()
