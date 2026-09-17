@@ -33,6 +33,23 @@ channel; `from_key_provider` still takes the real objects positionally and
 converts each to `is not None` at construction. All seven default to the
 admitted value (`None`/`False`), so every pre-existing construction is
 unchanged.
+
+Task 4.6 slice 6 adds the FULL_FRAME dispatch's own runtime carriers:
+`namespace_registry` and `unconfigured_column_policy` (the exact resolved
+objects the oracle's own `adapter.run(...)` call receives -- neither is
+recoverable from `plan` alone, so the harness builds them the same way
+`run_pipeline` does and mirrors them onto `ctx`) and `full_frame_adapter`,
+the caller-INJECTED, already-selected `ExecutionAdapter` instance (never
+constructed by the coordinator itself -- see `_shadow_full_frame.py`).
+`validators_requested` / `quarantine_requested` extend the slice 5a
+runtime-admission record with the two settings `_pipeline_finalize.
+finalize_validators_and_quarantine` reads straight off `config`: unlike
+`sink`/`source_loader`/`vault_writer`, `run_pipeline` takes no `validators`/
+`quarantine` KEYWORD at all (both come from `config["validators"]`/
+`config["quarantine"]`), so `from_key_provider` accepts the same raw values
+a caller would read off its own config and reduces them to presence here,
+matching the pattern. All five default to the admitted value
+(`None`/`False`), so every pre-existing construction is unchanged.
 """
 
 from __future__ import annotations
@@ -45,10 +62,12 @@ if TYPE_CHECKING:
 
     import pyarrow as pa
 
+    from decoy_engine.execution._adapter import ExecutionAdapter
+    from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
-    from decoy_engine.relationships import RelationshipGraph
+    from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
 _DEFAULT_BATCH_SIZE_ROWS = 50_000
 
@@ -114,6 +133,11 @@ class ShadowContext:
     source_loader_requested: bool = False
     vault_writer_requested: bool = False
     fidelity_report: bool = False
+    namespace_registry: NamespaceRegistry | None = None
+    unconfigured_column_policy: UnconfiguredColumnPolicy | None = None
+    full_frame_adapter: ExecutionAdapter | None = None
+    validators_requested: bool = False
+    quarantine_requested: bool = False
 
     def __post_init__(self) -> None:
         if self.batch_size_rows < 1:
@@ -136,6 +160,11 @@ class ShadowContext:
         source_loader: Callable[[str], pa.Table] | None = None,
         vault_writer: Any = None,
         fidelity_report: bool = False,
+        namespace_registry: NamespaceRegistry | None = None,
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        full_frame_adapter: ExecutionAdapter | None = None,
+        validators: Any = None,
+        quarantine_config: Any = None,
     ) -> ShadowContext:
         """Resolve `mask_key` the same way `run_pipeline` does
         (`keyprovider.resolve_mask_key`), so the shadow side and the oracle,
@@ -158,6 +187,16 @@ class ShadowContext:
         kwarg names, for a natural call site) but stored on `ShadowContext`
         as PRESENCE-ONLY booleans -- see the class docstring for why the
         objects themselves never land on this frozen carrier.
+
+        `namespace_registry` / `unconfigured_column_policy` /
+        `full_frame_adapter` (Task 4.6 slice 6) are the FULL_FRAME dispatch's
+        own resolved runtime objects, retained (not reduced to booleans) the
+        same way `key_provider` and `relationship_graph` are -- the dispatch
+        needs the objects themselves, not just their presence.
+        `validators` / `quarantine_config` mirror what a caller read off its
+        own `config["validators"]` / `config["quarantine"]` and are reduced
+        to presence-only booleans here, the same treatment as `sink` /
+        `source_loader` / `vault_writer` above.
         """
         from decoy_engine.keyprovider import resolve_mask_key
 
@@ -176,4 +215,9 @@ class ShadowContext:
             source_loader_requested=source_loader is not None,
             vault_writer_requested=vault_writer is not None,
             fidelity_report=fidelity_report,
+            namespace_registry=namespace_registry,
+            unconfigured_column_policy=unconfigured_column_policy,
+            full_frame_adapter=full_frame_adapter,
+            validators_requested=bool(validators),
+            quarantine_requested=quarantine_config is not None,
         )

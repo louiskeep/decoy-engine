@@ -40,6 +40,12 @@ _EXPECTED_CODES = frozenset(
         "mixed-fk-cross-generate-unsupported",
         "mixed-fk-topology-unsupported",
         "mixed-fk-unadmitted-child",
+        "full-frame-driver-unsupported",
+        "full-frame-substrate-unsupported",
+        "full-frame-dispatch-missing-dependency",
+        "global-strategy-unsupported",
+        "global-shuffle-determinism-unsupported",
+        "full-frame-runtime-feature-unsupported",
     }
 )
 
