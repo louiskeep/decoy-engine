@@ -1,32 +1,29 @@
 """Table-from-schema synthesis (engine-v2 S6).
 
-Produces synthetic tables from a generate-mode ``PipelineConfig``: for each generate
-table (``generate_columns`` + ``row_count``, no source), build ``row_count`` rows,
-each declared column filled by its per-column generator. This is the v2 analogue of
-V1 ``DataGenerator`` (``decoy_engine.generators``); it is PARITY-FROZEN to V1 under a
-fixed seed (Reading B) -- we reproduce V1 output, we do not extend it. GP2 is the one
-declared exception: an eligible pooled ``faker`` column (closed allowlist, `_faker_pool`)
-deliberately breaks V1 byte-parity for the rows it pools -- see ``_faker`` below.
+Produces synthetic tables from a generate-mode ``PipelineConfig``: for each generate table
+(``generate_columns`` + ``row_count``, no source), build ``row_count`` rows, each declared column
+filled by its per-column generator. This is the v2 analogue of V1 ``DataGenerator``
+(``decoy_engine.generators``); it is PARITY-FROZEN to V1 under a fixed seed (Reading B), except an
+eligible pooled ``faker`` column (GP2, see ``_faker``).
 
 S6-ENG-1 landed the spine + the ``sequence`` generator. S6-ENG-2 adds parity-frozen
-``categorical`` (and on the next sub-commits, ``faker`` / ``formula``); S6-ENG-3 adds
-FK-aware generation (mint-a-pool); S6-ENG-4 the seed / derive-key determinism envelope.
+``categorical`` (and on the next sub-commits, ``faker`` / ``formula``); S6-ENG-3 adds FK-aware
+generation (mint-a-pool); S6-ENG-4 the seed / derive-key determinism envelope.
 
-Parity seeding uses V1's ``GenDeriveContext`` (``decoy_engine.generators.derivation``)
-directly so the per-column derivation is byte-identical to V1 ``ColumnGenerator._column_ctx``
-under the same ``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real key).
+Parity seeding uses V1's ``GenDeriveContext`` (``decoy_engine.generators.derivation``) directly so
+the per-column derivation is byte-identical to V1 ``ColumnGenerator._column_ctx`` under the same
+``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real key).
 
-Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``)
-so two ``generate_tables`` calls in different threads do not corrupt each other's
-draws. ``random.Random(s)`` produces the same sequence as ``random.seed(s)``, so
-V1 byte-parity is preserved. Faker state is likewise isolated per worker: the
-no-locale default instance is thread-local and the locale paths construct fresh
-instances per call. ``Faker.seed_instance`` detaches the instance onto its own
-``random.Random`` and re-seeds it, so a per-thread instance seeded per row
-produces the exact sequence a reseeded shared instance did; output bytes are
-unchanged. This replaces the QA-7 F1 (2026-06-01) ``_FAKER_CALL_LOCK`` that
-serialized every seed_instance + provider_func pair across threads: isolation
-makes the race structurally impossible instead of locked away.
+Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``) so two
+``generate_tables`` calls in different threads do not corrupt each other's draws.
+``random.Random(s)`` produces the same sequence as ``random.seed(s)``, so V1 byte-parity is
+preserved. Faker state is likewise isolated per worker: the no-locale default instance is
+thread-local and the locale paths construct fresh instances per call. ``Faker.seed_instance``
+detaches the instance onto its own ``random.Random`` and re-seeds it, so a per-thread instance
+seeded per row produces the exact sequence a reseeded shared instance did; output bytes are
+unchanged. This replaces the QA-7 F1 (2026-06-01) ``_FAKER_CALL_LOCK`` that serialized every
+seed_instance + provider_func pair across threads: isolation makes the race structurally impossible
+instead of locked away.
 """
 
 from __future__ import annotations
@@ -48,24 +45,21 @@ from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# QA-7 F5 (2026-06-01): seed default aligned with plan compiler's
-# _normalize_job_seed default (0). Pre-fix _DEFAULT_SEED = 42 diverged
-# from plan/_compile.py which defaults to 0 when global_settings.seed
-# is absent. Same config, different effective seeds for generate vs
-# mask. The number 42 was historical; zero is what the rest of the
-# determinism layer assumes.
+# QA-7 F5 (2026-06-01): seed default aligned with plan compiler's _normalize_job_seed default
+# (0). Pre-fix _DEFAULT_SEED = 42 diverged from plan/_compile.py which defaults to 0 when
+# global_settings.seed is absent. Same config, different effective seeds for generate vs mask.
+# The number 42 was historical; zero is what the rest of the determinism layer assumes.
 _DEFAULT_SEED = 0
 
-# F-5 fix: Faker() construction loads locale data + registers ~200 providers
-# (50-200ms), so the no-locale instance is cached per THREAD, not per process
-# (memory scales with live worker threads). A shared instance re-seeded via
-# `seed_instance` races under concurrent generate_tables calls; QA-7 F1 masked
-# that by locking every seed_instance + provider_func pair. Per-thread
-# instances remove the race and the lock. Seed-derived output is unchanged:
-# per-row seed_instance detaches onto an instance-local random.Random, so a
-# fresh instance seeded the same yields the same sequence as a reseeded shared
-# one. (A custom provider drawing from process-global state like fake.unique
-# was already non-deterministic and is outside the seeded-draw contract.)
+# F-5 fix: Faker() construction loads locale data + registers ~200 providers (50-200ms), so the
+# no-locale instance is cached per THREAD, not per process (memory scales with live worker
+# threads). A shared instance re-seeded via `seed_instance` races under concurrent
+# generate_tables calls; QA-7 F1 masked that by locking every seed_instance + provider_func pair.
+# Per-thread instances remove the race and the lock. Seed-derived output is unchanged: per-row
+# seed_instance detaches onto an instance-local random.Random, so a fresh instance seeded the
+# same yields the same sequence as a reseeded shared one. (A custom provider drawing from
+# process-global state like fake.unique was already non-deterministic and is outside the
+# seeded-draw contract.)
 _THREAD_LOCAL = threading.local()
 
 
@@ -445,55 +439,29 @@ def _faker(
     instance_default_locale: str | None = None,
 ) -> list[Any]:
     """Faker-driven values, parity-frozen vs V1 ``_generate_faker_column``
-    (``columns.py:205-276``) -- WITH ONE GP2 EXCEPTION below.
+    (``columns.py:205-276``), except the GP2 pool path below.
 
-    Pattern (mirror V1): pick the Faker instance (fresh per-locale when ``locale``
-    is set, otherwise a shared instance), look up the provider by ``faker_type``
-    (default ``"word"``, fall back to ``"word"`` for unknown types), then per row
-    seed ``random`` AND ``faker_inst.seed_instance`` with ``col_seed + i`` and call
-    ``provider_func(**faker_kwargs)``. The per-row seed_instance override means the
-    initial instance seed does not affect output -- parity holds independent of how
-    the instance was constructed.
+    Pattern (mirror V1): pick the Faker instance (fresh per-locale when ``locale`` is set,
+    otherwise a shared instance), look up the provider by ``faker_type`` (default ``"word"``, fall
+    back to ``"word"`` for unknown types), then per row seed ``random`` AND
+    ``faker_inst.seed_instance`` with ``col_seed + i`` and call ``provider_func(**faker_kwargs)``.
+    The per-row seed_instance override means the initial instance seed does not affect output --
+    parity holds independent of how the instance was constructed.
 
     ``faker_kwargs`` is optional; non-dict values are dropped (matches V1's silent
-    drop, ``columns.py:253-259``).
-
-    GP2 exception: for a CLOSED ALLOWLIST of exact-semantic types
-    (``_faker_pool.POOL_ELIGIBLE_FAKER_TYPES``) at ``n >= _faker_pool.N_THRESHOLD``
-    and not opted out via ``pooled: false``, this tries the pool bridge FIRST
-    (`_faker_pool.build_and_sample`) and returns its result -- deliberately NOT
-    byte-identical to the per-row loop below (a different draw mechanism, on
-    purpose, for throughput; see ``_faker_pool``'s module docstring for the
-    determinism contract that replaces per-row parity for those columns). The
-    bridge returns ``None`` (never raises) when its locked resolver snapshot
-    finds a custom override or a locale-unavailable name, and every other column
-    -- below threshold, non-allowlisted, or explicitly opted out -- falls through
-    to the per-row loop UNCHANGED, so non-pooled output stays byte-identical to
-    pre-GP2.
+    drop, ``columns.py:253-259``). GP2: an eligible pooled column dispatches to
+    ``_faker_pool.try_pool`` first (see its docstring); else falls through unchanged.
     """
     faker_type = col.get("faker_type", "word")
     locale = col.get("locale")
     raw_kwargs = col.get("faker_kwargs") or {}
     faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
+    pooled = _faker_pool.try_pool(col, n, seed, derive_key, instance_default_locale, faker_kwargs)
+    if pooled is not None:
+        return pooled
     gen_ctx = GenDeriveContext.for_column(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     )
-
-    if _faker_pool.pool_eligible(faker_type, n, opted_out=col.get("pooled") is False):
-        effective_locale = locale or instance_default_locale
-        pooled = _faker_pool.build_and_sample(
-            faker_type=faker_type,
-            faker_kwargs=faker_kwargs,
-            n=n,
-            gen_ctx=gen_ctx,
-            effective_locale=effective_locale,
-        )
-        if pooled is not None:
-            return pooled
-        # Locked-resolver snapshot forced a per-row fallback (custom override
-        # present, or faker_type unavailable for effective_locale) -- fall
-        # through to the unchanged per-row loop below.
-
     if locale:
         faker_inst = make_faker(locale)
         pre_seed: int | None = None
@@ -512,10 +480,9 @@ def _faker(
     providers = get_faker_providers(faker_inst)
     provider_func = providers.get(faker_type) or providers["word"]
     out: list[Any] = []
-    # No lock: every path above yields an instance no other thread touches
-    # (thread-local default, or a fresh make_faker construction), so the
-    # seed_instance + provider_func pair cannot race. The QA-7 F1/C1 lock
-    # existed only because the default instance was a process-wide singleton.
+    # No lock: every path above yields an instance no other thread touches (thread-local default, or
+    # a fresh make_faker construction), so the seed_instance + provider_func pair cannot race. The
+    # QA-7 F1/C1 lock existed only because the default instance was a process-wide singleton.
     if pre_seed is not None:
         faker_inst.seed_instance(pre_seed)
     for i in range(n):

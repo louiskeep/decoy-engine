@@ -66,9 +66,16 @@ POOL_ELIGIBLE_FAKER_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# Spike crossover from the GP1 probe (Opus plan): below this row count, a
-# pool_size-call build costs more than just running the per-row loop.
-N_THRESHOLD = 1000
+# Plan correction (2026-09-17): the original 1000 came from the GP1 parallelism
+# spike's crossover, which is the wrong number here -- pool build cost is
+# dominated by the fixed ~10k-call pool_size (DEFAULT_POOL_SIZE), not by n, so
+# pooling a column between roughly 1k and 25k-30k rows actually ran SLOWER than
+# the per-row loop (measured: n=1000 pooled ~1.8k rows/s vs per-row ~9.2k rows/s;
+# crossover observed around n~25k-30k). 50000 sits safely past that measured
+# crossover with margin, so no row count regresses. This is a conservative
+# placeholder, not the true optimum: a GP1 probe run on the reference host should
+# refine it back down toward the real crossover.
+N_THRESHOLD = 50_000
 
 # GenDeriveContext.family_bytes labels (Codex round-2/3 spec B). Frozen wire
 # format: changing either string reseeds every pooled column that ships
@@ -90,6 +97,39 @@ def pool_eligible(faker_type: str, n: int, *, opted_out: bool) -> bool:
     ONLY, no forced-on knob).
     """
     return not opted_out and faker_type in POOL_ELIGIBLE_FAKER_TYPES and n >= N_THRESHOLD
+
+
+def try_pool(
+    col: dict[str, Any],
+    n: int,
+    seed: int,
+    derive_key: Any,
+    instance_default_locale: str | None,
+    faker_kwargs: dict[str, Any],
+) -> list[Any] | None:
+    """`_faker`'s one-call entry point into the GP2 pool bridge.
+
+    Returns `None` when the column is ineligible (cheap gate) or the locked
+    resolver forced a fallback (`build_and_sample`); either way `_faker` falls
+    through to its unchanged per-row loop. Keeping this dispatch here (not
+    inline in `synthesize.py`) keeps that file -- allowlisted near its own LOC
+    ceiling -- a thin caller; this module carries the branching. Recomputes
+    `col.get("locale")` rather than taking it as a param (cheap, and `_faker`
+    needs the value too either way).
+    """
+    faker_type = col.get("faker_type", "word")
+    if not pool_eligible(faker_type, n, opted_out=col.get("pooled") is False):
+        return None
+    gen_ctx = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    )
+    return build_and_sample(
+        faker_type=faker_type,
+        faker_kwargs=faker_kwargs,
+        n=n,
+        gen_ctx=gen_ctx,
+        effective_locale=col.get("locale") or instance_default_locale,
+    )
 
 
 def build_and_sample(
@@ -160,4 +200,5 @@ __all__ = [
     "POOL_ELIGIBLE_FAKER_TYPES",
     "build_and_sample",
     "pool_eligible",
+    "try_pool",
 ]

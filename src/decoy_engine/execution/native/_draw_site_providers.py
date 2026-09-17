@@ -1,32 +1,28 @@
 """Per-draw-site determinism providers (native program, Task 0.3).
 
 One :class:`DrawSiteProvider` per catalogued :class:`DrawSite`
-(``_determinism_protocol.DRAW_SITES``). Each provider is a PURE function of
-its site's declared identity tuple ``(entropy_root, strategy/config
-fingerprint, table/group/row identity, draw ordinal, variable-draw
-algorithm, provider version)`` and reproduces EXACTLY the sequence the
-current engine draws at that site: the same seed derivation, the same RNG
-object construction, the same API operation and call shape, and the same
-null-consumption rule.
+(``_determinism_protocol.DRAW_SITES``). Each provider is a PURE function of its site's declared
+identity tuple ``(entropy_root, strategy/config fingerprint, table/group/row identity, draw
+ordinal, variable-draw algorithm, provider version)`` and reproduces EXACTLY the sequence the
+current engine draws at that site: the same seed derivation, the same RNG object construction,
+the same API operation and call shape, and the same null-consumption rule.
 
-Why per-draw-site and not one generator, nor per-family: the SAME RNG family
-appears at DIFFERENT sites with DIFFERENT seed derivations and DIFFERENT call
-shapes. ``mask.shuffle`` and ``mask.grouped_series_monotone_walk`` are both
-``numpy_pcg64`` yet one draws a whole-column ``permutation(n)`` seeded from
-``derive(mask_key, namespace, column)`` and the other advances a per-group
-stream seeded per group label. A single HMAC-counter generator cannot
-reproduce either sequence, and per-family versioning collapses the two. So
-the protocol versions semantics by ``draw_site_id`` within each family; each
-provider carries its site's ``provider_version`` verbatim.
+Why per-draw-site and not one generator, nor per-family: the SAME RNG family appears at
+DIFFERENT sites with DIFFERENT seed derivations and DIFFERENT call shapes. ``mask.shuffle`` and
+``mask.grouped_series_monotone_walk`` are both ``numpy_pcg64`` yet one draws a whole-column
+``permutation(n)`` seeded from ``derive(mask_key, namespace, column)`` and the other advances a
+per-group stream seeded per group label. A single HMAC-counter generator cannot reproduce
+either sequence, and per-family versioning collapses the two. So the protocol versions
+semantics by ``draw_site_id`` within each family; each provider carries its site's
+``provider_version`` verbatim.
 
 Partitionability is a property of the draw, not a wish. A whole-column stream
-(``permutation(n)``, ``choices(k=n)``, ``default_rng.random(n)``) and a
-per-group sequential walk cannot be reproduced by concatenated local draws or
-a per-row substream, because a row's value depends on the position of every
-earlier draw in the stream. Those providers are ``partitionable=False`` and
-REFUSE a partitioned request with a coded error rather than fake a substream.
-Per-row source-keyed derivations and per-row-reseeded streams ARE
-partitionable: a batch reproduces a row's output from that row's own key.
+(``permutation(n)``, ``choices(k=n)``, ``default_rng.random(n)``) and a per-group sequential
+walk cannot be reproduced by concatenated local draws or a per-row substream, because a row's
+value depends on the position of every earlier draw in the stream. Those providers are
+``partitionable=False`` and REFUSE a partitioned request with a coded error rather than fake a
+substream. Per-row source-keyed derivations and per-row-reseeded streams ARE partitionable: a
+batch reproduces a row's output from that row's own key.
 
 References (established methodology, per the repo rule):
 - NumPy NEP-19 ``numpy.random.default_rng`` / PCG64: the seed-stability
@@ -93,15 +89,13 @@ def unit_float_from_bits53(raw_u64: int) -> float:
 class DrawSiteProtocolError(RuntimeError):
     """Coded failure raised by a draw-site provider.
 
-    Mirrors the repo's kwargs-only coded-error shape (``DeterminismError``,
-    ``StrategyError``) so callers can ``except DrawSiteProtocolError as e:
-    e.code`` consistently.
+    Mirrors the repo's kwargs-only coded-error shape (``DeterminismError``, ``StrategyError``)
+    so callers can ``except DrawSiteProtocolError as e: e.code`` consistently.
 
     Codes:
-        site_not_partitionable: a partitioned draw was requested from a
-            provider whose site is ``partitionable=False`` (a whole-column or
-            per-group stream). Phase 1 cannot route these; they stay on the
-            full-frame oracle until Phase 4.
+        site_not_partitionable: a partitioned draw was requested from a provider whose site is
+            ``partitionable=False`` (a whole-column or per-group stream). Phase 1 cannot route
+            these; they stay on the full-frame oracle until Phase 4.
         site_not_reproducible: a reproduction was requested from a provider
             whose site is unseeded by contract (non-deterministic mode). Its
             output differs run to run by design; there is no sequence to
@@ -792,67 +786,6 @@ class FakerPoolBuildProvider(DrawSiteProvider):
         return self.pool_seed(job_seed, provider, locale, namespace, config_hash)
 
 
-class FakerPoolBuildLocalProvider(DrawSiteProvider):
-    """``gen.faker_pool_build``: GP2's generation-local pool BUILD.
-
-    ``build_seed = gen_ctx.family_bytes("faker_pool_build")[:8]``, then ONE
-    ``Faker.seed_instance(int.from_bytes(build_seed, "big"))`` on a fresh
-    instance seeds a batch of ``pool_size`` provider calls. NOT
-    ``FakerPoolBuildProvider`` (``gen.pool_build_faker``): that site keys off
-    ``derive(job_seed, "pool/{provider}/{locale}/{namespace}", config_hash)``,
-    the V2 PoolBuilder identity shape; this one keys off the column's OWN
-    ``GenDeriveContext`` root, so it is rename-invariant per R3.10 and
-    independent of every other column's pool the same way gen.faker_per_row's
-    row_int is. Pool identity is a pure function of that root, so partitionable.
-    """
-
-    draw_site_id = "gen.faker_pool_build"
-
-    def build_seed(self, gen_ctx: GenDeriveContext) -> bytes:
-        return gen_ctx.family_bytes("faker_pool_build")[:8]
-
-    def build_seed_int(self, gen_ctx: GenDeriveContext) -> int:
-        return int.from_bytes(self.build_seed(gen_ctx), "big", signed=False)
-
-    def run(
-        self,
-        faker_inst: Any,
-        provider_callable: Callable[..., Any],
-        gen_ctx: GenDeriveContext,
-        pool_size: int,
-        *,
-        kwargs: dict[str, Any] | None = None,
-    ) -> list[Any]:
-        """Reproduce the shipped pool build (``generation/_faker_pool.py:132``)."""
-        call_kwargs = kwargs or {}
-        faker_inst.seed_instance(self.build_seed_int(gen_ctx))
-        return [provider_callable(**call_kwargs) for _ in range(pool_size)]
-
-    def partitioned_draw(self, gen_ctx: GenDeriveContext) -> bytes:
-        self.assert_partitionable()
-        return self.build_seed(gen_ctx)
-
-
-class FakerPoolSelectionProvider(_SeededFromBytesNumpyProvider):
-    """``gen.faker_pool_selection``: GP2's generation-local REUSE selection.
-
-    ``selection_seed = gen_ctx.family_bytes("faker_pool_selection")[:8]`` seeds
-    ``default_rng`` for ``integers(0, pool.size, size=n)`` -- mechanically the
-    SAME whole-column draw ``gen.pool_nondeterministic`` makes, but keyed from
-    THIS column's own label domain (never job_seed directly), so two pooled
-    columns with different config never collapse onto one selection stream.
-    Seeded but stream-positional, so NON-partitionable.
-    """
-
-    draw_site_id = "gen.faker_pool_selection"
-
-    def selection_seed(self, gen_ctx: GenDeriveContext) -> bytes:
-        return gen_ctx.family_bytes("faker_pool_selection")[:8]
-
-    def generator_for_column(self, gen_ctx: GenDeriveContext) -> np.random.Generator:
-        return self.generator(self.selection_seed(gen_ctx))
-
-
 # ---------------------------------------------------------------------------
 # gen_derive_context substrate: the keying layer, not a draw itself.
 # ---------------------------------------------------------------------------
@@ -933,6 +866,11 @@ _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "gen.identifier_deterministic": "derive_value",
 }
 
+# GP2 providers: sibling module (this file is allowlisted near its ceiling).
+from decoy_engine.execution.native._draw_site_providers_gen_pool import (  # noqa: E402
+    GEN_POOL_PROVIDER_CLASSES,
+)
+
 # Dedicated mechanism providers, keyed by the single id each reproduces.
 _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     ShuffleProvider,
@@ -951,12 +889,11 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     TextMaskFakerProvider,
     TextMaskDateShiftProvider,
     FakerPoolBuildProvider,
-    FakerPoolBuildLocalProvider,
-    FakerPoolSelectionProvider,
     GenDeriveContextProvider,
     FpeKeyProvider,
     CodeSetKeyedSelectProvider,
     JointMaskKeyedRowProvider,
+    *GEN_POOL_PROVIDER_CLASSES,
 )
 
 # Unseeded, non-deterministic-by-contract sites.
@@ -1026,9 +963,7 @@ __all__ = [
     "DrawSiteProtocolError",
     "DrawSiteProvider",
     "FakerPerRowProvider",
-    "FakerPoolBuildLocalProvider",
     "FakerPoolBuildProvider",
-    "FakerPoolSelectionProvider",
     "FormulaPerRowProvider",
     "FpeKeyProvider",
     "GenDeriveContextProvider",

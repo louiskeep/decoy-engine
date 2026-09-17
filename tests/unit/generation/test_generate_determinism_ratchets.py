@@ -22,6 +22,7 @@ import pytest
 
 import decoy_engine
 from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.generation import _faker_pool
 from tests.unit._dps_helpers import compile_and_generate
 
 
@@ -189,7 +190,7 @@ class TestCrossColumnIndependence:
 # selection streams for two differently-configured pooled columns.
 # ---------------------------------------------------------------------------
 
-_POOLED_ROW_COUNT = 1500  # > _faker_pool.N_THRESHOLD (1000)
+_POOLED_ROW_COUNT = _faker_pool.N_THRESHOLD  # eligible: pool_eligible checks n >= N_THRESHOLD
 
 
 def _pooled_multi_col_config(row_count: int = _POOLED_ROW_COUNT) -> dict:

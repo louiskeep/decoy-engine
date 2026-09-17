@@ -13,11 +13,14 @@ minimum engine version it was tested against via its
 
 `type: faker` generate columns now auto-pool for a closed allowlist of exact-semantic
 types (`first_name`, `last_name`, `name`, `prefix`, `suffix`, `city`, `state`, `country`,
-`job`, `company`) once a table's row count reaches 1,000 rows: instead of reseeding Faker
+`job`, `company`) once a table's row count reaches 50,000 rows: instead of reseeding Faker
 per row, the engine builds a bounded value pool once and vector-samples from it, matching
-the throughput masking's `faker` strategy already gets from pooling. Everything else --
-non-allowlisted types, below-threshold tables, a custom-overridden or locale-unavailable
-provider name -- keeps the unchanged per-row path.
+the throughput masking's `faker` strategy already gets from pooling. The threshold is a
+conservative placeholder set past the measured crossover (pool-build cost is dominated by
+a fixed ~10k-call pool size, not row count, so pooling below roughly 25k-30k rows measured
+SLOWER than the per-row loop); a follow-up GP1 probe run refines it toward the true
+crossover. Everything else -- non-allowlisted types, below-threshold tables, a
+custom-overridden or locale-unavailable provider name -- keeps the unchanged per-row path.
 
 New per-column YAML key: `pooled: false` opts a column out of auto-pooling and keeps the
 exact pre-GP2 per-row bytes; `pooled: true` is accepted but is not a forcing knob (an

@@ -38,7 +38,8 @@ from decoy_engine.providers import register_faker_provider, unregister_faker_pro
 
 
 def _call_paths(func: ast.FunctionDef) -> set[str]:
-    """Dotted `obj.method` text for every Call node's func expression in `func`."""
+    """Dotted `obj.method` text for every Call node's func expression in `func`,
+    PLUS the bare name of every same-module (unqualified) function call."""
     paths: set[str] = set()
     for node in ast.walk(func):
         if not isinstance(node, ast.Call):
@@ -46,6 +47,8 @@ def _call_paths(func: ast.FunctionDef) -> set[str]:
         target = node.func
         if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
             paths.add(f"{target.value.id}.{target.attr}")
+        elif isinstance(target, ast.Name):
+            paths.add(target.id)
     return paths
 
 
@@ -57,19 +60,24 @@ def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef:
 
 
 def test_faker_dispatch_reaches_both_pool_bridge_calls() -> None:
-    """`_faker` must branch into BOTH `_faker_pool.pool_eligible` (the gate)
-    and `_faker_pool.build_and_sample` (the pooled path), not merely import
-    the module -- a file-level scan can't tell those apart."""
-    source = inspect.getsource(_synthesize)
-    tree = ast.parse(source)
-    faker_fn = _find_function(tree, "_faker")
-    calls = _call_paths(faker_fn)
-    assert "_faker_pool.pool_eligible" in calls, (
-        "_faker no longer calls the GP2 eligibility gate -- pooling would be unconditional "
+    """`_faker` must call `_faker_pool.try_pool` (the GP2 dispatch entry point),
+    and `try_pool` itself must branch into BOTH `pool_eligible` (the gate) and
+    `build_and_sample` (the pooled path) -- not merely import the module, which
+    a file-level scan can't tell apart from a real reachable branch."""
+    faker_fn = _find_function(ast.parse(inspect.getsource(_synthesize)), "_faker")
+    assert "_faker_pool.try_pool" in _call_paths(faker_fn), (
+        "_faker no longer calls the GP2 pool-bridge dispatcher -- pooling would be "
+        "unconditional or dead code"
+    )
+
+    try_pool_fn = _find_function(ast.parse(inspect.getsource(_faker_pool)), "try_pool")
+    calls = _call_paths(try_pool_fn)
+    assert "pool_eligible" in calls, (
+        "try_pool no longer calls the GP2 eligibility gate -- pooling would be unconditional "
         "or dead code"
     )
-    assert "_faker_pool.build_and_sample" in calls, (
-        "_faker no longer calls the GP2 pool bridge -- the pooled draw sites would be unreachable"
+    assert "build_and_sample" in calls, (
+        "try_pool no longer calls the GP2 pool bridge -- the pooled draw sites would be unreachable"
     )
 
 
