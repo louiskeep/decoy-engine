@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from decoy_engine.config._transforms import TransformOp
 
@@ -156,6 +156,19 @@ class GenerateColumnConfig(BaseModel):
         "group_key",
     ]
 
+    # GP2 (Codex round-2 spec A/G7): the ONLY validated `type: faker` knob.
+    # `None` (omitted) and explicit `False` are both "no pool" -- generation
+    # auto-pools an eligible column above threshold either way; `False` is
+    # the one operator-facing opt-out. `StrictBool` (not plain `bool`) so a
+    # coercible non-bool -- `"false"`, `"yes"`, `0`, `1` -- is REJECTED at
+    # validation rather than silently coerced into enabling/disabling pooling
+    # (Codex FINAL gate, 2026-09-17: plain `bool | None` coerced `"false"` to
+    # `False` and quietly turned pooling off on a 50k eligible column).
+    # `strategy_config_fingerprint` excludes this field on purpose (derivation.py):
+    # it is a build-strategy toggle, not a value-affecting strategy knob, so a
+    # column with `pooled` unset keeps the exact pre-GP2 seed root and bytes.
+    pooled: StrictBool | None = None
+
     @model_validator(mode="after")
     def _reference_params_required(self) -> GenerateColumnConfig:
         """A ``reference`` column must declare its parent: ``reference_table`` +
@@ -192,6 +205,25 @@ class GenerateColumnConfig(BaseModel):
         extras = self.model_extra or {}
         if self.type == "faker" and not extras.get("faker_type"):
             raise ValueError(f"faker column {self.name!r} requires `faker_type`")
+        # GP2 (dennis review, 2026-09-17): `pooled` is a faker-only build-
+        # strategy toggle. Pooling sources its values from a Faker provider,
+        # so the flag has no meaning on any other type. Reject it at config
+        # time rather than letting it ride as a silent no-op the fingerprint
+        # then strips: the strip is byte-correct for a faker column that opts
+        # out, but on a non-faker column an accepted-then-ignored `pooled`
+        # is an operator error worth surfacing up front.
+        #
+        # `is not None`, deliberately NOT `"pooled" in model_fields_set`: an
+        # explicit `pooled: null` carries no directive (identical to omitting
+        # it) and must stay legal, because `model_dump()` stamps `pooled: null`
+        # on EVERY generate column. Rejecting on field-presence would reject a
+        # dumped-then-revalidated non-faker column and break config round-trip
+        # (Codex FINAL gate finding 1, 2026-09-17; verified). With StrictBool
+        # above, only a real bool (`true`/`false`) reaches here on a non-faker.
+        if self.type != "faker" and self.pooled is not None:
+            raise ValueError(
+                f"{self.type} column {self.name!r}: `pooled` is only valid on `type: faker` columns"
+            )
         if self.type == "sequence" and extras.get("start") is None:
             raise ValueError(f"sequence column {self.name!r} requires `start`")
         if self.type == "categorical" and not extras.get("categories"):

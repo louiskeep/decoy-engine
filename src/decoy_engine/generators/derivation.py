@@ -45,13 +45,20 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 # post-generation filter that doesn't change the underlying value the
 # generator emits for a given row. ``determinism`` flips between stable
 # and fresh paths but the *config* itself is the same set of inputs;
-# determinism is recorded as a separate evidence field.
+# determinism is recorded as a separate evidence field. ``pooled`` (GP2,
+# Codex round-2 spec A) is a BUILD-STRATEGY toggle, not a value-affecting
+# strategy knob: a column with `pooled` omitted or `pooled: false` must
+# keep the exact pre-GP2 per-row bytes AND seed root, which requires the
+# field to never touch the fingerprint (hashing it would shift the root
+# for every existing faker column the day GP2 lands, whether or not it
+# ever pools).
 _EXCLUDED_FROM_FINGERPRINT = frozenset(
     {
         "name",
         "null_probability",
         "determinism",
         "_legacy_column_name_seed",
+        "pooled",
     }
 )
 
@@ -252,6 +259,21 @@ class GenDeriveContext:
             key = _gen_hmac(self._root, b"fam:" + family.encode("utf-8"))
             self._family_keys[family] = key
         return key
+
+    def family_bytes(self, label: str) -> bytes:
+        """Public byte-returning accessor for an arbitrary sub-key label.
+
+        `base_int`/`row_int` only serve the three fixed `GEN_FAMILIES`
+        ("py"/"np"/"faker"). GP2's pool bridge needs two ADDITIONAL,
+        mutually-independent domains off the same column root --
+        "faker_pool_build" and "faker_pool_selection" (Codex round-2/3
+        spec B) -- that are neither RNG-family names nor row-indexed.
+        This is the same HMAC(root, "fam:"+label) sub-key `_family_key`
+        already computes, exposed under any label so a caller isn't
+        limited to the three built-in families or forced to reach into
+        the private cache.
+        """
+        return self._family_key(label)
 
     def base_int(self, family: str) -> int:
         """Full-width non-negative int for a base-only RNG seed (one per column)."""

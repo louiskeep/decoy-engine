@@ -39,7 +39,19 @@ def _seed_bytes_to_int(seed: bytes) -> int:
 
     Mirror image of the S3 spec convention; never used as a determinism
     envelope input (this seed feeds the build-side RNG only).
+
+    GP2 (Codex round-3 spec B): the non-deterministic dispatch previously
+    accepted any length here and let a too-short/too-long seed silently
+    truncate or overflow through int.from_bytes. A wrong-length seed is a
+    determinism-envelope bug, not a value to tolerate -- raise instead.
     """
+    if len(seed) != 8:
+        raise GenerationError(
+            code="invalid_seed_length",
+            message=(
+                f"PoolSampler non-deterministic seed must be exactly 8 bytes; got {len(seed)}."
+            ),
+        )
     return int.from_bytes(seed, "big")
 
 

@@ -438,6 +438,51 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
     return providers
 
 
+def resolve_pool_provider(
+    faker_instance: Faker, faker_type: str
+) -> tuple[Callable[..., Any] | None, bool, bool]:
+    """Locked-snapshot provider resolve for GP2's pool-eligibility decision.
+
+    Codex round-3 spec C: the eligibility check (is `faker_type` custom-
+    overridden? does it exist on this instance/locale?) and the provider
+    callable the pool is actually built from must come from ONE lock
+    acquisition. `get_faker_providers` builds its reflection dict first and
+    merges custom overrides in under a separate, later lock acquisition; a
+    caller that checked "is this custom?" and then separately called
+    `get_faker_providers(fake)[faker_type]` has a window where a concurrent
+    `register_faker_provider(faker_type, ...)` lands between the two --
+    the eligibility decision and the provider actually used can disagree.
+    This collapses both reads into the same acquisition, closing that window.
+
+    Returns ``(provider_callable, exact_name_available, custom_override_present)``.
+    ``provider_callable`` is ``None`` when `faker_type` resolves to neither a
+    custom override nor a built-in reflected method -- the "Unknown
+    faker_type" case `get_faker_providers` itself doesn't fill in (callers on
+    the per-row path still get the unknown -> ``word`` fallback via
+    `get_faker_providers`; this resolver leaves that fallback to them).
+    """
+    fake = faker_instance
+    with _PROVIDER_LOCK:
+        custom_override_present = faker_type in _CUSTOM_FAKER_PROVIDERS
+        attr = getattr(fake, faker_type, None)
+        exact_name_available = faker_type not in _FAKER_DENYLIST and callable(attr)
+        if custom_override_present:
+            fn = _CUSTOM_FAKER_PROVIDERS[faker_type]
+
+            def _custom_call(
+                *args: Any, _fn: Callable[[Faker], Any] = fn, _fake: Faker = fake, **kwargs: Any
+            ) -> Any:
+                # Mirrors get_faker_providers's own custom-provider wrapper:
+                # accept and ignore args/kwargs -- a custom provider's
+                # contract is fn(faker_instance), not fn(**faker_kwargs).
+                return _fn(_fake)
+
+            return _custom_call, exact_name_available, True
+        if not exact_name_available or not callable(attr):
+            return None, False, False
+        return _make_reflected_provider(attr), True, False
+
+
 def list_generate_faker_providers(locale: str | list[str] | None = None) -> tuple[str, ...]:
     """Return the sorted, flat, authoritative list of generate-kind Faker
     provider names (Sprint 2 honesty pack follow-up #11, 2026-07-04).

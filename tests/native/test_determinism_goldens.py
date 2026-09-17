@@ -48,10 +48,12 @@ from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHand
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
 from decoy_engine.execution.native._determinism_protocol import provider_for
+from decoy_engine.generation import _faker_pool
 from decoy_engine.generation.pool import ValuePool
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._cardinality import CardinalityMode
+from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 from decoy_engine.generation.pool._sampler import PoolSampler
 from decoy_engine.generation.statistical._sample import (
     _cumulative,
@@ -68,6 +70,7 @@ from decoy_engine.generation.synthesize import (
     _reference,
 )
 from decoy_engine.generators.derivation import GenDeriveContext
+from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 from decoy_engine.kernel._scalar import hash_array
 from decoy_engine.plan._types import ColumnSeed
@@ -338,6 +341,51 @@ class TestFakerPerRowGolden:
         )
         assert reproduced == shipped
         _record("gen.faker_per_row")
+
+
+class TestFakerPoolBuildAndSelectionGolden:
+    """GP2's generation-local pool bridge: two sites, one column.
+
+    The BUILD (``gen.faker_pool_build``) and SELECTION (``gen.faker_pool_selection``)
+    providers are reproduced independently -- via a fresh ``make_faker`` instance and
+    ``resolve_pool_provider``, the SAME primitives ``_faker_pool.build_and_sample`` uses,
+    but never calling that function's own logic twice -- then composed (pool[selection
+    index] per row) and compared against the REAL shipped ``build_and_sample`` output.
+    """
+
+    def test_providers_reproduce_shipped_pool_build_and_selection(self) -> None:
+        col = {"name": "city", "type": "faker", "faker_type": "city"}
+        n = _faker_pool.N_THRESHOLD + 500
+        gen_ctx = _gen_ctx(col)
+        shipped = _faker_pool.build_and_sample(
+            faker_type="city",
+            faker_kwargs={},
+            n=n,
+            gen_ctx=gen_ctx,
+            effective_locale=None,
+        )
+        assert shipped is not None
+
+        faker_inst = make_faker(None)
+        provider_callable, exact_name_available, custom_override_present = resolve_pool_provider(
+            faker_inst, "city"
+        )
+        assert exact_name_available and not custom_override_present
+
+        build_provider = provider_for("gen.faker_pool_build")
+        reproduced_pool = build_provider.run(
+            faker_inst, provider_callable, gen_ctx, DEFAULT_POOL_SIZE
+        )
+        _record("gen.faker_pool_build")
+
+        select_provider = provider_for("gen.faker_pool_selection")
+        indices = select_provider.generator_for_column(gen_ctx).integers(
+            0, DEFAULT_POOL_SIZE, size=n
+        )
+        reproduced = [reproduced_pool[i] for i in indices]
+        _record("gen.faker_pool_selection")
+
+        assert reproduced == shipped
 
 
 class TestStatisticalPerRowGolden:
@@ -643,14 +691,16 @@ class TestGoldenGateCoverage:
             "gen.pool_deterministic",
             "mask.faker",
             "gen.identifier_deterministic",
+            "gen.faker_pool_build",
+            "gen.faker_pool_selection",
         }
         assert set(_ROUTED) == expected_sites
-        # 19 distinct sites, each routed exactly once through the REAL shipped
-        # code. 18 reproduce the shipped OUTPUT byte-for-byte; mask.fpe is
+        # 21 distinct sites, each routed exactly once through the REAL shipped
+        # code. 20 reproduce the shipped OUTPUT byte-for-byte; mask.fpe is
         # keyed-material (the provider emits the FF1 key, and the ciphertext
         # is reproduced via the shipped fpe_encrypt_value driven by that key).
         _keyed_material_only = {"mask.fpe"}
         _reproduces_output = expected_sites - _keyed_material_only
-        assert len(_reproduces_output) == 18
-        assert len(_ROUTED) == 19
+        assert len(_reproduces_output) == 20
+        assert len(_ROUTED) == 21
         assert sorted(_ROUTED) == sorted(expected_sites)

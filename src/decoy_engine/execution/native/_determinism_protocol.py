@@ -1,12 +1,11 @@
 """Machine-checkable RNG draw-site inventory (native program, Task 0.1).
 
-This module is the single source of truth the native columnar-streaming
-determinism protocol (Task 0.3) is built against. Every place the engine
-consumes randomness to produce masked or generated output is catalogued
-here as one ``DrawSite`` entry, recording the EXACT seed derivation and
-call shape in the code today. Task 0.3 must reproduce each entry's byte
-sequence exactly, so accuracy of ``seed_derivation`` and ``call_shape`` is
-the contract. The prose companion is ``docs/native/draw-site-inventory.md``.
+This module is the single source of truth the native columnar-streaming determinism
+protocol (Task 0.3) is built against. Every place the engine consumes randomness to
+produce masked or generated output is catalogued here as one ``DrawSite`` entry,
+recording the EXACT seed derivation and call shape in the code today. Task 0.3 must
+reproduce each entry's byte sequence exactly, so accuracy of ``seed_derivation`` and
+``call_shape`` is the contract. The prose companion is ``docs/native/draw-site-inventory.md``.
 
 This module is pure data plus small helpers. It imports nothing from the
 masking or generation hot paths and changes no behavior.
@@ -70,7 +69,7 @@ IDENTITIES: frozenset[str] = frozenset(
 # randomness (identity transform, deterministic slice, expression eval).
 DETERMINISTIC_NO_DRAW = "deterministic_no_draw"
 
-_V6 = f"seed_protocol_v{SEED_PROTOCOL_VERSION}"
+_V6: str = f"seed_protocol_v{SEED_PROTOCOL_VERSION}"
 
 
 @dataclass(frozen=True)
@@ -794,7 +793,6 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     ),
 )
 
-
 # ---------------------------------------------------------------------------
 # Coverage maps. The test cross-checks these against the LIVE registries
 # (execution._strategies.SCALAR_HANDLERS and config._tables.GENERATE_TYPES),
@@ -888,7 +886,9 @@ _MASK_FORMULA = DrawSite(
     ),
 )
 
-DRAW_SITES = (*DRAW_SITES, _MASK_FORMULA)
+from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES  # noqa: E402
+
+DRAW_SITES = (*DRAW_SITES, _MASK_FORMULA, *GEN_POOL_DRAW_SITES)
 
 
 def draw_site_by_id(draw_site_id: str) -> DrawSite:

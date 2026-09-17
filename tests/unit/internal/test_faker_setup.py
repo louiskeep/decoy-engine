@@ -31,6 +31,7 @@ from decoy_engine.internal.faker_setup import (
     get_faker_providers,
     list_custom_faker_list_providers,
     register_faker_list_provider,
+    resolve_pool_provider,
     unregister_faker_provider,
 )
 
@@ -325,3 +326,93 @@ class TestQaH6CustomProviderIgnoresKwargs:
         register_faker_list_provider("acme_id2", ["only"])
         provider = get_faker_providers(Faker())["acme_id2"]
         assert provider() == "only"
+
+
+class TestResolvePoolProviderLockedSnapshot:
+    """GP2 (Codex round-3 spec C): `resolve_pool_provider` must decide
+    eligibility and return the actual provider from ONE lock acquisition, so
+    a registration racing between "is this custom?" and "resolve the
+    provider" can never see a torn snapshot (custom_override_present=True
+    paired with a stale built-in callable, or vice versa)."""
+
+    def test_steady_state_builtin(self):
+        fake = Faker()
+        provider, exact_name_available, custom_override_present = resolve_pool_provider(
+            fake, "city"
+        )
+        assert exact_name_available is True
+        assert custom_override_present is False
+        assert isinstance(provider(), str)
+
+    def test_steady_state_custom_override(self):
+        register_faker_list_provider("city", ["Custom City"])
+        try:
+            fake = Faker()
+            provider, exact_name_available, custom_override_present = resolve_pool_provider(
+                fake, "city"
+            )
+            assert custom_override_present is True
+            assert provider() == "Custom City"
+        finally:
+            unregister_faker_provider("city")
+
+    def test_steady_state_unknown_name(self):
+        fake = Faker()
+        provider, exact_name_available, custom_override_present = resolve_pool_provider(
+            fake, "this_provider_does_not_exist"
+        )
+        assert provider is None
+        assert exact_name_available is False
+        assert custom_override_present is False
+
+    def test_registration_interleaved_with_resolution_never_tears(self):
+        """A writer thread repeatedly registers/unregisters a custom `city`
+        override while a reader thread repeatedly calls `resolve_pool_provider`
+        for `city`. Every single observed result must be internally
+        consistent: when `custom_override_present` is True, calling the
+        returned provider must yield the CUSTOM value; when False, it must
+        yield a real Faker city string, never the custom value. A torn read
+        (flag says one thing, callable does another) is the race this
+        locked-snapshot resolver exists to close."""
+        fake = Faker()
+        stop = threading.Event()
+        reader_errors: list[BaseException] = []
+        observations: list[tuple[bool, str]] = []
+
+        def reader_loop() -> None:
+            while not stop.is_set():
+                try:
+                    provider, _exact, custom_present = resolve_pool_provider(fake, "city")
+                    value = provider() if provider is not None else None
+                except BaseException as exc:  # surfaced via the assertion below
+                    reader_errors.append(exc)
+                    return
+                if value is not None:
+                    observations.append((custom_present, value))
+
+        def writer_loop() -> None:
+            for _ in range(200):
+                register_faker_list_provider("city", ["RACE_CUSTOM_CITY"])
+                unregister_faker_provider("city")
+
+        reader = threading.Thread(target=reader_loop)
+        writer = threading.Thread(target=writer_loop)
+        reader.start()
+        writer.start()
+        writer.join()
+        stop.set()
+        reader.join()
+
+        assert not reader_errors, (
+            f"resolve_pool_provider reader crashed under concurrent registration: "
+            f"{type(reader_errors[0]).__name__}: {reader_errors[0]}"
+        )
+        torn = [
+            (flag, val)
+            for flag, val in observations
+            if (flag and val != "RACE_CUSTOM_CITY") or (not flag and val == "RACE_CUSTOM_CITY")
+        ]
+        assert not torn, (
+            f"resolve_pool_provider returned a torn (flag, value) pair under "
+            f"concurrent registration: {torn[:10]}"
+        )

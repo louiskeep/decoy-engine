@@ -295,7 +295,19 @@ class TestCategoricalParityV1:
 
 class TestFakerParityV1:
     """Reading B: v2 ``faker`` is byte-identical to V1 ``_generate_faker_column`` +
-    the V1 ``generate_column`` null_probability post-process under fixed seed."""
+    the V1 ``generate_column`` null_probability post-process under fixed seed --
+    for every column below the GP2 pool threshold, non-allowlisted, or opted out
+    of pooling. Every cell in THIS class stays below that threshold on purpose,
+    so it keeps testing what it always tested: the per-row loop is unchanged.
+
+    GP2 breaks this promise ON PURPOSE for one case: an allowlisted faker_type
+    (first_name, last_name, name, prefix, suffix, city, state, country, job,
+    company) at n >= the pool threshold, auto-pooled unless `pooled: false`.
+    That is S9-retirement territory -- the v2 `faker` column is no longer
+    universally V1-byte-frozen, by Cam's explicit pool-based-generation call
+    (see the GP2 plan). `TestPooledFakerNoLongerV1Frozen` below is the parity
+    test for THAT case: it asserts divergence, not equality, and pins the
+    opt-out/below-threshold/non-allowlisted escapes back to this class's bar."""
 
     def test_provider_no_kwargs(self):
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
@@ -357,6 +369,62 @@ class TestFakerParityV1:
         # Non-null rows must be strings (faker first_name output).
         non_null = [v for v in out if not pd.isna(v)]
         assert all(isinstance(v, str) for v in non_null)
+
+
+class TestPooledFakerNoLongerV1Frozen:
+    """GP2 (S9-retirement territory): an allowlisted faker_type at n >= the
+    pool threshold is auto-pooled and is NO LONGER V1-byte-frozen -- a
+    deliberate, Cam-approved break from ``TestFakerParityV1``'s promise for
+    this one case (see the GP2 plan's Codex round-1 GO + Cam's 2026-09-17
+    pool-based-generation direction). Every escape hatch back to the old
+    per-row/V1-parity bar is pinned here too: below threshold, non-
+    allowlisted, and explicit ``pooled: false`` all stay byte-identical to
+    V1, exactly like ``TestFakerParityV1``."""
+
+    def test_pooled_allowlisted_type_diverges_from_v1_at_threshold(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {"name": "hometown", "type": "faker", "faker_type": "city"}
+        n = _faker_pool.N_THRESHOLD
+        assert _v2_run(col, n) != _v1_run(col, n), (
+            "an eligible pooled column must NOT reproduce V1's per-row bytes -- "
+            "if this starts passing, the pool bridge silently stopped firing"
+        )
+
+    def test_pooled_output_is_still_well_formed(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {"name": "hometown", "type": "faker", "faker_type": "city"}
+        n = _faker_pool.N_THRESHOLD
+        out = _v2_run(col, n)
+        assert len(out) == n
+        assert all(isinstance(v, str) for v in out)
+        # A ~10k-value pool REUSE-sampled n times: heavy repetition expected,
+        # not the near-total distinctness the per-row loop produces.
+        assert len(set(out)) < n
+
+    def test_below_threshold_allowlisted_type_stays_v1_frozen(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {"name": "hometown", "type": "faker", "faker_type": "city"}
+        n = _faker_pool.N_THRESHOLD - 1
+        assert _v2_run(col, n) == _v1_run(col, n)
+
+    def test_non_allowlisted_type_stays_v1_frozen_even_above_threshold(self):
+        from decoy_engine.generation import _faker_pool
+
+        # pyint is a key-adjacent numeric type, deliberately excluded from
+        # POOL_ELIGIBLE_FAKER_TYPES (Codex round-2/3 spec C).
+        col = {"name": "n", "type": "faker", "faker_type": "pyint"}
+        n = _faker_pool.N_THRESHOLD + 50
+        assert _v2_run(col, n) == _v1_run(col, n)
+
+    def test_opted_out_allowlisted_type_stays_v1_frozen_above_threshold(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {"name": "hometown", "type": "faker", "faker_type": "city", "pooled": False}
+        n = _faker_pool.N_THRESHOLD + 50
+        assert _v2_run(col, n) == _v1_run(col, n)
 
 
 class TestQA7Coverage:

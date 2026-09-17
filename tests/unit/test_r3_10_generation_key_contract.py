@@ -21,6 +21,8 @@ tests assert the admin setting + validation gates around it.
 from __future__ import annotations
 
 from decoy_engine.context import make_key_resolver
+from decoy_engine.generation import _faker_pool
+from decoy_engine.generation.synthesize import _faker
 from decoy_engine.generators.columns import ColumnGenerator
 from decoy_engine.generators.derivation import strategy_config_fingerprint
 
@@ -29,6 +31,13 @@ _MASTER = bytes(range(32))
 
 def _resolver(label: str = "demo-pipeline"):
     return make_key_resolver(_MASTER, label)
+
+
+def _gen_v2_pooled(config: dict, *, derive_key=None, num_rows: int = _faker_pool.N_THRESHOLD):
+    """Drive the v2 `_faker` pool bridge directly (V1 `ColumnGenerator` never
+    pools -- R3.10's `_gen` helper above exercises V1 only). `num_rows`
+    defaults to the pool threshold so every caller here actually pools."""
+    return _faker(config, num_rows, 42, derive_key, None)
 
 
 def _gen(config, *, derive_key=None, num_rows: int = 10, table: str = "t"):
@@ -173,3 +182,104 @@ def test_legacy_column_name_seed_restores_pre_r3_10_coupling():
 # The synthetic_column_seed contract (int32 range, fresh path, M18 raise)
 # moved to GenDeriveContext at the v6 F2/F3 rewrite; see
 # tests/unit/generators/test_gen_derive_context.py.
+
+
+# ── GP2: pooled faker inherits the R3.10 contract ───────────────────────────
+#
+# Pooling doesn't reintroduce the pre-R3.10 name coupling: both the pool BUILD
+# and SELECTION seeds derive from the SAME per-column GenDeriveContext root
+# the per-row path uses, and `pooled` is excluded from the fingerprint (spec
+# A), so rename-invariance and same-config equality hold for pooled output
+# exactly as they do for per-row output -- just producing DIFFERENT bytes
+# (the pool mechanism, not the per-row loop).
+
+
+def test_pooled_rename_does_not_change_output():
+    resolver = _resolver()
+    base = {"name": "hometown", "type": "faker", "faker_type": "city"}
+    renamed = {**base, "name": "birth_city"}
+    assert _gen_v2_pooled(base, derive_key=resolver) == _gen_v2_pooled(renamed, derive_key=resolver)
+
+
+def test_pooled_rename_does_not_change_unkeyed_output():
+    base = {"name": "hometown", "type": "faker", "faker_type": "city"}
+    renamed = {**base, "name": "birth_city"}
+    assert _gen_v2_pooled(base) == _gen_v2_pooled(renamed)
+
+
+def test_pooled_two_columns_same_config_produce_identical_output():
+    resolver = _resolver()
+    a = {"name": "hometown", "type": "faker", "faker_type": "city"}
+    b = {"name": "birth_city", "type": "faker", "faker_type": "city"}
+    assert _gen_v2_pooled(a, derive_key=resolver) == _gen_v2_pooled(b, derive_key=resolver)
+
+
+def test_pooled_different_faker_type_produces_different_output():
+    resolver = _resolver()
+    city = {"name": "x", "type": "faker", "faker_type": "city"}
+    company = {"name": "x", "type": "faker", "faker_type": "company"}
+    assert _gen_v2_pooled(city, derive_key=resolver) != _gen_v2_pooled(company, derive_key=resolver)
+
+
+def test_pooled_flag_itself_does_not_shift_pooled_output():
+    """`pooled` is fingerprint-excluded: an explicit `pooled: true` on an
+    already-eligible column must not shift the bytes a bare eligible column
+    produces (both pool; the flag is a no-op documentation knob for the
+    already-auto-pooled case)."""
+    resolver = _resolver()
+    bare = {"name": "x", "type": "faker", "faker_type": "city"}
+    explicit = {**bare, "pooled": True}
+    assert _gen_v2_pooled(bare, derive_key=resolver) == _gen_v2_pooled(
+        explicit, derive_key=resolver
+    )
+
+
+def test_pooled_opt_out_reproduces_pre_gp2_bytes_and_root():
+    """GP2.A4 (the ratchet promise): `pooled: false` on an OTHERWISE-eligible
+    column (allowlisted type, at the pool threshold) keeps the EXACT pre-GP2
+    per-row bytes AND seed root -- checked against the V1 oracle (`_gen`,
+    real `ColumnGenerator`), which never pools at all."""
+    resolver = _resolver()
+    n = _faker_pool.N_THRESHOLD
+    col = {"name": "x", "type": "faker", "faker_type": "city"}
+    opted_out = {**col, "pooled": False}
+
+    assert strategy_config_fingerprint(col) == strategy_config_fingerprint(opted_out)
+    assert not _faker_pool.pool_eligible("city", n, opted_out=True)
+
+    v1 = _gen(col, derive_key=resolver, num_rows=n)
+    assert _faker(opted_out, n, 42, resolver, None) == v1
+
+
+def test_pooled_field_via_validated_config_does_not_shift_fingerprint_or_root():
+    """GP2.A4 regression, the exact case Codex round-2 spec A flagged: the new
+    typed `pooled` field on `GenerateColumnConfig` means
+    `PipelineConfig(...).model_dump()` now stamps EVERY generate column with
+    `"pooled": None`, even one whose YAML never mentioned it -- a key pre-GP2
+    configs never carried. If `pooled` weren't fingerprint-excluded, that
+    stamp would shift the seed ROOT (and therefore every byte) for every
+    existing faker column the day GP2 ships, pool-eligible or not. Checked
+    for a non-allowlisted type (never pools) and an eligible-but-opted-out
+    one (would pool if not for `pooled: false`)."""
+    from decoy_engine.config._pipeline import PipelineConfig
+
+    def _dumped_column(col: dict) -> dict:
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [{"name": "t", "row_count": 10, "generate_columns": [col]}],
+            "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
+        }
+        dumped = PipelineConfig.model_validate(cfg).model_dump()
+        return dumped["tables"][0]["generate_columns"][0]
+
+    for pre_gp2_shape in (
+        {"name": "x", "type": "faker", "faker_type": "pyint"},
+        {"name": "x", "type": "faker", "faker_type": "city", "pooled": False},
+    ):
+        dumped = _dumped_column(pre_gp2_shape)
+        assert dumped["pooled"] is pre_gp2_shape.get("pooled")  # model_dump() always stamps the key
+        assert strategy_config_fingerprint(dumped) == strategy_config_fingerprint(pre_gp2_shape)
+        n = _faker_pool.N_THRESHOLD
+        assert _faker(dumped, n, 42, None, None) == _faker(pre_gp2_shape, n, 42, None, None)

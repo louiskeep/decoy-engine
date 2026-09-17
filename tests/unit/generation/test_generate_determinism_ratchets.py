@@ -16,10 +16,13 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
+import decoy_engine
 from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.generation import _faker_pool
 from tests.unit._dps_helpers import compile_and_generate
 
 
@@ -176,3 +179,103 @@ class TestCrossColumnIndependence:
         b = compile_and_generate(cfg)["people"].column("score").to_pylist()
         assert a == b
         assert any(v is None for v in a)  # null injection actually fired
+
+
+# ---------------------------------------------------------------------------
+# GP2: the same three ratchets, for a POOLED faker column (row_count above
+# the pool threshold, an allowlisted faker_type). Pooling introduces two NEW
+# draw sites (gen.faker_pool_build / gen.faker_pool_selection); it must clear
+# the exact same determinism bar the per-row sites above do -- byte-identical
+# across processes, byte-identical generate-twice, and independent per-column
+# selection streams for two differently-configured pooled columns.
+# ---------------------------------------------------------------------------
+
+_POOLED_ROW_COUNT = _faker_pool.N_THRESHOLD  # eligible: pool_eligible checks n >= N_THRESHOLD
+
+
+def _pooled_multi_col_config(row_count: int = _POOLED_ROW_COUNT) -> dict:
+    return {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {},
+        "tables": [
+            {
+                "name": "people",
+                "row_count": row_count,
+                "generate_columns": [
+                    {"name": "id", "type": "sequence", "start": 1000, "step": 1},
+                    {"name": "hometown", "type": "faker", "faker_type": "city"},
+                    {"name": "employer", "type": "faker", "faker_type": "company"},
+                ],
+            }
+        ],
+        "targets": {"people": {"type": "file", "format": "csv", "path": "out.csv"}},
+    }
+
+
+# A dev worktree can share one editable-install venv whose `decoy_engine`
+# points at a DIFFERENT checkout than the one pytest's own `pythonpath` ini
+# setting resolves for the parent process (a subprocess does not inherit
+# `sys.path`, only `PYTHONPATH`/`sys.executable`'s own resolution). Prefixing
+# the child with the parent's own package root keeps this test proving the
+# ALGORITHM is process-stable, not silently comparing two different checkouts.
+_engine_src_dir = str(Path(decoy_engine.__file__).resolve().parents[1])
+_POOLED_CHILD_SCRIPT = f"import sys; sys.path.insert(0, {_engine_src_dir!r})\n" + _CHILD_SCRIPT
+
+
+@pytest.mark.golden
+class TestPooledGenerateProcessStability:
+    def test_subprocess_generates_byte_identical_pooled_tables(self):
+        import json
+
+        cfg = PipelineConfig.model_validate(_pooled_multi_col_config()).model_dump()
+        parent = _digest_tables(compile_and_generate(cfg))
+
+        child = subprocess.run(  # noqa: S603 -- args are test literals
+            [sys.executable, "-c", _POOLED_CHILD_SCRIPT, json.dumps(_pooled_multi_col_config())],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert child.stdout.strip() == parent, (
+            "pooled generate_tables process-stability drift: the pool build seed, the "
+            "selection seed, or the Faker/numpy draw itself reads process-local state."
+        )
+
+
+class TestPooledGenerateInProcessStability:
+    def test_generate_twice_is_byte_identical(self):
+        cfg = PipelineConfig.model_validate(_pooled_multi_col_config()).model_dump()
+        assert _digest_tables(compile_and_generate(cfg)) == _digest_tables(
+            compile_and_generate(cfg)
+        )
+
+
+class TestPooledCrossColumnIndependence:
+    def test_two_pooled_columns_get_independent_selection_streams(self):
+        # Both columns pool (city, company both allowlisted, both above
+        # threshold). If the pool-selection seed collapsed onto one shared
+        # stream (e.g. keyed on job_seed alone instead of each column's own
+        # GenDeriveContext root), the two columns' selection index sequences
+        # would align; they must not.
+        cfg = PipelineConfig.model_validate(_pooled_multi_col_config()).model_dump()
+        t = compile_and_generate(cfg)["people"]
+        hometown = t.column("hometown").to_pylist()
+        employer = t.column("employer").to_pylist()
+        assert hometown != employer
+        for k in range(1, 5):
+            assert hometown[k:] != employer[: len(hometown) - k]
+            assert employer[k:] != hometown[: len(employer) - k]
+
+    def test_pooled_and_below_threshold_faker_columns_are_independent(self):
+        # A pooled column and a per-row column sharing the same table must not
+        # correlate either (different mechanisms entirely, but worth pinning).
+        cfg = _pooled_multi_col_config()
+        cfg["tables"][0]["generate_columns"].append(
+            {"name": "small_city", "type": "faker", "faker_type": "city", "pooled": False}
+        )
+        cfg = PipelineConfig.model_validate(cfg).model_dump()
+        t = compile_and_generate(cfg)["people"]
+        pooled = t.column("hometown").to_pylist()
+        per_row = t.column("small_city").to_pylist()
+        assert pooled != per_row

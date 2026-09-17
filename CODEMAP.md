@@ -30,6 +30,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/execution/_pandas_adapter.py` | `PandasExecutionAdapter` (default) |
 | `src/decoy_engine/execution/polars/_polars_adapter.py` | `PolarsExecutionAdapter` |
 | `src/decoy_engine/generation/synthesize.py` | `generate_tables` (GENERATE entry) |
+| `src/decoy_engine/generation/_faker_pool.py` | GP2 generation-local pool bridge for scalar `faker_type` columns: `POOL_ELIGIBLE_FAKER_TYPES`, `pool_eligible`, `build_and_sample`. Called from `synthesize.py::_faker`; reuses `generation/pool`'s `ValuePool`/`PoolSampler`, not the V2 `PoolBuilder`/`ProviderRegistry` seam. |
 | `src/decoy_engine/storm/profiler.py` | `run_storm` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult` wire shape + `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (`FileSource`, `FileSink`, capabilities) |

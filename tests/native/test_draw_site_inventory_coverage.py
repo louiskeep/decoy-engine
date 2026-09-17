@@ -233,9 +233,18 @@ _ALLOWLIST = frozenset(
         "execution/_chunked_profile.py",
         "execution/_pipeline.py",
         "execution/native/_determinism_protocol.py",
+        # GP2 (2026-09-17): DRAW_SITES data siblings split out of
+        # _determinism_protocol.py's own recorded LOC ceiling (test_module_size.py).
+        # Same reason as that module's own entry: these are DrawSite literals whose
+        # seed_derivation/notes strings quote the call shapes the scan looks for.
+        "execution/native/_draw_sites_gen_pool.py",
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",
+        # GP2 (2026-09-17): DrawSiteProvider siblings split out of
+        # _draw_site_providers.py's own recorded LOC ceiling; same non-output-draw
+        # rationale as that module's own entry above.
+        "execution/native/_draw_site_providers_gen_pool.py",
         # Task 0.4 crypto contract: the reference kernels call derive/fpe_encrypt_value
         # to reproduce shipped KEYED derivation, which is deterministic, not an RNG
         # output draw. Not a new draw site. (Split out of _crypto_ext.py into this
