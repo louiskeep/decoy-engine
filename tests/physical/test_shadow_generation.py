@@ -146,8 +146,9 @@ def _admitted_dispatch(
 
 def _spy_adapter_run(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
     """Wraps `SynthesisStageAdapter.run` to record every call
-    `(plan, derive_key, instance_default_locale)` while still delegating to
-    the real implementation -- callers assert on the recorded calls."""
+    `(plan, derive_key, instance_default_locale, provider_snapshot)` while
+    still delegating to the real implementation -- callers assert on the
+    recorded calls."""
     calls: list[tuple[Any, ...]] = []
     original = SynthesisStageAdapter.run
 
@@ -156,9 +157,17 @@ def _spy_adapter_run(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
         plan: Any,
         derive_key: Any = None,
         instance_default_locale: str | None = None,
+        *,
+        provider_snapshot: Any = None,
     ) -> dict[str, pa.Table]:
-        calls.append((plan, derive_key, instance_default_locale))
-        return original(self, plan, derive_key, instance_default_locale)
+        calls.append((plan, derive_key, instance_default_locale, provider_snapshot))
+        return original(
+            self,
+            plan,
+            derive_key,
+            instance_default_locale,
+            provider_snapshot=provider_snapshot,
+        )
 
     monkeypatch.setattr(SynthesisStageAdapter, "run", _spy)
     return calls
@@ -192,10 +201,11 @@ def test_dispatch_calls_adapter_exactly_once_with_forwarded_args(
     ShadowCoordinator(ctx=ctx).run(plan, snapshot)
 
     assert len(calls) == 1
-    called_plan, derive_key, instance_default_locale = calls[0]
+    called_plan, derive_key, instance_default_locale, provider_snapshot = calls[0]
     assert called_plan is ctx.plan
     assert derive_key is ctx.derive_key is None
     assert instance_default_locale is ctx.instance_default_locale is None
+    assert provider_snapshot is ctx.provider_snapshot is None
 
 
 def test_dispatch_returns_adapter_tables_by_identity(monkeypatch: pytest.MonkeyPatch) -> None:

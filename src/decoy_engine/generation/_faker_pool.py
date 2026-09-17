@@ -32,10 +32,12 @@ fingerprints, and therefore their roots, differ).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
 from faker import VERSION as _FAKER_VERSION
+from faker import Faker
 
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
@@ -106,6 +108,8 @@ def try_pool(
     derive_key: Any,
     instance_default_locale: str | None,
     faker_kwargs: dict[str, Any],
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> list[Any] | None:
     """`_faker`'s one-call entry point into the GP2 pool bridge.
 
@@ -116,6 +120,10 @@ def try_pool(
     ceiling -- a thin caller; this module carries the branching. Recomputes
     `col.get("locale")` rather than taking it as a param (cheap, and `_faker`
     needs the value too either way).
+
+    `provider_snapshot` (5a-faker, additive) forwards straight through to
+    `build_and_sample`'s own resolver call; `None` (the default) resolves
+    against the live custom-provider registry exactly as before.
     """
     faker_type = col.get("faker_type", "word")
     if not pool_eligible(faker_type, n, opted_out=col.get("pooled") is False):
@@ -129,6 +137,7 @@ def try_pool(
         n=n,
         gen_ctx=gen_ctx,
         effective_locale=col.get("locale") or instance_default_locale,
+        provider_snapshot=provider_snapshot,
     )
 
 
@@ -140,6 +149,7 @@ def build_and_sample(
     gen_ctx: GenDeriveContext,
     effective_locale: str | None,
     pool_size: int = DEFAULT_POOL_SIZE,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> list[Any] | None:
     """Build a bounded value pool and REUSE-sample `n` values from it.
 
@@ -148,6 +158,13 @@ def build_and_sample(
     -- the caller must fall through to its own unchanged per-row loop, which
     still carries the unknown -> `word` fallback for a genuinely unrecognized
     name; this function does not apply that fallback itself.
+
+    `provider_snapshot` (5a-faker, additive): forwarded to
+    `resolve_pool_provider` so a caller comparing this pooled build against
+    a separate call (e.g. the shadow-parity oracle) resolves custom
+    overrides against the SAME captured registry state on both sides,
+    instead of two independent live reads. `None` (the default) resolves
+    against the live registry exactly as before.
     """
     # A FRESH instance, never the per-row path's cached/shared one: the pool
     # is built exactly once from one seed_instance call, so there is no
@@ -156,7 +173,7 @@ def build_and_sample(
     # preserves the invalid-locale-falls-back-to-en_US contract.
     faker_inst = make_faker(effective_locale)
     provider_callable, exact_name_available, custom_override_present = resolve_pool_provider(
-        faker_inst, faker_type
+        faker_inst, faker_type, provider_snapshot=provider_snapshot
     )
     if custom_override_present or not exact_name_available:
         return None

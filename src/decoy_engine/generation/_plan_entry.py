@@ -18,13 +18,18 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from decoy_engine.generation.statistical import spec_from_dict
 from decoy_engine.generation.synthesize import _generate_tables_from_config
 from decoy_engine.plan._types import unfreeze_json
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from faker import Faker
 
 
 def _config_declares_statistical_column(config: dict[str, Any]) -> bool:
@@ -51,6 +56,8 @@ def generate_tables(
     plan: Any,
     derive_key: Any = None,
     instance_default_locale: str | None = None,
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> dict[str, pa.Table]:
     """Build one Arrow table per generate table in the compiled ``Plan``.
 
@@ -69,6 +76,17 @@ def generate_tables(
     public ``seed`` parameter is added -- the job seed is read from the
     Plan's embedded configuration exactly as before, never from a second
     public input (guide section 4.8).
+
+    ``provider_snapshot`` (5a-faker, additive): an optional, keyword-only,
+    already-captured immutable view of the custom-faker-provider registry
+    (see ``internal.faker_setup.snapshot_custom_faker_providers``). Every
+    ``faker`` column resolves its custom-override question against this
+    mapping instead of the live registry when given. ``None`` (the
+    default) reads the live registry exactly as before this parameter
+    existed -- every pre-existing call is byte-unchanged. This exists for
+    a caller (the shadow-parity harness) that runs generation twice for
+    the same job and needs both runs to see the identical registry state,
+    not two live reads a concurrent register/unregister could straddle.
 
     Raises:
         TypeError: ``plan`` is not a compiled ``Plan``, or the Plan has no
@@ -124,4 +142,5 @@ def generate_tables(
         statistical_specs=statistical_specs,
         snapshot_index_for_column=snapshot_index_for_column,
         snapshot_artifacts=snapshot_artifacts,
+        provider_snapshot=provider_snapshot,
     )

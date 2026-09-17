@@ -58,9 +58,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     import pyarrow as pa
+    from faker import Faker
 
     from decoy_engine.execution._adapter import ExecutionAdapter
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
@@ -118,6 +119,14 @@ class ShadowContext:
     module docstring). The harness sets each to mirror exactly what it
     passes to its own oracle `run_pipeline` call. All seven default to the
     admitted value, so every pre-existing construction is unchanged.
+
+    `provider_snapshot` (5a-faker) is the ONE captured custom-faker-provider
+    view (`internal.faker_setup.snapshot_custom_faker_providers`) the
+    generation admission gate and the synthesis adapter both read for a
+    `faker` column, instead of two independent live-registry reads a
+    concurrent register/unregister could straddle. `None` (the default,
+    every pre-existing construction) falls back to the live registry at
+    both sites, exactly as before this field existed.
     """
 
     mask_key: bytes = field(repr=False)
@@ -138,6 +147,7 @@ class ShadowContext:
     full_frame_adapter: ExecutionAdapter | None = None
     validators_requested: bool = False
     quarantine_requested: bool = False
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None
 
     def __post_init__(self) -> None:
         if self.batch_size_rows < 1:
@@ -165,6 +175,7 @@ class ShadowContext:
         full_frame_adapter: ExecutionAdapter | None = None,
         validators: Any = None,
         quarantine_config: Any = None,
+        provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     ) -> ShadowContext:
         """Resolve `mask_key` the same way `run_pipeline` does
         (`keyprovider.resolve_mask_key`), so the shadow side and the oracle,
@@ -197,6 +208,11 @@ class ShadowContext:
         own `config["validators"]` / `config["quarantine"]` and are reduced
         to presence-only booleans here, the same treatment as `sink` /
         `source_loader` / `vault_writer` above.
+
+        `provider_snapshot` (5a-faker) is retained as-is (not reduced to a
+        boolean) -- the generation admission gate and the synthesis adapter
+        both need the mapping itself. `None` (the default) matches
+        `generate_tables`'s own default: resolve against the live registry.
         """
         from decoy_engine.keyprovider import resolve_mask_key
 
@@ -220,4 +236,5 @@ class ShadowContext:
             full_frame_adapter=full_frame_adapter,
             validators_requested=bool(validators),
             quarantine_requested=quarantine_config is not None,
+            provider_snapshot=provider_snapshot,
         )

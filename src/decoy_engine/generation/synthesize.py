@@ -37,13 +37,14 @@ import pyarrow as pa
 from faker import Faker
 
 from decoy_engine.generation import _faker_pool
+from decoy_engine.generation._statistical_column import statistical_generate
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator, Mapping
 
 # QA-7 F5 (2026-06-01): seed default aligned with plan compiler's _normalize_job_seed default
 # (0). Pre-fix _DEFAULT_SEED = 42 diverged from plan/_compile.py which defaults to 0 when
@@ -79,6 +80,7 @@ def _generate_tables_from_config(
     statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
     snapshot_index_for_column: dict[tuple[str, str], int] | None = None,
     snapshot_artifacts: list[dict[str, Any]] | None = None,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> dict[str, pa.Table]:
     """The actual generation logic, over a plain config dict recovered
     from ``GenerationPlan.config_json``. Not part of the public surface
@@ -86,10 +88,13 @@ def _generate_tables_from_config(
 
     ``statistical_specs`` is ``{(table_name, column_name): StatisticalSpec}``,
     already validated and pinned at compile time (guide section 4.7/4.8):
-    the ``statistical`` dispatch below (``_statistical``) consumes it
-    directly and never reopens a snapshot path. ``snapshot_index_for_
+    the ``statistical`` dispatch below (``_statistical_column.
+    statistical_generate``) consumes it directly and never reopens a
+    snapshot path. ``snapshot_index_for_
     column``/``snapshot_artifacts`` feed the fidelity gate the same pinned
-    artifacts, keyed the same way.
+    artifacts, keyed the same way. ``provider_snapshot`` (5a-faker) forwards
+    to every ``_generate_column`` call; ``None`` (the default) resolves
+    custom faker providers against the live registry exactly as before.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -151,6 +156,7 @@ def _generate_tables_from_config(
                 data,
                 table_name=name,
                 statistical_specs=statistical_specs,
+                provider_snapshot=provider_snapshot,
             )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
@@ -171,7 +177,7 @@ def _generate_tables_from_config(
         # 2026-06-12): score statistical columns against their source
         # snapshot and warn below global_settings.fidelity_warn_threshold.
         # Warn-only; output bytes are untouched. Lazy import mirrors the
-        # `_statistical` dispatch so non-statistical configs never pay it.
+        # `statistical` dispatch so non-statistical configs never pay it.
         if any(c.get("type") == "statistical" for c in gcols):
             from decoy_engine.generation._fidelity_gate import (
                 fidelity_warn_threshold,
@@ -241,6 +247,7 @@ def _generate_column(
     *,
     table_name: str = "",
     statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -252,20 +259,23 @@ def _generate_column(
     no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``.
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
-    here (guide section 4.8)."""
+    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to
+    the ``faker`` branch only; every other branch ignores it."""
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)
     elif kind == "categorical":
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
-        values = _faker(col, n, seed, derive_key, instance_default_locale)
+        values = _faker(
+            col, n, seed, derive_key, instance_default_locale, provider_snapshot=provider_snapshot
+        )
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
         values = _reference(col, n, seed, derive_key, pools or {})
     elif kind == "statistical":
-        values = _statistical(
+        values = statistical_generate(
             col, n, seed, derive_key, generated or {}, table_name, statistical_specs or {}
         )
     elif kind == "derived":
@@ -313,69 +323,6 @@ def _sequence(col: dict[str, Any], n: int) -> list[str]:
         value_str = str(value).zfill(pad) if pad > 0 else str(value)
         out.append(f"{prefix}{value_str}{suffix}")
     return out
-
-
-def _statistical(
-    col: dict[str, Any],
-    n: int,
-    seed: int,
-    derive_key: Any,
-    generated: dict[str, list[Any]],
-    table_name: str,
-    statistical_specs: dict[tuple[str, str], StatisticalSpec],
-) -> list[Any]:
-    """WS3 statistical synthesis: sample from a distribution-snapshot/v1
-    artifact (see generation/statistical for the methodology + privacy
-    gate). ADDITIVE generator type -- the existing types stay
-    parity-frozen to V1. `generated` carries the table's already-built
-    columns so `condition_on` can read its conditioning sibling
-    (declared-order sequential conditional sampling).
-
-    DPS Scope B (guide section 4.8): the spec comes from the Plan's
-    already-validated, already-pinned ``statistical_specs`` mapping, keyed
-    by ``(table_name, column_name)`` -- this function never opens a
-    snapshot path itself. The mapping is built once by ``generate_tables``
-    from ``GenerationPlan.statistical_specs``, which `compile_plan` froze
-    from the exact bytes it read at compile time (guide section 4.7),
-    closing the TOCTOU window a raw ``load_spec(col)`` call would reopen.
-    """
-    from decoy_engine.generation.statistical import sample_column
-    from decoy_engine.generation.statistical._spec import StatisticalSpecError
-
-    col_name = str(col.get("name"))
-    spec = statistical_specs.get((table_name, col_name))
-    if spec is None:
-        raise StatisticalSpecError(
-            code="statistical_spec_not_pinned",
-            message=(
-                f"statistical column {col_name!r} in table {table_name!r} has no pinned "
-                "spec in this Plan's GenerationPlan. This should be unreachable through "
-                "compile_plan -- every type: statistical column that compiles "
-                "successfully is pinned."
-            ),
-        )
-    parent_values: list[Any] | None = None
-    if spec.condition_on is not None:
-        parent_values = generated.get(spec.condition_on)
-        if parent_values is None:
-            raise StatisticalSpecError(
-                code="statistical_condition_column_unavailable",
-                message=(
-                    f"statistical column {spec.column!r} conditions on "
-                    f"{spec.condition_on!r}, which is not generated yet. Declare "
-                    f"{spec.condition_on!r} BEFORE {spec.column!r} in generate_columns."
-                ),
-            )
-    # Reuse the Plan's already-pinned digest (guide section 4.7/4.8, defect
-    # F4) instead of letting the fingerprint step reopen snapshot_file.
-    digest = f"sha256:{spec.snapshot_digest}" if spec.snapshot_digest else None
-    col_seed = GenDeriveContext.for_column(
-        derive_key=derive_key,
-        column_config=col,
-        fallback_seed=seed,
-        snapshot_content_digest=digest,
-    ).base_int("np")
-    return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
 
 
 def _derived_generate(
@@ -437,6 +384,8 @@ def _faker(
     seed: int,
     derive_key: Any = None,
     instance_default_locale: str | None = None,
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> list[Any]:
     """Faker-driven values, parity-frozen vs V1 ``_generate_faker_column``
     (``columns.py:205-276``), except the GP2 pool path below.
@@ -451,12 +400,28 @@ def _faker(
     ``faker_kwargs`` is optional; non-dict values are dropped (matches V1's silent
     drop, ``columns.py:253-259``). GP2: an eligible pooled column dispatches to
     ``_faker_pool.try_pool`` first (see its docstring); else falls through unchanged.
+
+    ``provider_snapshot`` (5a-faker, additive): threaded to both the pooled
+    and per-row custom-provider resolution below. ``None`` (the default)
+    resolves against the live custom-provider registry exactly as before --
+    this parameter exists so a caller comparing two independent
+    `generate_tables` calls (the shadow-parity harness) can pin both to the
+    SAME captured registry state instead of two live reads that a
+    concurrent register/unregister could straddle.
     """
     faker_type = col.get("faker_type", "word")
     locale = col.get("locale")
     raw_kwargs = col.get("faker_kwargs") or {}
     faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
-    pooled = _faker_pool.try_pool(col, n, seed, derive_key, instance_default_locale, faker_kwargs)
+    pooled = _faker_pool.try_pool(
+        col,
+        n,
+        seed,
+        derive_key,
+        instance_default_locale,
+        faker_kwargs,
+        provider_snapshot=provider_snapshot,
+    )
     if pooled is not None:
         return pooled
     gen_ctx = GenDeriveContext.for_column(
@@ -477,7 +442,7 @@ def _faker(
         # is output-identical to a fresh instance.
         faker_inst = _get_default_faker()
         pre_seed = seed
-    providers = get_faker_providers(faker_inst)
+    providers = get_faker_providers(faker_inst, provider_snapshot=provider_snapshot)
     provider_func = providers.get(faker_type) or providers["word"]
     out: list[Any] = []
     # No lock: every path above yields an instance no other thread touches (thread-local default, or

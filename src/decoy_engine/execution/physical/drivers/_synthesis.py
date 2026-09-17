@@ -10,7 +10,7 @@ stays completely outside this seam.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -18,6 +18,11 @@ from decoy_engine.execution.physical._capabilities import CAPABILITIES
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._types import DriverId, ExecutionScope
 from decoy_engine.generation.synthesize import generate_tables
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from faker import Faker
 
 
 class SynthesisStageAdapter:
@@ -34,10 +39,14 @@ class SynthesisStageAdapter:
         plan: Any,
         derive_key: Any = None,
         instance_default_locale: str | None = None,
+        *,
+        provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     ) -> dict[str, pa.Table]:
         self.last_invocation = SeamContext(
             driver_id=DriverId.SYNTHESIS,
             scope=ExecutionScope.SYNTHESIS_STAGE,
             tables=(),
         )
-        return generate_tables(plan, derive_key, instance_default_locale)
+        return generate_tables(
+            plan, derive_key, instance_default_locale, provider_snapshot=provider_snapshot
+        )
