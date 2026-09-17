@@ -1370,6 +1370,17 @@ rule admits exactly one single-column crossing edge and declines all other mask-
 PRESERVE/WARN are positive parity while FAIL and REMAP orphans are identical-rejections (a generated parent
 has no mask WorkNode, so REMAP yields the oracle's orphan_remap_parent_missing). This COMPLETES Cam's
 "coordinator genuinely owns generation + stitch" scope. All 4.6 slices double-gated (dennis APPROVE +
-Codex final GO). NEXT: 5a-faker (frozen-provider faker generation), then slice 6 (approved global/hard-tail),
-then route activation (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
+Codex final GO). Slice 6 (deterministic GLOBAL full-frame-only strategies) MERGED (PR #154, merge 2defe5be):
+the coordinator dispatches a {FULL_FRAME}-driver plan carrying an admitted global strategy (shuffle / top_code /
+grouped_series / derived_aggregate) by WRAPPING the existing FullFrameAdapter, proving lossless + inert
+adaptation vs run_pipeline; the branch engages ONLY when a global-strategy node is present (a native-admitted
+FULL_FRAME plan falls through byte-identical - no hijack of slices 1-4), keys admission on the compiled driver +
+live-plan determinism, and stays DORMANT (not wired into _unified_slice activation - a full-frame wrap has no
+per-node native evidence). Phase-5 hard-tail native ports (formula/geo/nested/ML/non-det shuffle/Python
+providers) stay DEFERRED. *** SLICE 6 WAS THE LAST MASKING SLICE: all Task 4.6 shadow-parity routes are now
+proven (scalar/chunked/OOC-FK/GroupB-C + generation pure/mixed/FK + global). *** 5a-faker DEFERRED (Cam) and
+folded into a separate pool-based generation-throughput workstream (not part of the consolidation route work).
+All 4.6 slices double-gated (dennis APPROVE + Codex final GO). NEXT: route ACTIVATION -- a HARD Cam-gate (also
+D9-cert-gated); the autonomous consolidation runway ENDS here pending Cam sign-off. Then Task 4.7 (delete
+superseded routing). -->
 
