@@ -307,12 +307,20 @@ def _execute_admitted(
         # (admission built it once for this call only), so mutating it in place
         # costs no extra conversion beyond the one admission already paid for.
         frame = candidate.source_frame
-        masked_table = shadow_result.outputs[candidate.table]
+        # Free the coordinator's native masked table once its columns are overlaid,
+        # BEFORE the final from_pandas. Those columns are Rust-allocated (FFI-exported),
+        # so they sit outside the pyarrow pool; holding them alongside the pandas frame
+        # and the final Arrow output is the unified lane's peak-RSS overshoot (D9 cert
+        # measured ~1.23x at 1M, dropping to ~1.05x with this release). `pop` (not index)
+        # takes ownership so `del` actually drops the last reference; the coordinator
+        # result is not read for its outputs again below.
+        masked_table = shadow_result.outputs.pop(candidate.table)
         for node in physical_table.nodes:
             if node.strategy == "passthrough":
                 continue
             column = node.columns[0]
             frame[column] = masked_table.column(column).to_pylist()
+        del masked_table
         outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
         quality_metrics: dict[str, Any] = {}
         _pipeline_finalize.stamp_execution_metrics(
