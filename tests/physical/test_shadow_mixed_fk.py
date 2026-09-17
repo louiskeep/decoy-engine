@@ -421,6 +421,29 @@ def test_decline_composite_fk_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     )
 
 
+def test_decline_non_admitted_child_key_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The complete-graph rule admits int/string keys only; a float child
+    key declines before generation ever runs (the child's type is known
+    from the resident snapshot, so this is checked pre-generation)."""
+    accounts = pa.table({"person_id": pa.array([0.0, 1.0], type=pa.float64())})
+    config = _fk_mixed_config(
+        tmp_path,
+        generate_table="people",
+        generate_columns=[{"name": "id", "type": "sequence", "start": 0, "step": 1}],
+        mask_tables={"accounts": (accounts, _passthrough_columns("person_id"))},
+        relationships=[_fk_edge()],
+        row_count=2,
+    )
+    _assert_declines_with_no_dispatch(
+        config,
+        {"accounts": accounts},
+        monkeypatch,
+        MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+    )
+
+
 def test_decline_another_incoming_edge_to_the_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
