@@ -16,12 +16,12 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
-from decoy_engine.execution._strategies._orphan import (
+from decoy_engine.execution._fk_resolve import (
     cascade_row_errors,
     gather_errored_parent_keys,
-    make_remap_fn,
     resolve_fk_keys,
 )
+from decoy_engine.execution._strategies._orphan import make_remap_fn
 from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph

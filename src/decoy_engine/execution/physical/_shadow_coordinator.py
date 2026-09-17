@@ -83,6 +83,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     SCHEMA_DIFF,
     ShadowDifference,
 )
+from decoy_engine.execution.physical._shadow_fk import build_fk_dispatch, resolve_admitted_fk_node
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
 from decoy_engine.execution.physical._shadow_snapshot import ShadowSnapshot
 from decoy_engine.execution.physical._types import DriverId
@@ -91,9 +92,11 @@ from decoy_engine.generation.pool._identity import PoolIdentity, resolve_faker_p
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
+    from decoy_engine.relationships._graph import RelationshipEdge
 
 __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 
@@ -106,11 +109,10 @@ _TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker"})
 @dataclass(frozen=True)
 class ShadowRunResult:
     """The staged (never published) result of one shadow run: the masked
-    output tables, per-node route evidence keyed by `node_id`, and the
-    (empty, for this slice's zero-diagnostic strategies) combined
-    diagnostics. `warnings`/`row_errors` exist for shape parity with the
-    oracle's `ExecutionResult` so a comparison harness can multiset-compare
-    them uniformly even though every slice strategy is zero-diagnostic.
+    output tables, per-node route evidence keyed by `node_id`, and
+    diagnostics. `warnings`/`row_errors` mirror `ExecutionResult`'s shape for
+    multiset comparison; every scalar/chunked/faker strategy here is
+    zero-diagnostic, but slice 5b-ii's FK resolution can populate `warnings`.
 
     `driver_invocation` (Task 4.6 slice 3) is the `SeamContext` the
     OUT_OF_CORE dispatch branch recorded, or `None` for every other
@@ -269,7 +271,13 @@ class ShadowCoordinator:
     ctx: ShadowContext
     registry: ProviderRegistry | None = None
 
-    def run(self, plan: PhysicalPlan, snapshot: ShadowSnapshot) -> ShadowRunResult:
+    def run(
+        self,
+        plan: PhysicalPlan,
+        snapshot: ShadowSnapshot,
+        *,
+        admitted_edges: tuple[RelationshipEdge, ...] = (),
+    ) -> ShadowRunResult:
         # Task 4.6 slice 5a: a PURE-GENERATE plan (no mask tables at all)
         # dispatches through the Task 4.2 SynthesisStageAdapter instead of
         # every branch below -- see _dispatch_synthesis. Checked first, and
@@ -280,13 +288,11 @@ class ShadowCoordinator:
         if not plan.tables and plan.synthesis is not None:
             return self._dispatch_synthesis(plan.synthesis, snapshot)
         if plan.tables and plan.synthesis is not None:
-            # Task 4.6 slice 5b-i: an INDEPENDENT-mixed plan (both present).
-            # `_dispatch_mixed` admits via its own contract, runs generation,
-            # reuses THIS loop for the mask half (by recursing into `run()`
-            # with `synthesis` stripped), and stitches the two outputs -- see
-            # `_shadow_mixed.py`. A not-yet-admitted shape (a generate->mask
-            # FK edge, an OOC mask driver, ...) declines coded from inside
-            # that gate rather than reaching the branches below.
+            # Task 4.6 slice 5b-i/5b-ii: a MIXED plan (both present),
+            # independent or FK-coupled. `_dispatch_mixed` admits via its own
+            # contract, runs generation, reuses THIS loop for the mask half
+            # (recursing into `run()` with `synthesis` stripped and an
+            # admitted-edge allowlist), and stitches -- see `_shadow_mixed.py`.
             return self._dispatch_mixed(plan, snapshot)
 
         # Task 4.6 slice 3: an OUT_OF_CORE mask-table plan dispatches through
@@ -317,15 +323,22 @@ class ShadowCoordinator:
         # module-global default (see the module docstring).
         pools_by_identity: dict[PoolIdentity, ValuePool] = {}
         pool_cache = PoolCache()
+        # Slice 5b-ii: an FK-child column resolves against its parent ahead of native binding.
+        fk = build_fk_dispatch(snapshot, self.ctx.relationship_graph, admitted_edges)
+        warnings: list[QualityWarning] = []
 
         for table in plan.tables:
             source = snapshot.tables[table.table]
             columns: dict[str, pa.Array] = {}
             for node in table.nodes:
+                fk_resolution = resolve_admitted_fk_node(node, table.table, source, columns, fk)
+                if fk_resolution is not None:
+                    columns[node.columns[0]] = fk_resolution.column
+                    warnings.extend(fk_resolution.warnings)
+                    continue
                 binding = node.execution
                 if binding is None:
-                    # Out of the slice (a different strategy, or a
-                    # native-admission miss); nothing to run for this node.
+                    # Out of the slice (a different strategy, or a native-admission miss).
                     continue
                 column = node.columns[0]
                 if node.node_id in route_evidence:
@@ -412,7 +425,9 @@ class ShadowCoordinator:
                     )
                 outputs[table.table] = pa.table({name: columns[name] for name in source_order})
 
-        return ShadowRunResult(outputs=outputs, route_evidence=route_evidence)
+        return ShadowRunResult(
+            outputs=outputs, route_evidence=route_evidence, warnings=tuple(warnings)
+        )
 
     def _dispatch_synthesis(
         self, physical_synthesis: SynthesisStage, snapshot: ShadowSnapshot
