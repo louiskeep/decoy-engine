@@ -91,6 +91,8 @@ from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from faker import Faker
+
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -165,6 +167,7 @@ def run_pipeline(
     out_of_core_reorder_threshold_rows: int | None = None,
     native_route_enabled: bool = False,
     unified_slice_enabled: bool = False,
+    _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -244,6 +247,17 @@ def run_pipeline(
 
     `native_route_enabled` / `unified_slice_enabled` (both default False): see
     `_native_route.maybe_run_native_route` / `_unified_slice.maybe_run_unified_slice`.
+
+    `_provider_snapshot` (5a-faker) is a private, keyword-only, test/harness-
+    only hook: an already-captured immutable custom-faker-provider view
+    (`internal.faker_setup.snapshot_custom_faker_providers`) forwarded
+    straight to the `generate_tables` call below. It exists so the shadow-
+    parity harness can pin this oracle call to the SAME registry snapshot
+    its own coordinator-side `generate_tables` call reads, instead of two
+    live reads a concurrent register/unregister could straddle. `None`
+    (the default, every real caller) resolves against the live registry
+    exactly as before this parameter existed -- ordinary callers never pass
+    it.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -488,6 +502,7 @@ def run_pipeline(
             plan,
             derive_key=derive_key,
             instance_default_locale=instance_default_locale,
+            provider_snapshot=_provider_snapshot,
         )
 
     # Step 2: mask-kind tables.

@@ -43,7 +43,7 @@ from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator, Mapping
 
 # QA-7 F5 (2026-06-01): seed default aligned with plan compiler's _normalize_job_seed default
 # (0). Pre-fix _DEFAULT_SEED = 42 diverged from plan/_compile.py which defaults to 0 when
@@ -79,6 +79,7 @@ def _generate_tables_from_config(
     statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
     snapshot_index_for_column: dict[tuple[str, str], int] | None = None,
     snapshot_artifacts: list[dict[str, Any]] | None = None,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> dict[str, pa.Table]:
     """The actual generation logic, over a plain config dict recovered
     from ``GenerationPlan.config_json``. Not part of the public surface
@@ -89,7 +90,9 @@ def _generate_tables_from_config(
     the ``statistical`` dispatch below (``_statistical``) consumes it
     directly and never reopens a snapshot path. ``snapshot_index_for_
     column``/``snapshot_artifacts`` feed the fidelity gate the same pinned
-    artifacts, keyed the same way.
+    artifacts, keyed the same way. ``provider_snapshot`` (5a-faker) forwards
+    to every ``_generate_column`` call; ``None`` (the default) resolves
+    custom faker providers against the live registry exactly as before.
     """
     statistical_specs = statistical_specs or {}
     snapshot_index_for_column = snapshot_index_for_column or {}
@@ -151,6 +154,7 @@ def _generate_tables_from_config(
                 data,
                 table_name=name,
                 statistical_specs=statistical_specs,
+                provider_snapshot=provider_snapshot,
             )
         # Cross-column formula post-pass: a `formula` column carrying
         # `references` was filled with None placeholders by `_formula`
@@ -241,6 +245,7 @@ def _generate_column(
     *,
     table_name: str = "",
     statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -252,14 +257,17 @@ def _generate_column(
     no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``.
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
-    here (guide section 4.8)."""
+    here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to
+    the ``faker`` branch only; every other branch ignores it."""
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)
     elif kind == "categorical":
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
-        values = _faker(col, n, seed, derive_key, instance_default_locale)
+        values = _faker(
+            col, n, seed, derive_key, instance_default_locale, provider_snapshot=provider_snapshot
+        )
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
@@ -437,6 +445,8 @@ def _faker(
     seed: int,
     derive_key: Any = None,
     instance_default_locale: str | None = None,
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> list[Any]:
     """Faker-driven values, parity-frozen vs V1 ``_generate_faker_column``
     (``columns.py:205-276``), except the GP2 pool path below.
@@ -451,12 +461,28 @@ def _faker(
     ``faker_kwargs`` is optional; non-dict values are dropped (matches V1's silent
     drop, ``columns.py:253-259``). GP2: an eligible pooled column dispatches to
     ``_faker_pool.try_pool`` first (see its docstring); else falls through unchanged.
+
+    ``provider_snapshot`` (5a-faker, additive): threaded to both the pooled
+    and per-row custom-provider resolution below. ``None`` (the default)
+    resolves against the live custom-provider registry exactly as before --
+    this parameter exists so a caller comparing two independent
+    `generate_tables` calls (the shadow-parity harness) can pin both to the
+    SAME captured registry state instead of two live reads that a
+    concurrent register/unregister could straddle.
     """
     faker_type = col.get("faker_type", "word")
     locale = col.get("locale")
     raw_kwargs = col.get("faker_kwargs") or {}
     faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
-    pooled = _faker_pool.try_pool(col, n, seed, derive_key, instance_default_locale, faker_kwargs)
+    pooled = _faker_pool.try_pool(
+        col,
+        n,
+        seed,
+        derive_key,
+        instance_default_locale,
+        faker_kwargs,
+        provider_snapshot=provider_snapshot,
+    )
     if pooled is not None:
         return pooled
     gen_ctx = GenDeriveContext.for_column(
@@ -477,7 +503,7 @@ def _faker(
         # is output-identical to a fresh instance.
         faker_inst = _get_default_faker()
         pre_seed = seed
-    providers = get_faker_providers(faker_inst)
+    providers = get_faker_providers(faker_inst, provider_snapshot=provider_snapshot)
     provider_func = providers.get(faker_type) or providers["word"]
     out: list[Any] = []
     # No lock: every path above yields an instance no other thread touches (thread-local default, or

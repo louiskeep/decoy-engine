@@ -24,8 +24,9 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from faker import Faker
@@ -151,6 +152,45 @@ def atomic_swap_db_providers(
             # Snapshot at registration time so post-swap caller-side
             # mutation cannot affect generation behaviour.
             _CUSTOM_FAKER_PROVIDER_VALUES[name] = list(values)
+
+
+def snapshot_custom_faker_providers() -> Mapping[str, Callable[[Faker], Any]]:
+    """Capture an immutable, point-in-time view of the custom-provider
+    registry (5a-faker).
+
+    `resolve_pool_provider` and `get_faker_providers` each take their own
+    lock acquisition, so a caller that reads the registry at admission time
+    and again at generation time can observe two different states if a
+    `register_faker_provider`/`unregister_faker_provider` call lands in
+    between (Codex plan-gate v1 BLOCKER, decoy-engine gen-5a-faker plan). A
+    caller that needs the SAME custom-provider view across several reads --
+    the shadow-parity admission gate plus both the shadow and oracle
+    `generate_tables` calls it feeds -- takes one snapshot here and threads
+    it through as `provider_snapshot`, closing that window. Copying the dict
+    before wrapping it severs identity with the live registry, so a
+    subsequent mutation of `_CUSTOM_FAKER_PROVIDERS` cannot leak through the
+    returned mapping.
+    """
+    with _PROVIDER_LOCK:
+        return MappingProxyType(dict(_CUSTOM_FAKER_PROVIDERS))
+
+
+def has_custom_faker_override(
+    faker_type: str, provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None
+) -> bool:
+    """Does a custom provider claim `faker_type`? Resolves against
+    `provider_snapshot` when given (no lock needed -- it is already an
+    immutable point-in-time copy); against the live registry otherwise,
+    under the same lock `resolve_pool_provider`/`get_faker_providers` use.
+    Shares the custom-override membership question those two callers each
+    answer inline, factored out so the shadow-admission gate
+    (`execution/physical/_shadow_generation.py`) can ask it without a
+    `Faker` instance in hand -- admission runs over the raw column config,
+    before generation ever constructs one."""
+    if provider_snapshot is not None:
+        return faker_type in provider_snapshot
+    with _PROVIDER_LOCK:
+        return faker_type in _CUSTOM_FAKER_PROVIDERS
 
 
 def load_custom_providers(
@@ -377,7 +417,11 @@ def _make_reflected_provider(method: Callable[..., Any]) -> Callable[..., Any]:
     return call
 
 
-def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
+def get_faker_providers(
+    faker_instance: Faker,
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+) -> dict[str, Callable[..., Any]]:
     """Return a dict of every safe Faker provider on ``faker_instance``.
 
     Built by reflection: each public method that isn't in
@@ -394,6 +438,13 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
 
     Custom providers registered via ``register_faker_provider`` are
     added last and override reflection on name collision.
+
+    ``provider_snapshot`` (5a-faker, additive): resolves the custom-
+    provider layer against this already-captured immutable mapping
+    instead of a fresh lock acquisition on the live registry -- see
+    ``snapshot_custom_faker_providers``. ``None`` (the default) reads the
+    live registry exactly as before, so every existing caller is
+    byte-unchanged.
     """
     fake = faker_instance
     providers: dict[str, Callable[..., Any]] = {}
@@ -424,9 +475,13 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
     # under _PROVIDER_LOCK so concurrent atomic_swap_db_providers calls
     # never produce a partial view. Iterate the snapshot outside the
     # lock so registration-time side effects (none today, but future-
-    # proofing) can't deadlock.
-    with _PROVIDER_LOCK:
-        custom_snapshot = list(_CUSTOM_FAKER_PROVIDERS.items())
+    # proofing) can't deadlock. A caller-supplied provider_snapshot is
+    # already an immutable point-in-time copy, so it needs no lock at all.
+    if provider_snapshot is None:
+        with _PROVIDER_LOCK:
+            custom_snapshot = list(_CUSTOM_FAKER_PROVIDERS.items())
+    else:
+        custom_snapshot = list(provider_snapshot.items())
     for name, fn in custom_snapshot:
         # Accept and ignore args/kwargs: callers invoke every provider as
         # provider(**faker_kwargs), but a custom provider's contract is
@@ -439,7 +494,10 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
 
 
 def resolve_pool_provider(
-    faker_instance: Faker, faker_type: str
+    faker_instance: Faker,
+    faker_type: str,
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> tuple[Callable[..., Any] | None, bool, bool]:
     """Locked-snapshot provider resolve for GP2's pool-eligibility decision.
 
@@ -460,27 +518,46 @@ def resolve_pool_provider(
     faker_type" case `get_faker_providers` itself doesn't fill in (callers on
     the per-row path still get the unknown -> ``word`` fallback via
     `get_faker_providers`; this resolver leaves that fallback to them).
+
+    ``provider_snapshot`` (5a-faker, additive): when given, resolves the
+    custom-override question against this already-captured immutable
+    mapping instead of taking a fresh lock on the live registry -- a caller
+    threading ONE snapshot through a whole shadow-vs-oracle comparison
+    needs the identical custom-provider view on every resolve call, not a
+    live read a concurrent register/unregister could straddle (see
+    `snapshot_custom_faker_providers`). ``None`` (the default) preserves
+    today's live-locked read exactly, so every existing caller (GP2 masking,
+    generation without a snapshot) is byte-unchanged.
     """
     fake = faker_instance
-    with _PROVIDER_LOCK:
-        custom_override_present = faker_type in _CUSTOM_FAKER_PROVIDERS
+    if provider_snapshot is None:
+        with _PROVIDER_LOCK:
+            custom_override_present = faker_type in _CUSTOM_FAKER_PROVIDERS
+            custom_fn = _CUSTOM_FAKER_PROVIDERS.get(faker_type)
+            attr = getattr(fake, faker_type, None)
+            exact_name_available = faker_type not in _FAKER_DENYLIST and callable(attr)
+    else:
+        custom_override_present = faker_type in provider_snapshot
+        custom_fn = provider_snapshot.get(faker_type)
         attr = getattr(fake, faker_type, None)
         exact_name_available = faker_type not in _FAKER_DENYLIST and callable(attr)
-        if custom_override_present:
-            fn = _CUSTOM_FAKER_PROVIDERS[faker_type]
 
-            def _custom_call(
-                *args: Any, _fn: Callable[[Faker], Any] = fn, _fake: Faker = fake, **kwargs: Any
-            ) -> Any:
-                # Mirrors get_faker_providers's own custom-provider wrapper:
-                # accept and ignore args/kwargs -- a custom provider's
-                # contract is fn(faker_instance), not fn(**faker_kwargs).
-                return _fn(_fake)
+    if custom_override_present:
+        assert custom_fn is not None  # noqa: S101 -- custom_override_present guarantees this
+        fn = custom_fn
 
-            return _custom_call, exact_name_available, True
-        if not exact_name_available or not callable(attr):
-            return None, False, False
-        return _make_reflected_provider(attr), True, False
+        def _custom_call(
+            *args: Any, _fn: Callable[[Faker], Any] = fn, _fake: Faker = fake, **kwargs: Any
+        ) -> Any:
+            # Mirrors get_faker_providers's own custom-provider wrapper:
+            # accept and ignore args/kwargs -- a custom provider's
+            # contract is fn(faker_instance), not fn(**faker_kwargs).
+            return _fn(_fake)
+
+        return _custom_call, exact_name_available, True
+    if not exact_name_available or not callable(attr):
+        return None, False, False
+    return _make_reflected_provider(attr), True, False
 
 
 def list_generate_faker_providers(locale: str | list[str] | None = None) -> tuple[str, ...]:

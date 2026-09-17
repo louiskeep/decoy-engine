@@ -41,6 +41,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.generation import _plan_entry as _plan_entry_module
+from decoy_engine.internal.faker_setup import snapshot_custom_faker_providers
 from decoy_engine.keyprovider import KeyProvider
 from decoy_engine.providers_v2 import ProviderRegistry
 
@@ -671,7 +672,20 @@ def run_generation_shadow_and_oracle(
     coordinator's synthesis dispatch and the public `run_pipeline` oracle
     UNDER phase-entry spies, each side's exception (if any) caught
     independently -- the phase-bound differential parity proof (plan §0/§3).
+
+    5a-faker: captures ONE custom-faker-provider registry snapshot here, up
+    front, and threads it to both the shadow (`ShadowContext.provider_
+    snapshot`) and oracle (`run_pipeline`'s `_provider_snapshot`) sides, so
+    a `faker` column's admission decision and both generation calls always
+    agree on the identical registry state -- never two independent live
+    reads a concurrent register/unregister could straddle. Inert for every
+    non-faker config already using this harness (sequence/categorical
+    columns never consult the snapshot). A test proving the race itself
+    needs finer-grained control than this one-shot harness gives (mutating
+    the registry BETWEEN the shadow and oracle calls) and drives the same
+    building blocks directly instead -- see `test_shadow_generation_faker.py`.
     """
+    provider_snapshot = snapshot_custom_faker_providers()
     inputs = capture_physical_plan_inputs(
         config,
         {},
@@ -686,6 +700,7 @@ def run_generation_shadow_and_oracle(
         relationship_graph=inputs.graph,
         derive_key=derive_key,
         instance_default_locale=instance_default_locale,
+        provider_snapshot=provider_snapshot,
     )
     snapshot = capture_shadow_snapshot({})
 
@@ -705,6 +720,7 @@ def run_generation_shadow_and_oracle(
             key_provider=key_provider,
             registry=registry,
             sink=None,
+            _provider_snapshot=provider_snapshot,
         )
         return dict(oracle_result.outputs)
 

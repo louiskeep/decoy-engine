@@ -278,7 +278,13 @@ def test_synthesis_stage_adapter_forwards_result_unchanged(
     sentinel_outputs = {"gen_table": pa.table({"c": [1]})}
     calls: list[tuple[Any, Any, Any]] = []
 
-    def _stub(plan: Any, derive_key: Any = None, instance_default_locale: Any = None) -> Any:
+    def _stub(
+        plan: Any,
+        derive_key: Any = None,
+        instance_default_locale: Any = None,
+        *,
+        provider_snapshot: Any = None,
+    ) -> Any:
         calls.append((plan, derive_key, instance_default_locale))
         return sentinel_outputs
 

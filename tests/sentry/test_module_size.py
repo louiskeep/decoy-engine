@@ -90,7 +90,15 @@ ALLOWLIST: dict[str, int] = {
     # pinned. `_statistical` now passes the pinned `StatisticalSpec.
     # snapshot_digest` straight through instead. Same decomposition target
     # stands.
-    "src/decoy_engine/generation/synthesize.py": 668,
+    # gen-5a-faker (2026-09-17): +25 LOC (668 -> 693) threading the optional,
+    # keyword-only `provider_snapshot` through `_generate_tables_from_config` /
+    # `_generate_column` / `_faker` so a caller comparing two independent
+    # `generate_tables` calls (the shadow-parity harness) can pin both to one
+    # captured custom-faker-provider registry snapshot instead of two live
+    # reads a concurrent register/unregister could straddle. Additive only:
+    # `None` (every existing caller) reads the live registry exactly as
+    # before. Same decomposition target stands.
+    "src/decoy_engine/generation/synthesize.py": 693,
     "src/decoy_engine/storm/detectors.py": 1049,
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,
@@ -458,7 +466,13 @@ ALLOWLIST: dict[str, int] = {
     # import, the `unified_slice_enabled` parameter, its require_bool call,
     # and the three-line call site itself. Ceiling restored to 645; do not
     # let this call site regrow past it.
-    "src/decoy_engine/execution/_pipeline.py": 645,
+    # gen-5a-faker (2026-09-17): +15 LOC (645 -> 660) adding the private,
+    # keyword-only `_provider_snapshot` parameter and forwarding it to the
+    # `generate_tables` call -- the shadow-parity harness's own hook for
+    # pinning this oracle call to the same captured custom-faker-provider
+    # snapshot its coordinator-side call reads (see `generation/synthesize.py`'s
+    # matching entry above). `None` for every real caller; additive only.
+    "src/decoy_engine/execution/_pipeline.py": 660,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table
@@ -623,6 +637,17 @@ ALLOWLIST: dict[str, int] = {
     # ratchet -- the plan gate found no cleaner class split worth introducing
     # solely to reach 600 LOC.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
+    # gen-5a-faker (2026-09-17): crossed the 600 cap (545 -> 622) adding
+    # `snapshot_custom_faker_providers` + `has_custom_faker_override` (the
+    # registry-snapshot mechanism the shadow-parity generation admission
+    # gate needs -- see `execution/physical/_shadow_generation.py`) and
+    # threading the optional `provider_snapshot` keyword through
+    # `resolve_pool_provider` / `get_faker_providers`. Additive only: `None`
+    # (every existing caller) resolves against the live registry exactly as
+    # before. Decomposition target: none identified -- this module already
+    # owns the whole custom-provider registry + Faker-reflection surface,
+    # and the new functions are a few lines each, not a new concern.
+    "src/decoy_engine/internal/faker_setup.py": 622,
     # Task 5.2 (2026-09-11): crossed the 600 cap (590 -> 657) for the P3-final
     # fpe-span rewrite: FF1 keying independent of `_span_key`
     # (`derive(mask_key, f"text.{detector_id}", FF1_KEY_LABEL)` +

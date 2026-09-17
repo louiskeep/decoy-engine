@@ -57,9 +57,14 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     GENERATION_SHAPE_UNSUPPORTED,
     ShadowDifference,
 )
+from decoy_engine.generation._faker_pool import POOL_ELIGIBLE_FAKER_TYPES
+from decoy_engine.internal.faker_setup import has_custom_faker_override
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     import pyarrow as pa
+    from faker import Faker
 
     from decoy_engine.execution.physical._context import SeamContext
     from decoy_engine.execution.physical._plan import SynthesisStage
@@ -68,6 +73,7 @@ if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
 
 __all__ = [
+    "SHADOW_ADMISSIBLE_FAKER_TYPES",
     "dispatch_synthesis",
     "require_generation_shape",
     "require_pure_generation_shadowable",
@@ -75,12 +81,22 @@ __all__ = [
 ]
 
 # The admitted generate-column `type` set for the slice's dispatches (both
-# pure and independent-mixed): sequence + categorical only. Deliberately
-# closed here rather than sourced from `config._tables.GENERATE_TYPES` --
-# that constant lists every type the SCHEMA accepts, not what this slice's
-# admission gates shadow; widening it is a scoped follow-up (5a-faker etc.),
-# never an accident of reusing the wrong source.
-_ADMITTED_GENERATE_COLUMN_TYPES = frozenset({"sequence", "categorical"})
+# pure and independent-mixed): sequence + categorical + a closed faker
+# allowlist (5a-faker). Deliberately closed here rather than sourced from
+# `config._tables.GENERATE_TYPES` -- that constant lists every type the
+# SCHEMA accepts, not what this slice's admission gates shadow; every other
+# generate type is a scoped follow-up, never an accident of reusing the
+# wrong source.
+_ADMITTED_GENERATE_COLUMN_TYPES = frozenset({"sequence", "categorical", "faker"})
+
+# 5a-faker: the closed, empirically-proven-deterministic faker_type set this
+# gate admits, reusing GP2's own reviewed allowlist as the single source
+# (Codex plan-gate v1 confirmed no import cycle -- execution.physical
+# already depends on generation via drivers/_synthesis.py). Every other
+# faker_type (custom overrides, non-deterministic builtins like uuid1/
+# passport_full, the ~190-type long tail) stays oracle-only; widening this
+# needs its own determinism proof + review, per the gen-5a-faker plan.
+SHADOW_ADMISSIBLE_FAKER_TYPES: frozenset[str] = POOL_ELIGIBLE_FAKER_TYPES
 
 
 def dispatch_synthesis(
@@ -124,6 +140,7 @@ def run_synthesis_adapter(
         plan_obj,
         derive_key=ctx.derive_key,
         instance_default_locale=ctx.instance_default_locale,
+        provider_snapshot=ctx.provider_snapshot,
     )
     seam_context = adapter.last_invocation
     if seam_context is None:  # pragma: no cover - set unconditionally before delegation
@@ -154,10 +171,15 @@ def require_generation_shape(
     it cannot serve this role); every GENERATE-kind table in the decoded
     config (per `classify_table_kinds`, the same generate/mask split
     `run_pipeline` itself uses) has an admitted column `type`
-    (`sequence`/`categorical`) and no `determinism: fresh`; and the
-    generate-table name set matches `physical_synthesis.tables` exactly.
-    MASK-kind table entries in the same decoded config are skipped here
-    (never validated, never rejected) -- an independent-mixed job's config
+    (`sequence`/`categorical`/`faker`) and no `determinism: fresh`; and the
+    generate-table name set matches `physical_synthesis.tables` exactly. A
+    `faker` column additionally passes `_require_shadow_admissible_faker_
+    column` against `ctx.provider_snapshot` (5a-faker) -- the SAME snapshot
+    both this admission check and the downstream `generate_tables` calls
+    read, so a custom-provider mutation between them cannot desync the
+    admission decision from what generation actually produces. MASK-kind
+    table entries in the same decoded config are skipped here (never
+    validated, never rejected) -- an independent-mixed job's config
     legitimately carries both kinds in one `tables:` list; validating the
     mask half is the mask-side admission machinery's job, not this one's.
 
@@ -191,7 +213,7 @@ def require_generation_shape(
     if digest != physical_synthesis.config_digest:
         raise ShadowDifference(code=GENERATION_SHAPE_UNSUPPORTED, detail="config_digest mismatch")
     config = _decode_generation_config_shallow(config_json)
-    generate_table_names = _require_generate_table_column_shape(config)
+    generate_table_names = _require_generate_table_column_shape(config, ctx.provider_snapshot)
     if generate_table_names != set(physical_synthesis.tables):
         raise ShadowDifference(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="generate-table name-set mismatch"
@@ -234,7 +256,10 @@ def _decode_generation_config_shallow(config_json: str) -> dict[str, Any]:
     return config
 
 
-def _require_generate_table_column_shape(config: dict[str, Any]) -> frozenset[str]:
+def _require_generate_table_column_shape(
+    config: dict[str, Any],
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
+) -> frozenset[str]:
     """The identity/column-shape half of §1a: every GENERATE-kind table
     (per `classify_table_kinds`) has an admitted column `type` and no
     `determinism: fresh`. A MASK-kind table entry in the same list is
@@ -243,8 +268,13 @@ def _require_generate_table_column_shape(config: dict[str, Any]) -> frozenset[st
     (`start`/`step`/`categories`/`weights`/`null_probability`/...) -- those
     must reach `generate_tables` unfiltered so a malformed one becomes a
     faithfully identical rejection on both sides, not an out-validation
-    here. Returns the generate-table name set for the caller's
-    identity-bind check against `physical_synthesis.tables`.
+    here. A `type: faker` column is the one exception: it gets its own
+    TOTAL admission check (`_require_shadow_admissible_faker_column`)
+    against `provider_snapshot`, since "is this faker_type shadow-safe" is
+    a shape question this gate owns, not a leaf-knob value the two sides
+    could naturally diverge or agree on unfiltered. Returns the
+    generate-table name set for the caller's identity-bind check against
+    `physical_synthesis.tables`.
     """
     tables = config.get("tables")
     if not isinstance(tables, list) or not tables:
@@ -298,12 +328,63 @@ def _require_generate_table_column_shape(config: dict[str, Any]) -> frozenset[st
                     code=GENERATION_SHAPE_UNSUPPORTED,
                     detail=f"table={name!r}: generate column type {column_type!r} is not admitted",
                 )
+            if column_type == "faker":
+                _require_shadow_admissible_faker_column(column, name, provider_snapshot)
             if column.get("determinism") == "fresh":
                 raise ShadowDifference(
                     code=GENERATION_SHAPE_UNSUPPORTED, detail=f"table={name!r}: determinism=fresh"
                 )
         generate_table_names.add(name)
     return frozenset(generate_table_names)
+
+
+def _require_shadow_admissible_faker_column(
+    column: dict[str, Any],
+    table_name: str,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
+) -> None:
+    """5a-faker's TOTAL admission gate for one `type: faker` column, run
+    BEFORE the adapter is ever constructed. Every failure below is a coded
+    decline in this fixed order (Codex plan-gate v1 HIGH): a malformed
+    `faker_type` (`None`/a list/a mapping) must decline on the very first
+    check, never reach the frozenset membership test or the resolver and
+    raise a raw `TypeError`.
+
+    1. `faker_type` is a string.
+    2. `faker_type` is in the reviewed, empirically-deterministic allowlist
+       (`SHADOW_ADMISSIBLE_FAKER_TYPES`).
+    3. No custom provider claims `faker_type` in `provider_snapshot` -- a
+       custom override can be non-deterministic (wall clock, `fake.unique`)
+       or simply diverge across the shadow/oracle's two independent
+       `generate_tables` calls, so it is never shadow-safe regardless of
+       what type name it overrides.
+    4. `determinism` is not `"fresh"` (`os.urandom` is non-reproducible).
+
+    A column that survives all four is exactly the case the gen-5a-faker
+    investigation proved byte-identical across two independent seeded
+    `generate_tables` calls, per-row and pooled.
+    """
+    faker_type = column.get("faker_type")
+    if not isinstance(faker_type, str):
+        raise ShadowDifference(
+            code=GENERATION_SHAPE_UNSUPPORTED,
+            detail=f"table={table_name!r}: faker_type {faker_type!r} is not a string",
+        )
+    if faker_type not in SHADOW_ADMISSIBLE_FAKER_TYPES:
+        raise ShadowDifference(
+            code=GENERATION_SHAPE_UNSUPPORTED,
+            detail=f"table={table_name!r}: faker_type {faker_type!r} is not shadow-admissible",
+        )
+    if has_custom_faker_override(faker_type, provider_snapshot):
+        raise ShadowDifference(
+            code=GENERATION_SHAPE_UNSUPPORTED,
+            detail=f"table={table_name!r}: faker_type {faker_type!r} has a custom provider override",
+        )
+    if column.get("determinism") == "fresh":
+        raise ShadowDifference(
+            code=GENERATION_SHAPE_UNSUPPORTED,
+            detail=f"table={table_name!r}: faker column determinism=fresh",
+        )
 
 
 def _require_pure_job_scope(config: dict[str, Any], generate_table_names: frozenset[str]) -> None:
