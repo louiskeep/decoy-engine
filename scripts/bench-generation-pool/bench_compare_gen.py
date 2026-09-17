@@ -341,6 +341,19 @@ def validate_worker_record(
                 f"worker record field {int_field!r}={value!r} != requested n_rows={expected_n_rows!r}"
             )
 
+    # rows_per_s is a DERIVED field (n_rows / wall_s); a worker that emitted a
+    # plausible-but-wrong throughput would still pass the finite/positive checks
+    # above. Recompute and fail closed on mismatch so a reported throughput can
+    # never disagree with the timing it claims to summarize (Codex FINAL gate
+    # LOW, 2026-09-17). The crossover statistic uses wall_s directly and is
+    # unaffected; this guards the human-facing rows_per_s only.
+    expected_rows_per_s = expected_n_rows / record["wall_s"]
+    if not math.isclose(record["rows_per_s"], expected_rows_per_s, rel_tol=1e-9, abs_tol=0.0):
+        raise FailClosedError(
+            f"worker record rows_per_s={record['rows_per_s']!r} != n_rows/wall_s="
+            f"{expected_rows_per_s!r} (derived-field consistency check)"
+        )
+
     if record.get("faker_type") != expected_faker_type:
         raise FailClosedError(
             f"worker record faker_type={record.get('faker_type')!r} != "

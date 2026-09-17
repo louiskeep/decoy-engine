@@ -405,6 +405,13 @@ def test_fail_closed_out_rows_mismatch() -> None:
     _assert_fails_closed([_raw_ok(_record_json(500, "city", False, out_rows=499))], [])
 
 
+def test_fail_closed_rows_per_s_inconsistent() -> None:
+    # rows_per_s is derived (n_rows/wall_s); a plausible-but-wrong value must fail
+    # closed so a reported throughput can never disagree with its own timing.
+    # Correct here is 500/0.5 = 1000.0; 12345.0 is finite/positive but wrong.
+    _assert_fails_closed([_raw_ok(_record_json(500, "city", False, rows_per_s=12345.0))], [])
+
+
 def test_fail_closed_missing_ru_maxrss() -> None:
     off = _raw_ok(_record_json(500, "city", False), ru_maxrss_kb=None)
     _assert_fails_closed([off], [])
