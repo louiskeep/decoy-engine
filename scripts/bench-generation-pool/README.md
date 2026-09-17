@@ -101,9 +101,20 @@ or beyond sweep boundary" rather than a false confirmed number. The overall
 recommendation is the MAX of every type's confirmed crossover (both the raw
 value and a rounded, padded number are reported); it is withheld, with a
 stated reason, if any type never confirms a crossover within the sweep, or
-if pooling's peak-RSS cost exceeds `--max-rss-ratio` (default 1.25x) or
-`--max-rss-delta-kb` (default 51,200, i.e. 50 MB) at or above the
-recommended tier.
+if the peak-RSS gate trips at or above the recommended tier
+(`--max-rss-ratio` default 1.25x, `--max-rss-delta-kb` default 51,200, i.e.
+50 MB).
+
+The RSS gate is a COARSE gross-regression guard, not a per-pool memory
+guarantee. `os.wait4`'s `ru_maxrss` is whole-process peak RSS, dominated by
+the identical pandas/pyarrow/faker imports and the identical `n_rows` output
+table both arms build; the pooling-specific cost is a bounded ~10k-value pool
+(`DEFAULT_POOL_SIZE`), which is a small delta against that ~180 MB baseline.
+So the gate can catch a gross memory blow-up but cannot resolve the marginal
+pool cost, and in practice it will rarely fire. It errs safe (it can only
+over-withhold a recommendation, never emit an unsafe one). If a real per-pool
+memory guarantee is wanted later, measure the pool directly (e.g. `tracemalloc`
+around the build) rather than whole-process `ru_maxrss`.
 
 ## Owed follow-up: applying the result
 
@@ -112,6 +123,23 @@ runs and produces a recommendation, updating
 `src/decoy_engine/generation/_faker_pool.py`'s `N_THRESHOLD` constant to the
 recommended value is a separate, data-backed follow-up -- out of scope here
 by design (this unit ships the harness, not a `src/` change).
+
+## Known limitations (dennis gate carry-forwards)
+
+Non-blocking items from the pre-merge review, all err-safe (they can only make
+the harness more conservative or slower, never emit a wrong recommendation):
+
+- The RSS gate is coarse (see the recommendation section above); a real
+  per-pool memory guarantee would need direct pool-memory measurement.
+- The RSS gate checks cells at the RAW max crossover tier, while the emitted
+  number is the higher rounded/padded value; cells between the two are gated
+  even though production would never pool there. Over-strict, never unsafe.
+- Two percentile helpers coexist (`_inclusive_percentile`, graceful at n<2,
+  and `inclusive_p95`, which requires n>=2 -- guaranteed by the `--reps >= 2`
+  CLI floor). A future cleanup can collapse them, but changing the p95 method
+  would shift computed values, so it is deferred rather than done casually.
+- The bootstrap recomputes the median per resample; on a full sweep that is
+  many small sorts. Pure offline-run efficiency, never a correctness issue.
 
 ## Out of scope
 
