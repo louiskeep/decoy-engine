@@ -10,6 +10,11 @@ pinned pandas oracle from Task 2.0); pass `bench_worker_native.py` for the
 Task 2.7 native-route measurement. Both scripts share the same BENCH_JSON /
 VmHWM contract this driver reads, so one harness serves both.
 
+Per-rep peak RSS is fail-closed by default: a timed rep with no VmHWM sample
+raises before that tier's summary is written, so a partial RSS aggregate is
+never persisted under a certified name. Pass --allow-missing-rss to accept a
+tolerant, explicitly-labelled partial result instead (see its --help text).
+
 Usage:
   python bench_driver.py --tiers 1000000,4000000 --reps 5 --out results.json
   python bench_driver.py --tiers 16000000 --reps 3 --out results_16x.json
@@ -45,6 +50,23 @@ _WORKER_ENV = {**os.environ, "PYTHONPATH": str(ENGINE / "src")}
 
 _JSON_RE = re.compile(r"^BENCH_JSON (.*)$", re.MULTILINE)
 _HWM_RE = re.compile(r"^VmHWM:\s*(\d+)\s*kB", re.MULTILINE)
+
+
+class MissingRssError(RuntimeError):
+    """Raised when a tier has a rep with no per-rep RSS and strict mode (the
+    default) is in effect. Never caught internally: a certified tier summary
+    must not be written or printed on an incomplete RSS aggregate."""
+
+
+def _fmt(value: float | int | None, unit: str = "", fmt: str = "") -> str:
+    """Render a measurement for a log line without ever crashing or printing
+    a bare `None`. A missing value becomes the literal "n/a"; the unit is
+    appended either way so a line's shape doesn't shift between a complete
+    and an incomplete measurement.
+    """
+    if value is None:
+        return f"n/a{unit}"
+    return f"{value:{fmt}}{unit}" if fmt else f"{value}{unit}"
 
 
 def _read_vmhwm_kb(pid: int) -> int | None:
@@ -113,9 +135,30 @@ def run_rep(n_rows: int, worker: Path, worker_args: list[str]) -> dict:
     return rec
 
 
-def summarize(n_rows: int, reps: list[dict]) -> dict:
+def summarize(n_rows: int, reps: list[dict], *, allow_missing_rss: bool = False) -> dict:
+    """Aggregate one tier's timed reps.
+
+    Per-rep RSS is fail-closed by default (`allow_missing_rss=False`): a rep
+    with `peak_rss_kb is None` raises `MissingRssError` before any summary
+    is built, so an incomplete RSS aggregate is never mistaken for a
+    certified one. With `allow_missing_rss=True`, `peak_rss_max_kb`/`_mb`
+    are `None` whenever any rep is missing RSS (a partial max is only a
+    lower bound and must not stand in for the certified max); the
+    separately-named `peak_rss_observed_max_*` carries the max over the
+    reps that did report RSS, alongside `rss_reps`/`rss_missing_reps`/
+    `rss_complete`.
+    """
     walls = sorted(r["wall_s"] for r in reps)
-    rss = [r["peak_rss_kb"] for r in reps if r["peak_rss_kb"] is not None]
+    present_rss = [r["peak_rss_kb"] for r in reps if r["peak_rss_kb"] is not None]
+    missing_rss = len(reps) - len(present_rss)
+    if missing_rss and not allow_missing_rss:
+        raise MissingRssError(
+            f"n_rows={n_rows}: {missing_rss}/{len(reps)} timed reps have no per-rep "
+            "peak RSS (peak_rss_kb is None); refusing to write a tier summary with an "
+            "incomplete RSS aggregate. Pass --allow-missing-rss to accept an "
+            "explicitly-labelled partial result instead."
+        )
+    rss_complete = missing_rss == 0
     # keyed-hash throughput: per-hash-column rows/sec, from in-process timings.
     hash_tputs = []
     for r in reps:
@@ -132,8 +175,15 @@ def summarize(n_rows: int, reps: list[dict]) -> dict:
         "wall_iqr_s": q[2] - q[0],
         "wall_p95of_s": max(walls),
         "wall_min_s": min(walls),
-        "peak_rss_max_kb": max(rss) if rss else None,
-        "peak_rss_max_mb": round(max(rss) / 1024, 1) if rss else None,
+        "peak_rss_max_kb": max(present_rss) if rss_complete and present_rss else None,
+        "peak_rss_max_mb": round(max(present_rss) / 1024, 1)
+        if rss_complete and present_rss
+        else None,
+        "peak_rss_observed_max_kb": max(present_rss) if present_rss else None,
+        "peak_rss_observed_max_mb": round(max(present_rss) / 1024, 1) if present_rss else None,
+        "rss_reps": len(present_rss),
+        "rss_missing_reps": missing_rss,
+        "rss_complete": rss_complete,
         "hash_tput_median_rows_s": statistics.median(hash_tputs) if hash_tputs else None,
         "whole_job_tput_median_rows_s": n_rows / statistics.median(walls),
         "execution_mode": reps[0].get("execution_mode"),
@@ -172,6 +222,21 @@ def main() -> None:
         default=None,
         help="directory for --prebuild's per-tier source files (default: this file's dir)",
     )
+    ap.add_argument(
+        "--allow-missing-rss",
+        action="store_true",
+        help=(
+            "tolerate a missing per-rep peak RSS instead of failing closed (default: off, "
+            "i.e. strict). Strict mode raises before writing a tier's summary if any timed "
+            "rep has no VmHWM sample, so a partial RSS result is never persisted under a "
+            "certified name. With this flag, the summary is still written, but "
+            "peak_rss_max_kb/mb are null (never a partial max) and "
+            "peak_rss_observed_max_kb/mb plus rss_reps/rss_missing_reps/rss_complete record "
+            "what was actually observed. Intended for tiny exploratory workloads whose wall "
+            "time can undercut the 20ms VmHWM poll; the frozen native-baseline cert tiers "
+            "should never need it."
+        ),
+    )
     args = ap.parse_args()
 
     worker = HERE / args.worker
@@ -187,47 +252,58 @@ def main() -> None:
         )
         sys.stderr.flush()
         source_path: Path | None = None
-        if prebuild is not None:
-            source_path = source_dir / f"w2_native_{n_rows}.parquet"
-            sys.stderr.write(f"  prebuilding source ({args.prebuild}) -> {source_path} ...\n")
-            sys.stderr.flush()
-            build_cmd = [str(VENV_PY), str(prebuild), str(n_rows), str(source_path)]
+        # try/finally so a prebuilt source is always removed, even when the tier
+        # body raises (a rep failure, or the strict missing-RSS fail-closed) --
+        # otherwise a multi-GB `--prebuild` Parquet orphans in --source-dir on
+        # exactly the error path an operator is already debugging.
+        try:
+            if prebuild is not None:
+                source_path = source_dir / f"w2_native_{n_rows}.parquet"
+                sys.stderr.write(f"  prebuilding source ({args.prebuild}) -> {source_path} ...\n")
+                sys.stderr.flush()
+                build_cmd = [str(VENV_PY), str(prebuild), str(n_rows), str(source_path)]
+                if args.batch_rows is not None:
+                    build_cmd.append(str(args.batch_rows))
+                subprocess.run(  # noqa: S603 fixed local benchmark command, no untrusted input
+                    build_cmd, cwd=str(ENGINE), env=_WORKER_ENV, check=True
+                )
+            worker_args = [str(source_path)] if source_path is not None else []
             if args.batch_rows is not None:
-                build_cmd.append(str(args.batch_rows))
-            subprocess.run(  # noqa: S603 fixed local benchmark command, no untrusted input
-                build_cmd, cwd=str(ENGINE), env=_WORKER_ENV, check=True
-            )
-        worker_args = [str(source_path)] if source_path is not None else []
-        if args.batch_rows is not None:
-            worker_args.append(str(args.batch_rows))
-        for w in range(args.warmup):
-            sys.stderr.write(f"  warmup {w + 1}/{args.warmup} ...\n")
-            sys.stderr.flush()
-            wr = run_rep(n_rows, worker, worker_args)
-            sys.stderr.write(f"    warmup wall={wr['wall_s']:.2f}s rss={wr['peak_rss_kb']}kb\n")
-            sys.stderr.flush()
-        reps = []
-        for i in range(args.reps):
-            r = run_rep(n_rows, worker, worker_args)
-            reps.append(r)
+                worker_args.append(str(args.batch_rows))
+            for w in range(args.warmup):
+                sys.stderr.write(f"  warmup {w + 1}/{args.warmup} ...\n")
+                sys.stderr.flush()
+                wr = run_rep(n_rows, worker, worker_args)
+                sys.stderr.write(
+                    f"    warmup wall={wr['wall_s']:.2f}s rss={_fmt(wr['peak_rss_kb'], 'kb')}\n"
+                )
+                sys.stderr.flush()
+            reps = []
+            for i in range(args.reps):
+                r = run_rep(n_rows, worker, worker_args)
+                reps.append(r)
+                sys.stderr.write(
+                    f"  rep {i + 1}/{args.reps}: wall={r['wall_s']:.2f}s "
+                    f"rss={_fmt(r['peak_rss_kb'], 'kb')} mode={r.get('execution_mode')}\n"
+                )
+                sys.stderr.flush()
+            summ = summarize(n_rows, reps, allow_missing_rss=args.allow_missing_rss)
+            all_results[str(n_rows)] = summ
+            missing_note = ""
+            if summ["rss_missing_reps"]:
+                missing_note = f" ({summ['rss_missing_reps']}/{summ['reps']} reps missing RSS)"
             sys.stderr.write(
-                f"  rep {i + 1}/{args.reps}: wall={r['wall_s']:.2f}s "
-                f"rss={r['peak_rss_kb']}kb mode={r.get('execution_mode')}\n"
+                f"  SUMMARY n={n_rows}: median={summ['wall_median_s']:.2f}s "
+                f"IQR={summ['wall_iqr_s']:.2f}s p95={summ['wall_p95of_s']:.2f}s "
+                f"rss_max={_fmt(summ['peak_rss_max_mb'], ' MB')}{missing_note} "
+                f"hash_tput={_fmt(summ['hash_tput_median_rows_s'], 'rows/s', '.0f')}\n"
             )
             sys.stderr.flush()
-        summ = summarize(n_rows, reps)
-        all_results[str(n_rows)] = summ
-        sys.stderr.write(
-            f"  SUMMARY n={n_rows}: median={summ['wall_median_s']:.2f}s "
-            f"IQR={summ['wall_iqr_s']:.2f}s p95={summ['wall_p95of_s']:.2f}s "
-            f"rss_max={summ['peak_rss_max_mb']}MB "
-            f"hash_tput={summ['hash_tput_median_rows_s']:.0f}rows/s\n"
-        )
-        sys.stderr.flush()
-        if source_path is not None:
-            source_path.unlink(missing_ok=True)
-        # Persist incrementally so a later-tier OOM doesn't lose earlier tiers.
-        Path(args.out).write_text(json.dumps(all_results, indent=2))
+            # Persist incrementally so a later-tier OOM doesn't lose earlier tiers.
+            Path(args.out).write_text(json.dumps(all_results, indent=2))
+        finally:
+            if source_path is not None:
+                source_path.unlink(missing_ok=True)
 
     Path(args.out).write_text(json.dumps(all_results, indent=2))
     print(json.dumps(all_results, indent=2))
