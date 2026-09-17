@@ -1356,7 +1356,20 @@ so the oracle's final generate output is pandas-round-tripped while the shadow s
 non-round-trip-stable generate columns (null_count>0, floating NaN, nested type) diverge. Fixed by gating on
 the MATERIALIZED generate output (require_roundtrip_stable_generate_outputs), NOT config knobs -- nullable/
 unstable generate columns in a mixed job are a tracked deferral. Mask half confirmed parity-safe. All 4.6
-slices double-gated (dennis APPROVE + Codex final GO). NEXT: 5b-ii (mixed generate-parent->mask-child FK
-pool read + stitch precedence), 5a-faker, then slice 6 (approved global/hard-tail), then route activation
-(Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
+slices double-gated (dennis APPROVE + Codex final GO). Slice 5b-ii (COUPLED mixed: generate-parent ->
+mask-child FK) MERGED (PR #152, merge e8739e6c): the coordinator now reads a generated table as the FK
+pool for a mask child -- generate_outputs are injected into a merged shadow snapshot, the child FK column
+is resolved against the generated parent as an IDENTITY pool, and byte parity holds vs run_pipeline. The FK
+orphan-policy helpers (resolve_fk_keys/gather_errored_parent_keys/cascade_row_errors) were extracted
+verbatim to a NEW parent-level execution/_fk_resolve.py so the pandas oracle and the shadow share one owner
+(no drift); _shadow_fk.py builds the identity map with the oracle's exact fk_key_value normalization and
+writes the resolved child column back through the oracle's own lossless _fk_keys pandas<->Arrow bridge
+(byte-parity across all int/uint widths, >2**63, nulls, all-null, strings -- NO 2**53 gate). A run-scoped
+admitted-edge carrier keeps FK behavior out of existing full_frame mask jobs; a complete graph admission
+rule admits exactly one single-column crossing edge and declines all other mask-touching topologies;
+PRESERVE/WARN are positive parity while FAIL and REMAP orphans are identical-rejections (a generated parent
+has no mask WorkNode, so REMAP yields the oracle's orphan_remap_parent_missing). This COMPLETES Cam's
+"coordinator genuinely owns generation + stitch" scope. All 4.6 slices double-gated (dennis APPROVE +
+Codex final GO). NEXT: 5a-faker (frozen-provider faker generation), then slice 6 (approved global/hard-tail),
+then route activation (Cam-gated + D9-cert-gated), then Task 4.7 (delete superseded routing). -->
 
