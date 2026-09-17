@@ -202,6 +202,17 @@ class GenerateColumnConfig(BaseModel):
         extras = self.model_extra or {}
         if self.type == "faker" and not extras.get("faker_type"):
             raise ValueError(f"faker column {self.name!r} requires `faker_type`")
+        # GP2 (dennis review, 2026-09-17): `pooled` is a faker-only build-
+        # strategy toggle. Pooling sources its values from a Faker provider,
+        # so the flag has no meaning on any other type. Reject it at config
+        # time rather than letting it ride as a silent no-op the fingerprint
+        # then strips: the strip is byte-correct for a faker column that opts
+        # out, but on a non-faker column an accepted-then-ignored `pooled`
+        # is an operator error worth surfacing up front.
+        if self.type != "faker" and self.pooled is not None:
+            raise ValueError(
+                f"{self.type} column {self.name!r}: `pooled` is only valid on `type: faker` columns"
+            )
         if self.type == "sequence" and extras.get("start") is None:
             raise ValueError(f"sequence column {self.name!r} requires `start`")
         if self.type == "categorical" and not extras.get("categories"):

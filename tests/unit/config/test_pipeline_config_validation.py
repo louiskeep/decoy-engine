@@ -465,6 +465,32 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
         with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
             PipelineConfig.model_validate(cfg)
 
+    def test_pooled_on_non_faker_column_raises(self):
+        """GP2 (dennis review): `pooled` is a faker-only knob. Setting it on
+        any other type is an operator error -- reject at validation rather
+        than accept-then-silently-ignore (and strip from the fingerprint)."""
+        cfg = self._wrap({"name": "id", "type": "sequence", "start": 1, "pooled": True})
+        with pytest.raises(
+            ValidationError, match="sequence column 'id': `pooled` is only valid on"
+        ):
+            PipelineConfig.model_validate(cfg)
+
+    def test_pooled_false_on_non_faker_column_also_raises(self):
+        """`pooled: false` is still faker-only: even the opt-out value is
+        meaningless off a faker column, so it must not pass validation."""
+        cfg = self._wrap(
+            {"name": "dept", "type": "categorical", "categories": ["a"], "pooled": False}
+        )
+        with pytest.raises(
+            ValidationError, match="categorical column 'dept': `pooled` is only valid on"
+        ):
+            PipelineConfig.model_validate(cfg)
+
+    def test_pooled_on_faker_column_accepted(self):
+        """The valid case: `pooled` on a faker column validates cleanly."""
+        cfg = self._wrap({"name": "city", "type": "faker", "faker_type": "city", "pooled": True})
+        PipelineConfig.model_validate(cfg)  # no raise
+
     def test_reference_validator_unchanged_still_raises_on_missing_table(self):
         """Existing _reference_params_required validator still works
         alongside the new _type_params_present validator."""

@@ -243,13 +243,13 @@ Numeric, categorical, and datetime samplers all draw whole-column vectors
 stream-positional across the whole output, so NOT partitionable.
 
 ### gen.faker_pool_selection
-`generation/_faker_pool.py:148`. GP2's generation-local pool REUSE selection:
+`generation/_faker_pool.py:192`. GP2's generation-local pool REUSE selection:
 `selection_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_selection")[:8]`
 seeds `default_rng` for `integers(0, pool.size, size=n)` -- mechanically the same
 whole-column draw as `gen.pool_nondeterministic`, but keyed from the column's OWN
 `GenDeriveContext` root rather than `job_seed` directly, so two pooled columns
 with different config never collapse onto one selection stream. Seeded but
-stream-positional, so NOT partitionable. Mirror: `generation/pool/_sampler.py:122`.
+stream-positional, so NOT partitionable. Mirror: `generation/pool/_sampler.py:136`.
 
 ### gen.identifier_nondeterministic
 `providers_v2/identifiers/_ssn.py:165`. Every identifier adapter has two unseeded
@@ -352,7 +352,7 @@ adapter, a fresh `Generic(locale, seed=int.from_bytes(spec.seed))` per batch
 (`providers_v2/mimesis/_adapter.py:167`). Both are catalogued as mirrors here.
 
 ### gen.faker_pool_build
-`generation/_faker_pool.py:132`. GP2's generation-local pool BUILD -- NOT
+`generation/_faker_pool.py:176`. GP2's generation-local pool BUILD -- NOT
 `gen.pool_build_faker` above (that's the V2 PoolBuilder/ProviderRegistry seam
 masking's `faker` strategy uses; generation's raw `faker_type` values, like
 `first_name` or `city`, are not V2-registered providers). Closed allowlist only
