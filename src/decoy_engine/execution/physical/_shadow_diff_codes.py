@@ -18,7 +18,13 @@ __all__ = [
     "DIFFERENCE_CODES",
     "DUPLICATE_NODE_DECLARATION",
     "FAKER_POOL_NON_STRING_OUTPUT",
+    "FULL_FRAME_DISPATCH_MISSING_DEPENDENCY",
+    "FULL_FRAME_DRIVER_UNSUPPORTED",
+    "FULL_FRAME_RUNTIME_FEATURE_UNSUPPORTED",
+    "FULL_FRAME_SUBSTRATE_UNSUPPORTED",
     "GENERATION_SHAPE_UNSUPPORTED",
+    "GLOBAL_SHUFFLE_DETERMINISM_UNSUPPORTED",
+    "GLOBAL_STRATEGY_UNSUPPORTED",
     "MIXED_DRIVER_UNSUPPORTED",
     "MIXED_FK_CROSS_GENERATE_UNSUPPORTED",
     "MIXED_FK_TOPOLOGY_UNSUPPORTED",
@@ -139,6 +145,20 @@ MIXED_FK_TOPOLOGY_UNSUPPORTED: Final = "mixed-fk-topology-unsupported"
 # (ignoring its parent) would silently diverge from the oracle, so it
 # declines coded instead. `detail` names the table LOCATION only.
 MIXED_FK_UNADMITTED_CHILD: Final = "mixed-fk-unadmitted-child"
+# Task 4.6 slice 6: the FULL_FRAME dispatch's own catalog -- see
+# `_shadow_full_frame.py`'s module docstring for the full admission gate
+# each code guards. `detail` stays to the same location-only discipline as
+# every code above: a count, a strategy name, a table/column location, or a
+# field name that was absent -- never a source value.
+FULL_FRAME_DRIVER_UNSUPPORTED: Final = "full-frame-driver-unsupported"
+FULL_FRAME_SUBSTRATE_UNSUPPORTED: Final = "full-frame-substrate-unsupported"
+FULL_FRAME_DISPATCH_MISSING_DEPENDENCY: Final = "full-frame-dispatch-missing-dependency"
+GLOBAL_STRATEGY_UNSUPPORTED: Final = "global-strategy-unsupported"
+GLOBAL_SHUFFLE_DETERMINISM_UNSUPPORTED: Final = "global-shuffle-determinism-unsupported"
+FULL_FRAME_RUNTIME_FEATURE_UNSUPPORTED: Final = "full-frame-runtime-feature-unsupported"
+# ^ also covers item 5's FK half: a relationship edge naming the one
+# admitted table (sink/source_loader/vault/fidelity/validators/quarantine
+# share this code too -- see _shadow_full_frame.py's module docstring).
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -163,6 +183,12 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
         MIXED_FK_TOPOLOGY_UNSUPPORTED,
         MIXED_FK_UNADMITTED_CHILD,
+        FULL_FRAME_DRIVER_UNSUPPORTED,
+        FULL_FRAME_SUBSTRATE_UNSUPPORTED,
+        FULL_FRAME_DISPATCH_MISSING_DEPENDENCY,
+        GLOBAL_STRATEGY_UNSUPPORTED,
+        GLOBAL_SHUFFLE_DETERMINISM_UNSUPPORTED,
+        FULL_FRAME_RUNTIME_FEATURE_UNSUPPORTED,
     }
 )
 

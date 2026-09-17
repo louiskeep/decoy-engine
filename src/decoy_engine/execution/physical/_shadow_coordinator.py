@@ -53,6 +53,8 @@ stitches the two outputs via the shared `execution._stitch` helper. A shape
 that dispatch does not admit (a generate->mask FK coupling, an OOC mask
 driver, ...) declines coded rather than silently masking only part of the
 job -- see `_shadow_mixed.py` for the full contract.
+
+Task 4.6 slice 6 (the LAST masking slice) wraps `FullFrameAdapter` via `_shadow_full_frame.py`.
 """
 
 from __future__ import annotations
@@ -114,23 +116,14 @@ class ShadowRunResult:
     multiset comparison; every scalar/chunked/faker strategy here is
     zero-diagnostic, but slice 5b-ii's FK resolution can populate `warnings`.
 
-    `driver_invocation` (Task 4.6 slice 3) is the `SeamContext` the
-    OUT_OF_CORE dispatch branch recorded, or `None` for every other
-    disposition (the per-node scalar/chunked loop has no single adapter
-    invocation to name). `route_evidence` stays empty on the OOC branch: an
-    OOC table's nodes carry `execution=None` by construction (the driver runs
-    its own masking), so there is no per-node evidence to report -- the
-    coordinator does not widen `route_evidence`'s per-node contract to fake
-    one.
-
-    `quality_metrics` (Task 4.6 slice 4) carries `ExecutionResult.quality_
-    metrics` through, by reference, for the OOC branch only -- the same type
-    `ExecutionResult` itself declares it (`dict[str, Any]`), so a comparator
-    can assert the coordinator preserves route-scoped evidence (e.g.
-    code_set's corpus-provenance entries) rather than silently dropping it in
-    the ExecutionResult -> ShadowRunResult adaptation. The scalar/chunked/
-    faker loop below never produces a metric-bearing strategy in this slice,
-    so it keeps the empty default -- behaviorally unchanged.
+    `driver_invocation` (slice 3, widened by slice 6) is the `SeamContext`
+    the OUT_OF_CORE or FULL_FRAME branch recorded (`None` elsewhere -- the
+    per-node loop has no single adapter call to name); `route_evidence`
+    stays empty on both (no per-node loop runs there). `quality_metrics`
+    (slice 4, widened by slice 6) carries `ExecutionResult.quality_metrics`
+    through by reference for those same branches; the per-node loop below
+    produces no metric-bearing strategy in this slice, so it keeps the
+    empty default.
     """
 
     outputs: dict[str, pa.Table]
@@ -304,6 +297,12 @@ class ShadowCoordinator:
         mask_drivers = {table.driver for table in plan.tables}
         if mask_drivers == {DriverId.OUT_OF_CORE}:
             return self._dispatch_out_of_core(plan, snapshot)
+        if mask_drivers == {DriverId.FULL_FRAME}:
+            from decoy_engine.execution.physical import _shadow_full_frame
+
+            result = _shadow_full_frame.dispatch_full_frame_if_applicable(self, plan, snapshot)
+            if result is not None:
+                return result
         if DriverId.OUT_OF_CORE in mask_drivers:
             # OUT_OF_CORE mixed with any other masking driver: never mask
             # part of a plan through the adapter and the rest scalar.
