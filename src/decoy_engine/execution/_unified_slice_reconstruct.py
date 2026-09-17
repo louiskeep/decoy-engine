@@ -68,7 +68,10 @@ def source_shaped_output(
     It is now rebuilt from `candidate.source` at call time: admission proved this
     exact conversion succeeds and round-trips type-/value-clean before admitting,
     so the rebuild is byte-identical to the frame admission validated, and
-    building it here keeps it out of the coordinator's peak.
+    building it here keeps it out of the coordinator's peak. The cost is one extra
+    full-source Arrow->pandas conversion per admitted table (admission already
+    does one to validate); that CPU-for-memory trade is what buys the peak-RSS
+    reduction.
 
     MUST be called only after the coordinator run returns (see the ordering test
     in `tests/physical/test_unified_slice_reconstruct.py`): building the frame

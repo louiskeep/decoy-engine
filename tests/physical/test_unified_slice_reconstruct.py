@@ -1,9 +1,13 @@
-"""D9 peak-RSS fix: the source-shaped reconstruction must run AFTER the shadow
-coordinator returns, so the full-source pandas rebuild never overlaps the
-coordinator's native-execution peak. A refactor that rebuilt the frame before or
-during native execution would stay correct (byte parity holds either way) while
-silently reintroducing the peak-RSS overshoot the fix removed. This ordering test
-is the guard that the peak-lifetime contract cannot regress unnoticed.
+"""D9 peak-RSS fix: the source-shaped reconstruction is invoked only after the
+shadow coordinator returns, so the retained full-source pandas frame is built
+past the coordinator's native-execution peak, never across it.
+
+This asserts exactly that call ordering (`source_shaped_output` runs after
+`ShadowCoordinator.run` returns), not the whole peak-lifetime contract. Admission
+still converts the source to pandas transiently to validate it, but that frame is
+released before the coordinator runs -- the admission test asserts the candidate
+carries no frame, so a regression cannot stash a pre-built frame on it. The RSS
+outcome itself is D9-cert-gated.
 """
 
 from __future__ import annotations
