@@ -18,7 +18,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -149,25 +148,15 @@ def _stage_shadow_coordinator_run(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _stage_source_shaped_assembly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Poisons only the ONE `CheapCandidate.source_frame` this admitted call
-    builds (a per-instance `DataFrame` subclass, not a class-wide pandas
-    patch) so the legacy reroute's own, unrelated `df[col] = ...`
-    assignments are untouched."""
-    from decoy_engine.execution import _unified_slice_admission
+    """Poisons the reconstruction helper so it raises on the unified lane's own
+    call (n=1). The legacy reroute never calls `source_shaped_output`, so its
+    unrelated output assembly is untouched. This exercises the same
+    reconstruction-failure reroute path the per-instance `_RaisingFrame` poison
+    used to, now that the frame is rebuilt inside the helper rather than carried
+    on `CheapCandidate`."""
+    from decoy_engine.execution import _unified_slice_reconstruct
 
-    class _RaisingFrame(pd.DataFrame):
-        def __setitem__(self, key: Any, value: Any) -> None:
-            raise RuntimeError("injected fault: source-shaped assembly")
-
-    original = _unified_slice_admission.cheap_admission
-
-    def _wrapper(*args: Any, **kwargs: Any) -> Any:
-        candidate = original(*args, **kwargs)
-        if candidate is None:
-            return None
-        return dataclasses.replace(candidate, source_frame=_RaisingFrame(candidate.source_frame))
-
-    monkeypatch.setattr(_unified_slice_admission, "cheap_admission", _wrapper)
+    _raise_on_nth_call(monkeypatch, _unified_slice_reconstruct, "source_shaped_output", n=1)
 
 
 def _stage_stamp_execution_metrics(monkeypatch: pytest.MonkeyPatch) -> None:

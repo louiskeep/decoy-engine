@@ -253,6 +253,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_fk_resolve.py",
         "src/decoy_engine/execution/_pandas_adapter.py",
         "src/decoy_engine/execution/_strategies/_orphan.py",
+        # D9 peak-RSS fix: the unified lane's source-shaped output assembly moves
+        # out of `_unified_slice.py` into this new parent-level module so the
+        # full-source pandas rebuild happens AFTER the coordinator returns (never
+        # across its native peak) and `_unified_slice.py` stays under the 600-LOC
+        # cap. Same seam discipline as `_stitch.py`/`_fk_resolve.py`: it imports
+        # NOTHING from `execution.physical` (physical shapes are annotated via
+        # Protocol), so it is NOT in DELIBERATELY_CONNECTED_MODULES -- the four
+        # import-direction sweeps above stay green.
+        "src/decoy_engine/execution/_unified_slice_reconstruct.py",
     }
     unexpected = [
         name

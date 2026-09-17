@@ -395,9 +395,10 @@ def test_cheap_admission_admits_a_default_range_index(tmp_path: Path) -> None:
     profile, _ = _profile_and_plan(config, source)
     candidate = _cheap_ok(config, profile, source)
     assert candidate is not None
-    assert list(candidate.source_frame.columns) == ["c"]
-    assert candidate.source_frame.index.equals(pd.RangeIndex(3))
-    assert candidate.source_frame.index.name is None
+    # The candidate carries only the Arrow source now (the validated pandas frame
+    # is built and discarded inside admission; reconstruction rebuilds it later).
+    assert list(candidate.source.column_names) == ["c"]
+    assert candidate.source.num_rows == 3
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution import _unified_slice_admission as _admission
+from decoy_engine.execution import _unified_slice_reconstruct
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.generation.pool._events import QualityWarning
 
@@ -167,8 +168,6 @@ def _execute_admitted(
     accepting a third parameter) costs nothing and keeps `_pipeline.py`'s
     one call site to fewer duplicate pointers into the same state.
     """
-    import pyarrow as pa
-
     from decoy_engine.execution import _pipeline_finalize, _pipeline_route_exec
     from decoy_engine.execution._adapter import ExecutionResult
     from decoy_engine.execution._substrate import select_execution_adapter
@@ -289,39 +288,15 @@ def _execute_admitted(
                 "compiled_kernel_executed": evidence.compiled_kernel_executed,
             }
 
-        # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
-        # trip of the coordinator's own metadata-free output. `candidate.
-        # source_frame` is the SAME source-aware pandas conversion the legacy
-        # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`,
-        # which reduces to a plain `to_pandas()` here since cheap admission
-        # already declined any relationship-bearing job); leaving a passthrough
-        # column untouched on it reproduces the legacy `PassthroughHandler`
-        # exactly (it is a literal no-op, `_strategies/_passthrough.py`), and
-        # overlaying a masked column's `to_pylist()` POSITIONALLY reproduces
-        # every tokenizing handler's own `df[column] = masked.to_pylist()`
-        # assignment (`_redact.py` / `_truncate.py` / `_hash.py`). The closing
-        # `pa.Table.from_pandas(frame, preserve_index=False)` is then EXACTLY
-        # the legacy adapter's own conversion (`_pandas_adapter.py:325`),
-        # attaching the identical `b"pandas"` schema metadata by construction --
-        # not by hand-copying bytes. `candidate.source_frame` is single-use
-        # (admission built it once for this call only), so mutating it in place
-        # costs no extra conversion beyond the one admission already paid for.
-        frame = candidate.source_frame
-        # Free the coordinator's native masked table once its columns are overlaid,
-        # BEFORE the final from_pandas. Those columns are Rust-allocated (FFI-exported),
-        # so they sit outside the pyarrow pool; holding them alongside the pandas frame
-        # and the final Arrow output is the unified lane's peak-RSS overshoot (D9 cert
-        # measured ~1.23x at 1M, dropping to ~1.05x with this release). `pop` (not index)
-        # takes ownership so `del` actually drops the last reference; the coordinator
-        # result is not read for its outputs again below.
-        masked_table = shadow_result.outputs.pop(candidate.table)
-        for node in physical_table.nodes:
-            if node.strategy == "passthrough":
-                continue
-            column = node.columns[0]
-            frame[column] = masked_table.column(column).to_pylist()
-        del masked_table
-        outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
+        # SOURCE-SHAPED reconstruction (D9 fix), assembled from the Arrow source
+        # only now that the coordinator has returned -- the full-source pandas copy
+        # never coexists with the coordinator's native peak. See
+        # `_unified_slice_reconstruct.source_shaped_output` for the parity argument
+        # and the peak-lifetime contract; this call stays inside the exception
+        # boundary, so a raise here still reroutes to legacy.
+        outputs = _unified_slice_reconstruct.source_shaped_output(
+            candidate, shadow_result, physical_table
+        )
         quality_metrics: dict[str, Any] = {}
         _pipeline_finalize.stamp_execution_metrics(
             quality_metrics,

@@ -109,15 +109,17 @@ class CheapCandidate:
     """A job admitted through every check answerable without touching
     `execution.physical` or the source's actual masking behavior.
 
-    `source_frame` is the ONE Arrow->pandas conversion of `source` this lane
-    performs (`cheap_admission` builds and validates it); `_unified_slice.
-    _execute_admitted` reuses it verbatim for source-shaped output assembly
-    rather than converting a second time.
+    Admission builds an Arrow->pandas conversion of `source` to VALIDATE it
+    (physical-consistency round trip below) and then discards it. It is not
+    carried on the candidate: `_unified_slice_reconstruct.source_shaped_output`
+    rebuilds the same conversion from `source` after the coordinator returns, so
+    the full-source pandas copy never overlaps the coordinator's native peak
+    (the D9 1M peak-RSS overshoot). The rebuild is byte-identical to the frame
+    validated here (`to_pandas()` is deterministic on the immutable table).
     """
 
     table: str
     source: pa.Table
-    source_frame: pd.DataFrame
 
 
 def cheap_admission(
@@ -235,12 +237,14 @@ def cheap_admission(
         # only) would have missed.
         return None
 
-    # Root-cause fix: this is the SAME Arrow->pandas conversion the legacy
-    # route performs on this table (`to_pandas_fk_safe` reduces to a plain
-    # `to_pandas()` here -- `profile.relationships` was already declined
-    # above, so `fk_columns` is always empty); doing it once, here, and
-    # carrying the frame forward on `CheapCandidate` means `_unified_slice.
-    # _execute_admitted`'s source-shaped output assembly never re-converts.
+    # Build the Arrow->pandas conversion ONLY to validate it (the physical-
+    # consistency round trip below). This is the SAME conversion the legacy route
+    # performs (`to_pandas_fk_safe` reduces to a plain `to_pandas()` here --
+    # `profile.relationships` was already declined above, so `fk_columns` is
+    # empty). `frame` is NOT carried on the candidate: reconstruction rebuilds it
+    # from `source` after the coordinator returns, so this full-source pandas copy
+    # never overlaps the coordinator's native peak. `frame`/`round_trip` lose
+    # their last reference when this function returns, before the coordinator runs.
     try:
         frame = source.to_pandas()
     except Exception:
@@ -289,7 +293,7 @@ def cheap_admission(
         if rt_col.type != resident_col.type or not rt_col.equals(resident_col):
             return None
 
-    return CheapCandidate(table=table, source=source, source_frame=frame)
+    return CheapCandidate(table=table, source=source)
 
 
 def _has_when_gate(col: Mapping[str, Any]) -> bool:
