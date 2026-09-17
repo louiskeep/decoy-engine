@@ -6,6 +6,7 @@ overlay, unit-tested directly against the private helpers (no full
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -395,8 +396,11 @@ def test_cheap_admission_admits_a_default_range_index(tmp_path: Path) -> None:
     profile, _ = _profile_and_plan(config, source)
     candidate = _cheap_ok(config, profile, source)
     assert candidate is not None
-    # The candidate carries only the Arrow source now (the validated pandas frame
-    # is built and discarded inside admission; reconstruction rebuilds it later).
+    # The candidate carries only the Arrow source now: the validated pandas frame
+    # is built and discarded inside admission, and reconstruction rebuilds it after
+    # the coordinator returns. Assert the field set structurally so a reintroduced
+    # frame field (which would restore the peak-RSS overlap) fails here.
+    assert [f.name for f in dataclasses.fields(candidate)] == ["table", "source"]
     assert list(candidate.source.column_names) == ["c"]
     assert candidate.source.num_rows == 3
 

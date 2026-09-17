@@ -20,10 +20,12 @@ Two stages, matching the plan:
 - `cheap_admission`: everything decidable from `config` / the already-
   resolved routing facts / the resident source's own schema and data, with
   zero `execution.physical` import. Any doubt here declines before the lazy
-  import in `_unified_slice._execute_admitted` ever runs. Also performs the
-  ONE Arrow->pandas conversion this lane needs (source-shaped output
-  assembly reuses it, `_unified_slice.py`'s own D2 comment) and validates
-  that conversion carries no named/physical pandas index.
+  import in `_unified_slice._execute_admitted` ever runs. Builds an
+  Arrow->pandas conversion of the source ONLY to validate it (no named/
+  physical pandas index, type-/value-clean round trip) and then discards it;
+  the frame is not carried on the candidate. Source-shaped output assembly
+  rebuilds the same conversion after the coordinator returns
+  (`_unified_slice_reconstruct.py`), so it never overlaps the native peak.
 - `resident_contract_admission`: the facts only the REAL 4.3 compiler (and a
   companion/null-data check against the admitted source) can answer -- built
   from the compiled `PhysicalPlan`, never re-implemented by hand. This is
