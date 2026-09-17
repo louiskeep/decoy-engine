@@ -148,6 +148,48 @@ def test_positive_preserve_matches_and_fk_subset_of_parent_keys(tmp_path: Path) 
     assert parent_keys == {"0", "1", "2", "3", "4"}  # sequence(start=0, step=1) is deterministic
 
 
+def test_positive_coupled_edge_coexists_with_a_generate_to_generate_edge(tmp_path: Path) -> None:
+    """L2 (dennis): the admitted coupled generate-parent -> mask-child edge may
+    coexist with a generate -> generate edge (which the complete-graph rule
+    leaves admitted, since neither of its endpoints is a mask table -- that
+    coupling is generation's own concern). Prove the whole job still holds
+    full byte parity, so the second edge neither trips admission nor perturbs
+    the coupled FK resolution."""
+    accounts = pa.table({"person_id": pa.array([f"{i % 5}" for i in range(6)], type=pa.string())})
+    config = _fk_mixed_config(
+        tmp_path,
+        generate_table="people",
+        generate_columns=[{"name": "id", "type": "sequence", "start": 0, "step": 1}],
+        mask_tables={"accounts": (accounts, _passthrough_columns("person_id"))},
+        relationships=[_fk_edge(orphan_policy="preserve")],
+        row_count=5,
+    )
+    # A second, independent generate table with a generate -> generate edge back
+    # to the first. `relationships:` is declarative (5b-i precedent), so a
+    # sequence FK-child column is config-valid; this edge touches no mask table.
+    config["tables"].append(
+        {
+            "name": "profiles",
+            "row_count": 5,
+            "generate_columns": [{"name": "person_id", "type": "sequence", "start": 0, "step": 1}],
+        }
+    )
+    config["targets"]["profiles"] = {"type": "file", "format": "csv", "path": "profiles.out.csv"}
+    config["relationships"].append(
+        {
+            "parent": {"table": "people", "columns": ["id"]},
+            "children": [{"table": "profiles", "columns": ["person_id"]}],
+            "orphan_policy": "preserve",
+            # Same parent column (people.id) as the coupled edge, so it must
+            # share that column's single namespace (ns_people).
+            "namespace": "ns_people",
+        }
+    )
+    config = PipelineConfig.model_validate(config).model_dump()
+    run = run_shadow_and_oracle(config, sources={"accounts": accounts})
+    assert_generation_outputs_arrow_ipc_equal(run)
+
+
 def test_positive_warn_orphan_matches_and_warns(tmp_path: Path) -> None:
     """A1 (WARN): an orphan child row parity-matches the oracle's stitched
     output AND its aggregated `orphan_fk` warning."""

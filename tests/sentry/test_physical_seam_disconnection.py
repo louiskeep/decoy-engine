@@ -211,8 +211,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
     a deliberate, reviewed touch, not incidental scope creep (its one caller,
     `_mask_chunk_native`, is updated to match; native output is unchanged,
     proven by the existing `tests/parity/native/test_c1_faker_parity.py` /
-    `tests/native/test_dispatch_faker.py` staying green unmodified). Every
-    other file's diff is still restricted to `execution/physical/`."""
+    `tests/native/test_dispatch_faker.py` staying green unmodified). Task 4.6
+    slice 5b-ii adds one more of the same kind: the FK orphan-policy helpers
+    move verbatim from `_strategies/_orphan.py` into the new parent-level
+    `_fk_resolve.py`, so the pandas oracle and the shadow mixed-FK dispatch
+    share one owner (the `_pandas_adapter.py` / `_orphan.py` diffs are the
+    import rewire plus the moved bodies; FK production output is unchanged,
+    proven by the FK/RI/orphan/lossless suites staying green). Every other
+    file's diff is still restricted to `execution/physical/`."""
     # Diff against the MERGE-BASE, not origin/main's tip: if origin/main advances
     # with unrelated execution/ changes before this branch merges, a raw
     # origin/main..HEAD diff would raise a false positive. The merge-base is the
@@ -234,6 +240,19 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # NOTHING from `execution.physical` itself (confirmed by the sweeps
         # above), it is simply a new file outside that package.
         "src/decoy_engine/execution/_stitch.py",
+        # Task 4.6 slice 5b-ii: the FK orphan-policy helpers (resolve_fk_keys,
+        # gather_errored_parent_keys, cascade_row_errors) are extracted from
+        # `_strategies/_orphan.py` into the new parent-level `_fk_resolve.py`
+        # so the pandas oracle AND the shadow mixed-FK dispatch share one owner
+        # of the map-hit/orphan/REMAP precedence and cannot drift. Same seam
+        # discipline as `_stitch.py`: `_fk_resolve.py` imports NOTHING from
+        # `execution.physical`; `_pandas_adapter.py` and `_strategies/_orphan.py`
+        # import only that parent-level module (their diffs are the import
+        # rewire + `_orphan.py`'s function bodies moving out verbatim). The four
+        # import-direction seam sweeps above stay green.
+        "src/decoy_engine/execution/_fk_resolve.py",
+        "src/decoy_engine/execution/_pandas_adapter.py",
+        "src/decoy_engine/execution/_strategies/_orphan.py",
     }
     unexpected = [
         name
