@@ -1,6 +1,6 @@
 """FOLLOWUP-BENCH-DRIVER-HARDEN: fast, CI-safe tests for `scripts/native-
 baseline/bench_driver.py`'s two hardenings -- None-safe log-line formatting
-and fail-closed per-rep RSS aggregation. Covers the plan's acceptance tests:
+and fail-closed per-rep RSS aggregation. Covers:
 strict-by-default failure before a tier summary is written, an all-present
 success, the `--allow-missing-rss` tolerant shape, None-safe rendering on
 the warmup/per-rep/summary log lines, a non-hash workload's `None` hash
@@ -71,7 +71,7 @@ def _run_main_with_fake_reps(
 
 
 # ---------------------------------------------------------------------------
-# Fix 2: fail-closed per-rep RSS aggregation
+# fail-closed per-rep RSS aggregation
 # ---------------------------------------------------------------------------
 
 
@@ -127,6 +127,17 @@ def test_all_present_succeeds_with_real_max_and_complete_true() -> None:
     assert summ["rss_complete"] is True
 
 
+def test_allow_missing_rss_all_present_populates_certified_max() -> None:
+    # Tolerant flag over a fully-present list must still populate the certified
+    # peak_rss_max_* and mark rss_complete True (not withhold them).
+    reps = [_rep(peak_rss_kb=1000), _rep(peak_rss_kb=3000), _rep(peak_rss_kb=2000)]
+    summ = bd.summarize(2000, reps, allow_missing_rss=True)
+    assert summ["peak_rss_max_kb"] == 3000
+    assert summ["peak_rss_observed_max_kb"] == 3000
+    assert summ["rss_missing_reps"] == 0
+    assert summ["rss_complete"] is True
+
+
 def test_allow_missing_rss_tolerant_shape() -> None:
     reps = [
         _rep(peak_rss_kb=1000),
@@ -145,8 +156,8 @@ def test_allow_missing_rss_tolerant_shape() -> None:
 
 
 def test_allow_missing_rss_all_missing_observed_max_is_none() -> None:
-    """Failure mode 1 from the plan: every rep misses RSS under the tolerant
-    flag -- there is no observed max to report either."""
+    """When every rep misses RSS under the tolerant flag, there is no observed
+    max to report either."""
     reps = [_rep(peak_rss_kb=None), _rep(peak_rss_kb=None)]
     summ = bd.summarize(500, reps, allow_missing_rss=True)
     assert summ["peak_rss_max_kb"] is None
@@ -182,7 +193,7 @@ def test_non_hash_workload_hash_tput_none_does_not_raise() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fix 1: None-safe formatting
+# None-safe formatting
 # ---------------------------------------------------------------------------
 
 

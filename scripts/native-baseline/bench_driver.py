@@ -252,52 +252,58 @@ def main() -> None:
         )
         sys.stderr.flush()
         source_path: Path | None = None
-        if prebuild is not None:
-            source_path = source_dir / f"w2_native_{n_rows}.parquet"
-            sys.stderr.write(f"  prebuilding source ({args.prebuild}) -> {source_path} ...\n")
-            sys.stderr.flush()
-            build_cmd = [str(VENV_PY), str(prebuild), str(n_rows), str(source_path)]
+        # try/finally so a prebuilt source is always removed, even when the tier
+        # body raises (a rep failure, or the strict missing-RSS fail-closed) --
+        # otherwise a multi-GB `--prebuild` Parquet orphans in --source-dir on
+        # exactly the error path an operator is already debugging.
+        try:
+            if prebuild is not None:
+                source_path = source_dir / f"w2_native_{n_rows}.parquet"
+                sys.stderr.write(f"  prebuilding source ({args.prebuild}) -> {source_path} ...\n")
+                sys.stderr.flush()
+                build_cmd = [str(VENV_PY), str(prebuild), str(n_rows), str(source_path)]
+                if args.batch_rows is not None:
+                    build_cmd.append(str(args.batch_rows))
+                subprocess.run(  # noqa: S603 fixed local benchmark command, no untrusted input
+                    build_cmd, cwd=str(ENGINE), env=_WORKER_ENV, check=True
+                )
+            worker_args = [str(source_path)] if source_path is not None else []
             if args.batch_rows is not None:
-                build_cmd.append(str(args.batch_rows))
-            subprocess.run(  # noqa: S603 fixed local benchmark command, no untrusted input
-                build_cmd, cwd=str(ENGINE), env=_WORKER_ENV, check=True
-            )
-        worker_args = [str(source_path)] if source_path is not None else []
-        if args.batch_rows is not None:
-            worker_args.append(str(args.batch_rows))
-        for w in range(args.warmup):
-            sys.stderr.write(f"  warmup {w + 1}/{args.warmup} ...\n")
-            sys.stderr.flush()
-            wr = run_rep(n_rows, worker, worker_args)
+                worker_args.append(str(args.batch_rows))
+            for w in range(args.warmup):
+                sys.stderr.write(f"  warmup {w + 1}/{args.warmup} ...\n")
+                sys.stderr.flush()
+                wr = run_rep(n_rows, worker, worker_args)
+                sys.stderr.write(
+                    f"    warmup wall={wr['wall_s']:.2f}s rss={_fmt(wr['peak_rss_kb'], 'kb')}\n"
+                )
+                sys.stderr.flush()
+            reps = []
+            for i in range(args.reps):
+                r = run_rep(n_rows, worker, worker_args)
+                reps.append(r)
+                sys.stderr.write(
+                    f"  rep {i + 1}/{args.reps}: wall={r['wall_s']:.2f}s "
+                    f"rss={_fmt(r['peak_rss_kb'], 'kb')} mode={r.get('execution_mode')}\n"
+                )
+                sys.stderr.flush()
+            summ = summarize(n_rows, reps, allow_missing_rss=args.allow_missing_rss)
+            all_results[str(n_rows)] = summ
+            missing_note = ""
+            if summ["rss_missing_reps"]:
+                missing_note = f" ({summ['rss_missing_reps']}/{summ['reps']} reps missing RSS)"
             sys.stderr.write(
-                f"    warmup wall={wr['wall_s']:.2f}s rss={_fmt(wr['peak_rss_kb'], 'kb')}\n"
+                f"  SUMMARY n={n_rows}: median={summ['wall_median_s']:.2f}s "
+                f"IQR={summ['wall_iqr_s']:.2f}s p95={summ['wall_p95of_s']:.2f}s "
+                f"rss_max={_fmt(summ['peak_rss_max_mb'], ' MB')}{missing_note} "
+                f"hash_tput={_fmt(summ['hash_tput_median_rows_s'], 'rows/s', '.0f')}\n"
             )
             sys.stderr.flush()
-        reps = []
-        for i in range(args.reps):
-            r = run_rep(n_rows, worker, worker_args)
-            reps.append(r)
-            sys.stderr.write(
-                f"  rep {i + 1}/{args.reps}: wall={r['wall_s']:.2f}s "
-                f"rss={_fmt(r['peak_rss_kb'], 'kb')} mode={r.get('execution_mode')}\n"
-            )
-            sys.stderr.flush()
-        summ = summarize(n_rows, reps, allow_missing_rss=args.allow_missing_rss)
-        all_results[str(n_rows)] = summ
-        missing_note = ""
-        if summ["rss_missing_reps"]:
-            missing_note = f" ({summ['rss_missing_reps']}/{summ['reps']} reps missing RSS)"
-        sys.stderr.write(
-            f"  SUMMARY n={n_rows}: median={summ['wall_median_s']:.2f}s "
-            f"IQR={summ['wall_iqr_s']:.2f}s p95={summ['wall_p95of_s']:.2f}s "
-            f"rss_max={_fmt(summ['peak_rss_max_mb'], ' MB')}{missing_note} "
-            f"hash_tput={_fmt(summ['hash_tput_median_rows_s'], 'rows/s', '.0f')}\n"
-        )
-        sys.stderr.flush()
-        if source_path is not None:
-            source_path.unlink(missing_ok=True)
-        # Persist incrementally so a later-tier OOM doesn't lose earlier tiers.
-        Path(args.out).write_text(json.dumps(all_results, indent=2))
+            # Persist incrementally so a later-tier OOM doesn't lose earlier tiers.
+            Path(args.out).write_text(json.dumps(all_results, indent=2))
+        finally:
+            if source_path is not None:
+                source_path.unlink(missing_ok=True)
 
     Path(args.out).write_text(json.dumps(all_results, indent=2))
     print(json.dumps(all_results, indent=2))
