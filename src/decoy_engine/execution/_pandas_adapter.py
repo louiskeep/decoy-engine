@@ -51,6 +51,11 @@ from decoy_engine.execution._fk_keys import (
     lossless_fk_int_values,
     to_pandas_fk_safe,
 )
+from decoy_engine.execution._fk_resolve import (
+    cascade_row_errors,
+    gather_errored_parent_keys,
+    resolve_fk_keys,
+)
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._output_projection import enforce_output_projection
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
@@ -66,12 +71,7 @@ from decoy_engine.execution._sequential import run_sequential as _run_sequential
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
-from decoy_engine.execution._strategies._orphan import (
-    cascade_row_errors,
-    gather_errored_parent_keys,
-    make_remap_fn,
-    resolve_fk_keys,
-)
+from decoy_engine.execution._strategies._orphan import make_remap_fn
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.generation.pool._cache import PoolCache

@@ -38,6 +38,8 @@ _EXPECTED_CODES = frozenset(
         "ooc-fk-parity-diff",
         "generation-shape-unsupported",
         "mixed-fk-cross-generate-unsupported",
+        "mixed-fk-topology-unsupported",
+        "mixed-fk-unadmitted-child",
     }
 )
 

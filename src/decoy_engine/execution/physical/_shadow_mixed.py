@@ -1,13 +1,18 @@
-"""Task 4.6 slice 5b-i: the coordinator's INDEPENDENT-mixed dispatch --
-a plan with both generate tables and mask tables, where the two halves are
-independent (no `generate-parent -> mask-child` relationship edge). Kept out
-of `_shadow_coordinator.py` (which would otherwise exceed the 600-LOC
+"""Task 4.6 slice 5b-i/5b-ii: the coordinator's MIXED dispatch -- a plan with
+both generate tables and mask tables, either INDEPENDENT (no `generate-
+parent -> mask-child` edge, slice 5b-i) or COUPLED through exactly one
+admitted such edge (slice 5b-ii: the mask child's FK parent IS a generate
+table, so the mask side must read the generate output as its FK pool). Kept
+out of `_shadow_coordinator.py` (which would otherwise exceed the 600-LOC
 orchestration cap) and out of `_shadow_generation.py` (whose job stays
 scoped to the pure-only contract), mirroring how slice 3's OOC dispatch and
 slice 5a's synthesis dispatch each got their own module.
 
 `require_independent_mixed_shadowable` (contract C, plan section "The
-eligibility gate") admits iff:
+eligibility gate"; name kept from 5b-i even though it now also admits the
+coupled case, since it is the one gate every caller -- production dispatch
+and the test suite's own raw-guard tests -- already imports by this name)
+admits iff:
 
   1. the plan genuinely mixes generate and mask tables (guaranteed by the
      coordinator's own branch condition before this is called; re-asserted
@@ -20,18 +25,36 @@ eligibility gate") admits iff:
      null, floating NaN, or nested generate output; see that function for the
      full "why". Mixed-specific: the pure path never reaches it);
   3. every mask-table driver is in the already-proven scalar/full_frame/
-     chunked admitted set -- OUT_OF_CORE is REJECTED (OOC-mask + generation
-     is out of scope for this slice, deferred to 5b-ii+);
-  4. no `generate-parent -> mask-child` relationship edge exists (the
-     "independent" precondition -- a crossing edge means the mask side
-     would need to read the generate side's output as its FK pool, which
-     is the merged-source read slice 5b-ii adds, not this slice);
-  5. no job-level validators, quarantine, vault writer, fidelity reporting,
+     chunked admitted set -- OUT_OF_CORE is REJECTED. This is not a future
+     capability a later slice lifts: a mixed job always routes full_frame/
+     pandas in production (`_pipeline_routing.py`'s `generate_plus_mask`
+     never selects `out_of_core`), so an OOC mask driver can never
+     legitimately reach this gate from a real compiled plan; the check is a
+     defensive total guard, not a scoped-out feature;
+  4. the relationship graph's `generate-parent -> mask-child` edges resolve
+     to EITHER zero (the independent case, unchanged from 5b-i) OR exactly
+     one edge admitted by the complete-graph rule (`_select_admitted_
+     coupled_edge`, slice 5b-ii, item 5 below) -- more than one crossing
+     edge, or one that fails the rule, declines coded rather than guessing
+     which (if any) should win;
+  5. COMPLETE GRAPH ADMISSION RULE for the coupled case: the crossing edge's
+     parent and child keys are each a single (non-composite) column, of an
+     admitted Arrow type (int or string -- the child's type is checked here
+     from the resident snapshot; the parent's type is checked in `dispatch_
+     mixed` AFTER generation runs, since a generate table's actual column
+     type is not known before that); no OTHER relationship edge in the graph
+     touches a mask table at all, on either side -- this one condition
+     subsumes "no other incoming edge to the child", "no outgoing edge from
+     the child or the generated parent reaching a mask table", and "no FK
+     edge involving any other mask table" all at once, since the child
+     itself is always a mask table, so any other edge naming it (as parent
+     or child) or naming any other mask table already fails this check;
+  6. no job-level validators, quarantine, vault writer, fidelity reporting,
      or `mask_secret_ref` (the last because `ShadowContext.from_key_
      provider` never threads it -- see `_shadow_mixed.py`'s own runtime-
      contract check below for why leaving it ungated would silently
      diverge the resolved mask key from the oracle's);
-  6. no sink or source-loader requested (inertness; the coordinator
+  7. no sink or source-loader requested (inertness; the coordinator
      structurally cannot publish or lazily load, so these can only ever be
      `False`, but a caller mirroring a sink/loader into its own oracle call
      must decline here, not silently ignore the mismatch).
@@ -46,11 +69,19 @@ no oracle-side masking to reuse the resolved key for.
 dispatch uses (`_shadow_generation.run_synthesis_adapter`, over a plan
 already admitted by this module's own gate -- never
 `require_pure_generation_shadowable`, which would reject the very
-sources/relationships/snapshot a real mixed job carries), then reuses the
-coordinator's OWN scalar/chunked per-node loop for the mask half by
+sources/relationships/snapshot a real mixed job carries). For the COUPLED
+case it then checks the admitted edge's PARENT key type (only now knowable,
+against the materialized generate output) and injects `generate_outputs`
+into the mask-half's snapshot (`{**snapshot.tables, **generate_outputs}`,
+mirroring the oracle's own `merged_sources`, harmless for the independent
+case where nothing looks the extra entries up) alongside a run-scoped tuple
+of admitted `RelationshipEdge` identities, so the reused per-node loop can
+resolve the one allowlisted FK child (`_shadow_fk.py`) while coded-declining
+any other FK-child node it encounters, never inferring admission from the
+graph alone (`_shadow_coordinator.py`'s own per-node loop). Either way, the
+mask half reuses the coordinator's OWN scalar/chunked per-node loop (by
 recursing into `ShadowCoordinator.run` with `synthesis` stripped off the
-plan (that loop is unmodified code -- see `_shadow_coordinator.py`), then
-stitches the two outputs via the one shared precedence helper
+plan), then stitches the two outputs via the one shared precedence helper
 (`execution._stitch.stitch_generate_mask_outputs`) both this module and the
 oracle (`_pipeline.py`) call. Generation runs first and unconditionally --
 matching the oracle's own Step 1/Step 2 order (`_pipeline.py:481-594`) -- so
@@ -79,12 +110,14 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     GENERATION_SHAPE_UNSUPPORTED,
     MIXED_DRIVER_UNSUPPORTED,
     MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+    MIXED_FK_TOPOLOGY_UNSUPPORTED,
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_generation import (
     require_generation_shape,
     run_synthesis_adapter,
 )
+from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._types import DriverId
 
 if TYPE_CHECKING:
@@ -96,15 +129,29 @@ if TYPE_CHECKING:
     )
     from decoy_engine.execution.physical._shadow_snapshot import ShadowSnapshot
     from decoy_engine.plan._types import Plan
+    from decoy_engine.relationships._graph import RelationshipEdge
 
 __all__ = ["dispatch_mixed", "require_independent_mixed_shadowable"]
+
+
+# Task 4.6 slice 5b-ii admission rule #5's key-shape check: a single-column
+# int or string key. Composite keys and every other scalar type (float,
+# decimal, bool, timestamp, ...) stay deferred -- see `_shadow_fk.py`'s
+# module docstring for why the write-back bridge only needs to reproduce
+# these two families.
+def _is_admitted_fk_key_type(arrow_type: pa.DataType | None) -> bool:
+    return arrow_type is not None and (
+        pa.types.is_integer(arrow_type)
+        or pa.types.is_string(arrow_type)
+        or pa.types.is_large_string(arrow_type)
+    )
 
 
 def dispatch_mixed(
     coordinator: ShadowCoordinator, plan: PhysicalPlan, snapshot: ShadowSnapshot
 ) -> ShadowRunResult:
-    """Admit + dispatch an INDEPENDENT-mixed plan: generate first (the same
-    adapter path slice 5a uses), then the mask half through the
+    """Admit + dispatch a MIXED plan (independent or coupled): generate first
+    (the same adapter path slice 5a uses), then the mask half through the
     coordinator's own reused loop, then stitch. See the module docstring for
     the full admission contract and why each step is safe to reuse
     unmodified."""
@@ -117,7 +164,7 @@ def dispatch_mixed(
     if plan.synthesis is None:  # pragma: no cover - the coordinator's own branch condition
         raise AssertionError("dispatch_mixed called with plan.synthesis is None")
     ctx = coordinator.ctx
-    plan_obj = require_independent_mixed_shadowable(ctx, plan, snapshot)
+    plan_obj, admitted_edge = require_independent_mixed_shadowable(ctx, plan, snapshot)
 
     generate_outputs, generate_seam = run_synthesis_adapter(ctx, plan_obj, plan.synthesis)
     # Gate on the ACTUAL generated output, not on config knobs: a mixed job's
@@ -130,6 +177,21 @@ def dispatch_mixed(
     # type -- rather than trying to predict it from the config (whack-a-mole).
     _require_roundtrip_stable_generate_outputs(generate_outputs)
 
+    admitted_edges: tuple[RelationshipEdge, ...] = ()
+    if admitted_edge is not None:
+        # The parent key's Arrow type is only knowable now, against the
+        # materialized generate output (unlike the child's, which the
+        # admission gate already checked from the resident snapshot).
+        _require_admitted_parent_key_type(admitted_edge, generate_outputs)
+        admitted_edges = (admitted_edge,)
+
+    # Mirrors the oracle's own `merged_sources = resident_sources |
+    # generate_outputs` (`_pipeline.py`): a mask table whose FK parent is a
+    # generate table reads the generate output as its FK pool. Harmless for
+    # the independent case (`admitted_edges` empty) -- nothing looks the
+    # extra entries up.
+    merged_snapshot = capture_shadow_snapshot({**snapshot.tables, **generate_outputs})
+
     # Reuse `ShadowCoordinator.run` itself for the mask half, UNCHANGED: a
     # plan with `synthesis` stripped off falls straight through this
     # method's own pure-generate and mixed branches (both false now) into
@@ -137,8 +199,10 @@ def dispatch_mixed(
     # unreachable here, since the gate above rejected any OUT_OF_CORE
     # driver before this call. This is the "reuse, never reimplement" the
     # plan requires for the mask side, made literal rather than duplicated.
+    # `admitted_edges` (default `()`) is the only new signal threaded
+    # through: every pre-5b-ii caller of `run()` leaves it at that default.
     mask_only_plan = dataclasses.replace(plan, synthesis=None)
-    mask_result = coordinator.run(mask_only_plan, snapshot)
+    mask_result = coordinator.run(mask_only_plan, merged_snapshot, admitted_edges=admitted_edges)
 
     outputs = stitch_generate_mask_outputs(generate_outputs, mask_result.outputs)
     # `driver_invocation` names the generate half's seam (mirroring slice
@@ -158,28 +222,29 @@ def dispatch_mixed(
 
 def require_independent_mixed_shadowable(
     ctx: ShadowContext, plan: PhysicalPlan, snapshot: ShadowSnapshot
-) -> Plan:
+) -> tuple[Plan, RelationshipEdge | None]:
     """Contract C -- see the module docstring for the full admitted-domain
-    list. `snapshot` is accepted (unused directly) for signature symmetry
-    with the pure gate and because a future widening of this contract may
-    need it; the mask half's own resident-source lookup happens inside the
-    reused coordinator loop, not here.
+    list. Returns the compiled generation `Plan` plus the ONE admitted
+    generate-parent -> mask-child edge (`None` for the independent case,
+    unchanged from 5b-i).
     """
-    del snapshot  # not consulted directly; kept for signature symmetry, see docstring
     if not plan.tables or plan.synthesis is None:  # pragma: no cover - coordinator guards this
         raise ShadowDifference(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="plan is not a mixed generate+mask shape"
         )
     plan_obj, config, generate_table_names = require_generation_shape(ctx, plan.synthesis)
-    # Note: round-trip stability of the generate OUTPUT is checked in
-    # `dispatch_mixed` after generation runs, not here -- it is a property of
-    # the materialized Arrow tables, not of the pre-generation config shape.
+    # Note: round-trip stability of the generate OUTPUT, and the admitted
+    # edge's PARENT key type, are both checked in `dispatch_mixed` after
+    # generation runs, not here -- both are properties of the materialized
+    # Arrow tables, not of the pre-generation config/graph shape.
 
     mask_table_names = _table_name_set(plan)
     _require_admitted_mask_drivers(plan)
-    _require_no_generate_to_mask_fk_edge(ctx, generate_table_names, mask_table_names)
+    admitted_edge = _select_admitted_coupled_edge(
+        ctx, generate_table_names, mask_table_names, snapshot
+    )
     _require_no_disqualifying_job_settings(ctx, config)
-    return plan_obj
+    return plan_obj, admitted_edge
 
 
 def _require_roundtrip_stable_generate_outputs(generate_outputs: dict[str, pa.Table]) -> None:
@@ -300,13 +365,22 @@ def _require_admitted_mask_drivers(plan: PhysicalPlan) -> None:
         )
 
 
-def _require_no_generate_to_mask_fk_edge(
-    ctx: ShadowContext, generate_table_names: frozenset[str], mask_table_names: frozenset[str]
-) -> None:
-    """Item 4: no `generate-parent -> mask-child` relationship edge. The
-    reverse direction (a mask-parent referenced by a generate child) is
-    already rejected upstream at generation-config validation, so it never
-    reaches this gate -- only THIS direction needs checking."""
+def _select_admitted_coupled_edge(
+    ctx: ShadowContext,
+    generate_table_names: frozenset[str],
+    mask_table_names: frozenset[str],
+    snapshot: ShadowSnapshot,
+) -> RelationshipEdge | None:
+    """Item 4/5: find the AT MOST ONE `generate-parent -> mask-child` edge
+    this dispatch may couple the mask half's FK resolution to. `None` means
+    the independent case (no crossing edge at all -- unchanged 5b-i
+    behavior). The reverse direction (a mask-parent referenced by a generate
+    child) is already rejected upstream at generation-config validation, so
+    it never reaches this gate -- only THIS direction needs checking.
+
+    The admitted edge's PARENT key type is checked separately, in `dispatch_
+    mixed`, AFTER generation runs (a generate table's actual column type is
+    not knowable from the graph alone)."""
     graph = ctx.relationship_graph
     if graph is None:
         raise ShadowDifference(
@@ -319,10 +393,12 @@ def _require_no_generate_to_mask_fk_edge(
             code=GENERATION_SHAPE_UNSUPPORTED,
             detail="ShadowContext.relationship_graph has no edges attribute",
         ) from exc
-    for edge in edges:
+
+    crossing: list[RelationshipEdge] = []
+    for candidate in edges:
         try:
-            parent_table = edge.parent_table
-            child_table = edge.child_table
+            parent_table = candidate.parent_table
+            child_table = candidate.child_table
         except AttributeError as exc:
             raise ShadowDifference(
                 code=GENERATION_SHAPE_UNSUPPORTED, detail="a relationship edge is malformed"
@@ -335,10 +411,80 @@ def _require_no_generate_to_mask_fk_edge(
                 detail="a relationship edge table name is unhashable",
             ) from exc
         if crosses:
+            crossing.append(candidate)
+
+    if not crossing:
+        return None
+    if len(crossing) > 1:
+        raise ShadowDifference(
+            code=MIXED_FK_TOPOLOGY_UNSUPPORTED,
+            detail=f"{len(crossing)} generate-parent -> mask-child edges present",
+        )
+    edge = crossing[0]
+    if len(edge.parent_columns) != 1 or len(edge.child_columns) != 1:
+        raise ShadowDifference(
+            code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+            detail=(
+                f"parent={edge.parent_table!r} child={edge.child_table!r}: "
+                "composite FK key not admitted"
+            ),
+        )
+    child_type = _resident_column_type(snapshot, edge.child_table, edge.child_columns[0])
+    if not _is_admitted_fk_key_type(child_type):
+        raise ShadowDifference(
+            code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+            detail=(
+                f"child={edge.child_table!r}.{edge.child_columns[0]!r}: "
+                f"key type {child_type} not admitted"
+            ),
+        )
+    # The complete-graph rule (plan item 5): no OTHER relationship edge may
+    # touch a mask table at all, on either side. Since the admitted edge's
+    # own child is always a mask table, this single check subsumes "no other
+    # incoming edge to the child", "no outgoing edge from the child or the
+    # generated parent reaching a mask table", and "no FK edge involving any
+    # other mask table" all at once -- any other edge naming the child (as
+    # parent or child) or naming a different mask table fails it.
+    for other in edges:
+        if other is edge:
+            continue
+        if other.parent_table in mask_table_names or other.child_table in mask_table_names:
             raise ShadowDifference(
-                code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
-                detail=f"parent={parent_table!r} (generate) -> child={child_table!r} (mask)",
+                code=MIXED_FK_TOPOLOGY_UNSUPPORTED,
+                detail="another relationship edge touches a mask table",
             )
+    return edge
+
+
+def _resident_column_type(snapshot: ShadowSnapshot, table: str, column: str) -> pa.DataType | None:
+    resident = snapshot.tables.get(table)
+    if resident is None or column not in resident.schema.names:
+        return None
+    return resident.schema.field(column).type
+
+
+def _require_admitted_parent_key_type(
+    edge: RelationshipEdge, generate_outputs: dict[str, pa.Table]
+) -> None:
+    """The other half of admission rule #5's key-shape check, deferred until
+    now because a generate table's actual column type is only knowable
+    against its materialized output (nothing about `sequence`/`categorical`
+    config alone pins int-vs-string, and a mixed-type `categorical` is
+    possible in principle)."""
+    parent_table = generate_outputs.get(edge.parent_table)
+    column_name = edge.parent_columns[0]
+    key_type = (
+        parent_table.schema.field(column_name).type
+        if parent_table is not None and column_name in parent_table.schema.names
+        else None
+    )
+    if not _is_admitted_fk_key_type(key_type):
+        raise ShadowDifference(
+            code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+            detail=(
+                f"parent={edge.parent_table!r}.{column_name!r}: key type {key_type} not admitted"
+            ),
+        )
 
 
 def _require_no_disqualifying_job_settings(ctx: ShadowContext, config: dict[str, object]) -> None:

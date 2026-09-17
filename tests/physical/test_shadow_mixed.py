@@ -47,7 +47,6 @@ from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinato
 from decoy_engine.execution.physical._shadow_diff_codes import (
     GENERATION_SHAPE_UNSUPPORTED,
     MIXED_DRIVER_UNSUPPORTED,
-    MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_mixed import (
@@ -449,9 +448,14 @@ def test_cross_stage_mismatch_is_a_parity_failure_guard_the_guard() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_decline_generate_parent_mask_child_fk_edge(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_generate_parent_mask_child_fk_edge_now_admitted(tmp_path: Path) -> None:
+    """Task 4.6 slice 5b-ii widened `require_independent_mixed_shadowable`
+    (via `_select_admitted_coupled_edge`) to ADMIT exactly this shape -- one
+    crossing edge, single-column string keys both sides, no other edges --
+    which 5b-i's blanket reject used to decline `MIXED_FK_CROSS_GENERATE_
+    UNSUPPORTED`. Pinned here as a same-file regression that the coordinator
+    now dispatches successfully rather than declining; see `tests/physical/
+    test_shadow_mixed_fk.py` for the full FK-coupling acceptance suite."""
     accounts = pa.table({"person_id": pa.array([f"{i % 5}" for i in range(6)], type=pa.string())})
     config = _mixed_config(
         tmp_path,
@@ -469,35 +473,8 @@ def test_decline_generate_parent_mask_child_fk_edge(
             }
         ],
     )
-    inputs = capture_physical_plan_inputs(
-        config, {"accounts": accounts}, engine_version=ENGINE_VERSION, execution_mode="full_frame"
-    )
-    plan = compile_physical_plan(inputs)
-    ctx = ShadowContext.from_key_provider(
-        plan=inputs.plan, key_provider=None, relationship_graph=inputs.graph
-    )
-    snapshot = capture_shadow_snapshot({"accounts": accounts})
-
-    generate_calls: list[Any] = []
-
-    def _bomb_generate(self: SynthesisStageAdapter, *a: Any, **k: Any) -> dict[str, pa.Table]:
-        generate_calls.append((a, k))
-        raise AssertionError("generate_tables must not be invoked for a declined mixed plan")
-
-    mask_calls: list[Any] = []
-
-    def _bomb_mask(*a: Any, **k: Any) -> pa.Array:
-        mask_calls.append((a, k))
-        raise AssertionError("run_operator must not be invoked for a declined mixed plan")
-
-    monkeypatch.setattr(SynthesisStageAdapter, "run", _bomb_generate)
-    monkeypatch.setattr(_coordinator_module, "run_operator", _bomb_mask)
-
-    with pytest.raises(ShadowDifference) as excinfo:
-        ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
-    assert excinfo.value.code == MIXED_FK_CROSS_GENERATE_UNSUPPORTED
-    assert generate_calls == []
-    assert mask_calls == []
+    run = run_shadow_and_oracle(config, sources={"accounts": accounts})
+    assert_generation_outputs_arrow_ipc_equal(run)
 
 
 def test_decline_out_of_core_mask_driver_with_generate(tmp_path: Path) -> None:

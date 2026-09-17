@@ -21,6 +21,8 @@ __all__ = [
     "GENERATION_SHAPE_UNSUPPORTED",
     "MIXED_DRIVER_UNSUPPORTED",
     "MIXED_FK_CROSS_GENERATE_UNSUPPORTED",
+    "MIXED_FK_TOPOLOGY_UNSUPPORTED",
+    "MIXED_FK_UNADMITTED_CHILD",
     "NATIVE_COMPANION_UNAVAILABLE",
     "NULL_MASK_DIFF",
     "OOC_DISPATCH_MISSING_DEPENDENCY",
@@ -69,12 +71,16 @@ FAKER_POOL_NON_STRING_OUTPUT: Final = "faker-pool-non-string-output"
 # Task 4.6 slice 3 (widened by slice 5b-i): a compiled plan whose mask-table
 # driver set is not exactly `{OUT_OF_CORE}` but still contains it -- mixed
 # with another masking driver, or (slice 5b-i) present at all on an
-# otherwise-admitted independent generate+mask dispatch, where OOC-mask +
-# generation is out of scope for this slice (deferred). The coordinator
-# refuses to dispatch part of a plan through the OOC adapter and mask the
-# rest scalar, or to dispatch a mixed job whose mask half needs OOC, rather
-# than silently picking one. `detail` names the driver set only (never a
-# table/column value).
+# otherwise-admitted generate+mask dispatch. OOC-mask + generation is not a
+# future capability this deferral waits on: a mixed job always routes
+# full_frame/pandas in production (`_pipeline_routing.py`'s `generate_plus_
+# mask` never selects out_of_core), so this shape can never legitimately
+# arise from a real compiled plan -- the check exists as a defensive total
+# guard, matching the same shape's own hand-forced test coverage. The
+# coordinator refuses to dispatch part of a plan through the OOC adapter and
+# mask the rest scalar, or to dispatch a mixed job whose mask half needs OOC,
+# rather than silently picking one. `detail` names the driver set only
+# (never a table/column value).
 MIXED_DRIVER_UNSUPPORTED: Final = "mixed-driver-unsupported"
 # The runtime OOC carriers (`ShadowContext.plan`/`.relationship_graph`, or the
 # coordinator's `registry`) are declared `| None` for back-compat with the
@@ -104,15 +110,35 @@ OOC_FK_PARITY_DIFF: Final = "ooc-fk-parity-diff"
 # structural check + a table/field LOCATION only, never a leaf knob's value
 # (neither gate inspects one).
 GENERATION_SHAPE_UNSUPPORTED: Final = "generation-shape-unsupported"
-# Task 4.6 slice 5b-i: an independent-mixed dispatch's relationship graph
-# carries a `generate-parent -> mask-child` edge -- the generate side's
-# output would need to feed the mask side's FK pool for that column, which
-# this slice does not implement (the merged-source read is slice 5b-ii
-# territory). `detail` names the parent/child table LOCATION, never a row
-# value. The reverse direction (a mask-parent referenced by a generate
-# child) is already rejected upstream, at generation-config validation, so
-# it never reaches this gate.
+# Task 4.6 slice 5b-i (widened by slice 5b-ii): a generate-parent ->
+# mask-child relationship edge exists but this slice's FK-coupling admission
+# rule cannot resolve it -- a COMPOSITE key (either side's column tuple has
+# more than one column), or a single-column key whose Arrow type is not
+# admitted (int/string only). `detail` names the parent/child table.column
+# LOCATION and, for a type miss, the Arrow type name -- never a row value.
+# The reverse direction (a mask-parent referenced by a generate child) is
+# already rejected upstream, at generation-config validation, so it never
+# reaches this gate.
 MIXED_FK_CROSS_GENERATE_UNSUPPORTED: Final = "mixed-fk-cross-generate-unsupported"
+# Task 4.6 slice 5b-ii: a generate-parent -> mask-child edge's KEY SHAPE is
+# admitted (single-column int/string), but the surrounding relationship
+# GRAPH is not -- more than one crossing generate->mask edge, another
+# incoming edge to the admitted child, an outgoing edge from the child or
+# the generated parent that reaches a mask table, or any other relationship
+# edge touching a mask table anywhere in this mixed run. The admission gate
+# declines the WHOLE coupling rather than guess which edge should win;
+# multi-parent/multi-level FK-through-generate stays a tracked deferral, not
+# a silent partial resolution. `detail` names the LOCATION only.
+MIXED_FK_TOPOLOGY_UNSUPPORTED: Final = "mixed-fk-topology-unsupported"
+# Task 4.6 slice 5b-ii: the coordinator's per-node mask loop found an FK-
+# child node (`relationship_graph.parents_of` is non-empty for it) that is
+# NOT the one edge the admission gate allowlisted for this run. The
+# admission gate's own complete-graph rule already guarantees this can never
+# happen for a properly-admitted plan, so this is a defensive total guard,
+# not an expected runtime path: masking an unadmitted FK child scalar
+# (ignoring its parent) would silently diverge from the oracle, so it
+# declines coded instead. `detail` names the table LOCATION only.
+MIXED_FK_UNADMITTED_CHILD: Final = "mixed-fk-unadmitted-child"
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -135,6 +161,8 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         OOC_FK_PARITY_DIFF,
         GENERATION_SHAPE_UNSUPPORTED,
         MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+        MIXED_FK_TOPOLOGY_UNSUPPORTED,
+        MIXED_FK_UNADMITTED_CHILD,
     }
 )
 
