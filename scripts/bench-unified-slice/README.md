@@ -76,7 +76,8 @@ does not attempt.
 - **Activation, enforced:** the `on` arm must actually activate the unified slice
   (`unified_slice_activated is True`); a silent legacy fallback fails closed.
 - **Thresholds:** 100k & 1M median new/old wall <= 1.10 and p95 <= 1.15; 10k median
-  regression <= max(10%, 50 ms); peak RSS <= 1.10x at every tier.
+  regression <= max(10%, 50 ms); peak RSS <= `rss_budget_ratio(n_rows)` (1.10x below
+  1M, 1.25x at 1M and above).
 - **Fail-closed RSS:** a missing peak-RSS sample (per rep OR aggregate) is a
   FAILURE -- the RSS bound cannot be certified without the evidence, so the harness
   never silently drops it and reports PASS.

@@ -75,11 +75,15 @@ _CERT_MIN_BOOTSTRAP = 2000
 _SMALL_TIER_MAX_ROWS = 10_000
 
 # Peak-RSS regression budget (unified/"on" arm vs legacy/"off" arm), per tier.
-# This is a regression-detection band, not an absolute-safety limit: absolute
-# peak at 1M is ~1.8GB, far under the 6.5GiB-at-100M reference-host ceiling.
-# The unified lane trades a larger transient reconstruction buffer at 1M for a
-# ~4x wall-time win, so the 1M-and-up tier carries a wider band; the smaller
-# tiers, where no such buffer dominates, keep the tight default.
+# This is a RELATIVE regression-detection band (on vs off at the same revision),
+# not an absolute-safety limit -- absolute safety is enforced elsewhere (the
+# frozen mem limit / mem telemetry). At 1M the unified lane's absolute peak is
+# ~1.8GB, far under the 6.5GiB-at-100M reference-host ceiling, and it trades a
+# larger transient reconstruction buffer for a ~4x wall-time win, so the
+# 1M-and-up tier carries a wider band; the smaller tiers, where no such buffer
+# dominates, keep the tight default. The band stays open above 1M by intent
+# (a bigger job carries a proportionally similar buffer); the ~1.8GB figure is
+# the 1M measurement, not an absolute claim for larger custom runs.
 _RSS_BUDGET_DEFAULT = 1.10
 _RSS_BUDGET_LARGE_TIER = 1.25
 _RSS_LARGE_TIER_MIN_ROWS = 1_000_000
