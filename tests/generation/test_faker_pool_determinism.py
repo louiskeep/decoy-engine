@@ -64,6 +64,7 @@ def _fast_subset_from_golden(limit: int = 4) -> tuple[list[str], list[str]]:
     return types, ["en_US"]
 
 
+@pytest.mark.determinism_harness
 @pytest.mark.skipif(not _GOLDEN, reason="golden_digests.json is empty or not yet generated")
 def test_fast_subset_matches_committed_golden(tmp_path: Path) -> None:
     types, locales = _fast_subset_from_golden()
@@ -93,6 +94,7 @@ def test_fast_subset_matches_committed_golden(tmp_path: Path) -> None:
     assert not report["regressions"]
 
 
+@pytest.mark.determinism_harness
 @pytest.mark.skipif(
     not _CERTIFIED_PAIRS, reason="certified_pairs.json is empty or not yet generated"
 )

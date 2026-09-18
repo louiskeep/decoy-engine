@@ -35,7 +35,6 @@ import json
 import os
 import platform
 import random
-import subprocess
 import sys
 from typing import Any
 
@@ -81,21 +80,11 @@ _FALLBACK_SEED = 20260918
 _N_SELECTED = 2_000
 
 
-def _git_commit() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607 -- fixed console-script invocation
-            cwd=ENGINE_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except OSError:
-        pass
-    return "unknown"
+def _engine_commit() -> str:
+    # The driver stamps this once (one `git rev-parse` for the whole run) so a full sweep does
+    # not fork a git process per worker. Standalone runs without it fall back to "unknown"; the
+    # value is provenance metadata only, consumed by neither the digest nor the verdict.
+    return os.environ.get("DECOY_ENGINE_COMMIT", "unknown")
 
 
 def _hex_digest_of_pool(values: list[Any] | None) -> str | None:
@@ -158,7 +147,7 @@ def main() -> None:
         "custom_override_present": custom_override_present,
         "meta": {
             "engine_version": _engine_version,
-            "engine_commit": _git_commit(),
+            "engine_commit": _engine_commit(),
             "python_version": (
                 f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             ),

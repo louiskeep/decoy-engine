@@ -100,6 +100,30 @@ DEFAULT_TYPES: tuple[str, ...] = tuple(sorted(set(POSITIVE_CONTROL) | set(TIER_1
 # real, extensible starting set, not every Faker locale.
 DEFAULT_LOCALES: tuple[str, ...] = ("en_US", "en_GB", "fr_FR", "de_DE", "es_ES")
 
+_ENGINE_COMMIT_CACHE: str | None = None
+
+
+def engine_commit() -> str:
+    # One `git rev-parse HEAD` per driver run (cached), stamped into each worker's env as
+    # DECOY_ENGINE_COMMIT. Without this the workers each fork git for provenance metadata --
+    # thousands of extra processes on a full sweep.
+    global _ENGINE_COMMIT_CACHE
+    if _ENGINE_COMMIT_CACHE is None:
+        try:
+            out = subprocess.run(
+                ["git", "rev-parse", "HEAD"],  # noqa: S607 -- fixed console-script invocation
+                cwd=ENGINE_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            _ENGINE_COMMIT_CACHE = out.stdout.strip() if out.returncode == 0 else "unknown"
+        except OSError:
+            _ENGINE_COMMIT_CACHE = "unknown"
+    return _ENGINE_COMMIT_CACHE
+
+
 # K=8, fixed and including 0 (plan C3): the verdict must be reproducible
 # run-to-run, so this is not drawn from anything random.
 DEFAULT_HASH_SEEDS: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7)
@@ -177,6 +201,7 @@ def run_worker_once(
         "TZ": "UTC",
         "LC_ALL": "C",
         "LANG": "C",
+        "DECOY_ENGINE_COMMIT": engine_commit(),
     }
     locale_arg = candidate.locale if candidate.locale is not None else "-"
     cmd = [
@@ -423,6 +448,17 @@ def parse_and_validate_args(
     args.locales = [loc.strip() for loc in args.locales.split(",") if loc.strip()]
     if not args.locales:
         parser.error("--locales must be non-empty")
+    if args.write_golden and (
+        set(args.types) != set(DEFAULT_TYPES) or set(args.locales) != set(DEFAULT_LOCALES)
+    ):
+        # --write-golden REPLACES the whole committed baseline (it starts from an empty
+        # golden). Narrowing with --types/--locales would silently drop every other
+        # certified pair, so refuse it: the baseline is only ever regenerated over the
+        # full default matrix.
+        parser.error(
+            "--write-golden regenerates the FULL baseline and cannot be narrowed with "
+            "--types/--locales (that would drop every other certified pair)."
+        )
     try:
         kwargs = json.loads(args.kwargs_json)
     except json.JSONDecodeError as exc:
