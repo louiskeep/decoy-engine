@@ -507,6 +507,31 @@ class TestNewlyCertifiedPairNoLongerV1Frozen:
         n = _faker_pool.N_THRESHOLD + 50
         assert _v2_run(col, n) == _v1_run(col, n)
 
+    def test_list_locale_new_type_declines_to_per_row_above_threshold(self):
+        import pytest
+
+        from decoy_engine.generation import _faker_pool
+
+        # A locale LIST is not a certified (type, str-locale) pair (the pooled
+        # pairs are keyed on single string locales), so pool_eligible declines
+        # and the column takes the UNCHANGED per-row path end-to-end. For a
+        # multi-locale Faker column that path hits Faker's own multi-locale
+        # limitation, exactly as it did pre-slice. The raise is the proof that
+        # pooling did NOT engage: the pooled path builds one seeded instance and
+        # would neither call the provider per row nor raise here. (A direct
+        # _v1_run==_v2_run comparison is not the right check for THIS edge -- the
+        # V1 ColumnGenerator and v2 compile_and_generate entry points already
+        # diverge on multi-locale independent of pooling.)
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": ["en_US", "de_DE"],
+        }
+        n = _faker_pool.N_THRESHOLD + 50
+        with pytest.raises(NotImplementedError):
+            _v2_run(col, n)
+
     def test_opted_out_certified_pair_stays_v1_frozen_above_threshold(self):
         from decoy_engine.generation import _faker_pool
 
