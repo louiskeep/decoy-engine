@@ -394,10 +394,11 @@ pythonpath = ["src", "scripts"]
 # `benchmark`/`testflight`: the full faker-pool determinism matrix
 # (scripts/faker-determinism/) spawns K=8 fresh subprocesses per
 # (type, locale) candidate across ~195 candidates, which is a real but
-# multi-minute cost inappropriate for every default test run. The fast
-# subset in tests/generation/test_faker_pool_determinism.py stays in the
-# default loop as a cheap regression guard on the driver+golden mechanism
-# itself; run the full sweep explicitly via
+# multi-minute cost inappropriate for every default test run. ALL of the
+# real determinism tests in tests/generation/test_faker_pool_determinism.py
+# carry this marker (the default loop keeps only the version-independent
+# codec/characterization/driver-unit tests, including the hash-order
+# fail-control); run the marked determinism sweep explicitly via
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [

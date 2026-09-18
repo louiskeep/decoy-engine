@@ -448,17 +448,6 @@ def parse_and_validate_args(
     args.locales = [loc.strip() for loc in args.locales.split(",") if loc.strip()]
     if not args.locales:
         parser.error("--locales must be non-empty")
-    if args.write_golden and (
-        set(args.types) != set(DEFAULT_TYPES) or set(args.locales) != set(DEFAULT_LOCALES)
-    ):
-        # --write-golden REPLACES the whole committed baseline (it starts from an empty
-        # golden). Narrowing with --types/--locales would silently drop every other
-        # certified pair, so refuse it: the baseline is only ever regenerated over the
-        # full default matrix.
-        parser.error(
-            "--write-golden regenerates the FULL baseline and cannot be narrowed with "
-            "--types/--locales (that would drop every other certified pair)."
-        )
     try:
         kwargs = json.loads(args.kwargs_json)
     except json.JSONDecodeError as exc:
@@ -494,6 +483,33 @@ def parse_and_validate_args(
     args.golden_path = Path(args.golden_path).resolve()
     args.certified_out_path = Path(args.certified_out).resolve()
     args.report_out_path = Path(args.report_out).resolve()
+
+    if args.write_golden:
+        # --write-golden REPLACES the whole committed baseline (it starts empty), and that
+        # baseline is what the later addition slice trusts. Any weakening of the certification
+        # workload would bake an under-verified pair into the golden -- most dangerously `--k 1`
+        # (or any single seed), where one worker record trivially "agrees" with itself, so a
+        # hash-order-dependent pair would be written as certified. Refuse anything but the exact
+        # canonical full-matrix workload.
+        problems = []
+        if set(args.types) != set(DEFAULT_TYPES):
+            problems.append("--types must be the full default set")
+        if set(args.locales) != set(DEFAULT_LOCALES):
+            problems.append("--locales must be the full default set")
+        if args.kwargs != {}:
+            problems.append("--kwargs-json must be {}")
+        if tuple(args.hash_seeds) != DEFAULT_HASH_SEEDS:
+            problems.append(
+                f"--k/--hash-seeds must be the canonical {len(DEFAULT_HASH_SEEDS)} default seeds "
+                f"{list(DEFAULT_HASH_SEEDS)}"
+            )
+        if args.worker_path != DEFAULT_WORKER.resolve():
+            problems.append("--worker must be the default worker")
+        if problems:
+            parser.error(
+                "--write-golden regenerates the committed baseline and requires the exact "
+                "canonical full-matrix workload; refusing: " + "; ".join(problems)
+            )
 
     return args
 

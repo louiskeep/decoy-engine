@@ -269,3 +269,55 @@ def test_driver_flags_hash_order_probe_worker_as_divergent(tmp_path: Path) -> No
     assert report["results"][0]["status"] == "divergent"
     assert certified_out.exists()
     assert json.loads(certified_out.read_text()) == []
+
+
+# ---------------------------------------------------------------------------
+# --write-golden may only regenerate the baseline over the exact canonical
+# full-matrix workload: any weakening (esp. reduced K) would bake an
+# under-verified pair into the committed golden the addition slice trusts.
+# ---------------------------------------------------------------------------
+
+
+def _write_golden_rejects(argv: list[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse_and_validate_args(["--write-golden", *argv])
+
+
+def test_write_golden_accepts_canonical_full_matrix() -> None:
+    args = parse_and_validate_args(["--write-golden"])
+    assert args.write_golden is True
+    assert tuple(args.hash_seeds) == check_determinism.DEFAULT_HASH_SEEDS
+
+
+def test_write_golden_rejects_reduced_k_single_seed() -> None:
+    # The dangerous case: K=1 means one worker trivially "agrees" with itself.
+    _write_golden_rejects(["--k", "1", "--hash-seeds", "0"])
+
+
+def test_write_golden_rejects_narrowed_types() -> None:
+    _write_golden_rejects(["--types", "first_name"])
+
+
+def test_write_golden_rejects_narrowed_locales() -> None:
+    _write_golden_rejects(["--locales", "en_US"])
+
+
+def test_write_golden_rejects_nonempty_kwargs() -> None:
+    _write_golden_rejects(["--kwargs-json", '{"length": 3}'])
+
+
+def test_write_golden_rejects_reordered_seeds() -> None:
+    _write_golden_rejects(["--hash-seeds", "7,6,5,4,3,2,1,0"])
+
+
+def test_write_golden_rejects_nondefault_worker() -> None:
+    # digest_codec.py exists but is not the default worker path.
+    alt = str(HARNESS_DIR / "digest_codec.py")
+    _write_golden_rejects(["--worker", alt])
+
+
+def test_assert_mode_still_allows_narrowed_workload() -> None:
+    # WITHOUT --write-golden, a narrowed run (e.g. the marked fast-subset test)
+    # is legitimate: it only asserts against the golden, never rewrites it.
+    args = parse_and_validate_args(["--types", "first_name", "--k", "1", "--hash-seeds", "0"])
+    assert args.write_golden is False

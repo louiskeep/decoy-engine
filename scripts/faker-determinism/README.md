@@ -48,10 +48,11 @@ python scripts/faker-determinism/check_determinism.py --types city,job_female --
 
 `--jobs N` runs N candidates concurrently (each candidate still spawns its
 own K sequential subprocesses); the default matrix at K=8 is a genuine
-multi-minute run, which is why the full sweep is excluded from the default
-pytest loop (`pytest -m determinism_harness` runs it explicitly) while a
-small fast subset stays in `tests/generation/test_faker_pool_determinism.py`
-as a cheap regression guard on the driver+golden mechanism itself.
+multi-minute run, which is why every determinism test that spawns the sweep
+carries the `determinism_harness` marker and is excluded from the default
+pytest loop (`pytest -m determinism_harness` runs them explicitly). The
+default loop keeps only the version-independent codec, characterization, and
+driver-unit tests (including the synthetic hash-order fail-control).
 
 ## Reading a candidate's status
 
