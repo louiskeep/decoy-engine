@@ -390,9 +390,19 @@ pythonpath = ["src", "scripts"]
 # missing optional dependency. Run explicitly via the codspeed workflow
 # (`pytest tests/codspeed/ -m codspeed`), matching the ml-gate / packaging-gate
 # explicit `-m` override pattern below.
-addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed'"
+# `determinism_harness` is excluded for the same shape of reason as
+# `benchmark`/`testflight`: the full faker-pool determinism matrix
+# (scripts/faker-determinism/) spawns K=8 fresh subprocesses per
+# (type, locale) candidate across ~195 candidates, which is a real but
+# multi-minute cost inappropriate for every default test run. The fast
+# subset in tests/generation/test_faker_pool_determinism.py stays in the
+# default loop as a cheap regression guard on the driver+golden mechanism
+# itself; run the full sweep explicitly via
+# `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
+addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
+    "determinism_harness: full faker-pool determinism matrix sweep (scripts/faker-determinism/check_determinism.py against golden_digests.json); excluded from the default loop for runtime, run explicitly via pytest -m determinism_harness",
     "codspeed: pytest-codspeed instrumented microbenchmarks (tests/codspeed/); needs the [perf] extra; run only by the codspeed CI workflow, gated on the CODSPEED_TOKEN secret",
     "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
