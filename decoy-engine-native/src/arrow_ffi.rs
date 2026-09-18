@@ -215,9 +215,9 @@ fn derive_batch_checked(
         .unwrap_or(1);
     let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
     let threads = budget.threads();
-    // Task 1.5: `derive_array` runs its row loop on the one shared host-sized `NativeThreadPool`,
-    // with `threads` bounding the number of row ranges (and thus the parallelism) within it. The
-    // output is byte-identical at every thread count.
+    // `threads` bounds the number of row ranges (and thus the parallelism). A single range runs
+    // serially off the shared pool; two or more ranges run on the one shared host-sized
+    // `NativeThreadPool` (see `batch::run_range_tasks`). Output is byte-identical at every count.
 
     // Import + validate the Arrow array while the GIL is held (this touches PyO3 / the Python
     // FFI capsule). The imported `array` is an owned arrow-rs `ArrayRef` with no Python object
