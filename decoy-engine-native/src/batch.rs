@@ -133,6 +133,32 @@ fn constant_output_width(truncate: Option<isize>) -> usize {
     hex_token_into(&[0u8; 32], truncate, &mut buf).len()
 }
 
+/// One per-range result before arbitration: `Ok(())`, or the failing task's `(global_row_index,
+/// error)`. `first_error_by_row_index` reduces these to the minimum-row-index error.
+type RangeResults = Vec<Result<(), (usize, BatchError)>>;
+
+/// Run per-range `tasks` with `run`, avoiding the shared host-sized Rayon pool for a single range.
+///
+/// A single range is the whole batch on one worker, so installing it on the shared pool would
+/// construct that pool (its host-core-sized worker threads and Rayon runtime state raise peak RSS
+/// with the host's core count) for no parallel benefit. Running one range serially here is
+/// byte-identical, and keeps the bounded path (`native_threads=None` -> `threads=1` -> one range)
+/// from ever building the pool. Two or more ranges still install on the shared pool. A pool-build
+/// failure surfaces as a coded error via `?` (the `From<DeriveError>` conversion for `BatchError`).
+/// `install` is synchronous, so `run` may borrow from the caller's stack frame either way.
+fn run_range_tasks<T, F>(tasks: Vec<T>, run: F) -> Result<RangeResults, BatchError>
+where
+    T: Send,
+    F: Fn(T) -> Result<(), (usize, BatchError)> + Sync + Send,
+{
+    if tasks.len() <= 1 {
+        Ok(tasks.into_iter().map(run).collect())
+    } else {
+        let pool = shared_native_pool()?;
+        Ok(pool.install(|| tasks.into_par_iter().map(run).collect()))
+    }
+}
+
 /// Validate the mask key and the array's admitted type, then canonicalize + derive + hex-encode
 /// every row across up to `threads` Rayon workers, returning one output string per input row
 /// (null in, null out; no derivation for a null slot). Output is byte-identical to a single-thread
@@ -144,8 +170,9 @@ fn constant_output_width(truncate: Option<isize>) -> usize {
 /// the end rather than erroring, so the native kernel must too.
 ///
 /// `threads` is the resolved per-job budget (`NativeThreadBudget::threads`): it bounds the number
-/// of row ranges, and therefore the parallelism, WITHIN the one shared host-sized pool. `1` means a
-/// single range (sequential work on a pool worker).
+/// of row ranges, and therefore the parallelism. `1` means a single range run serially, which
+/// (see `run_range_tasks`) never constructs the shared host-sized pool; `>= 2` ranges install on
+/// that pool.
 pub fn derive_array(
     array: &dyn Array,
     mask_key: Option<&[u8]>,
@@ -232,17 +259,11 @@ pub fn derive_array(
     let mut values = vec![0u8; total_bytes];
     let tasks = partition_into_tasks(array, &offsets, &mut values, threads, non_null);
 
-    // Run on the one shared, host-sized pool (never a per-batch pool). `install` is synchronous, so
-    // workers may borrow `array`/`ctx`/`values` from this stack frame; a worker panic propagates
-    // out of `install` to the `catch_unwind` in `derive_batch`. `into_par_iter` moves each task
-    // (its owned `&mut [u8]`) to a worker; `par_iter` would only hand out shared refs.
-    let pool = shared_native_pool()?;
-    let results: Vec<Result<(), (usize, BatchError)>> = pool.install(|| {
-        tasks
-            .into_par_iter()
-            .map(|task| fill_range(&ctx, array, truncate, task))
-            .collect()
-    });
+    // A single range is the whole batch on one worker, so `run_range_tasks` runs it serially and
+    // never constructs the host-sized shared pool (see that fn). Multi-range work installs on the
+    // shared pool; `install` is synchronous, so workers may borrow `array`/`ctx`/`values` from
+    // this stack frame and a worker panic propagates to `derive_batch`'s `catch_unwind`.
+    let results = run_range_tasks(tasks, |task| fill_range(&ctx, array, truncate, task))?;
 
     // Multi-error arbitration: report the failure at the MINIMUM global row index, never
     // task-completion order, so the error matches the sequential first-error-wins path exactly.
@@ -529,13 +550,7 @@ pub fn derive_index_array_typed(
     let mut values = vec![0u64; len];
     let tasks = partition_index_tasks(array, &mut values, threads, non_null);
 
-    let pool = shared_native_pool()?;
-    let results: Vec<Result<(), (usize, BatchError)>> = pool.install(|| {
-        tasks
-            .into_par_iter()
-            .map(|task| fill_index_range(&ctx, array, pool_size, task))
-            .collect()
-    });
+    let results = run_range_tasks(tasks, |task| fill_index_range(&ctx, array, pool_size, task))?;
     if let Some(err) = first_error_by_row_index(results) {
         return Err(err);
     }
@@ -687,6 +702,8 @@ mod tests {
             Some(100),
             Some(-5),
         ] {
+            // threads=1 is the serial, pool-free path (`run_range_tasks`); 2..16 install on the
+            // shared pool. This asserts the direct-one-range output matches the pooled output.
             let baseline = derive_array(&array, Some(&key), "ns", truncate, 1).unwrap();
             for threads in [2usize, 3, 4, 8, 16] {
                 let out = derive_array(&array, Some(&key), "ns", truncate, threads).unwrap();
@@ -861,6 +878,7 @@ mod tests {
         let array = mixed_string_fixture(97);
         let key = [7u8; 32];
         for pool in [1i64, 2, 1000, 1 << 56] {
+            // threads=1 is the serial, pool-free path; 2..16 install on the shared pool.
             let baseline = derive_index_array(&array, Some(&key), "ns", pool, 1).unwrap();
             for threads in [2usize, 3, 4, 8, 16] {
                 let out = derive_index_array(&array, Some(&key), "ns", pool, threads).unwrap();
