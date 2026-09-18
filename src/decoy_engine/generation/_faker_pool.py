@@ -68,6 +68,156 @@ POOL_ELIGIBLE_FAKER_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# Faker widening ADDITION slice (2026-09-18): a SEPARATE closed allowlist,
+# keyed on (faker_type, locale) rather than type alone. The harness
+# (scripts/faker-determinism) certified these 29 additional types as
+# deterministic and reuse-safe, but only in the 5 locales it actually ran --
+# unlike POOL_ELIGIBLE_FAKER_TYPES above (legacy, global across all locales),
+# admitting one of these types outside its certified locale would pool an
+# untested provider. Embedded verbatim from the harness's
+# `certified_pairs.json` (kwargs={}, legacy types filtered out); a new pair
+# is NEVER added by inference -- it needs its own harness certification +
+# gate round, matching POOL_ELIGIBLE_FAKER_TYPES's philosophy.
+POOL_ELIGIBLE_LOCALE_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("administrative_unit", "de_DE"),
+        ("administrative_unit", "en_GB"),
+        ("administrative_unit", "en_US"),
+        ("administrative_unit", "es_ES"),
+        ("administrative_unit", "fr_FR"),
+        ("bs", "de_DE"),
+        ("bs", "en_GB"),
+        ("bs", "en_US"),
+        ("bs", "es_ES"),
+        ("bs", "fr_FR"),
+        ("catch_phrase", "de_DE"),
+        ("catch_phrase", "en_GB"),
+        ("catch_phrase", "en_US"),
+        ("catch_phrase", "es_ES"),
+        ("catch_phrase", "fr_FR"),
+        ("city_prefix", "en_GB"),
+        ("city_prefix", "en_US"),
+        ("city_prefix", "fr_FR"),
+        ("city_suffix", "de_DE"),
+        ("city_suffix", "en_GB"),
+        ("city_suffix", "en_US"),
+        ("city_suffix", "es_ES"),
+        ("city_suffix", "fr_FR"),
+        ("company_suffix", "de_DE"),
+        ("company_suffix", "en_GB"),
+        ("company_suffix", "en_US"),
+        ("company_suffix", "es_ES"),
+        ("company_suffix", "fr_FR"),
+        ("country_code", "de_DE"),
+        ("country_code", "en_GB"),
+        ("country_code", "en_US"),
+        ("country_code", "es_ES"),
+        ("country_code", "fr_FR"),
+        ("current_country", "de_DE"),
+        ("current_country", "en_GB"),
+        ("current_country", "en_US"),
+        ("current_country", "es_ES"),
+        ("current_country", "fr_FR"),
+        ("first_name_female", "de_DE"),
+        ("first_name_female", "en_GB"),
+        ("first_name_female", "en_US"),
+        ("first_name_female", "es_ES"),
+        ("first_name_female", "fr_FR"),
+        ("first_name_male", "de_DE"),
+        ("first_name_male", "en_GB"),
+        ("first_name_male", "en_US"),
+        ("first_name_male", "es_ES"),
+        ("first_name_male", "fr_FR"),
+        ("first_name_nonbinary", "de_DE"),
+        ("first_name_nonbinary", "en_GB"),
+        ("first_name_nonbinary", "en_US"),
+        ("first_name_nonbinary", "es_ES"),
+        ("first_name_nonbinary", "fr_FR"),
+        ("job_female", "de_DE"),
+        ("job_female", "en_GB"),
+        ("job_female", "en_US"),
+        ("job_female", "es_ES"),
+        ("job_female", "fr_FR"),
+        ("job_male", "de_DE"),
+        ("job_male", "en_GB"),
+        ("job_male", "en_US"),
+        ("job_male", "es_ES"),
+        ("job_male", "fr_FR"),
+        ("last_name_female", "de_DE"),
+        ("last_name_female", "en_GB"),
+        ("last_name_female", "en_US"),
+        ("last_name_female", "es_ES"),
+        ("last_name_female", "fr_FR"),
+        ("last_name_male", "de_DE"),
+        ("last_name_male", "en_GB"),
+        ("last_name_male", "en_US"),
+        ("last_name_male", "es_ES"),
+        ("last_name_male", "fr_FR"),
+        ("last_name_nonbinary", "de_DE"),
+        ("last_name_nonbinary", "en_GB"),
+        ("last_name_nonbinary", "en_US"),
+        ("last_name_nonbinary", "es_ES"),
+        ("last_name_nonbinary", "fr_FR"),
+        ("military_state", "en_US"),
+        ("name_female", "de_DE"),
+        ("name_female", "en_GB"),
+        ("name_female", "en_US"),
+        ("name_female", "es_ES"),
+        ("name_female", "fr_FR"),
+        ("name_male", "de_DE"),
+        ("name_male", "en_GB"),
+        ("name_male", "en_US"),
+        ("name_male", "es_ES"),
+        ("name_male", "fr_FR"),
+        ("name_nonbinary", "de_DE"),
+        ("name_nonbinary", "en_GB"),
+        ("name_nonbinary", "en_US"),
+        ("name_nonbinary", "es_ES"),
+        ("name_nonbinary", "fr_FR"),
+        ("prefix_female", "de_DE"),
+        ("prefix_female", "en_GB"),
+        ("prefix_female", "en_US"),
+        ("prefix_female", "es_ES"),
+        ("prefix_female", "fr_FR"),
+        ("prefix_male", "de_DE"),
+        ("prefix_male", "en_GB"),
+        ("prefix_male", "en_US"),
+        ("prefix_male", "es_ES"),
+        ("prefix_male", "fr_FR"),
+        ("prefix_nonbinary", "de_DE"),
+        ("prefix_nonbinary", "en_GB"),
+        ("prefix_nonbinary", "en_US"),
+        ("prefix_nonbinary", "es_ES"),
+        ("prefix_nonbinary", "fr_FR"),
+        ("state_abbr", "en_US"),
+        ("street_name", "de_DE"),
+        ("street_name", "en_GB"),
+        ("street_name", "en_US"),
+        ("street_name", "es_ES"),
+        ("street_name", "fr_FR"),
+        ("street_suffix", "de_DE"),
+        ("street_suffix", "en_GB"),
+        ("street_suffix", "en_US"),
+        ("street_suffix", "es_ES"),
+        ("street_suffix", "fr_FR"),
+        ("suffix_female", "de_DE"),
+        ("suffix_female", "en_GB"),
+        ("suffix_female", "en_US"),
+        ("suffix_female", "es_ES"),
+        ("suffix_female", "fr_FR"),
+        ("suffix_male", "de_DE"),
+        ("suffix_male", "en_GB"),
+        ("suffix_male", "en_US"),
+        ("suffix_male", "es_ES"),
+        ("suffix_male", "fr_FR"),
+        ("suffix_nonbinary", "de_DE"),
+        ("suffix_nonbinary", "en_GB"),
+        ("suffix_nonbinary", "en_US"),
+        ("suffix_nonbinary", "es_ES"),
+        ("suffix_nonbinary", "fr_FR"),
+    }
+)
+
 # Plan correction (2026-09-17): the original 1000 came from the GP1 parallelism
 # spike's crossover, which is the wrong number here -- pool build cost is
 # dominated by the fixed ~10k-call pool_size (DEFAULT_POOL_SIZE), not by n, so
@@ -86,7 +236,7 @@ _BUILD_FAMILY = "faker_pool_build"
 _SELECTION_FAMILY = "faker_pool_selection"
 
 
-def pool_eligible(faker_type: str, n: int, *, opted_out: bool) -> bool:
+def pool_eligible(faker_type: str, requested_locale: Any, n: int, *, opted_out: bool) -> bool:
     """Cheap, instance-independent gate: should `_faker` attempt pooling?
 
     This is NOT the full eligibility decision -- it doesn't know yet whether
@@ -97,8 +247,30 @@ def pool_eligible(faker_type: str, n: int, *, opted_out: bool) -> bool:
     gate: an ineligible `faker_type` or a below-threshold `n` stays per-row
     regardless of what the column sets (Codex round-2 spec: AUTO + opt-out
     ONLY, no forced-on knob).
+
+    Locale-aware (faker-widening ADDITION slice): `POOL_ELIGIBLE_FAKER_TYPES`
+    is still the legacy global allowlist -- one of those 10 types pools in
+    ANY locale, exactly as before this slice, and is never locale-checked.
+    A type from `POOL_ELIGIBLE_LOCALE_PAIRS` pools only in its own certified
+    locale. `requested_locale` is taken AS REQUESTED, not resolved through
+    `make_faker`: an absent/falsy locale maps to Faker's own default
+    (`en_US`) for admission purposes, a `str` locale is checked as given
+    (an uncertified or invalid string just misses the set), and anything
+    else -- most importantly a locale LIST, which `make_faker` accepts but a
+    frozenset of `(type, str)` tuples cannot hash against -- declines to the
+    per-row path rather than raising.
     """
-    return not opted_out and faker_type in POOL_ELIGIBLE_FAKER_TYPES and n >= N_THRESHOLD
+    if opted_out or n < N_THRESHOLD:
+        return False
+    if faker_type in POOL_ELIGIBLE_FAKER_TYPES:
+        return True
+    if requested_locale is None:
+        locale = "en_US"
+    elif isinstance(requested_locale, str):
+        locale = requested_locale
+    else:
+        return False
+    return (faker_type, locale) in POOL_ELIGIBLE_LOCALE_PAIRS
 
 
 def try_pool(
@@ -126,7 +298,8 @@ def try_pool(
     against the live custom-provider registry exactly as before.
     """
     faker_type = col.get("faker_type", "word")
-    if not pool_eligible(faker_type, n, opted_out=col.get("pooled") is False):
+    requested_locale = col.get("locale") or instance_default_locale
+    if not pool_eligible(faker_type, requested_locale, n, opted_out=col.get("pooled") is False):
         return None
     gen_ctx = GenDeriveContext.for_column(
         derive_key=derive_key, column_config=col, fallback_seed=seed
@@ -298,6 +471,7 @@ def build_and_sample(
 __all__ = [
     "N_THRESHOLD",
     "POOL_ELIGIBLE_FAKER_TYPES",
+    "POOL_ELIGIBLE_LOCALE_PAIRS",
     "build_and_sample",
     "build_pool_values",
     "pool_eligible",

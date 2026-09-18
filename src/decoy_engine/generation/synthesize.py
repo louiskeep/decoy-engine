@@ -4,7 +4,7 @@ Produces synthetic tables from a generate-mode ``PipelineConfig``: for each gene
 (``generate_columns`` + ``row_count``, no source), build ``row_count`` rows, each declared column
 filled by its per-column generator. This is the v2 analogue of V1 ``DataGenerator``
 (``decoy_engine.generators``); it is PARITY-FROZEN to V1 under a fixed seed (Reading B), except an
-eligible pooled ``faker`` column (GP2, see ``_faker``).
+eligible pooled ``faker`` column (GP2 + the faker-widening ADDITION slice, see ``_faker_pool``).
 
 S6-ENG-1 landed the spine + the ``sequence`` generator. S6-ENG-2 adds parity-frozen
 ``categorical`` (and on the next sub-commits, ``faker`` / ``formula``); S6-ENG-3 adds FK-aware
