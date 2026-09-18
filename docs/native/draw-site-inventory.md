@@ -355,8 +355,10 @@ adapter, a fresh `Generic(locale, seed=int.from_bytes(spec.seed))` per batch
 `generation/_faker_pool.py:176`. GP2's generation-local pool BUILD -- NOT
 `gen.pool_build_faker` above (that's the V2 PoolBuilder/ProviderRegistry seam
 masking's `faker` strategy uses; generation's raw `faker_type` values, like
-`first_name` or `city`, are not V2-registered providers). Closed allowlist only
-(`_faker_pool.POOL_ELIGIBLE_FAKER_TYPES`), gated by a locked resolver snapshot for
+`first_name` or `city`, are not V2-registered providers). Two closed allowlists:
+`_faker_pool.POOL_ELIGIBLE_FAKER_TYPES` (the legacy global types, any locale) and
+`_faker_pool.POOL_ELIGIBLE_LOCALE_PAIRS` (the widening slice's locale-scoped
+`(faker_type, locale)` pairs). Gated by a locked resolver snapshot for
 custom-override/locale availability. Seed:
 `build_seed = GenDeriveContext.for_column(...).family_bytes("faker_pool_build")[:8]`,
 then ONE `faker.seed_instance(int.from_bytes(build_seed, "big"))` on a fresh

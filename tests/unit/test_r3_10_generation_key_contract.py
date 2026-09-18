@@ -245,7 +245,7 @@ def test_pooled_opt_out_reproduces_pre_gp2_bytes_and_root():
     opted_out = {**col, "pooled": False}
 
     assert strategy_config_fingerprint(col) == strategy_config_fingerprint(opted_out)
-    assert not _faker_pool.pool_eligible("city", n, opted_out=True)
+    assert not _faker_pool.pool_eligible("city", None, n, opted_out=True)
 
     v1 = _gen(col, derive_key=resolver, num_rows=n)
     assert _faker(opted_out, n, 42, resolver, None) == v1

@@ -132,8 +132,11 @@ def test_off_arm_never_pools_even_with_override_set() -> None:
 
 
 def test_production_pool_eligible_predicate_unchanged() -> None:
-    assert _faker_pool.pool_eligible("city", _faker_pool.N_THRESHOLD - 1, opted_out=False) is False
-    assert _faker_pool.pool_eligible("city", _faker_pool.N_THRESHOLD, opted_out=False) is True
+    assert (
+        _faker_pool.pool_eligible("city", None, _faker_pool.N_THRESHOLD - 1, opted_out=False)
+        is False
+    )
+    assert _faker_pool.pool_eligible("city", None, _faker_pool.N_THRESHOLD, opted_out=False) is True
 
 
 # ---------------------------------------------------------------------------

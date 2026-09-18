@@ -302,12 +302,16 @@ class TestFakerParityV1:
 
     GP2 breaks this promise ON PURPOSE for one case: an allowlisted faker_type
     (first_name, last_name, name, prefix, suffix, city, state, country, job,
-    company) at n >= the pool threshold, auto-pooled unless `pooled: false`.
-    That is S9-retirement territory -- the v2 `faker` column is no longer
+    company, global across all locales) at n >= the pool threshold, auto-pooled
+    unless `pooled: false`. The faker-widening ADDITION slice widens the same
+    break to 135 more (faker_type, locale) pairs -- pooled only in their own
+    certified locale, not globally (see `_faker_pool.POOL_ELIGIBLE_LOCALE_PAIRS`).
+    Both are S9-retirement territory -- the v2 `faker` column is no longer
     universally V1-byte-frozen, by Cam's explicit pool-based-generation call
     (see the GP2 plan). `TestPooledFakerNoLongerV1Frozen` below is the parity
     test for THAT case: it asserts divergence, not equality, and pins the
-    opt-out/below-threshold/non-allowlisted escapes back to this class's bar."""
+    opt-out/below-threshold/non-allowlisted/non-certified-locale escapes back
+    to this class's bar."""
 
     def test_provider_no_kwargs(self):
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
@@ -379,7 +383,14 @@ class TestPooledFakerNoLongerV1Frozen:
     pool-based-generation direction). Every escape hatch back to the old
     per-row/V1-parity bar is pinned here too: below threshold, non-
     allowlisted, and explicit ``pooled: false`` all stay byte-identical to
-    V1, exactly like ``TestFakerParityV1``."""
+    V1, exactly like ``TestFakerParityV1``.
+
+    The faker-widening ADDITION slice retires the same promise for the 135
+    new certified (faker_type, locale) pairs, in the same way and for the
+    same reason. ``TestNewlyCertifiedPairNoLongerV1Frozen`` below is that
+    slice's version of this class: one certified pair diverges at threshold,
+    and its below-threshold / uncertified-locale / opt-out escapes stay
+    frozen."""
 
     def test_pooled_allowlisted_type_diverges_from_v1_at_threshold(self):
         from decoy_engine.generation import _faker_pool
@@ -423,6 +434,114 @@ class TestPooledFakerNoLongerV1Frozen:
         from decoy_engine.generation import _faker_pool
 
         col = {"name": "hometown", "type": "faker", "faker_type": "city", "pooled": False}
+        n = _faker_pool.N_THRESHOLD + 50
+        assert _v2_run(col, n) == _v1_run(col, n)
+
+
+class TestNewlyCertifiedPairNoLongerV1Frozen:
+    """Faker-widening ADDITION slice: ``first_name_female``/``en_US`` is one of
+    the 135 newly-certified (faker_type, locale) pairs in
+    ``_faker_pool.POOL_ELIGIBLE_LOCALE_PAIRS``, not one of the legacy 10
+    global types. Pins the same divergence contract
+    ``TestPooledFakerNoLongerV1Frozen`` pins for the legacy types, plus the
+    locale-scoped escape hatch this slice adds: the identical type in an
+    UNCERTIFIED locale (``ja_JP``) stays V1-frozen even above threshold,
+    because it was never harness-certified there."""
+
+    def test_certified_pair_diverges_from_v1_at_threshold(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": "en_US",
+        }
+        n = _faker_pool.N_THRESHOLD
+        assert _v2_run(col, n) != _v1_run(col, n), (
+            "a certified (type, locale) pair must NOT reproduce V1's per-row "
+            "bytes at n >= N_THRESHOLD -- if this starts passing, the pair "
+            "silently stopped pooling"
+        )
+
+    def test_certified_pair_output_is_still_well_formed(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": "en_US",
+        }
+        n = _faker_pool.N_THRESHOLD
+        out = _v2_run(col, n)
+        assert len(out) == n
+        assert all(isinstance(v, str) for v in out)
+        assert len(set(out)) < n
+
+    def test_certified_pair_below_threshold_stays_v1_frozen(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": "en_US",
+        }
+        n = _faker_pool.N_THRESHOLD - 1
+        assert _v2_run(col, n) == _v1_run(col, n)
+
+    def test_uncertified_locale_stays_v1_frozen_even_above_threshold(self):
+        from decoy_engine.generation import _faker_pool
+
+        # first_name_female is certified for en_US/en_GB/de_DE/es_ES/fr_FR
+        # (Codex plan-gate slice 0), NOT ja_JP -- an uncertified locale for a
+        # newly-widened type must decline to the per-row path, the same way
+        # a non-allowlisted type does for the legacy set.
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": "ja_JP",
+        }
+        n = _faker_pool.N_THRESHOLD + 50
+        assert _v2_run(col, n) == _v1_run(col, n)
+
+    def test_list_locale_new_type_declines_to_per_row_above_threshold(self):
+        import pytest
+
+        from decoy_engine.generation import _faker_pool
+
+        # A locale LIST is not a certified (type, str-locale) pair (the pooled
+        # pairs are keyed on single string locales), so pool_eligible declines
+        # and the column takes the UNCHANGED per-row path end-to-end. For a
+        # multi-locale Faker column that path hits Faker's own multi-locale
+        # limitation, exactly as it did pre-slice. The raise is the proof that
+        # pooling did NOT engage: the pooled path builds one seeded instance and
+        # would neither call the provider per row nor raise here. (A direct
+        # _v1_run==_v2_run comparison is not the right check for THIS edge -- the
+        # V1 ColumnGenerator and v2 compile_and_generate entry points already
+        # diverge on multi-locale independent of pooling.)
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": ["en_US", "de_DE"],
+        }
+        n = _faker_pool.N_THRESHOLD + 50
+        with pytest.raises(NotImplementedError):
+            _v2_run(col, n)
+
+    def test_opted_out_certified_pair_stays_v1_frozen_above_threshold(self):
+        from decoy_engine.generation import _faker_pool
+
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name_female",
+            "locale": "en_US",
+            "pooled": False,
+        }
         n = _faker_pool.N_THRESHOLD + 50
         assert _v2_run(col, n) == _v1_run(col, n)
 
