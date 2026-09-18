@@ -1,19 +1,19 @@
 """C5: the faker pool determinism harness wired as a pytest gate
 (plan_faker_determinism_harness_v2.md).
 
-Two tiers:
+Every test here that spawns the real driver is marked `determinism_harness`
+and excluded from the default loop -- it is Faker-version-coupled and
+subprocess-heavy, so it belongs in the pinned determinism gate, not every
+test run (see `pyproject.toml`'s marker description and the sibling
+`scripts/faker-determinism/README.md`). Tiers:
 
-1. A small, deterministic subset of `golden_digests.json` re-run through
-   the real driver at the full K=8 -- fast (a handful of candidates, not
-   the ~195-candidate matrix), so it stays in the default test loop as a
-   cheap regression guard that the driver + committed golden still agree.
-2. The exhaustive full-matrix sweep against the same golden, marked
-   `determinism_harness` and excluded from the default loop (runtime: a
-   genuine multi-minute run spawning thousands of subprocesses) -- see
-   `pyproject.toml`'s marker description and this directory's sibling
-   `scripts/faker-determinism/README.md`.
+1. A small deterministic subset of `golden_digests.json` re-run through the
+   real driver at K=8 -- a cheap regression guard that the driver + committed
+   golden still agree.
+2. The exhaustive full-matrix sweep against the same golden -- a genuine
+   multi-minute run spawning thousands of subprocesses.
 
-A third, always-fast check reads the committed `certified_pairs.json`
+A third check reads the committed `certified_pairs.json`
 directly (no subprocess) and confirms VERIFY item 2: every positive-control
 type is certified at every matrix locale where Faker actually has that
 provider.
@@ -102,8 +102,10 @@ def test_positive_control_types_are_certified_where_available() -> None:
     """VERIFY item 2: every one of the 10 current pooled types must be
     certified at every matrix locale where Faker actually has that method.
     No subprocess: reads the committed certified_pairs.json and checks
-    in-process which (type, locale) pairs genuinely exist, so this stays
-    fast enough for the default loop."""
+    in-process which (type, locale) pairs genuinely exist. Marked
+    `determinism_harness` (not for the default loop) because it is coupled to
+    the installed Faker version: adding a provider for a new (type, locale)
+    would fail it as a false alarm rather than flag a determinism regression."""
     from decoy_engine.generation import _faker_pool
     from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
 
