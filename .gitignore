@@ -54,3 +54,6 @@ decoy-engine-native/decoy_engine_native/*.pyd
 
 # graphify knowledge-graph cache/output (not source)
 graphify-out/
+
+# faker-determinism per-run report (transient; the committed golden is the ratchet)
+scripts/faker-determinism/determinism_report.json

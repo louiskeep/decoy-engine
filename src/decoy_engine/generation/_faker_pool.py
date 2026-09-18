@@ -141,6 +141,102 @@ def try_pool(
     )
 
 
+def build_pool_values(
+    faker_type: str,
+    effective_locale: str | None,
+    build_seed: bytes,
+    pool_size: int,
+    faker_kwargs: dict[str, Any],
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+) -> tuple[list[Any], bool, bool]:
+    """The production pool-BUILD seam (determinism harness slice 0, C0).
+
+    Extracted from `build_and_sample` so the determinism harness can build
+    the exact same ordered `pool_size`-length value list production does,
+    without also running the selection draw. `build_and_sample` calls this
+    (via `_build_and_sample_returning_pool`, one call, no second divergent
+    build) rather than restating the build inline -- see that function.
+
+    A FRESH `Faker` instance, never the per-row path's cached/shared one:
+    the pool is built exactly once from one `seed_instance` call, so there
+    is no per-thread reuse hazard to guard against (Codex round-2 spec B
+    mirrors `providers_v2/_faker_adapter.py:224`). `make_faker` (not raw
+    `Faker(...)`) preserves the invalid-locale-falls-back-to-en_US contract.
+
+    Returns `(values, exact_name_available, custom_override_present)`.
+    `values` is `[]` when `faker_type` is custom-overridden or unavailable
+    for `effective_locale` -- callers branch on the two bool flags, never on
+    `values` truthiness, to tell "genuinely empty pool" apart (impossible
+    today: `pool_size` is always > 0) from "build declined".
+    """
+    faker_inst = make_faker(effective_locale)
+    provider_callable, exact_name_available, custom_override_present = resolve_pool_provider(
+        faker_inst, faker_type, provider_snapshot=provider_snapshot
+    )
+    if custom_override_present or not exact_name_available:
+        return [], exact_name_available, custom_override_present
+    assert provider_callable is not None  # noqa: S101 -- exact_name_available guarantees this
+
+    faker_inst.seed_instance(int.from_bytes(build_seed, "big", signed=False))
+    raw_values = [provider_callable(**faker_kwargs) for _ in range(pool_size)]
+    return raw_values, exact_name_available, custom_override_present
+
+
+def _build_and_sample_returning_pool(
+    *,
+    faker_type: str,
+    faker_kwargs: dict[str, Any],
+    n: int,
+    build_seed: bytes,
+    selection_seed: bytes,
+    effective_locale: str | None,
+    pool_size: int,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+) -> tuple[list[Any] | None, list[Any] | None, bool, bool]:
+    """Build the pool ONCE (`build_pool_values`) and sample from that exact
+    pool -- never a second, independently-built pool (determinism harness
+    slice 0, C2). `build_and_sample` delegates here and discards
+    `pool_values`; the determinism worker calls this directly so the digest
+    it takes of `pool_values` and the digest it takes of `sampled_output`
+    are guaranteed to come from the SAME build, not two builds compared for
+    equality (which cannot bind two runtime builds under mutable
+    custom-provider registration or other process-local state).
+
+    Returns `(pool_values, sampled_output, exact_name_available,
+    custom_override_present)`; the first two are `None` together when the
+    build declined (mirrors `build_and_sample`'s `None` return).
+    """
+    raw_values, exact_name_available, custom_override_present = build_pool_values(
+        faker_type,
+        effective_locale,
+        build_seed,
+        pool_size,
+        faker_kwargs,
+        provider_snapshot=provider_snapshot,
+    )
+    if custom_override_present or not exact_name_available:
+        return None, None, exact_name_available, custom_override_present
+
+    values = _freeze_array(np.array(raw_values, dtype=object))
+    pool = ValuePool(
+        values=values,
+        provider=f"gen.faker_pool.{faker_type}",
+        locale=effective_locale or "default",
+        config_hash="",
+        seed=build_seed,
+        size=pool_size,
+        build_time_ms=0.0,
+        backend_type="faker",
+        backend_version=_FAKER_VERSION,
+        distinct_count=len(set(values.tolist())),
+    )
+    sampled = PoolSampler().sample(
+        pool, n, mode=CardinalityMode.REUSE, seed=selection_seed, deterministic=False
+    )
+    return values.tolist(), sampled.tolist(), exact_name_available, custom_override_present
+
+
 def build_and_sample(
     *,
     faker_type: str,
@@ -165,20 +261,14 @@ def build_and_sample(
     overrides against the SAME captured registry state on both sides,
     instead of two independent live reads. `None` (the default) resolves
     against the live registry exactly as before.
-    """
-    # A FRESH instance, never the per-row path's cached/shared one: the pool
-    # is built exactly once from one seed_instance call, so there is no
-    # per-thread reuse hazard to guard against (Codex round-2 spec B mirrors
-    # providers_v2/_faker_adapter.py:224). make_faker (not raw Faker(...))
-    # preserves the invalid-locale-falls-back-to-en_US contract.
-    faker_inst = make_faker(effective_locale)
-    provider_callable, exact_name_available, custom_override_present = resolve_pool_provider(
-        faker_inst, faker_type, provider_snapshot=provider_snapshot
-    )
-    if custom_override_present or not exact_name_available:
-        return None
-    assert provider_callable is not None  # noqa: S101 -- exact_name_available guarantees this
 
+    Delegates to `_build_and_sample_returning_pool` (determinism harness
+    slice 0, C0) for the actual build + selection, discarding the pool it
+    also returns -- this function's own contract is the selection output
+    only. Behavior-preserving: see
+    `tests/unit/generation/test_faker_pool_seam_characterization.py` for the
+    pre-extraction byte-identical proof.
+    """
     build_seed = gen_ctx.family_bytes(_BUILD_FAMILY)[:8]
     selection_seed = gen_ctx.family_bytes(_SELECTION_FAMILY)[:8]
     if build_seed == selection_seed:
@@ -190,32 +280,26 @@ def build_and_sample(
             "GenDeriveContext.family_bytes is no longer label-disjoint"
         )
 
-    faker_inst.seed_instance(int.from_bytes(build_seed, "big", signed=False))
-    raw_values = [provider_callable(**faker_kwargs) for _ in range(pool_size)]
-    values = _freeze_array(np.array(raw_values, dtype=object))
-
-    pool = ValuePool(
-        values=values,
-        provider=f"gen.faker_pool.{faker_type}",
-        locale=effective_locale or "default",
-        config_hash="",
-        seed=build_seed,
-        size=pool_size,
-        build_time_ms=0.0,
-        backend_type="faker",
-        backend_version=_FAKER_VERSION,
-        distinct_count=len(set(values.tolist())),
+    _pool_values, sampled_output, _exact_name_available, _custom_override_present = (
+        _build_and_sample_returning_pool(
+            faker_type=faker_type,
+            faker_kwargs=faker_kwargs,
+            n=n,
+            build_seed=build_seed,
+            selection_seed=selection_seed,
+            effective_locale=effective_locale,
+            pool_size=pool_size,
+            provider_snapshot=provider_snapshot,
+        )
     )
-    sampled = PoolSampler().sample(
-        pool, n, mode=CardinalityMode.REUSE, seed=selection_seed, deterministic=False
-    )
-    return sampled.tolist()
+    return sampled_output
 
 
 __all__ = [
     "N_THRESHOLD",
     "POOL_ELIGIBLE_FAKER_TYPES",
     "build_and_sample",
+    "build_pool_values",
     "pool_eligible",
     "try_pool",
 ]
