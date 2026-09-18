@@ -144,8 +144,8 @@ type RangeResults = Vec<Result<(), (usize, BatchError)>>;
 /// with the host's core count) for no parallel benefit. Running one range serially here is
 /// byte-identical, and keeps the bounded path (`native_threads=None` -> `threads=1` -> one range)
 /// from ever building the pool. Two or more ranges still install on the shared pool. A pool-build
-/// failure surfaces as a coded error via `?`, exactly as the previous inline `shared_native_pool()?`
-/// did. `install` is synchronous, so `run` may borrow from the caller's stack frame either way.
+/// failure surfaces as a coded error via `?` (the `From<DeriveError>` conversion for `BatchError`).
+/// `install` is synchronous, so `run` may borrow from the caller's stack frame either way.
 fn run_range_tasks<T, F>(tasks: Vec<T>, run: F) -> Result<RangeResults, BatchError>
 where
     T: Send,
