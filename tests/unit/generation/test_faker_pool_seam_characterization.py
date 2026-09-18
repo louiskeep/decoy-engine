@@ -32,7 +32,10 @@ from decoy_engine.generation import _faker_pool
 from decoy_engine.generators.derivation import GenDeriveContext
 
 FIXTURE_PATH = (
-    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "golden"
+    Path(__file__).resolve().parents[3]
+    / "tests"
+    / "fixtures"
+    / "golden"
     / "faker_pool_seam_characterization.json"
 )
 
@@ -46,9 +49,7 @@ _CASES = _load_cases()
 assert len(_CASES) >= 8, "characterization fixture unexpectedly shrank"
 
 
-@pytest.mark.parametrize(
-    "case", _CASES, ids=lambda c: f"{c['faker_type']}@{c['locale']}#{c['n']}"
-)
+@pytest.mark.parametrize("case", _CASES, ids=lambda c: f"{c['faker_type']}@{c['locale']}#{c['n']}")
 def test_build_and_sample_output_matches_pre_extraction_baseline(case: dict[str, Any]) -> None:
     col = {
         "name": "val",
