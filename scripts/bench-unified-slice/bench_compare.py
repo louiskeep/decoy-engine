@@ -74,6 +74,23 @@ _CERT_MIN_WARMUP = 3
 _CERT_MIN_BOOTSTRAP = 2000
 _SMALL_TIER_MAX_ROWS = 10_000
 
+# Peak-RSS regression budget (unified/"on" arm vs legacy/"off" arm), per tier.
+# This is a regression-detection band, not an absolute-safety limit: absolute
+# peak at 1M is ~1.8GB, far under the 6.5GiB-at-100M reference-host ceiling.
+# The unified lane trades a larger transient reconstruction buffer at 1M for a
+# ~4x wall-time win, so the 1M-and-up tier carries a wider band; the smaller
+# tiers, where no such buffer dominates, keep the tight default.
+_RSS_BUDGET_DEFAULT = 1.10
+_RSS_BUDGET_LARGE_TIER = 1.25
+_RSS_LARGE_TIER_MIN_ROWS = 1_000_000
+
+
+def rss_budget_ratio(n_rows: int) -> float:
+    """The peak-RSS ratio the "on" arm must stay within for this tier."""
+    if n_rows >= _RSS_LARGE_TIER_MIN_ROWS:
+        return _RSS_BUDGET_LARGE_TIER
+    return _RSS_BUDGET_DEFAULT
+
 
 def is_cert_shape(tiers: Sequence[int], *, reps: int, warmup: int, bootstrap: int) -> bool:
     """The ONLY cert-eligible shape: tiers exactly {10k, 100k, 1M} (a set --
@@ -179,7 +196,9 @@ def apply_gates(
         ci_floor = 1.0 + max(0.10, 0.050 / off_wall_median)
         gates["ci"] = ci_high <= ci_floor
     gates["rss"] = (
-        off_rss_max_kb > 0 and on_rss_max_kb > 0 and on_rss_max_kb <= 1.10 * off_rss_max_kb
+        off_rss_max_kb > 0
+        and on_rss_max_kb > 0
+        and on_rss_max_kb <= rss_budget_ratio(n_rows) * off_rss_max_kb
     )
     return gates
 

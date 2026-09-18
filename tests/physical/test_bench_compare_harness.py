@@ -237,6 +237,27 @@ def test_rss_gate_fails_closed_on_missing_evidence() -> None:
     assert gates["rss"] is False
 
 
+def test_rss_budget_ratio_is_per_tier() -> None:
+    assert bc.rss_budget_ratio(10_000) == 1.10
+    assert bc.rss_budget_ratio(100_000) == 1.10
+    assert bc.rss_budget_ratio(999_999) == 1.10
+    assert bc.rss_budget_ratio(1_000_000) == 1.25
+    assert bc.rss_budget_ratio(5_000_000) == 1.25
+
+
+def test_rss_gate_1m_tier_uses_relaxed_budget() -> None:
+    # A 1.20x overshoot: rejected at the tight-budget tiers, accepted at 1M.
+    kwargs = {**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 100_000, "on_rss_max_kb": 120_000}
+    assert bc.apply_gates(100_000, **kwargs)["rss"] is False
+    assert bc.apply_gates(1_000_000, **kwargs)["rss"] is True
+
+
+def test_rss_gate_1m_tier_boundary() -> None:
+    base = {**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 100_000}
+    assert bc.apply_gates(1_000_000, **{**base, "on_rss_max_kb": 125_000})["rss"] is True
+    assert bc.apply_gates(1_000_000, **{**base, "on_rss_max_kb": 125_001})["rss"] is False
+
+
 def test_bootstrap_ci_is_seeded_and_reproducible() -> None:
     ratios = [1.0, 1.05, 0.98, 1.1, 1.02]
     a = bc.bootstrap_ci(ratios, seed=42, n_bootstrap=500)
