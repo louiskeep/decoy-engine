@@ -1,18 +1,14 @@
 # PLAN — Remove the dormant Polars MASKING adapter (keep Polars for subsetting)
 
-Status: plan (rev2) — PARKED 2026-09-18 pending Cam. Two Codex plan-gate rounds showed this is NOT a
-bounded dormant-code delete: the dormant masking adapter is woven into a whole V2 benchmark subsystem
-(`scripts/run_engine_v2_baseline.py` + `scripts/compare_baselines.py` + `.github/workflows/
-benchmark.yml` + two perf tests + a committed JSON baseline fixture + `docs/v2/perf/engine-v2-
-baseline-report.md`), the generated capability matrix (`scripts/gen_capability_matrix.py` +
-`docs/capability-matrix.md` + its sentry), mutation ledgers (`docs/quality/mutation-ledgers/
-execution_when_gate.md`, `execution_chunked.md`), ~25 test files, and platform architecture docs.
-ONE product decision is needed before build: retire the V2 baseline benchmark harness, or convert it
-to a pandas-only baseline? (A safe default is convert-to-pandas-only, but the harness's ongoing value
-is Cam's call.) Parked here — the plan + reference map are ready to resume; the remaining round-2
-findings (test_when_gate_mutation_kills.py import, the full benchmark-consumer list, 2 more guard
-tests, the mutation ledgers + 3 stale tests) are enumerated in the gate output. Not urgent (Phase 6
-cleanup). Author: Opus. Roadmap: Stage C item 13 (Phase 6 Polars decision). Cam-decided
+Status: plan (rev3) — UNPARKED 2026-09-20. The one product decision that parked it is RESOLVED:
+**Cam decided RETIRE the V2 baseline benchmark harness** (2026-09-20). Rationale (Cam's framing): the
+V2 harness's "correctness" is cross-substrate parity (pandas==polars); once the polars masking adapter
+is deleted there is no second substrate to compare against, so the check is moot, and the shipped
+(pandas/native) path's correctness is already covered by the golden-gate test-flight + property/
+mutation + acceptance suites. So D7b = RETIRE (delete the harness + its CI + fixtures + report),
+preserving the historical baseline JSON + report as a dated `record` for evidence. This resolves the
+V2-harness entanglement behind the two prior Codex NO-GOs. Ready to re-gate + build. Roadmap: Stage C
+item 13 (later than Stage A/B in the master order — sequence with Cam). Author: Opus. Cam-decided
 2026-09-18: keep Polars for subsetting, delete the dormant Polars masking adapter. Pre-GA hard-delete
 is in force (`release.py` pre-ga; engine CLAUDE.md "Pre-GA = hard delete"). `substrate` /
 `DECOY_SUBSTRATE` / `VALID_SUBSTRATES` is NOT a frozen surface (not in `docs/compatibility-
@@ -150,10 +146,14 @@ entry in the SAME change. Re-check any other allowlisted file this touches.
     drop the polars parametrization / rewrite pandas-only, preserving any pandas assertion.
   Do a fresh repo-wide sweep for `from decoy_engine.execution.polars` and `PolarsExecutionAdapter`
   and `polars_native` before building, and treat every hit as delete/edit-or-break.
-- **D7b — benchmark tool [HIGH].** `scripts/run_engine_v2_baseline.py` is a two-substrate parity/
-  performance harness. Do NOT just drop the import (leaves an invalid result schema + broken gates).
-  Either RETIRE the script (delete it + any reference/docs) or convert it to a pandas-only baseline
-  with its JSON schema + docstring updated. Prefer retire unless something still consumes its output.
+- **D7b — benchmark tool [HIGH]. DECIDED: RETIRE (Cam 2026-09-20).** `scripts/run_engine_v2_baseline.py`
+  + `scripts/compare_baselines.py` are a two-substrate parity/performance harness whose correctness
+  dimension IS pandas==polars parity — moot once polars masking is gone. RETIRE: delete both scripts,
+  the `.github/workflows/benchmark.yml` V2/polars job, the two perf tests, the committed baseline JSON
+  fixture, and `docs/v2/perf/engine-v2-baseline-report.md`. PRESERVE the historical baseline JSON +
+  report by moving them to a dated `record`-status location (evidence), not deleting the evidence.
+  Sweep for any remaining consumer of the harness output before deleting. (Shipped-path correctness is
+  covered by test-flight + property/mutation + acceptance — no coverage lost.)
 - **D7c — generated capability matrix [HIGH].** `scripts/gen_capability_matrix.py:40` silently
   catches the missing polars registry and would emit "no" for every acceleration row; the checked-in
   `docs/capability-matrix.md` goes stale. Remove the polars-registry/acceleration-column logic if it
@@ -178,7 +178,94 @@ entry in the SAME change. Re-check any other allowlisted file this touches.
   `_run_both` in `test_code_set_cross_substrate_evidence.py` to pandas-only keeping hole-#1 evidence;
   pandas masking output is unchanged (golden/test-flight is the proof); keep `polars>=1.0,<2.0`.
 
+## Rev3 remediations (Codex plan-gate round 3, 2026-09-20)
+
+The RETIRE decision cleared the product blocker; round 3 surfaced that the adapter is woven wider
+than rev2 enumerated. FULL consumer map (from a repo-wide sweep of `from decoy_engine.execution.polars`
+/ `PolarsExecutionAdapter` / `polars_native` / `POLARS_SCALAR_HANDLERS` / `translate_polars_rejection`):
+
+- **BLOCKER — 22 test files import the adapter (test collection breaks if unhandled).** Full list:
+  `tests/unit/execution/`: `test_polars_adapter.py`, `test_bucket_perturb_chunked.py`,
+  `test_text_mask_chunked.py`, `test_group_key_chunked.py`, `test_code_set_chunked.py`,
+  `test_dgrn_windowed_date.py`, `test_nested_strategy.py`, `test_auto_chunk_routing.py`,
+  `test_chunked_mutation_kills.py`, `test_de10_chunked_fk_passthrough.py`,
+  `test_code_set_cross_substrate_evidence.py`, `test_run_pipeline_substrate.py`,
+  `test_execution_planner.py`, `test_planner_mutation_kills.py`; `tests/unit/test_de02_keyprovider.py`;
+  `tests/integration/`: `test_row_errors_e2e.py`, `test_when_gate_row_error_leak.py`;
+  `tests/parity/`: `test_polars`-only `test_strategy_substrate_parity.py`,
+  `test_composite_substrate_parity.py`, `test_chunked_substrate_parity.py`;
+  `tests/physical/`: `test_characterization_full_frame.py`, `test_compiler_reasons.py`.
+  Per file: DELETE the adapter-only ones (`test_polars_adapter.py`, `test_strategy_substrate_parity.py`,
+  `test_composite_substrate_parity.py`); for the rest, drop the polars parametrization/import and
+  PRESERVE any pandas assertion (relocate a sole-exerciser pandas case first — the chunked-substrate
+  byte-parity is duplicated in `test_chunked.py`, verify before deleting). ACCEPTANCE: a zero-live-hit
+  sweep for those symbols across `src/`+`tests/`+`scripts/` (historical `docs/` records excluded).
+
+- **HIGH — D6b guard coverage must include ALL retained fail-closed guards.** Beyond native-route /
+  unified-slice-admission / pipeline-routing, add synthetic-`"future_substrate"` unit coverage for
+  `_planner._chunked_rejection`'s non-pandas guard AND both `_shadow_full_frame._require_admitted_substrate`
+  checks (:259 compiled `table.substrate != "pandas"`, and the injected `adapter_name` check), each
+  asserting the existing decline; SEPARATELY assert public `substrate="polars"` + `DECOY_SUBSTRATE=polars`
+  raise `invalid_substrate`.
+
+- **Source deleted-path references (data/docstrings, not imports):** update
+  `execution/native/_determinism_protocol.py` (`mirror_call_sites` tuples naming `execution/polars/
+  _strategies/*` at :135,:153,:179,:197 — drop or re-point the polars mirror sites),
+  `plan/_checks_categorical.py:9` + `plan/_checks_truncate.py:10` (docstrings naming the deleted
+  polars strategy files — trim to pandas).
+
+- **Active CI doc:** `docs/ci-regression-gate.md:17` still lists `tests/parity/` pandas-vs-polars
+  parity + the substrate/parity workflows as required — update to pandas-only.
+
+- **D7b RETIRE consumer sweep:** account for `docs/ci-regression-gate.md` and the historical report
+  reference in `scripts/fk_memory_probe.py:1` (re-point it to the final dated-record location).
+
+- **Dated-record destination (define + link before moving):** move the historical V2 baseline JSON +
+  `docs/v2/perf/engine-v2-baseline-report.md` to `docs/product/release-1-validation-runs/2026-05-28-engine-v2-baseline/`
+  (Status: record), and update every link (fk_memory_probe.py, ci-regression-gate.md, any plan doc).
+
+- **Scope reality (for Cam):** this is a ~30+-file sprawling cleanup (22 test files + src data refs +
+  guards + V2 harness retire + capability-matrix regen + platform-doc PR), and Codex found more
+  consumers on each of 3 rounds. Bounded + mechanical, but LARGE. Recommend executing it as a fresh
+  focused pass (own branch `feat/polars-masking-removal`, already started) rather than tail-of-marathon.
+
+## Rev3 remediations (Codex plan-gate round 4, 2026-09-20) + APPROACH REFRAME
+
+Round 4 found STILL more consumers (4th round running, each finds new references) — the guard
+coverage (D6b) is now confirmed complete, but the reference map is not closeable by upfront
+enumeration. Newly found:
+- **BLOCKER:** `tests/unit/execution/test_when_gate_mutation_kills.py:27` imports the deleted
+  `run_with_when_gate_polars` (D3) — add to the D6 handle list (drop the polars case).
+- `src/decoy_engine/execution/_strategies/_top_code.py:355` docstring names `run_with_when_gate_polars`.
+- `tests/sentry/test_physical_seam_disconnection.py:86` names the deleted adapter path in its
+  allowed-import set (like the 4.7 fix — update the allowlist).
+- `docs/acceptance-test-flight.md:283` directs readers to cross-substrate parity + the substrate
+  matrix workflow (update to pandas-only).
+- `docs/native/draw-site-inventory.md:116,207,212` name deleted polars strategy paths.
+- Mutation ledgers `execution_when_gate.md:5`, `execution_chunked.md:94`, `execution_planner.md:5`
+  need an explicit archive/update decision (mark the polars-adapter mutants historical).
+
+**APPROACH REFRAME (why to stop upfront-gating and build iteratively):** four adversarial plan-gate
+rounds each surfaced more scattered references (docstrings, ledgers, doc pages, sentry lists, test
+imports across the whole suite). The polars masking adapter is broad-but-shallow: not architecturally
+risky, just referenced in many places. A perfect upfront map is a treadmill. The correct completeness
+gate is the BUILD's iterative loop, not another plan-gate round:
+  1. `rm -r execution/polars/` + fix the 3 unguarded src imports (D2) so the package imports.
+  2. Repeatedly: run the full suite (chunked, since local OOMs) + the removal sweep + all sentries;
+     fix every import error / stale reference / allowlist / doc they surface; repeat until the
+     zero-live-hit sweep is clean AND suite+sentries+ruff+mypy are green.
+  3. Then dennis + Codex FINAL review the actual diff (where a scattered-reference miss shows up as
+     a real failure, not a plan-review guess) + full CI (both substrates).
+The plan's DELETE/EDIT/KEEP map (D1-D7) + this rev3 consumer list are the STARTING point; the sweep
+closes the tail. This is the method that worked for Task 4.7 (sweep + import-probe + suite caught the
+consumers the plan review could not fully pre-enumerate).
+
+**RECOMMENDATION (Cam):** this is a ~35-file sprawling cleanup best executed as a dedicated fresh pass
+using the iterative method above, NOT at the tail of a long multi-merge session. The plan + full known
+map are ready on branch `feat/polars-masking-removal`.
+
 ## Gates
-FRAME (done) → PLAN rev2 (this) → Codex plan-gate re-run → build (Sonnet from this plan, or Opus; large mechanical
-deletion, full suite is the safety net) → SELF-CHECK → VERIFY → dennis → Codex FINAL → merge
-(Cam-authorized in the autonomous run; Slack milestone).
+FRAME (done) → PLAN rev3 (this) → build via the ITERATIVE sweep-driven loop above (Opus; the full
+suite + removal sweep + sentries are the completeness gate, not further plan-gating) → SELF-CHECK →
+VERIFY → dennis → Codex FINAL → CI (both substrates) → merge (Cam-authorized as the next unit; Slack
+milestone). Platform-doc update is a separate off-main worktree PR.
