@@ -124,7 +124,6 @@ def cheap_admission(
     *,
     route: str,
     route_chunked: bool,
-    native_route_enabled: bool,
     resolved_substrate: str,
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
@@ -140,7 +139,7 @@ def cheap_admission(
     the native lane's own `(None, None)` contract at this same call tier
     (the coded reason is a nice-to-have for a future telemetry pass, not a
     D9 requirement, so it is not threaded through here)."""
-    if route != "full_frame" or route_chunked or native_route_enabled:
+    if route != "full_frame" or route_chunked:
         return None
     if resolved_substrate != "pandas":
         # D3: this lane returns a result identical to the PANDAS full-frame

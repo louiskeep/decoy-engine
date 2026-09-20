@@ -4,8 +4,8 @@
 production module's source imports `execution.physical`. This file proves it
 DYNAMICALLY: every driver adapter's `run` is patched to raise if ever called,
 then a representative `run_pipeline` invocation is forced down each of the
-six drivers (full_frame, sequential, chunked, native_stream, out_of_core,
-synthesis+mask). None of the patched methods fire -- if the production seam
+five drivers (full_frame, sequential, chunked, out_of_core, synthesis+mask).
+None of the patched methods fire -- if the production seam
 were ever wired in (Task 4.5+ done by accident today), one of these would
 explode instead of silently passing.
 """
@@ -25,13 +25,11 @@ from decoy_engine.execution.physical.drivers import (
     FullFrameAdapter,
     MaskPipelineChunkedAdapter,
     NativeOrOracleChunkedAdapter,
-    NativeStreamAdapter,
     OutOfCoreAdapter,
     ResidentChunkedAggregatorAdapter,
     SequentialAdapter,
     SynthesisStageAdapter,
 )
-from decoy_engine.profile._readers import LazySource
 
 
 class _SeamInvokedInProductionError(AssertionError):
@@ -52,7 +50,6 @@ def _arm_bomb_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
         MaskPipelineChunkedAdapter,
         NativeOrOracleChunkedAdapter,
         ResidentChunkedAggregatorAdapter,
-        NativeStreamAdapter,
         OutOfCoreAdapter,
         SynthesisStageAdapter,
     ):
@@ -166,31 +163,6 @@ def test_chunked_route_never_invokes_the_seam(tmp_path: Path) -> None:
         chunk_size_rows=3,
     )
     assert result.outputs["t"].num_rows == 10
-
-
-def test_native_stream_route_never_invokes_the_seam(tmp_path: Path) -> None:
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "note", "strategy": "redact"}]}],
-        }
-    ).model_dump()
-
-    result = run_pipeline(
-        config,
-        {"t": LazySource(path=path)},
-        engine_version="bomb-test",
-        native_route_enabled=True,
-        execution_mode="auto",
-    )
-    assert result.native_route is not None and result.native_route.admitted is True
 
 
 def test_out_of_core_route_never_invokes_the_seam(tmp_path: Path) -> None:

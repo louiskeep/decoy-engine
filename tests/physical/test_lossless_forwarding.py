@@ -9,8 +9,8 @@ adapter's caller passed (by identity for at least one mutable argument),
 proving no massaging happens on the way in either.
 
 This is the D3 "lossless forwarding" sentinel the plan calls for, done once
-per adapter surface (8 total: full_frame, sequential, the 3 chunked surfaces,
-native_stream, out_of_core, synthesis).
+per adapter surface (7 total: full_frame, sequential, the 3 chunked surfaces,
+out_of_core, synthesis).
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from decoy_engine.execution.physical.drivers import (
     FullFrameAdapter,
     MaskPipelineChunkedAdapter,
     NativeOrOracleChunkedAdapter,
-    NativeStreamAdapter,
     OutOfCoreAdapter,
     ResidentChunkedAggregatorAdapter,
     SequentialAdapter,
@@ -177,74 +176,6 @@ def test_resident_chunked_aggregator_forwards_result_unchanged(
 
     assert result is sentinel
     assert calls[0]["source"] is source_marker
-
-
-def test_native_stream_adapter_forwards_result_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
-    sentinel_result = _Sentinel()
-    sentinel_report = _Sentinel()
-    calls: list[dict[str, Any]] = []
-
-    def _stub(**kwargs: Any) -> Any:
-        calls.append(kwargs)
-        return (sentinel_result, sentinel_report)
-
-    monkeypatch.setattr(
-        "decoy_engine.execution.physical.drivers._native_stream.try_native_route", _stub
-    )
-    adapter = NativeStreamAdapter()
-    plan_marker = object()
-
-    result, report = adapter.run(
-        config={"cfg": 1},
-        plan=plan_marker,
-        table_kinds={"t": "mask"},
-        caller_sources={},
-        source_loader=None,
-        sink=None,
-        fidelity_report=False,
-        execution_mode="auto",
-        graph=object(),  # type: ignore[arg-type]
-    )
-
-    assert result is sentinel_result
-    assert report is sentinel_report
-    assert calls[0]["plan"] is plan_marker
-    # The pinned module default for `batch_rows` must not be overridden by a
-    # `None` the caller never asked to change (see the adapter's conditional
-    # forwarding).
-    assert "batch_rows" not in calls[0]
-
-
-def test_native_stream_adapter_forwards_declined_none_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The native lane's decline shape `(None, report)` is a first-class,
-    non-error outcome (plan C1); the adapter must forward it verbatim, not
-    treat it as a missing/incomplete result."""
-    sentinel_report = _Sentinel()
-
-    def _stub(**kwargs: Any) -> Any:
-        return (None, sentinel_report)
-
-    monkeypatch.setattr(
-        "decoy_engine.execution.physical.drivers._native_stream.try_native_route", _stub
-    )
-    adapter = NativeStreamAdapter()
-
-    result, report = adapter.run(
-        config={},
-        plan=object(),
-        table_kinds={},
-        caller_sources={},
-        source_loader=None,
-        sink=None,
-        fidelity_report=False,
-        execution_mode="auto",
-        graph=object(),  # type: ignore[arg-type]
-    )
-
-    assert result is None
-    assert report is sentinel_report
 
 
 def test_out_of_core_adapter_forwards_result_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -46,7 +46,6 @@ def _cheap_ok(config, profile, source, **overrides):
     kwargs = dict(
         route="full_frame",
         route_chunked=False,
-        native_route_enabled=False,
         resolved_substrate="pandas",
         sink=None,
         source_loader=None,
@@ -84,13 +83,6 @@ def test_cheap_admission_declines_when_chunked(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source, route_chunked=True) is None
 
 
-def test_cheap_admission_declines_when_native_route_enabled(tmp_path: Path) -> None:
-    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
-    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
-    profile, _ = _profile_and_plan(config, source)
-    assert _cheap_ok(config, profile, source, native_route_enabled=True) is None
-
-
 def test_cheap_admission_declines_non_pandas_substrate(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
@@ -120,14 +112,13 @@ def test_cheap_admission_admits_inert_sink_on_full_frame(tmp_path: Path) -> None
 
 def test_cheap_admission_still_declines_sink_on_non_full_frame(tmp_path: Path) -> None:
     # The route check, not the sink, is what guards streaming: a sink present
-    # together with a non-full-frame route (or chunked, or native) still declines,
+    # together with a non-full-frame route (or chunked) still declines,
     # because the streaming/OOC route is the only one that writes the sink.
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
     assert _cheap_ok(config, profile, source, sink=object(), route="sequential") is None
     assert _cheap_ok(config, profile, source, sink=object(), route_chunked=True) is None
-    assert _cheap_ok(config, profile, source, sink=object(), native_route_enabled=True) is None
 
 
 def test_cheap_admission_declines_source_loader_present(tmp_path: Path) -> None:
@@ -447,7 +438,6 @@ def _compile(config: dict, profile, plan, source: pa.Table):
         full_frame_reject_rows=7_500_000,
         use_byte_estimate_routing=True,
         use_probe_routing=True,
-        native_route_enabled=False,
         fpe_chunk_count=4,
         max_workers=4,
         fallback_to_pandas=True,

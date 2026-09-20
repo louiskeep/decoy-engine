@@ -3,10 +3,10 @@
 For each fixture, this asserts `compile_physical_plan`'s driver selection
 matches what `run_pipeline` would ACTUALLY dispatch to, without ever letting
 `run_pipeline` mask a single row: `_live_dispatched_driver` monkeypatches the
-five real dispatch boundaries (`run_sequential_route`, `run_out_of_core_
-route`, `_run_native_streaming`, `run_mask_chunked`,
-`PandasExecutionAdapter.run`) to raise a marker naming which one was
-reached, then runs the REAL `run_pipeline` and catches the marker. Everything
+four real dispatch boundaries (`run_sequential_route`, `run_out_of_core_
+route`, `run_mask_chunked`, `PandasExecutionAdapter.run`) to raise a marker
+naming which one was reached, then runs the REAL `run_pipeline` and catches
+the marker. Everything
 upstream of that boundary -- `decide_execution_route`, `classify_job`,
 `static_candidacy`, `classify_and_preflight`, `peek_and_admit` -- runs
 UNCHANGED, for real, exactly as `run_pipeline` runs it; only the moment
@@ -46,10 +46,7 @@ from decoy_engine.execution.physical import (
     compile_physical_plan,
 )
 from decoy_engine.execution.physical._plan import PhysicalTable, RejectedAlternative
-from decoy_engine.execution.physical._reasons import (
-    FORCED_MODE_BRANCH_IDENTITIES,
-    native_reason_code_family,
-)
+from decoy_engine.execution.physical._reasons import FORCED_MODE_BRANCH_IDENTITIES
 from decoy_engine.profile._readers import LazySource
 
 
@@ -77,10 +74,6 @@ def _patched_dispatch(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(
         "decoy_engine.execution._pipeline_route_exec.run_out_of_core_route",
         _bomb(DriverId.OUT_OF_CORE.value),
-    )
-    monkeypatch.setattr(
-        "decoy_engine.execution._native_route_exec._run_native_streaming",
-        _bomb(DriverId.NATIVE_STREAM.value),
     )
     monkeypatch.setattr(
         "decoy_engine.execution._pipeline_route_exec.run_mask_chunked",
@@ -277,20 +270,6 @@ def _expected_relationship_alternatives(
     )
 
 
-def _expected_native_alternative(inputs: Any) -> tuple[DriverId, str, bool]:
-    """Repackaging check ONLY: `inputs.native_admission` is an already-
-    captured REAL fact (the live `static_candidacy` -> `classify_and_
-    preflight` -> `peek_and_admit` chain ran once at capture time), so this
-    asserts the compiler packaged it correctly, not that the fact itself is
-    correct (that is `NativeAdmissionFact`'s own construction, exercised by
-    `capture_native_admission_fact` directly)."""
-    applies = inputs.native_route_enabled and inputs.has_mask_table
-    if not applies:
-        return (DriverId.NATIVE_STREAM, "native_route_disabled_or_no_mask_table", False)
-    admission = inputs.native_admission
-    return (DriverId.NATIVE_STREAM, admission.reason or "native_admission_declined", True)
-
-
 def _expected_chunked_alternative(inputs: Any) -> tuple[DriverId, str, bool]:
     """Recomputes `classify_job` -- the SAME live function `_compiler.
     layer2_chunk_decision` calls -- a second, independent time."""
@@ -346,22 +325,18 @@ def _assert_reason_and_alternatives_match_live(inputs: Any, table: PhysicalTable
         assert table.rejected_alternatives == ()
         return
 
-    # route == "full_frame": narrow among native_stream / chunked / full_frame,
-    # exactly mirroring `select_driver`'s own precedence.
+    # route == "full_frame": narrow among chunked / full_frame, exactly
+    # mirroring `select_driver`'s own precedence.
     assert route == "full_frame"
-    native_alt = _expected_native_alternative(inputs)
     chunked_alt = _expected_chunked_alternative(inputs)
 
-    if table.driver == DriverId.NATIVE_STREAM:
-        assert table.driver_reason == _reasons.DRIVER_REASON_NATIVE_ADMITTED
-        expected = (*expected_relationship_alts, chunked_alt)
-    elif table.driver == DriverId.CHUNKED:
+    if table.driver == DriverId.CHUNKED:
         assert table.driver_reason == _reasons.DRIVER_REASON_CHUNKED_ADMITTED
-        expected = (*expected_relationship_alts, native_alt)
+        expected = expected_relationship_alts
     else:
         assert table.driver == DriverId.FULL_FRAME
         assert table.driver_reason == route_reason
-        expected = (*expected_relationship_alts, native_alt, chunked_alt)
+        expected = (*expected_relationship_alts, chunked_alt)
 
     actual = tuple((alt.driver, alt.reason, alt.attempted) for alt in table.rejected_alternatives)
     assert actual == expected, (
@@ -507,111 +482,7 @@ def test_chunked_declined_below_threshold(tmp_path: Path, monkeypatch: pytest.Mo
     )
 
 
-def test_native_stream_admitted_utf8_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = _single_table_config(tmp_path, source)
-    _assert_equivalent(
-        monkeypatch,
-        config,
-        {"t": LazySource(path=path)},
-        native_route_enabled=True,
-    )
-
-
-def test_native_stream_declined_unsupported_strategy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = _single_table_config(tmp_path, source, strategy="hash")
-    config["tables"][0]["columns"][0]["namespace"] = "n"
-    _assert_equivalent(
-        monkeypatch,
-        config,
-        {"t": LazySource(path=path)},
-        native_route_enabled=True,
-    )
-
-
-def test_native_stream_declined_source_loader_present(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    config = _single_table_config(tmp_path, source)
-    _assert_equivalent(
-        monkeypatch,
-        config,
-        {"t": source},
-        native_route_enabled=True,
-        source_loader=lambda name: source,
-    )
-
-
-def test_native_stream_widened_admitted_integer_passthrough(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = pa.table({"n": pa.array([1, 2, 3], type=pa.int64())})
-    path = tmp_path / "t.parquet"
-    pq.write_table(source, path)
-    config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "n", "strategy": "passthrough"}]}],
-        }
-    ).model_dump()
-    _assert_equivalent(
-        monkeypatch,
-        config,
-        {"t": LazySource(path=path)},
-        native_route_enabled=True,
-    )
-
-
-def test_native_stream_widened_declined_null_bearing_integer_redact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = pa.table({"n": pa.array([1, None, 3], type=pa.int64())})
-    path = tmp_path / "t.parquet"
-    pq.write_table(source, path)
-    config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {
-                            "name": "n",
-                            "strategy": "truncate",
-                            "provider_config": {"length": 1},
-                        }
-                    ],
-                }
-            ],
-        }
-    ).model_dump()
-    _assert_equivalent(
-        monkeypatch,
-        config,
-        {"t": LazySource(path=path)},
-        native_route_enabled=True,
-    )
-
-
-def test_native_stream_not_enabled_falls_to_full_frame(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_lazy_source_falls_to_full_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
     path = _write(tmp_path, source, "t")
     config = _single_table_config(tmp_path, source)
@@ -966,223 +837,6 @@ def test_forced_sequential_cyclic_fk_graph(tmp_path: Path, monkeypatch: pytest.M
         must_contain="cross-table cycle",
         execution_mode="sequential",
     )
-
-
-# ---------------------------------------------------------------------------
-# Catalog-completeness audit over this corpus: every native-admission reason
-# and every translated planner-rejection code observed above must be a KNOWN
-# family / never the "unclassified_*" sentinel (D3's closing line).
-# ---------------------------------------------------------------------------
-
-
-def test_native_admission_reasons_stay_in_the_known_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """H4 #2/#3 fix. Each scenario's source key must match the table name the
-    scenario's OWN config declares -- the pre-fix `"utf8"`/`"hashcol"` keys
-    never matched `_single_table_config`'s hardcoded table `"t"`, so
-    `caller_sources.get(table)` (`_native_route.py`) always missed and both
-    scenarios stopped dead at `non_lazy_source` without ever exercising the
-    admitted-utf8 or unsupported-strategy branches they claimed to cover.
-    Each scenario now asserts it actually reaches the branch it names
-    (`static_reason` / `.reason` / `.lane`), not just that SOME reason
-    landed in a known family -- a dead fixture that always hit the same
-    branch would still pass the old family-only assertion.
-    """
-    scenarios: list[tuple[str, dict[str, Any], Any, dict[str, Any], Any]] = []
-
-    def _assert_utf8_admitted(inputs: Any) -> None:
-        admission = inputs.native_admission
-        assert admission.static_candidate is True
-        assert admission.lane == "utf8_only"
-        assert admission.admitted is True
-        assert admission.reason is None
-
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = _single_table_config(tmp_path, source)
-    scenarios.append(
-        (
-            "utf8_admitted",
-            config,
-            {"t": LazySource(path=path)},
-            {"native_route_enabled": True},
-            _assert_utf8_admitted,
-        )
-    )
-
-    def _assert_unsupported_strategy(inputs: Any) -> None:
-        admission = inputs.native_admission
-        assert admission.static_candidate is False
-        assert admission.static_reason is not None
-        assert admission.static_reason.startswith("unsupported_strategy:note:hash")
-        assert admission.reason == admission.static_reason
-
-    hash_source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    hash_path = _write(tmp_path, hash_source, "t")
-    hash_config = _single_table_config(tmp_path, hash_source, strategy="hash")
-    hash_config["tables"][0]["columns"][0]["namespace"] = "n"
-    scenarios.append(
-        (
-            "unsupported_strategy",
-            hash_config,
-            {"t": LazySource(path=hash_path)},
-            {"native_route_enabled": True},
-            _assert_unsupported_strategy,
-        )
-    )
-
-    def _assert_route_disabled(inputs: Any) -> None:
-        admission = inputs.native_admission
-        assert admission.static_candidate is False
-        assert admission.static_reason == "native_route_disabled_or_no_mask_table"
-
-    scenarios.append(
-        ("route_disabled", config, {"t": source}, {}, _assert_route_disabled)
-    )  # native_route_enabled=False by default
-
-    def _assert_redact_with_not_string(inputs: Any) -> None:
-        admission = inputs.native_admission
-        assert admission.static_candidate is False
-        assert admission.static_reason == "redact_with_not_string:note"
-
-    redact_source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    redact_path = _write(tmp_path, redact_source, "t")
-    redact_config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(redact_path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [
-                {
-                    "name": "t",
-                    "columns": [
-                        {
-                            "name": "note",
-                            "strategy": "redact",
-                            "provider_config": {"redact_with": 123},
-                        }
-                    ],
-                }
-            ],
-        }
-    ).model_dump()
-    scenarios.append(
-        (
-            "redact_with_not_string",
-            redact_config,
-            {"t": LazySource(path=redact_path)},
-            {"native_route_enabled": True},
-            _assert_redact_with_not_string,
-        )
-    )
-
-    for name, cfg, srcs, kwargs, assert_branch in scenarios:
-        inputs = capture_physical_plan_inputs(cfg, srcs, engine_version="d4-catalog", **kwargs)
-        assert_branch(inputs)
-        admission = inputs.native_admission
-        if admission.reason is not None:
-            family = native_reason_code_family(admission.reason)
-            assert family != "unknown", (
-                f"scenario {name!r}: uncatalogued native-admission reason: {admission.reason!r}"
-            )
-
-
-def test_native_admission_catalog_is_bidirectional() -> None:
-    """H4 #3's bidirectional close (Codex final-gate MEDIUM): the catalog must
-    equal the reviewed set of REACHABLE native-admission prefixes EXACTLY --
-    not merely contain the four this remediation added. A membership-only
-    check let a dead prefix injected into `NATIVE_STATIC_CODE_PREFIXES` pass
-    the audit; full set equality rejects an extra (dead) entry AND a missing
-    (uncatalogued-reachable) one. The two expected sets below are enumerated
-    directly from the live producers -- `static_candidacy` /
-    `redact_config_rejection` / `truncate_config_rejection`
-    (`_native_route.py`, `native/_requirements.py`) for STATIC, and
-    `classify_and_preflight` / `peek_and_admit` (`_native_route_preflight.py`)
-    for SCAN -- so any catalog change must be mirrored here, forcing a review
-    that a new prefix is genuinely reachable (and in the right family).
-    """
-    from decoy_engine.execution.physical._reasons import (
-        NATIVE_DETAIL_SUFFIXES,
-        NATIVE_RUNTIME_ERROR_CODES,
-        NATIVE_SCAN_CODE_PREFIXES,
-        NATIVE_STATIC_CODE_PREFIXES,
-    )
-
-    expected_static = frozenset(
-        {
-            "execution_mode_not_auto",
-            "non_pandas_substrate",
-            "generation_table_present",
-            "multi_table_job",
-            "fk_relationship_present",
-            "source_loader_present",
-            "non_lazy_source",
-            "fidelity_report_requested",
-            "validators_present",
-            "quarantine_configured",
-            "unsupported_sink",
-            "no_columns_configured",
-            "invalid_column_config",
-            "vault_column",
-            "unsupported_strategy",
-            "native_route_disabled_or_no_mask_table",
-            "redact_with_not_string",
-            "truncate_length_invalid",
-            "truncate_keep_invalid",
-            "truncate_mask_char_invalid",
-        }
-    )
-    # ONLY the reasons the preflight RETURNS as an admission verdict (`reason=`
-    # on a RouteAdmission / NativeBatchAdmission). Codes that raise, or are
-    # produced only during execution, or are nested detail suffixes are NOT
-    # admission reasons and are audited separately below.
-    expected_scan = frozenset(
-        {
-            "zero_row_source",
-            "unsupported_projection",
-            "non_utf8_column",
-            "native_preflight_schema_drift",
-            "native_preflight_reroute",
-        }
-    )
-    assert expected_static == NATIVE_STATIC_CODE_PREFIXES
-    assert expected_scan == NATIVE_SCAN_CODE_PREFIXES
-    # The two admission families must stay disjoint, or a prefix's family is
-    # ambiguous.
-    assert not (NATIVE_STATIC_CODE_PREFIXES & NATIVE_SCAN_CODE_PREFIXES)
-    # Runtime-error and detail codes are NOT admission reasons and must never
-    # leak into the admission catalog (that was the membership-only audit's
-    # gap: it accepted a set padded with non-admission codes). They classify as
-    # "unknown" on their own -- correct, since they are not admission verdicts.
-    assert not (
-        NATIVE_RUNTIME_ERROR_CODES & (NATIVE_STATIC_CODE_PREFIXES | NATIVE_SCAN_CODE_PREFIXES)
-    )
-    assert not (NATIVE_DETAIL_SUFFIXES & (NATIVE_STATIC_CODE_PREFIXES | NATIVE_SCAN_CODE_PREFIXES))
-    for runtime_code in NATIVE_RUNTIME_ERROR_CODES:
-        assert native_reason_code_family(runtime_code) == "unknown"
-    # A real captured schema-drift reason carrying a `columns_changed` /
-    # `type_changed` detail tail still resolves to "scan" via its top-level
-    # prefix, so the detail codes need no catalog entry of their own.
-    assert (
-        native_reason_code_family("native_preflight_schema_drift:columns_changed:missing=[x]")
-        == "scan"
-    )
-    assert (
-        native_reason_code_family("native_preflight_schema_drift:type_changed:c:int->str") == "scan"
-    )
-    # The four codes this remediation added resolve to STATIC (spot-check the
-    # classifier, not just set membership).
-    for code in (
-        "redact_with_not_string",
-        "truncate_length_invalid",
-        "truncate_keep_invalid",
-        "truncate_mask_char_invalid",
-    ):
-        assert native_reason_code_family(f"{code}:note") == "static"
 
 
 def test_forced_mode_branch_identities_are_all_named() -> None:

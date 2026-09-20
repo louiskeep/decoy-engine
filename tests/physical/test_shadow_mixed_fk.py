@@ -330,7 +330,6 @@ def _run_oracle_raises(config: dict[str, Any], sources: dict[str, pa.Table]) -> 
             engine_version=ENGINE_VERSION,
             substrate="pandas",
             execution_mode="full_frame",
-            native_route_enabled=False,
             key_provider=None,
             sink=None,
         )
@@ -680,7 +679,6 @@ def test_run_pipeline_fk_output_pinned_after_fk_resolve_extraction(tmp_path: Pat
         engine_version=ENGINE_VERSION,
         substrate="pandas",
         execution_mode="full_frame",
-        native_route_enabled=False,
         key_provider=None,
         sink=None,
     )

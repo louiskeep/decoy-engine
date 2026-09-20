@@ -79,7 +79,6 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from decoy_engine.execution import (
-    _native_route,
     _pipeline_finalize,
     _pipeline_generate_mask,
     _pipeline_routing,
@@ -170,7 +169,6 @@ def run_pipeline(
     use_probe_routing: bool = True,
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
-    native_route_enabled: bool = False,
     unified_slice_enabled: bool = True,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
@@ -250,8 +248,8 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
-    `native_route_enabled` (default False) / `unified_slice_enabled` (default True
-    since 2026-09-20; admission is the safety gate, pass False for legacy): see those lanes.
+    `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
+    gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
     `_provider_snapshot` (5a-faker) is a private, keyword-only, test/harness-
     only hook: an already-captured immutable custom-faker-provider view
@@ -305,7 +303,6 @@ def run_pipeline(
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
-    require_bool("native_route_enabled", native_route_enabled)
     require_bool("unified_slice_enabled", unified_slice_enabled)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
@@ -471,25 +468,6 @@ def run_pipeline(
             out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         )
 
-    # Q3 slice 1 native lane; see maybe_run_native_route's docstring.
-    native_result, native_route_report = _native_route.maybe_run_native_route(
-        has_mask_table=has_mask_table,
-        native_route_enabled=native_route_enabled,
-        config=config,
-        plan=plan,
-        table_kinds=table_kinds,
-        caller_sources=caller_sources,
-        source_loader=source_loader,
-        sink=sink,
-        fidelity_report=fidelity_report,
-        execution_mode=execution_mode,
-        graph=graph,
-        resolved_substrate=resolved_substrate,
-        explain_plan=explain_plan,
-        execution_plan_decision=execution_plan_decision,
-    )
-    if native_result is not None:
-        return native_result
     unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
     if unified_slice_result is not None:
         return unified_slice_result
@@ -595,5 +573,4 @@ def run_pipeline(
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=mask_row_errors,
-        native_route=native_route_report,
     )

@@ -1,7 +1,7 @@
 """The physical-execution adapter seam (Task 4.2 of the execution-consolidation
 program, docs/plans/2026-09-09-execution-consolidation-and-native-throughput.md).
 
-REPRESENTATION-ONLY, ADDITIVE. This package models today's six table drivers
+REPRESENTATION-ONLY, ADDITIVE. This package models today's five table drivers
 (docs/plans/2026-09-13-physical-plan-design.md section 4) and their node-
 operator families (section 5) as a parallel seam that Tasks 4.3 (compiler) and
 4.4 (shadow coordinator) build against. It changes NOTHING about masked output,
@@ -12,8 +12,8 @@ determinism, publication, or route selection:
     `ExecutionAdapter`, `_sequential.run_sequential`,
     `_chunked.run_mask_pipeline_chunked`, `native._dispatch.
     run_native_or_oracle_chunked`, `_pipeline_route_exec.run_mask_chunked`,
-    `_native_route_exec.try_native_route`, `out_of_core._runner.
-    run_fk_out_of_core`, `generation._plan_entry.generate_tables`) and returns
+    `out_of_core._runner.run_fk_out_of_core`,
+    `generation._plan_entry.generate_tables`) and returns
     its result UNCHANGED -- no re-aggregation, no result mutation, no
     fallback/publication ownership taken over;
   * Task 4.5 (engine production-readiness) adds a single sanctioned production
@@ -21,8 +21,8 @@ determinism, publication, or route selection:
     Parquet-table masks (strategies passthrough/redact/truncate/keyed-hash on
     resident pa.Table sources) inside `run_pipeline` to route through the
     physical plan + coordinator, returning an ExecutionResult identical to the
-    pandas path. The lane is default-OFF per-run flag; caller activation is
-    Task 4.6. Every other route/coordinator/executor module remains disconnected
+    pandas path. The lane is the default-ON per-run flag (activated Task 4.6,
+    2026-09-20). Every other route/coordinator/executor module remains disconnected
     (enforced by `tests/sentry/test_physical_seam_disconnection.py`).
 
 Package layout:
@@ -37,10 +37,9 @@ Package layout:
                        one entry per driver (design doc section 4 table).
   `_protocols`      -- the `BatchOperator` family protocols (design doc
                        section 5 / plan C2) and the `TableDriver` protocol.
-  `drivers/`        -- the six delegating adapters (plan D2).
+  `drivers/`        -- the five delegating adapters (plan D2).
   `_reasons`        -- Task 4.3 D3: the frozen decision-code catalog.
-  `_inputs`         -- Task 4.3 D1: `PhysicalPlanInputs`, the native-
-                       admission captured fact, and the OOC routing facts.
+  `_inputs`         -- Task 4.3 D1: `PhysicalPlanInputs` and the OOC routing facts.
   `_plan`           -- Task 4.3 D2 output records: `PhysicalPlan` /
                        `PhysicalTable` / `PhysicalNode` / `SynthesisStage`,
                        plus (Task 4.6 slice 1) the faker-only `PoolBinding`.
@@ -83,10 +82,8 @@ from decoy_engine.execution.physical._capabilities import CAPABILITIES, DriverCa
 from decoy_engine.execution.physical._compiler import DriverSelection, compile_physical_plan
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._inputs import (
-    NativeAdmissionFact,
     OutOfCoreRoutingFacts,
     PhysicalPlanInputs,
-    capture_native_admission_fact,
 )
 from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
 from decoy_engine.execution.physical._plan import (
@@ -138,7 +135,6 @@ __all__ = [
     "ExecutionBinding",
     "ExecutionScope",
     "KeyBinding",
-    "NativeAdmissionFact",
     "NativeScalarKeyedOperator",
     "OperatorCallEvidence",
     "OperatorFamily",
@@ -166,7 +162,6 @@ __all__ = [
     "UnifiedSliceActivation",
     "build_live_physical_plan_inputs",
     "build_unified_slice_activation",
-    "capture_native_admission_fact",
     "capture_physical_plan_inputs",
     "capture_shadow_snapshot",
     "compile_physical_plan",

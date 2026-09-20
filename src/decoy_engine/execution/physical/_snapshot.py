@@ -2,7 +2,7 @@
 running the SAME preflight sequence `run_pipeline` runs before it ever
 dispatches to a driver (`profile_source` -> `compile_plan` ->
 `build_namespace_registry`/`build_relationship_graph` -> the routing-signal
-resolvers -> the native-admission preflight chain).
+resolvers).
 
 This function is the concrete "how" behind D1's snapshot -- and the D4
 harness's way of building a real, non-synthesized input snapshot from a real
@@ -26,10 +26,8 @@ from decoy_engine.execution._planner import (
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
 from decoy_engine.execution.physical._inputs import (
-    NativeAdmissionFact,
     OutOfCoreRoutingFacts,
     PhysicalPlanInputs,
-    capture_native_admission_fact,
     deep_freeze_config,
 )
 from decoy_engine.profile._readers import LazySource
@@ -39,11 +37,6 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
 
 __all__ = ["capture_physical_plan_inputs"]
-
-# Batch size the native preflight chain streams in; matches
-# `_native_route_exec.py`'s own default so a captured fact reads the source
-# the same way production would.
-_NATIVE_BATCH_ROWS_DEFAULT = 50_000
 
 
 def _sink_class_token(sink: TransactionalSink | None) -> str:
@@ -76,7 +69,6 @@ def capture_physical_plan_inputs(
     use_byte_estimate_routing: bool = True,
     use_probe_routing: bool = True,
     out_of_core_reorder_threshold_rows: int | None = None,
-    native_route_enabled: bool = False,
     vault_writer: Any = None,
 ) -> PhysicalPlanInputs:
     """Build a `PhysicalPlanInputs` snapshot for `config`/`sources` by running
@@ -138,7 +130,6 @@ def capture_physical_plan_inputs(
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
-    require_bool("native_route_enabled", native_route_enabled)
     resolved_reorder_threshold = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
@@ -209,22 +200,6 @@ def capture_physical_plan_inputs(
     # `PhysicalPlanInputs.native_companion_reason`'s docstring for scope).
     native_companion_reason = native_companion_status().reason
 
-    native_admission: NativeAdmissionFact = capture_native_admission_fact(
-        has_mask_table=has_mask_table,
-        native_route_enabled=native_route_enabled,
-        config=config,
-        execution_mode=execution_mode,
-        table_kinds=table_kinds,
-        caller_sources=caller_sources,
-        source_loader=source_loader,
-        sink=sink,
-        fidelity_report=fidelity_report,
-        graph=graph,
-        resolved_substrate=resolved_substrate,
-        plan=plan,
-        batch_rows=_NATIVE_BATCH_ROWS_DEFAULT,
-    )
-
     out_of_core_facts = OutOfCoreRoutingFacts(
         compatible=out_of_core_compatible,
         reject_code=out_of_core_reject_code,
@@ -264,12 +239,10 @@ def capture_physical_plan_inputs(
         full_frame_reject_rows=full_frame_reject_rows,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
-        native_route_enabled=native_route_enabled,
         fpe_chunk_count=fpe_chunk_count,
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,
         out_of_core_facts=out_of_core_facts,
-        native_admission=native_admission,
         native_companion_reason=native_companion_reason,
         engine_version=engine_version,
     )

@@ -144,6 +144,12 @@ def test_isolated_worker_parquet_activates_and_matches_legacy(tmp_path) -> None:
     # The activation leaf covers the admitted node(s), each executed.
     assert leaf["nodes"], "activation evidence must cover at least one node"
     assert all(evidence["executed"] is True for evidence in leaf["nodes"].values())
+    # plan_hash is an observable identity: it must survive the worker's
+    # quality_metrics serialization (round-trips through the spawned child's
+    # result envelope) as a well-formed non-empty string. Task 4.7 removed the
+    # `native_route_enabled` hash input, which shifts plan_hash by a constant
+    # but must not drop it.
+    assert isinstance(leaf["plan_hash"], str) and leaf["plan_hash"]
     # Every other quality_metrics entry is value-identical to the legacy route:
     # the D9 parity contract (`_assert_quality_metrics_parity`) drops ONLY the
     # activation leaf and then asserts full equality, so the same holds here.

@@ -19,8 +19,7 @@ Task 4.3 (the physical-plan compiler, `_compiler.py` / `_inputs.py` /
 `_snapshot.py` / `_reasons.py` / `_plan.py`) extends this same disconnection
 proof rather than adding a parallel one: `GUARDED_MODULES` already covers
 every module the compiler's own snapshot builder (`capture_physical_plan_
-inputs`) imports from (`_pipeline_routing`, `_planner`, `_native_route`,
-`_native_route_preflight`, ...), so the existing static regex sweep and the
+inputs`) imports from (`_pipeline_routing`, `_planner`, ...), so the existing static regex sweep and the
 exact-diff gate already re-verify 4.3's disconnection unmodified. The one
 genuine addition below (`test_compile_physical_plan_is_unreachable_from_a_
 fresh_import_of_run_pipeline`) is DYNAMIC rather than static: it proves, in
@@ -74,10 +73,6 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pandas_adapter.py",
     "execution/_sequential.py",
     "execution/_chunked.py",
-    "execution/_native_route.py",
-    "execution/_native_route_exec.py",
-    "execution/_native_route_preflight.py",
-    "execution/_native_route_digest.py",
     "execution/_adapter.py",
     "execution/_substrate.py",
     "execution/_runner.py",
@@ -253,6 +248,17 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_fk_resolve.py",
         "src/decoy_engine/execution/_pandas_adapter.py",
         "src/decoy_engine/execution/_strategies/_orphan.py",
+        # Task 4.7: the superseded standalone native routing lane was deleted
+        # (it had zero production ownership -- `native_route_enabled` always
+        # defaulted False). `_adapter.py`'s diff is the removed
+        # `ExecutionResult.native_route` field; the four `_native_route*.py`
+        # files are the deleted lane itself. None is under execution/physical/,
+        # so they are permitted deletions/edits here.
+        "src/decoy_engine/execution/_adapter.py",
+        "src/decoy_engine/execution/_native_route.py",
+        "src/decoy_engine/execution/_native_route_exec.py",
+        "src/decoy_engine/execution/_native_route_preflight.py",
+        "src/decoy_engine/execution/_native_route_digest.py",
     }
     unexpected = [
         name

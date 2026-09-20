@@ -7,12 +7,12 @@ route. An inert sink (the one the platform worker always attaches) is admitted
 since it is never consumed on the full-frame route; a caller can force the legacy
 route with `unified_slice_enabled=False`.
 
-Structurally parallel to the Q3 native lane (`_native_route.py`): a per-run flag, a conservative
-admission predicate, an early return of a complete `ExecutionResult` when admitted, `None` (this
-lane returns a single value, not a tuple -- see `maybe_run_unified_slice`'s docstring) when not.
+Shape: a per-run flag, a conservative admission predicate, and an early return of a complete
+`ExecutionResult` when admitted, `None` (a single value, not a tuple -- see
+`maybe_run_unified_slice`'s docstring) when not.
 
-D1 (CRITICAL, Codex): `_native_route.py`'s own `maybe_run_native_route` imports its executor
-BEFORE its off-check (`_native_route.py:347-353`); this module does not repeat that. Every
+D1 (CRITICAL, Codex): imports are kept local so a flag-off caller never pulls in
+`execution.physical`. Every
 function below that reaches into `decoy_engine.execution.physical` (which imports eagerly,
 `physical/__init__.py:62-97`) does so import-local, and NONE of those functions run before
 `maybe_run_unified_slice` has already confirmed the flag is on and
@@ -137,7 +137,6 @@ def _execute_admitted(
     full_frame_reject_rows: int,
     use_byte_estimate_routing: bool,
     use_probe_routing: bool,
-    native_route_enabled: bool,
     fpe_chunk_count: int,
     max_workers: int,
     fallback_to_pandas: bool,
@@ -211,7 +210,6 @@ def _execute_admitted(
             full_frame_reject_rows=full_frame_reject_rows,
             use_byte_estimate_routing=use_byte_estimate_routing,
             use_probe_routing=use_probe_routing,
-            native_route_enabled=native_route_enabled,
             fpe_chunk_count=fpe_chunk_count,
             max_workers=max_workers,
             fallback_to_pandas=fallback_to_pandas,
@@ -370,7 +368,6 @@ def _execute_admitted(
             quality_metrics=quality_metrics,
             table_kinds=dict(table_kinds),
             row_errors=_typed_row_errors(shadow_result.row_errors),
-            native_route=None,
         )
     except UnifiedSliceInvariantError:
         raise
@@ -394,7 +391,6 @@ def maybe_run_unified_slice(
     vault_writer: Any,
     route: str,
     route_chunked: bool,
-    native_route_enabled: bool,
     registry: ProviderRegistry,
     substrate: str | None,
     resolved_substrate: str,
@@ -420,14 +416,11 @@ def maybe_run_unified_slice(
     """`run_pipeline`'s single call site for the Task 4.5 unified-slice lane.
 
     Sits after both routing layers (Layer 1 relationship routing, Layer 2
-    auto-chunk) and the native lane's own early return, before
-    `resolve_resident_sources` -- structurally parallel to `_native_route.
-    maybe_run_native_route`'s own placement.
+    auto-chunk), before `resolve_resident_sources`.
 
     Returns `None` on absolutely any doubt: the flag is off, the job has no
-    mask table, or either admission stage declines. Unlike the native
-    lane's `(ExecutionResult | None, NativeRouteReport | None)`, this
-    returns a single `ExecutionResult | None` -- the unified slice does not
+    mask table, or either admission stage declines. It returns a single
+    `ExecutionResult | None` -- the unified slice does not
     add a new field to `ExecutionResult` for route evidence (D7's proof
     lives under `quality_metrics[QUALITY_METRICS_KEY]` instead, which is
     populated only on the admitted-and-executed path), so there is no
@@ -452,7 +445,6 @@ def maybe_run_unified_slice(
     candidate = _admission.cheap_admission(
         route=route,
         route_chunked=route_chunked,
-        native_route_enabled=native_route_enabled,
         resolved_substrate=resolved_substrate,
         sink=sink,
         source_loader=source_loader,
@@ -485,7 +477,6 @@ def maybe_run_unified_slice(
         full_frame_reject_rows=full_frame_reject_rows,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
-        native_route_enabled=native_route_enabled,
         fpe_chunk_count=fpe_chunk_count,
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,
@@ -527,7 +518,6 @@ _PIPELINE_LOCAL_KWARGS: Final[tuple[str, ...]] = (
     "vault_writer",
     "route",
     "route_chunked",
-    "native_route_enabled",
     "substrate",
     "resolved_substrate",
     "fpe_chunk_count",

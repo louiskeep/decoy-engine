@@ -21,7 +21,6 @@ import pyarrow as pa
 from decoy_engine.execution.physical._inputs import (
     OutOfCoreRoutingFacts,
     PhysicalPlanInputs,
-    capture_native_admission_fact,
     deep_freeze_config,
 )
 from decoy_engine.profile._readers import LazySource
@@ -35,13 +34,6 @@ if TYPE_CHECKING:
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = ["build_live_physical_plan_inputs"]
-
-# Unused on the short-circuit path this constructor's caller always takes
-# (`native_route_enabled=False` makes `capture_native_admission_fact` return
-# its sentinel on its first line, before `batch_rows` is ever read); kept as
-# an explicit named constant rather than a bare literal so a reader does not
-# mistake it for a tuned value.
-_LIVE_NATIVE_BATCH_ROWS_UNUSED = 50_000
 
 # `_sink_class_token(None)`'s own return value (`_snapshot.py`) -- the D3
 # admission predicate guarantees no sink on this lane's admitted path, so
@@ -72,7 +64,6 @@ def build_live_physical_plan_inputs(
     full_frame_reject_rows: int,
     use_byte_estimate_routing: bool,
     use_probe_routing: bool,
-    native_route_enabled: bool,
     fpe_chunk_count: int,
     max_workers: int,
     fallback_to_pandas: bool,
@@ -92,10 +83,9 @@ def build_live_physical_plan_inputs(
     unified slice's own admission predicate already proves are decision-
     inert for this shape).
 
-    Two fact families are reconstructed rather than re-computed, because the
+    One fact family is reconstructed rather than re-computed, because the
     unified-slice admission predicate (`_unified_slice.py`) already proves,
-    BEFORE this is ever called, that the job has no relationships and never
-    asked for the native lane:
+    BEFORE this is ever called, that the job has no relationships:
 
     - `out_of_core_facts`: `out_of_core_routing_signals` itself short-circuits
       to the inert `(False, None, None, True)` whenever `not (profile.
@@ -114,13 +104,6 @@ def build_live_physical_plan_inputs(
       the same value `resolve_full_frame_fits_estimate` / `resolve_probe_
       recovery` already return for the (different, but equally out-of-scope)
       "no mask table" shape.
-    - `native_admission`: `capture_native_admission_fact` itself returns its
-      `native_route_disabled_or_no_mask_table` sentinel on its very first
-      line whenever `native_route_enabled` is False -- which the admission
-      predicate already guarantees here -- so it is called directly (a true
-      no-op call, not a re-derivation) rather than hand-built, for the same
-      single-source-of-truth reason as the out-of-core signals above.
-
     `resolve_budget` / `resolve_reorder_threshold_rows` / the native
     companion probe are genuine host-config / capability reads, not job-data
     re-derivations (they never touch `caller_sources` or `config`), so they
@@ -163,22 +146,6 @@ def build_live_physical_plan_inputs(
         merge_fan_in=_MERGE_FAN_IN_DEFAULT,
     )
 
-    native_admission = capture_native_admission_fact(
-        has_mask_table=has_mask_table,
-        native_route_enabled=native_route_enabled,
-        config=config,
-        execution_mode=execution_mode,
-        table_kinds=table_kinds,
-        caller_sources=caller_sources,
-        source_loader=None,
-        sink=None,
-        fidelity_report=fidelity_report,
-        graph=graph,
-        resolved_substrate=resolved_substrate,
-        plan=plan,
-        batch_rows=_LIVE_NATIVE_BATCH_ROWS_UNUSED,
-    )
-
     return PhysicalPlanInputs(
         config=deep_freeze_config(config),
         plan=plan,
@@ -201,12 +168,10 @@ def build_live_physical_plan_inputs(
         full_frame_reject_rows=full_frame_reject_rows,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
-        native_route_enabled=native_route_enabled,
         fpe_chunk_count=fpe_chunk_count,
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,
         out_of_core_facts=out_of_core_facts,
-        native_admission=native_admission,
         native_companion_reason=native_companion_status().reason,
         engine_version=engine_version,
     )
