@@ -98,6 +98,14 @@ def live_dispatched_driver(
     propagate uncaught -- callers that expect a reject/forced-mode failure
     assert on those directly (`pytest.raises`), never on this return value.
     """
+    # This helper observes the LEGACY driver-dispatch layer (it bombs the legacy
+    # dispatch boundaries and reports which driver was reached). The unified-slice
+    # lane (default-on since 2026-09-20) bypasses that layer for an admissible
+    # shape, returning a result without ever reaching a bombed boundary -- which
+    # would read here as "no driver dispatched." Pin the legacy route so this
+    # equivalence oracle keeps testing what it means to; a caller can still
+    # override to exercise the unified lane explicitly.
+    kwargs.setdefault("unified_slice_enabled", False)
     with _patched_dispatch(monkeypatch):
         try:
             run_pipeline(config, sources, engine_version="d4-oracle", **kwargs)

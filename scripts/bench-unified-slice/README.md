@@ -1,12 +1,15 @@
-# Unified-slice benchmark (Task 4.5 D9): CERTIFIED 2026-09-18
+# Unified-slice benchmark (Task 4.5 D9): CERTIFIED 2026-09-20 (route activated)
 
 Status: the statistical comparison harness (`bench_compare.py`) is **built**,
 covered by its own fast test suite
 (`tests/physical/test_bench_compare_harness.py`), and **D9-certified** as of
-2026-09-18 on the reference host (GCE n2-standard-8): `d9_certified: true`, all
-tiers pass — 10k RSS 1.025x, 100k 1.071x, 1M 1.121x (under the per-tier band),
-wall ~3-4.3x faster. Cert artifact: `decoy-platform` `docs/product/release-1-
-validation-runs/2026-09-18-tb6-50m/`. `d9_certified` only flips true after the
+2026-09-20 on the reference host (GCE n2-standard-8), re-run on the route-
+activation commit: `d9_certified: true`, all tiers pass — 10k RSS 1.023x, 100k
+1.048x, 1M 1.094x (under the per-tier band), wall ~4.3x faster at 1M. Cert
+artifact: `decoy-platform` `docs/product/release-1-validation-runs/2026-09-20-
+d9-recert/`. (The 2026-09-18 cert under `.../2026-09-18-tb6-50m/` remains the
+per-tier RSS-budget baseline; this recert confirms the activation commit is
+unchanged on the measured lane.) `d9_certified` only flips true after the
 harness's real 10k/100k/1M sweep runs on a bench node and every gate passes
 there; that sweep is a deliberate offline invocation (multi-minute per arm),
 never a CI step.

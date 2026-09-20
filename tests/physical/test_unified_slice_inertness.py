@@ -1,11 +1,13 @@
-"""Task 4.5 D9: FLAG-OFF INERTNESS.
+"""Task 4.5 D9: FLAG-OFF INERTNESS (+ default-on activation, 2026-09-20).
 
 Poisons every new unified-slice call site (the cheap admission check, the
 dominating resident-contract check, and the full execution path) and proves
-NONE fire when `unified_slice_enabled` defaults False, then proves -- in a
+NONE fire under an explicit `unified_slice_enabled=False`, then proves -- in a
 fresh subprocess, so a hidden dynamic import cannot hide from a source-text
 sweep -- that `decoy_engine.execution.physical` is never imported on that
-path either.
+path either. Since activation (default now True), the omitted-flag case instead
+proves the lane ACTIVATES (`test_default_omitted_flag_now_activates`); explicit
+`False` stays the contractual inert opt-out.
 """
 
 from __future__ import annotations
@@ -92,19 +94,65 @@ def test_flag_off_native_companion_probe_never_fires(
     run_pipeline(config, {"t": source}, engine_version=ENGINE_VERSION, unified_slice_enabled=False)
 
 
-def test_default_omitted_flag_is_also_inert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The plan's default-OFF contract: a caller that never passes
-    `unified_slice_enabled` at all (the overwhelming majority of today's
-    callers) gets the identical inertness proof as an explicit `False`."""
+def test_default_omitted_flag_now_activates(tmp_path: Path) -> None:
+    """Route activation (2026-09-20): the default flipped to True, so a caller
+    that never passes `unified_slice_enabled` (the overwhelming majority of
+    callers, including the platform worker) now ACTIVATES the unified lane on an
+    admitted shape. The explicit-`False` inertness proofs below stay contractual.
+
+    This is the inverse of the old default-OFF contract: an omitted flag used to
+    prove inertness; it now proves activation. Output correctness is unchanged
+    (parity is covered by test_unified_slice_parity)."""
     config, source = _admissible_config_and_source(tmp_path)
 
-    def _poisoned(*args: object, **kwargs: object) -> object:
-        raise AssertionError("cheap_admission must not run when the kwarg is omitted")
+    result = run_pipeline(config, {"t": source}, engine_version=ENGINE_VERSION)
 
-    monkeypatch.setattr(_unified_slice_admission, "cheap_admission", _poisoned)
-    run_pipeline(config, {"t": source}, engine_version=ENGINE_VERSION)
+    assert result.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
+    assert _unified_slice.QUALITY_METRICS_KEY in result.quality_metrics
+    leaf = result.quality_metrics[_unified_slice.QUALITY_METRICS_KEY]
+    assert leaf["activated"] is True
+    assert leaf["nodes"], "activation evidence must cover at least one node"
+
+
+class _SpySink:
+    """Records every transactional method call. Matches the TransactionalSink
+    protocol (write / write_batches / commit / abort)."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def write(self, table: str, data: pa.Table) -> None:
+        self.calls.append("write")
+
+    def write_batches(self, table: str, batches: object, schema: object) -> None:
+        self.calls.append("write_batches")
+
+    def commit(self) -> None:
+        self.calls.append("commit")
+
+    def abort(self) -> None:
+        self.calls.append("abort")
+
+
+def test_admitted_job_never_calls_any_sink_method(tmp_path: Path) -> None:
+    """Sink inertness by METHOD (not directory emptiness): an admitted full-frame
+    job with the flag on and a real sink present must never invoke any
+    transactional method -- the outputs come back resident, staged by the caller,
+    and the sink is untouched."""
+    config, source = _admissible_config_and_source(tmp_path)
+    spy = _SpySink()
+
+    result = run_pipeline(
+        config,
+        {"t": source},
+        engine_version=ENGINE_VERSION,
+        unified_slice_enabled=True,
+        sink=spy,
+    )
+
+    assert spy.calls == [], f"admitted lane touched the sink: {spy.calls}"
+    assert _unified_slice.QUALITY_METRICS_KEY in result.quality_metrics
+    assert result.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
 
 
 _FRESH_IMPORT_PROBE = """

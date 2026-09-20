@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (unified-slice route activation, 2026-09-20)
+
+`run_pipeline`'s `unified_slice_enabled` now defaults to `True` (was `False`): the
+Task 4.5 unified-slice lane is the production default. This is a behavioral change
+for any caller of an admissible shape (a single non-FK Parquet mask table on the
+four native scalar strategies, pandas substrate, full-frame route, exact schema) --
+such a job now runs the faster physical-plan + coordinator lane and returns
+byte-identical outputs plus one added provenance key,
+`quality_metrics["unified_slice_activation"]`. Every non-admissible shape falls
+through to the unchanged legacy route; the conservative admission predicate, not the
+flag, is the safety gate. Pass `unified_slice_enabled=False` to force the legacy
+oracle route.
+
+Admission was also widened so a job carrying an inert `TransactionalSink` is no
+longer declined: on the full-frame route the sink is never consumed (its fate is
+decided by route), so the platform isolated-worker -- which always attaches a
+`ParquetTransactionalSink` -- now reaches the certified lane with no platform-side
+change. Streaming/out-of-core jobs (the only routes that write a sink) are unchanged.
+
 ### Added (GP2: pool-based faker generation, 2026-09-17)
 
 `type: faker` generate columns now auto-pool for a closed allowlist of exact-semantic

@@ -1,8 +1,11 @@
-"""Task 4.5: the unified-slice production lane -- a DEFAULT-OFF, per-run-flag route that runs one
-bounded slice (a single non-FK Parquet mask table, the four native scalar strategies, a resident
-`pa.Table` source) through the 4.3 physical plan + 4.4 shadow coordinator, returning
-`ExecutionResult(outputs= ...)` identically to the pandas full-frame route -- no sink, no caller
-change.
+"""Task 4.5: the unified-slice production lane -- the DEFAULT-ON (activated
+2026-09-20; `unified_slice_enabled=True`) per-run-flag route that runs one bounded
+slice (a single non-FK Parquet mask table, the four native scalar strategies, a
+resident `pa.Table` source) through the 4.3 physical plan + 4.4 shadow coordinator,
+returning `ExecutionResult(outputs= ...)` identically to the pandas full-frame
+route. An inert sink (the one the platform worker always attaches) is admitted
+since it is never consumed on the full-frame route; a caller can force the legacy
+route with `unified_slice_enabled=False`.
 
 Structurally parallel to the Q3 native lane (`_native_route.py`): a per-run flag, a conservative
 admission predicate, an early return of a complete `ExecutionResult` when admitted, `None` (this
@@ -551,8 +554,8 @@ def run_from_pipeline_locals(local_vars: Mapping[str, Any]) -> ExecutionResult |
     """`_pipeline.py`'s actual call site for this lane (CHANGE 4, Codex
     determination): that module's module-size sentry allowlist is SHRINK-
     ONLY (`tests/sentry/test_module_size.py:14`, "update the census only by
-    shrinking, never by raising") and was already at its 645-LOC ceiling
-    before this task, so this lane's own ~30-keyword call cannot live there.
+    shrinking, never by raising") and sits just under its 600-LOC sentry cap,
+    so this lane's own ~30-keyword call cannot live there.
 
     By the time `run_pipeline` reaches its `maybe_run_unified_slice` call it
     has already bound every fact this lane needs as an ordinary local
@@ -561,12 +564,12 @@ def run_from_pipeline_locals(local_vars: Mapping[str, Any]) -> ExecutionResult |
     its own `locals()` verbatim keeps that call site itself to one line
     instead of the argument block this function now owns.
 
-    Flag-off (the default, every normal run) reads ONLY the stable
+    The explicit opt-out (`unified_slice_enabled=False`) reads ONLY the stable
     `unified_slice_enabled` run_pipeline parameter and returns before indexing
     any other local. So a future rename of one of the forwarded locals can only
-    break the opt-in flag-on path -- caught loudly by the flag-on test matrix
-    and the import-time `_assert_forwarding_covers_signature` check below -- and
-    never a default customer run.
+    break the flag-on path (now the default) -- caught loudly by the flag-on
+    test matrix and the import-time `_assert_forwarding_covers_signature` check
+    below -- and never the early opt-out return.
     """
     if not local_vars.get("unified_slice_enabled"):
         return None

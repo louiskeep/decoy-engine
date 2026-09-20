@@ -103,11 +103,31 @@ def test_cheap_admission_declines_non_pandas_substrate(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source, resolved_substrate="polars") is None
 
 
-def test_cheap_admission_declines_sink_present(tmp_path: Path) -> None:
+def test_cheap_admission_admits_inert_sink_on_full_frame(tmp_path: Path) -> None:
+    # Route activation (2026-09-20): a sink is inert on the full-frame route
+    # (both legacy and admitted paths ignore it; the sink's fate is decided by
+    # route). Since the route check above already established route=="full_frame",
+    # a golden-shape candidate carrying a sink is now ADMITTED -- this is what
+    # lets the platform worker (which always attaches a ParquetTransactionalSink)
+    # reach the certified lane.
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
-    assert _cheap_ok(config, profile, source, sink=object()) is None
+    candidate = _cheap_ok(config, profile, source, sink=object())
+    assert candidate is not None
+    assert candidate.table == "t"
+
+
+def test_cheap_admission_still_declines_sink_on_non_full_frame(tmp_path: Path) -> None:
+    # The route check, not the sink, is what guards streaming: a sink present
+    # together with a non-full-frame route (or chunked, or native) still declines,
+    # because the streaming/OOC route is the only one that writes the sink.
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source, sink=object(), route="sequential") is None
+    assert _cheap_ok(config, profile, source, sink=object(), route_chunked=True) is None
+    assert _cheap_ok(config, profile, source, sink=object(), native_route_enabled=True) is None
 
 
 def test_cheap_admission_declines_source_loader_present(tmp_path: Path) -> None:
