@@ -151,8 +151,23 @@ def cheap_admission(
         # unchanged old route. `resolved_substrate` is post-resolve_substrate,
         # so substrate=None + DECOY_SUBSTRATE=polars is caught here too.
         return None
-    if sink is not None or source_loader is not None:
+    if source_loader is not None:
+        # A source_loader signals lazy/relationship loading (a different output
+        # contract, `_isolated_worker._load_sources(lazy=True)`), outside this
+        # slice's single-resident-table scope. Still a hard decline.
         return None
+    # `sink` is intentionally NOT a decline (route activation, 2026-09-20). The
+    # first check above already established route == "full_frame" (not chunked,
+    # not native). On the full-frame route the sink is never consumed: the legacy
+    # full-frame route ignores it (`_isolated_worker.py`'s own comment;
+    # `_finalize_outputs` reads `result.outputs`), and the admitted path returns
+    # outputs in-memory identically (execution goes through `_execute_admitted`,
+    # which is never passed `sink`). The sink's fate is decided by ROUTE, not by
+    # which full-frame implementation runs, so admitting a full-frame job that
+    # carries an inert sink is behavior-preserving. The streaming/OOC route -- the
+    # only one that writes a sink -- is already declined above by the route check.
+    # This is what lets the platform worker (which always attaches a
+    # ParquetTransactionalSink) reach the certified lane.
     if fidelity_report or vault_writer is not None:
         return None
     if config.get("validators") or config.get("quarantine") or config.get("run_storm"):

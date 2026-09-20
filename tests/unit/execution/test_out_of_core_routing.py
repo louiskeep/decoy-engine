@@ -28,7 +28,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.errors import ConfigError
-from decoy_engine.execution import ParquetTransactionalSink
+from decoy_engine.execution import ParquetTransactionalSink, _unified_slice
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._pipeline_routing import decide_execution_route
@@ -404,6 +404,40 @@ class TestRunPipelineOutOfCoreDispatch:
         )
         assert streamed.outputs == {}
         assert streamed.quality_metrics["execution"]["outputs_streamed"] is True
+        for table in full.outputs:
+            sunk = pq.read_table(tmp_path / "ooc_out" / f"{table}.parquet")
+            assert sunk.to_pydict() == full.outputs[table].to_pydict(), f"{table} sink differs"
+
+    def test_streaming_sink_job_never_intercepted_by_unified_lane(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Route-safety guard (activation, 2026-09-20): even with the unified lane
+        # ON by default, a sink-writing streaming/OOC job must never reach the
+        # admitted lane. A relationship-bearing job declines admission (before the
+        # sink check), so `_execute_admitted` must not fire, and the sink is
+        # written/committed by the legacy streaming route exactly as before.
+        config = _fk_ooc_config(tmp_path)
+        sources = _sources(config)
+        full = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
+
+        def _poison(*args: object, **kwargs: object) -> object:
+            raise AssertionError("_execute_admitted must not run for a streaming sink job")
+
+        monkeypatch.setattr(_unified_slice, "_execute_admitted", _poison)
+
+        sink = ParquetTransactionalSink(tmp_path / "ooc_out")
+        streamed = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            execution_mode="out_of_core",
+            sink=sink,
+            unified_slice_enabled=True,
+        )
+
+        assert streamed.outputs == {}
+        assert streamed.quality_metrics["execution"]["outputs_streamed"] is True
+        assert "unified_slice_activation" not in streamed.quality_metrics
         for table in full.outputs:
             sunk = pq.read_table(tmp_path / "ooc_out" / f"{table}.parquet")
             assert sunk.to_pydict() == full.outputs[table].to_pydict(), f"{table} sink differs"

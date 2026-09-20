@@ -171,7 +171,7 @@ def run_pipeline(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     native_route_enabled: bool = False,
-    unified_slice_enabled: bool = False,
+    unified_slice_enabled: bool = True,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
@@ -250,8 +250,8 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
-    `native_route_enabled` / `unified_slice_enabled` (both default False): see
-    `_native_route.maybe_run_native_route` / `_unified_slice.maybe_run_unified_slice`.
+    `native_route_enabled` (default False) / `unified_slice_enabled` (default True
+    since 2026-09-20; admission is the safety gate, pass False for legacy): see those lanes.
 
     `_provider_snapshot` (5a-faker) is a private, keyword-only, test/harness-
     only hook: an already-captured immutable custom-faker-provider view
