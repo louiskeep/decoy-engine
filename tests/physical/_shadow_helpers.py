@@ -247,7 +247,6 @@ def run_shadow_and_oracle(
         auto_chunk=auto_chunk,
         chunk_size_rows=resolved_chunk_size,
         auto_chunk_threshold_rows=resolved_threshold,
-        native_route_enabled=False,
         key_provider=key_provider,
         registry=registry,
         sink=sink,

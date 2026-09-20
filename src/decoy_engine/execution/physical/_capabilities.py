@@ -99,20 +99,6 @@ CAPABILITIES: dict[DriverId, DriverCapabilities] = {
         can_own_fk_table=False,
         substrate=(Substrate.PANDAS,),
     ),
-    DriverId.NATIVE_STREAM: DriverCapabilities(
-        driver_id=DriverId.NATIVE_STREAM,
-        scope=ExecutionScope.TABLE,
-        residency=Residency.STREAM_PER_BATCH,
-        publication_modes=(
-            PublicationMode.RESIDENT_NO_SINK,
-            PublicationMode.BATCH_WRITE_COMMIT,
-        ),
-        accepts_sink=True,
-        sink_api=("transactional",),
-        hosted_operator_families=(OperatorFamily.NATIVE_SCALAR_KEYED,),
-        can_own_fk_table=False,
-        substrate=(Substrate.PANDAS,),
-    ),
     DriverId.OUT_OF_CORE: DriverCapabilities(
         driver_id=DriverId.OUT_OF_CORE,
         scope=ExecutionScope.RELATIONSHIP_JOB,

@@ -1,4 +1,4 @@
-"""The six delegating driver adapters (Task 4.2, D2).
+"""The five delegating driver adapters (Task 4.2, D2).
 
 Each adapter here forwards its call, verbatim, to the exact production entry
 point the design doc names for that driver and returns the delegate's result
@@ -19,7 +19,6 @@ from decoy_engine.execution.physical.drivers._chunked import (
     ResidentChunkedAggregatorAdapter,
 )
 from decoy_engine.execution.physical.drivers._full_frame import FullFrameAdapter
-from decoy_engine.execution.physical.drivers._native_stream import NativeStreamAdapter
 from decoy_engine.execution.physical.drivers._out_of_core import OutOfCoreAdapter
 from decoy_engine.execution.physical.drivers._sequential import SequentialAdapter
 from decoy_engine.execution.physical.drivers._synthesis import SynthesisStageAdapter
@@ -28,7 +27,6 @@ __all__ = [
     "FullFrameAdapter",
     "MaskPipelineChunkedAdapter",
     "NativeOrOracleChunkedAdapter",
-    "NativeStreamAdapter",
     "OutOfCoreAdapter",
     "ResidentChunkedAggregatorAdapter",
     "SequentialAdapter",

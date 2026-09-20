@@ -788,7 +788,6 @@ module = [
     "decoy_engine.execution.physical.drivers._full_frame",
     "decoy_engine.execution.physical.drivers._sequential",
     "decoy_engine.execution.physical.drivers._chunked",
-    "decoy_engine.execution.physical.drivers._native_stream",
     "decoy_engine.execution.physical.drivers._out_of_core",
     "decoy_engine.execution.physical.drivers._synthesis",
     # Task 4.3: the physical-plan compiler + its input snapshot, records, and

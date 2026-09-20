@@ -15,18 +15,15 @@ allowlist). The frozen SELECTION PRECEDENCE (TASK-4.3-PLAN.md D2), from
      before masking).
   2. Layer-1 `decide_execution_route` -> `full_frame` / `sequential` /
      `out_of_core`.
-  3. `native_stream` admission: if admitted, it RETURNS and PREEMPTS the
-     chunk branch (`_pipeline.py:453`); the chunk candidate is computed but
-     used only if native is not admitted.
-  4. Else Layer-2 chunked-vs-`full_frame`.
+  3. Layer-2 chunked-vs-`full_frame`.
 
 Deliberate design choice (see `_inputs.py`'s module docstring): every stage
 above calls the LIVE production decision function directly
 (`decide_execution_route`, `classify_job`) rather than reimplementing its
 branching, so equivalence for what those functions decide is definitional.
 What this module owns is strictly the PRECEDENCE wiring between them plus
-the two narrowing decisions layer 1/2 do not make on their own (native
-preempting chunk; which driver a job's mask tables end up on).
+the narrowing decision layer 1/2 does not make on its own (which driver a
+job's mask tables end up on).
 
 Every function below is a free function (module-level, not a class method),
 by design: the repo's mutation tooling (mutmut 3.7) skips decorated-class
@@ -54,7 +51,7 @@ from decoy_engine.execution.physical._types import DriverId
 
 if TYPE_CHECKING:
     from decoy_engine.execution._planner import ExecutionPlan
-    from decoy_engine.execution.physical._inputs import NativeAdmissionFact, PhysicalPlanInputs
+    from decoy_engine.execution.physical._inputs import PhysicalPlanInputs
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = [
@@ -62,12 +59,10 @@ __all__ = [
     "compile_physical_plan",
     "layer1_route",
     "layer2_chunk_decision",
-    "native_applies",
     "out_of_core_not_ready_reason",
     "select_driver",
 ]
 
-_NATIVE_ROUTE_NOT_APPLICABLE = "native_route_disabled_or_no_mask_table"
 _CHUNK_NOT_APPLICABLE = "auto_chunk_disabled_or_no_mask_table"
 
 
@@ -140,13 +135,6 @@ def layer2_chunk_decision(inputs: PhysicalPlanInputs) -> tuple[ExecutionPlan | N
     )
     route_chunked = inputs.auto_chunk and decision.mode == "chunked"
     return decision, route_chunked
-
-
-def native_applies(inputs: PhysicalPlanInputs) -> bool:
-    """`maybe_run_native_route`'s own top gate (`_native_route.py`), restated
-    so `select_driver` can decide whether native was even a candidate
-    independent of `inputs.native_admission`'s already-captured verdict."""
-    return inputs.native_route_enabled and inputs.has_mask_table
 
 
 def out_of_core_not_ready_reason(inputs: PhysicalPlanInputs) -> str:
@@ -230,23 +218,15 @@ def _relationship_alternatives(
     )
 
 
-def _native_rejected_entry(applies: bool, admission: NativeAdmissionFact) -> RejectedAlternative:
-    if not applies:
-        return RejectedAlternative(
-            DriverId.NATIVE_STREAM, _NATIVE_ROUTE_NOT_APPLICABLE, attempted=False
-        )
-    return RejectedAlternative(
-        DriverId.NATIVE_STREAM, admission.reason or "native_admission_declined", attempted=True
-    )
-
-
 def _chunked_rejected_entry(decision: ExecutionPlan | None) -> RejectedAlternative:
     if decision is None:
         return RejectedAlternative(DriverId.CHUNKED, _CHUNK_NOT_APPLICABLE, attempted=False)
-    if decision.mode == "chunked":
-        # classify_job itself found the job chunk-admissible; it was not
-        # SELECTED here only because native preempted it (the only way this
-        # branch is reached with decision.mode == "chunked").
+    if decision.mode == "chunked":  # pragma: no cover - defensive
+        # classify_job found the job chunk-admissible. Pre-4.7 this branch was
+        # reached when the native lane preempted a chunk-admissible job; with
+        # the native lane removed, a chunk-admissible job always selects CHUNKED
+        # (route_chunked True), so the full_frame path only reaches here for a
+        # non-chunked decision. Kept as a defensive classifier.
         return RejectedAlternative(
             DriverId.CHUNKED, _reasons.DRIVER_REASON_CHUNKED_ADMITTED, attempted=True
         )
@@ -274,26 +254,14 @@ def select_driver(inputs: PhysicalPlanInputs) -> DriverSelection:
     if route == "out_of_core":
         return DriverSelection(DriverId.OUT_OF_CORE, route_reason, None, ())
 
-    # route == "full_frame": narrow among native_stream / chunked / full_frame.
+    # route == "full_frame": narrow among chunked / full_frame.
     decision, route_chunked = layer2_chunk_decision(inputs)
-    applies = native_applies(inputs)
-    admission = inputs.native_admission
-
-    if applies and admission.admitted:
-        native_rejected: tuple[RejectedAlternative, ...] = (
-            *_relationship_alternatives(inputs, route_reason),
-            _chunked_rejected_entry(decision),
-        )
-        return DriverSelection(
-            DriverId.NATIVE_STREAM, _reasons.DRIVER_REASON_NATIVE_ADMITTED, None, native_rejected
-        )
 
     if route_chunked:
         if decision is None:  # pragma: no cover - route_chunked implies decision is not None
             raise AssertionError("route_chunked is True but classify_job produced no decision")
-        chunked_rejected: tuple[RejectedAlternative, ...] = (
-            *_relationship_alternatives(inputs, route_reason),
-            _native_rejected_entry(applies, admission),
+        chunked_rejected: tuple[RejectedAlternative, ...] = _relationship_alternatives(
+            inputs, route_reason
         )
         return DriverSelection(
             DriverId.CHUNKED,
@@ -304,7 +272,6 @@ def select_driver(inputs: PhysicalPlanInputs) -> DriverSelection:
 
     full_frame_rejected: tuple[RejectedAlternative, ...] = (
         *_relationship_alternatives(inputs, route_reason),
-        _native_rejected_entry(applies, admission),
         _chunked_rejected_entry(decision),
     )
     return DriverSelection(DriverId.FULL_FRAME, route_reason, None, full_frame_rejected)

@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Removed (Task 4.7: delete the superseded native routing lane, 2026-09-20)
+
+**Breaking (pre-GA API):** removed the standalone single-pass streaming native lane,
+now that the unified-slice coordinator owns the production single-table masking path.
+Gone: the `native_route_enabled` kwarg on `run_pipeline` (and any caller forwarding
+it through `run_pipeline_isolated`'s `**kwargs`; it always defaulted `False` and was
+never enabled in production), the
+`ExecutionResult.native_route` field, and the internal `_native_route*` /
+`physical.drivers._native_stream` modules + `DriverId.NATIVE_STREAM`. No production
+behavior changes: the lane was dead code (the flag was never `True`), and single-table
+non-FK passthrough/redact/truncate jobs already ran the legacy pandas full-frame oracle,
+which is unchanged. The compiled deterministic-Faker kernel package (`execution/native/`)
+is untouched. Pre-GA policy is hard delete, not deprecate.
+
+One observable side effect: removing `native_route_enabled` from the physical plan's
+hash inputs shifts the internal `plan_hash` (surfaced in `quality_metrics`) by a
+one-time constant. It remains a well-formed per-run identity; nothing compares it across
+the change boundary.
+
 ### Changed (unified-slice route activation, 2026-09-20)
 
 `run_pipeline`'s `unified_slice_enabled` now defaults to `True` (was `False`): the

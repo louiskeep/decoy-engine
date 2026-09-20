@@ -15,22 +15,21 @@ instead of reimplementing their branching. That is a deliberate 4.3 design
 choice: equivalence for everything those functions decide is definitional
 (same function, same arguments), not re-derived and therefore not a source
 of drift. What genuinely cannot be captured without a real (I/O-bearing but
-non-masking) read -- the native-admission preflight chain, the resolved OOC
-memory budget, the byte-estimate/probe verdicts -- is captured ONCE by
+non-masking) read -- the resolved OOC memory budget, the byte-estimate/probe
+verdicts -- is captured ONCE by
 `capture_physical_plan_inputs` below and frozen onto the snapshot; the
 compiler itself never re-derives or re-reads any of it (D1's "the compiler
 is pure over this snapshot").
 
 `capture_physical_plan_inputs` mirrors `run_pipeline`'s own preflight
 sequence (`profile_source` -> `compile_plan` -> `build_namespace_registry` /
-`build_relationship_graph` -> the routing-signal resolvers -> the native
-preflight chain) up to, but never past, the point where `run_pipeline`
+`build_relationship_graph` -> the routing-signal resolvers) up to, but never
+past, the point where `run_pipeline`
 itself would dispatch to a driver. It is NOT wired into `run_pipeline` (this
 whole package stays disconnected from production, per the Task 4.2 seam's
 own sentries) and it executes no masking -- everything it calls is a scan
-(schema, row counts, null state, the native lane's bounded preflight pass)
-that today's `run_pipeline` already performs before the first byte is
-masked.
+(schema, row counts, null state) that today's `run_pipeline` already performs
+before the first byte is masked.
 """
 
 from __future__ import annotations
@@ -40,12 +39,10 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution._native_route import peek_and_admit, static_candidacy
-from decoy_engine.execution._native_route_preflight import classify_and_preflight
 from decoy_engine.profile._readers import LazySource
 
 
@@ -98,156 +95,15 @@ def _canonical_config_json(config: Mapping[str, Any]) -> str:
 
 
 if TYPE_CHECKING:
-    from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = [
-    "NativeAdmissionFact",
     "OutOfCoreRoutingFacts",
     "PhysicalPlanInputs",
-    "capture_native_admission_fact",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Native-admission captured fact (D1, round-4 restore; plan LOW-2).
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class NativeAdmissionFact:
-    """The normalized result of the full production native-admission chain
-    `static_candidacy` -> `classify_and_preflight` -> `peek_and_admit`
-    (`_native_route.py` / `_native_route_preflight.py`), captured up to but
-    never past the point `try_native_route` would start masking.
-
-    Normalized from the production `RouteAdmission`
-    (`mode`/`admitted`/`reason` -- what actually routes; plan round-4 LOW-2)
-    plus `NativeStaticCandidacy` (`table`, `sink_mode`) and, for the utf8
-    lane, `NativeBatchAdmission` (`admitted`, `reason`). `PreflightResult.
-    column_states` are DELIBERATELY OMITTED: `classify_and_preflight` already
-    drops them when building `RouteAdmission` and they do not affect driver
-    totality, so re-capturing them here would be redundant diagnostic state,
-    not a routing fact.
-
-    `static_candidate=False` means `static_candidacy` declined before any
-    source was touched (`static_reason` carries why, including the
-    `native_route_disabled_or_no_mask_table` sentinel this module assigns
-    when the gate `maybe_run_native_route` itself enforces -- `has_mask_table
-    and native_route_enabled` -- was never true, so the live chain was never
-    invoked at all). `lane` is set only once `static_candidacy` admits:
-    `"utf8_only"` runs the unchanged slice-1 `peek_and_admit` path;
-    `"widened"` runs `classify_and_preflight`'s bounded scan. `admitted` is
-    the final verdict at whichever level the chain stopped; `reason` is
-    `None` only when `admitted` is True.
-    """
-
-    table: str | None
-    static_candidate: bool
-    static_reason: str | None
-    sink_mode: Literal["resident", "streaming"] | None
-    lane: Literal["utf8_only", "widened"] | None
-    admitted: bool
-    reason: str | None
-
-
-_NATIVE_ROUTE_DISABLED_SENTINEL = "native_route_disabled_or_no_mask_table"
-
-
-def capture_native_admission_fact(
-    *,
-    has_mask_table: bool,
-    native_route_enabled: bool,
-    config: Mapping[str, Any],
-    execution_mode: str,
-    table_kinds: Mapping[str, str],
-    caller_sources: Mapping[str, pa.Table | LazySource],
-    source_loader: Any,
-    sink: TransactionalSink | None,
-    fidelity_report: bool,
-    graph: RelationshipGraph,
-    resolved_substrate: str,
-    plan: Plan,
-    batch_rows: int,
-) -> NativeAdmissionFact:
-    """Run the LIVE production preflight chain far enough to know the native
-    decision, WITHOUT ever calling `_run_native_streaming` / `run_widened_
-    execution` (where masking would start). Mirrors `maybe_run_native_route`'s
-    own top gate, then `try_native_route`'s exact branch-conditional order
-    (`_native_route_exec.py:521`): `static_candidacy` first; on a candidate,
-    `classify_and_preflight` decides `utf8_only` vs. `widened`; `peek_and_
-    admit` runs ONLY on the `utf8_only` branch (a widened reject returns
-    immediately, a widened admit needs no separate peek -- `classify_and_
-    preflight`'s own bounded scan already proved it).
-    """
-    if not (has_mask_table and native_route_enabled):
-        return NativeAdmissionFact(
-            table=None,
-            static_candidate=False,
-            static_reason=_NATIVE_ROUTE_DISABLED_SENTINEL,
-            sink_mode=None,
-            lane=None,
-            admitted=False,
-            reason=_NATIVE_ROUTE_DISABLED_SENTINEL,
-        )
-
-    candidacy = static_candidacy(
-        config=config,
-        execution_mode=execution_mode,
-        table_kinds=table_kinds,
-        caller_sources=caller_sources,
-        source_loader=source_loader,
-        sink=sink,
-        fidelity_report=fidelity_report,
-        graph=graph,
-        resolved_substrate=resolved_substrate,
-    )
-    if not candidacy.candidate:
-        return NativeAdmissionFact(
-            table=None,
-            static_candidate=False,
-            static_reason=candidacy.reason,
-            sink_mode=None,
-            lane=None,
-            admitted=False,
-            reason=candidacy.reason,
-        )
-
-    table = candidacy.table
-    if table is None:  # pragma: no cover - static_candidacy guarantees this when candidate=True
-        raise AssertionError("static_candidacy admitted a candidate with no table name")
-    source = caller_sources[table]
-    if not isinstance(
-        source, LazySource
-    ):  # pragma: no cover - static_candidacy already proved this
-        raise AssertionError(f"{table!r}: candidacy admitted a non-LazySource entry")
-
-    classification = classify_and_preflight(
-        source, table=table, plan=plan, config=config, batch_rows=batch_rows
-    )
-    if classification.mode == "utf8_only":
-        admission = peek_and_admit(source, table=table, plan=plan, batch_rows=batch_rows)
-        return NativeAdmissionFact(
-            table=table,
-            static_candidate=True,
-            static_reason=None,
-            sink_mode=candidacy.sink_mode,
-            lane="utf8_only",
-            admitted=admission.admitted,
-            reason=admission.reason,
-        )
-    return NativeAdmissionFact(
-        table=table,
-        static_candidate=True,
-        static_reason=None,
-        sink_mode=candidacy.sink_mode,
-        lane="widened",
-        admitted=classification.admitted,
-        reason=classification.reason,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -350,12 +206,10 @@ class PhysicalPlanInputs:
     full_frame_reject_rows: int
     use_byte_estimate_routing: bool
     use_probe_routing: bool
-    native_route_enabled: bool
     fpe_chunk_count: int
     max_workers: int
     fallback_to_pandas: bool
     out_of_core_facts: OutOfCoreRoutingFacts
-    native_admission: NativeAdmissionFact
     native_companion_reason: str
     engine_version: str
 
@@ -410,9 +264,7 @@ def _resident_source_fact(name: str, source: pa.Table | LazySource) -> tuple[obj
     chunk-dtype-stability gate) and what `classify_job`/`layer2_chunk_
     decision` therefore branches on. A `LazySource` carries no resident rows
     to measure, so it contributes a stable marker instead -- its own route-
-    affecting content (path, schema) is out of scope for THIS fact family
-    (the native-admission chain already captures what it reads from a lazy
-    source, in `NativeAdmissionFact`).
+    affecting content (path, schema) is out of scope for THIS fact family.
     """
     if isinstance(source, LazySource):
         return (name, "lazy_source")
@@ -435,7 +287,6 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
     profile / CLAUDE.md's mutation guidance).
     """
     facts = inputs.out_of_core_facts
-    admission = inputs.native_admission
     resident_source_facts = tuple(
         _resident_source_fact(name, inputs.caller_sources[name])
         for name in sorted(inputs.caller_sources)
@@ -469,7 +320,6 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         inputs.full_frame_reject_rows,
         inputs.use_byte_estimate_routing,
         inputs.use_probe_routing,
-        inputs.native_route_enabled,
         inputs.fpe_chunk_count,
         inputs.max_workers,
         inputs.fallback_to_pandas,
@@ -484,13 +334,6 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         facts.budget_bytes,
         facts.reorder_threshold_rows,
         facts.merge_fan_in,
-        admission.table,
-        admission.static_candidate,
-        admission.static_reason,
-        admission.sink_mode,
-        admission.lane,
-        admission.admitted,
-        admission.reason,
         inputs.native_companion_reason,
     )
     digest = hashlib.sha256()

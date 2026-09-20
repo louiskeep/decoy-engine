@@ -13,12 +13,11 @@ from enum import Enum
 
 
 class DriverId(str, Enum):
-    """The five masking drivers plus the synthesis stage (design doc section 4)."""
+    """The four masking drivers plus the synthesis stage (design doc section 4)."""
 
     FULL_FRAME = "full_frame"
     SEQUENTIAL = "sequential"
     CHUNKED = "chunked"
-    NATIVE_STREAM = "native_stream"
     OUT_OF_CORE = "out_of_core"
     SYNTHESIS = "synthesis"
 

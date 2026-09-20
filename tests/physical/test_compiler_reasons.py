@@ -2,44 +2,14 @@
 planner-prose translators (`execution/physical/_reasons.py`).
 
 Fast, in-memory, string-only -- these exist to give mutmut a dense,
-easy-to-run target for the catalog's own logic (the translators, the
-native-reason classifier), independent of the slower real-job D4 corpus in
+easy-to-run target for the catalog's own logic (the translators),
+independent of the slower real-job D4 corpus in
 `test_compiler_preflight_equivalence.py`.
 """
 
 from __future__ import annotations
 
 from decoy_engine.execution.physical import _reasons
-
-
-def test_native_reason_code_family_classifies_static_codes() -> None:
-    assert _reasons.native_reason_code_family("execution_mode_not_auto") == "static"
-    assert _reasons.native_reason_code_family("non_pandas_substrate:polars") == "static"
-    assert _reasons.native_reason_code_family("unsupported_strategy:col:faker") == "static"
-    assert _reasons.native_reason_code_family("vault_column:ssn") == "static"
-
-
-def test_native_reason_code_family_classifies_scan_codes() -> None:
-    assert _reasons.native_reason_code_family("zero_row_source") == "scan"
-    assert (
-        _reasons.native_reason_code_family("unsupported_projection:missing=[]:extra=[]") == "scan"
-    )
-    assert _reasons.native_reason_code_family("non_utf8_column:n:int64") == "scan"
-    assert (
-        _reasons.native_reason_code_family("native_preflight_reroute:n:redact:integer:partial_null")
-        == "scan"
-    )
-    assert _reasons.native_reason_code_family("native_preflight_schema_drift:columns_changed") == (
-        "scan"
-    )
-
-
-def test_native_reason_code_family_flags_unknown_codes() -> None:
-    assert _reasons.native_reason_code_family("something_never_seen_before") == "unknown"
-    # Runtime-error codes RAISE (`code=`), they are never a returned admission
-    # reason, so they are correctly NOT in the admission catalog -> "unknown".
-    assert _reasons.native_reason_code_family("native_chunk_schema_drift") == "unknown"
-    assert _reasons.native_reason_code_family("native_preflight_strategy_unresolved") == "unknown"
 
 
 def test_translate_polars_rejection_no_mask_work() -> None:

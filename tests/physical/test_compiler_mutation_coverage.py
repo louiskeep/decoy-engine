@@ -3,9 +3,8 @@
 R2: "coverage + branch + MUTATION on the compiler decision logic; routing-
 decision mutants must be killed").
 
-`_native_rejected_entry` / `_chunked_rejected_entry` take primitives
-(`NativeAdmissionFact`, `ExecutionPlan | None`) directly, so they are tested
-here without building a full `PhysicalPlanInputs` -- fast, and precise about
+`_chunked_rejected_entry` takes primitives (`ExecutionPlan | None`) directly,
+so it is tested here without building a full `PhysicalPlanInputs` -- fast, and precise about
 which exact field value each branch must produce (a Yoda-value mutation like
 `route_reason` -> `None` is invisible to a membership assertion but not to
 an equality one).
@@ -24,13 +23,11 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution._planner import ExecutionPlan
 from decoy_engine.execution.physical import (
     DriverId,
-    NativeAdmissionFact,
     capture_physical_plan_inputs,
 )
 from decoy_engine.execution.physical._compiler import (
     DriverSelection,
     _chunked_rejected_entry,
-    _native_rejected_entry,
     _relationship_alternatives,
     compile_physical_plan,
     out_of_core_not_ready_reason,
@@ -38,45 +35,6 @@ from decoy_engine.execution.physical._compiler import (
 )
 from decoy_engine.execution.physical._inputs import OutOfCoreRoutingFacts
 from decoy_engine.execution.physical._plan import RejectedAlternative
-from decoy_engine.profile._readers import LazySource
-
-# ---------------------------------------------------------------------------
-# _native_rejected_entry
-# ---------------------------------------------------------------------------
-
-
-def _admission(*, admitted: bool = False, reason: str | None = None) -> NativeAdmissionFact:
-    return NativeAdmissionFact(
-        table="t",
-        static_candidate=True,
-        static_reason=None,
-        sink_mode="resident",
-        lane="utf8_only",
-        admitted=admitted,
-        reason=reason,
-    )
-
-
-def test_native_rejected_entry_not_applicable() -> None:
-    entry = _native_rejected_entry(False, _admission())
-    assert entry == RejectedAlternative(
-        DriverId.NATIVE_STREAM, "native_route_disabled_or_no_mask_table", attempted=False
-    )
-
-
-def test_native_rejected_entry_applies_with_reason() -> None:
-    entry = _native_rejected_entry(True, _admission(reason="unsupported_strategy:col:faker"))
-    assert entry == RejectedAlternative(
-        DriverId.NATIVE_STREAM, "unsupported_strategy:col:faker", attempted=True
-    )
-
-
-def test_native_rejected_entry_applies_with_no_reason_falls_back() -> None:
-    entry = _native_rejected_entry(True, _admission(admitted=False, reason=None))
-    assert entry == RejectedAlternative(
-        DriverId.NATIVE_STREAM, "native_admission_declined", attempted=True
-    )
-
 
 # ---------------------------------------------------------------------------
 # _chunked_rejected_entry
@@ -435,32 +393,6 @@ def test_select_driver_chunked_reason_detail_is_decision_reason(tmp_path: Path) 
     assert "chunk-safe" in selection.reason_detail
 
 
-def test_select_driver_native_stream_reason_and_detail(tmp_path: Path) -> None:
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "note", "strategy": "redact"}]}],
-        }
-    ).model_dump()
-    inputs = capture_physical_plan_inputs(
-        config,
-        {"t": LazySource(path=path)},
-        engine_version="mutation-coverage",
-        native_route_enabled=True,
-    )
-    selection = select_driver(inputs)
-    assert selection.driver == DriverId.NATIVE_STREAM
-    assert selection.reason == "native_admission_admitted"
-    assert selection.reason_detail is None
-
-
 # ---------------------------------------------------------------------------
 # select_driver: FULL DriverSelection equality (every field, including
 # `rejected_alternatives` content) per branch -- catches a mutated arg
@@ -527,9 +459,6 @@ def test_select_driver_full_frame_with_relationships_full_selection_equality(
                 DriverId.SEQUENTIAL, "byte_estimate_full_frame_fits", attempted=True
             ),
             RejectedAlternative(
-                DriverId.NATIVE_STREAM, "native_route_disabled_or_no_mask_table", attempted=False
-            ),
-            RejectedAlternative(
                 DriverId.CHUNKED,
                 "masks_one_table_per_run;chunked_relationships_unsupported",
                 attempted=True,
@@ -563,11 +492,9 @@ def test_select_driver_chunked_full_selection_equality(tmp_path: Path) -> None:
     selection = select_driver(inputs)
     assert selection.driver == DriverId.CHUNKED
     assert selection.reason == "chunked_admitted"
-    assert selection.rejected_alternatives == (
-        RejectedAlternative(
-            DriverId.NATIVE_STREAM, "native_route_disabled_or_no_mask_table", attempted=False
-        ),
-    )
+    # A flat non-FK chunked job has no out_of_core/sequential alternatives, and
+    # the native lane is gone, so no alternatives are recorded.
+    assert selection.rejected_alternatives == ()
 
 
 # ---------------------------------------------------------------------------
@@ -647,76 +574,6 @@ def test_out_of_core_routing_facts_replace_smoke() -> None:
     replaced = replace(facts, compatible=True)
     assert replaced.compatible is True
     assert facts.compatible is False
-
-
-# ---------------------------------------------------------------------------
-# select_driver: native `applies=True` but declined, distinguishing
-# `_native_rejected_entry(applies, ...)` from a mutated `None` passthrough
-# (`not None` is also truthy, so a scenario where `applies` is already False
-# cannot tell the two apart -- this one makes native genuinely APPLY and
-# decline, so `not applies` (`False`) and `not None` (`True`) diverge).
-# ---------------------------------------------------------------------------
-
-
-def test_select_driver_full_frame_native_applies_but_declines_resident_source(
-    tmp_path: Path,
-) -> None:
-    source = pa.table({"note": pa.array(["s1", "s2"], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "note", "strategy": "redact"}]}],
-        }
-    ).model_dump()
-    # A resident pa.Table (not a LazySource) declines native with
-    # "non_lazy_source" even though native_route_enabled=True makes it
-    # APPLY; auto_chunk stays off the default threshold so full_frame wins.
-    inputs = capture_physical_plan_inputs(
-        config, {"t": source}, engine_version="mutation-coverage", native_route_enabled=True
-    )
-    selection = select_driver(inputs)
-    assert selection.driver == DriverId.FULL_FRAME
-    by_driver = {alt.driver: alt for alt in selection.rejected_alternatives}
-    assert by_driver[DriverId.NATIVE_STREAM] == RejectedAlternative(
-        DriverId.NATIVE_STREAM, "non_lazy_source", attempted=True
-    )
-
-
-def test_select_driver_chunked_native_applies_but_declines_resident_source(tmp_path: Path) -> None:
-    source = pa.table({"note": pa.array([f"s{i}" for i in range(10)], type=pa.string())})
-    path = _write(tmp_path, source, "t")
-    config = PipelineConfig.model_validate(
-        {
-            "version": 1,
-            "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
-            "targets": {
-                "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out.parquet")}
-            },
-            "tables": [{"name": "t", "columns": [{"name": "note", "strategy": "redact"}]}],
-        }
-    ).model_dump()
-    inputs = capture_physical_plan_inputs(
-        config,
-        {"t": source},
-        engine_version="mutation-coverage",
-        native_route_enabled=True,
-        auto_chunk=True,
-        auto_chunk_threshold_rows=1,
-        chunk_size_rows=3,
-    )
-    selection = select_driver(inputs)
-    assert selection.driver == DriverId.CHUNKED
-    by_driver = {alt.driver: alt for alt in selection.rejected_alternatives}
-    assert by_driver[DriverId.NATIVE_STREAM] == RejectedAlternative(
-        DriverId.NATIVE_STREAM, "non_lazy_source", attempted=True
-    )
 
 
 # ---------------------------------------------------------------------------

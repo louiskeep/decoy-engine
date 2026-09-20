@@ -147,19 +147,14 @@ FORCED_MODE_BRANCH_IDENTITIES: Final[frozenset[str]] = frozenset(
 
 # ---------------------------------------------------------------------------
 # Compiler-assigned driver-selection codes: D2's own narrowing decisions
-# beyond Layer 1's already-coded tokens (native admission success has no
-# live "reason" string -- `NativeBatchAdmission.reason`/`RouteAdmission.
-# reason` are None on the admitted path -- so the compiler names its own
-# positive-admission code; likewise "chunked was admitted" has no single
-# stable code in `_planner.ExecutionPlan.reason`, which is prose).
+# beyond Layer 1's already-coded tokens ("chunked was admitted" has no single
+# stable code in `_planner.ExecutionPlan.reason`, which is prose, so the
+# compiler names its own positive-admission code).
 # ---------------------------------------------------------------------------
 
-DRIVER_REASON_NATIVE_ADMITTED: Final = "native_admission_admitted"
 DRIVER_REASON_CHUNKED_ADMITTED: Final = "chunked_admitted"
 
-DRIVER_SELECTION_CODES: Final[frozenset[str]] = frozenset(
-    {DRIVER_REASON_NATIVE_ADMITTED, DRIVER_REASON_CHUNKED_ADMITTED}
-)
+DRIVER_SELECTION_CODES: Final[frozenset[str]] = frozenset({DRIVER_REASON_CHUNKED_ADMITTED})
 
 # ---------------------------------------------------------------------------
 # Pre-compilation / snapshot-acquisition EXCLUSIONS: documented, never
@@ -175,112 +170,6 @@ PRECOMPILATION_EXCLUDED_CODES: Final[frozenset[str]] = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
-# Native-lane admission codes (`_native_route.py` / `_native_route_preflight.
-# py`). Parameterized with a `:<detail>` suffix; classified by the prefix
-# before the first `:`. The static/scan split mirrors the two live call
-# sites (`static_candidacy` vs. `classify_and_preflight`/`peek_and_admit`);
-# `unsupported_projection` / `non_utf8_column` / `zero_row_source` are
-# produced by BOTH `peek_and_admit` (utf8 lane) and `classify_and_preflight`
-# (widened lane's own projection/type gate before the preflight scan), so
-# they live in the shared "scan" family rather than being pinned to one.
-# ---------------------------------------------------------------------------
-
-NATIVE_STATIC_CODE_PREFIXES: Final[frozenset[str]] = frozenset(
-    {
-        "execution_mode_not_auto",
-        "non_pandas_substrate",
-        "generation_table_present",
-        "multi_table_job",
-        "fk_relationship_present",
-        "source_loader_present",
-        "non_lazy_source",
-        "fidelity_report_requested",
-        "validators_present",
-        "quarantine_configured",
-        "unsupported_sink",
-        "no_columns_configured",
-        "invalid_column_config",
-        "vault_column",
-        "unsupported_strategy",
-        "native_route_disabled_or_no_mask_table",
-        # `redact_config_rejection` / `truncate_config_rejection`
-        # (`native/_requirements.py`), called from `static_candidacy`
-        # (`_native_route.py`) for an ALLOWED_STRATEGIES redact/truncate
-        # column whose config itself cannot run on the native kernel --
-        # config-gate checks, no I/O, so STATIC not SCAN (Task 4.3
-        # remediation H4 #3: previously uncatalogued, classified "unknown").
-        "redact_with_not_string",
-        "truncate_length_invalid",
-        "truncate_keep_invalid",
-        "truncate_mask_char_invalid",
-    }
-)
-
-# Only the native-lane reasons the preflight RETURNS as an admission verdict
-# (`reason=` on a `RouteAdmission`/`NativeBatchAdmission` in `_native_route.py`
-# / `_native_route_preflight.py`), so `native_reason_code_family` classifies
-# exactly the reasons a captured `NativeAdmissionFact.reason` can carry. Codes
-# that RAISE (`code=` on an `ExecutionError`) or are produced only during
-# execution are runtime codes, not admission reasons -- see
-# `NATIVE_RUNTIME_ERROR_CODES` below; nested DETAIL suffixes
-# (`columns_changed` / `type_changed`, which only ever appear AFTER a top-level
-# `native_preflight_schema_drift:` prefix) are `NATIVE_DETAIL_SUFFIXES`.
-NATIVE_SCAN_CODE_PREFIXES: Final[frozenset[str]] = frozenset(
-    {
-        "zero_row_source",
-        "unsupported_projection",
-        "non_utf8_column",
-        "native_preflight_schema_drift",
-        "native_preflight_reroute",
-    }
-)
-
-# Native-lane codes that RAISE an `ExecutionError` (`code=`) rather than being
-# returned as an admission verdict -- runtime/execution codes (D3's runtime
-# category), never a captured `NativeAdmissionFact.reason`, so deliberately
-# EXCLUDED from the admission catalog above. Named here so the audit can prove
-# they are runtime codes (raised, not returned) against their live producers,
-# not silently dropped.
-NATIVE_RUNTIME_ERROR_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "native_preflight_strategy_unresolved",  # _native_route_preflight.py:314
-        "native_source_snapshot_digest_mismatch",  # _native_route_preflight.py:261
-        "native_chunk_schema_drift",  # _native_route_exec.py:305 / _preflight.py:419
-    }
-)
-
-# Nested DETAIL suffixes: these only ever appear as the `:<detail>` tail of a
-# top-level `native_preflight_schema_drift:` reason (`_native_route_preflight.
-# py:143/147`), never as a top-level prefix, so `native_reason_code_family`
-# (which splits on the FIRST `:`) classifies the whole reason by its
-# `native_preflight_schema_drift` prefix and these need no catalog entry.
-NATIVE_DETAIL_SUFFIXES: Final[frozenset[str]] = frozenset(
-    {
-        "columns_changed",
-        "type_changed",
-    }
-)
-
-
-def native_reason_code_family(reason: str) -> str:
-    """Classify a captured native-admission `reason` string into its D3
-    catalog family by prefix (codes may carry a `:<detail>` suffix).
-
-    Returns `"static"`, `"scan"`, or `"unknown"` -- the D4 harness asserts
-    `"unknown"` never appears across the acceptance corpus: an unclassified
-    reason is a catalog-completeness defect (design doc section 10), never a
-    silently-accepted new code.
-    """
-    prefix = reason.split(":", 1)[0]
-    if prefix in NATIVE_STATIC_CODE_PREFIXES:
-        return "static"
-    if prefix in NATIVE_SCAN_CODE_PREFIXES:
-        return "scan"
-    return "unknown"
-
-
-# ---------------------------------------------------------------------------
 # Planner-prose translators (`_planner.py`'s `_polars_native_rejection` /
 # `_chunked_rejection`): live output is one sentence per applicable reason,
 # `"; ".join()`-ed together -- but several of the INDIVIDUAL reason sentences
@@ -445,7 +334,6 @@ __all__ = [
     "CODE_NO_RELATIONSHIP_ROUTE",
     "CODE_RELATIONSHIP_ROUTE_DEFERRED",
     "DRIVER_REASON_CHUNKED_ADMITTED",
-    "DRIVER_REASON_NATIVE_ADMITTED",
     "DRIVER_SELECTION_CODES",
     "EXC_FK_FULL_FRAME_OOM_RISK_REJECTED",
     "EXC_FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED",
@@ -457,10 +345,6 @@ __all__ = [
     "FORCED_SEQUENTIAL_CYCLIC",
     "FORCED_SEQUENTIAL_INELIGIBLE",
     "FORCED_SEQUENTIAL_NO_MASK_TABLE",
-    "NATIVE_DETAIL_SUFFIXES",
-    "NATIVE_RUNTIME_ERROR_CODES",
-    "NATIVE_SCAN_CODE_PREFIXES",
-    "NATIVE_STATIC_CODE_PREFIXES",
     "OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX",
     "OUT_OF_CORE_NOT_READY_CODES",
     "OUT_OF_CORE_NOT_READY_CYCLIC",
@@ -484,7 +368,6 @@ __all__ = [
     "ROUTE_REASON_CODES",
     "ROUTE_VALIDATORS_PRESENT",
     "ROUTE_VAULT_WRITER_REQUESTED",
-    "native_reason_code_family",
     "translate_chunked_rejection",
     "translate_polars_rejection",
     "translate_relationship_mode_reason",

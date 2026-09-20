@@ -353,7 +353,6 @@ def test_oracle_parity_outputs_warnings_row_errors(tmp_path: Path) -> None:
         substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
-        native_route_enabled=False,
         key_provider=None,
         sink=None,
     )
@@ -394,7 +393,6 @@ def test_extra_resident_source_preserved_and_projection_warning_parity(tmp_path:
         substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
-        native_route_enabled=False,
         key_provider=None,
         sink=None,
     )
