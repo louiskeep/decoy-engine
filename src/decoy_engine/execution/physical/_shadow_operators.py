@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
@@ -42,6 +43,7 @@ _REDACT: Final = "native_redact"
 _TRUNCATE: Final = "native_truncate"
 _KEYED_HASH: Final = "native_keyed_hash"
 _FAKER_SELECT: Final = "native_faker_select"
+_CATEGORICAL: Final = "native_categorical"
 
 
 @dataclass
@@ -128,6 +130,32 @@ def run_operator(
             pool=pool,
             namespace=binding.key_binding.namespace,
             mask_key=ctx.mask_key,
+            index_kernel=index_kernel,
+            native_threads=ctx.native_threads,
+        )
+        evidence.compiled_kernel_executed = True
+    elif binding.operator_id == _CATEGORICAL:
+        if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+            raise AssertionError("categorical node reached run_operator with no KeyBinding")
+        if not binding.categorical_deterministic:
+            # Runtime determinism assertion (Phase 5 Track B): the native
+            # categorical operator is always source-keyed, so an unseeded plan
+            # must never reach it. Admission already declines a non-deterministic
+            # categorical to the oracle; this fails closed if a wiring bug ever
+            # routed one here, rather than silently changing its contract.
+            raise AssertionError(
+                "categorical node reached run_operator with categorical_deterministic=False"
+            )
+        if binding.categorical_categories is None:  # pragma: no cover - C0 binds it together
+            raise AssertionError("categorical node reached run_operator with no resolved categories")
+        if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+            raise AssertionError("categorical node reached run_operator with no index_kernel")
+        out = native_categorical(
+            array,
+            categories=binding.categorical_categories,
+            cdf=binding.categorical_cdf,
+            mask_key=ctx.mask_key,
+            namespace=binding.key_binding.namespace,
             index_kernel=index_kernel,
             native_threads=ctx.native_threads,
         )

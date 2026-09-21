@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ALLOWED_OPERATOR_IDS",
+    "CATEGORICAL_OPERATOR_ID",
     "HASH_OPERATOR_ID",
     "CheapCandidate",
     "cheap_admission",
@@ -76,9 +77,19 @@ __all__ = [
 # with zero `execution.physical` reach. Public (no leading underscore):
 # `_unified_slice.py`'s D7 evidence check reads `HASH_OPERATOR_ID` too.
 ALLOWED_OPERATOR_IDS = frozenset(
-    {"native_passthrough", "native_redact", "native_truncate", "native_keyed_hash"}
+    {
+        "native_passthrough",
+        "native_redact",
+        "native_truncate",
+        "native_keyed_hash",
+        "native_categorical",
+    }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
+# Phase 5 Track B: like hash, categorical consumes its namespace through the
+# compiled kernel at every batch invocation and needs the native companion
+# loadable at this host, so `resident_contract_admission` gates it the same way.
+CATEGORICAL_OPERATOR_ID = "native_categorical"
 
 # The fixed, reviewed resident-type domain per slice strategy -- the actual
 # set the 4.4 shadow corpus characterizes, not the compiler's coarse profile
@@ -94,6 +105,10 @@ _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     # hash also requires null-freedom, enforced separately below via the
     # same `reject_null_bearing_int` guard the legacy adapter runs.
     "hash": frozenset({pa.string(), pa.int64()}),
+    # Phase 5 Track B: native categorical selects over string categories keyed
+    # on a STRING source (the compiled index kernel's admitted input); a
+    # non-string source declines to the oracle.
+    "categorical": frozenset({pa.string()}),
 }
 
 
@@ -368,6 +383,7 @@ def resident_contract_admission(
 
     covered: list[str] = []
     hash_columns: list[str] = []
+    categorical_columns: list[str] = []
     for node in nodes:
         binding = node.execution
         if binding is None:
@@ -395,6 +411,15 @@ def resident_contract_admission(
             except UnicodeEncodeError:
                 return None
             hash_columns.append(column)
+        if binding.operator_id == CATEGORICAL_OPERATOR_ID:
+            key_binding = binding.key_binding
+            if key_binding is None:
+                return None
+            try:
+                key_binding.namespace.encode("utf-8")
+            except UnicodeEncodeError:
+                return None
+            categorical_columns.append(column)
         covered.append(column)
 
     # 1:1 coverage across configured columns / physical nodes / resident
@@ -406,7 +431,7 @@ def resident_contract_admission(
     if len(covered) != len(set(covered)) or set(covered) != set(source.column_names):
         return None
 
-    if hash_columns and not native_companion_status().ok:
+    if (hash_columns or categorical_columns) and not native_companion_status().ok:
         return None
     try:
         reject_null_bearing_int(plan, {table: source}, registry, graph)

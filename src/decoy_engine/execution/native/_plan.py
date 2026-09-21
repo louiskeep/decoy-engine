@@ -50,7 +50,9 @@ from decoy_engine.execution.native._capabilities import (
 )
 from decoy_engine.execution.native._requirements import (
     NodeRequirements,
+    categorical_config_rejection,
     hash_config_rejection,
+    is_deterministic_categorical,
     native_kernel_rejection,
     redact_config_rejection,
     requirements_for,
@@ -304,6 +306,17 @@ def _config_rejection(
         provider_config = col.get("provider_config")
         return redact_config_rejection(
             name, provider_config if isinstance(provider_config, dict) else {}
+        )
+    if strategy == "categorical":
+        provider_config = col.get("provider_config")
+        # Config-only boundary: determinism is derived from the raw column via
+        # `is_deterministic_categorical` (equal by construction to the compiled
+        # `ColumnSeed.deterministic` the full-frame binding reads).
+        return categorical_config_rejection(
+            name,
+            deterministic=is_deterministic_categorical(col),
+            namespace=col.get("namespace"),
+            provider_config=provider_config if isinstance(provider_config, dict) else {},
         )
     return None
 

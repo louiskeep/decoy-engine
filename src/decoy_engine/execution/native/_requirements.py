@@ -21,6 +21,8 @@ from typing import Any, Literal
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import (
     StrategyCapabilities,
     capabilities_for,
@@ -121,7 +123,17 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # route through this SAME constant rather than recompute its own admitted
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
-NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash"})
+NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash", "categorical"})
+
+# Strategies admitted to the native FULL-FRAME route but explicitly VETOED on
+# the native CHUNKED/streaming route (Phase 5 Track B). categorical's oracle
+# output TYPE is data-dependent (all-null -> null, empty -> float64, else ->
+# string) and can only be resolved at a whole-column assembly point, which the
+# eager per-chunk emit (`_chunk_masking.py`) does not have. Adding categorical
+# to NATIVE_KERNEL_STRATEGIES alone would let `_static_route_decision` admit it
+# on the chunked route and hit the missing chunk handler, so the chunked
+# preflight vetoes it here and routes the whole table to the oracle instead.
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
@@ -416,6 +428,66 @@ def redact_config_rejection(name: str, provider_config: dict[str, Any]) -> str |
     return None
 
 
+def is_deterministic_categorical(resolved_config: Any) -> bool:
+    """Whether a categorical column's resolved config selects the deterministic
+    (source-keyed, row-local) path -- the SINGLE source of truth the native
+    determinism gate consults at the config-only boundary.
+
+    Reproduces the seed envelope's own determinism computation for a column
+    (`plan/_seed_envelope.py`): the first-class `deterministic: bool` field,
+    OR the `allow_collisions: true` alias that forces deterministic reuse. So
+    `ColumnSeed.deterministic == is_deterministic_categorical(col_config)` by
+    construction (pinned by a test), letting the config-only native-route query
+    decide determinism without a compiled `ColumnSeed`.
+    """
+    get = resolved_config.get if hasattr(resolved_config, "get") else (lambda _k, _d=None: _d)
+    return bool(get("deterministic", False)) or bool(get("allow_collisions", False))
+
+
+def categorical_config_rejection(
+    name: str,
+    *,
+    deterministic: bool,
+    namespace: str | None,
+    provider_config: dict[str, Any],
+) -> str | None:
+    """The coded reason a `categorical` column cannot run on the native
+    operator, or None when it can (Phase 5 Track B).
+
+    v1 admits ONLY the deterministic, namespaced, STRING-category variant. An
+    unseeded (non-deterministic) categorical draws a whole-column vector that
+    is not reproducible, so it declines to the oracle here rather than silently
+    running the always-deterministic native operator. Non-string categories
+    decline (the oracle's data-dependent output-type reconciliation for them is
+    a later slice). A weighted config whose CDF the oracle's `_build_cdf` would
+    reject (nonpositive total, a below-resolution weight) declines here too, so
+    the whole table routes to the oracle, which raises the identical error --
+    never a native-side compile failure the oracle would not produce.
+    """
+    if not deterministic:
+        return f"categorical_not_deterministic:{name}"
+    if not namespace:
+        return f"categorical_requires_namespace:{name}"
+    categories = provider_config.get("categories")
+    if not isinstance(categories, (list, tuple)) or not categories:
+        return f"categorical_categories_not_nonempty_list:{name}"
+    if not all(isinstance(c, str) for c in categories):
+        return f"categorical_categories_not_all_string:{name}"
+    weights = provider_config.get("weights")
+    if weights is not None:
+        if not isinstance(weights, (list, tuple)) or len(weights) != len(categories):
+            return f"categorical_weights_shape:{name}"
+        if any(isinstance(w, bool) or not isinstance(w, (int, float)) for w in weights):
+            return f"categorical_weights_not_numeric:{name}"
+        if any(w < 0 for w in weights):
+            return f"categorical_weights_negative:{name}"
+        try:
+            _build_cdf([float(w) for w in weights])
+        except StrategyError:
+            return f"categorical_weights_unbuildable_cdf:{name}"
+    return None
+
+
 def _config_gate_rejection(
     node: Any, strategy_name: str, cfg: dict[str, Any], profile: Any
 ) -> str | None:
@@ -432,6 +504,17 @@ def _config_gate_rejection(
         return truncate_config_rejection(name, cfg)
     if strategy_name == "redact":
         return redact_config_rejection(name, cfg)
+    if strategy_name == "categorical":
+        # The compiled ColumnSeed is the determinism source of truth here (the
+        # native-route eligibility query, which has only raw config, uses the
+        # equivalent `is_deterministic_categorical` instead).
+        slice_ = node.plan_slice
+        return categorical_config_rejection(
+            name,
+            deterministic=bool(getattr(slice_, "deterministic", False)),
+            namespace=getattr(slice_, "namespace", None),
+            provider_config=cfg,
+        )
     return None
 
 
@@ -491,13 +574,16 @@ def requirements_for(node: Any, *, plan: Any, profile: Any) -> NodeRequirements:
 
 
 __all__ = [
+    "CHUNKED_ROUTE_VETOED_STRATEGIES",
     "NATIVE_KERNEL_STRATEGIES",
     "NATIVE_POOL_STRATEGIES",
     "FallbackPolicy",
     "NodeRequirements",
+    "categorical_config_rejection",
     "faker_pool_precondition_met",
     "hash_config_rejection",
     "is_admitted_native_hash_type",
+    "is_deterministic_categorical",
     "native_kernel_rejection",
     "native_pool_rejection",
     "redact_config_rejection",
