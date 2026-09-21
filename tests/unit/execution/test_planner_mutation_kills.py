@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -24,7 +23,6 @@ import pyarrow.parquet as pq
 from decoy_engine.execution._planner import (
     _bucketize_columns,
     _fpe_join_group_columns,
-    _polars_native_rejection,
     _runtime_source_rejections,
     _table_column_entries,
     _whole_column_state_rejections,
@@ -315,50 +313,3 @@ class TestRuntimeSourceBucketizeGate:
         assert _rr(tbl, bucketize_columns=[]) == []
 
 
-# --------------------------------------------------------------------------
-# _polars_native_rejection: substrate / mask-presence / fk / native-work gates
-# --------------------------------------------------------------------------
-
-
-def _scalar(strategy: str, table: str = "t"):
-    return SimpleNamespace(kind="scalar", strategy=strategy, table=table)
-
-
-class TestPolarsNativeRejection:
-    def test_all_native_scalar_no_fk_on_polars_is_admitted(self):
-        assert (
-            _polars_native_rejection(
-                substrate="polars", mask_tables=["t"], work=[_scalar("hash")], has_fk=False
-            )
-            is None
-        )
-
-    def test_non_native_scalar_strategy_is_named_and_rejects(self):
-        reason = _polars_native_rejection(
-            substrate="polars",
-            mask_tables=["t"],
-            work=[_scalar("zzz_not_native")],
-            has_fk=False,
-        )
-        assert reason is not None  # kills the filter `and`->`or` (would admit)
-        assert "non-polars-native work: zzz_not_native" in reason  # kills kind/strategy swap
-
-    def test_multiple_non_native_strategies_are_comma_joined(self):
-        reason = _polars_native_rejection(
-            substrate="polars",
-            mask_tables=["t"],
-            work=[_scalar("aaa"), _scalar("bbb")],
-            has_fk=False,
-        )
-        assert "non-polars-native work: aaa, bbb" in reason
-
-    def test_fk_edges_reject_with_lowercase_code(self):
-        reason = _polars_native_rejection(
-            substrate="pandas", mask_tables=["t"], work=[_scalar("hash")], has_fk=True
-        )
-        assert "fk_resolution:" in reason  # kills the all-uppercase message mutation
-        assert "resolved substrate is 'pandas'" in reason
-
-    def test_no_mask_tables_rejects(self):
-        reason = _polars_native_rejection(substrate="polars", mask_tables=[], work=[], has_fk=False)
-        assert "no mask-kind work" in reason

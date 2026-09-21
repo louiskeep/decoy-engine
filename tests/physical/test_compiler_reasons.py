@@ -12,42 +12,6 @@ from __future__ import annotations
 from decoy_engine.execution.physical import _reasons
 
 
-def test_translate_polars_rejection_no_mask_work() -> None:
-    prose = "no mask-kind work; the polars-native loop masks existing data (generation uses the synthesize path)"
-    assert _reasons.translate_polars_rejection(prose) == (_reasons.CODE_NO_MASK_WORK,)
-
-
-def test_translate_polars_rejection_substrate() -> None:
-    prose = "resolved substrate is 'pandas'; the polars-native loop requires the polars substrate"
-    assert _reasons.translate_polars_rejection(prose) == ("substrate_is:pandas",)
-
-
-def test_translate_polars_rejection_fk_resolution() -> None:
-    prose = "fk_resolution: FK edges route through the pandas oracle"
-    assert _reasons.translate_polars_rejection(prose) == (_reasons.CODE_FK_RESOLUTION,)
-
-
-def test_translate_polars_rejection_non_native_work() -> None:
-    prose = "non-polars-native work: fpe, hash"
-    assert _reasons.translate_polars_rejection(prose) == ("non_polars_native_work:fpe, hash",)
-
-
-def test_translate_polars_rejection_combines_multiple_reasons() -> None:
-    prose = (
-        "no mask-kind work; the polars-native loop masks existing data "
-        "(generation uses the synthesize path); "
-        "resolved substrate is 'pandas'; the polars-native loop requires the polars substrate"
-    )
-    codes = _reasons.translate_polars_rejection(prose)
-    assert _reasons.CODE_NO_MASK_WORK in codes
-    assert "substrate_is:pandas" in codes
-
-
-def test_translate_polars_rejection_unclassified_fallback() -> None:
-    prose = "a brand new reason nobody wrote a template for"
-    assert _reasons.translate_polars_rejection(prose) == (f"unclassified_polars_rejection:{prose}",)
-
-
 def test_translate_chunked_rejection_no_mask_tables() -> None:
     assert _reasons.translate_chunked_rejection("no mask-kind tables to stream") == (
         _reasons.CODE_NO_MASK_TABLES,

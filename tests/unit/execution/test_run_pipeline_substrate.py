@@ -7,12 +7,12 @@ P1 routes `run_pipeline`'s mask-kind execution through
 as `run_pipeline` keyword parameters.
 
 The load-bearing contract pinned here: the DEFAULT call is byte-identical
-to the pre-P1 hardcoded pandas path. `resolve_substrate`'s S13 default
-flip to polars must NOT leak into `run_pipeline`'s default -- the
-`substrate` parameter defaults to `"pandas"`, and `substrate=None` is the
-explicit opt-in to env-resolved (`DECOY_SUBSTRATE`) selection. Every test
-pins or clears `DECOY_SUBSTRATE` so the suite is hermetic under the CI
-substrate matrix (which exports `DECOY_SUBSTRATE=polars`).
+to the pre-P1 hardcoded pandas path. The `substrate` parameter defaults to
+`"pandas"`, and `substrate=None` is the explicit opt-in to env-resolved
+(`DECOY_SUBSTRATE`) selection. `"pandas"` is the only valid substrate since
+the polars masking adapter was removed, so an explicit `substrate="polars"`
+(or `DECOY_SUBSTRATE=polars`) now raises `invalid_substrate`; every test
+still pins or clears `DECOY_SUBSTRATE` so the suite stays hermetic.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
 
 _ENGINE_VERSION = "p1p4-substrate-test"
 
@@ -76,70 +75,6 @@ def _scalar_mask_sources(tmp_path) -> dict[str, pa.Table]:
     )
     df.to_csv(tmp_path / "customers.csv", index=False)
     return {"customers": pa.Table.from_pandas(df, preserve_index=False)}
-
-
-def _fk_mask_config(tmp_path) -> dict:
-    """Parent/child FK mask config: the polars adapter cannot run FK
-    resolution natively and must route through the pandas oracle."""
-    return _validated_dump(
-        {
-            "version": 1,
-            "global_settings": {"seed": 42},
-            "sources": {
-                "customers": {
-                    "type": "file",
-                    "format": "csv",
-                    "path": str(tmp_path / "customers.csv"),
-                },
-                "orders": {
-                    "type": "file",
-                    "format": "csv",
-                    "path": str(tmp_path / "orders.csv"),
-                },
-            },
-            "tables": [
-                {
-                    "name": "customers",
-                    "columns": [{"name": "id", "strategy": "hash", "namespace": "id_ns"}],
-                },
-                {
-                    "name": "orders",
-                    "columns": [{"name": "customer_id", "strategy": "hash", "namespace": "id_ns"}],
-                },
-            ],
-            "relationships": [
-                {
-                    "parent": {"table": "customers", "columns": ["id"]},
-                    "children": [{"table": "orders", "columns": ["customer_id"]}],
-                    "orphan_policy": "preserve",
-                    "namespace": "id_ns",
-                }
-            ],
-            "targets": {
-                "customers": {
-                    "type": "file",
-                    "format": "csv",
-                    "path": str(tmp_path / "customers_out.csv"),
-                },
-                "orders": {
-                    "type": "file",
-                    "format": "csv",
-                    "path": str(tmp_path / "orders_out.csv"),
-                },
-            },
-        }
-    )
-
-
-def _fk_mask_sources(tmp_path) -> dict[str, pa.Table]:
-    customers = pd.DataFrame({"id": ["C1", "C2", "C3"]})
-    orders = pd.DataFrame({"customer_id": ["C1", "C1", "C2"]})
-    customers.to_csv(tmp_path / "customers.csv", index=False)
-    orders.to_csv(tmp_path / "orders.csv", index=False)
-    return {
-        "customers": pa.Table.from_pandas(customers, preserve_index=False),
-        "orders": pa.Table.from_pandas(orders, preserve_index=False),
-    }
 
 
 @pytest.fixture
@@ -262,79 +197,35 @@ class TestEnvResolvedSubstrate:
         run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate=None)
         assert isinstance(select_spy[0]["adapter"], PandasExecutionAdapter)
 
-    def test_substrate_none_honors_env_polars(self, tmp_path, monkeypatch, select_spy):
+    def test_substrate_none_env_polars_now_raises_invalid_substrate(self, tmp_path, monkeypatch):
+        """`DECOY_SUBSTRATE=polars` was the S13 opt-in; with the polars
+        masking adapter removed, env-resolved selection rejects it."""
         monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
         cfg = _scalar_mask_config(tmp_path)
         sources = _scalar_mask_sources(tmp_path)
-        run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate=None)
-        assert isinstance(select_spy[0]["adapter"], PolarsExecutionAdapter)
+        with pytest.raises(ExecutionError) as exc:
+            run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate=None)
+        assert exc.value.code == "invalid_substrate"
 
 
 # --------------------------------------------------------------------------
-# P1: explicit polars route -- native scalar parity + FK fallback
+# P1: explicit polars selection is now rejected (adapter removed)
 # --------------------------------------------------------------------------
 
 
-class TestPolarsRoute:
-    def test_polars_scalar_no_fk_runs_native_and_matches_pandas_values(self, tmp_path, monkeypatch):
-        """Value parity per the v2 substrate contract: `to_pydict()`
-        equality (schema-level string-width drift is the accepted
-        difference, per SEMANTIC_DIFFERENCES.md)."""
+class TestPolarsRejected:
+    def test_explicit_polars_substrate_raises_invalid_substrate(self, tmp_path, monkeypatch):
+        """`substrate="polars"` was the explicit opt-in to the dormant
+        masking adapter; with it removed, pandas is the only substrate and
+        the public route rejects polars at selection time."""
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         cfg = _scalar_mask_config(tmp_path)
         sources = _scalar_mask_sources(tmp_path)
-        pandas_result = run_pipeline(
-            cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="pandas"
-        )
-        polars_result = run_pipeline(
-            cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="polars"
-        )
-        assert (
-            polars_result.outputs["customers"].to_pydict()
-            == pandas_result.outputs["customers"].to_pydict()
-        )
-        executed = polars_result.quality_metrics["executed_substrate"]
-        assert executed == {"hash": "polars", "truncate": "polars", "redact": "polars"}
-
-    def test_polars_fk_job_falls_back_to_pandas_oracle(self, tmp_path, monkeypatch):
-        """FK resolution is not polars-native: the executed substrate of
-        record must be pandas and the values must match the pandas run."""
-        monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
-        cfg = _fk_mask_config(tmp_path)
-        sources = _fk_mask_sources(tmp_path)
-        pandas_result = run_pipeline(
-            cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="pandas"
-        )
-        polars_result = run_pipeline(
-            cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="polars"
-        )
-        for table in ("customers", "orders"):
-            assert (
-                polars_result.outputs[table].to_pydict() == pandas_result.outputs[table].to_pydict()
-            ), f"{table} diverged from the pandas oracle"
-        executed = polars_result.quality_metrics["executed_substrate"]
-        assert set(executed.values()) == {"pandas"}
-        # FK integrity survives the fallback: child keys resolve through
-        # the parent map, so masked child values appear in the parent.
-        masked_parent = set(polars_result.outputs["customers"].column("id").to_pylist())
-        masked_child = set(polars_result.outputs["orders"].column("customer_id").to_pylist())
-        assert masked_child <= masked_parent
-
-    def test_polars_fallback_disabled_fk_job_raises_typed(self, tmp_path, monkeypatch):
-        """`fallback_to_pandas=False` keeps its existing hard-error
-        semantics when routed via run_pipeline (no silent downgrade)."""
-        monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
-        cfg = _fk_mask_config(tmp_path)
-        sources = _fk_mask_sources(tmp_path)
         with pytest.raises(ExecutionError) as exc:
             run_pipeline(
-                cfg,
-                sources=sources,
-                engine_version=_ENGINE_VERSION,
-                substrate="polars",
-                fallback_to_pandas=False,
+                cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="polars"
             )
-        assert exc.value.code == "polars_substrate_strategy_unmigrated"
+        assert exc.value.code == "invalid_substrate"
 
 
 # --------------------------------------------------------------------------
@@ -409,7 +300,7 @@ class TestKnobValidation:
         from decoy_engine.execution._substrate import select_execution_adapter
 
         with pytest.raises(ExecutionError) as exc:
-            select_execution_adapter(substrate="polars", fallback_to_pandas=bad)
+            select_execution_adapter(substrate="pandas", fallback_to_pandas=bad)
         assert exc.value.code == "invalid_execution_knob"
 
     @pytest.mark.parametrize("bad", [123, True, ["polars"]])
@@ -424,22 +315,6 @@ class TestKnobValidation:
 
 
 class TestNonDefaultKnobMetadata:
-    def test_non_default_substrate_stamps_execution_adapter_block(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
-        cfg = _scalar_mask_config(tmp_path)
-        sources = _scalar_mask_sources(tmp_path)
-        result = run_pipeline(
-            cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="polars"
-        )
-        block = result.quality_metrics["execution_adapter"]
-        assert block["adapter_name"] == "polars"
-        assert isinstance(block["adapter_version"], str)
-        assert block["requested_substrate"] == "polars"
-        assert block["resolved_substrate"] == "polars"
-        assert block["fpe_chunk_count"] == 4
-        assert block["max_workers"] == 4
-        assert block["fallback_to_pandas"] is True
-
     def test_non_default_int_knob_stamps_block_on_pandas(self, tmp_path, monkeypatch):
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         cfg = _scalar_mask_config(tmp_path)
