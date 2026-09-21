@@ -2,9 +2,10 @@
 
 Called from the compiler's `_build_nodes` at compile time, for exactly the
 native-admitted slice strategies the shadow coordinator shadows: passthrough,
-redact, truncate, keyed hash (Task 4.4), and (Task 4.6 slice 1) deterministic
-faker over the frozen C1 provider allowlist. Every other node is left unbound
-(`PhysicalNode.execution is None`) -- out of scope for this slice.
+redact, truncate, keyed hash (Task 4.4), (Task 4.6 slice 1) deterministic
+faker over the frozen C1 provider allowlist, and (Phase 5 Track B)
+deterministic categorical over string categories. Every other node is left
+unbound (`PhysicalNode.execution is None`) -- out of scope for this slice.
 
 Secrets never appear here: `KeyBinding` carries only the non-secret
 `KeySource` token (`native/_capabilities.py:51`) plus the namespace, and
@@ -21,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Final
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._chunk_masking import _resolve_truncate_keep
 from decoy_engine.execution.native._phase3_eligibility import C1_PROVIDER_ALLOWLIST
@@ -38,7 +41,7 @@ if TYPE_CHECKING:
 # Task 4.6 slice 1's faker addition); a node outside this set is never bound,
 # regardless of native admission.
 SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(
-    {"passthrough", "redact", "truncate", "hash", "faker"}
+    {"passthrough", "redact", "truncate", "hash", "faker", "categorical"}
 )
 
 OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
@@ -47,6 +50,7 @@ OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
     "truncate": "native_truncate",
     "hash": "native_keyed_hash",
     "faker": "native_faker_select",
+    "categorical": "native_categorical",
 }
 
 _SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
@@ -187,6 +191,9 @@ def execution_binding_for_slice_node(
     caps = capabilities_for(strategy)
     key_binding: KeyBinding | None = None
     pool_binding: PoolBinding | None = None
+    categorical_deterministic = False
+    categorical_categories: tuple[str, ...] | None = None
+    categorical_cdf: tuple[int, ...] | None = None
     if strategy == "hash":
         if caps.key_source is None or plan_slice.namespace is None:
             # hash_requires_namespace is enforced upstream of the native
@@ -215,6 +222,29 @@ def execution_binding_for_slice_node(
             return None
         key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
         pool_binding = PoolBinding(provider=provider, plan_pool_size=pool_size)
+    elif strategy == "categorical":
+        # `requirements.fallback_policy == "native"` (checked above) already
+        # proved `categorical_config_rejection` passed: deterministic, a
+        # namespace, a non-empty STRING category list, and a buildable weight
+        # CDF. Capture the resolved categories + CDF onto the binding so the
+        # operator never re-reads/re-validates config per batch.
+        namespace = plan_slice.namespace
+        if caps.key_source is None or namespace is None:
+            return None  # pragma: no cover - config gate guarantees both
+        categories_raw = cfg.get("categories")
+        if not isinstance(categories_raw, (list, tuple)) or not all(
+            isinstance(c, str) for c in categories_raw
+        ):
+            return None  # pragma: no cover - config gate guarantees string categories
+        categorical_categories = tuple(categories_raw)
+        weights_raw = cfg.get("weights")
+        if weights_raw is not None:
+            try:
+                categorical_cdf = tuple(_build_cdf([float(w) for w in weights_raw]))
+            except StrategyError:
+                return None  # pragma: no cover - config gate already proved buildable
+        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
+        categorical_deterministic = True
 
     return ExecutionBinding(
         operator_id=OPERATOR_ID_BY_STRATEGY[strategy],
@@ -229,4 +259,7 @@ def execution_binding_for_slice_node(
         required_prepasses=requirements.required_prepasses,
         batch_estimate=_batch_estimate(table, inputs),
         pool_binding=pool_binding,
+        categorical_deterministic=categorical_deterministic,
+        categorical_categories=categorical_categories,
+        categorical_cdf=categorical_cdf,
     )

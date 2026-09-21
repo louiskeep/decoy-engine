@@ -288,6 +288,18 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/out_of_core/_compat.py",
         "src/decoy_engine/execution/_guards.py",
         "src/decoy_engine/execution/_strategies/_date_shift.py",
+        # Phase 5 Track B (native categorical operator, 2026-09-21): the new
+        # operator extends the NATIVE route -- its config/determinism gate
+        # (`_requirements.py`), the config-only eligibility query (`_plan.py`),
+        # the chunked-route veto (`_dispatch.py`), and the reusing kernel
+        # (`_categorical_ext.py`, new). None imports `execution.physical`, so
+        # the import-direction seam sweeps and the run_pipeline dynamic check
+        # below stay green; these live under execution/native/, not
+        # execution/physical/, so they are permitted edits here.
+        "src/decoy_engine/execution/native/_categorical_ext.py",
+        "src/decoy_engine/execution/native/_dispatch.py",
+        "src/decoy_engine/execution/native/_plan.py",
+        "src/decoy_engine/execution/native/_requirements.py",
     }
     unexpected = [
         name

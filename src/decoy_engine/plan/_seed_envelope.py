@@ -188,6 +188,11 @@ def _build_seed_envelope(
                 )
                 # R6: read the new first-class `deterministic: bool` field.
                 # Defaults to False; the column opts in explicitly.
+                # SYNC: this determinism computation (the `deterministic` field OR
+                # the `allow_collisions` alias below) is mirrored by
+                # `execution/native/_requirements.py::is_deterministic_categorical`
+                # for the config-only native-route query. A new determinism
+                # condition here MUST be added there too (a test pins equivalence).
                 deterministic = bool(col_entry.get("deterministic", False))
                 # Gap-closure item 2: `allow_collisions: true` is a documented
                 # alias for Delphix Secure Lookup's collision-allowed semantics.

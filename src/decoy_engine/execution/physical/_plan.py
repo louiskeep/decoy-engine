@@ -92,6 +92,16 @@ class ExecutionBinding:
     (empty for this slice's zero-diagnostic strategies). `batch_estimate` is
     the resident source table's row count when known, for reporting only --
     it does not gate anything.
+
+    Phase 5 Track B adds the deterministic-categorical carriers. `categorical_
+    deterministic` is set True only for a bound categorical node, sourced from
+    `ColumnSeed.deterministic` (equal by construction to `is_deterministic_
+    categorical(config)`) -- the runtime asserts it before invoking the native
+    operator so the unseeded path can never reach it under a wiring bug.
+    `categorical_categories` is the resolved STRING category tuple; `categorical
+    _cdf` is the resolved integer CDF (`_build_cdf`) for the weighted variant,
+    `None` for the uniform one. All four default so every non-categorical
+    construction is unchanged.
     """
 
     operator_id: str
@@ -105,9 +115,14 @@ class ExecutionBinding:
     diagnostic_obligations: tuple[str, ...]
     required_prepasses: tuple[str, ...]
     batch_estimate: int | None
-    # Task 4.6 slice 1: LAST field, defaulted to None, so every pre-existing
-    # ExecutionBinding construction (the four scalar operators) is unchanged.
+    # Task 4.6 slice 1: LAST field before Phase 5, defaulted to None, so every
+    # pre-existing construction (the four scalar operators) is unchanged.
     pool_binding: PoolBinding | None = None
+    # Phase 5 Track B (deterministic categorical); all defaulted, so no
+    # pre-existing ExecutionBinding construction changes shape.
+    categorical_deterministic: bool = False
+    categorical_categories: tuple[str, ...] | None = None
+    categorical_cdf: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)

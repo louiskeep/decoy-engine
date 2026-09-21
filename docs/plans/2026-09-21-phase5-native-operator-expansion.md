@@ -6,6 +6,30 @@ Roadmap: Stage C item 11 (Phase 5). Scope approved by Cam 2026-09-21 (Track A + 
 knee clamp, up to 8 GCP runs reserving prodsim headroom). FRAME survey: the native-path seam map
 (2026-09-21). Base: engine main `831a9f0f` (post task #11).
 
+## UPDATE 2026-09-21 (post-build; supersedes Track A below)
+
+- **PR-1a (engine-side knee clamp): SHIPPED** — engine PR #170 merged to main `e7100689`, full CI green
+  (Codex plan-gate GO -> dennis APPROVE -> Codex FINAL GO -> CI; a red-main flake in an unrelated
+  OOM-classification test cleared on re-run). Keep it: it bounds runaway thread requests and improves
+  hash/faker too (t4 beats t8).
+- **PR-1b (parallelize redact/truncate fan-out): DROPPED — its premise was a STALE benchmark.** An A0
+  spike + a data-path investigation (Cam-directed, 2026-09-21) found the "redact ~142s / truncate ~173s
+  @100M" figure came from `scripts/native-baseline/results_native_100m.json` committed 2026-08-30
+  (`6cac36df`), which recorded the pre-vectorization per-row Python loop. The vectorized pyarrow fast
+  path landed 2026-09-11 (`d4885f7a`), ~12 days later. On current main the same 100M workload runs
+  ~1.4s (redact) / ~3.6s (truncate) — no wall to attack. Production source strings arrive as
+  `pa.string()` (fast); the default full-frame route admits redact/truncate only for exact `pa.string()`.
+  A Python thread-pool fan-out would save ~1s on an already-fast op and cannot help the GIL-held Python
+  path anyway. So Track A's fan-out is void. (One narrow residual: a `large_string` SOURCE parquet on the
+  native CHUNKED route has no type gate and hits ~97s; a byte-identical `pc.cast(large_string->string)`
+  (~0.26s/100M) closes it — a DEFERRED defensive add, land only if enterprise `large_string`/
+  `string[pyarrow]` sources are in scope, NOT a throughput lever.) See [[decoy-redact-truncate-fallback-
+  cost]].
+- **This PR = PR-2 (native `categorical`) only.** Track B below is the live scope; Track A / PR-1a /
+  PR-1b sections are retained as record. A separate 1-GCP-run regenerates the stale `results_native_
+  100m.json` on current main to kill the misleading 142s source-of-truth.
+- Base for this PR: engine main `e7100689` (post PR-1a).
+
 ## FRAME — the goal
 
 After the keyed-hash kernel fell ~13.5x (1280s -> 95s at 8 threads) and the pool/faker selector went
