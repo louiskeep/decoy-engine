@@ -105,7 +105,12 @@ __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 # Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
 # else -> string (passthrough is separate). bucket_perturb differs ONLY on empty
 # (it passes its source object series through -> Arrow null), so it is split out.
-_TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker", "categorical"})
+# group_key never emits an all-null column (a null sibling cell derives the key
+# for "None"), so its all-null branch is dead, but empty -> float64 applies (the
+# empty-frame golden pins this) -- so it belongs here, not in _NULL_ON_EMPTY.
+_TOKENIZING_STRATEGIES = frozenset(
+    {"redact", "truncate", "hash", "faker", "categorical", "group_key"}
+)
 _NULL_ON_EMPTY_STRATEGIES = frozenset({"bucket_perturb"})
 
 
@@ -370,6 +375,13 @@ class ShadowCoordinator:
                         pool_cache=pool_cache,
                     )
 
+                # group_key is the one bound strategy that keys on a DIFFERENT
+                # column than the one it writes: it reads the sibling `group_by`
+                # column's ORIGINAL source value (admission proved that sibling is
+                # unmasked/passthrough, so `batch.column(group_by)` equals what the
+                # oracle reads) and writes the derived key to `column`. Every other
+                # operator reads and writes the same column.
+                input_column = binding.group_key_group_by or column
                 parts: list[pa.Array] = []
                 for batch in _batches(source, self.ctx.batch_size_rows):
                     if batch.num_rows > self.ctx.batch_size_rows:  # pragma: no cover
@@ -377,7 +389,7 @@ class ShadowCoordinator:
                             code=RESOURCE_LIMIT_BREACH,
                             detail=f"node={node.node_id!r}: a batch exceeded the batch_size_rows budget",
                         )
-                    array = batch.column(column)
+                    array = batch.column(input_column)
                     parts.append(
                         run_operator(
                             array,

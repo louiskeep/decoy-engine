@@ -20,6 +20,7 @@ from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_pert
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -46,6 +47,7 @@ _KEYED_HASH: Final = "native_keyed_hash"
 _FAKER_SELECT: Final = "native_faker_select"
 _CATEGORICAL: Final = "native_categorical"
 _BUCKET_PERTURB: Final = "native_bucket_perturb"
+_GROUP_KEY: Final = "native_group_key"
 
 
 @dataclass
@@ -183,6 +185,35 @@ def run_operator(
             index_kernel=index_kernel,
             native_threads=ctx.native_threads,
         )
+        evidence.compiled_kernel_executed = True
+    elif binding.operator_id == _GROUP_KEY:
+        # group_key is the one operator whose input `array` is NOT the target
+        # column: the coordinator feeds `batch.column(group_by)` (the sibling),
+        # and the derived key is written to the target. The binding carries the
+        # resolved length/prefix and the SYNTHESIZED f"group_key/{target}"
+        # namespace on its KeyBinding.
+        if (
+            binding.key_binding is None
+            or binding.group_key_group_by is None
+            or binding.group_key_length is None
+        ):  # pragma: no cover - C0 binds these together for group_key
+            raise AssertionError(
+                "group_key node reached run_operator with no KeyBinding/group_by/length"
+            )
+        try:
+            out = native_group_key(
+                array,
+                length=binding.group_key_length,
+                prefix=binding.group_key_prefix or "",
+                mask_key=ctx.mask_key,
+                namespace=binding.key_binding.namespace,
+                native_threads=ctx.native_threads,
+            )
+        except CryptoExtensionUnavailableError as exc:
+            raise ShadowDifference(
+                code=NATIVE_COMPANION_UNAVAILABLE,
+                detail=f"operator={binding.operator_id!r}: compiled raw-hex companion unavailable",
+            ) from exc
         evidence.compiled_kernel_executed = True
     else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
         raise AssertionError(f"unbound operator id {binding.operator_id!r}")

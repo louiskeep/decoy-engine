@@ -52,6 +52,7 @@ from decoy_engine.execution.native._requirements import (
     NodeRequirements,
     bucket_perturb_config_rejection,
     categorical_config_rejection,
+    group_key_config_rejection,
     hash_config_rejection,
     is_deterministic_categorical,
     native_kernel_rejection,
@@ -293,9 +294,9 @@ def _config_rejection(
     name: str, strategy: str, col: dict[str, Any], *, table: str, profile: Any | None
 ) -> str | None:
     """The coded reason `name`'s resolved CONFIG or INPUT type is one the
-    native kernel for `strategy` cannot honor, or None. Only the admitted
-    set's five strategies (hash/truncate/redact/categorical/bucket_perturb) get
-    a gate here; every other strategy that passed the capability check above is
+    native kernel for `strategy` cannot honor, or None. Only the admitted set's
+    strategies (hash/truncate/redact/categorical/bucket_perturb/group_key) get a
+    gate here; every other strategy that passed the capability check above is
     unaffected (narrowing, never widening)."""
     if strategy == "hash":
         return hash_config_rejection(name, table, profile)
@@ -327,6 +328,14 @@ def _config_rejection(
             table,
             profile,
             namespace=col.get("namespace"),
+            provider_config=provider_config if isinstance(provider_config, dict) else {},
+        )
+    if strategy == "group_key":
+        provider_config = col.get("provider_config")
+        return group_key_config_rejection(
+            name,
+            table,
+            profile,
             provider_config=provider_config if isinstance(provider_config, dict) else {},
         )
     return None

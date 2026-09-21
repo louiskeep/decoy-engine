@@ -31,6 +31,10 @@ from decoy_engine.execution.native._companion_status import (
 )
 from decoy_engine.execution.native._crypto_ext import _EXPECTED_ABI_VERSION
 from decoy_engine.execution.native._crypto_reference import reference_keyed_derivation
+from decoy_engine.execution.native._group_key_ext import (
+    RAW_HEX_KAT,
+    reference_raw_hex_derivation,
+)
 from decoy_engine.execution.native._index_ext import (
     INDEX_KAT,
     reference_index_derivation,
@@ -75,6 +79,15 @@ def _good_derive_index_batch() -> Callable[..., pa.Array]:
     return _fn
 
 
+def _good_derive_hex_raw_batch() -> Callable[..., pa.Array]:
+    reference = reference_raw_hex_derivation()
+
+    def _fn(values: pa.Array, **kwargs: object) -> pa.Array:
+        return reference.derive_hex_raw_batch(values, **kwargs)  # type: ignore[arg-type]
+
+    return _fn
+
+
 def _install_fake_kernel(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -82,6 +95,7 @@ def _install_fake_kernel(
     abi_raises: bool = False,
     derive_batch: Callable[..., pa.Array] | object | None = None,
     derive_index_batch: Callable[..., pa.Array] | object | None = None,
+    derive_hex_raw_batch: Callable[..., pa.Array] | object | None = None,
 ) -> None:
     """Inject a stand-in `decoy_engine_native._kernel` via `sys.modules`.
 
@@ -105,6 +119,10 @@ def _install_fake_kernel(
     if derive_index_batch is not _NO_ENTRY_POINT:
         fake_kernel.derive_index_batch = (  # type: ignore[attr-defined]
             derive_index_batch or _good_derive_index_batch()
+        )
+    if derive_hex_raw_batch is not _NO_ENTRY_POINT:
+        fake_kernel.derive_hex_raw_batch = (  # type: ignore[attr-defined]
+            derive_hex_raw_batch or _good_derive_hex_raw_batch()
         )
     fake_pkg = types.ModuleType("decoy_engine_native")
     fake_pkg._kernel = fake_kernel  # type: ignore[attr-defined]
@@ -258,6 +276,21 @@ def test_load_error_when_derive_index_batch_entry_point_missing(
     assert isinstance(status.cause, AttributeError)
 
 
+def test_load_error_when_derive_hex_raw_batch_entry_point_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A companion built before the raw-hex (group_key) kernel existed: still a
+    # valid abi-2 build for the hash/index routes, but incomplete. The hash and
+    # index KATs pass, but the overall status must still be not-ok.
+    _install_fake_kernel(monkeypatch, derive_hex_raw_batch=_NO_ENTRY_POINT)
+    status = native_companion_status()
+    assert status.present is True
+    assert status.ok is False
+    assert status.reason == "load-error"
+    assert status.abi_actual == _EXPECTED_ABI_VERSION
+    assert isinstance(status.cause, AttributeError)
+
+
 # ---------------------------------------------------------------------------
 # abi-mismatch
 # ---------------------------------------------------------------------------
@@ -301,6 +334,19 @@ def test_kat_corrupt_when_index_kat_wrong_value(monkeypatch: pytest.MonkeyPatch)
         return pa.array([0] * len(INDEX_KAT.values), type=pa.uint64())
 
     _install_fake_kernel(monkeypatch, derive_index_batch=_wrong)
+    status = native_companion_status()
+    assert status.present is True
+    assert status.ok is False
+    assert status.reason == "kat-corrupt"
+    assert isinstance(status.cause, NativeCompanionCheckError)
+    assert status.cause.reason == "kat-corrupt"
+
+
+def test_kat_corrupt_when_raw_hex_kat_wrong_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _wrong(values: pa.Array, **kwargs: object) -> pa.Array:
+        return pa.array(["deadbeef"] * len(RAW_HEX_KAT.values), type=pa.string())
+
+    _install_fake_kernel(monkeypatch, derive_hex_raw_batch=_wrong)
     status = native_companion_status()
     assert status.present is True
     assert status.ok is False

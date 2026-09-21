@@ -66,6 +66,7 @@ __all__ = [
     "ALLOWED_OPERATOR_IDS",
     "BUCKET_PERTURB_OPERATOR_ID",
     "CATEGORICAL_OPERATOR_ID",
+    "GROUP_KEY_OPERATOR_ID",
     "HASH_OPERATOR_ID",
     "CheapCandidate",
     "cheap_admission",
@@ -85,6 +86,7 @@ ALLOWED_OPERATOR_IDS = frozenset(
         "native_keyed_hash",
         "native_categorical",
         "native_bucket_perturb",
+        "native_group_key",
     }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
@@ -95,15 +97,16 @@ HASH_OPERATOR_ID = "native_keyed_hash"
 # `_COMPANION_DEPENDENT_OPERATOR_IDS` set below).
 CATEGORICAL_OPERATOR_ID = "native_categorical"
 BUCKET_PERTURB_OPERATOR_ID = "native_bucket_perturb"
+GROUP_KEY_OPERATOR_ID = "native_group_key"
 
 # The operators whose native execution needs the compiled companion loadable at
-# this host: hash (its crypto kernel) plus the two index-kernel operators
-# (categorical, bucket_perturb). A table carrying any of these declines to the
-# oracle when the companion is absent -- the CI `substrate(pandas)` leg. Named
-# as a set so a new index/crypto operator joins by one edit, not a third ad-hoc
-# branch in `resident_contract_admission`.
+# this host: hash (its crypto kernel), the two index-kernel operators
+# (categorical, bucket_perturb), and group_key (its raw-hex kernel). A table
+# carrying any of these declines to the oracle when the companion is absent --
+# the CI `substrate(pandas)` leg. Named as a set so a new index/crypto operator
+# joins by one edit, not another ad-hoc branch in `resident_contract_admission`.
 _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
-    {HASH_OPERATOR_ID, CATEGORICAL_OPERATOR_ID, BUCKET_PERTURB_OPERATOR_ID}
+    {HASH_OPERATOR_ID, CATEGORICAL_OPERATOR_ID, BUCKET_PERTURB_OPERATOR_ID, GROUP_KEY_OPERATOR_ID}
 )
 
 # The fixed, reviewed resident-type domain per slice strategy -- the actual
@@ -346,6 +349,51 @@ def _has_when_gate(col: Mapping[str, Any]) -> bool:
     return isinstance(when, str) and bool(when.strip())
 
 
+def _group_key_sibling_admitted(
+    binding: Any, physical_table: PhysicalTable, source: pa.Table
+) -> bool:
+    """Whether a bound group_key node's `group_by` SIBLING column is admissible:
+    resident, a safe non-dictionary type, matching the binding's input_schema,
+    and NOT itself masked by another node in the table (the order-dependence
+    decline).
+
+    Runs on the SIBLING, not the target: the oracle keys on `df[group_by]` at
+    group_key's execution point, so native parity holds only when
+    `batch.column(group_by)` (the original source value) equals what the oracle
+    reads -- which requires the sibling to be resident, safe-typed, and left
+    UNMASKED (a passthrough node). A masked sibling means the pandas adapter
+    would have mutated that column in the frame before group_key reads it, so
+    native declines to the oracle (v1 does not model the effective-input
+    dependency)."""
+    from decoy_engine.execution.native._requirements import group_key_sibling_type_admitted
+
+    group_by = binding.group_key_group_by
+    if not isinstance(group_by, str) or not group_by:
+        return False
+    if group_by not in source.schema.names:
+        # A non-resident sibling declines cleanly (never a raising KeyError).
+        return False
+    sibling_type = source.schema.field(group_by).type
+    if not group_key_sibling_type_admitted(sibling_type):
+        # float / decimal / dictionary (and any unlisted type) decline.
+        return False
+    # The binding's input_schema is built from the SIBLING column's type, so it
+    # must carry exactly that field at that type (not the target's).
+    input_schema = binding.input_schema
+    if (
+        len(input_schema) != 1
+        or group_by not in input_schema.names
+        or input_schema.field(group_by).type != sibling_type
+    ):
+        return False
+    # Order-dependence: the sibling must be an UNMASKED (passthrough) node. Any
+    # other node masking it means the oracle would key on the mutated value.
+    for other in physical_table.nodes:
+        if group_by in other.columns and other.strategy != "passthrough":
+            return False
+    return True
+
+
 def resident_contract_admission(
     physical_plan: PhysicalPlan,
     *,
@@ -413,6 +461,26 @@ def resident_contract_admission(
         if binding.required_prepasses or binding.diagnostic_obligations:
             return None
         column = node.columns[0]
+        if binding.operator_id == GROUP_KEY_OPERATOR_ID:
+            # group_key keys on a SIBLING column, so its resident-type + residency
+            # checks must run on that sibling BEFORE the target-name schema lookup
+            # below (which would otherwise validate the wrong column, or raise for
+            # a binding whose input_schema is keyed by the sibling, not the
+            # target). A miss declines cleanly.
+            if not _group_key_sibling_admitted(binding, physical_table, source):
+                return None
+            # group_key consumes its namespace through the compiled raw-hex kernel
+            # at every batch, like the other companion-dependent operators.
+            key_binding = binding.key_binding
+            if key_binding is None:
+                return None
+            try:
+                key_binding.namespace.encode("utf-8")
+            except UnicodeEncodeError:
+                return None
+            companion_dependent_columns.append(column)
+            covered.append(column)
+            continue
         resident_type = source.schema.field(column).type
         if len(binding.input_schema) != 1 or binding.input_schema.field(column).type != (
             resident_type

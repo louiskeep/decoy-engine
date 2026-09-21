@@ -124,7 +124,7 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
 NATIVE_KERNEL_STRATEGIES = frozenset(
-    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb"}
+    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb", "group_key"}
 )
 
 # Mirrors the oracle's `transforms.bucket_perturb._VALID_BUCKETS`; kept local to
@@ -135,10 +135,13 @@ _VALID_BUCKET_PERTURB_BUCKETS = frozenset({"week", "month", "quarter"})
 # route: categorical and bucket_perturb both have a data-dependent output TYPE
 # (all-null -> null, empty -> float64/null, else -> string) that only a
 # whole-column assembly point can resolve, which the eager per-chunk emit
-# (`_chunk_masking.py`) lacks. Without this veto `_static_route_decision` would
-# admit them on the chunked route and hit the missing chunk handler; instead the
-# preflight routes the whole table to the oracle.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb"})
+# (`_chunk_masking.py`) lacks. group_key is here for a different reason: it keys
+# on a SIBLING column and is deliberately kept out of the chunk-safe set
+# (`_chunked_group_key.py`), so its native path is full-frame only too. Without
+# this veto `_static_route_decision` would admit them on the chunked route and
+# hit the missing chunk handler; instead the preflight routes the whole table to
+# the oracle.
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb", "group_key"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
@@ -537,6 +540,60 @@ def bucket_perturb_config_rejection(
     return None
 
 
+def group_key_sibling_type_admitted(arrow_type: pa.DataType) -> bool:
+    """Whether a group_by sibling's Arrow type is admitted to the native
+    group_key route: the shared `group_by_type_is_safe` predicate (integer,
+    boolean, string, large_string, date, timestamp -- float/decimal excluded)
+    MINUS dictionary types.
+
+    Dictionary is excluded in v1 (Codex P1-2): `group_by_type_is_safe`
+    recursively admits a dictionary whose value type is safe, but the
+    unified-slice resident-type gate is an exact-type map that cannot express
+    that recursive predicate, so a dictionary sibling declines to the oracle
+    until a later slice adds it with its own parity tests. Imported lazily so
+    the pandas-bearing chunked-group_key module stays off the planning
+    boundary's module-load path (matching `bucket_perturb_config_rejection`'s
+    lazy import)."""
+    from decoy_engine.execution._chunked_group_key import group_by_type_is_safe
+
+    return group_by_type_is_safe(arrow_type) and not pa.types.is_dictionary(arrow_type)
+
+
+def group_key_config_rejection(
+    name: str,
+    table: str,
+    profile: Any | None,
+    *,
+    provider_config: dict[str, Any],
+) -> str | None:
+    """The coded reason a `group_key` column cannot run natively, or None.
+
+    v1 admits ONLY a column whose `group_by` sibling is present and resolves to
+    a safe Arrow type (integer/bool/string/large_string/date/timestamp;
+    float/decimal/dictionary excluded), with a valid even `length` in `[8, 64]`.
+    `group_by` and `length` are already validated at plan-compile
+    (`GroupKeyConfig.from_dict`), so those checks are defensive; the load-bearing
+    gate here is the SIBLING type. An unresolved profile leaves the sibling type
+    unknowable, so this defers to the unified-slice resident-type gate (matching
+    hash) rather than guessing. The order-dependence decline (the sibling must
+    not itself be masked by another node) needs cross-node visibility the config
+    boundary lacks and is enforced at `resident_contract_admission`, the
+    full-visibility shadow-vs-oracle arbiter."""
+    group_by = provider_config.get("group_by")
+    if not isinstance(group_by, str) or not group_by:
+        return f"group_key_requires_group_by:{name}"
+    length = provider_config.get("length", 16)
+    if isinstance(length, bool) or not isinstance(length, int):
+        return f"group_key_length_not_int:{name}"
+    if length % 2 != 0 or length < 8 or length > 64:
+        return f"group_key_length_out_of_range:{name}"
+    if profile is not None:
+        resolved = resolve_input_arrow_type(table, group_by, profile)
+        if resolved is not None and not group_key_sibling_type_admitted(resolved):
+            return f"group_key_group_by_type_not_native:{name}:{group_by}:{resolved!s}"
+    return None
+
+
 def _config_gate_rejection(
     node: Any, strategy_name: str, cfg: dict[str, Any], profile: Any
 ) -> str | None:
@@ -572,6 +629,8 @@ def _config_gate_rejection(
             namespace=getattr(node.plan_slice, "namespace", None),
             provider_config=cfg,
         )
+    if strategy_name == "group_key":
+        return group_key_config_rejection(name, node.table, profile, provider_config=cfg)
     return None
 
 
@@ -639,6 +698,8 @@ __all__ = [
     "bucket_perturb_config_rejection",
     "categorical_config_rejection",
     "faker_pool_precondition_met",
+    "group_key_config_rejection",
+    "group_key_sibling_type_admitted",
     "hash_config_rejection",
     "is_admitted_native_hash_type",
     "is_deterministic_categorical",
