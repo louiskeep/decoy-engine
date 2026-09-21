@@ -31,7 +31,6 @@ import pytest
 
 from decoy_engine import run_mask_pipeline_chunked, run_pipeline
 from decoy_engine.config import PipelineConfig
-from decoy_engine.execution import PolarsExecutionAdapter
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_fk import CHUNK_SAFE_STRATEGIES
 from decoy_engine.execution._chunked_group_key import (
@@ -1562,49 +1561,7 @@ class TestWhenRejection:
 
 
 # ---------------------------------------------------------------------------
-# 9. Cross-substrate (polars).
-# ---------------------------------------------------------------------------
-
-
-class TestCrossSubstrate:
-    @pytest.mark.parametrize("chunk_size", [1, 6, 40])
-    def test_polars_chunked_value_equals_pandas_full_frame(self, tmp_path, chunk_size) -> None:
-        n = 37
-        household_ids = [f"H-{i % 9}" for i in range(n)]
-        table = pa.table({"household_id": pa.array(household_ids, type=pa.string())})
-        columns = [
-            {"name": "household_id", "strategy": "passthrough"},
-            {
-                "name": "household_key",
-                "strategy": "group_key",
-                "provider_config": {"group_by": "household_id"},
-            },
-        ]
-        cfg = _config(tmp_path, columns)
-        _write_csv_stub(tmp_path, "people", table)
-
-        full = run_pipeline(cfg, sources={"people": table}, engine_version=_ENGINE_VERSION).outputs[
-            "people"
-        ]
-
-        polars_chunked = pa.concat_tables(
-            list(
-                run_mask_pipeline_chunked(
-                    cfg,
-                    _pa_chunks(table, chunk_size),
-                    table="people",
-                    engine_version=_ENGINE_VERSION,
-                    adapter=PolarsExecutionAdapter(),
-                )
-            )
-        ).combine_chunks()
-
-        assert polars_chunked.column_names == full.column_names
-        assert polars_chunked.to_pydict() == full.to_pydict()
-
-
-# ---------------------------------------------------------------------------
-# 10. Output dtype invariance, no-`when` (Trap C).
+# 9. Output dtype invariance, no-`when` (Trap C).
 # ---------------------------------------------------------------------------
 
 

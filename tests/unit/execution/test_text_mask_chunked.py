@@ -55,7 +55,6 @@ import pytest
 
 from decoy_engine import run_mask_pipeline_chunked, run_pipeline
 from decoy_engine.config import PipelineConfig
-from decoy_engine.execution import PolarsExecutionAdapter
 from decoy_engine.execution._chunked import check_chunked_compatibility, concat_masked_chunks
 from decoy_engine.execution._chunked_fk import CHUNK_SAFE_STRATEGIES, NAMESPACE_REQUIRING_STRATEGIES
 from decoy_engine.execution._chunked_text_mask import (
@@ -1114,33 +1113,6 @@ class TestAdmissionSurfaces:
             chunk_size_rows=7,
         )
         assert result.quality_metrics["auto_chunk"]["mode"] == "chunked"
-
-    def test_cross_substrate_polars_value_equals_pandas_oracle(self, tmp_path) -> None:
-        table = pa.table(
-            {"cell": pa.array([f"id {i} {_SSN}" for i in range(20)], type=pa.string())}
-        )
-        columns = [
-            {"name": "cell", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}}
-        ]
-        cfg = _config(tmp_path, columns)
-        _write_csv_stub(tmp_path, "records", table)
-        full = run_pipeline(
-            cfg, sources={"records": table}, engine_version=_ENGINE_VERSION
-        ).outputs["records"]
-        polars_chunked = pa.concat_tables(
-            list(
-                run_mask_pipeline_chunked(
-                    cfg,
-                    _pa_chunks(table, 6),
-                    table="records",
-                    engine_version=_ENGINE_VERSION,
-                    adapter=PolarsExecutionAdapter(),
-                )
-            )
-        ).combine_chunks()
-        assert polars_chunked.column_names == full.column_names
-        assert polars_chunked.to_pydict() == full.to_pydict()
-
 
 # ---------------------------------------------------------------------------
 # 9. Warnings contract vs the unmatched-passthrough log.

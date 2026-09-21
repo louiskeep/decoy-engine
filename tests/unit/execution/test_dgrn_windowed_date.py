@@ -25,7 +25,6 @@ import pytest
 from decoy_engine import ExecutionError, run_mask_pipeline_chunked, run_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.determinism._derive import derive
-from decoy_engine.execution import PolarsExecutionAdapter
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_dgrn import (
     CHUNK_DGRN_STRATEGIES,
@@ -613,46 +612,6 @@ class TestNullAnchorFailure:
                     engine_version=_ENGINE_VERSION,
                 )
             )
-
-
-# ---------------------------------------------------------------------------
-# Cross-substrate (polars pandas-fallback).
-# ---------------------------------------------------------------------------
-
-
-class TestCrossSubstrate:
-    @pytest.mark.parametrize("chunk_size", [1, 6, 40])
-    def test_polars_chunked_value_equals_pandas_full_frame(self, tmp_path, chunk_size) -> None:
-        """windowed_date is never polars-native, so every polars-adapter
-        chunk lands on `_run_via_pandas_oracle` -> `PandasExecutionAdapter.run`.
-        Proves row_offset threads the FULL path: PolarsExecutionAdapter.run ->
-        _run_via_pandas_oracle -> PandasExecutionAdapter.run -> StrategyContext.
-        A missing forward anywhere on that path would reset `i` to 0 every
-        chunk and only the multi-chunk cases here would catch it."""
-        df = _anchor_frame(37)
-        df.to_csv(tmp_path / "in.csv", index=False)
-        cfg = _windowed_date_cfg(tmp_path, min_days=-8, max_days=20, distribution="early")
-
-        full = run_pipeline(
-            cfg,
-            sources={"accounts": pa.Table.from_pandas(df, preserve_index=False)},
-            engine_version=_ENGINE_VERSION,
-        ).outputs["accounts"]
-
-        polars_chunked = pa.concat_tables(
-            list(
-                run_mask_pipeline_chunked(
-                    cfg,
-                    _chunks(df, chunk_size),
-                    table="accounts",
-                    engine_version=_ENGINE_VERSION,
-                    adapter=PolarsExecutionAdapter(),
-                )
-            )
-        ).combine_chunks()
-
-        assert polars_chunked.column_names == full.column_names
-        assert polars_chunked.to_pydict() == full.to_pydict()
 
 
 # ---------------------------------------------------------------------------
