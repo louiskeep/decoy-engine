@@ -73,12 +73,16 @@ The `str(value)` and the derivation split cleanly so the new Rust surface is min
   ONLY when `group_by` is an unmasked/passthrough column, where `batch.column(group_by)` (the original
   source value) equals what the oracle reads. Modeling the effective-input dependency is a later slice.
   Test group_key with `group_by` masked before it (declines) and unmasked (native).
-- **Sibling group_by column SAFE-TYPE gate:** admit only `{string, large_string, int*, bool, date,
-  timestamp}` (reuse `group_by_type_is_safe`, `_chunked_group_key.py:95-115`); **exclude float + decimal**
-  (str()/collision trap) AND **exclude dictionary types in v1** (Codex P1-2: `group_by_type_is_safe`
-  recursively admits dictionaries, but `_ADMITTED_RESIDENT_TYPES` is an exact-type map that can't express
-  the recursive predicate; support them later with parity tests). Non-safe sibling type declines. The
-  safe-type check runs against the EFFECTIVE sibling value/type, not the target schema.
+- **Sibling group_by column SAFE-TYPE gate:** admit only `{string, int64, bool}` in v1 (final-gate MEDIUM
+  narrowing). The stringify-safe set is wider (`group_by_type_is_safe`: string/large_string/int*/bool/date/
+  timestamp, float+decimal excluded), and the operator masks all of it byte-identically, BUT the sibling
+  must be an unmasked PASSTHROUGH node and passthrough's production resident set is exactly
+  `{string, int64, bool}` (`_unified_slice_admission._ADMITTED_RESIDENT_TYPES`) -- so a large_string/int32/
+  uint64/date/timestamp sibling could never activate end-to-end anyway; admitting it would over-advertise.
+  `group_key_sibling_type_admitted` is therefore the exact `{string, int64, bool}` set. Dictionary is
+  excluded (Codex P1-2: the exact-type resident map can't express the recursive predicate). Extending
+  passthrough's resident set + end-to-end coverage for the wider set is a later slice. The type check runs
+  against the SIBLING resident type, not the target schema.
 - **Resident-plumbing (Codex P1-2):** `resident_contract_admission()` today looks up `source.schema.field(
   TARGET)` and requires an input-schema field of the target name -- a binding whose input is `group_by`
   would FAIL/raise, not decline. Add an EXPLICIT sibling-input field to the binding and special-case its
