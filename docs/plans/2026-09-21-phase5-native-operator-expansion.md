@@ -179,14 +179,27 @@ stays small), reusing `derive_index_batch`:
     oracle's EXACT Arrow output type for string categories across {empty, all-null, one-null-mixed,
     fully-populated} x {uniform, weighted}. Expected rule to confirm: `pa.null()` for all-null/empty
     output, `pa.string()` otherwise. Native reproduces the observed type EXACTLY, per output column.
-  - **Streaming schema stability:** column-level data-dependent typing (null vs string) can destabilize
-    the chunked lane's cross-chunk concat. Resolve by mirroring how the SHIPPED native faker/redact
-    path handles all-null chunks (proven pattern — inspect `sample_faker_array` + `native_redact`
-    repin and the coordinator concat). If categorical genuinely cannot match the oracle's type without
-    breaking streaming-schema stability, DECLINE the all-null/empty categorical output to the oracle
-    (decided from the spike + the lane's actual concat behavior, BEFORE building the categorical
-    kernel). Do not rely on `_requirements.py:274`'s default-to-`pa.string()` — write the resolved
-    output schema into the `ExecutionBinding` contract explicitly.
+  - **B0 observes the ACTUAL assembler output, not raw pandas (Codex round-3 P0-2).** The full-frame
+    and chunked lanes have their OWN degenerate-type conventions, so the type native must match is what
+    the lane's oracle-comparison actually yields, not `Table.from_pandas` in isolation. B0 enumerates
+    the type by running the real assembler paths for degenerate categorical.
+  - **The resolved type is an AUTHORITATIVE, CONSUMED schema contract in BOTH routes — writing it is
+    not enough (Codex round-3 P0-2).** Today the assemblers IGNORE a resolved schema: the full-frame
+    coordinator derives degenerate output types from strategy+array contents
+    (`_shadow_coordinator.py:172`), and the tokenizing empty-case is hard-coded to `pa.float64()` — which
+    COLLIDES with item 7 classifying categorical as tokenizing; the chunked assembler returns
+    `pa.table(arrays)` raw (`_chunk_masking.py:231`). Remediation, both routes:
+    - Full-frame: the coordinator CONSUMES `ExecutionBinding.output_schema` for categorical's output
+      type (incl. the empty/all-null degenerate case), OVERRIDING the generic tokenizing->`float64`
+      default. Explicitly resolve the item-7 collision: categorical is tokenizing for KERNEL-LOADING,
+      but its degenerate type comes from the binding contract, not the tokenizing default.
+    - Chunked: the final assembly CASTS/pins the categorical column to the native-preflight/requirements
+      resolved type instead of raw `pa.table(arrays)`.
+    - Both: ASSERT the emitted Arrow field type EQUALS the resolved contract; DECLINE before output if a
+      stable streaming schema cannot be preserved.
+    - Test (type, not just value): the bound/preflight schema EQUALS the final Arrow field type for the
+      empty and all-null cases on both routes.
+    Do not rely on `_requirements.py:274`'s default-to-`pa.string()`.
   - Non-string category support is a later slice, gated on an exact pandas-oracle dtype-reconciliation
     algorithm + per-domain parity tests.
 
@@ -229,7 +242,8 @@ routes actually EXECUTED categorical (not declined to the oracle):
    faker-only (`_dispatch.py:321,348`); categorical needs the equivalent first-schema type admission +
    index-companion probing.
 4. `native/_chunk_masking.py`: dispatch branch (L178-226) + a categorical gather helper (mirrors
-   `sample_faker_array`).
+   `sample_faker_array`); final assembly (`:231`) CASTS the categorical column to the native-preflight
+   resolved output type instead of raw `pa.table(arrays)` (see "Output typing" below).
 5. `physical/_plan.py` `ExecutionBinding` contract (Codex round-2 P0-1): today it has NO
    deterministic-categorical field, so `_shadow_bindings.py` has nowhere to "carry" the flag. Add the
    explicit `categorical_deterministic: bool` (+ the resolved categories/weights/CDF + resolved output
@@ -241,7 +255,9 @@ routes actually EXECUTED categorical (not declined to the oracle):
 7. `physical/_shadow_coordinator.py`: (a) arrange compiled index-kernel LOADING for categorical —
    today it is keyed only to `pool_binding`/faker (`_shadow_coordinator.py:105`), so categorical would
    otherwise get no kernel; (b) classify categorical in `_TOKENIZING_STRATEGIES` (`:354`) so batch
-   assembly treats it as tokenizing.
+   assembly treats it as tokenizing; (c) at final assembly (`:172`) CONSUME
+   `ExecutionBinding.output_schema` for categorical's degenerate output type, overriding the tokenizing
+   empty-case `pa.float64()` default (the item-7 tokenizing collision — see "Output typing" below).
 8. `execution/_unified_slice_admission.py`: `ALLOWED_OPERATOR_IDS` (L78-80) + `_ADMITTED_RESIDENT_
    TYPES` (L90-97) — WITHOUT this, full-frame binding succeeds but unified-slice admission declines.
 9. `native/_capabilities.py`: **ALREADY correct** (row-local/static/zero-diagnostic, L214-226) —
