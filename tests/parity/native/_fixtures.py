@@ -45,7 +45,7 @@ from decoy_engine.providers_v2 import get_default_registry
 _ENGINE_VERSION = "native-parity-harness"
 
 # The native substrate the efficiency program's Phases 1+ build. It is NOT a
-# valid substrate yet (`VALID_SUBSTRATES == ("pandas", "polars")`), so routing
+# valid substrate yet (`VALID_SUBSTRATES == ("pandas",)`), so routing
 # a candidate through it raises `invalid_substrate` today. That is the flip
 # switch: when a phase wires native execution for a strategy and it reaches
 # logical parity, that strategy's matrix cases start passing. Later phases

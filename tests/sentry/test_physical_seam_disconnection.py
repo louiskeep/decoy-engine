@@ -259,11 +259,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_native_route_preflight.py",
         "src/decoy_engine/execution/_native_route_digest.py",
         # Polars masking removal (2026-09-21): the dormant polars masking adapter
-        # was deleted (pre-GA hard delete; `"polars"` was value-parity with pandas
-        # and never selected by default). These modules are edited to strip the
-        # polars-adapter references -- the polars_native planner mode +
-        # `_polars_native_rejection`, the polars when-gate variant, the polars
-        # translate/reason block, the collapsed chunked-adapter gate, docstrings,
+        # was deleted (pre-GA hard delete; that substrate was value-parity with
+        # pandas and never selected by default). These modules are edited to strip
+        # the deleted adapter's references -- its planner classification mode + the
+        # matching rejection helper, the when-gate variant, the reason-code
+        # translation, the collapsed chunked-adapter gate, docstrings,
         # and the determinism-mirror sites for the deleted polars strategy files.
         # The pandas execution path is unchanged. None is under execution/physical/.
         # The deleted execution/polars/ tree itself is carved out of the filter below.
