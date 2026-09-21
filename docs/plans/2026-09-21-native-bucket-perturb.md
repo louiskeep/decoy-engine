@@ -68,9 +68,12 @@ reconciliation. The keyed derivation is HKDF-SHA256 (`derive`) reduced by first-
 ### The native kernel `native_bucket_perturb` (new `native/_bucket_perturb_ext.py`)
 Reuses `derive_index_batch` -- NO new Rust. Given a `pa.string()` array + resolved `bucket` + resolved
 `date_format` + mask_key + namespace:
-1. **Parse** (vectorized): `pc`/pandas `to_datetime(values, format=date_format, errors="coerce")`. Build
-   the null mask (source null) + parse-fail mask (coerced NaT & not source-null). These rows pass through
-   UNCHANGED (see step 6).
+1. **Parse** (vectorized) — **PANDAS is the parsing AUTHORITY, not Arrow (Codex P0-1).** Arrow and pandas
+   parse permissive input, unsupported directives, and error-to-null DIFFERENTLY; an Arrow parse could
+   turn an oracle-valid date into a native parse-fail (or vice versa) and break byte-parity. Use
+   `pd.to_datetime(values, format=date_format, errors="coerce")` EXACTLY as the oracle does
+   (`bucket_perturb.py:157`). Build the null mask (source null) + parse-fail mask (coerced NaT & not
+   source-null). These rows pass through UNCHANGED (see step 6).
 2. **Bucket start + size per row** (vectorized): from the parsed dates, compute `bucket_start` and
    `bucket_size` reproducing `_bucket_start_and_size` (`:53-91`) EXACTLY -- week (Monday snap, size 7),
    month (first-of-month, `monthrange` size), quarter (`_QUARTER_START_MONTH`, day-count size). Leap years
@@ -82,15 +85,20 @@ Reuses `derive_index_batch` -- NO new Rust. Given a `pa.string()` array + resolv
    offsets back to row positions). The kernel canonicalizes internally (shared canonicalizer) -- byte-
    parity to `_perturb_date`'s `int.from_bytes(digest[:8],"big") % bucket_size`.
 4. **Perturbed date** (vectorized): `perturbed = bucket_start + offset` days.
-5. **Format** (vectorized): `strftime(date_format)` reproducing the oracle's `perturbed.strftime(fmt)`
-   exactly (same format, same pandas/Python strftime semantics).
+5. **Format** (vectorized) — **pandas/Python strftime AUTHORITY (Codex P0-1), not Arrow's formatter.**
+   Reproduce the oracle's `perturbed.strftime(fmt)` via the SAME pandas/Python `strftime` (e.g.
+   `.dt.strftime`), same `date_format`, same directive semantics.
 6. **Pass-through** null + parse-fail rows UNCHANGED (the ORIGINAL string value, not re-null/re-format) --
    `_canonicalize`-free; matches `:165-166`.
 Output type is resolved at final assembly (below), not forced.
 
 ### Output typing (B0-style, reuse categorical's solution)
-Data-dependent, exactly like categorical: empty output -> `pa.float64()` (the tokenizing default,
-`_shadow_coordinator.py:190`); all-null / all-parse-fail-with-null -> `pa.null()`; populated -> `pa.string()`.
+Data-dependent, like categorical. **State the rule by the assembled result's `length` and `null_count`
+(Codex P1-2), NOT by "all-parse-fail":** `length == 0` -> `pa.float64()` (the tokenizing default,
+`_shadow_coordinator.py:190`); `null_count == length` (every value null) -> `pa.null()`; else ->
+`pa.string()`. A fully-UNPARSEABLE column is POPULATED (parse-fails copied through unchanged,
+`null_count < length`) -> `pa.string()`; "all-parse-fail -> null" is WRONG. Admission tests use
+explicitly-typed `pa.string()` all-null inputs (a null-typed Arrow source properly declines).
 A B0 spike MEASURES the oracle's end-to-end field type for {empty, all-null, all-parse-fail, mixed,
 populated} x {week, month, quarter} through the real unified-slice output path; native reproduces it via
 `_TOKENIZING_STRATEGIES` (per-batch `pa.string()` then whole-column final normalization at
@@ -100,8 +108,13 @@ boundary. Do NOT assume a rule -- match B0. (A fully-unparseable string column p
 
 ### The 9-seam checklist (bucket_perturb is absent from every native seam; mirror categorical)
 1. `native/_requirements.py`: add `bucket_perturb` to `NATIVE_KERNEL_STRATEGIES` (`:126`) + new
-   `bucket_perturb_config_rejection` (bucket in {week,month,quarter}; namespace present; STRING source;
-   `date_format` PRESENT -- reject autodetect to the oracle).
+   `bucket_perturb_config_rejection` using ONE shared resolver at BOTH the native-plan and compiled-
+   binding boundaries that matches the oracle's real semantics (Codex P1-1): `bucket = str(cfg.get(
+   "bucket", "month"))` then validate in {week,month,quarter} (the oracle defaults a missing bucket to
+   "month" before validating, `_bucket_perturb.py:54,62`); admit ONLY a NONEMPTY `str` `date_format`
+   (the oracle treats `""`/non-string as autodetect via `cfg.get("date_format") or None`,
+   `_bucket_perturb.py:55` -> those DECLINE to the oracle); require a NONEMPTY namespace + an actual
+   resident `pa.string()` type.
 2. `native/_plan.py` eligibility (`:283-317`): add a `bucket_perturb` branch calling the rejection fn;
    confirm it does not ride any other operator's exception.
 3. `native/_dispatch.py`: add `bucket_perturb` to `CHUNKED_ROUTE_VETOED_STRATEGIES` (`_requirements.py:136`)
@@ -109,15 +122,25 @@ boundary. Do NOT assume a rule -- match B0. (A fully-unparseable string column p
    positive oracle-route test.
 4. `native/_chunk_masking.py`: NO chunked branch in v1 (declined at #3; deferred slice).
 5. `physical/_plan.py` `ExecutionBinding`: add `bucket_perturb_bucket`, `bucket_perturb_date_format`,
-   resolved output schema fields.
+   resolved output schema fields, **AND a `KeyBinding(mask_key, namespace)` (Codex P0-2 — bucket_perturb
+   is keyed, exactly like categorical/faker's keyed-index path; without it the binding lacks its
+   key/namespace contract).**
 5b. `physical/_shadow_bindings.py`: `SLICE_STRATEGIES` + `OPERATOR_ID_BY_STRATEGY` (`bucket_perturb` ->
-   `native_bucket_perturb`) + a binding branch populating the new fields.
-6. `physical/_shadow_operators.py`: `run_operator` branch + `_BUCKET_PERTURB` const -> calls
-   `native_bucket_perturb`.
+   `native_bucket_perturb`) + a binding branch that POPULATES the new fields AND the `KeyBinding` after
+   the same namespace gate categorical uses.
+6. `physical/_shadow_operators.py`: `run_operator` branch + `_BUCKET_PERTURB` const -> REQUIRES the
+   `KeyBinding` and passes its `mask_key`+`namespace` to `native_bucket_perturb` (fail-closed if absent).
 7. `physical/_shadow_coordinator.py`: (a) index-kernel loading for bucket_perturb bindings (`needs_index`,
    `:355-357`); (b) add to `_TOKENIZING_STRATEGIES`; (c) final-assembly output-type resolution (B0).
 8. `execution/_unified_slice_admission.py`: `ALLOWED_OPERATOR_IDS` (`:79`) + `_ADMITTED_RESIDENT_TYPES`
-   (`:101`) -> `bucket_perturb: frozenset({pa.string()})`.
+   (`:101`) -> `bucket_perturb: frozenset({pa.string()})`; **AND treat `native_bucket_perturb` as
+   INDEX-COMPANION-DEPENDENT so it DECLINES to the oracle before execution when the compiled companion is
+   unavailable (Codex P0-2). GENERALIZE the existing hash/categorical companion-availability predicate
+   (`:434` `if (hash_columns or categorical_columns) and not native_companion_status().ok:`) to an
+   "index-dependent operator" set rather than adding a third ad-hoc branch.** This is the exact
+   companion-absent decline that categorical needed (its CI `substrate(pandas)` leg runs without the
+   companion) -- build it in from the start + guard the native-path tests with `@skipif(not
+   companion.ok)`.
 9. `native/_capabilities.py:195`: ALREADY PRESENT (`_Ortho(True,False,False,False,True)`, zero-diagnostic)
    -- VERIFY only, no edit.
 
@@ -139,8 +162,11 @@ boundary. Do NOT assume a rule -- match B0. (A fully-unparseable string column p
    the oracle; a NON-STRING source declines; the CHUNKED route declines; full-frame WITH explicit
    date_format + string source EXECUTES native (route evidence).
 5. **KAT**: a bucket_perturb KAT vector (fixed config+seed corpus per bucket) guarding drift.
-6. **strftime round-trip**: several `date_format`s (`%Y-%m-%d`, `%m/%d/%Y`, `%Y%m%d`, ...) produce
-   byte-identical formatted output.
+6. **Parse + format differential (Codex P0-1)**: several `date_format`s (`%Y-%m-%d`, `%m/%d/%Y`,
+   `%Y%m%d`, `%m/%d/%y`, `%Y-%m-%dT%H:%M:%S`, ...) produce byte-identical output, AND a corpus stressing
+   pandas parse strictness/permissiveness (partial dates, out-of-range, whitespace, ambiguous day/month,
+   directive edge cases) confirms native `pd.to_datetime(errors="coerce")` parses IDENTICALLY to the
+   oracle -- an oracle-valid date must never become a native parse-fail (or vice versa).
 
 ## Build order (single PR, categorical-style)
 B0 oracle-typing spike -> `ExecutionBinding` fields -> `bucket_perturb_config_rejection` + admission
