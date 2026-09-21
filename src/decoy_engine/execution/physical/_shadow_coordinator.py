@@ -102,13 +102,11 @@ if TYPE_CHECKING:
 
 __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 
-# Strategies whose masked output is a tokenized string regardless of input type;
-# passthrough is type-preserving and handled separately. Each one's measured
-# oracle output type is this null-shape mapping (empty -> float64, all-null ->
-# null, else -> string); bucket_perturb matches it (S-slate B0, see its test).
-_TOKENIZING_STRATEGIES = frozenset(
-    {"redact", "truncate", "hash", "faker", "categorical", "bucket_perturb"}
-)
+# Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
+# else -> string (passthrough is separate). bucket_perturb differs ONLY on empty
+# (it passes its source object series through -> Arrow null), so it is split out.
+_TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker", "categorical"})
+_NULL_ON_EMPTY_STRATEGIES = frozenset({"bucket_perturb"})
 
 
 @dataclass(frozen=True)
@@ -196,6 +194,8 @@ def _assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
         # all-null one as `null`, a normal one stays exactly as produced.
         if n == 0:
             return pa.array([], type=pa.float64())
+        return pa.nulls(n, type=pa.null()) if combined.null_count == n else combined
+    if strategy in _NULL_ON_EMPTY_STRATEGIES:  # empty + all-null -> null, else string
         return pa.nulls(n, type=pa.null()) if combined.null_count == n else combined
     # passthrough is value-identity, so its OUTPUT SCHEMA is exactly whatever
     # the pandas full-frame oracle infers when the table round-trips

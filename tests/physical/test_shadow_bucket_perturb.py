@@ -14,14 +14,19 @@ batch` kernel) and skip without it, exactly like the categorical suite; the
 production companion-absent behavior (bucket_perturb declines to the pandas
 oracle) is covered by the `run_pipeline` tests, which run without the companion.
 
-Empty-input note: an EMPTY column's zero-row Arrow type label is the one place
-the legacy per-strategy oracle (which types an empty bucket_perturb column
-`null`, passing the source through) and the unified-slice finalizer (which
-normalizes an empty masked column to `float64`, like every tokenizing operator)
-disagree. Empty parity is therefore proven at the coordinator boundary, whose
-oracle uses the same finalizer contract (`float64`); the unified-slice matrix
-covers empty for VALUE parity and pins the finalizer's `float64` type
-explicitly. No data is affected -- the difference is a zero-row type label only.
+Empty-input note: bucket_perturb passes its source object series through for
+null/parse-fail rows, so its EMPTY oracle output is Arrow `null`, not the
+`float64` every fresh-column tokenizing operator produces. The coordinator's
+`_assemble_column` emits that `null` (its own `_NULL_ON_EMPTY_STRATEGIES`
+branch), and the unified-slice finalizer preserves it (a zero-row overlay uses
+`to_pandas()`, carrying the masked dtype, instead of `to_pylist()` which pandas
+would infer as `float64`). Empty is therefore in the full type-asserting matrix
+at BOTH boundaries -- flag-off (legacy pandas) and flag-on agree `null == null`.
+
+Timezone note: a `date_format` with a `%z`/`%Z` directive DECLINES to the oracle
+(`bucket_perturb_timezone_directive`) -- the oracle drops tz via `.date()` before
+strftime while the kernel keeps tz-aware Timestamps, a divergence outside the
+proven envelope.
 """
 
 from __future__ import annotations
@@ -388,6 +393,48 @@ def test_unsupported_bucket_declines_on_native_route(tmp_path: Path) -> None:
     )
 
 
+# ── Timezone directive declines (dennis BLOCKER 1) ──────────────────
+
+
+@pytest.mark.parametrize(
+    "fmt", ["%Y-%m-%d%z", "%Y-%m-%d %Z", "%Y-%m-%dT%H:%M:%S%z", "%z", "%Z%Y-%m-%d"]
+)
+def test_timezone_directive_declines_on_native_route(tmp_path: Path, fmt: str) -> None:
+    """A `%z`/`%Z` date_format declines: the oracle drops tz via `.date()` before
+    strftime while the native kernel keeps tz-aware Timestamps (a byte divergence,
+    and mixed offsets make pd.to_datetime raise)."""
+    config = build_config(tmp_path, "t", tmp_path / "x.parquet", [_bp_column(date_format=fmt)])
+    result = native_route_eligibility(config, table="t")
+    assert not result.accepted
+    assert any(r == "bucket_perturb_timezone_directive:c" for r in result.rejections), (
+        result.rejections
+    )
+
+
+def test_literal_double_percent_z_is_not_timezone_declined(tmp_path: Path) -> None:
+    """`%%z` is an escaped literal percent + 'z', NOT a tz directive, so it is not
+    tz-declined (the directive scanner skips the escaped `%%`)."""
+    config = build_config(
+        tmp_path, "t", tmp_path / "x.parquet", [_bp_column(date_format="%Y-%m-%d%%z")]
+    )
+    result = native_route_eligibility(config, table="t")
+    assert not any(r.startswith("bucket_perturb_timezone_directive") for r in result.rejections)
+
+
+@pytest.mark.parametrize("fmt", ["%Y-%m-%d%z", "%Y-%m-%d %Z"])
+def test_timezone_format_parity_declines_to_oracle(tmp_path: Path, fmt: str) -> None:
+    """At the production boundary a tz format DECLINES: both arms take the legacy
+    oracle and agree byte-for-byte (value + type), no native activation."""
+    source = pa.table(
+        {"c": pa.array(["2024-02-29+0000", "2023-06-15+0000", None, "bad"], type=pa.string())}
+    )
+    off, on = _run_both(tmp_path, source, [_bp_column(date_format=fmt)])
+    ot, nt = off.outputs["t"], on.outputs["t"]
+    assert ot.column("c").to_pylist() == nt.column("c").to_pylist()
+    assert ot.schema.field("c").type == nt.schema.field("c").type
+    assert QUALITY_METRICS_KEY not in on.quality_metrics
+
+
 def _compile_plan_for(config: dict, source: pa.Table):
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=ENGINE_VERSION)
     return compile_physical_plan(inputs)
@@ -479,13 +526,11 @@ def _run_both(tmp_path: Path, source: pa.Table, columns: list[dict]):
     return off, on
 
 
-# Non-empty shapes: full value AND field-type parity at the final boundary. Empty
-# is covered separately (its zero-row type label is a finalizer artifact).
-_NONEMPTY_SHAPES = [(label, vals) for label, vals in _SHAPES if label != "empty"]
-
-
+# The FULL shape matrix (empty included) gets value AND field-type parity at the
+# production boundary. Empty is NOT carved out: bucket_perturb's empty type is
+# null on both arms (dennis BLOCKER 2 fix), so it belongs in the type assertion.
 @pytest.mark.parametrize("bucket", _BUCKETS)
-@pytest.mark.parametrize("label, values", _NONEMPTY_SHAPES, ids=[s[0] for s in _NONEMPTY_SHAPES])
+@pytest.mark.parametrize("label, values", _SHAPES, ids=[s[0] for s in _SHAPES])
 def test_unified_slice_execution_result_byte_identical(
     tmp_path: Path, bucket: str, label: str, values: list
 ) -> None:
@@ -506,21 +551,18 @@ def test_unified_slice_execution_result_byte_identical(
             assert ev["executed"] is True
 
 
-def test_unified_slice_empty_value_parity_and_finalizer_type(tmp_path: Path) -> None:
-    """An EMPTY column: VALUE parity holds (both zero-row). When the companion is
-    present the lane activates and the unified-slice finalizer normalizes the
-    zero-row masked column to `float64` (the tokenizing-family contract), while
-    the legacy per-strategy oracle types the passed-through empty source `null`.
-    Without the companion the lane declines and both sides are the legacy oracle,
-    so the two agree. Either way no data is affected -- a zero-row type label."""
+def test_unified_slice_empty_column_is_null_on_both_arms(tmp_path: Path) -> None:
+    """dennis BLOCKER 2 regression pin: an empty bucket_perturb column is Arrow
+    `null` on BOTH the legacy (flag-off) and native (flag-on) arms -- never the
+    tokenizing `float64` default. Asserts the concrete type, so a future
+    regression to float64-on-both could not silently pass a mere off==on check."""
     source = pa.table({"c": pa.array([], type=pa.string())})
     off, on = _run_both(tmp_path, source, [_bp_column()])
     ot, nt = off.outputs["t"], on.outputs["t"]
     assert ot.column("c").to_pylist() == nt.column("c").to_pylist() == []
-    if native_companion_status().ok:
-        assert nt.schema.field("c").type == pa.float64()
-    else:
-        assert nt.schema.field("c").type == ot.schema.field("c").type
+    assert ot.schema.field("c").type == pa.null()
+    assert nt.schema.field("c").type == pa.null()
+    assert ot.schema.equals(nt.schema, check_metadata=True)
 
 
 def test_unified_slice_parquet_round_trip(tmp_path: Path) -> None:

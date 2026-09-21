@@ -294,8 +294,9 @@ def _config_rejection(
 ) -> str | None:
     """The coded reason `name`'s resolved CONFIG or INPUT type is one the
     native kernel for `strategy` cannot honor, or None. Only the admitted
-    set's four strategies get a gate here; every other strategy that passed
-    the capability check above is unaffected (narrowing, never widening)."""
+    set's five strategies (hash/truncate/redact/categorical/bucket_perturb) get
+    a gate here; every other strategy that passed the capability check above is
+    unaffected (narrowing, never widening)."""
     if strategy == "hash":
         return hash_config_rejection(name, table, profile)
     if strategy == "truncate":

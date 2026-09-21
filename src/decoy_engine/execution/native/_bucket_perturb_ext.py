@@ -59,6 +59,24 @@ _QUARTER = "quarter"
 _QUARTER_SIZE_BASE = np.array([90, 91, 92, 92], dtype=np.int64)
 
 
+def has_timezone_directive(date_format: str) -> bool:
+    """Whether `date_format` carries a real `%z`/`%Z` directive (skips `%%z`).
+
+    A tz directive is declined to the oracle at admission: the oracle reduces
+    every value to a naive `datetime.date` before strftime (dropping time AND
+    tz), which this tz-preserving kernel cannot reproduce byte-for-byte.
+    """
+    i = 0
+    while i < len(date_format) - 1:
+        if date_format[i] == "%":
+            if date_format[i + 1] in ("z", "Z"):
+                return True
+            i += 2  # consume the directive, incl. the escaped `%%`
+            continue
+        i += 1
+    return False
+
+
 def _bucket_start_and_size(
     parsed_valid: pd.DatetimeIndex, bucket: str
 ) -> tuple[pd.DatetimeIndex, np.ndarray]:
@@ -224,4 +242,4 @@ def native_bucket_perturb(
     return pa.array(out, type=pa.string())
 
 
-__all__ = ["native_bucket_perturb"]
+__all__ = ["has_timezone_directive", "native_bucket_perturb"]
