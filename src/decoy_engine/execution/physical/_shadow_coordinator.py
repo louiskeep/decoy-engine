@@ -103,11 +103,8 @@ if TYPE_CHECKING:
 __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 
 # Strategies whose masked output is a tokenized string regardless of input
-# type (redact/truncate/hash/faker/categorical); passthrough is the one
-# type-preserving strategy and gets its own assembly branch below. Categorical
-# joins this set because its measured oracle output type matches the tokenizing
-# null-shape mapping exactly (Phase 5 Track B B0 spike: empty -> float64,
-# all-null -> null, else -> string).
+# type; passthrough is the one type-preserving strategy, handled separately.
+# Categorical's measured oracle output type is exactly this null-shape mapping.
 _TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker", "categorical"})
 
 
@@ -355,12 +352,10 @@ class ShadowCoordinator:
                 route_evidence[node.node_id] = evidence
 
                 pool: ValuePool | None = None
-                # Both faker (pool selection) and categorical (Phase 5 Track B)
-                # run their keyed draw through the compiled index kernel, loaded
-                # at most once per run, lazily, the first time either is reached.
-                if (
-                    binding.pool_binding is not None or binding.categorical_deterministic
-                ) and index_kernel is None:
+                # Faker (pool selection) and categorical (Phase 5 Track B) both
+                # draw through the compiled index kernel, loaded once per run.
+                needs_index = binding.pool_binding is not None or binding.categorical_deterministic
+                if needs_index and index_kernel is None:
                     try:
                         index_kernel = load_compiled_index_kernel()
                     except CryptoExtensionUnavailableError as exc:

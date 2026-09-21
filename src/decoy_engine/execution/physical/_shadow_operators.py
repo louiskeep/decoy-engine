@@ -79,11 +79,11 @@ def run_operator(
     back to the oracle -- when the compiled hash companion is missing or
     ABI-incompatible (C2/C4).
 
-    `pool` and `index_kernel` are used ONLY by the faker branch (Task 4.6
-    slice 1): the coordinator resolves the pool once per node and loads the
-    index kernel once per run, then threads both explicitly here so every
-    faker batch shares the identical verified kernel wrapper (mirroring the
-    native chunked route's own preflight-once, thread-through contract).
+    `pool` is used only by the faker branch; `index_kernel` by faker AND
+    categorical (Phase 5 Track B): the coordinator resolves the pool once per
+    node and loads the index kernel once per run, then threads both explicitly
+    here so every batch shares the identical verified kernel wrapper (mirroring
+    the native chunked route's own preflight-once, thread-through contract).
     """
     cfg = dict(binding.resolved_config)
     if binding.operator_id == _PASSTHROUGH:
@@ -147,7 +147,9 @@ def run_operator(
                 "categorical node reached run_operator with categorical_deterministic=False"
             )
         if binding.categorical_categories is None:  # pragma: no cover - C0 binds it together
-            raise AssertionError("categorical node reached run_operator with no resolved categories")
+            raise AssertionError(
+                "categorical node reached run_operator with no resolved categories"
+            )
         if index_kernel is None:  # pragma: no cover - the coordinator loads it first
             raise AssertionError("categorical node reached run_operator with no index_kernel")
         out = native_categorical(

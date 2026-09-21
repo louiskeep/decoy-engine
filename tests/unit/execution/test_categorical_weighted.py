@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import Counter
 
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from decoy_engine.execution._errors import StrategyError
@@ -22,6 +23,12 @@ from decoy_engine.execution._strategies._categorical import (
     _WEIGHTED_CDF_RES,
     CategoricalStrategyHandler,
     _build_cdf,
+)
+from decoy_engine.execution.native._categorical_ext import native_categorical
+from decoy_engine.execution.native._companion_status import native_companion_status
+from decoy_engine.execution.native._index_ext import (
+    load_compiled_index_kernel,
+    reference_index_derivation,
 )
 from decoy_engine.plan._types import ColumnSeed
 
@@ -445,6 +452,59 @@ class TestNonDeterministicUniform:
         picks = out["col"].tolist()
         assert len(picks) == n
         assert set(picks) == {"X", "Y"}  # both indices reached, none out of range
+
+
+# ── Phase 5 Track B: native operator vs oracle handler (byte-identity) ─
+
+
+class TestNativeVsOracleDifferential:
+    """The native `native_categorical` operator must reproduce the deterministic
+    oracle handler byte-for-byte (value + Arrow string type), on both the
+    compiled and the pure-Python reference index kernel. This is the kernel-
+    level half of the merge gate; the coordinator/ExecutionResult boundary is
+    covered in `tests/physical/test_shadow_categorical.py`."""
+
+    def _kernels(self):
+        kernels = [reference_index_derivation()]
+        if native_companion_status().ok:
+            kernels.append(load_compiled_index_kernel())
+        return kernels
+
+    def _oracle(self, values, categories, weights):
+        pc = {"categories": list(categories)}
+        if weights is not None:
+            pc["weights"] = list(weights)
+        out, _ = CategoricalStrategyHandler().run(
+            pd.DataFrame({"col": values}), "col", _seed(pc, deterministic=True), _Ctx()
+        )
+        return out["col"].tolist()
+
+    def _native(self, values, categories, weights, kernel):
+        cdf = tuple(_build_cdf([float(w) for w in weights])) if weights is not None else None
+        return native_categorical(
+            pa.array(values, type=pa.string()),
+            categories=tuple(categories),
+            cdf=cdf,
+            mask_key=_Ctx.mask_key,
+            namespace="ns",
+            index_kernel=kernel,
+            native_threads=1,
+        )
+
+    def test_uniform_and_weighted_match_oracle(self):
+        values = ["alice", "bob", None, "carol", "dave", "alice", "eve"]
+        for categories, weights in [
+            (["X", "Y", "Z"], None),
+            (["X", "Y", "Z"], [0.6, 0.3, 0.1]),
+            (["X", "Y", "Z"], [1.0, 0.0, 1.0]),  # zero-weight band
+            (["only"], None),  # single category
+            (["X", "Y"], [1.0, 1.0]),  # equal weights
+        ]:
+            oracle = self._oracle(values, categories, weights)
+            for kernel in self._kernels():
+                out = self._native(values, categories, weights, kernel)
+                assert out.type == pa.string()
+                assert out.to_pylist() == oracle
 
 
 class TestNonDeterministicWeightedNormalization:

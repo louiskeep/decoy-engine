@@ -2,9 +2,10 @@
 
 Called from the compiler's `_build_nodes` at compile time, for exactly the
 native-admitted slice strategies the shadow coordinator shadows: passthrough,
-redact, truncate, keyed hash (Task 4.4), and (Task 4.6 slice 1) deterministic
-faker over the frozen C1 provider allowlist. Every other node is left unbound
-(`PhysicalNode.execution is None`) -- out of scope for this slice.
+redact, truncate, keyed hash (Task 4.4), (Task 4.6 slice 1) deterministic
+faker over the frozen C1 provider allowlist, and (Phase 5 Track B)
+deterministic categorical over string categories. Every other node is left
+unbound (`PhysicalNode.execution is None`) -- out of scope for this slice.
 
 Secrets never appear here: `KeyBinding` carries only the non-secret
 `KeySource` token (`native/_capabilities.py:51`) plus the namespace, and
