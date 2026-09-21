@@ -147,11 +147,10 @@ impl NativeThreadBudget {
         requested: Option<i64>,
         host_available: usize,
     ) -> Result<NativeThreadBudget, DeriveError> {
-        // Request-validation-first: validate `requested` BEFORE resolving the env knee so a bad
-        // request surfaces its own coded error even when the knee override is also invalid. The
-        // knee `Result` is passed through unforced; `resolve_from_knee` unwraps it only after the
-        // request is known valid.
-        Self::resolve_from_knee(requested, host_available, native_mask_thread_knee())
+        // Request-validation-first is a STRUCTURAL guarantee, not just an error-precedence one:
+        // `native_mask_thread_knee` is passed as a function and only invoked once the request is
+        // known valid, so an invalid request never reads the env or initializes the knee OnceLock.
+        Self::resolve_from_knee(requested, host_available, native_mask_thread_knee)
     }
 
     /// [`resolve`](Self::resolve) with the knee supplied as an already-resolved value.
@@ -165,20 +164,26 @@ impl NativeThreadBudget {
         host_available: usize,
         knee: usize,
     ) -> Result<NativeThreadBudget, DeriveError> {
-        Self::resolve_from_knee(requested, host_available, Ok(knee))
+        Self::resolve_from_knee(requested, host_available, || Ok(knee))
     }
 
-    /// The shared body of [`resolve`] and [`resolve_with_knee`]: validate the request, THEN unwrap
-    /// the knee, then clamp. Taking the knee as a `Result` lets [`resolve`] defer the knee error
-    /// until after request validation (so both callers share the exact ordering guarantee), while
-    /// [`resolve_with_knee`] passes `Ok(knee)` for hermetic arithmetic tests.
-    fn resolve_from_knee(
+    /// The shared body of [`resolve`] and [`resolve_with_knee`]: validate the request FIRST, and
+    /// only then call `knee` to resolve the effective knee, then clamp.
+    ///
+    /// `knee` is a closure, not a value, so it is not evaluated until after `validate_requested`
+    /// succeeds. That is what makes "validate first" structural: [`resolve`] passes
+    /// [`native_mask_thread_knee`] itself, so a bad request short-circuits before the env or the
+    /// OnceLock is ever touched; [`resolve_with_knee`] passes `|| Ok(knee)` for hermetic tests.
+    fn resolve_from_knee<F>(
         requested: Option<i64>,
         host_available: usize,
-        knee: Result<usize, DeriveError>,
-    ) -> Result<NativeThreadBudget, DeriveError> {
+        knee: F,
+    ) -> Result<NativeThreadBudget, DeriveError>
+    where
+        F: FnOnce() -> Result<usize, DeriveError>,
+    {
         let requested_or_default = Self::validate_requested(requested)?;
-        let knee = knee?;
+        let knee = knee()?;
         Ok(NativeThreadBudget {
             threads: Self::clamp(requested_or_default, host_available, knee),
         })
@@ -465,25 +470,39 @@ mod tests {
 
     #[test]
     fn resolve_validates_the_request_before_resolving_the_knee() {
-        // Request-validation-first: an invalid request surfaces its OWN coded error even when the
-        // knee is also invalid, so a bad env knee can never mask a bad `native_threads`.
-        let knee_err = || {
-            Err(DeriveError::new(
-                "native_mask_thread_knee_invalid",
-                "bad knee",
-            ))
-        };
+        // Structural guarantee: for an invalid request the knee closure is NEVER called, so no env
+        // read or OnceLock init happens, and the request error surfaces. A `Cell` records whether
+        // the closure ran.
+        use std::cell::Cell;
         for (req, expected) in [
             (Some(0_i64), "native_threads_zero"),
             (Some(-1), "native_threads_negative"),
             (Some(MAX_NATIVE_THREADS + 1), "native_threads_excessive"),
         ] {
-            let err = NativeThreadBudget::resolve_from_knee(req, 8, knee_err()).unwrap_err();
-            assert_eq!(err.code, expected, "request error must win over a bad knee");
+            let consulted = Cell::new(false);
+            let err = NativeThreadBudget::resolve_from_knee(req, 8, || {
+                consulted.set(true);
+                Ok(4)
+            })
+            .unwrap_err();
+            assert_eq!(err.code, expected, "request error must win over the knee");
+            assert!(
+                !consulted.get(),
+                "knee must not be consulted when the request is invalid"
+            );
         }
-        // A VALID request lets the knee error surface (the knee is only consulted once the request
-        // is known good).
-        let err = NativeThreadBudget::resolve_from_knee(Some(4), 8, knee_err()).unwrap_err();
+        // A VALID request DOES consult the knee, and a knee error then surfaces (proving the knee
+        // is reached only after the request is known good).
+        let consulted = Cell::new(false);
+        let err = NativeThreadBudget::resolve_from_knee(Some(4), 8, || {
+            consulted.set(true);
+            Err(DeriveError::new(
+                "native_mask_thread_knee_invalid",
+                "bad knee",
+            ))
+        })
+        .unwrap_err();
+        assert!(consulted.get(), "a valid request must consult the knee");
         assert_eq!(err.code, "native_mask_thread_knee_invalid");
     }
 

@@ -17,8 +17,10 @@ both shared callers of the resolver, `derive_batch` (hash) and `derive_index_bat
 The invariance is row-local and would hold even without the clamp; that is the point. It is the
 standing guarantee that makes the clamp safe, and the regression that would catch a future kernel
 change (a reduction that folded results in thread-completion order, say) that broke it. The tests
-skip on hosts with fewer than 4 usable cores, where an 8-thread and a 4-thread grant resolve to the
-same effective count and the comparison would be vacuous.
+skip only when effective parallelism (`min(usable cores, effective knee)`) is below 2, since then
+every count in {1, 4, 8} clamps to the same value and the comparison proves nothing; a 2-3 core
+host still runs (t1=1 genuinely differs from t4/t8=2-3), and a `DECOY_NATIVE_MASK_THREAD_KNEE=1`
+override correctly skips.
 """
 
 from __future__ import annotations
@@ -45,9 +47,29 @@ def _usable_cpus() -> int:
     return os.cpu_count() or 1
 
 
-_NEEDS_FOUR_CORES = pytest.mark.skipif(
-    _usable_cpus() < 4,
-    reason="fewer than 4 usable cores: an 8- vs 4-thread grant resolves equal, so the compare is vacuous",
+def _effective_knee() -> int:
+    """The knee the Rust resolver will apply, mirroring `DECOY_NATIVE_MASK_THREAD_KNEE` semantics:
+    absent or invalid/out-of-range -> the default 4; otherwise the set value in 1..=1024. An
+    invalid override would make the kernel calls raise (fail-closed), not silently clamp, so for
+    the skip decision we treat it as the default."""
+    raw = os.environ.get("DECOY_NATIVE_MASK_THREAD_KNEE")
+    if raw is None:
+        return 4
+    try:
+        value = int(raw)
+    except ValueError:
+        return 4
+    return value if 1 <= value <= 1024 else 4
+
+
+# The test compares native_threads in {1, 4, 8}; it is only meaningful if at least one of {4, 8}
+# resolves to an effective count > 1, i.e. if min(usable cores, effective knee) >= 2. Below that
+# every count clamps to the same value and the comparison proves nothing. This correctly RUNS on
+# 2-3 core hosts (where t1=1 genuinely differs from t4/t8=2-3) and skips the knee=1 / 1-core cases.
+_EFFECTIVE_PARALLELISM = min(_usable_cpus(), _effective_knee())
+_NEEDS_PARALLELISM = pytest.mark.skipif(
+    _EFFECTIVE_PARALLELISM < 2,
+    reason="effective parallelism < 2: all of {1,4,8} clamp to the same count, so the compare is vacuous",
 )
 
 # One representative column: nulls (incl. leading/trailing), duplicates, empty string, ASCII and
@@ -73,7 +95,7 @@ def _string_array():
 
 
 @_NEEDS_COMPANION
-@_NEEDS_FOUR_CORES
+@_NEEDS_PARALLELISM
 def test_hash_thread_invariance_value_and_type() -> None:
     """derive_batch (hash) output is bit-identical for native_threads in {1, 4, 8}: lowering an
     8-thread grant to the knee (Rust-side clamp) never perturbs the value or the Arrow type."""
@@ -99,7 +121,7 @@ def test_hash_thread_invariance_value_and_type() -> None:
 
 
 @_NEEDS_COMPANION
-@_NEEDS_FOUR_CORES
+@_NEEDS_PARALLELISM
 def test_index_thread_invariance_value_and_type() -> None:
     """derive_index_batch (faker/index) output is bit-identical for native_threads in {1, 4, 8}
     across several pool sizes: it shares the clamped resolver with the hash path, so the same
