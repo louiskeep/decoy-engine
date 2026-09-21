@@ -26,7 +26,7 @@ from decoy_engine.execution._errors import ExecutionError
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
 
-VALID_SUBSTRATES = ("pandas", "polars")
+VALID_SUBSTRATES = ("pandas",)
 _DEFAULT_SUBSTRATE = "pandas"
 
 
@@ -101,15 +101,10 @@ def select_execution_adapter(
     require_positive_int("fpe_chunk_count", fpe_chunk_count)
     require_positive_int("max_workers", max_workers)
     require_bool("fallback_to_pandas", fallback_to_pandas)
-    substrate = resolve_substrate(substrate)
-    if substrate == "polars":
-        from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
-
-        return PolarsExecutionAdapter(
-            max_workers=max_workers,
-            fpe_chunk_count=fpe_chunk_count,
-            fallback_to_pandas=fallback_to_pandas,
-        )
+    # Validates the resolved substrate; "polars" and any unknown value now raise
+    # invalid_substrate (pandas is the only substrate since the polars masking
+    # adapter was removed). pandas is the only construction path.
+    resolve_substrate(substrate)
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 
     return PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count)

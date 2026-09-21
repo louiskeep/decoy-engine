@@ -600,7 +600,9 @@ ALLOWLIST: dict[str, int] = {
     # bucket_perturb source-dtype auto-route gate, via the shared
     # `_chunked_bucket_perturb.unsafe_bucket_perturb_source_columns`
     # collector. Same `_planner_chunked.py` decomposition target stands.
-    "src/decoy_engine/execution/_planner.py": 652,
+    # Polars-masking removal (2026-09-21): deleting the `polars_native` mode +
+    # `_polars_native_rejection` dropped this module to 587 -- under the 600 cap,
+    # so it is no longer allowlisted here. Do not re-add it without cause.
     # P4 HIGH-1 (2026-09-03): decomposition slice itself. Extracted the DuckDB
     # EXPLAIN-plan verification helpers into `_stream_join_plan.py` and the
     # complete reorder/cursor/lifecycle unit (`_OrderedJoinRows` +
