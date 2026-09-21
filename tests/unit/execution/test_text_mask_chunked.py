@@ -28,7 +28,7 @@ named:
    drift is detected.
 7. Trap E: `text_mask` + `when:` is rejected, fail-closed, at both entry
    points.
-8. Admission surfaces: manual entry, auto route, cross-substrate polars.
+8. Admission surfaces: manual entry, auto route.
 9. The handler's warnings contract (always `[]`) stays separate from the
    unmatched-passthrough log, which is identical between routes.
 
@@ -877,7 +877,7 @@ class TestWhenRejection:
 
 
 # ---------------------------------------------------------------------------
-# 8. Admission surfaces: manual entry, auto route, cross-substrate polars.
+# 8. Admission surfaces: manual entry, auto route.
 # ---------------------------------------------------------------------------
 
 
