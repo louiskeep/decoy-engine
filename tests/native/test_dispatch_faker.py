@@ -30,6 +30,7 @@ import pytest
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution.native import _chunk_masking, _dispatch
+from decoy_engine.execution.native import _index_ext as _index_ext_module
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._dispatch import (
     NativeRouteEvidence,
@@ -46,7 +47,6 @@ from decoy_engine.execution.native._requirements import (
 )
 from decoy_engine.generation.pool import GenerationError, PoolBuilder, PoolCache, ValuePool
 from decoy_engine.generation.pool import PoolSampler as _PoolSampler
-from decoy_engine.generation.pool import _sampler as _pool_sampler_module
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
 
@@ -1097,7 +1097,10 @@ def test_index_kernel_called_exactly_once_per_faker_column_chunk_never_the_pytho
         raise AssertionError("derive_index must never run per-row on the compiled index route")
 
     monkeypatch.setattr(_PoolSampler, "sample", _fail_sample)
-    monkeypatch.setattr(_pool_sampler_module, "derive_index", _fail_derive_index)
+    # The per-row Python derivation now lives behind the reference index kernel
+    # (`_index_ext.derive_index`); guarding it proves the route took the compiled
+    # batch kernel, never a per-row fallback.
+    monkeypatch.setattr(_index_ext_module, "derive_index", _fail_derive_index)
 
     config = _config(
         _faker_column("FIRST", namespace="ns_first"),
