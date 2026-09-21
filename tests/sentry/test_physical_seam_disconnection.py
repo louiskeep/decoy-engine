@@ -280,6 +280,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # defence; the pandas path is unchanged).
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_unified_slice_admission.py",
+        # Polars masking removal scrub (2026-09-21): comment/docstring-only edits
+        # rewording stale "polars adapter/route/substrate" descriptions to the
+        # pandas-only reality. No behavior change; none is under execution/physical/.
+        "src/decoy_engine/execution/_pipeline_route_exec.py",
+        "src/decoy_engine/execution/_chunked_fk_dtype_safety.py",
+        "src/decoy_engine/execution/out_of_core/_compat.py",
+        "src/decoy_engine/execution/_guards.py",
+        "src/decoy_engine/execution/_strategies/_date_shift.py",
     }
     unexpected = [
         name

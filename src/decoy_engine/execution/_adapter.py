@@ -2,8 +2,8 @@
 
 The boundary between planning and execution (S9 spec §2). Concrete adapter at
 S9 close: PandasExecutionAdapter. The boundary is Arrow-shaped (`pa.Table` in,
-`pa.Table` out); what a strategy does internally (pandas Series ops today,
-Polars in S12) is invisible to the boundary.
+`pa.Table` out); what a strategy does internally (pandas Series ops) is
+invisible to the boundary.
 
 Refinement vs the spec's StrategyHandler signature: the rarely-used run() deps
 (registry, pool_cache, relationship_graph, namespace_registry, job_seed) are
@@ -174,8 +174,8 @@ class StrategyContext:
     code_set_records: dict[tuple[str, str], Any] = field(default_factory=dict)
     # HC-3a (Codex R1 P1 #1): pre-mask entity-anchor snapshots for
     # `date_shift` columns configured with `group_by`, keyed by (table,
-    # group_by_column). Each route (pandas full-frame/chunked, sequential,
-    # polars-native) copies the group column's values BEFORE any node masks,
+    # group_by_column). Each route (full-frame, chunked, sequential) copies
+    # the group column's values BEFORE any node masks,
     # so `DateShiftStrategyHandler` derives every row's offset from the
     # entity's ORIGINAL id -- never a value some earlier (possibly when-gated)
     # node already masked in place, which would split one patient's rows onto
@@ -248,8 +248,8 @@ class StrategyHandler(Protocol):
 class ExecutionAdapter(Protocol):
     """The planning/execution boundary (S9 spec §2). Narrow by design.
 
-    `runtime_checkable` so a second concrete adapter (S11's polars adapter) can
-    assert conformance via `isinstance`; this is name-presence only, the real
+    `runtime_checkable` so any second concrete adapter can assert conformance
+    via `isinstance`; this is name-presence only, the real
     signature conformance is the mypy gate.
     """
 

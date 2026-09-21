@@ -172,12 +172,12 @@ class DateShiftStrategyHandler:
                     # from a null-free numpy-backed chunk) to its Python
                     # equivalent, so the canonical digest input is identical
                     # whether the anchor column materialized as a numpy dtype or
-                    # a Python-scalar object/extension/polars dtype. Without this
-                    # the SAME anchor value hashes differently across a chunk
-                    # boundary (null-free chunk vs nullable full frame) and across
-                    # substrates (`numpy.bool_(True)` -> b"True" vs `True` ->
-                    # b"\x01"), breaking the deterministic parity guarantee
-                    # (Codex R3 P1). Python scalars have no `.item()` and pass
+                    # a Python-scalar object/extension dtype. Without this the
+                    # SAME anchor value hashes differently across a chunk
+                    # boundary -- null-free numpy chunk vs nullable full frame
+                    # (`numpy.bool_(True)` -> b"True" vs `True` -> b"\x01") --
+                    # breaking the deterministic parity guarantee (Codex R3 P1).
+                    # Python scalars have no `.item()` and pass
                     # through unchanged.
                     anchor = group_value.item() if hasattr(group_value, "item") else group_value
             else:

@@ -5,9 +5,9 @@ plan-compile check `null_bearing_int_unsupported` rejects integer + null-bearing
 columns under truncate/hash/categorical when a profile is present; under
 `no_profile=True` that check lands in `checks_skipped` because dtype/null_count
 are unavailable at compile time. This guard re-checks at ingest, on the
-`pa.Table` sources BEFORE any `to_pandas`/`to_polars` conversion (so the integer
-type is still intact, not yet widened to float), and raises the SAME typed error
-on BOTH adapters. Neither substrate silently produces output the other rejects.
+`pa.Table` sources BEFORE the `to_pandas` conversion (so the integer type is
+still intact, not yet widened to float), and raises the typed error before any
+adapter runs. The rejection is loud and identical regardless of route.
 
 PO-settled 2026-05-28 (S13 spec section 1.5); consistent with the S5
 float-canonicalization hard error. This rejects loudly + identically; it is not a

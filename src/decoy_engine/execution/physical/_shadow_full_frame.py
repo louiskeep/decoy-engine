@@ -20,7 +20,7 @@ round 1).
 
 Reuse, never re-add: `FullFrameAdapter` already exists and already delegates,
 unchanged, to whichever `ExecutionAdapter` `select_execution_adapter` chose
-(pandas or polars) -- see its own module docstring. This module never
+(pandas) -- see its own module docstring. This module never
 constructs a `PandasExecutionAdapter` itself; the caller injects the
 already-selected instance via `ShadowContext.full_frame_adapter` (Codex
 plan-gate: the coordinator must not select or construct the delegate),

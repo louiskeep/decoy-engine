@@ -128,8 +128,7 @@ def run_sequential_route(
     `fpe_chunk_count` (S3 reconciliation, P1 x S2): `decide_execution_route`
     only lets this route run when the resolved substrate is `"pandas"`, so
     the FPE-parallelism knob (which, per `select_execution_adapter`, DOES
-    apply to the pandas adapter, unlike `max_workers` / `fallback_to_pandas`
-    which are polars-only) is threaded into the constructor here rather
+    apply to the pandas adapter) is threaded into the constructor here rather
     than silently reverting to `PandasExecutionAdapter`'s class default.
 
     `explain_plan` / `execution_plan_decision` (S3 reconciliation, P2 x S2):
