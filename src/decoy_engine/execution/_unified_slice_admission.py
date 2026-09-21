@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ALLOWED_OPERATOR_IDS",
+    "BUCKET_PERTURB_OPERATOR_ID",
     "CATEGORICAL_OPERATOR_ID",
     "HASH_OPERATOR_ID",
     "CheapCandidate",
@@ -83,13 +84,27 @@ ALLOWED_OPERATOR_IDS = frozenset(
         "native_truncate",
         "native_keyed_hash",
         "native_categorical",
+        "native_bucket_perturb",
     }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
-# Phase 5 Track B: like hash, categorical consumes its namespace through the
-# compiled kernel at every batch invocation and needs the native companion
-# loadable at this host, so `resident_contract_admission` gates it the same way.
+# Phase 5 Track B / S-slate: like hash, categorical and bucket_perturb consume
+# their namespace through the compiled index kernel at every batch invocation
+# and need the native companion loadable at this host, so
+# `resident_contract_admission` gates all three the same way (the
+# `_COMPANION_DEPENDENT_OPERATOR_IDS` set below).
 CATEGORICAL_OPERATOR_ID = "native_categorical"
+BUCKET_PERTURB_OPERATOR_ID = "native_bucket_perturb"
+
+# The operators whose native execution needs the compiled companion loadable at
+# this host: hash (its crypto kernel) plus the two index-kernel operators
+# (categorical, bucket_perturb). A table carrying any of these declines to the
+# oracle when the companion is absent -- the CI `substrate(pandas)` leg. Named
+# as a set so a new index/crypto operator joins by one edit, not a third ad-hoc
+# branch in `resident_contract_admission`.
+_COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
+    {HASH_OPERATOR_ID, CATEGORICAL_OPERATOR_ID, BUCKET_PERTURB_OPERATOR_ID}
+)
 
 # The fixed, reviewed resident-type domain per slice strategy -- the actual
 # set the 4.4 shadow corpus characterizes, not the compiler's coarse profile
@@ -109,6 +124,10 @@ _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     # on a STRING source (the compiled index kernel's admitted input); a
     # non-string source declines to the oracle.
     "categorical": frozenset({pa.string()}),
+    # S-slate: native bucket_perturb parses/perturbs a STRING date column keyed
+    # on that same STRING source (astype(str) identity keeps canonicalization
+    # byte-parity-safe); a non-string source declines to the oracle.
+    "bucket_perturb": frozenset({pa.string()}),
 }
 
 
@@ -382,8 +401,7 @@ def resident_contract_admission(
         return None
 
     covered: list[str] = []
-    hash_columns: list[str] = []
-    categorical_columns: list[str] = []
+    companion_dependent_columns: list[str] = []
     for node in nodes:
         binding = node.execution
         if binding is None:
@@ -402,7 +420,11 @@ def resident_contract_admission(
             return None
         if resident_type not in _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset()):
             return None
-        if binding.operator_id == HASH_OPERATOR_ID:
+        if binding.operator_id in _COMPANION_DEPENDENT_OPERATOR_IDS:
+            # hash / categorical / bucket_perturb all consume their namespace
+            # through the compiled companion at every batch; a missing KeyBinding
+            # or a non-UTF-8 namespace declines to the oracle (the compiled
+            # kernel requires an encodable namespace).
             key_binding = binding.key_binding
             if key_binding is None:
                 return None
@@ -410,16 +432,7 @@ def resident_contract_admission(
                 key_binding.namespace.encode("utf-8")
             except UnicodeEncodeError:
                 return None
-            hash_columns.append(column)
-        if binding.operator_id == CATEGORICAL_OPERATOR_ID:
-            key_binding = binding.key_binding
-            if key_binding is None:
-                return None
-            try:
-                key_binding.namespace.encode("utf-8")
-            except UnicodeEncodeError:
-                return None
-            categorical_columns.append(column)
+            companion_dependent_columns.append(column)
         covered.append(column)
 
     # 1:1 coverage across configured columns / physical nodes / resident
@@ -431,7 +444,7 @@ def resident_contract_admission(
     if len(covered) != len(set(covered)) or set(covered) != set(source.column_names):
         return None
 
-    if (hash_columns or categorical_columns) and not native_companion_status().ok:
+    if companion_dependent_columns and not native_companion_status().ok:
         return None
     try:
         reject_null_bearing_int(plan, {table: source}, registry, graph)

@@ -123,7 +123,14 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # route through this SAME constant rather than recompute its own admitted
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
-NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash", "categorical"})
+NATIVE_KERNEL_STRATEGIES = frozenset(
+    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb"}
+)
+
+# Bucket names bucket_perturb admits on the native route. Mirrors the oracle's
+# `transforms.bucket_perturb._VALID_BUCKETS`; kept local to avoid importing the
+# transforms module into the planning boundary.
+_VALID_BUCKET_PERTURB_BUCKETS = frozenset({"week", "month", "quarter"})
 
 # Strategies admitted to the native FULL-FRAME route but explicitly VETOED on
 # the native CHUNKED/streaming route (Phase 5 Track B). categorical's oracle
@@ -133,7 +140,7 @@ NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash
 # to NATIVE_KERNEL_STRATEGIES alone would let `_static_route_decision` admit it
 # on the chunked route and hit the missing chunk handler, so the chunked
 # preflight vetoes it here and routes the whole table to the oracle instead.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical"})
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
@@ -488,6 +495,48 @@ def categorical_config_rejection(
     return None
 
 
+def bucket_perturb_config_rejection(
+    name: str,
+    table: str,
+    profile: Any | None,
+    *,
+    namespace: str | None,
+    provider_config: dict[str, Any],
+) -> str | None:
+    """The coded reason a `bucket_perturb` column cannot run on the native
+    operator, or None when it can (Phase 5 S-slate).
+
+    v1 admits ONLY the string-source, explicit-`date_format`, valid-bucket,
+    namespaced variant. The oracle defaults a missing bucket to "month" before
+    validating (`_bucket_perturb.py:54`), so this resolves the same default
+    before the membership check. It treats a missing/empty/non-string
+    `date_format` as autodetect (`cfg.get("date_format") or None`,
+    `_bucket_perturb.py:55`); autodetect is an order-dependent whole-column
+    prepass and a parity hazard, so those DECLINE to the oracle here. A
+    non-string resident source declines too -- `astype(str)` is an identity only
+    for a string source, which is what keeps the shared canonicalizer
+    byte-parity-safe. Both native boundaries (the config-only eligibility query
+    and the compiled full-frame binding) call this ONE resolver so they can
+    never reach a different verdict for the same column.
+    """
+    if not namespace:
+        return f"bucket_perturb_requires_namespace:{name}"
+    bucket = str(provider_config.get("bucket", "month"))
+    if bucket not in _VALID_BUCKET_PERTURB_BUCKETS:
+        return f"bucket_perturb_unsupported_bucket:{name}"
+    date_format = provider_config.get("date_format")
+    if not isinstance(date_format, str) or not date_format:
+        return f"bucket_perturb_requires_date_format:{name}"
+    # An unresolved profile leaves the input type unknowable; defer to the
+    # unified-slice resident-type gate rather than guess (matches hash). A
+    # RESOLVED non-string type is rejected here, early.
+    if profile is not None:
+        resolved = resolve_input_arrow_type(table, name, profile)
+        if resolved is not None and resolved != pa.string():
+            return f"bucket_perturb_source_not_string:{name}:{resolved!s}"
+    return None
+
+
 def _config_gate_rejection(
     node: Any, strategy_name: str, cfg: dict[str, Any], profile: Any
 ) -> str | None:
@@ -513,6 +562,14 @@ def _config_gate_rejection(
             name,
             deterministic=bool(getattr(slice_, "deterministic", False)),
             namespace=getattr(slice_, "namespace", None),
+            provider_config=cfg,
+        )
+    if strategy_name == "bucket_perturb":
+        return bucket_perturb_config_rejection(
+            name,
+            node.table,
+            profile,
+            namespace=getattr(node.plan_slice, "namespace", None),
             provider_config=cfg,
         )
     return None
@@ -579,6 +636,7 @@ __all__ = [
     "NATIVE_POOL_STRATEGIES",
     "FallbackPolicy",
     "NodeRequirements",
+    "bucket_perturb_config_rejection",
     "categorical_config_rejection",
     "faker_pool_precondition_met",
     "hash_config_rejection",

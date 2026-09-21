@@ -105,7 +105,16 @@ __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 # Strategies whose masked output is a tokenized string regardless of input
 # type; passthrough is the one type-preserving strategy, handled separately.
 # Categorical's measured oracle output type is exactly this null-shape mapping.
-_TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker", "categorical"})
+# bucket_perturb (S-slate) joins this set: the B0 spike (2026-09-21) measured its
+# oracle output type through the coordinator's pandas full-frame path -- empty ->
+# float64, all-null -> null, else -> string -- which is exactly the tokenizing
+# null-shape mapping. (An empty masked column's zero-row type label is the one
+# place the legacy per-strategy oracle and the unified-slice finalizer disagree;
+# the finalizer normalizes it to float64 for every tokenizing operator, which is
+# what this mapping matches. See the empty-case note in test_shadow_bucket_perturb.)
+_TOKENIZING_STRATEGIES = frozenset(
+    {"redact", "truncate", "hash", "faker", "categorical", "bucket_perturb"}
+)
 
 
 @dataclass(frozen=True)
@@ -352,9 +361,14 @@ class ShadowCoordinator:
                 route_evidence[node.node_id] = evidence
 
                 pool: ValuePool | None = None
-                # Faker (pool selection) and categorical (Phase 5 Track B) both
-                # draw through the compiled index kernel, loaded once per run.
-                needs_index = binding.pool_binding is not None or binding.categorical_deterministic
+                # Faker (pool selection), categorical (Phase 5 Track B), and
+                # bucket_perturb (S-slate) all draw through the compiled index
+                # kernel, loaded once per run.
+                needs_index = (
+                    binding.pool_binding is not None
+                    or binding.categorical_deterministic
+                    or binding.bucket_perturb_bucket is not None
+                )
                 if needs_index and index_kernel is None:
                     try:
                         index_kernel = load_compiled_index_kernel()

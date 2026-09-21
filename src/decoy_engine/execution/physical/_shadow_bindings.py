@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 # Task 4.6 slice 1's faker addition); a node outside this set is never bound,
 # regardless of native admission.
 SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(
-    {"passthrough", "redact", "truncate", "hash", "faker", "categorical"}
+    {"passthrough", "redact", "truncate", "hash", "faker", "categorical", "bucket_perturb"}
 )
 
 OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
@@ -51,6 +51,7 @@ OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
     "hash": "native_keyed_hash",
     "faker": "native_faker_select",
     "categorical": "native_categorical",
+    "bucket_perturb": "native_bucket_perturb",
 }
 
 _SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
@@ -194,6 +195,8 @@ def execution_binding_for_slice_node(
     categorical_deterministic = False
     categorical_categories: tuple[str, ...] | None = None
     categorical_cdf: tuple[int, ...] | None = None
+    bucket_perturb_bucket: str | None = None
+    bucket_perturb_date_format: str | None = None
     if strategy == "hash":
         if caps.key_source is None or plan_slice.namespace is None:
             # hash_requires_namespace is enforced upstream of the native
@@ -245,6 +248,21 @@ def execution_binding_for_slice_node(
                 return None  # pragma: no cover - config gate already proved buildable
         key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
         categorical_deterministic = True
+    elif strategy == "bucket_perturb":
+        # `requirements.fallback_policy == "native"` (checked above) already
+        # proved `bucket_perturb_config_rejection` passed: a namespace, a valid
+        # bucket, and an explicit string date_format. Capture both onto the
+        # binding so the operator never re-reads/re-resolves config per batch,
+        # and bind the source key (bucket_perturb is source-keyed like hash).
+        namespace = plan_slice.namespace
+        if caps.key_source is None or namespace is None:
+            return None  # pragma: no cover - config gate guarantees both
+        bucket_perturb_bucket = str(cfg.get("bucket", "month"))
+        date_format = cfg.get("date_format")
+        if not isinstance(date_format, str) or not date_format:
+            return None  # pragma: no cover - config gate guarantees an explicit format
+        bucket_perturb_date_format = date_format
+        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
 
     return ExecutionBinding(
         operator_id=OPERATOR_ID_BY_STRATEGY[strategy],
@@ -262,4 +280,6 @@ def execution_binding_for_slice_node(
         categorical_deterministic=categorical_deterministic,
         categorical_categories=categorical_categories,
         categorical_cdf=categorical_cdf,
+        bucket_perturb_bucket=bucket_perturb_bucket,
+        bucket_perturb_date_format=bucket_perturb_date_format,
     )
