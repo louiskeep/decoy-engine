@@ -103,7 +103,7 @@ def test_capabilities_include_fpe_and_redact_with_invariants():
 def test_every_mask_strategy_is_proven_or_waived():
     gen = _load_generator()
     m = gen._capability_matrix_module()
-    registry_strategies = {name for name, _gdpr, _accel in m._mask_strategies()}
+    registry_strategies = {name for name, _gdpr in m._mask_strategies()}
     proven = {c["id"].split(".", 1)[1] for c in gen.build()["capabilities"] if c["kind"] == "mask"}
     waived = gen.WAIVED_MASK_STRATEGIES
     missing = registry_strategies - proven - waived
