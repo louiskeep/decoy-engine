@@ -63,7 +63,7 @@ CAPABILITIES: dict[DriverId, DriverCapabilities] = {
         sink_api=(),
         hosted_operator_families=_ORACLE_FAMILIES,
         can_own_fk_table=True,
-        substrate=(Substrate.PANDAS, Substrate.POLARS),
+        substrate=(Substrate.PANDAS,),
     ),
     DriverId.SEQUENTIAL: DriverCapabilities(
         driver_id=DriverId.SEQUENTIAL,
