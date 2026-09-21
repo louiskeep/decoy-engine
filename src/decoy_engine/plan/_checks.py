@@ -29,10 +29,10 @@ from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._pool_size import resolve_pool_size
 from decoy_engine.profile._types import Profile
 
-# Strategies under which a null-bearing integer source column diverges across the
-# pandas oracle and the polars-native path (to_pandas widens int+null to float64,
-# which the deterministic remap then either reshapes or hard-errors on, while the
-# polars path keeps the integer). B1, PO-settled 2026-05-28: reject at validation.
+# Strategies under which a null-bearing integer source column is ambiguous: an
+# arrow-backed int+null column widens to float64 under `to_pandas()`, which the
+# deterministic remap then either reshapes or hard-errors on. B1, PO-settled
+# 2026-05-28: reject at validation.
 _INT_NULL_REJECTED_STRATEGIES = frozenset({"truncate", "hash", "categorical"})
 
 
@@ -200,8 +200,8 @@ def check_null_bearing_int_unsupported(config: dict[str, Any], profile: Profile)
     Compile-check ownership table row #10 (B1, S13). PO-settled 2026-05-28: a
     column that is integer-typed AND null-bearing is REJECTED at plan-compile when
     masked under truncate / hash / categorical, because its masked value is
-    ambiguous across execution substrates (`to_pandas()` widens int+null to
-    float64; the polars-native path keeps the integer). This is the same class of
+    ambiguous: `to_pandas()` widens an arrow-backed int+null source to float64
+    before the deterministic remap sees it. This is the same class of
     "ambiguous numeric source" the S5 float-canonicalization hard error already
     rejects. Remediation: stringify or bin the column upstream.
 

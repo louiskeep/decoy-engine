@@ -71,7 +71,7 @@ jobs:
   # Full module-to-suite map: docs/ci-regression-gate.md.
   #
   #   relational   : tests/integration/golden (row-count / FK / join invariants)
-  #   parity       : tests/parity (pandas vs polars adapter)
+  #   parity       : tests/parity (cross-route byte-parity: chunked-substrate + out-of-core FK)
   #   determinism  : tests/unit/determinism + tests/integration/golden
   #   golden       : tests/integration/golden (engine-v2 S1 fixtures)
   #   quality      : tests/unit/quality + tests/snapshots (fidelity / privacy / DCR + frozen snapshots)
