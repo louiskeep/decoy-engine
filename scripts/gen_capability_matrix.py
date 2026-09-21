@@ -32,23 +32,16 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 """
 
 
-def _mask_strategies() -> list[tuple[str, str, str]]:
+def _mask_strategies() -> list[tuple[str, str]]:
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
     from decoy_engine.execution._technique_class import TECHNIQUE_CLASS_BY_STRATEGY
 
-    try:
-        from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
-
-        polars = set(POLARS_SCALAR_HANDLERS)
-    except Exception:
-        polars = set()
     rows = []
     for name in sorted(SCALAR_HANDLERS):
         if name == "nested":
             continue  # wrapper, not a user-facing strategy
         gdpr = str(TECHNIQUE_CLASS_BY_STRATEGY.get(name, "-"))
-        accel = "yes" if name in polars else "no"
-        rows.append((name, gdpr, accel))
+        rows.append((name, gdpr))
     return rows
 
 
@@ -168,10 +161,10 @@ def render() -> str:
 
     mask = _mask_strategies()
     w(f"\n## Mask strategies ({len(mask)})\n\n")
-    w("| Strategy | GDPR technique class | Polars-accelerated |\n")
-    w("| --- | --- | --- |\n")
-    for name, gdpr, accel in mask:
-        w(f"| `{name}` | {gdpr} | {accel} |\n")
+    w("| Strategy | GDPR technique class |\n")
+    w("| --- | --- |\n")
+    for name, gdpr in mask:
+        w(f"| `{name}` | {gdpr} |\n")
     w("\n`nested` is an internal wrapper, not a user-facing strategy.\n")
 
     gen = _generation_strategies()

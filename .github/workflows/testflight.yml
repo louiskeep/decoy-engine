@@ -9,11 +9,9 @@
 # Because pyproject.toml addopts excludes the testflight marker, the
 # regression-gate and substrate-matrix workflows never accidentally run it.
 #
-# Substrate: pandas only. The full strategy catalog exercised by the suite
-# (fpe, geo_generalize, code_set, joint_mask, etc.) is not implemented in the
-# polars adapter, so running under a substrate matrix is incorrect and would
-# fail on the polars leg. The existing substrate-matrix workflow covers
-# per-strategy substrate parity separately.
+# Substrate: pandas only, which is the only masking substrate (the dormant
+# polars masking adapter was removed). The strategy catalog exercised by the
+# suite (fpe, geo_generalize, code_set, joint_mask, etc.) runs on pandas.
 #
 # Install: uv sync --extra dev --extra geo. The geo extra provides h3-py
 # (Uber, Apache-2.0) needed by geo_generalize lat/lng mode in Job A and
