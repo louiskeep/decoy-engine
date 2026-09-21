@@ -83,7 +83,6 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/out_of_core/_runner.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_route_policy.py",
-    "execution/polars/_polars_adapter.py",
     "generation/_plan_entry.py",
     "generation/synthesize.py",
 )
