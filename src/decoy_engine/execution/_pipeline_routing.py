@@ -316,11 +316,10 @@ def decide_execution_route(
     flagged and still routes normally.
 
     `resolved_substrate` disqualifies sequential eligibility when it is
-    not `"pandas"` (see `_sequential_eligible`'s docstring): an explicit
-    `substrate="polars"` (or an env-resolved one) must route to full_frame
-    so `select_execution_adapter` -- not the pandas-only sequential path --
-    is what actually decides polars-native-vs-fallback and stamps the
-    caller-visible `executed_substrate` / `execution_adapter` telemetry.
+    not `"pandas"` (see `_sequential_eligible`'s docstring): pandas is the only
+    masking substrate, so any other resolved value routes to full_frame
+    (fail-closed) rather than the pandas-only sequential path, and a future
+    non-pandas substrate would need its own explicit handling first.
 
     Threshold ordering (L2): the reject-before-read branch reads most naturally
     when `out_of_core_threshold_rows <= full_frame_reject_rows`, and that is the

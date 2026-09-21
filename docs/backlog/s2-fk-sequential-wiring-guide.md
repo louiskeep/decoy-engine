@@ -40,9 +40,9 @@ Read these before you touch code (you will edit the first two):
    in memory and returns `outputs: dict[str, pa.Table]` in memory. Callers (platform runner, CLI, unmask,
    subset) read `result.outputs` and write targets themselves. `config["targets"]` paths are the
    caller's concern, not `run_pipeline`'s. **This layering must be preserved for existing callers.**
-2. **`run_pipeline` is always pandas.** It hardcodes `adapter = PandasExecutionAdapter()` (L206). The
-   polars substrate never reaches here, so `run_sequential` (pandas-only) is always applicable when the
-   route selects it. You do NOT need a substrate guard.
+2. **`run_pipeline` is always pandas.** It hardcodes `adapter = PandasExecutionAdapter()` (L206).
+   Pandas is the only masking substrate, so `run_sequential` (pandas-only) is always applicable when
+   the route selects it. You do NOT need a substrate guard.
 3. **Row-error draining already works in `run()` but NOT in `run_sequential`.** `run()` calls
    `drain_row_errors(ctx.row_errors, table=node.table)` after each node dispatch (L216-221) and returns
    them on `ExecutionResult.row_errors`. `run_sequential` never drains, so `ctx.row_errors` accumulates

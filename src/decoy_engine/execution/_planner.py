@@ -182,8 +182,8 @@ def classify_job(
 
     `config` is the validated `PipelineConfig` dump; `plan`, `registry`,
     and `relationship_graph` are the same objects `run_pipeline` builds
-    before dispatch; `substrate` is the RESOLVED substrate string
-    (`"pandas"` / `"polars"`), passed explicitly so the planner never
+    before dispatch; `substrate` is the RESOLVED substrate string (`"pandas"`,
+    the only valid masking substrate), passed explicitly so the planner never
     reads the environment itself.
 
     `source_tables` are the caller-loaded Arrow frames (what
@@ -196,8 +196,7 @@ def classify_job(
 
     Pure and deterministic: every admissibility check is a static read
     of the compiled plan / config (the chunked gate reuses
-    `check_chunked_compatibility`, the polars gate mirrors the polars
-    adapter's native predicate over the same work list); `source_tables`
+    `check_chunked_compatibility`); `source_tables`
     contributes only Arrow metadata (row/null counts, schema types).
     """
     from decoy_engine.execution._pipeline import classify_table_kinds

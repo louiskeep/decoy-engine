@@ -275,6 +275,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_substrate.py",
         "src/decoy_engine/execution/_when_gate.py",
         "src/decoy_engine/execution/native/_determinism_protocol.py",
+        # Comment-only edits stripping polars-masking wording from the retained
+        # non-pandas substrate guards (the guards themselves stay as fail-closed
+        # defence; the pandas path is unchanged).
+        "src/decoy_engine/execution/_pipeline_routing.py",
+        "src/decoy_engine/execution/_unified_slice_admission.py",
     }
     unexpected = [
         name

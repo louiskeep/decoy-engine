@@ -90,7 +90,7 @@ is private and may change without a version bump.
 |--------------------------------------------|--------------------------------------------------------------------------|
 | `src/decoy_engine/config/`                 | `PipelineConfig`, source/target descriptors, relationship config.         |
 | `src/decoy_engine/plan/`                   | `compile_plan` and the frozen `Plan`.                                    |
-| `src/decoy_engine/execution/`              | `ExecutionAdapter` protocol, Pandas + Polars adapters, strategy handlers. |
+| `src/decoy_engine/execution/`              | `ExecutionAdapter` protocol, the Pandas masking adapter, strategy handlers. |
 | `src/decoy_engine/generation/`             | `generate_tables`, composite providers, value pools.                     |
 | `src/decoy_engine/providers_v2/`           | Provider registry + identifier adapters (NPI, SSN, EIN, MRN, NDC).        |
 | `src/decoy_engine/relationships/`          | Relationship graph, namespace registry, orphan-FK policy.                 |

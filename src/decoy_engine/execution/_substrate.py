@@ -81,9 +81,9 @@ def select_execution_adapter(
 ) -> ExecutionAdapter:
     """Construct the execution adapter for `substrate` (default: DECOY_SUBSTRATE).
 
-    `max_workers` + `fallback_to_pandas` apply to the polars adapter only; the
-    pandas adapter ignores them (it has no fallback and no runner-level
-    parallelism knob at S11). An explicit `substrate` overrides the env var;
+    `max_workers` + `fallback_to_pandas` are reserved no-op knobs (they applied
+    to the removed polars adapter); the pandas adapter ignores them. An explicit
+    `substrate` overrides the env var;
     None keeps the env-resolved behavior unchanged.
 
     Raises:
