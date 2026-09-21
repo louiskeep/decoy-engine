@@ -100,6 +100,18 @@ _CASES = [
 ]
 
 
+# These tests drive the native shadow/coordinator path directly (run_shadow_and_oracle),
+# which REQUIRES the compiled companion; skip when it is absent. Production
+# companion-absent behavior -- categorical declines to the pandas oracle -- is covered by
+# the run_pipeline tests below (`test_unified_slice_execution_result_byte_identical`), which
+# run and pass without the companion.
+_NEEDS_COMPANION = pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable; the native shadow path requires it",
+)
+
+
+@_NEEDS_COMPANION
 @pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
 def test_coordinator_matches_oracle_byte_identical(tmp_path: Path, case) -> None:
     _label, values, pc = case
@@ -115,6 +127,7 @@ def test_coordinator_matches_oracle_byte_identical(tmp_path: Path, case) -> None
 # ── Seam proof: full-frame EXECUTES native categorical ──────────────
 
 
+@_NEEDS_COMPANION
 def test_full_frame_executes_native_categorical(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", None, "d"], type=pa.string())})
     write_read_only_fixture(tmp_path, source, "cat")
@@ -354,9 +367,12 @@ def test_non_string_source_declines_to_oracle(tmp_path: Path) -> None:
     assert QUALITY_METRICS_KEY not in on.quality_metrics
 
 
+@_NEEDS_COMPANION
 def test_shadow_difference_is_never_raised_for_admitted_categorical(tmp_path: Path) -> None:
     """A guard that the admitted native categorical path produces a result, not
-    a coded `ShadowDifference` (which would signal an admission-predicate gap)."""
+    a coded `ShadowDifference` (which would signal an admission-predicate gap).
+    An admitted native categorical only exists with the companion present; without
+    it the production route declines to the oracle (see the run_pipeline tests)."""
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     write_read_only_fixture(tmp_path, source, "cat")
     config = build_config(
