@@ -86,7 +86,7 @@ def native_group_key(
     compiled kernel, and prepends `prefix`. Output is always populated
     `pa.string()` (a null sibling cell yields the key for `"None"`, never a
     null); the empty-column reconciliation to the oracle's float64 inference
-    happens at final assembly (`_shadow_coordinator._assemble_column`, the
+    happens at final assembly (`_shadow_assembly.assemble_column`, the
     tokenizing branch).
 
     `namespace` is the SYNTHESIZED `f"group_key/{target}"` the caller resolved,

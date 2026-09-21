@@ -55,7 +55,7 @@ def native_categorical(
     label-aligned. Output is pinned `pa.string()` per batch (stable across
     batches, so the coordinator's part-concat never type-drifts); the
     whole-column null-shape reconciliation to the oracle's data-dependent type
-    happens at final assembly (`_shadow_coordinator._assemble_column`).
+    happens at final assembly (`_shadow_assembly.assemble_column`).
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(

@@ -193,7 +193,7 @@ def native_bucket_perturb(
     through UNCHANGED (the original string, never re-null/re-format). Output is
     pinned `pa.string()` per batch; the whole-column null-shape reconciliation to
     the oracle's data-dependent type happens at final assembly
-    (`_shadow_coordinator._assemble_column`, the bucket_perturb branch).
+    (`_shadow_assembly.assemble_column`, the bucket_perturb branch).
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
