@@ -178,36 +178,42 @@ stays small), reusing `derive_index_batch`:
   into pandas, and `Table.from_pandas` infers Arrow `null`, not `string` — so the plan's own all-null/
   empty byte-identity tests (type is part of parity, `tests/native/test_kernels_scalar.py:51`) would
   fail against a forced `pa.string()`. Root-cause remediation:
-  - **B0 typing spike (gates the categorical build, like A0 gates fan-out):** enumerate the pandas
-    oracle's EXACT Arrow output type for string categories across {empty, all-null, one-null-mixed,
-    fully-populated} x {uniform, weighted}. Expected rule to confirm: `pa.null()` for all-null/empty
-    output, `pa.string()` otherwise. Native reproduces the observed type EXACTLY, per output column.
-  - **Root cause (Codex round-4 P0-2): the oracle's output TYPE is data-dependent** (`pa.null()` for
-    wholly-empty/all-null output, `pa.string()` otherwise), and that disposition CANNOT be known at
-    bind/preflight time. The chunked/OOC lane emits each masked chunk EAGERLY (`_chunk_masking.py:231`)
-    with no whole-column assembly point, so a `pa.string()` all-null chunk is schema-indistinguishable
-    from a populated one and an after-assembly assertion is too late to "decline before output." This is
-    architectural, not a wording gap — so v1 changes SCOPE rather than patching it again.
+  - **Root cause (Codex round-4 P0-2): the oracle's output TYPE is data-dependent** and CANNOT be known
+    at bind/preflight time. The chunked/OOC lane emits each masked chunk EAGERLY
+    (`_chunk_masking.py:231`) with no whole-column assembly point, so an all-null chunk is
+    schema-indistinguishable from a populated one and an after-assembly assertion is too late to "decline
+    before output." This is architectural, not a wording gap — so v1 changes SCOPE rather than patching.
   - **v1 SCOPE CUT — native categorical runs on the FULL-FRAME (unified-slice) route ONLY; the chunked/
     OOC route DECLINES categorical to the oracle.** The full-frame coordinator assembles the WHOLE
     column (loops `_batches`, concatenates parts, `_shadow_coordinator.py:373-389`) BEFORE emitting, so
     it is the one route with a point where whole-column null-ness is known and the oracle-matching type
-    can be resolved. The eager chunked route has no such point in v1, so categorical stays on the oracle
-    there (as today) — no throughput regression, just no native speedup for out-of-core categorical yet.
-  - **Full-frame type mechanism (definitive):** native categorical emits `pa.string()` PER BATCH
-    (stable across batches, so `run_operator` part-concat never type-drifts); THEN at final assembly the
-    coordinator computes the oracle-matching output type FROM the assembled column (`pa.null()` if the
-    whole column is empty/all-null, else `pa.string()`) and casts once — exactly mirroring how the
-    oracle's own assembled output is typed (B0 confirms the rule by running the real oracle+assembler
-    on {empty, all-null, mixed, populated} x {uniform, weighted}). Both native and oracle go through the
-    same assembly, so the shadow comparison sees identical value AND type. ASSERT the final field type
-    equals the oracle's; the tokenizing empty-case `pa.float64()` default (`_shadow_coordinator.py:172`)
-    is overridden for categorical by this whole-column rule (resolves the item-7 tokenizing collision).
-  - **Chunked decline is enforced at native preflight** (`_dispatch.py`/`_requirements`): categorical is
-    NOT admitted to the native chunked route, so it never emits an unresolvable eager chunk.
-  - Tests (type, not just value): full-frame byte-identity incl. empty + all-null + mixed columns
-    (assert the final Arrow field type equals the oracle's); a test proving categorical DECLINES on the
-    chunked route. Do not rely on `_requirements.py:274`'s default-to-`pa.string()`.
+    can be resolved (Codex round 5 confirmed this is the right resolution point). The eager chunked route
+    has no such point in v1, so categorical stays on the oracle there — no throughput regression, just no
+    native speedup for out-of-core categorical yet.
+  - **B0 is the AUTHORITY for the exact types — do NOT assume a mapping (Codex round-5 P0-2).** B0
+    measures the ORACLE's real END-TO-END final field type — through the actual unified-slice oracle
+    output path, which reconstructs via pandas (`_unified_slice.py:310`), NOT raw `Table.from_pandas` in
+    isolation — for {empty, all-null, one-null-mixed, populated} x {uniform, weighted} string categories.
+    Native then implements EXACTLY B0's measured mapping. The likely shape (to CONFIRM, not assume) is
+    empty -> `pa.float64()` (the coordinator already models empty tokenizing output that way,
+    `_shadow_coordinator.py:190`), all-null -> `pa.null()`, otherwise `pa.string()` — but the plan
+    asserts only "match B0 exactly," never a specific type.
+  - **Full-frame type mechanism:** native categorical emits `pa.string()` PER BATCH (stable across
+    batches, so `run_operator` part-concat never type-drifts, `pa.concat_arrays` safe — Codex round 5
+    confirmed); THEN at final assembly the coordinator normalizes the assembled WHOLE column to B0's
+    measured type for its null-shape, overriding the generic tokenizing default
+    (`_shadow_coordinator.py:172,190`) for categorical (resolves the item-7 collision). Native and oracle
+    do NOT literally share coordinator assembly (the oracle reconstructs via pandas at
+    `_unified_slice.py:310`), so byte-identity (value AND field type) is asserted at the FINAL
+    `ExecutionResult` boundary, after both sides' final conversions — not mid-coordinator.
+  - **Chunked decline needs an EXPLICIT route-specific veto (Codex round-5):** adding `categorical` to
+    `NATIVE_KERNEL_STRATEGIES` alone would admit it in `_static_route_decision` (`_dispatch.py:221`) and
+    then hit the missing chunk handler. So the preflight explicitly VETOES categorical on the chunked
+    route (routes to oracle) + a positive oracle-route test proves it declined cleanly.
+  - Tests (field TYPE, not just value): full-frame byte-identity at the `ExecutionResult` boundary incl.
+    empty + all-null + mixed columns (assert final field type == the oracle's, per B0); a test proving
+    categorical DECLINES to the oracle on the chunked route. Do not rely on `_requirements.py:274`'s
+    default-to-`pa.string()`.
   - Chunked native categorical is a LATER slice, gated on a bounded whole-input/nullness prepass or a
     buffering policy that can resolve the type before eager output.
   - Non-string category support is a later slice, gated on an exact pandas-oracle dtype-reconciliation
@@ -248,10 +254,12 @@ routes actually EXECUTED categorical (not declined to the oracle):
    directly (`_plan.py:283`) and will reject categorical unless updated — update it. `_phase3_
    eligibility` STAYS faker-only (it is deliberately the faker provider allowlist); add a regression
    proving categorical does NOT ride the faker exception.
-3. `native/_dispatch.py` preflight (v1 = ENFORCE DECLINE): categorical is NOT admitted to the native
-   CHUNKED route in v1 (see the Output-typing v1 scope cut — the eager chunked lane has no whole-column
-   assembly point to resolve the oracle's data-dependent output type). The preflight/`_requirements`
-   must decline categorical on the chunked route so it routes to the oracle. Test the decline.
+3. `native/_dispatch.py` preflight (v1 = EXPLICIT ROUTE VETO): categorical is NOT admitted to the
+   native CHUNKED route in v1 (the eager lane can't resolve the oracle's data-dependent output type).
+   A route-specific VETO is required — mere absence from `NATIVE_KERNEL_STRATEGIES` is not enough
+   (Codex round 5: `_static_route_decision` at `_dispatch.py:221` would otherwise admit it and hit the
+   missing chunk handler). Veto categorical on the chunked route so it routes to the oracle; a positive
+   oracle-route test proves the clean decline.
 4. `native/_chunk_masking.py`: NO chunked native categorical branch in v1 (declined at item 3). This is
    the DEFERRED chunked slice; do not add a gather branch here until a nullness-prepass/buffering policy
    resolves the type pre-output.
@@ -266,10 +274,10 @@ routes actually EXECUTED categorical (not declined to the oracle):
 7. `physical/_shadow_coordinator.py`: (a) arrange compiled index-kernel LOADING for categorical —
    today it is keyed only to `pool_binding`/faker (`_shadow_coordinator.py:105`), so categorical would
    otherwise get no kernel; (b) classify categorical in `_TOKENIZING_STRATEGIES` (`:354`) so batch
-   assembly treats it as tokenizing; (c) at final assembly (`:172`) resolve categorical's output type
-   from the ASSEMBLED WHOLE COLUMN to match the oracle (`pa.null()` if empty/all-null, else
-   `pa.string()`), overriding the tokenizing empty-case `pa.float64()` default (the item-7 tokenizing
-   collision — see "Output typing" for the per-batch-string-then-final-cast mechanism).
+   assembly treats it as tokenizing; (c) at final assembly (`:172,190`) resolve categorical's output
+   type from the ASSEMBLED WHOLE COLUMN to B0's MEASURED oracle mapping (not an assumed rule),
+   overriding the generic tokenizing default (the item-7 collision — see "Output typing" for the
+   per-batch-string-then-final-normalize mechanism + the `ExecutionResult`-boundary parity assertion).
 8. `execution/_unified_slice_admission.py`: `ALLOWED_OPERATOR_IDS` (L78-80) + `_ADMITTED_RESIDENT_
    TYPES` (L90-97) — WITHOUT this, full-frame binding succeeds but unified-slice admission declines.
 9. `native/_capabilities.py`: **ALREADY correct** (row-local/static/zero-diagnostic, L214-226) —
