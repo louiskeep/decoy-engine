@@ -44,9 +44,9 @@ partitionable.
 
 ## Summary
 
-- 32 catalogued draw sites (plus 47 mirror call sites: V1/V2 engines,
-  pandas/polars substrates, the out-of-core batched path, the delegation
-  handlers, and the 9 identifier provider adapters).
+- 32 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+  the out-of-core batched path, the delegation handlers, and the 9 identifier
+  provider adapters).
 - 20 partitionable, 12 not.
 - Family breakdown: `source_keyed_hmac` 12, `numpy_pcg64` 9, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
@@ -111,9 +111,8 @@ and consume no derivation.
 `execution/_strategies/_categorical.py:187`. Uniform path:
 `derive_index(mask_key, namespace, _canonicalize_source(value), pool_size=len(categories))`.
 Weighted path: `derive_index(..., pool_size=_WEIGHTED_CDF_RES)` then a bisect over
-the CDF. Mirrors: the out-of-core categorical kernel
-(`execution/out_of_core/_mask_group_b.py:336`) and the polars handler
-(`execution/polars/_strategies/_categorical.py:113`).
+the CDF. Mirror: the out-of-core categorical kernel
+(`execution/out_of_core/_mask_group_b.py:336`).
 
 ### mask.fpe
 `transforms/fpe.py:349`. NIST SP 800-38G FF1 (AES-256, Algorithms 5/6; Task 5.2,
@@ -204,7 +203,7 @@ permutation. Seed:
 then `default_rng(seed).permutation(len(non_na_values))`. NOT partitionable: a
 partition sees only its slice and cannot reproduce the global permutation order.
 Nulls are excluded before the draw. Non-deterministic mode uses an unseeded
-`default_rng()`. Polars mirror at `execution/polars/_strategies/_shuffle.py:57`.
+`default_rng()`.
 
 ### mask.categorical_nondeterministic
 `execution/_strategies/_categorical.py:215`. `np.random.default_rng()` (unseeded)

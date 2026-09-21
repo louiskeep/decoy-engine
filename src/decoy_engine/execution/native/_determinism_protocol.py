@@ -98,8 +98,8 @@ class DrawSite:
     notes: str = ""
     uncertain: bool = False
     # Sibling call sites that implement the SAME mechanism byte-for-byte
-    # (V1/V2 engines, pandas/polars substrates, in-core/out-of-core). Recorded
-    # so the protocol knows every physical location that must move in lockstep.
+    # (pandas substrate, in-core/out-of-core). Recorded so the protocol knows
+    # every physical location that must move in lockstep.
     mirror_call_sites: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -132,7 +132,6 @@ DRAW_SITES: tuple[DrawSite, ...] = (
             "so it cannot reproduce the global permutation order. Non-deterministic "
             "mode uses an unseeded default_rng()."
         ),
-        mirror_call_sites=("execution/polars/_strategies/_shuffle.py:57",),
     ),
     # -- Masking: source-keyed HMAC family (per-row, partitionable) ----------
     DrawSite(
@@ -150,7 +149,6 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+truncate",
         provider_version=_V6,
         notes="The HMAC digest IS the output; no RNG object. Joinability-preserving.",
-        mirror_call_sites=("execution/polars/_strategies/_hash.py:53",),
     ),
     DrawSite(
         draw_site_id="mask.categorical_deterministic",
@@ -176,7 +174,6 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         mirror_call_sites=(
             "execution/out_of_core/_mask_group_b.py:336",
             "execution/out_of_core/_mask_group_b.py:346",
-            "execution/polars/_strategies/_categorical.py:113",
         ),
     ),
     DrawSite(
@@ -194,7 +191,6 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="none(non-deterministic)",
         provider_version="numpy NEP-19 PCG64",
         notes="Non-deterministic contract: output differs run to run by design.",
-        mirror_call_sites=("execution/polars/_strategies/_categorical.py:139",),
     ),
     DrawSite(
         draw_site_id="mask.fpe",

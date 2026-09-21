@@ -91,14 +91,12 @@ selection kills, with existing coverage: passthrough guard mut 73, 75, 85, 86, 8
   name (`orders`, data) is in the fail-closed message. The declared-dtype twin
   already asserted its table name; this closes the same gap on the passthrough side.
 - **mut_88** (`chunked_adapter_touches_pandas_ingestion(adapter, config, None)`):
-  `test_polars_nonnative_table_still_applies_fk_passthrough_guard` -- `table` is
-  load-bearing ONLY on the polars branch (the pandas adapter returns True before
-  reading it, which is why the pandas-route reject tests cannot reach this mutant).
-  A polars adapter whose table carries a non-native strategy (`top_code`, the one
-  chunk-safe strategy outside `POLARS_SCALAR_HANDLERS`) falls to the pandas oracle,
-  so the guard must fire; with `table=None` the native-check sees no columns,
-  wrongly reports the adapter never touches pandas, and the lossy big-int
-  passthrough FK rounds silently.
+  *Historical (polars masking removed 2026-09-21).* This mutant depended on the
+  per-adapter branch in `chunked_adapter_touches_pandas_ingestion`, where `table`
+  was load-bearing only on the polars route. With pandas the only masking
+  substrate, the function now unconditionally returns True (the chunked route
+  always ingests through the pandas adapter), so the `table`-dependent mutant no
+  longer exists and the polars-adapter test that killed it was deleted.
 - **mut_59 / mut_60 / mut_124 / mut_132** (projection policy `= None` /
   `resolve_unconfigured_column_policy(None)` / `adapter.run(unconfigured_column_policy=None)`
   / dropped kwarg): `test_unconfigured_error_policy_threaded_to_each_chunk` -- an
