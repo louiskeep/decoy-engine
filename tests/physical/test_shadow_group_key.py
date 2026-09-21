@@ -133,12 +133,16 @@ _SIBLINGS: dict[str, pa.Array] = {
     "uint64_big_null": pa.array([2**63 + 5, None, 10], type=pa.uint64()),
     "bool": pa.array([True, False, True], type=pa.bool_()),
     "bool_null": pa.array([True, None, False], type=pa.bool_()),
-    "date32": pa.array([dt.date(2020, 1, 1), dt.date(1999, 12, 31), dt.date(2020, 1, 1)], type=pa.date32()),
+    "date32": pa.array(
+        [dt.date(2020, 1, 1), dt.date(1999, 12, 31), dt.date(2020, 1, 1)], type=pa.date32()
+    ),
     "timestamp_us": pa.array(
-        [dt.datetime(2020, 1, 1, 12), dt.datetime(1999, 12, 31, 23, 59, 59)], type=pa.timestamp("us")
+        [dt.datetime(2020, 1, 1, 12), dt.datetime(1999, 12, 31, 23, 59, 59)],
+        type=pa.timestamp("us"),
     ),
     "timestamp_tz": pa.array(
-        [dt.datetime(2020, 1, 1, 12), dt.datetime(1999, 6, 1)], type=pa.timestamp("us", tz="US/Eastern")
+        [dt.datetime(2020, 1, 1, 12), dt.datetime(1999, 6, 1)],
+        type=pa.timestamp("us", tz="US/Eastern"),
     ),
     "all_null": pa.array([None, None], type=pa.string()),
     "single": pa.array(["solo"], type=pa.string()),
@@ -201,7 +205,10 @@ def test_same_group_same_key_and_distinct_differ() -> None:
         (pa.array(["é", "café"], type=pa.string()), True),  # decomposed unicode (NFC)
         (pa.array([1, 2, 3], type=pa.int64()), True),  # int length-prefix
         (pa.array([True, False], type=pa.bool_()), True),  # bool special-encode
-        (pa.array([dt.date(2021, 6, 1), dt.date(1990, 1, 2)], type=pa.date32()), False),  # str-equal
+        (
+            pa.array([dt.date(2021, 6, 1), dt.date(1990, 1, 2)], type=pa.date32()),
+            False,
+        ),  # str-equal
     ],
     ids=["nonNFC", "int", "bool", "date"],
 )
@@ -226,11 +233,15 @@ def test_canonicalization_free_differential(gb: pa.Array, diverges: bool) -> Non
     ]
     assert native == raw
     canon = [
-        derive(_MASK_KEY, f"group_key/{_TARGET}", canonicalize_derive_source(v))[: length // 2].hex()
+        derive(_MASK_KEY, f"group_key/{_TARGET}", canonicalize_derive_source(v))[
+            : length // 2
+        ].hex()
         for v in df[_GB]
     ]
     if diverges:
-        assert native != canon, "native must differ from a canonicalizing derivation (raw path proof)"
+        assert native != canon, (
+            "native must differ from a canonicalizing derivation (raw path proof)"
+        )
 
 
 # ── Stringify parity: astype(str) == oracle element-wise str() ───────────────
@@ -341,9 +352,9 @@ def test_float_sibling_declines(tmp_path: Path) -> None:
     )
     result = _eligibility(tmp_path, source, _gk_columns())
     assert not result.accepted
-    assert any(r.startswith("group_key_group_by_type_not_native:key:gb:") for r in result.rejections), (
-        result.rejections
-    )
+    assert any(
+        r.startswith("group_key_group_by_type_not_native:key:gb:") for r in result.rejections
+    ), result.rejections
 
 
 def test_missing_group_by_declines(tmp_path: Path) -> None:

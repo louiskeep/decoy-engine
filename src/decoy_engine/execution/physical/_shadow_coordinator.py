@@ -105,9 +105,8 @@ __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 # Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
 # else -> string (passthrough is separate). bucket_perturb differs ONLY on empty
 # (it passes its source object series through -> Arrow null), so it is split out.
-# group_key never emits an all-null column (a null sibling cell derives the key
-# for "None"), so its all-null branch is dead, but empty -> float64 applies (the
-# empty-frame golden pins this) -- so it belongs here, not in _NULL_ON_EMPTY.
+# group_key never emits all-null (a null cell keys on "None") but its empty ->
+# float64 rule matches, so it belongs here (the empty golden pins this).
 _TOKENIZING_STRATEGIES = frozenset(
     {"redact", "truncate", "hash", "faker", "categorical", "group_key"}
 )
@@ -375,12 +374,10 @@ class ShadowCoordinator:
                         pool_cache=pool_cache,
                     )
 
-                # group_key is the one bound strategy that keys on a DIFFERENT
-                # column than the one it writes: it reads the sibling `group_by`
-                # column's ORIGINAL source value (admission proved that sibling is
-                # unmasked/passthrough, so `batch.column(group_by)` equals what the
-                # oracle reads) and writes the derived key to `column`. Every other
-                # operator reads and writes the same column.
+                # group_key alone reads a DIFFERENT column than it writes: it keys
+                # on the sibling `group_by`'s original source value (admission
+                # proved the sibling unmasked, so it equals what the oracle reads)
+                # and writes to `column`; every other operator reads `column`.
                 input_column = binding.group_key_group_by or column
                 parts: list[pa.Array] = []
                 for batch in _batches(source, self.ctx.batch_size_rows):

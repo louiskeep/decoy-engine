@@ -146,7 +146,9 @@ def native_group_key(
     # emit-null handling never fires. The last positional argument is the
     # separator (empty), so each element is the plain concatenation.
     prefix_col = pa.array([prefix] * n, type=pa.string())
-    return pc.binary_join_element_wise(prefix_col, hex_out, "")
+    # `binary_join_element_wise(a, b, sep)` concatenates a + sep + b per row; the
+    # separator is the empty string, so each element is `prefix + key`.
+    return pc.binary_join_element_wise(prefix_col, hex_out, "")  # type: ignore[attr-defined]
 
 
 __all__ = ["native_group_key"]

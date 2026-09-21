@@ -294,9 +294,14 @@ class _ReferenceRawHexDerivation:
         del native_threads
         key = _require_mask_key(mask_key, "group_key_derivation")
         n_bytes = hex_chars // 2
-        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+        # Accept the pa.Array / pa.ChunkedArray / list forms the Protocol admits.
+        if isinstance(values, list):
+            items = values
+        else:
+            array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+            items = array.to_pylist()
         out: list[str | None] = []
-        for value in array.to_pylist():
+        for value in items:
             if value is None:
                 out.append(None)
                 continue

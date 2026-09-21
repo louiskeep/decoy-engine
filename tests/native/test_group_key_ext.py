@@ -23,6 +23,7 @@ import pytest
 from decoy_engine.determinism import DeterminismError
 from decoy_engine.determinism._derive import derive
 from decoy_engine.errors import MaskKeyRequiredError
+from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._group_key_ext import (
     RAW_HEX_KAT,
     CryptoExtensionUnavailableError,
@@ -30,7 +31,6 @@ from decoy_engine.execution.native._group_key_ext import (
     load_compiled_raw_hex_kernel,
     reference_raw_hex_derivation,
 )
-from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.generation.pool._errors import GenerationError
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
@@ -103,14 +103,18 @@ def test_reference_requires_mask_key() -> None:
 
 @pytest.mark.parametrize("code", ["seed_wrong_length", "namespace_empty"])
 def test_translate_determinism_codes(code: str) -> None:
-    assert isinstance(_translate_compiled_raw_hex_kernel_error(ValueError(f"{code}: d")), DeterminismError)
+    assert isinstance(
+        _translate_compiled_raw_hex_kernel_error(ValueError(f"{code}: d")), DeterminismError
+    )
 
 
 @pytest.mark.parametrize(
     "code", ["mixed_object_not_native", "group_key_input_not_string", "group_key_hex_chars_invalid"]
 )
 def test_translate_generation_codes(code: str) -> None:
-    assert isinstance(_translate_compiled_raw_hex_kernel_error(ValueError(f"{code}: d")), GenerationError)
+    assert isinstance(
+        _translate_compiled_raw_hex_kernel_error(ValueError(f"{code}: d")), GenerationError
+    )
 
 
 def test_translate_unrecognized_code_passes_through() -> None:
