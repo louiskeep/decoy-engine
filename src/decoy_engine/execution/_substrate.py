@@ -1,19 +1,13 @@
 """DECOY_SUBSTRATE flag + execution-adapter selection (engine-v2 S11).
 
-The flag picks which `ExecutionAdapter` the runner instantiates. The default is
-`pandas`. (History: S11 shipped the flag with a `pandas` default; S13 flipped the
-default to `polars` on a throughput bet that measurement did not bear out -- the
-polars substrate is value-parity with pandas but not faster for the per-value
-keyed-crypto masking workload, so the bet was reverted here and pandas is the
-masking substrate again.)
-
-The polars substrate is retained but DORMANT for masking: `"polars"` stays a
-valid, explicit opt-in (so the adapter + its parity harness keep working and the
-switch is reversible), but nothing selects it by default and the CLI no longer
-advertises it. It is NOT removed -- `subset/` still uses polars directly for
-FK-closure joins (its genuine strength), unaffected by this default. When polars
-IS explicitly selected, FK + composite jobs route through the pandas oracle
-(byte-for-byte identical, recorded as such). See `polars/_polars_adapter.py`.
+The flag picks which `ExecutionAdapter` the runner instantiates. Pandas is the
+only masking substrate: `VALID_SUBSTRATES` is `("pandas",)` and any other value
+raises `invalid_substrate`. (History: S11 shipped the flag with a `pandas`
+default; S13 flipped it to `polars` on a throughput bet that measurement did not
+bear out -- polars was value-parity with pandas but not faster for the per-value
+keyed-crypto masking workload -- so the default was reverted, and the dormant
+polars masking adapter was later removed entirely. `subset/` still uses the
+polars LIBRARY directly for FK-closure joins, unaffected.)
 """
 
 from __future__ import annotations
