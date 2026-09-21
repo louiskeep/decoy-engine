@@ -274,6 +274,17 @@ class TestModeClassification:
         assert block["mode"] == "pandas_fallback"
         assert "threshold" in block["rejections"]["chunked"]
 
+    def test_non_pandas_substrate_rejects_chunked(self, tmp_path):
+        """D6b fail-closed guard: the chunked route constructs the pandas
+        adapter, so a non-pandas resolved substrate must reject chunked (routing
+        would silently change the executed substrate). Pandas is the only
+        substrate today; a synthetic "future_substrate" exercises the guard
+        directly, preserving the defence the removed polars opt-in relied on."""
+        cfg, _ = _scalar_chunk_safe_job(tmp_path)
+        plan = _classify(cfg, substrate="future_substrate")
+        assert plan.mode == "pandas_fallback"
+        assert "future_substrate" in plan.rejections["chunked"]
+
     def test_non_chunk_safe_strategy_rejects_chunked_naming_strategy(self, tmp_path, monkeypatch):
         cfg, sources = _shuffle_job(tmp_path)
         block = _explain(cfg, sources, monkeypatch=monkeypatch)

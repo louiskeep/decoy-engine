@@ -83,6 +83,19 @@ def test_cheap_admission_declines_when_chunked(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source, route_chunked=True) is None
 
 
+def test_cheap_admission_declines_non_pandas_substrate(tmp_path: Path) -> None:
+    # D6b fail-closed guard: this lane returns a result identical to the PANDAS
+    # full-frame route only, so any non-pandas resolved substrate must decline.
+    # Pandas is the only substrate today; a synthetic "future_substrate" value
+    # exercises the guard directly (it is reached below the resolve_substrate
+    # validation, so it defends a future substrate the same way it defended the
+    # removed polars opt-in).
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source, resolved_substrate="future_substrate") is None
+
+
 def test_cheap_admission_admits_inert_sink_on_full_frame(tmp_path: Path) -> None:
     # Route activation (2026-09-20): a sink is inert on the full-frame route
     # (both legacy and admitted paths ignore it; the sink's fate is decided by
