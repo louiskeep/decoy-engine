@@ -184,5 +184,3 @@ class TestB1WhenDateShift:
         assert result.outputs["t"].num_rows == 5
         records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
         assert records[0]["dob"] == "not-a-date"
-
-

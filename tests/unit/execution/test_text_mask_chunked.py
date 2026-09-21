@@ -1114,6 +1114,7 @@ class TestAdmissionSurfaces:
         )
         assert result.quality_metrics["auto_chunk"]["mode"] == "chunked"
 
+
 # ---------------------------------------------------------------------------
 # 9. Warnings contract vs the unmatched-passthrough log.
 # ---------------------------------------------------------------------------

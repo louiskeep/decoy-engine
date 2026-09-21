@@ -311,6 +311,7 @@ class TestBucketizeFailLoud:
         assert result.row_errors == ()
         assert result.outputs["t"].column("age").to_pylist() == ["20", None, "40"]
 
+
 class TestDateShiftFailLoud:
     def test_no_quarantine_raises_row_errors_failed(self, tmp_path: Path) -> None:
         src = pa.table({"dob": ["2020-01-01", "garbage-date", "2021-06-15"]})

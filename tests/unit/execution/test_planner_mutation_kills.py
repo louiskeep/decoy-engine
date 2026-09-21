@@ -311,5 +311,3 @@ class TestRuntimeSourceBucketizeGate:
     def test_empty_bucketize_list_yields_no_bucketize_reason(self):
         tbl = pa.table({"s": pa.array(["a", "b"])})
         assert _rr(tbl, bucketize_columns=[]) == []
-
-

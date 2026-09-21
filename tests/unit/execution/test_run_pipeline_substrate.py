@@ -222,9 +222,7 @@ class TestPolarsRejected:
         cfg = _scalar_mask_config(tmp_path)
         sources = _scalar_mask_sources(tmp_path)
         with pytest.raises(ExecutionError) as exc:
-            run_pipeline(
-                cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="polars"
-            )
+            run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, substrate="polars")
         assert exc.value.code == "invalid_substrate"
 
 
