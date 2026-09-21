@@ -169,34 +169,52 @@ stays small), reusing `derive_index_batch`:
   vectorized for throughput); gather `categories_arr[cat_idx]`. `searchsorted(side="right")` must be
   proven equivalent to the oracle's `bisect_right` on the integer CDF (it is, for a sorted CDF; a
   differential test pins it).
-- **Output typing — v1 is STRING-ONLY (Codex P0-2).** "Pin to the oracle dtype" is a parity trap: the
-  oracle assigns a Python-object list into pandas, so the output Arrow type comes from pandas->Arrow
-  conversion, which differs from a direct `pa.array(categories_arr[...])` for nullable numerics,
-  booleans, mixed categories, empty output, and all-null output — and the scalar tests treat this Arrow
-  type as PART of parity (`tests/native/test_kernels_scalar.py:51`). So v1 native categorical admits
-  ONLY string categories and emits `pa.string()`; the config gate DECLINES non-string categories to the
-  oracle. The resolved output schema is written into the physical binding/requirements contract
-  explicitly (do not rely on the `_requirements.py:274` default-to-`pa.string()`, which is only correct
-  BECAUSE v1 is string-only — annotate that coupling). Non-string category support is a later slice
-  gated on an exact pandas-oracle dtype-reconciliation algorithm + per-domain parity tests.
+- **Output typing — STRING categories + an oracle-typing spike (Codex P0-2, refined round 2).** v1
+  admits ONLY string categories; non-string categories decline to the oracle. But "emit `pa.string()`
+  always" is STILL wrong: for all-null (and empty) output the oracle assigns an all-`None` object list
+  into pandas, and `Table.from_pandas` infers Arrow `null`, not `string` — so the plan's own all-null/
+  empty byte-identity tests (type is part of parity, `tests/native/test_kernels_scalar.py:51`) would
+  fail against a forced `pa.string()`. Root-cause remediation:
+  - **B0 typing spike (gates the categorical build, like A0 gates fan-out):** enumerate the pandas
+    oracle's EXACT Arrow output type for string categories across {empty, all-null, one-null-mixed,
+    fully-populated} x {uniform, weighted}. Expected rule to confirm: `pa.null()` for all-null/empty
+    output, `pa.string()` otherwise. Native reproduces the observed type EXACTLY, per output column.
+  - **Streaming schema stability:** column-level data-dependent typing (null vs string) can destabilize
+    the chunked lane's cross-chunk concat. Resolve by mirroring how the SHIPPED native faker/redact
+    path handles all-null chunks (proven pattern — inspect `sample_faker_array` + `native_redact`
+    repin and the coordinator concat). If categorical genuinely cannot match the oracle's type without
+    breaking streaming-schema stability, DECLINE the all-null/empty categorical output to the oracle
+    (decided from the spike + the lane's actual concat behavior, BEFORE building the categorical
+    kernel). Do not rely on `_requirements.py:274`'s default-to-`pa.string()` — write the resolved
+    output schema into the `ExecutionBinding` contract explicitly.
+  - Non-string category support is a later slice, gated on an exact pandas-oracle dtype-reconciliation
+    algorithm + per-domain parity tests.
 
-**B config/determinism gate — enforced at admission AND runtime (Codex P0-3).** Admission-only
-rejection is insufficient: the native function is always-deterministic and the full-frame binding does
-not currently carry a deterministic flag, so a wiring regression could route an UNSEEDED plan into the
-always-deterministic native impl and silently change its contract instead of declining. The oracle's
-branch selector is `ColumnSeed.deterministic` (`_categorical.py:173`). Remediation:
-- **Shared eligibility predicate** over the compiled `ColumnSeed` (single source of truth), used in
-  BOTH the native-route admission (`_plan`/`_requirements`) AND the full-frame binding admission
-  (`_shadow_bindings`) — not two independent checks that can drift.
-- The categorical binding CARRIES an explicit deterministic-categorical mode; `run_operator` /
-  dispatch ASSERTS it before invoking the native kernel (a runtime defensive assertion that the
-  unseeded branch can never reach native).
-- `categorical_config_rejection` in `_requirements.py` also validates: `namespace` present,
-  `categories` a non-empty STRING list, `weights` (if present) shape-matched + non-negative.
+**B config/determinism gate — enforced at admission AND runtime (Codex P0-3, refined round 2).**
+Admission-only rejection is insufficient: the native function is always-deterministic and a wiring
+regression could route an UNSEEDED plan into it, silently changing its contract instead of declining.
+The gate must be ONE rule usable at both boundaries, which see DIFFERENT inputs: `_plan.
+native_route_eligibility()` is CONFIG-only (it cannot read a compiled `ColumnSeed`), while the
+full-frame binding sees the `ColumnSeed`. Root-cause remediation — a predicate that is a PURE FUNCTION
+OF THE RESOLVED CONFIG:
+- Define `is_deterministic_categorical(resolved_config) -> bool` = EXACTLY the function whose result
+  sets `ColumnSeed.deterministic` (`_categorical.py:173` derives determinism from config today; extract
+  that decision into the shared function so `ColumnSeed.deterministic == is_deterministic_categorical(
+  config)` by construction — one source of truth, not a duplicate gate).
+- Native-route boundary (`_plan.native_route_eligibility` / `_requirements.categorical_config_
+  rejection`): calls `is_deterministic_categorical(config)` on the config it already has — no
+  `ColumnSeed` needed. Full-frame binding (`_shadow_bindings`): reads `ColumnSeed.deterministic` (equal
+  by construction) and writes `ExecutionBinding.categorical_deterministic`.
+- Runtime: `run_operator` / dispatch ASSERTS `ExecutionBinding.categorical_deterministic is True`
+  before invoking the native kernel (defensive: the unseeded branch can never reach native even under a
+  wiring bug).
+- `categorical_config_rejection` also validates: `namespace` present, `categories` a non-empty STRING
+  list, `weights` (if present) shape-matched + non-negative.
 - Negative tests at BOTH admission boundaries (unseeded categorical declines on the native route AND on
-  the full-frame binding) + the runtime assertion test. This is what keeps categorical clear of the
-  full-frame diagnostics/quarantine wall: the deterministic path emits NO per-row error diagnostics, so
-  admission stays clean — but only if the unseeded path provably cannot reach it.
+  the full-frame binding) + the runtime-assertion test + a test that `is_deterministic_categorical`
+  agrees with `ColumnSeed.deterministic` across the config space. This keeps categorical clear of the
+  full-frame diagnostics/quarantine wall — the deterministic path emits NO per-row error diagnostics,
+  but only if the unseeded path provably cannot reach it.
 
 **B registration — the EXECUTABLE seam checklist (Codex P0-1: the survey's 5-seam list was incomplete;
 missing seams would let binding succeed while admission/runtime silently declines or receives no
@@ -212,9 +230,13 @@ routes actually EXECUTED categorical (not declined to the oracle):
    index-companion probing.
 4. `native/_chunk_masking.py`: dispatch branch (L178-226) + a categorical gather helper (mirrors
    `sample_faker_array`).
-5. `physical/_shadow_bindings.py`: `SLICE_STRATEGIES` + `OPERATOR_ID_BY_STRATEGY` (`categorical` ->
-   `native_categorical`) + a categorical binding branch carrying key + categories/weights/CDF + the
-   resolved output schema + the deterministic-mode flag (see gate below).
+5. `physical/_plan.py` `ExecutionBinding` contract (Codex round-2 P0-1): today it has NO
+   deterministic-categorical field, so `_shadow_bindings.py` has nowhere to "carry" the flag. Add the
+   explicit `categorical_deterministic: bool` (+ the resolved categories/weights/CDF + resolved output
+   schema) to the `ExecutionBinding` dataclass FIRST; item 5 populates it, item 6 asserts it.
+5b. `physical/_shadow_bindings.py`: `SLICE_STRATEGIES` + `OPERATOR_ID_BY_STRATEGY` (`categorical` ->
+   `native_categorical`) + a categorical binding branch that POPULATES the new `ExecutionBinding`
+   fields (key + categories/weights/CDF + resolved output schema + `categorical_deterministic`).
 6. `physical/_shadow_operators.py`: `run_operator` branch + `_CATEGORICAL` const.
 7. `physical/_shadow_coordinator.py`: (a) arrange compiled index-kernel LOADING for categorical —
    today it is keyed only to `pool_binding`/faker (`_shadow_coordinator.py:105`), so categorical would
@@ -259,9 +281,11 @@ Codex P1-6)
   meeting the target: shard-wrapper fan-out across both seams + byte-parity incl. mixed null/non-null
   shard boundaries -> dennis -> Codex FINAL -> CI -> merge. On MISSING the target: do NOT merge fan-out;
   take the A-fork or defer (PR-1a already banked the clamp).
-- **PR-2 = Track B native categorical.** Kernel + determinism gate + the 9-item seam checklist +
-  byte-parity (uniform + weighted, string-only) + KAT + both-routes-executed + decline tests -> dennis
-  -> Codex FINAL -> CI -> merge. No GCP needed.
+- **PR-2 = Track B native categorical.** B0 oracle-typing spike (gates the kernel) -> `ExecutionBinding`
+  contract field + shared `is_deterministic_categorical` predicate + the 10-item seam checklist +
+  kernel + determinism gate -> byte-parity (uniform + weighted, string-only, incl. all-null/empty type)
+  + KAT + both-routes-executed + both-boundary decline + runtime-assertion tests -> dennis -> Codex
+  FINAL -> CI -> merge. No GCP needed.
 
 **A-fork spec (if PR-1b misses the target).** Owner: same build lane (Opus-planned, subagent-built).
 Approach: Rust `redact`/`truncate` kernels mirroring `derive_array` (range tasks + `shared_native_pool`
