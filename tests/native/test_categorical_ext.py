@@ -190,6 +190,24 @@ def test_searchsorted_right_equals_bisect_right() -> None:
         per_row = [bisect.bisect_right(cdf, int(b)) for b in buckets]
         assert list(vectorized) == per_row
 
+    # Explicit DUPLICATE-threshold CDFs (zero-weight bands) the random sweep never
+    # produces: a zero-weight category makes two CDF entries equal, so the
+    # right-biased search must skip the empty band exactly as `bisect_right` does.
+    # Buckets deliberately land ON the duplicated threshold and either side of it.
+    _R = _WEIGHTED_CDF_RES
+    explicit_cdfs = [
+        [500_000, 500_000, _R],  # middle category zero-weight (band at 500000)
+        [_R, _R, _R],  # first category takes everything; two empty bands
+        [0, 500_000, _R],  # first category zero-weight (threshold at 0)
+        [1, 1, _R],  # near-zero leading bands
+    ]
+    for cdf in explicit_cdfs:
+        buckets = [0, 1, 499_999, 500_000, 500_001, 999_999, _R - 1, _R, *cdf]
+        buckets_np = np.asarray(buckets, dtype=np.int64)
+        vectorized = np.searchsorted(np.asarray(cdf, dtype=np.int64), buckets_np, side="right")
+        per_row = [bisect.bisect_right(cdf, int(b)) for b in buckets]
+        assert list(vectorized) == per_row, cdf
+
 
 # ── Kernel fail-closed invariants (malformed compiled/stub kernel) ──
 

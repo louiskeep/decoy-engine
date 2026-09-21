@@ -88,6 +88,12 @@ _CASES = [
         [f"v{i}" for i in range(40)],
         {"categories": ["A", "B"], "weights": [0.99, 0.01]},
     ),
+    (
+        "weighted_null_dup_unicode",
+        ["a", None, "a", "café", "日本"],
+        {"categories": ["α", "β", "γ"], "weights": [1.0, 2.0, 3.0]},  # noqa: RUF001
+    ),
+    ("weighted_single", ["x", "y", "z"], {"categories": ["only"], "weights": [1.0]}),
     ("weighted_null", ["a", None, "c", None], {"categories": _UNI, "weights": [3.0, 1.0, 1.0]}),
     ("weighted_all_null", [None, None], {"categories": ["X", "Y"], "weights": [1.0, 2.0]}),
     ("weighted_empty", [], {"categories": ["X", "Y"], "weights": [1.0, 2.0]}),
@@ -296,19 +302,10 @@ def _run_both(tmp_path: Path, source: pa.Table, columns: list[dict]):
     return off, on
 
 
-@pytest.mark.parametrize(
-    "label, values, pc",
-    [
-        ("uniform", ["a", "b", "c", None, "e"], {"categories": _UNI}),
-        ("weighted", ["a", "b", "c", None, "e"], {"categories": _UNI, "weights": [1.0, 2.0, 3.0]}),
-        ("all_null", [None, None, None], {"categories": _UNI}),
-        ("empty", [], {"categories": _UNI}),
-        # Weighted degenerate shapes too: the type reconciliation is by strategy,
-        # not by uniform-vs-weighted, but assert it at this boundary for symmetry.
-        ("weighted_all_null", [None, None, None], {"categories": _UNI, "weights": [1.0, 2.0, 3.0]}),
-        ("weighted_empty", [], {"categories": _UNI, "weights": [1.0, 2.0, 3.0]}),
-    ],
-)
+# The full rich matrix (`_CASES`) runs end-to-end at the ExecutionResult boundary,
+# not just a subset: value + Arrow field type must match the oracle for every
+# duplicate/unicode/single/equal/zero-band/skewed/degenerate case here too.
+@pytest.mark.parametrize("label, values, pc", _CASES, ids=[c[0] for c in _CASES])
 def test_unified_slice_execution_result_byte_identical(
     tmp_path: Path, label: str, values: list, pc: dict
 ) -> None:
