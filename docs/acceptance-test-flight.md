@@ -22,7 +22,7 @@ config, then evaluates a full set of invariants against the output.
 
 The suite lives in `testflight/` at the repo root. It is excluded from the
 default `pytest tests` collection by `addopts` in `pyproject.toml` and by the
-`testpaths` setting, so it never enters the regression-gate or the polars
+`testpaths` setting, so it never enters the regression-gate or the
 substrate-matrix workflows.
 
 ## How to run it
@@ -278,11 +278,10 @@ Limitations specific to the test-flight:
   not hold. Those pairs are checked via the distribution fidelity metric with
   strategy-aware policy bands (coarsen class), not by the Cramers V metric.
 
-- **Pandas only.** The full strategy catalog (fpe, geo_generalize, code_set,
-  joint_mask, text_mask, bucket_perturb, etc.) is not implemented in the
-  polars adapter, so the suite runs only on the pandas substrate. Per-strategy
-  substrate parity is covered separately by `tests/parity/` and the
-  `engine-v2-substrate-matrix` workflow.
+- **Pandas only.** Pandas is the only masking substrate (the dormant polars
+  masking adapter was removed), so the full strategy catalog (fpe,
+  geo_generalize, code_set, joint_mask, text_mask, bucket_perturb, etc.) and
+  this suite run on pandas.
 
 - **Pairwise blind spot.** Correlations are only checked for declared joint
   pairs. An undeclared pair is never tested. The manifests declare the

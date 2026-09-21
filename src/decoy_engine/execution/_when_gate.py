@@ -5,13 +5,7 @@ column's frame and dispatch the underlying strategy ONLY to the rows
 where the predicate is True. Rows where the predicate is False
 passthrough untouched.
 
-The pandas variant (`run_with_when_gate`) is used by the pandas
-execution adapter; the polars variant (`run_with_when_gate_polars`)
-is used by the polars adapter and converts the polars frame to a
-pandas DataFrame just for the predicate eval (reusing the same C1
-substrate) before subsetting natively in polars. Both variants share
-the same eval semantics + error codes so byte-identical parity is
-guaranteed by construction.
+`run_with_when_gate` is used by the pandas execution adapter.
 
 Security posture (reuses the Dennis C1 patch on `_transforms.py`):
 the eval call pins `engine="numexpr"` AND clamps both `local_dict`
@@ -34,7 +28,7 @@ from __future__ import annotations
 import logging
 import warnings
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -45,8 +39,6 @@ from decoy_engine.execution._row_errors import RowError
 _log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    import polars as pl
-
     from decoy_engine.execution._adapter import (
         StrategyContext,
         StrategyHandler,
@@ -223,90 +215,3 @@ def run_with_when_gate(
         _remap_gated_row_errors(ctx, err_start, np.flatnonzero(mask.to_numpy()).tolist())
     df.loc[mask, column] = sub_df[column]
     return df, warnings
-
-
-def run_with_when_gate_polars(
-    handler: Any,
-    frame: pl.DataFrame,
-    column: str,
-    plan: ColumnSeed,
-    ctx: StrategyContext,
-) -> tuple[pl.DataFrame, list[QualityWarning]]:
-    """Polars-frame counterpart of `run_with_when_gate`.
-
-    For the predicate eval we hand the polars frame to pandas (the
-    eval expression syntax is pandas/numexpr, not polars-expression).
-    That conversion is the ONLY extra cost on the polars path; the
-    actual subset + writeback stays in polars.
-
-    Byte-identical to the pandas adapter's gated dispatch by
-    construction: same eval substrate, same `mask.any()` short-circuit,
-    same subset semantics.
-
-    Codex round-6 P2 FAIL-CLOSED PARITY remediation: this polars gate used
-    to short-circuit a zero-match `when:` WITHOUT calling the handler's
-    optional `preflight` hook, unlike `run_with_when_gate` (the pandas
-    variant), which calls it unconditionally before its own short-circuit
-    (see that function's docstring). A native polars `nested(code_set)`
-    column with a zero-match `when:` and a missing/invalid corpus therefore
-    succeeded silently on the polars route while the pandas route correctly
-    failed closed -- a cross-substrate fail-closed inconsistency. Fixed by
-    calling `preflight` here too, mirroring the pandas gate exactly. Reaches
-    a `PandasStrategyPort`-wrapped handler's `preflight` via the port's own
-    forwarding `preflight` method (see `_pandas_port.PandasStrategyPort`).
-    """
-    import polars as pl  # local import keeps the module pandas-only by default
-
-    if plan.when is None:
-        return handler.run(frame, column, plan, ctx)
-
-    preflight = getattr(handler, "preflight", None)
-    if preflight is not None:
-        preflight(plan, ctx)
-
-    pdf = frame.to_pandas()
-    mask = _eval_predicate(pdf, plan.when, plan.strategy)
-
-    if not mask.any():
-        return frame, []
-
-    mask_pl = pl.Series("_when_mask", mask.to_numpy(), dtype=pl.Boolean)
-    # QA-3 F13 (2026-05-31): carry an explicit positional anchor through
-    # the subset so the writeback survives a handler that reorders /
-    # sorts rows internally. Pre-fix the writeback used
-    # `sub_pdf[column].values` (a positional, zero-indexed read), which
-    # is label-aligned to mask-true rows only IFF the handler preserved
-    # the subset's row order. No current polars handler sorts; this is
-    # a contract tightening to prevent a future handler from silently
-    # misaligning the writeback. The anchor column is stripped before
-    # the writeback so it never leaks into the masked frame.
-    anchor_col = "_decoy_when_row_pos"
-    positions = pl.Series(anchor_col, range(frame.height), dtype=pl.Int64)
-    frame_with_anchor = frame.with_columns(positions)
-    sub_frame = frame_with_anchor.filter(mask_pl)
-    err_start = len(ctx.row_errors)
-    sub_frame, warnings = handler.run(sub_frame, column, plan, ctx)
-    # B1: remap subset-relative row-error indices to full-table positions,
-    # reusing the same positional anchor the value writeback below relies on
-    # (`_decoy_when_row_pos` carries each surviving row's original position).
-    # `sub_frame[anchor_col][k]` is the full-table position of the k-th gated
-    # row, so it is exactly the full_positions mapping _remap_gated_row_errors
-    # needs -- the row-error attribution and the value writeback share one
-    # anchor, so they cannot disagree.
-    if len(ctx.row_errors) > err_start:
-        _remap_gated_row_errors(ctx, err_start, sub_frame.get_column(anchor_col).to_list())
-
-    # Stitch via pandas. The eval already paid a `.to_pandas()` on the
-    # full frame; we reuse `pdf` and write back to the rows the anchor
-    # column says we filtered to. The anchor is the original positional
-    # index; even if the handler reordered rows, `set_index` re-aligns
-    # the masked values to the destination rows correctly.
-    sub_pdf = sub_frame.to_pandas()
-    # Drop the anchor from the surface that gets returned to the caller
-    # but keep it in sub_pdf to drive label-aligned assignment.
-    pdf.iloc[
-        sub_pdf[anchor_col].to_numpy(),
-        pdf.columns.get_loc(column),
-    ] = sub_pdf[column].to_numpy()
-    masked_col = pl.from_pandas(pdf[[column]]).get_column(column)
-    return frame.with_columns(masked_col), warnings

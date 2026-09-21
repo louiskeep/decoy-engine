@@ -1,6 +1,7 @@
 """Measure peak memory of the FK relationships mask paths.
 
-Replaces the linear extrapolation in `docs/v2/perf/engine-v2-baseline-report.md`
+Replaces the linear extrapolation in the historical
+`docs/product/release-1-validation-runs/2026-05-28-engine-v2-baseline/engine-v2-baseline-report.md`
 (quoted in `docs/relationships-memory-scaling.md`) with a real measurement: build
 a parent to child to grandchild FK chain of N rows per table, run it through one
 of three routes, and report peak resident memory:

@@ -198,9 +198,9 @@ class TestNestedGroupByRejected:
 class TestWhenPlusGroupByRejected:
     """Codex R1 P1 #1 residual: `when` + `group_by` on a date_shift column is
     fail-closed at compile. The pre-mask anchor is label-aligned, which is
-    correct on pandas but silently mis-anchors on the polars-native when-gate
-    (fresh RangeIndex after filter), so the combination is rejected until
-    per-route positional anchoring lands."""
+    correct only while a when-gated subset keeps its parent-table labels; any
+    route that re-bases the subset onto a fresh RangeIndex would mis-anchor, so
+    the combination is rejected until per-route positional anchoring lands."""
 
     def _cfg_with_when(self, when: str | None) -> dict[str, Any]:
         dob: dict[str, Any] = {

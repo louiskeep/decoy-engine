@@ -300,62 +300,31 @@ def test_chunked_passthrough_parent_small_int_null_bearing_fk_still_admitted() -
 
 
 # ---------------------------------------------------------------------------
-# MEDIUM: the guard must be gated on whether THIS adapter will actually
-# touch pandas ingestion for this table -- a fully-native-Polars chunked run
-# preserves nullable int64 losslessly and never touches pandas, so applying
-# the pandas-only guard there is a false-positive fail-closed reject.
+# The pandas-ingestion gate is unconditional now that pandas is the only
+# masking substrate: the chunked route always ingests through the pandas
+# adapter, so the guard always applies. The adapter/config/table params are
+# retained for a future non-pandas substrate (fail-closed defence).
 # ---------------------------------------------------------------------------
 
 
-def test_chunked_adapter_touches_pandas_ingestion_gates_correctly() -> None:
+def test_chunked_adapter_touches_pandas_ingestion_is_unconditional() -> None:
     from decoy_engine.execution._chunked_adapter_gate import (
         chunked_adapter_touches_pandas_ingestion,
     )
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-    from decoy_engine.execution.polars import PolarsExecutionAdapter
 
     config = _passthrough_fk_config()
     assert (
         chunked_adapter_touches_pandas_ingestion(PandasExecutionAdapter(), config, "orders") is True
     )
-    assert (
-        chunked_adapter_touches_pandas_ingestion(PolarsExecutionAdapter(), config, "orders")
-        is False
-    )
-
-    # A table with a non-polars-native strategy alongside `passthrough` falls
-    # back to the pandas oracle INSIDE the polars adapter's own `run()`, so it
-    # must still be treated as pandas-touching (skipping the guard there would
-    # re-open the exact silent-rounding gap this MEDIUM closes, just for a
-    # mixed-strategy table instead of an all-passthrough one). `code_set` is
-    # deliberately NOT chunk-safe (so this exact config could never actually
-    # reach `run_mask_pipeline_chunked` in production -- every CHUNK_SAFE_
-    # STRATEGIES member happens to already be polars-native today, per
-    # `POLARS_SCALAR_HANDLERS`); it is used here purely to exercise this
-    # helper's own non-native branch in isolation, as defensive coverage for
-    # if that overlap ever narrows.
-    mixed_config = _passthrough_fk_config()
-    mixed_config["tables"][1]["columns"].append(
-        {"name": "note", "strategy": "code_set", "provider_config": {"code_set": "iso3166-1"}}
-    )
-    assert (
-        chunked_adapter_touches_pandas_ingestion(PolarsExecutionAdapter(), mixed_config, "orders")
-        is True
-    )
+    # Pandas is the only masking substrate, so the guard applies regardless of
+    # the adapter/config/table handed in.
+    assert chunked_adapter_touches_pandas_ingestion(object(), config, "orders") is True
 
 
-def test_chunked_passthrough_child_polars_adapter_also_gate_killed_first() -> None:
-    """Was `test_chunked_passthrough_polars_adapter_preserves_big_int_
-    without_false_positive_reject`: the adapter-gating distinction this test
-    proved (the pandas-only ingestion guard must not false-positive-reject a
-    fully polars-native run) is now moot for the CHILD role -- the compile-
-    time allowlist gate is adapter-agnostic and fires before ANY adapter is
-    even selected, for either adapter. `test_chunked_adapter_touches_pandas_
-    ingestion_gates_correctly` above (unaffected by this fix -- it calls the
-    adapter-gating helper directly, not through the full FK gate) keeps the
-    adapter-distinction coverage."""
-    from decoy_engine.execution.polars import PolarsExecutionAdapter
-
+def test_chunked_passthrough_child_gate_killed_first() -> None:
+    """The passthrough-FK CHILD role is rejected at the compile-time allowlist
+    gate, which is adapter-agnostic and fires before any adapter is selected."""
     config = _passthrough_fk_config()
     chunk = pa.table({"customer_id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
 
@@ -366,7 +335,6 @@ def test_chunked_passthrough_child_polars_adapter_also_gate_killed_first() -> No
                 [chunk],
                 table="orders",
                 engine_version=_ENGINE,
-                adapter=PolarsExecutionAdapter(),
             )
         )
     assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"

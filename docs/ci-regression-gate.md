@@ -14,14 +14,14 @@ a directory; the routing guard makes the coverage explicit.
 | Regression family | Suite path(s) | What it guards |
 |---|---|---|
 | relational | `tests/integration/golden/` | row-count, FK, join and groupby invariants on golden fixtures |
-| parity | `tests/parity/` | pandas adapter equals polars adapter across strategies and graph ops |
+| parity | `tests/parity/` | pandas chunked equals pandas full-frame byte-for-byte across strategies |
 | determinism | `tests/unit/determinism/`, `tests/integration/golden/` | key-derivation vectors, cross-process stability, namespace independence |
 | golden | `tests/integration/golden/` | engine-v2 S1 golden fixture suite (CSVs plus manifests) |
 | quality | `tests/unit/quality/`, `tests/snapshots/` | fidelity, diagnostic, policy, DCR and attack metrics plus frozen snapshots |
 | sentry | `tests/sentry/` | source-policy guards: eval, mojibake, brand, stale paths, raw em-dash/arrow |
 | security | `tests/security/` | redaction, expression scope, no PII in output |
 | privacy | `tests/privacy/` | disclosure-risk and privacy-metric guards |
-| perf guard | `tests/perf/` | PERF.BASE.3 schema pins and harness-sanity check for `engine-v2-baseline.json`; runs under `pytest -m "not benchmark"` but is NOT in the routing guard list (see ci.yml) |
+| perf guard | `tests/perf/` | throughput budgets and out-of-core memory sentinels; runs under `pytest -m "not benchmark"` but is NOT in the routing guard list (see ci.yml) |
 
 Overlaps are intentional: the golden suite is where relational and
 determinism invariants are asserted, so those families share files. The
@@ -32,16 +32,18 @@ map documents the overlap rather than partitioning the files artificially.
 - Benchmarks (`tests/benchmark/`, pytest marker `benchmark`): informational,
   run on a separate workflow, never a regression gate (shared-runner perf
   numbers are noise).
-- Substrate matrix (`engine-v2-substrate-matrix.yml`) and parity
-  (`engine-v2-parity.yml`): separate required workflows, currently
-  path-filtered to the execution and graph-op trees.
+- Substrate matrix (`engine-v2-substrate-matrix.yml`): a separate workflow,
+  path-filtered to the execution tree. Pandas is the only masking substrate
+  since the dormant polars masking adapter was removed, so it runs a single
+  pandas leg (the former pandas-vs-polars `engine-v2-parity.yml` workflow was
+  retired with the adapter).
 - Docs build (`docs.yml`): a build gate, not a data-behavior gate.
 
 ## Required checks (branch protection)
 
 At merge time, `main` branch protection should require `regression-gate`,
-`ruff`, `mypy`, and the parity and substrate checks (which pass when their
-path filters skip them). Benchmark and docs jobs are not required.
+`ruff`, `mypy`, and the substrate-matrix check (which passes when its path
+filter skips it). Benchmark and docs jobs are not required.
 
 ## Verifying the gate ("routing verified")
 

@@ -6,8 +6,7 @@ _checks.py module decomposes into per-strategy sub-modules as new strategies
 land; this is the coercion-13 S3 slice for truncate).
 
 Sprint 13 finding 0.4 (CONFIRMED live on main): `TruncateHandler.run`
-(`execution/_strategies/_truncate.py`) and its polars twin
-(`execution/polars/_strategies/_truncate.py`) each had THREE silent-
+(`execution/_strategies/_truncate.py`) had THREE silent-
 passthrough exits: an invalid `length`, an unrecognized `keep`, and a
 multi-character or non-string `mask_char`. On any of the three, the
 handler returned the source DataFrame unchanged with no warning -- a

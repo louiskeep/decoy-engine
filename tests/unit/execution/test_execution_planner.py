@@ -1,9 +1,9 @@
 """P2 (job-performance sprints): observe-only execution-mode planner.
 
 `classify_job` classifies a job into exactly one execution mode
-(`polars_native` / `chunked` / `sequential_relationship` /
-`out_of_core_relationship` / `pandas_fallback`) and records a rejection
-reason for every faster mode not chosen. P2 is OBSERVE-ONLY: the planner
+(`chunked` / `sequential_relationship` / `out_of_core_relationship` /
+`pandas_fallback`) and records a rejection reason for every faster mode
+not chosen. P2 is OBSERVE-ONLY: the planner
 never changes routing, and the default `run_pipeline` call stays
 byte-identical (the P1 golden `quality_metrics == {}` contract).
 
@@ -255,24 +255,15 @@ def _explain(cfg, sources, *, monkeypatch, **kwargs) -> dict[str, Any]:
 
 
 class TestModeClassification:
-    def test_scalar_no_fk_polars_admissible_is_polars_native(self, tmp_path, monkeypatch):
-        cfg, sources = _scalar_chunk_safe_job(tmp_path)
-        block = _explain(cfg, sources, monkeypatch=monkeypatch, substrate="polars")
-        assert block["mode"] == "polars_native"
-        # polars_native is the fastest mode: nothing faster was rejected.
-        assert block["rejections"] == {}
-        assert block["reason"]
-
-    def test_chunk_safe_single_table_on_pandas_is_chunked(self, tmp_path, monkeypatch):
-        """With the substrate pinned pandas, polars_native is rejected for
-        the substrate pin and the chunk-safe single-table job classifies
-        chunked once it clears the P3 size threshold (P3 routes this mode;
-        the threshold knob is lowered so the 2-row fixture qualifies)."""
+    def test_chunk_safe_single_table_is_chunked(self, tmp_path, monkeypatch):
+        """A chunk-safe single-table job classifies chunked once it clears
+        the P3 size threshold (P3 routes this mode; the threshold knob is
+        lowered so the 2-row fixture qualifies). `chunked` is the fastest
+        mode, so nothing faster is rejected."""
         cfg, sources = _scalar_chunk_safe_job(tmp_path)
         block = _explain(cfg, sources, monkeypatch=monkeypatch, auto_chunk_threshold_rows=1)
         assert block["mode"] == "chunked"
-        assert set(block["rejections"]) == {"polars_native"}
-        assert "pandas" in block["rejections"]["polars_native"]
+        assert block["rejections"] == {}
 
     def test_chunk_safe_single_table_below_threshold_falls_back(self, tmp_path, monkeypatch):
         """P3 size gate: the same chunk-admissible job under the DEFAULT
@@ -283,6 +274,17 @@ class TestModeClassification:
         assert block["mode"] == "pandas_fallback"
         assert "threshold" in block["rejections"]["chunked"]
 
+    def test_non_pandas_substrate_rejects_chunked(self, tmp_path):
+        """D6b fail-closed guard: the chunked route constructs the pandas
+        adapter, so a non-pandas resolved substrate must reject chunked (routing
+        would silently change the executed substrate). Pandas is the only
+        substrate today; a synthetic "future_substrate" exercises the guard
+        directly, preserving the defence the removed polars opt-in relied on."""
+        cfg, _ = _scalar_chunk_safe_job(tmp_path)
+        plan = _classify(cfg, substrate="future_substrate")
+        assert plan.mode == "pandas_fallback"
+        assert "future_substrate" in plan.rejections["chunked"]
+
     def test_non_chunk_safe_strategy_rejects_chunked_naming_strategy(self, tmp_path, monkeypatch):
         cfg, sources = _shuffle_job(tmp_path)
         block = _explain(cfg, sources, monkeypatch=monkeypatch)
@@ -290,14 +292,11 @@ class TestModeClassification:
         assert "shuffle" in block["rejections"]["chunked"]
         assert "strategy_not_chunk_safe" in block["rejections"]["chunked"]
 
-    def test_composite_bundle_rejects_polars_native_with_composite_reason(
-        self, tmp_path, monkeypatch
-    ):
+    def test_composite_bundle_rejects_chunked_with_composite_reason(self, tmp_path, monkeypatch):
         cfg, sources = _composite_job(tmp_path)
-        block = _explain(cfg, sources, monkeypatch=monkeypatch, substrate="polars")
+        block = _explain(cfg, sources, monkeypatch=monkeypatch)
         assert block["mode"] == "pandas_fallback"
-        assert "composite" in block["rejections"]["polars_native"]
-        assert block["rejections"]["chunked"]
+        assert "composite" in block["rejections"]["chunked"]
 
     def test_generate_table_rejects_chunked_with_generation_reason(self, tmp_path, monkeypatch):
         cfg, sources = _mixed_generate_job(tmp_path)
@@ -320,8 +319,7 @@ class TestModeClassification:
         assert "not by this planner" in RELATIONSHIP_ROUTE_DEFERRED
         # The chosen-mode reason declares the job a relationship-route candidate.
         assert "relationship-route candidate" in block["reason"]
-        # FK also rejects the non-relationship fast modes.
-        assert "fk" in block["rejections"]["polars_native"].lower()
+        # FK also rejects the non-relationship fast mode.
         assert "relationship" in block["rejections"]["chunked"].lower()
 
     def test_fk_relationships_keep_chunked_self_masking_gate_unreachable(self, tmp_path):
@@ -384,9 +382,8 @@ class TestModeClassification:
                 },
             }
         )
-        block = _explain(cfg, None, monkeypatch=monkeypatch, substrate="polars")
+        block = _explain(cfg, None, monkeypatch=monkeypatch)
         assert block["mode"] == "pandas_fallback"
-        assert "mask" in block["rejections"]["polars_native"]
         assert block["rejections"]["chunked"]
 
 
@@ -417,9 +414,9 @@ class TestDeterminismAndResultType:
         cfg, _ = _scalar_chunk_safe_job(tmp_path)
         plan = _classify(cfg, substrate="pandas")
         with pytest.raises(AttributeError):
-            plan.mode = "polars_native"  # type: ignore[misc]
+            plan.mode = "chunked"  # type: ignore[misc]
         with pytest.raises(TypeError):
-            plan.rejections["polars_native"] = "mutated"  # type: ignore[index]
+            plan.rejections["chunked"] = "mutated"  # type: ignore[index]
 
     def test_execution_plan_rejects_unknown_mode(self):
         with pytest.raises(ValueError):
@@ -605,27 +602,6 @@ def _mask_plus_two_generate_job(tmp_path) -> dict:
     )
 
 
-def _polars_native_plus_generate_job(tmp_path) -> dict:
-    df = pd.DataFrame({"val": ["a", "b"]})
-    return _base_config(
-        tmp_path,
-        tables=[
-            {"name": "t", "columns": [{"name": "val", "strategy": "hash", "namespace": "ns"}]},
-            {
-                "name": "g1",
-                "row_count": 3,
-                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
-            },
-            {
-                "name": "g2",
-                "row_count": 3,
-                "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
-            },
-        ],
-        sources={"t": _write_csv(tmp_path, "t", df)},
-    )
-
-
 class TestChunkedGateDelegation:
     """`_chunked_rejection` must delegate to each per-table gate with the RIGHT
     table and wire the result in. Each job below reduces to a single chunked
@@ -683,19 +659,6 @@ class TestReasonComposition:
     """The chosen-mode `reason` is a stamped decision field: these pin its
     composition so mutations that blank it, drop a clause, or corrupt the row
     count are caught."""
-
-    def test_polars_native_reason_appends_generate_note(self, tmp_path):
-        cfg = _polars_native_plus_generate_job(tmp_path)
-        plan = _classify(cfg, substrate="polars")
-        assert plan.mode == "polars_native"
-        # Data anchor: the generate table names, comma-joined. Catches the
-        # join-arg / separator / `-=` mutations; the surrounding prose is left
-        # to the prose-equivalent class in the ledger.
-        assert "generate-kind table(s) g1, g2 run the" in plan.reason
-        # Composition symmetry (dennis gate): the base clause must survive the
-        # append, so a `reason += ...` -> `reason = ...` mutation (mut_35) that
-        # DROPS the base clause is caught, not silently equivalent.
-        assert "all mask work is scalar" in plan.reason
 
     def test_chunked_reason_reports_source_rows_and_base_clause(self, tmp_path):
         cfg, sources = _scalar_chunk_safe_job(tmp_path)

@@ -124,7 +124,6 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityEstimate,
     CapacityVerdict,
 )
-from decoy_engine.execution.polars import PolarsExecutionAdapter
 
 __all__ = [
     "CHUNK_CONDITIONAL_STRATEGIES",
@@ -150,7 +149,6 @@ __all__ = [
     "OutOfCoreRejection",
     "PandasExecutionAdapter",
     "ParquetTransactionalSink",
-    "PolarsExecutionAdapter",
     "ProbePoint",
     "ProbeResult",
     "RowError",

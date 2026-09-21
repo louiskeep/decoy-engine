@@ -582,12 +582,14 @@ def test_out_of_core_not_ready_reason_non_pandas_substrate_disqualifies(tmp_path
     """Kills mutants that drop `resolved_substrate` from the forwarded call
     (the compiler's own `resolved_substrate=inputs.resolved_substrate`
     kwarg omitted falls back to `_sequential_eligible`'s `"pandas"`
-    default, silently un-disqualifying a polars job)."""
+    default, silently un-disqualifying a non-pandas job). Pandas is the only
+    valid substrate now, so this exercises the retained fail-closed guard with
+    a synthetic non-pandas value."""
     from dataclasses import replace
 
     inputs = _fk_inputs(tmp_path, use_byte_estimate_routing=False)
     assert out_of_core_not_ready_reason(inputs) != "non_pandas_substrate_requested"
-    inputs = replace(inputs, resolved_substrate="polars")
+    inputs = replace(inputs, resolved_substrate="future_substrate")
     assert out_of_core_not_ready_reason(inputs) == "non_pandas_substrate_requested"
 
 

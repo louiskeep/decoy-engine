@@ -5,8 +5,7 @@ ceiling (see the SP-10 comment in tests/sentry/test_module_size.py).
 
 Sprint 13 GATE-1 Q4 (PO-approved, 2026-07-03): close the sibling silent-
 corruption leak in the same pass as truncate. `CategoricalStrategyHandler.run`
-(`execution/_strategies/_categorical.py`) and its polars twin
-(`execution/polars/_strategies/_categorical.py`) both do
+(`execution/_strategies/_categorical.py`) does
 ``categories = list(cfg.get("categories", []))``. When ``categories`` is a
 plain string (e.g. the Studio picker's free-text field emitted with no
 coercion), ``list(...)`` iterates its CHARACTERS rather than raising or

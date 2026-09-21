@@ -9,6 +9,23 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Removed (Polars masking adapter, 2026-09-21)
+
+**Breaking (pre-GA API):** removed the dormant Polars MASKING adapter. `"polars"` was a
+value-parity-with-pandas opt-in that measured no faster for the per-value keyed-crypto
+masking workload, so it was reverted to dormant and is now deleted. `VALID_SUBSTRATES`
+is `("pandas",)`: `run_pipeline(..., substrate="polars")` and `DECOY_SUBSTRATE=polars`
+now raise `ExecutionError(code="invalid_substrate")`. Gone: `execution/polars/` (the
+adapter + its strategy ports), the `polars_native` planner mode, the polars when-gate
+variant, and the polars reason-code translation. No masking behavior change: pandas was
+always the masking output, so results stay byte-identical (test-flight fingerprints
+unchanged). The `max_workers` / `fallback_to_pandas` knobs are kept as accepted no-ops,
+and the generic non-pandas substrate guards are kept as fail-closed defence for a future
+substrate. `subset/` still uses the polars LIBRARY directly for FK-closure joins, and the
+`polars>=1.0,<2.0` runtime dependency is unchanged. The V2 baseline benchmark harness
+(whose only correctness dimension was pandas==polars parity) is retired; its historical
+baseline is preserved as a dated validation record. Pre-GA policy is hard delete.
+
 ### Removed (Task 4.7: delete the superseded native routing lane, 2026-09-20)
 
 **Breaking (pre-GA API):** removed the standalone single-pass streaming native lane,

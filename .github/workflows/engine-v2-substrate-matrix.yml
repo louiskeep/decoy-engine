@@ -1,14 +1,13 @@
 # engine-v2 substrate matrix (S11).
 #
-# Runs the test suite under both execution substrates (pandas, polars) so the
-# polars path is exercised on every change that touches the execution package.
-# Per the substrate-decision doc: the matrix runs both substrates for the
-# duration of the migration window (S11 through S13); once the default flips to
-# polars at S13 close, pandas drops to a nightly-only run.
+# Runs the execution test suite under DECOY_SUBSTRATE=pandas on every change
+# that touches the execution package. Pandas is the only masking substrate
+# since the dormant polars masking adapter was removed, so the matrix carries a
+# single leg (kept as a matrix so a future substrate slots straight back in).
 #
 # Trigger is scoped to the execution package (Engine-reality note #3: the v2
-# masking spine + parity triggers key off decoy_engine/execution/**), so a PR
-# that does not touch execution does not pay the doubled runtime.
+# masking spine triggers key off decoy_engine/execution/**), so a PR that does
+# not touch execution does not pay the extra runtime.
 
 name: engine-v2-substrate-matrix
 
@@ -29,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        substrate: [pandas, polars]
+        substrate: [pandas]
     env:
       DECOY_SUBSTRATE: ${{ matrix.substrate }}
     steps:

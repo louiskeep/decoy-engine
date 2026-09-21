@@ -13,12 +13,7 @@ is that pattern applied to chunked streaming.
 Modes, fastest first (the order defines "faster" for rejection
 recording):
 
-1. `polars_native`: every mask work node is a scalar polars-native
-   strategy, no FK edges, and the polars substrate was requested. This
-   mirrors `PolarsExecutionAdapter._is_fully_polars_native` WITHOUT
-   executing: same work list (`build_work_list`), same native-strategy
-   set (`POLARS_SCALAR_HANDLERS`), same FK-edge gate.
-2. `chunked`: a single mask table whose every strategy passes
+1. `chunked`: a single mask table whose every strategy passes
    `check_chunked_compatibility` (the value-keyed contract), no generate
    tables, no FK edges, resolved substrate pandas (the chunked route is
    pandas-only), only scalar work (composite bundles carry state the
@@ -33,7 +28,7 @@ recording):
    ROUTES this mode through `run_mask_pipeline_chunked` since the
    auto-chunk sprint; without loaded sources the runtime gates are
    skipped and the classification is admissibility-only.
-3. `sequential_relationship` / `out_of_core_relationship`: relationship
+2. `sequential_relationship` / `out_of_core_relationship`: relationship
    routes for FK jobs. The FK stack (`_sequential.py`, `out_of_core/`)
    now lives on this branch, but the LIVE relationship-route decision
    (sequential vs. out-of-core vs. full-frame) is owned by
@@ -45,7 +40,7 @@ recording):
    candidate) and points at the live router for the actual disposition
    (`RELATIONSHIP_ROUTE_DEFERRED`), so the EXPLAIN surface never claims a
    route the planner does not itself take.
-4. `pandas_fallback`: the universal substrate; always admissible.
+3. `pandas_fallback`: the universal substrate; always admissible.
 
 Determinism: same inputs -> same `ExecutionPlan`. The rejections mapping
 is built in the fixed mode order above, every multi-part reason joins
@@ -82,7 +77,6 @@ if TYPE_CHECKING:
 # Fastest-first mode order; rejection recording and "faster than" both
 # derive from this tuple so they cannot disagree.
 EXECUTION_MODES: tuple[str, ...] = (
-    "polars_native",
     "chunked",
     "sequential_relationship",
     "out_of_core_relationship",
@@ -188,8 +182,8 @@ def classify_job(
 
     `config` is the validated `PipelineConfig` dump; `plan`, `registry`,
     and `relationship_graph` are the same objects `run_pipeline` builds
-    before dispatch; `substrate` is the RESOLVED substrate string
-    (`"pandas"` / `"polars"`), passed explicitly so the planner never
+    before dispatch; `substrate` is the RESOLVED substrate string (`"pandas"`,
+    the only valid masking substrate), passed explicitly so the planner never
     reads the environment itself.
 
     `source_tables` are the caller-loaded Arrow frames (what
@@ -202,8 +196,7 @@ def classify_job(
 
     Pure and deterministic: every admissibility check is a static read
     of the compiled plan / config (the chunked gate reuses
-    `check_chunked_compatibility`, the polars gate mirrors the polars
-    adapter's native predicate over the same work list); `source_tables`
+    `check_chunked_compatibility`); `source_tables`
     contributes only Arrow metadata (row/null counts, schema types).
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
@@ -221,21 +214,6 @@ def classify_job(
     has_fk = bool(relationship_graph.edges)
 
     rejections: dict[str, str] = {}
-
-    polars_rejection = _polars_native_rejection(
-        substrate=substrate, mask_tables=mask_tables, work=work, has_fk=has_fk
-    )
-    if polars_rejection is None:
-        reason = (
-            "all mask work is scalar and polars-native with no FK edges on the polars substrate."
-        )
-        if generate_tables:
-            reason += (
-                f" generate-kind table(s) {', '.join(generate_tables)} run the"
-                " synthesize path regardless of mode."
-            )
-        return ExecutionPlan(mode="polars_native", rejections={}, reason=reason)
-    rejections["polars_native"] = polars_rejection
 
     chunked_rejection = _chunked_rejection(
         config,
@@ -276,50 +254,6 @@ def classify_job(
         rejections["out_of_core_relationship"] = _NO_RELATIONSHIP_ROUTE
         reason = "no faster execution mode admitted this job; pandas is the universal fallback."
     return ExecutionPlan(mode="pandas_fallback", rejections=rejections, reason=reason)
-
-
-def _polars_native_rejection(
-    *,
-    substrate: str,
-    mask_tables: list[str],
-    work: list[Any],
-    has_fk: bool,
-) -> str | None:
-    """None when the job would take the pure-polars loop; else why not.
-
-    Mirrors `PolarsExecutionAdapter._is_fully_polars_native` (edges gate +
-    scalar-native work check) plus the two planner-level gates that
-    predicate cannot see: the requested substrate (an operator pin the
-    planner must not override) and the presence of any mask work at all
-    (a pure-generate job never enters the mask adapter, so calling it
-    polars-native would be vacuous).
-    """
-    from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
-
-    native = frozenset(POLARS_SCALAR_HANDLERS)
-    reasons: list[str] = []
-    if not mask_tables:
-        reasons.append(
-            "no mask-kind work; the polars-native loop masks existing data "
-            "(generation uses the synthesize path)"
-        )
-    if substrate != "polars":
-        reasons.append(
-            f"resolved substrate is {substrate!r}; the polars-native loop "
-            "requires the polars substrate"
-        )
-    if has_fk:
-        reasons.append("fk_resolution: FK edges route through the pandas oracle")
-    non_native = sorted(
-        {
-            node.strategy if node.kind == "scalar" else node.kind
-            for node in work
-            if not (node.kind == "scalar" and node.strategy in native)
-        }
-    )
-    if non_native:
-        reasons.append(f"non-polars-native work: {', '.join(non_native)}")
-    return "; ".join(reasons) if reasons else None
 
 
 def _chunked_rejection(

@@ -1,5 +1,10 @@
 # Mutation grading: `execution/_when_gate.py` -- substrate bar 75%
 
+> **Historical (polars masking removed 2026-09-21).** The `run_with_when_gate_polars`
+> wrapper and its tests were deleted with the dormant polars masking adapter;
+> pandas is the only masking substrate. The `run_with_when_gate_polars` mutant
+> rows below are a record of the prior grading and are no longer live.
+
 TQ substrate sweep (branch `tq/substrate-sweep`), DRAFT pending re-grade.
 `_when_gate.py` is the pre-strategy `when:` predicate gate: two thin wrappers
 (`run_with_when_gate` for pandas, `run_with_when_gate_polars` for polars) that

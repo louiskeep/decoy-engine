@@ -311,38 +311,6 @@ class TestBucketizeFailLoud:
         assert result.row_errors == ()
         assert result.outputs["t"].column("age").to_pylist() == ["20", None, "40"]
 
-    def test_polars_substrate_parity(self, tmp_path: Path) -> None:
-        """T7: the polars adapter shares the same handler; same fail-loud behavior."""
-        from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
-        from decoy_engine.plan import compile_plan
-        from decoy_engine.profile import profile_source
-        from decoy_engine.providers_v2 import get_default_registry
-        from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
-
-        config = _bucketize_config(
-            _write_source(
-                tmp_path, pa.table({"age": pa.array(["23", "bad", "47"], type=pa.string())})
-            ),
-            str(tmp_path / "t.out.parquet"),
-        )
-        profile = profile_source(config, seed=0)
-        plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
-        ns_registry = build_namespace_registry(config, profile)
-        graph = RelationshipGraph(edges=(), ordering=())
-        sources = {"t": pa.table({"age": pa.array(["23", "bad", "47"], type=pa.string())})}
-
-        adapter = PolarsExecutionAdapter()
-        result = adapter.run(
-            plan,
-            sources,
-            registry=get_default_registry(),
-            relationship_graph=graph,
-            namespace_registry=ns_registry,
-        )
-        assert len(result.row_errors) == 1
-        assert result.row_errors[0].column == "age"
-        assert result.row_errors[0].trigger == "format_error"
-
 
 class TestDateShiftFailLoud:
     def test_no_quarantine_raises_row_errors_failed(self, tmp_path: Path) -> None:

@@ -76,7 +76,7 @@ pieces most callers need:
 | `PipelineConfig`                                                                  | Strict pipeline-config schema. Validate once: `PipelineConfig.model_validate(yaml).model_dump()`. |
 | `run_pipeline(config, sources, engine_version=...)`                               | Run the whole pipeline in one call (validate, profile, compile, execute). The recommended entrypoint; returns an `ExecutionResult` with `.outputs[table]`. |
 | `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan` (the lower-level path).                   |
-| `select_execution_adapter()` / `PandasExecutionAdapter` / `PolarsExecutionAdapter`| Plan-to-data execution. Pandas is the default substrate (polars is a dormant explicit opt-in). |
+| `select_execution_adapter()` / `PandasExecutionAdapter`                           | Plan-to-data execution. Pandas is the only masking substrate. |
 | `generate_tables(...)`                                                            | Table-from-schema synthesis for `mode: generate` configs.                    |
 | `run_storm(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |
 | `validate_config(...)`                                                            | Validation report without raising. Returns a `ValidationResult`.             |
@@ -90,7 +90,7 @@ is private and may change without a version bump.
 |--------------------------------------------|--------------------------------------------------------------------------|
 | `src/decoy_engine/config/`                 | `PipelineConfig`, source/target descriptors, relationship config.         |
 | `src/decoy_engine/plan/`                   | `compile_plan` and the frozen `Plan`.                                    |
-| `src/decoy_engine/execution/`              | `ExecutionAdapter` protocol, Pandas + Polars adapters, strategy handlers. |
+| `src/decoy_engine/execution/`              | `ExecutionAdapter` protocol, the Pandas masking adapter, strategy handlers. |
 | `src/decoy_engine/generation/`             | `generate_tables`, composite providers, value pools.                     |
 | `src/decoy_engine/providers_v2/`           | Provider registry + identifier adapters (NPI, SSN, EIN, MRN, NDC).        |
 | `src/decoy_engine/relationships/`          | Relationship graph, namespace registry, orphan-FK policy.                 |

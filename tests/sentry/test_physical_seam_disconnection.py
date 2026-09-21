@@ -83,7 +83,6 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/out_of_core/_runner.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_route_policy.py",
-    "execution/polars/_polars_adapter.py",
     "generation/_plan_entry.py",
     "generation/synthesize.py",
 )
@@ -259,11 +258,45 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_native_route_exec.py",
         "src/decoy_engine/execution/_native_route_preflight.py",
         "src/decoy_engine/execution/_native_route_digest.py",
+        # Polars masking removal (2026-09-21): the dormant polars masking adapter
+        # was deleted (pre-GA hard delete; that substrate was value-parity with
+        # pandas and never selected by default). These modules are edited to strip
+        # the deleted adapter's references -- its planner classification mode + the
+        # matching rejection helper, the when-gate variant, the reason-code
+        # translation, the collapsed chunked-adapter gate, docstrings,
+        # and the determinism-mirror sites for the deleted polars strategy files.
+        # The pandas execution path is unchanged. None is under execution/physical/.
+        # The deleted execution/polars/ tree itself is carved out of the filter below.
+        "src/decoy_engine/execution/__init__.py",
+        "src/decoy_engine/execution/_chunked.py",
+        "src/decoy_engine/execution/_chunked_adapter_gate.py",
+        "src/decoy_engine/execution/_planner.py",
+        "src/decoy_engine/execution/_strategies/_top_code.py",
+        "src/decoy_engine/execution/_substrate.py",
+        "src/decoy_engine/execution/_when_gate.py",
+        "src/decoy_engine/execution/native/_determinism_protocol.py",
+        # Comment-only edits stripping polars-masking wording from the retained
+        # non-pandas substrate guards (the guards themselves stay as fail-closed
+        # defence; the pandas path is unchanged).
+        "src/decoy_engine/execution/_pipeline_routing.py",
+        "src/decoy_engine/execution/_unified_slice_admission.py",
+        # Polars masking removal scrub (2026-09-21): comment/docstring-only edits
+        # rewording stale "polars adapter/route/substrate" descriptions to the
+        # pandas-only reality. No behavior change; none is under execution/physical/.
+        "src/decoy_engine/execution/_pipeline_route_exec.py",
+        "src/decoy_engine/execution/_chunked_fk_dtype_safety.py",
+        "src/decoy_engine/execution/out_of_core/_compat.py",
+        "src/decoy_engine/execution/_guards.py",
+        "src/decoy_engine/execution/_strategies/_date_shift.py",
     }
     unexpected = [
         name
         for name in diff_names
-        if "/execution/physical/" not in name and name not in permitted_non_physical
+        if "/execution/physical/" not in name
+        # Polars masking removal (2026-09-21): the whole execution/polars/ adapter
+        # tree was deleted; permit those deletions wholesale rather than enumerate.
+        and "/execution/polars/" not in name
+        and name not in permitted_non_physical
     ]
     assert not unexpected, (
         "Files under src/decoy_engine/execution changed versus origin/main outside "

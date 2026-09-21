@@ -35,8 +35,8 @@ breaks the byte-identical-to-full-frame guarantee `run_mask_pipeline_chunked`
 makes and splits GROUP BY/JOIN groups. Rendering from the coerced numeric with
 integral values normalized (mirroring bucketize's `.astype("Int64")`
 normalization, not its raw whole-column `.astype(str)`) makes `str(value)` a
-pure function of the value -- identical across chunk boundaries and across the
-pandas/polars substrates. The in-range cell's numeric CONTENT is preserved
+pure function of the value -- identical across chunk boundaries. The in-range
+cell's numeric CONTENT is preserved
 exactly; only its Python type changes, so utility on the untouched majority
 survives.
 """
@@ -352,9 +352,8 @@ class TopCodeStrategyHandler:
     def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
         """Fail closed: top_code is never valid under a `when` gate.
 
-        `run_with_when_gate` (pandas) and `run_with_when_gate_polars` (via the
-        `PandasStrategyPort` forward) call this optional hook UNCONDITIONALLY and
-        ONLY when `plan.when is not None`, before their zero-match short-circuit.
+        `run_with_when_gate` calls this optional hook UNCONDITIONALLY and
+        ONLY when `plan.when is not None`, before its zero-match short-circuit.
         Its mere invocation therefore means "top_code was combined with `when`".
 
         The compile check (`plan/_checks_top_code.py`) rejects that shape too, but

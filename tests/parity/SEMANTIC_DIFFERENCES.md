@@ -1,9 +1,9 @@
 # Pandas ↔ Polars semantic differences
 
-> **Status:** living document. Updated as Phase 3 + 4 + 6 surface divergences.
-> **Last reviewed:** 2026-05-10.
+> **Status:** living document (rows 1-6) + historical record (the v2 masking-adapter section).
+> **Last reviewed:** 2026-09-21.
 
-This is the running list of behavior differences between the pandas and polars implementations of relational ops, in cases where both are correct under their own semantics. Each row is a documented divergence — not a bug — and each one has a downstream-handling note (or "no action; both are correct").
+Pandas is the only MASKING substrate (the polars masking adapter was removed 2026-09-21, pre-GA hard delete). Rows 1-6 below remain live: they document pandas vs the polars/duckdb LIBRARY that `subset/` uses for relational ops, where both are correct under their own semantics. Each row is a documented divergence — not a bug — with a downstream-handling note. The "v2 strategy-substrate parity" section further down is a HISTORICAL record of the removed polars masking adapter, kept for provenance.
 
 | # | Behavior | Pandas | Polars | Decision / note |
 |---|---|---|---|---|
@@ -22,9 +22,13 @@ When a parity test catches a divergence:
 2. Add a row to the table above with the behavior, the two outputs, and the downstream handling decision.
 3. If the difference is data-shape-specific, add a parametric parity test that asserts the divergence explicitly so a future change can't silently cross the line.
 
-## v2 strategy-substrate parity (engine-v2 S12)
+## v2 strategy-substrate parity (engine-v2 S12) — HISTORICAL
 
-The rows above cover the V1 graph-engine relational ops (pandas vs duckdb/polars). This section covers the v2 EXECUTION-adapter strategy parity (`test_strategy_substrate_parity.py`): the v2 pandas adapter vs the v2 polars adapter, for the same masking `(plan, sources)`.
+> The polars MASKING adapter was removed (2026-09-21, pre-GA hard delete); pandas is the only
+> masking substrate and `test_strategy_substrate_parity.py` is deleted. This section is kept as a
+> record of the cross-substrate parity that held while the adapter existed.
+
+The rows above cover the V1 graph-engine relational ops (pandas vs duckdb/polars, still live via `subset/`). This section covered the v2 EXECUTION-adapter strategy parity: the v2 pandas adapter vs the (now-removed) v2 polars adapter, for the same masking `(plan, sources)`.
 
 The v2 parity gate is **value-level**: `assert_frames_semantically_equal` compares `outputs[table].to_pydict()` (per-column values + null positions), not Arrow schema or buffer identity. The accepted differences:
 
@@ -64,6 +68,6 @@ This supersedes the earlier "composite partial-null orphan parity divergence" no
 
 The value-level parity above covers in-memory `outputs`. The platform's evidence manifest, however, hashes the WRITTEN output-file bytes (the manifest's `outputs[].hash` is a tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest). Polars 1.x widens five Arrow types on `from_arrow`/`to_arrow` (`large_string`, `large_binary`, `large_list`, `dictionary<uint32,..>`, `time64[ns]`), so a file written by the polars writer can carry a different parquet/IPC schema than the pandas-path file for the SAME logical data, and the manifest hash therefore differs across substrates for those types.
 
-**Disposition (S13 M1): ACCEPT and document** (Dennis-confirmed Session 52; final PO sign-off on the readiness report). Rationale (the load-bearing framing is WITHIN-substrate reproducibility, not substrate count): the evidence manifest's `outputs[].hash` is the tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest, and the R3 contract has no cross-run/cross-substrate invariance clause. Within-substrate reproducibility holds (each writer is deterministic for a given input). The S13 polars default was later reverted, so the shipped masking substrate is pandas again: every production manifest is pandas-written, and the cross-substrate byte drift only arises if a caller explicitly opts into the now-dormant polars substrate (no shipped path does). The drift is bounded to parquet/IPC (CSV has no Arrow-type encoding); logical data is identical in all cases, only Arrow type width differs. Normalize-at-write in `write_target_polars` is a correct V2+ hardening, not a ship gate.
+**Disposition (S13 M1): ACCEPT and document** (Dennis-confirmed Session 52; final PO sign-off on the readiness report). Rationale (the load-bearing framing is WITHIN-substrate reproducibility, not substrate count): the evidence manifest's `outputs[].hash` is the tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest, and the R3 contract has no cross-run/cross-substrate invariance clause. Within-substrate reproducibility holds (each writer is deterministic for a given input). The S13 polars default was later reverted, so the shipped masking substrate is pandas again: every production manifest is pandas-written. The cross-substrate byte drift described here is now moot: the polars masking adapter was removed (2026-09-21), so `"polars"` raises `invalid_substrate` and no substrate but pandas can write a manifest. The drift is bounded to parquet/IPC (CSV has no Arrow-type encoding); logical data is identical in all cases, only Arrow type width differs. Normalize-at-write in `write_target_polars` is a correct V2+ hardening, not a ship gate.
 
 This disposition is recorded in the S13 release-readiness report's known-limitations section (the canonical ship-decision home); this doc is the accepted-differences cross-reference.

@@ -9,31 +9,31 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 
 ## Mask strategies (23)
 
-| Strategy | GDPR technique class | Polars-accelerated |
-| --- | --- | --- |
-| `bucket_perturb` | anonymisation | no |
-| `bucketize` | anonymisation | yes |
-| `categorical` | synthetic | yes |
-| `code_set` | anonymisation | no |
-| `date_shift` | pseudonymisation | yes |
-| `derived` | pseudonymisation | no |
-| `derived_aggregate` | pseudonymisation | no |
-| `faker` | synthetic | yes |
-| `formula` | pseudonymisation | yes |
-| `fpe` | pseudonymisation | yes |
-| `geo_generalize` | anonymisation | no |
-| `group_key` | pseudonymisation | no |
-| `grouped_series` | synthetic | no |
-| `hash` | pseudonymisation | yes |
-| `joint_mask` | anonymisation | no |
-| `passthrough` | passthrough | yes |
-| `redact` | anonymisation | yes |
-| `shuffle` | anonymisation | yes |
-| `text_mask` | pseudonymisation | no |
-| `text_redact` | anonymisation | yes |
-| `top_code` | anonymisation | no |
-| `truncate` | anonymisation | yes |
-| `windowed_date` | pseudonymisation | no |
+| Strategy | GDPR technique class |
+| --- | --- |
+| `bucket_perturb` | anonymisation |
+| `bucketize` | anonymisation |
+| `categorical` | synthetic |
+| `code_set` | anonymisation |
+| `date_shift` | pseudonymisation |
+| `derived` | pseudonymisation |
+| `derived_aggregate` | pseudonymisation |
+| `faker` | synthetic |
+| `formula` | pseudonymisation |
+| `fpe` | pseudonymisation |
+| `geo_generalize` | anonymisation |
+| `group_key` | pseudonymisation |
+| `grouped_series` | synthetic |
+| `hash` | pseudonymisation |
+| `joint_mask` | anonymisation |
+| `passthrough` | passthrough |
+| `redact` | anonymisation |
+| `shuffle` | anonymisation |
+| `text_mask` | pseudonymisation |
+| `text_redact` | anonymisation |
+| `top_code` | anonymisation |
+| `truncate` | anonymisation |
+| `windowed_date` | pseudonymisation |
 
 `nested` is an internal wrapper, not a user-facing strategy.
 

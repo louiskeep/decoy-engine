@@ -1,5 +1,11 @@
 # Mutation grading: `execution/_planner.py` -- substrate bar 75%
 
+> **Historical (polars masking removed 2026-09-21).** The `polars_native` mode
+> and its `_polars_native_rejection` gate were deleted with the dormant polars
+> masking adapter; pandas is the only masking substrate. The `polars_native` /
+> `_polars_native_rejection` mutant rows below are a record of the prior grading
+> and are no longer live.
+
 TQ substrate sweep (branch `tq/substrate-sweep`), DRAFT pending re-grade.
 `_planner.py` is the observe-only execution-mode planner: `classify_job`
 classifies a validated job into one mode (`polars_native` / `chunked` /

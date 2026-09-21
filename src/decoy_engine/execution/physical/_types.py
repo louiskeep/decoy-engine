@@ -89,11 +89,10 @@ class PublicationMode(str, Enum):
 
 
 class Substrate(str, Enum):
-    """The `full_frame` driver's two hosted substrate variants (design doc
-    section 4/8/C3). The other five drivers are pandas-only."""
+    """The `full_frame` driver's hosted substrate (design doc section 4/8/C3).
+    Pandas is the only masking substrate; every driver is pandas-only."""
 
     PANDAS = "pandas"
-    POLARS = "polars"
 
 
 class OperatorFamily(str, Enum):

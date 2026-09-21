@@ -1,19 +1,13 @@
 """DECOY_SUBSTRATE flag + execution-adapter selection (engine-v2 S11).
 
-The flag picks which `ExecutionAdapter` the runner instantiates. The default is
-`pandas`. (History: S11 shipped the flag with a `pandas` default; S13 flipped the
-default to `polars` on a throughput bet that measurement did not bear out -- the
-polars substrate is value-parity with pandas but not faster for the per-value
-keyed-crypto masking workload, so the bet was reverted here and pandas is the
-masking substrate again.)
-
-The polars substrate is retained but DORMANT for masking: `"polars"` stays a
-valid, explicit opt-in (so the adapter + its parity harness keep working and the
-switch is reversible), but nothing selects it by default and the CLI no longer
-advertises it. It is NOT removed -- `subset/` still uses polars directly for
-FK-closure joins (its genuine strength), unaffected by this default. When polars
-IS explicitly selected, FK + composite jobs route through the pandas oracle
-(byte-for-byte identical, recorded as such). See `polars/_polars_adapter.py`.
+The flag picks which `ExecutionAdapter` the runner instantiates. Pandas is the
+only masking substrate: `VALID_SUBSTRATES` is `("pandas",)` and any other value
+raises `invalid_substrate`. (History: S11 shipped the flag with a `pandas`
+default; S13 flipped it to `polars` on a throughput bet that measurement did not
+bear out -- polars was value-parity with pandas but not faster for the per-value
+keyed-crypto masking workload -- so the default was reverted, and the dormant
+polars masking adapter was later removed entirely. `subset/` still uses the
+polars LIBRARY directly for FK-closure joins, unaffected.)
 """
 
 from __future__ import annotations
@@ -26,7 +20,7 @@ from decoy_engine.execution._errors import ExecutionError
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
 
-VALID_SUBSTRATES = ("pandas", "polars")
+VALID_SUBSTRATES = ("pandas",)
 _DEFAULT_SUBSTRATE = "pandas"
 
 
@@ -87,9 +81,9 @@ def select_execution_adapter(
 ) -> ExecutionAdapter:
     """Construct the execution adapter for `substrate` (default: DECOY_SUBSTRATE).
 
-    `max_workers` + `fallback_to_pandas` apply to the polars adapter only; the
-    pandas adapter ignores them (it has no fallback and no runner-level
-    parallelism knob at S11). An explicit `substrate` overrides the env var;
+    `max_workers` + `fallback_to_pandas` are reserved no-op knobs (they applied
+    to the removed polars adapter); the pandas adapter ignores them. An explicit
+    `substrate` overrides the env var;
     None keeps the env-resolved behavior unchanged.
 
     Raises:
@@ -101,15 +95,10 @@ def select_execution_adapter(
     require_positive_int("fpe_chunk_count", fpe_chunk_count)
     require_positive_int("max_workers", max_workers)
     require_bool("fallback_to_pandas", fallback_to_pandas)
-    substrate = resolve_substrate(substrate)
-    if substrate == "polars":
-        from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
-
-        return PolarsExecutionAdapter(
-            max_workers=max_workers,
-            fpe_chunk_count=fpe_chunk_count,
-            fallback_to_pandas=fallback_to_pandas,
-        )
+    # Validates the resolved substrate; "polars" and any unknown value now raise
+    # invalid_substrate (pandas is the only substrate since the polars masking
+    # adapter was removed). pandas is the only construction path.
+    resolve_substrate(substrate)
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 
     return PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count)

@@ -100,7 +100,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, *, decide_route: str) -> dict[str, _S
         fidelity_report=True,
         vault_writer=_VAULT,
         execution_mode="auto",
-        resolved_substrate="polars",
+        resolved_substrate="future_substrate",
         out_of_core_threshold_rows=111,
         full_frame_reject_rows=222,
         out_of_core_budget_bytes=333,
@@ -157,7 +157,7 @@ def test_route_forwards_every_decide_execution_route_argument(
     assert kw.get("largest_table_rows_exact") is False  # #59, #78
     assert kw.get("out_of_core_threshold_rows") == 111  # #60, #79
     assert kw.get("full_frame_reject_rows") == 222  # #61, #80
-    assert kw.get("resolved_substrate") == "polars"  # #74
+    assert kw.get("resolved_substrate") == "future_substrate"  # #74
     assert kw.get("use_byte_estimate_routing") is False  # #81
     assert kw.get("use_probe_routing") is False  # #83
 

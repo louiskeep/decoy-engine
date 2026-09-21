@@ -780,50 +780,6 @@ class TestRunMaskChunkedCallSites:
         assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
         assert "customers" in exc.value.message
 
-    def test_polars_nonnative_table_still_applies_fk_passthrough_guard(self) -> None:
-        """On a POLARS adapter whose table carries a non-native strategy
-        (`top_code`), the chunk falls back to the pandas oracle's unprotected
-        ingestion, so the lossy-passthrough FK guard MUST still fire. Kills
-        `chunked_adapter_touches_pandas_ingestion(adapter, config, None)` (mut_88):
-        with `table=None` the polars native-check matches no table, sees an empty
-        strategy set, wrongly reports the adapter never touches pandas, and the
-        guard is skipped -- the null-bearing big-int passthrough FK then rounds
-        silently instead of failing closed. `table` is load-bearing only on this
-        polars branch (the pandas adapter returns True before reading it), which is
-        why the pandas-route reject tests above cannot reach this mutant.
-
-        PARENT role (`table="customers"`), not child -- see the previous
-        test's docstring for why: a passthrough FK CHILD column is rejected
-        earlier now, at the compile-time allowlist gate, before this guard
-        (or the adapter it runs under) is ever reached."""
-        pytest.importorskip("polars")
-        from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
-
-        config = _passthrough_fk_config()
-        # A non-native (top_code) column on `customers` forces the polars
-        # adapter to the pandas oracle for this table, so the pandas-ingestion
-        # guard applies.
-        config["tables"][0]["columns"].append(
-            {"name": "age", "strategy": "top_code", "provider_config": {"preset": "hipaa_age"}}
-        )
-        chunk = pa.table(
-            {
-                "id": pa.array([1, None, 9007199254740993], type=pa.int64()),
-                "age": pa.array([40, 55, 92], type=pa.int64()),
-            }
-        )
-        with pytest.raises(ExecutionError) as exc:
-            list(
-                run_mask_pipeline_chunked(
-                    config,
-                    [chunk],
-                    table="customers",
-                    engine_version=_EV,
-                    adapter=PolarsExecutionAdapter(),
-                )
-            )
-        assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
-
     def test_unconfigured_error_policy_threaded_to_each_chunk(self, tmp_path) -> None:
         """An explicit `error` policy plus a chunk column the config never declares:
         the resolved projection policy must reach the per-chunk adapter.run so the

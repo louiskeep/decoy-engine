@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 # library dist did not.
 name = "decoy-engine"
 version = "0.5.0"
-description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs against pandas / polars substrates. Used by the decoy-cli CLI and the decoy-platform commercial product."
+description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs on a pandas substrate. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = "Apache-2.0"

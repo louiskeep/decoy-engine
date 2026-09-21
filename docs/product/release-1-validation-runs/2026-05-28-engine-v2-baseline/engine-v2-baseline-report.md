@@ -1,9 +1,20 @@
 # Engine V2 Baseline Report
 
-**Source:** benchmark CI run captured in `tests/perf_fixtures/engine-v2-baseline.json`
-(run on `ci-ubuntu-latest-py311`, 2026-05-28, commit d8ef1e5). Numbers are from the
-standardized benchmark CI (`.github/workflows/benchmark.yml`); local dev-box runs are
-indicative only. See `scripts/run_engine_v2_baseline.py` for the measurement method.
+Status: record
+
+**Historical record (2026-05-28).** This is the preserved evidence from the one
+cross-substrate (pandas vs polars) engine-v2 baseline run. The V2 baseline
+harness (`scripts/run_engine_v2_baseline.py`, `scripts/compare_baselines.py`, the
+`benchmark.yml` `engine-v2-baseline` job, and the two `tests/perf/` baseline
+tests) was retired when the dormant polars masking adapter was removed: its
+correctness dimension was pandas==polars parity, which is moot once pandas is the
+only masking substrate. Shipped-path correctness is covered by the golden-gate
+test-flight plus the property/mutation/acceptance suites. The numbers below are
+kept as-is for provenance and are not regenerated.
+
+**Source:** benchmark CI run captured in the co-located `engine-v2-baseline.json`
+(run on `ci-ubuntu-latest-py311`, 2026-05-28, commit d8ef1e5). Numbers were from
+the standardized benchmark CI; local dev-box runs were indicative only.
 
 **Matrix:** 11 strategies x 2 tiers (small = 1k rows, medium = 100k rows) x 2 substrates
 (pandas, polars). Large tier (10M rows) is deferred to bigger hardware. Reference strategy

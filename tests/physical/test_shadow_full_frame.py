@@ -555,6 +555,25 @@ def test_decline_polars_selected_adapter(tmp_path: Path) -> None:
     _assert_declines(inputs, plan, ctx, snapshot, FULL_FRAME_SUBSTRATE_UNSUPPORTED)
 
 
+def test_decline_compiled_non_pandas_substrate(tmp_path: Path) -> None:
+    """A6 companion: the compiled `PhysicalTable.substrate` guard declines a
+    non-pandas substrate independently of the injected adapter's identity.
+    Pandas is the only substrate today; a synthetic "future_substrate" on the
+    compiled table exercises that guard branch directly (the adapter here is the
+    pandas default, so only the compiled-substrate check can fire the decline)."""
+    config, source = _admitted_table_config(tmp_path)
+    sources = {_TABLE: source}
+    inputs, plan = _capture(config, sources)
+    assert plan.tables[0].substrate == "pandas"
+    forced = dataclasses.replace(plan.tables[0], substrate="future_substrate")
+    plan = dataclasses.replace(plan, tables=(forced, *plan.tables[1:]))
+    # adapter_name is "pandas" so the sibling adapter-identity check (:275) passes;
+    # the decline must come from the compiled-substrate guard (:259) alone.
+    ctx = _build_ctx(inputs, config, adapter=_AdapterSpy(adapter_name="pandas"))
+    snapshot = capture_shadow_snapshot(sources)
+    _assert_declines(inputs, plan, ctx, snapshot, FULL_FRAME_SUBSTRATE_UNSUPPORTED)
+
+
 def test_decline_relationship_edge_touches_admitted_table(tmp_path: Path) -> None:
     """A6: item 5's FK half. Item 1 (exactly one mask table) already rules
     out the ordinary parent+child shape, so this injects a synthetic

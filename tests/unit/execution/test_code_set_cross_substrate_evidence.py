@@ -5,7 +5,7 @@ corpus-provenance evidence (`ExecutionResult.quality_metrics
 ['code_set_corpora']`) silently going missing on a route or dispatch shape
 the original HC-1 work did not exercise.
 
-Two concrete holes this pins shut:
+One concrete hole this pins shut:
 
   1. NESTED CODE_SET MIS-KEYED EVIDENCE: `NestedStrategyHandler` invokes its
      child handler with the synthetic column name `_nested_leaves`, not the
@@ -15,18 +15,9 @@ Two concrete holes this pins shut:
      collided on the same `_nested_leaves` key -- one corpus's provenance
      silently disappeared. Fixed via `StrategyContext.nested_outer_column`.
 
-  2. POLARS-NATIVE ROUTE OMITS CODE_SET EVIDENCE: a job whose outer strategy
-     is `nested` (polars-native via `PandasStrategyPort`) and whose child is
-     `code_set` used to populate `StrategyContext.code_set_corpora` but never
-     merge it into the polars adapter's `ExecutionResult.quality_metrics` --
-     a fully successful masked run silently returned no provenance. Fixed by
-     merging `ctx.code_set_corpora_metrics()` into `_run_polars_native`'s
-     result, mirroring `PandasExecutionAdapter.run`.
-
-These tests drive full plans through BOTH `PandasExecutionAdapter` and
-`PolarsExecutionAdapter` (the actual adapter boundary, not the handler in
-isolation) so a future regression on either substrate's dispatch/merge path
-fails here rather than shipping silently. The out-of-core route is not
+These tests drive full plans through `PandasExecutionAdapter` (the actual
+adapter boundary, not the handler in isolation) so a future regression on the
+dispatch/merge path fails here rather than shipping silently. The out-of-core route is not
 included for the nested fixture: `execution.out_of_core._runner`'s evidence
 scan is gated on `column_seed.strategy == "code_set"` (a plan-level scan
 independent of live handler dispatch), so a nested-wrapped code_set column
@@ -44,7 +35,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.execution import PandasExecutionAdapter, PolarsExecutionAdapter
+from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -102,45 +93,27 @@ def _plan(table: str, per_column: dict[str, ColumnSeed]) -> Any:
     )
 
 
-def _run_both(plan: Any, sources: dict[str, pa.Table]) -> tuple[Any, Any]:
-    """Run the same plan through both adapters; return (pandas, polars) results."""
-    pandas_result = PandasExecutionAdapter().run(
-        plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
-    )
-    polars_result = PolarsExecutionAdapter().run(
-        plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
-    )
-    return pandas_result, polars_result
+class TestDirectCodeSetEvidence:
+    """A direct (non-nested) code_set column must surface its corpus-provenance
+    evidence on the pandas adapter -- the baseline the nested cases below are
+    contrasted against."""
 
-
-class TestDirectCodeSetEvidenceBothSubstrates:
-    """A direct (non-nested) code_set column must surface evidence on both
-    adapters. `code_set` is not itself polars-native, so the polars adapter
-    falls back to the pandas oracle for this job -- already-correct
-    pre-round-4 behavior, pinned here as the baseline the nested cases below
-    are contrasted against."""
-
-    def test_direct_code_set_surfaces_evidence_on_both_adapters(self) -> None:
+    def test_direct_code_set_surfaces_evidence(self) -> None:
         plan = _plan("t", {"diag": _direct_code_set_col("icd10")})
         sources = {"t": pa.table({"diag": pa.array(["I10", "E11.9"], type=pa.string())})}
 
-        pandas_result, polars_result = _run_both(plan, sources)
-
-        for label, result in (("pandas", pandas_result), ("polars", polars_result)):
-            corpora = result.quality_metrics.get("code_set_corpora")
-            assert corpora is not None and len(corpora) == 1, (
-                f"{label} adapter dropped direct code_set evidence: {result.quality_metrics!r}"
-            )
-            entry = corpora[0]
-            assert entry["table"] == "t"
-            assert entry["column"] == "diag"
-            assert entry["code_set"] == "icd10"
-            assert entry["row_count"] > 0
-
-        # Confirms this job actually fell back to the pandas oracle on the
-        # polars adapter (code_set has no native polars handler), not that
-        # the assertion above passed by some unrelated accident.
-        assert polars_result.quality_metrics["executed_substrate"] == {"code_set": "pandas"}
+        result = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        corpora = result.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 1, (
+            f"pandas adapter dropped direct code_set evidence: {result.quality_metrics!r}"
+        )
+        entry = corpora[0]
+        assert entry["table"] == "t"
+        assert entry["column"] == "diag"
+        assert entry["code_set"] == "icd10"
+        assert entry["row_count"] > 0
 
 
 class TestNestedCodeSetOuterColumnAttribution:
@@ -184,26 +157,6 @@ class TestNestedCodeSetOuterColumnAttribution:
         assert entry["code_set"] == "icd10"
         assert entry["row_count"] > 0
 
-    def test_nested_code_set_reports_outer_column_on_polars(self) -> None:
-        plan, sources = self._fixture()
-        result = PolarsExecutionAdapter().run(
-            plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
-        )
-        # nested is polars-native (PandasStrategyPort); this job has no FK
-        # edges and no other strategy, so it must classify fully native --
-        # confirming the merge fix in `_run_polars_native` is what is under
-        # test, not an oracle fallback.
-        assert result.quality_metrics["executed_substrate"] == {"nested": "polars"}
-        corpora = result.quality_metrics.get("code_set_corpora")
-        assert corpora is not None and len(corpora) == 1, (
-            f"polars-native route dropped nested code_set evidence: {result.quality_metrics!r}"
-        )
-        entry = corpora[0]
-        assert entry["column"] == "wrapped"
-        assert entry["table"] == "t"
-        assert entry["code_set"] == "icd10"
-        assert entry["row_count"] > 0
-
 
 class TestTwoNestedCodeSetColumnsDistinctOuterColumns:
     """The exact reproduction the round-4 cross-model review used: a
@@ -211,10 +164,8 @@ class TestTwoNestedCodeSetColumnsDistinctOuterColumns:
     DIFFERENT corpora. Pre-fix, both children were dispatched with the same
     synthetic `_nested_leaves` column name, so the second stamp silently
     overwrote the first in `StrategyContext.code_set_corpora` -- one
-    corpus's provenance vanished. Proven on both adapters: pandas exercises
-    the mis-keying fix directly; polars additionally exercises the
-    polars-native evidence-merge fix (nested is polars-native, so this job
-    has no FK edges/unmigrated strategies and classifies fully native)."""
+    corpus's provenance vanished. Pinned on the pandas adapter, which
+    exercises the mis-keying fix directly."""
 
     def _fixture(self) -> tuple[Any, dict[str, pa.Table]]:
         plan = _plan(
@@ -263,11 +214,3 @@ class TestTwoNestedCodeSetColumnsDistinctOuterColumns:
             plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
         )
         self._assert_both_corpora_present(result.quality_metrics, "pandas")
-
-    def test_both_nested_corpora_survive_on_polars(self) -> None:
-        plan, sources = self._fixture()
-        result = PolarsExecutionAdapter().run(
-            plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
-        )
-        assert result.quality_metrics["executed_substrate"] == {"nested": "polars"}
-        self._assert_both_corpora_present(result.quality_metrics, "polars")

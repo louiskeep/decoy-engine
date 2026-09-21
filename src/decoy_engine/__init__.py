@@ -13,7 +13,7 @@ Public API (the contract CLI and platform code depend on):
     LicenseVerifier   license verification (stub)
     compile_plan      compile a validated config + Profile into a frozen Plan
                       (decoy_engine.plan)
-    ExecutionAdapter / PandasExecutionAdapter / PolarsExecutionAdapter /
+    ExecutionAdapter / PandasExecutionAdapter /
     select_execution_adapter / get_default_executor:
                       the plan-to-data execution boundary; the pandas adapter is
                       the default substrate. The caller runs

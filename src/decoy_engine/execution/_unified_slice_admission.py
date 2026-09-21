@@ -143,12 +143,13 @@ def cheap_admission(
         return None
     if resolved_substrate != "pandas":
         # D3: this lane returns a result identical to the PANDAS full-frame
-        # route only. A non-pandas substrate (e.g. the polars opt-in) runs a
-        # different legacy adapter and stamps its own provenance telemetry
-        # (executed_substrate, pa<->pl conversion timings), so admitting it
-        # would diverge on the caller-consumed quality_metrics. Decline to the
-        # unchanged old route. `resolved_substrate` is post-resolve_substrate,
-        # so substrate=None + DECOY_SUBSTRATE=polars is caught here too.
+        # route only. Any future non-pandas substrate would run a different
+        # adapter and stamp its own provenance telemetry (executed_substrate,
+        # boundary conversion timings), so admitting it would diverge on the
+        # caller-consumed quality_metrics. Decline to the unchanged old route.
+        # `resolved_substrate` is post-resolve_substrate; pandas is the only
+        # substrate that resolves (any other value already raised
+        # invalid_substrate upstream), so this stays a defence-in-depth guard.
         return None
     if source_loader is not None:
         # A source_loader signals lazy/relationship loading (a different output

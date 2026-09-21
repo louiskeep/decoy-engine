@@ -14,9 +14,9 @@ The load-bearing contract pinned here, in order of importance:
    auto-chunked output equals the same job forced full-frame
    (`auto_chunk=False`) exactly -- values AND schema.
 2. FAIL-CLOSED: every non-eligible shape (non-chunk-safe strategy,
-   multi-table, generation, relationships, polars substrate, below
-   threshold, unstable dtypes, join-group fpe) takes the unchanged
-   full-frame path with a recorded reason.
+   multi-table, generation, relationships, below threshold, unstable
+   dtypes, join-group fpe) takes the unchanged full-frame path with a
+   recorded reason.
 3. VAULT: a vault-collecting eligible job produces the same vault
    entries chunked as full-frame.
 4. The P1 golden holds: a plain default small run stamps nothing
@@ -523,46 +523,6 @@ class TestFailClosed:
         auto, forced = _run_pair(cfg, sources, monkeypatch, explain_plan=True)
         _assert_full_frame_and_identical(auto, forced, "customers", "relationship")
         _assert_full_frame_and_identical(auto, forced, "orders")
-
-    def test_polars_substrate_stays_on_polars_adapter(self, tmp_path, monkeypatch):
-        """A polars-substrate job must not be silently moved to the pandas
-        chunked path: the executed substrate is part of the job's contract.
-        Every chunk-safe strategy is also polars-native, so this job
-        classifies polars_native and never reaches the chunked mode."""
-        cfg, sources = _single_column_job(tmp_path, "hash")
-        auto, forced = _run_pair(cfg, sources, monkeypatch, substrate="polars", explain_plan=True)
-        assert auto.quality_metrics["auto_chunk"]["mode"] == "full_frame"
-        assert auto.quality_metrics["execution_plan"]["mode"] == "polars_native"
-        # The polars adapter really ran (its per-strategy substrate-of-record).
-        assert auto.quality_metrics["executed_substrate"] == {"hash": "polars"}
-        assert auto.outputs["accounts"].equals(forced.outputs["accounts"])
-
-    def test_planner_substrate_gate_rejects_chunked_for_polars(self, tmp_path, monkeypatch):
-        """Defense-in-depth: when the chunked mode IS evaluated under a
-        polars substrate (reachable via non-polars-native work, e.g. a
-        composite bundle), the rejection names the substrate pin."""
-        from decoy_engine.execution._planner import classify_job
-        from decoy_engine.plan import compile_plan
-        from decoy_engine.plan._seed import _normalize_job_seed_int
-        from decoy_engine.profile import profile_source
-        from decoy_engine.providers_v2 import get_default_registry
-        from decoy_engine.relationships import RelationshipGraph
-
-        monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
-        cfg, sources = _composite_job_config(tmp_path)
-        profile = profile_source(cfg, seed=_normalize_job_seed_int(cfg))
-        plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION)
-        decision = classify_job(
-            cfg,
-            plan=plan,
-            registry=get_default_registry(),
-            relationship_graph=RelationshipGraph(edges=(), ordering=()),
-            substrate="polars",
-            source_tables=sources,
-            auto_chunk_threshold_rows=_LOW_THRESHOLD,
-        )
-        assert decision.mode != "chunked"
-        assert "polars" in decision.rejections["chunked"]
 
     def test_below_threshold_default_run_stamps_nothing(self, tmp_path, monkeypatch):
         """The P1 golden extended: a small eligible job under ALL-DEFAULT

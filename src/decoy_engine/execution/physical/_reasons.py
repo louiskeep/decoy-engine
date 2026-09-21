@@ -27,12 +27,11 @@ boundary between families:
     branch), since several forced branches share the bare `ConfigError` type.
 
 Some live reason strings are prose, not a bare stable code (`_planner.py`'s
-`_polars_native_rejection` / `_chunked_rejection` build human-readable,
-semicolon-joined sentences). Appendix A names the INTENDED target codes for
-these; part of 4.3's job (design doc section 12 punch-list) is completing the
-translation from live prose to those stable codes -- `translate_polars_
-rejection` / `translate_chunked_rejection` below do that, by exact pattern
-match against the literal f-string templates `_planner.py` emits today. A
+`_chunked_rejection` builds human-readable, semicolon-joined sentences).
+Appendix A names the INTENDED target codes for these; part of 4.3's job (design
+doc section 12 punch-list) is completing the translation from live prose to
+those stable codes -- `translate_chunked_rejection` below does that, by exact
+pattern match against the literal f-string templates `_planner.py` emits today. A
 part that matches no known template comes back tagged
 `unclassified_<family>_rejection:<text>`, which the D4 harness asserts never
 fires across the acceptance corpus -- a catalog-completeness defect to fix,
@@ -170,8 +169,8 @@ PRECOMPILATION_EXCLUDED_CODES: Final[frozenset[str]] = frozenset(
     }
 )
 
-# Planner-prose translators (`_planner.py`'s `_polars_native_rejection` /
-# `_chunked_rejection`): live output is one sentence per applicable reason,
+# Planner-prose translator (`_planner.py`'s `_chunked_rejection`): live output
+# is one sentence per applicable reason,
 # `"; ".join()`-ed together -- but several of the INDIVIDUAL reason sentences
 # ALSO contain their own internal `"; "` (e.g. `"chunked execution masks one
 # table per run; job declares 2 mask tables (...)"` is ONE reason, not two),
@@ -194,42 +193,6 @@ PRECOMPILATION_EXCLUDED_CODES: Final[frozenset[str]] = frozenset(
 # ---------------------------------------------------------------------------
 
 _CODE_PREFIX_RE: Final = re.compile(r"(?:^|; )([a-z][a-z0-9_]+): ")
-
-_POLARS_SUBSTRATE_RE: Final = re.compile(
-    r"resolved substrate is '([^']*)'; the polars-native loop requires"
-)
-_POLARS_NONNATIVE_RE: Final = re.compile(r"non-polars-native work: ([^;]+)")
-
-CODE_NO_MASK_WORK: Final = "no_mask_work"
-CODE_FK_RESOLUTION: Final = "fk_resolution"
-
-_POLARS_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
-    (
-        re.compile(r"no mask-kind work; the polars-native loop masks existing data"),
-        CODE_NO_MASK_WORK,
-    ),
-    (re.compile(r"fk_resolution: FK edges route through the pandas oracle"), CODE_FK_RESOLUTION),
-)
-
-
-def translate_polars_rejection(prose: str) -> tuple[str, ...]:
-    """Translate `_polars_native_rejection`'s live prose into Appendix A's
-    `polars_native` code family: `no_mask_work` / `substrate_is:<s>` /
-    `fk_resolution` / `non_polars_native_work:<strategies>`."""
-    codes: list[str] = []
-    for pattern, code in _POLARS_PATTERNS:
-        if pattern.search(prose):
-            codes.append(code)
-    match = _POLARS_SUBSTRATE_RE.search(prose)
-    if match is not None:
-        codes.append(f"substrate_is:{match.group(1)}")
-    match = _POLARS_NONNATIVE_RE.search(prose)
-    if match is not None:
-        codes.append(f"non_polars_native_work:{match.group(1)}")
-    if not codes:
-        codes.append(f"unclassified_polars_rejection:{prose}")
-    return tuple(codes)
-
 
 _CHUNKED_SUBSTRATE_RE: Final = re.compile(
     r"resolved substrate is '([^']*)'; the chunked route constructs"
@@ -324,13 +287,11 @@ __all__ = [
     "CODE_CHUNKED_SOURCE_BELOW_THRESHOLD",
     "CODE_CHUNKED_SOURCE_DTYPE_UNSTABLE",
     "CODE_CHUNKED_SOURCE_FRAME_MISSING",
-    "CODE_FK_RESOLUTION",
     "CODE_FPE_JOIN_GROUP",
     "CODE_GENERATE_TABLES_PRESENT",
     "CODE_MASKS_ONE_TABLE_PER_RUN",
     "CODE_NON_SCALAR_COMPOSITE",
     "CODE_NO_MASK_TABLES",
-    "CODE_NO_MASK_WORK",
     "CODE_NO_RELATIONSHIP_ROUTE",
     "CODE_RELATIONSHIP_ROUTE_DEFERRED",
     "DRIVER_REASON_CHUNKED_ADMITTED",
@@ -369,6 +330,5 @@ __all__ = [
     "ROUTE_VALIDATORS_PRESENT",
     "ROUTE_VAULT_WRITER_REQUESTED",
     "translate_chunked_rejection",
-    "translate_polars_rejection",
     "translate_relationship_mode_reason",
 ]

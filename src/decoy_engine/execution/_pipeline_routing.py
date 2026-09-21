@@ -191,17 +191,14 @@ def _sequential_eligible(
     not masked table-by-table through this path.
 
     `resolved_substrate` (S3 reconciliation, P1 x S2): `run_sequential` is
-    pandas-only by construction. An explicit non-pandas `substrate` request
-    (or `DECOY_SUBSTRATE=polars` resolving through `substrate=None`) must
-    disqualify sequential eligibility rather than silently ignoring the
-    request -- the full_frame branch's `select_execution_adapter` is what
-    actually honors `substrate="polars"` (native polars execution, or its
-    own explicit `fallback_to_pandas` contract, including
-    `code='polars_substrate_strategy_unmigrated'` when fallback is
-    disabled). Defaults to `"pandas"` so callers that never pass a
-    substrate keep today's routing (the common case: a pure-mask FK job is
-    bounded-memory by default) and existing unit tests that construct this
-    predicate directly without a substrate argument are unaffected.
+    pandas-only by construction. Pandas is the only masking substrate, so any
+    other resolved substrate value disqualifies sequential eligibility here
+    (fail-closed) rather than silently ignoring it -- a future non-pandas
+    substrate would need its own explicit handling before this guard could
+    admit it. Defaults to `"pandas"` so callers that never pass a substrate
+    keep today's routing (the common case: a pure-mask FK job is bounded-memory
+    by default) and existing unit tests that construct this predicate directly
+    without a substrate argument are unaffected.
     """
     if not profile.relationships:
         return False, "no_relationships"
@@ -319,11 +316,10 @@ def decide_execution_route(
     flagged and still routes normally.
 
     `resolved_substrate` disqualifies sequential eligibility when it is
-    not `"pandas"` (see `_sequential_eligible`'s docstring): an explicit
-    `substrate="polars"` (or an env-resolved one) must route to full_frame
-    so `select_execution_adapter` -- not the pandas-only sequential path --
-    is what actually decides polars-native-vs-fallback and stamps the
-    caller-visible `executed_substrate` / `execution_adapter` telemetry.
+    not `"pandas"` (see `_sequential_eligible`'s docstring): pandas is the only
+    masking substrate, so any other resolved value routes to full_frame
+    (fail-closed) rather than the pandas-only sequential path, and a future
+    non-pandas substrate would need its own explicit handling first.
 
     Threshold ordering (L2): the reject-before-read branch reads most naturally
     when `out_of_core_threshold_rows <= full_frame_reject_rows`, and that is the

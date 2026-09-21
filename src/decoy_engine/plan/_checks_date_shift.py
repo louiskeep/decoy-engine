@@ -44,9 +44,9 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
        FK-safe (per-value deterministic); only the combination is rejected.
     4. group_by combined with ``when`` (Codex R1 P1 #1 residual): rejected. The
        pre-mask anchor is label-aligned to the frame the handler sees, which is
-       correct on pandas but not on the polars-native when-gate (it filters to a
-       fresh RangeIndex), so the combination would silently mis-anchor on the
-       polars route. Fail closed until per-route positional anchoring lands.
+       only safe while a when-gated subset keeps its parent-table labels.
+       Per-route positional anchoring for when-gated subsets is not implemented,
+       so the combination is failed closed until it lands.
 
     date_shift is mask-kind only (no generate-kind `type: date_shift`), so
     unlike windowed_date/group_key the top-level check has a single loop.
@@ -189,15 +189,15 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                 )
             # `when` + `group_by` (Codex R1 P1 #1 residual): fail closed. The
             # entity anchor is aligned to the frame the handler sees by index
-            # LABEL, which is correct on every pandas route (a when-gated subset
-            # keeps its parent-table labels). But the polars-native when-gate
-            # filters to a FRESH RangeIndex (the original positions survive only
-            # in the gate's internal `_decoy_when_row_pos` anchor), so a
-            # label-reindex there silently picks the WRONG rows -- a wrong-output
-            # hole the handler cannot detect (both indexes are RangeIndexes).
-            # Rather than ship a route-dependent silent-wrong-output, reject the
-            # combination until per-route positional anchoring is implemented.
-            # date_shift's core per-entity-consistent shift does not need `when`.
+            # LABEL, which is correct only while a when-gated subset keeps its
+            # parent-table labels. Any route that re-bases a when-gated subset
+            # onto a FRESH RangeIndex (the original positions surviving only in
+            # the gate's internal `_decoy_when_row_pos` anchor) would make that
+            # label-reindex silently pick the WRONG rows -- a wrong-output hole
+            # the handler cannot detect (both indexes are RangeIndexes). Rather
+            # than depend on that alignment invariant, reject the combination
+            # until per-route positional anchoring is implemented. date_shift's
+            # core per-entity-consistent shift does not need `when`.
             when_val = col_entry.get("when")
             if isinstance(when_val, str) and when_val.strip():
                 raise PlanCompileError(
@@ -206,9 +206,9 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                     message=(
                         f"date_shift column {col_name!r} in table "
                         f"{table_name!r} combines `when` with `group_by`. This "
-                        "combination is not yet supported: on the polars route a "
-                        "when-gated subset cannot be re-aligned to the pre-mask "
-                        "entity anchor without producing wrong offsets. Remove "
-                        "`when` or `group_by` from this column."
+                        "combination is not yet supported: a when-gated subset "
+                        "cannot be re-aligned to the pre-mask entity anchor "
+                        "without risking wrong offsets. Remove `when` or "
+                        "`group_by` from this column."
                     ),
                 )

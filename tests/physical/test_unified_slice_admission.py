@@ -84,15 +84,16 @@ def test_cheap_admission_declines_when_chunked(tmp_path: Path) -> None:
 
 
 def test_cheap_admission_declines_non_pandas_substrate(tmp_path: Path) -> None:
+    # D6b fail-closed guard: this lane returns a result identical to the PANDAS
+    # full-frame route only, so any non-pandas resolved substrate must decline.
+    # Pandas is the only substrate today; a synthetic "future_substrate" value
+    # exercises the guard directly (it is reached below the resolve_substrate
+    # validation, so it defends a future substrate the same way it defended the
+    # removed polars opt-in).
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
-    # The lane returns a result identical to the PANDAS full-frame route only.
-    # A polars-substrate job runs a different legacy adapter that stamps its own
-    # provenance telemetry (executed_substrate, pa<->pl conversion timings), so
-    # admitting it would diverge on the caller-consumed quality_metrics. It must
-    # fall through to the unchanged old route.
-    assert _cheap_ok(config, profile, source, resolved_substrate="polars") is None
+    assert _cheap_ok(config, profile, source, resolved_substrate="future_substrate") is None
 
 
 def test_cheap_admission_admits_inert_sink_on_full_frame(tmp_path: Path) -> None:
@@ -687,12 +688,6 @@ def test_resolved_substrate_env_change_after_resolution_does_not_flip_admission(
     monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
     admitted_post = _cheap_ok(config, profile, source, resolved_substrate="pandas")
     assert admitted_post is not None
-
-    # And the reverse: a resolved "polars" value must still decline even
-    # though the env now (again) says something else.
-    monkeypatch.setenv("DECOY_SUBSTRATE", "pandas")
-    declined = _cheap_ok(config, profile, source, resolved_substrate="polars")
-    assert declined is None
 
 
 # ---------------------------------------------------------------------------

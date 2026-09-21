@@ -1,15 +1,15 @@
-"""Predicate 12's EXACT cross-adapter-safe FK-key dtype set (chunked-FK
+"""Predicate 12's EXACT cross-route-safe FK-key dtype set (chunked-FK
 cascade-safety fix, 2026-09-02 plan).
 
 `hash` is the only FK self-mask strategy admitted onto the chunked route
 (`_chunked_fk.gate_fk_child_edges` condition (a), narrowed to hash-only by
-this fix); the companion Polars-hash fix routes both adapters through the
-same kernel, so hash is cross-adapter byte-identical ONLY for a specific
-dtype set. The EXISTING coarse `_dtype_family` comparison (`_chunked_fk.py`)
-is too permissive for that claim: it collapses `date32`/`date64`, every
-timestamp unit/tz, and every decimal width/scale into one family string, so
-it would admit `date64`-as-`date32`, `decimal256`-as-`decimal128`, and a
-fixed-offset tz as IANA -- each a real cross-adapter divergence. This module
+this fix); a FK key's hash stays byte-identical across the chunked-route
+boundary ONLY for a specific dtype set. The EXISTING coarse `_dtype_family`
+comparison (`_chunked_fk.py`) is too permissive for that claim: it collapses
+`date32`/`date64`, every timestamp unit/tz, and every decimal width/scale
+into one family string, so it would admit `date64`-as-`date32`,
+`decimal256`-as-`decimal128`, and a fixed-offset tz as IANA -- each a real
+cross-route divergence. This module
 is the single EXACT predicate both stages of the two-stage check share:
 
   - `gate_fk_child_edges` (`_chunked_fk.py`) calls `declared_dtype_is_fk_hash_
@@ -99,7 +99,7 @@ _DECIMAL_BARE_WIDTH_DECLARED_RE = re.compile(
 
 
 def arrow_type_is_fk_hash_safe(arrow_type: pa.DataType) -> bool:
-    """True iff `arrow_type` is in predicate 12's EXACT cross-adapter-safe set
+    """True iff `arrow_type` is in predicate 12's EXACT cross-route-safe set
     for hash-only FK self-masking: string, large_string, any signed/unsigned
     integer width, bool, `date32` ONLY, a timestamp (any of s/ms/us/ns) with a
     non-empty `zoneinfo.ZoneInfo`-resolvable tz, or a decimal (32/64/128 -- NOT
@@ -108,7 +108,7 @@ def arrow_type_is_fk_hash_safe(arrow_type: pa.DataType) -> bool:
     Dictionary-wrapped types are rejected BEFORE unwrapping -- deliberately
     NOT the family helper's dictionary-unwrap-then-compare behavior
     (`_chunked_fk_dtype._arrow_dtype_family`), which is a coarse compatibility
-    check, not a cross-adapter byte-parity proof. Hash on a dictionary-encoded
+    check, not a cross-route byte-parity proof. Hash on a dictionary-encoded
     key is not proven safe here (deferred; see the plan's non-goals).
     """
     if pa.types.is_dictionary(arrow_type):
@@ -143,7 +143,7 @@ def arrow_type_is_fk_hash_safe(arrow_type: pa.DataType) -> bool:
 
 def declared_fk_hash_dtype_is_safe(dtype: str) -> bool:
     """True iff the operator-DECLARED dtype string names a type in predicate
-    12's exact cross-adapter-safe set. Returns False for anything unparseable
+    12's exact cross-route-safe set. Returns False for anything unparseable
     (fail closed: an unrecognized or ambiguous declaration is unprovable, same
     posture as the bare-decimal sentinel the coarse family check already
     uses).

@@ -1,8 +1,7 @@
 """Compatibility gate for the out-of-core FK route.
 
-The gate lives beside the polars adapter instead of inside the future execution
-operator so routing has one decision surface: polars-native, out-of-core, or
-oracle/rejection.
+The gate lives at the routing boundary instead of inside the future execution
+operator so routing has one decision surface: out-of-core or oracle/rejection.
 """
 
 from __future__ import annotations
