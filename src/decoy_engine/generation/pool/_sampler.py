@@ -437,12 +437,14 @@ class PoolSampler:
         """Sample n bundle tuples, then explode into one Series per output_column.
 
         Per S8 spec §3b: the index selection is IDENTICAL to `sample`
-        (deterministic: per-row `derive_index` over the canonicalized source,
-        with null preservation; non-deterministic: `default_rng`). The only
+        (deterministic: one batched `derive_index_batch` over the canonicalized
+        source yielding a shared index per row, with positional null
+        preservation; non-deterministic: `default_rng`). The only
         bundle-specific work is splitting each selected tuple across the
-        pool's `output_columns`. This keeps a composite's determinism path
-        byte-for-byte aligned with the scalar sampler (same `derive_index` +
-        `_canonicalize_source`), which the cross-sprint coherence contract needs.
+        pool's `output_columns` -- every column of a row is gathered from that
+        row's ONE shared index. This keeps a composite's determinism path
+        byte-for-byte aligned with the scalar sampler (same `derive_index_batch`
+        + `_canonicalize_source`), which the cross-sprint coherence contract needs.
         """
         cols = pool.output_columns
         if not cols:

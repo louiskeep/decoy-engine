@@ -257,7 +257,19 @@ _SCALAR_SOURCES: list[tuple[str, pd.Series]] = [
     ("numpy_int_column", pd.Series([1, 2, 3, 4], dtype="int64")),
     ("numpy_uint_column", pd.Series([1, 2, 3], dtype="uint64")),
     ("int8_column", pd.Series([1, 2, 3], dtype="int8")),
-    ("tz_aware_ts", pd.Series(pd.to_datetime(["2020-01-01", "2021-06-01"]).tz_localize("UTC"))),
+    # A sub-microsecond value drives the ns-vs-us construction path end-to-end
+    # through PoolSampler (from_pandas preserves ns; pa.array(list) would
+    # truncate) -- the one riskiest value class, so it is guarded here, not only
+    # in the D0 test that bypasses PoolSampler (dennis MEDIUM).
+    (
+        "tz_aware_ts",
+        pd.Series(
+            [
+                pd.Timestamp("2020-01-01", tz="UTC"),
+                pd.Timestamp("2021-06-01T00:00:00.000000123", tz="UTC"),
+            ]
+        ),
+    ),
     (
         "dates",
         pd.Series(
@@ -322,7 +334,15 @@ _BUNDLE_SOURCES: list[tuple[str, pd.Series]] = [
     ("strings", pd.Series(["a", "b", "c", "a", "d"], dtype=object)),
     ("bools", pd.Series([True, False, True], dtype=object)),
     ("ints", pd.Series([1, 2, 3, 1], dtype="int64")),
-    ("tz_ts", pd.Series(pd.to_datetime(["2020-01-01", "2021-01-01"]).tz_localize("UTC"))),
+    (
+        "tz_ts",
+        pd.Series(
+            [
+                pd.Timestamp("2020-01-01", tz="UTC"),
+                pd.Timestamp("2021-01-01T00:00:00.000000123", tz="UTC"),
+            ]
+        ),
+    ),
     ("decimals", pd.Series([Decimal("1.5"), Decimal("2.5")], dtype=object)),
     ("all_null", pd.Series([None, None], dtype=object)),
     ("mixed_null", pd.Series(["a", None, "b", None], dtype=object)),
