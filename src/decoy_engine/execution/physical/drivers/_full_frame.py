@@ -1,8 +1,8 @@
 """`full_frame` driver adapter (Task 4.2, D2).
 
-Wraps the SELECTED `ExecutionAdapter` (pandas or, for `substrate="polars"`,
-`PolarsExecutionAdapter` -- `_pipeline.py`'s `select_execution_adapter` call,
-design doc section 4/C3): whole multi-table mapping, resident output, and a
+Wraps the SELECTED `ExecutionAdapter` (pandas -- `_pipeline.py`'s
+`select_execution_adapter` call, design doc section 4/C3): whole multi-table
+mapping, resident output, and a
 caller-provided sink is silently ignored because `ExecutionAdapter.run` has no
 sink parameter at all -- this adapter does not accept one either, matching the
 production shape exactly rather than adding a parameter the delegate would
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 class FullFrameAdapter:
     """Pure delegation to one already-selected `ExecutionAdapter` instance.
 
-    `adapter` is whatever `select_execution_adapter` chose (pandas or polars);
+    `adapter` is whatever `select_execution_adapter` chose (pandas);
     this class never selects or constructs one itself, matching plan C1
     (drivers do not take over selection/fallback).
     """

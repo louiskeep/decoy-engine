@@ -56,12 +56,10 @@ Out of scope for FC-1 (deferred to V2.1):
   when a generate column's `reference_table` points at a mask-kind
   parent. Operators see a clear "deferred to V2.1" error up front
   instead of a hung job at runtime.
-- Cross-substrate mixed mode. Polars falls back to pandas for FK paths
-  (`_polars_adapter.py:121`); the pandas adapter is the canonical
-  mixed-mode adapter for V2 ship. `run_pipeline` defaults its `substrate`
-  knob to `"pandas"`, which is also the `DECOY_SUBSTRATE` default; polars is
-  a dormant explicit opt-in (`substrate="polars"`, or `substrate=None` to
-  honor the env var when it is set to polars).
+- Non-pandas substrates. Pandas is the only masking substrate. `run_pipeline`
+  defaults its `substrate` knob to `"pandas"` (also the `DECOY_SUBSTRATE`
+  default); any other value raises `invalid_substrate`. The knob and the
+  adapter seam are retained as fail-closed defence for a future substrate.
 - Per-node preview on mixed configs. Covered by F5 at the platform
   layer (`run_v2_pipeline_preview`).
 
@@ -230,12 +228,11 @@ def run_pipeline(
 
     - `substrate`: which execution adapter masks the mask-kind tables.
       Default `"pandas"` keeps the original hardcoded pandas route
-      byte-identical; `"polars"` opts a scalar no-FK job into the
-      polars-native route (FK/composite work still falls back to the
-      pandas oracle exactly as `PolarsExecutionAdapter` dictates);
-      `None` defers to the `DECOY_SUBSTRATE` env contract.
-    - `fpe_chunk_count`: FPE per-value chunk parallelism (both adapters).
-    - `max_workers` / `fallback_to_pandas`: polars-adapter knobs, passed
+      byte-identical; pandas is the only substrate, so any other value
+      raises `invalid_substrate`. `None` defers to the `DECOY_SUBSTRATE`
+      env contract.
+    - `fpe_chunk_count`: FPE per-value chunk parallelism.
+    - `max_workers` / `fallback_to_pandas`: reserved no-op knobs, passed
       through untouched; the pandas adapter ignores them.
 
     All four forward to `select_execution_adapter`, which validates them

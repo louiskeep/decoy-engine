@@ -135,11 +135,9 @@ chunked_fk_composite_unsupported). Tables that are FK parents but not
 children are unaffected by this gate.
 
 Each chunk runs through the SAME compiled plan, one execution adapter
-(pandas by default; polars via the `adapter` parameter), and one shared
-pre-warmed pool cache, so chunked output is byte-identical to a serial
-run on the same substrate by construction rather than by
-re-implementation. Cross-substrate parity is value-level, per the v2
-rows in tests/parity/SEMANTIC_DIFFERENCES.md.
+(pandas; the `adapter` parameter is retained for a future substrate), and
+one shared pre-warmed pool cache, so chunked output is byte-identical to a
+serial run by construction rather than by re-implementation.
 
 `passthrough` FK-column ingestion gap (MEDIUM #4, DE-10 rework follow-up,
 2026-07-13): `run()`'s ingestion protects a column via
@@ -389,11 +387,9 @@ def run_mask_pipeline_chunked(
     text_mask gate to that whole class.
 
     `adapter` selects the execution substrate; None keeps the pandas
-    adapter (the byte-stable default this mode shipped with). Pass a
-    `PolarsExecutionAdapter` (e.g. via `select_execution_adapter`) for
-    polars-substrate streaming; cross-substrate output is VALUE-equal,
-    not Arrow-schema-equal (string widens to large_string etc.; the
-    recorded v2 rows in tests/parity/SEMANTIC_DIFFERENCES.md).
+    adapter (the byte-stable default this mode shipped with). The parameter
+    is retained for a future non-pandas substrate; pandas is the only
+    substrate today.
 
     `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
     chunk's source->masked pairs for `vault: true` columns as the chunk
@@ -530,13 +526,11 @@ def run_mask_pipeline_chunked(
     hash_fk_key_columns = fk_hash_strategy_columns_for_table(config, table)
     if adapter is None:
         adapter = PandasExecutionAdapter()
-    # MEDIUM (DE-10 reland): only pay the guard's cost -- and only reject --
-    # when THIS adapter will actually ingest `table` through the pandas
-    # round trip the guard protects against. A native-Polars chunked run
-    # (see `chunked_adapter_touches_pandas_ingestion`) preserves nullable
-    # int64 losslessly and never touches pandas, so applying the guard
-    # there is a false-positive fail-closed reject, not a real corruption
-    # risk.
+    # MEDIUM (DE-10 reland): the guard only applies when the adapter ingests
+    # `table` through the pandas round trip it protects against. Pandas is the
+    # only substrate now, so `chunked_adapter_touches_pandas_ingestion` is
+    # always True; the seam is kept for a future non-pandas substrate that
+    # would not touch pandas (see that function's docstring).
     guard_passthrough_fk_columns = (
         passthrough_fk_columns
         if chunked_adapter_touches_pandas_ingestion(adapter, config, table)
