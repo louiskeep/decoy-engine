@@ -235,6 +235,9 @@ def test_run_operator_asserts_categorical_determinism() -> None:
 
 
 # ── is_deterministic_categorical == ColumnSeed.deterministic ────────
+# SYNC guard: the predicate mirrors the seed-envelope determinism computation
+# (`plan/_seed_envelope.py`). If a new determinism-affecting key is added there,
+# add it to both the predicate and this matrix, or the two silently diverge.
 
 
 @pytest.mark.parametrize(
@@ -300,6 +303,10 @@ def _run_both(tmp_path: Path, source: pa.Table, columns: list[dict]):
         ("weighted", ["a", "b", "c", None, "e"], {"categories": _UNI, "weights": [1.0, 2.0, 3.0]}),
         ("all_null", [None, None, None], {"categories": _UNI}),
         ("empty", [], {"categories": _UNI}),
+        # Weighted degenerate shapes too: the type reconciliation is by strategy,
+        # not by uniform-vs-weighted, but assert it at this boundary for symmetry.
+        ("weighted_all_null", [None, None, None], {"categories": _UNI, "weights": [1.0, 2.0, 3.0]}),
+        ("weighted_empty", [], {"categories": _UNI, "weights": [1.0, 2.0, 3.0]}),
     ],
 )
 def test_unified_slice_execution_result_byte_identical(
