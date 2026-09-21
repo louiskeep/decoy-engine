@@ -403,8 +403,93 @@ fn derive_index_batch(
     }
 }
 
+fn derive_hex_raw_batch_checked(
+    py: Python<'_>,
+    values: &Bound<'_, PyAny>,
+    mask_key: Option<&[u8]>,
+    namespace: &str,
+    hex_chars: usize,
+    native_threads: Option<i64>,
+) -> Result<Py<PyAny>, KernelError> {
+    if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(KernelError::MaskKeyRequired);
+    }
+    let host_available = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let budget = crate::threads::NativeThreadBudget::resolve(native_threads, host_available)?;
+    let threads = budget.threads();
+
+    let array = import_array(values)?;
+    let result_array = py
+        .detach(|| {
+            if std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_DETACH").is_some() {
+                panic!("test-only forced panic in the GIL-released region");
+            }
+            crate::batch::derive_hex_raw_array(
+                array.as_ref(),
+                mask_key,
+                namespace,
+                hex_chars,
+                threads,
+            )
+        })
+        .map_err(KernelError::from)?;
+
+    export_string_array(py, &result_array).map_err(|e| {
+        KernelError::ProtocolError(format!("failed to export the derived string array: {e}"))
+    })
+}
+
+/// `derive_hex_raw_batch(values, *, mask_key, namespace, hex_chars, native_threads=None) -> pa.Array`
+///
+/// The `group_key` derivation: one lowercase-hex key per row of a `pa.string()` column,
+/// `derive(mask_key, namespace, value.utf8_bytes)[:hex_chars//2].hex()`, with NO canonicalization
+/// (the group_key oracle hashes the raw bytes of `str(value)`, unlike the canonicalizing
+/// `derive_batch`). `hex_chars` is the config `length` (even, in `[8, 64]`); the caller has
+/// already stringified the sibling column with pandas `Series.astype(str)` so a null cell arrives
+/// as the string "None", never a null. A missing/empty `mask_key` raises `mask_key_required`
+/// before any row; a non-`pa.string()` array or an out-of-contract `hex_chars` fails closed with
+/// its coded error. `native_threads` is the per-job thread budget, byte-identical at every count.
+#[pyfunction]
+#[pyo3(signature = (values, *, mask_key, namespace, hex_chars, native_threads=None))]
+fn derive_hex_raw_batch(
+    py: Python<'_>,
+    values: &Bound<'_, PyAny>,
+    mask_key: Option<Vec<u8>>,
+    namespace: String,
+    hex_chars: usize,
+    native_threads: Option<i64>,
+) -> PyResult<Py<PyAny>> {
+    // `_require_mask_key` is the reference's FIRST check; mirror it at this boundary before the
+    // array or `hex_chars` is inspected.
+    if mask_key.as_deref().map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(to_py_err(KernelError::MaskKeyRequired));
+    }
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        derive_hex_raw_batch_checked(
+            py,
+            values,
+            mask_key.as_deref(),
+            &namespace,
+            hex_chars,
+            native_threads,
+        )
+    }));
+    match outcome {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(kernel_err)) => Err(to_py_err(kernel_err)),
+        Err(_panic) => Err(PyValueError::new_err(
+            "internal_panic: the native kernel hit an unexpected internal error and stopped \
+             before producing output"
+                .to_string(),
+        )),
+    }
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(derive_batch, m)?)?;
     m.add_function(wrap_pyfunction!(derive_index_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(derive_hex_raw_batch, m)?)?;
     Ok(())
 }

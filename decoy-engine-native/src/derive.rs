@@ -304,6 +304,37 @@ pub fn hex_token(digest: &[u8; 32], truncate: Option<isize>) -> String {
     hex_token_into(digest, truncate, &mut buf).to_string()
 }
 
+/// Hex-encode the FIRST `output_bytes` bytes of a 32-byte digest into `buf`, returning the
+/// `2*output_bytes`-character slice (the group_key derivation width).
+///
+/// This is the byte-truncation the `group_key` oracle applies:
+/// `derive(mask_key, namespace, str(value).encode())[:output_bytes].hex()`. The truncation unit
+/// is BYTES, converted from the config's even hex-character `length` in exactly one place
+/// (`output_bytes = length / 2`, `derive_hex_raw_array`), so no layer can double it by confusing
+/// hex characters for bytes. Distinct from `hex_token_into`'s Python-`token[:truncate]` slice
+/// semantics: `output_bytes` is an unsigned byte count, never a signed slice stop.
+///
+/// `output_bytes` must be `<= 32` (the digest width); `derive_hex_raw_array` validates the even
+/// `hex_chars` bound before calling, so a caller cannot reach here with an out-of-range count.
+pub fn hex_prefix_into<'a>(
+    digest: &[u8; 32],
+    output_bytes: usize,
+    buf: &'a mut [u8; HEX_LEN],
+) -> &'a str {
+    debug_assert!(
+        output_bytes <= 32,
+        "output_bytes must not exceed the 32-byte digest width"
+    );
+    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for (i, byte) in digest[..output_bytes].iter().enumerate() {
+        buf[i * 2] = HEX_DIGITS[(byte >> 4) as usize];
+        buf[i * 2 + 1] = HEX_DIGITS[(byte & 0x0f) as usize];
+    }
+    // SAFETY: every byte written is one of the 16 ASCII hex-digit characters, so the slice is
+    // valid UTF-8 by construction (identical argument to `hex_token_into`).
+    unsafe { std::str::from_utf8_unchecked(&buf[..output_bytes * 2]) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,6 +458,33 @@ mod tests {
     /// clamping at zero rather than erroring or wrapping. Table matches the reference exactly
     /// (`"x" * 64`, indices below computed the same way CPython computes a negative slice
     /// stop): -1 keeps 63 chars, -63 keeps 1, -64 and anything more negative keep 0.
+    /// `hex_prefix_into(digest, n)` must equal the oracle's `digest[:n].hex()` for every byte
+    /// count in the group_key range, and equal the first `2n` characters of the full hex token
+    /// (the two truncation formulations the plan proves equivalent). Covers the config `length`
+    /// bounds 8/16/64 as byte counts 4/8/32.
+    #[test]
+    fn hex_prefix_into_matches_byte_truncated_hex() {
+        let digest = [0xabu8; 32];
+        let full = hex_token(&digest, None);
+        let mut buf = [0u8; HEX_LEN];
+        for output_bytes in [4usize, 8, 32] {
+            let got = hex_prefix_into(&digest, output_bytes, &mut buf);
+            assert_eq!(got, &full[..output_bytes * 2]);
+            assert_eq!(got.len(), output_bytes * 2);
+        }
+    }
+
+    /// Distinct digests must produce distinct prefixes at a realistic width (a sanity check that
+    /// the encoding reads the actual bytes, not a constant), and the empty prefix is stable.
+    #[test]
+    fn hex_prefix_into_reads_the_real_bytes() {
+        let mut buf = [0u8; HEX_LEN];
+        let a = hex_prefix_into(&[0x01u8; 32], 8, &mut buf).to_string();
+        let b = hex_prefix_into(&[0x02u8; 32], 8, &mut buf).to_string();
+        assert_ne!(a, b);
+        assert_eq!(hex_prefix_into(&[0u8; 32], 0, &mut buf), "");
+    }
+
     #[test]
     fn hex_token_negative_truncate_matches_python_slice_semantics() {
         let digest = [0xabu8; 32];
