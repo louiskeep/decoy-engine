@@ -27,8 +27,15 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 
 import pytest
+
+# Rust `usize::parse` grammar (after the resolver trims surrounding whitespace): ASCII digits with an
+# optional leading '+', no '-', no Unicode digits, no underscores. Python `int()` would wrongly accept
+# Unicode digits (e.g. U+0661 ARABIC-INDIC ONE), so gate on this ASCII pattern first. `[0-9]` in `re`
+# is ASCII-only (unlike `\d`).
+_KNEE_GRAMMAR = re.compile(r"\+?[0-9]+")
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _NEEDS_COMPANION = pytest.mark.skipif(
@@ -55,10 +62,13 @@ def _effective_knee() -> int:
     raw = os.environ.get("DECOY_NATIVE_MASK_THREAD_KNEE")
     if raw is None:
         return 4
-    try:
-        value = int(raw)
-    except ValueError:
+    trimmed = raw.strip()  # Rust trims surrounding whitespace before parsing
+    if not _KNEE_GRAMMAR.fullmatch(trimmed):
+        # A value Rust rejects (Unicode digits, sign, underscores, non-numeric) makes the resolver
+        # fail closed rather than clamp; treat it as the default for the skip decision so the test
+        # is never hidden by a would-be-invalid override.
         return 4
+    value = int(trimmed)
     return value if 1 <= value <= 1024 else 4
 
 
