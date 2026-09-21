@@ -1,7 +1,10 @@
 """PoolSampler: vectorized sampling from a ValuePool.
 
 Two paths per S5 spec §5:
-- Deterministic: per-row `derive_index(seed, namespace, canonical_source, pool_size)`.
+- Deterministic: one batched `derive_index_batch(source, mask_key=seed,
+  namespace, pool_size)` over the non-null source values (`_derive_pool_indices`),
+  byte-identical to the former per-row `derive_index(seed, namespace,
+  canonical_source, pool_size)` loop.
 - Non-deterministic: `np.random.default_rng(seed_int)` per the NEP-19 contract.
 
 Null preservation: positions where source[i] is null produce null in
@@ -22,16 +25,139 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
-from decoy_engine.determinism import derive_index
-from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.composite._bundle_pool import BundlePool
     from decoy_engine.generation.pool._value_pool import ValuePool
+
+
+# The compiled index kernel imports back into this package (it reuses
+# `_canonicalize_source` + `derive_index`), so resolve it lazily and once to
+# keep the module import graph acyclic and the load-time self-test off the
+# per-call path.
+_COMPILED_INDEX_KERNEL: IndexDerivationKernel | None = None
+_COMPILED_INDEX_KERNEL_LOADED = False
+_REFERENCE_INDEX_KERNEL: IndexDerivationKernel | None = None
+
+
+def _compiled_index_kernel() -> IndexDerivationKernel | None:
+    """The compiled `derive_index_batch` kernel if the native companion is
+    installed, else None. Selected once. The reference kernel below is a
+    byte-identical fallback for the None case (the index KAT proves equality),
+    so the sampler is correct and slower without the companion, faster with it.
+    """
+    global _COMPILED_INDEX_KERNEL, _COMPILED_INDEX_KERNEL_LOADED
+    if not _COMPILED_INDEX_KERNEL_LOADED:
+        from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+        from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+
+        try:
+            _COMPILED_INDEX_KERNEL = load_compiled_index_kernel()
+        except CryptoExtensionUnavailableError:
+            _COMPILED_INDEX_KERNEL = None
+        _COMPILED_INDEX_KERNEL_LOADED = True
+    return _COMPILED_INDEX_KERNEL
+
+
+def _reference_index_kernel() -> IndexDerivationKernel:
+    """The pure-Python reference derivation: byte-identical to the former per-row
+    loop by construction (same `_canonicalize_source` + `derive_index`)."""
+    global _REFERENCE_INDEX_KERNEL
+    if _REFERENCE_INDEX_KERNEL is None:
+        from decoy_engine.execution.native._index_ext import reference_index_derivation
+
+        _REFERENCE_INDEX_KERNEL = reference_index_derivation()
+    return _REFERENCE_INDEX_KERNEL
+
+
+def _validated_index_array(idx: Any, *, expected_len: int, pool_size: int) -> np.ndarray[Any, Any]:
+    """Fail-closed checks on the kernel's own result before it indexes a pool.
+
+    Adapted from the native masking gather (`execution/native/_chunk_masking.
+    sample_faker_array`): a malformed compiled (or stub, in tests) kernel must
+    fail HERE, coded, never gather from the pool with a bad index. The sampler
+    strips nulls before the call, so a valid result carries no nulls and has one
+    index per non-null row; the null-position check the masking path runs is a
+    null_count check here instead.
+    """
+    if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
+        got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
+        raise GenerationError(
+            code="index_batch_type_mismatch",
+            message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
+        )
+    if len(idx) != expected_len:
+        raise GenerationError(
+            code="index_batch_length_mismatch",
+            message=f"derive_index_batch returned {len(idx)} indices for {expected_len} non-null rows",
+        )
+    if idx.null_count:
+        raise GenerationError(
+            code="index_batch_null_mask_mismatch",
+            message="derive_index_batch returned a null index for a non-null source value",
+        )
+    idx_np: np.ndarray[Any, Any] = idx.to_numpy(zero_copy_only=False)
+    if expected_len and int(idx_np.max()) >= pool_size:
+        raise GenerationError(
+            code="index_batch_out_of_bounds",
+            message=(
+                f"derive_index_batch returned an index >= pool_size {pool_size}; "
+                "refusing to gather from the pool with it"
+            ),
+        )
+    return idx_np
+
+
+def _derive_pool_indices(
+    nonnull_source: pd.Series, *, seed: bytes, namespace: str, pool_size: int
+) -> np.ndarray[Any, Any]:
+    """One pool index per non-null source value, row order preserved.
+
+    Batches the per-row `derive_index` into a single `derive_index_batch` call.
+    The compiled kernel takes a native Arrow array built with
+    `pa.Array.from_pandas` (the throughput win, and dtype-faithful: it keeps
+    `timestamp[ns]` where `pa.array(list)` would truncate to microseconds). Any
+    value class the compiled kernel does not admit (dates, decimals,
+    magnitudes past int64, mixed-type object columns) falls back to the
+    reference kernel over the raw Python values, byte-identical to the former
+    per-row loop. The reference is fed the raw values, never an Arrow array: a
+    round-trip through Arrow can canonicalize differently (decimal scale,
+    sub-microsecond timestamps), while the compiled kernel canonicalizes the
+    admitted Arrow types identically to the per-row path (the index KAT).
+    """
+    raw_values = nonnull_source.tolist()
+    compiled = _compiled_index_kernel()
+    if compiled is not None:
+        try:
+            arrow_values: pa.Array | None = pa.Array.from_pandas(nonnull_source)
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError, OverflowError):
+            # A magnitude past int64 or a mixed-type object column cannot become
+            # one native Arrow array; the reference handles it over raw values.
+            arrow_values = None
+        if arrow_values is not None:
+            try:
+                idx = compiled.derive_index_batch(
+                    arrow_values, mask_key=seed, namespace=namespace, pool_size=pool_size
+                )
+                return _validated_index_array(
+                    idx, expected_len=len(raw_values), pool_size=pool_size
+                )
+            except GenerationError as exc:
+                # The compiled kernel rejects every un-admitted Arrow type with
+                # one code; the reference derives those value classes directly
+                # (or raises the same per-value error the per-row path raised).
+                if exc.code != "native_type_not_admitted":
+                    raise
+    idx = _reference_index_kernel().derive_index_batch(
+        raw_values, mask_key=seed, namespace=namespace, pool_size=pool_size
+    )
+    return _validated_index_array(idx, expected_len=len(raw_values), pool_size=pool_size)
 
 
 def _seed_bytes_to_int(seed: bytes) -> int:
@@ -203,16 +329,17 @@ class PoolSampler:
         seed: bytes,
         namespace: str,
     ) -> pd.Series:
-        """Per-row derive_index path with null preservation.
+        """Batched derive_index path with positional null preservation.
 
-        S21 Q6 fix (2026-05-30): batch-materialize source + null mask to plain
-        Python lists once, then iterate. The prior implementation called
-        `source.iloc[i]` + `is_null.iloc[i]` once per row, paying pandas
-        scalar-unboxing overhead on every iteration. The HMAC inside
-        `derive_index` is the irreducible cost; the pandas overhead is not.
-        On a 100K-row column the loop now spends ~half the wall time it did,
-        and the savings scale linearly. QA report Q6 + ISO/IEC 25010 §5.2.2
-        (performance efficiency).
+        The per-row `derive_index` loop is replaced by ONE `derive_index_batch`
+        call over the non-null source values (`_derive_pool_indices`), the same
+        drop-in that made Phase 2 pool selection ~13x on the masking route. The
+        HMAC that was the irreducible per-row cost is now batched into the
+        compiled kernel (or the byte-identical Python reference when the native
+        companion is absent). Null handling stays POSITIONAL: `source.isna()`
+        rows re-emit `pd.NA`, consume no index, and the surviving rows keep their
+        order. Output is byte-identical to the former per-row path (proven by the
+        legacy-oracle differential tests).
         """
         if len(source) != n:
             # Caller error: source length must match n; this is a
@@ -224,23 +351,19 @@ class PoolSampler:
                     f"but n={n}; they must match for per-row determinism."
                 ),
             )
-        # One C-level materialization each; replaces 2n `.iloc` calls below.
-        src_values = source.tolist()
-        is_null_arr = source.isna().to_numpy()
-        pool_values = pool.values
-        pool_size = pool.size
+        is_null = source.isna().to_numpy()
         output: list[Any] = [pd.NA] * n
-        for i, value in enumerate(src_values):
-            if is_null_arr[i]:
-                continue
-            canonical = _canonicalize_source(value)
-            idx = derive_index(
+        nonnull_positions = np.flatnonzero(~is_null)
+        if nonnull_positions.size:
+            idx_np = _derive_pool_indices(
+                source.iloc[nonnull_positions],
                 seed=seed,
                 namespace=namespace,
-                source=canonical,
-                pool_size=pool_size,
+                pool_size=pool.size,
             )
-            output[i] = pool_values[idx]
+            selected = pool.values[idx_np]
+            for pos, value in zip(nonnull_positions.tolist(), selected, strict=True):
+                output[pos] = value
         return pd.Series(output)
 
     def _match_source_cardinality(
@@ -356,23 +479,25 @@ class PoolSampler:
                         f"{len(source)} but n={n}; they must match."
                     ),
                 )
-            per_col: dict[str, list[Any]] = {c: [] for c in cols}
-            is_null = source.isna()
-            for i in range(n):
-                if is_null.iloc[i]:
-                    for c in cols:
-                        per_col[c].append(pd.NA)
-                    continue
-                canonical = _canonicalize_source(source.iloc[i])
-                idx = derive_index(
+            # ONE shared batch-index array per row across every bundle column:
+            # the same `derive_index_batch` drop-in as the scalar path, then each
+            # column gathers by the SAME index (the cross-column tuple-integrity
+            # contract is preserved by construction). Nulls stay positional.
+            per_col: dict[str, list[Any]] = {c: [pd.NA] * n for c in cols}
+            is_null = source.isna().to_numpy()
+            nonnull_positions = np.flatnonzero(~is_null)
+            if nonnull_positions.size:
+                idx_np = _derive_pool_indices(
+                    source.iloc[nonnull_positions],
                     seed=seed,
                     namespace=namespace,
-                    source=canonical,
                     pool_size=pool.size,
                 )
-                bundle = pool.values[idx]
-                for j, c in enumerate(cols):
-                    per_col[c].append(bundle[j])
+                pool_values = pool.values
+                for pos, ix in zip(nonnull_positions.tolist(), idx_np.tolist(), strict=True):
+                    bundle = pool_values[ix]
+                    for j, c in enumerate(cols):
+                        per_col[c][pos] = bundle[j]
             return {c: pd.Series(per_col[c]) for c in cols}
 
         # Non-deterministic: with-replacement by default; UNIQUE without.
