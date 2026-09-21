@@ -37,6 +37,60 @@ use crate::derive::DeriveError;
 /// an effectively unbounded number of OS threads.
 const MAX_NATIVE_THREADS: i64 = 1024;
 
+/// Default native-mask thread knee: the measured throughput sweet spot on the 8-core class.
+///
+/// The 2026-09-21 thread sweep found t4 beats t8 on the native mask path (the keyed-hash kernel
+/// measured t4=116.9s against t8=126s at 100M rows on an n2-standard-8), so a request above this
+/// knee spends more threads for less throughput. `resolve` therefore clamps every per-call budget
+/// to it. This is a static conservative cap calibrated to the 8-core class, not a per-host optimum;
+/// larger hosts should raise it via [`NATIVE_MASK_THREAD_KNEE_ENV`].
+const DEFAULT_NATIVE_MASK_THREAD_KNEE: usize = 4;
+
+/// Env var that overrides [`DEFAULT_NATIVE_MASK_THREAD_KNEE`] for other host classes.
+const NATIVE_MASK_THREAD_KNEE_ENV: &str = "DECOY_NATIVE_MASK_THREAD_KNEE";
+
+/// The knee resolved from the environment, parsed at most once per process.
+///
+/// A `OnceLock` so the process-wide cap is read exactly once and cannot drift mid-run: every
+/// `resolve` after the first reuses the cached outcome. An invalid override caches (and re-returns)
+/// the coded error rather than falling back silently, mirroring how [`shared_native_pool`] caches a
+/// build failure.
+static NATIVE_MASK_THREAD_KNEE: OnceLock<Result<usize, DeriveError>> = OnceLock::new();
+
+/// Parse a raw `DECOY_NATIVE_MASK_THREAD_KNEE` value into an effective knee.
+///
+/// Pure (no env read) so the semantics are exhaustively testable without a process-global race:
+/// - `None` (var absent) -> [`DEFAULT_NATIVE_MASK_THREAD_KNEE`],
+/// - a decimal integer in `1..=MAX_NATIVE_THREADS` -> that value,
+/// - anything else (unparseable, `< 1`, `> MAX_NATIVE_THREADS`) -> a coded
+///   `native_mask_thread_knee_invalid` [`DeriveError`], never a silent fallback.
+fn parse_native_mask_thread_knee(raw: Option<&str>) -> Result<usize, DeriveError> {
+    match raw {
+        None => Ok(DEFAULT_NATIVE_MASK_THREAD_KNEE),
+        Some(text) => match text.trim().parse::<i64>() {
+            Ok(v) if (1..=MAX_NATIVE_THREADS).contains(&v) => Ok(v as usize),
+            _ => Err(DeriveError::new(
+                "native_mask_thread_knee_invalid",
+                "DECOY_NATIVE_MASK_THREAD_KNEE must be an integer in 1..=1024",
+            )),
+        },
+    }
+}
+
+/// The effective native-mask thread knee for this process, parsed once from the environment.
+///
+/// Reads [`NATIVE_MASK_THREAD_KNEE_ENV`] on the first call and caches the outcome (value or coded
+/// error) for the process lifetime. See [`parse_native_mask_thread_knee`] for the semantics.
+fn native_mask_thread_knee() -> Result<usize, DeriveError> {
+    NATIVE_MASK_THREAD_KNEE
+        .get_or_init(|| {
+            parse_native_mask_thread_knee(
+                std::env::var(NATIVE_MASK_THREAD_KNEE_ENV).ok().as_deref(),
+            )
+        })
+        .clone()
+}
+
 /// A validated native thread budget: an approved worker-thread count that is always `>= 1`.
 ///
 /// Construct with [`NativeThreadBudget::resolve`]; the invariant (`threads >= 1`, `threads <=
@@ -48,32 +102,48 @@ pub struct NativeThreadBudget {
 }
 
 impl NativeThreadBudget {
-    /// Resolve a caller-supplied request into a validated budget.
+    /// Resolve a caller-supplied request into a validated, clamped budget.
     ///
     /// `requested` is the raw engine argument (a Python `int` or `None` at the PyO3 boundary):
-    /// - `None` resolves to the deterministic default of **1 thread**. One thread is chosen as
-    ///   the default (rather than `host_available`) so the out-of-the-box native path stays
-    ///   byte-identical to today's sequential execution and to the one-thread mode Task 1.5's
-    ///   parity gate pins as ground truth; a caller opts into parallelism explicitly by passing
-    ///   a count. `host_available` is accepted for future precedence/clamping use (and to let a
-    ///   caller pass it straight through) but does not change the `None` default here.
-    /// - `Some(v)` with `v >= 1` and `v <= MAX_NATIVE_THREADS` resolves to exactly `v` threads.
+    /// - `None` resolves to the deterministic default of **1 thread** (before the clamp below).
+    ///   One thread is the default (rather than `host_available`) so the out-of-the-box native
+    ///   path stays byte-identical to sequential execution and to the one-thread mode the parity
+    ///   gate pins as ground truth; a caller opts into parallelism explicitly by passing a count.
+    /// - `Some(v)` with `v >= 1` and `v <= MAX_NATIVE_THREADS` is the validated request.
+    ///
+    /// The validated request is then clamped down (never up) to the smaller of the real host
+    /// parallelism and the measured [thread knee](DEFAULT_NATIVE_MASK_THREAD_KNEE):
+    /// `effective = min(requested_or_default, host_available, knee)`. This is the ONE engine-side
+    /// enforcement point so no caller can exceed the knee, and it is shared by `derive_batch`
+    /// (hash) and `derive_index_batch` (faker/index) alike. Because a native masking job derives
+    /// each row independently and arbitrates errors by lowest row index, thread count never
+    /// affects output bytes, so this clamp is parity-neutral by construction: it changes speed,
+    /// never results.
     ///
     /// Rejections carry a coded, value-free [`DeriveError`] (the redacted-error contract: the
     /// offending value is never echoed into the detail string):
     /// - `native_threads_zero` for `0`,
     /// - `native_threads_negative` for any negative value,
-    /// - `native_threads_excessive` for a value above `MAX_NATIVE_THREADS`.
+    /// - `native_threads_excessive` for a value above `MAX_NATIVE_THREADS`,
+    /// - `native_mask_thread_knee_invalid` if the `DECOY_NATIVE_MASK_THREAD_KNEE` override is set
+    ///   to an invalid value (see [`parse_native_mask_thread_knee`]).
     pub fn resolve(
         requested: Option<i64>,
         host_available: usize,
     ) -> Result<NativeThreadBudget, DeriveError> {
-        // `host_available` is intentionally not consulted for the default or the cap yet; it is
-        // part of the signature so the platform-precedence lane and Task 1.5 can clamp against
-        // the real host without another boundary change. Bind it to silence "unused" without
-        // pretending to use it.
-        let _ = host_available;
-        let threads = match requested {
+        Self::resolve_with_knee(requested, host_available, native_mask_thread_knee()?)
+    }
+
+    /// [`resolve`](Self::resolve) with the knee supplied explicitly.
+    ///
+    /// Split out so the clamp arithmetic is unit-testable against a chosen knee without the
+    /// process-global `OnceLock`: `resolve` is just this called with the env-resolved knee.
+    fn resolve_with_knee(
+        requested: Option<i64>,
+        host_available: usize,
+        knee: usize,
+    ) -> Result<NativeThreadBudget, DeriveError> {
+        let requested_or_default: usize = match requested {
             None => 1,
             Some(0) => {
                 return Err(DeriveError::new(
@@ -97,6 +167,10 @@ impl NativeThreadBudget {
             // target (usize is at least 32-bit; 1024 fits trivially).
             Some(v) => v as usize,
         };
+        // Clamp to the real host and the knee. `host_available.max(1)` keeps the `threads >= 1`
+        // invariant even if a caller passes 0; `requested_or_default` and `knee` are already
+        // `>= 1`, so the min can never drop below 1.
+        let threads = requested_or_default.min(host_available.max(1)).min(knee);
         Ok(NativeThreadBudget { threads })
     }
 
@@ -215,12 +289,140 @@ mod tests {
     }
 
     #[test]
-    fn valid_values_resolve_unchanged() {
-        for v in [1_i64, 2, 4, 8, MAX_NATIVE_THREADS] {
+    fn valid_values_below_the_clamps_resolve_unchanged() {
+        // With the default knee (4) and a roomy host, a request at or below the knee is granted
+        // as-is; only requests above a clamp get lowered (covered by the clamp tests below).
+        for v in [1_i64, 2, 4] {
             let budget = NativeThreadBudget::resolve(Some(v), 8)
                 .unwrap_or_else(|_| panic!("{v} should be valid"));
             assert_eq!(budget.threads(), v as usize);
         }
+    }
+
+    #[test]
+    fn resolve_clamps_a_request_above_the_knee_down_to_the_knee() {
+        // The measured knee is the default 4; a request of 8 on an 8-core host is granted 4.
+        let budget = NativeThreadBudget::resolve(Some(8), 8).expect("8 is a valid request");
+        assert_eq!(budget.threads(), DEFAULT_NATIVE_MASK_THREAD_KNEE);
+        // The absolute-max request is likewise clamped to the knee, not granted verbatim.
+        let budget = NativeThreadBudget::resolve(Some(MAX_NATIVE_THREADS), 64)
+            .expect("max is a valid request");
+        assert_eq!(budget.threads(), DEFAULT_NATIVE_MASK_THREAD_KNEE);
+    }
+
+    #[test]
+    fn resolve_grants_a_request_below_both_clamps_unchanged() {
+        // requested 2 <= host 8 and <= knee 4 -> 2.
+        let budget = NativeThreadBudget::resolve(Some(2), 8).expect("2 is valid");
+        assert_eq!(budget.threads(), 2);
+    }
+
+    #[test]
+    fn resolve_clamps_to_host_available_when_it_is_the_lowest() {
+        // host_available 3 is below both the request (8) and the knee (4), so it wins.
+        let budget = NativeThreadBudget::resolve(Some(8), 3).expect("8 is valid");
+        assert_eq!(budget.threads(), 3);
+    }
+
+    #[test]
+    fn resolve_with_knee_lets_an_override_move_the_cap() {
+        // A raised knee (8) grants a request of 8 that the default knee (4) would clamp to 4,
+        // proving the env override changes the effective cap. Host must be >= 8 to see it.
+        let raised = NativeThreadBudget::resolve_with_knee(Some(8), 8, 8).expect("valid");
+        assert_eq!(raised.threads(), 8);
+        let defaulted =
+            NativeThreadBudget::resolve_with_knee(Some(8), 8, DEFAULT_NATIVE_MASK_THREAD_KNEE)
+                .expect("valid");
+        assert_eq!(defaulted.threads(), DEFAULT_NATIVE_MASK_THREAD_KNEE);
+        // The knee only lowers: a raised knee never grants above the request or the host.
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(Some(2), 8, 8)
+                .unwrap()
+                .threads(),
+            2
+        );
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(Some(16), 6, 8)
+                .unwrap()
+                .threads(),
+            6
+        );
+    }
+
+    #[test]
+    fn resolve_with_knee_still_validates_the_request_before_clamping() {
+        // The request-validation errors are unchanged and fire regardless of the knee.
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(Some(0), 8, 8)
+                .unwrap_err()
+                .code,
+            "native_threads_zero"
+        );
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(Some(-1), 8, 8)
+                .unwrap_err()
+                .code,
+            "native_threads_negative"
+        );
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(Some(MAX_NATIVE_THREADS + 1), 8, 8)
+                .unwrap_err()
+                .code,
+            "native_threads_excessive"
+        );
+    }
+
+    #[test]
+    fn resolve_with_knee_holds_the_at_least_one_invariant() {
+        // Even a degenerate host_available of 0 cannot drop the budget below 1.
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(None, 0, 4)
+                .unwrap()
+                .threads(),
+            1
+        );
+        assert_eq!(
+            NativeThreadBudget::resolve_with_knee(Some(8), 0, 4)
+                .unwrap()
+                .threads(),
+            1
+        );
+    }
+
+    #[test]
+    fn knee_env_parsing_has_defined_semantics() {
+        // Absent -> the calibrated default.
+        assert_eq!(
+            parse_native_mask_thread_knee(None).unwrap(),
+            DEFAULT_NATIVE_MASK_THREAD_KNEE
+        );
+        // A valid override in range -> that value (surrounding whitespace tolerated).
+        assert_eq!(parse_native_mask_thread_knee(Some("8")).unwrap(), 8);
+        assert_eq!(parse_native_mask_thread_knee(Some(" 2 ")).unwrap(), 2);
+        assert_eq!(
+            parse_native_mask_thread_knee(Some(&MAX_NATIVE_THREADS.to_string())).unwrap(),
+            MAX_NATIVE_THREADS as usize
+        );
+        // Invalid / out-of-range -> a coded error, never a silent fallback to the default.
+        for raw in ["0", "-1", "1025", "abc", "", "4.5", "0x4"] {
+            let err = parse_native_mask_thread_knee(Some(raw))
+                .expect_err("invalid override must be a coded error");
+            assert_eq!(
+                err.code, "native_mask_thread_knee_invalid",
+                "override {raw:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn knee_env_is_read_once_and_matches_the_default_when_unset() {
+        // No test sets the real env var, so the cached process-wide knee is the default. This
+        // exercises the `OnceLock` path itself (the clamp tests use `resolve_with_knee` to stay
+        // race-free); the exhaustive env semantics are covered by the pure parser test above.
+        assert_eq!(
+            native_mask_thread_knee().expect("knee resolves"),
+            DEFAULT_NATIVE_MASK_THREAD_KNEE
+        );
     }
 
     #[test]
@@ -255,8 +457,10 @@ mod tests {
 
     #[test]
     fn pool_builds_with_the_requested_thread_count() {
+        // Use a knee/host high enough that the clamp does not lower the request: this asserts the
+        // pool honors the budget it is handed, independent of the resolve-time clamp.
         for v in [1_usize, 2, 4, 8] {
-            let budget = NativeThreadBudget::resolve(Some(v as i64), 8).unwrap();
+            let budget = NativeThreadBudget::resolve_with_knee(Some(v as i64), 16, 16).unwrap();
             let pool = NativeThreadPool::new(&budget).expect("pool builds");
             assert_eq!(pool.current_num_threads(), v);
         }
