@@ -39,30 +39,53 @@ result = `prefix + hex_key` (`group_key.py:168-174`). Key facts:
 
 ### The two-part kernel (Python stringify + new canonicalize-free Rust derive)
 The `str(value)` and the derivation split cleanly so the new Rust surface is minimal:
-1. **Python stringifies the sibling column, vectorized, byte-exact to the oracle's per-row `str()`.** The
-   oracle does `str(raw_val)` per row (`group_key.py:170`). Native reproduces it via a VECTORIZED stringify
-   of the group_by column that is PROVEN equal to element-wise `str()` for every ADMITTED sibling type
-   (string/large_string/int*/bool/date/timestamp). A B0-style spike measures `astype(str)`/`pc.cast` vs
-   per-row `str()` per admitted type and the plan uses whichever is byte-exact (fallback: an explicit
-   vectorized formatter per type). Result: a `pa.string()` array of the raw stringified sibling values.
-   Nulls become `"None"` (matching `str(None)`), so the output has no nulls.
-2. **New Rust path: canonicalize-FREE hex derivation.** Add a `canonicalize=False` mode to the existing
-   `derive_batch` machinery (preferred -- reuses the shared pool, `py.detach`, threads-clamp, KAT
-   infra), or a sibling `derive_hex_raw_batch`. It computes `derive(mask_key, namespace,
-   value.utf8_bytes)[:truncate_bytes].hex()` per row over a `pa.string()` array WITHOUT `canonicalize_row`
-   (raw utf8 bytes straight to `derive`). Byte-parity target: `derive(seed, ns, s.encode())[:length//2].hex()`.
-   Truncation: pass `truncate = length` hex chars (== `length//2` bytes, since `length` is even). ABI
-   bump + a KAT vector for the raw path + a Rust parity test vs the reference.
+1. **Python stringifies the sibling column via pandas `Series.astype(str)` -- the ONE proven formatter
+   (Codex P1-1).** The oracle does `str(raw_val)` per row (`group_key.py:170`). `pc.cast` is DEMONSTRABLY
+   WRONG (`"1"` vs the oracle's pandas `"1.0"` for nullable int, `"true"` vs `"True"` for bool, preserves
+   nulls instead of `"None"`, tz `-0500` vs `-05:00`); a local experiment showed pandas
+   `Series.astype(str)` on the effective sibling values MATCHES the oracle for string, nullable int, bool,
+   date, timestamp, and tz timestamp. So native converts the group_by column to a pandas Series and applies
+   `.astype(str)` (the same path the oracle's frame takes), giving a `pa.string()` array where nulls become
+   `"None"`. The B0 spike PINS this formatter's corpus (per admitted type), the pandas/Arrow VERSIONS,
+   null/NaT behavior, timestamp unit + timezone coverage, and NON-NFC string preservation, tested at the
+   actual execution boundary; a type is NOT admitted until `astype(str)` is proven byte-exact for it.
+2. **New Rust path: a DISTINCT canonicalize-FREE hex kernel (NOT a flag on derive_batch) (Codex P0-2).**
+   Add a SEPARATE entry point `derive_hex_raw_batch` (its own pyfunction/protocol + loader), leaving the
+   canonicalizing `derive_batch` contract SEMANTICALLY UNCHANGED. It reuses the shared pool / `py.detach`
+   / thread-clamp but SKIPS `canonicalize_row` -- raw utf8 bytes straight to `derive`:
+   `derive(mask_key, namespace, value.utf8_bytes)` then hex-encode then truncate. Byte-parity target:
+   `derive(seed, ns, s.encode()).hex()[:HEX_CHARS]`.
+   - **Truncation unit is unambiguous (Codex P1-3): `hex_chars` (= `length`), converted to bytes in ONE
+     place** (`output_bytes = hex_chars // 2`, `length` even). The ABI contract names `hex_chars` so no
+     implementation can double it.
+   - **Full companion integration (Codex P0-2):** `native_companion_status()` / the loader must
+     capability-DETECT the raw symbol and run its OWN type-and-byte KAT at loader init AND in the status
+     probe (today they validate only `derive_batch`/`derive_index_batch`). A MISSING or KAT-mismatched raw
+     symbol is a clean ORACLE DECLINE (never a hard failure). ABI bump.
 3. **Python prepends `prefix`** to the hex column (vectorized `pc.binary_join`/string concat).
 
 ### v1 SCOPE (decline outside the proven envelope)
+- **DECLINE the order-dependent case (Codex P0-1).** The oracle reads `df[group_by]` at group_key's
+  execution point, and the pandas adapter mutates the frame in ordered-node sequence -- so if an EARLIER
+  node masked `group_by`, the oracle keys on the ALREADY-MASKED value, not the source
+  (`test_group_key_chunked.py:1406`). v1 does NOT model that dependency: admission DECLINES to the oracle
+  whenever the `group_by` column is itself a masked (non-passthrough) node in the plan -- native admits
+  ONLY when `group_by` is an unmasked/passthrough column, where `batch.column(group_by)` (the original
+  source value) equals what the oracle reads. Modeling the effective-input dependency is a later slice.
+  Test group_key with `group_by` masked before it (declines) and unmasked (native).
 - **Sibling group_by column SAFE-TYPE gate:** admit only `{string, large_string, int*, bool, date,
   timestamp}` (reuse `group_by_type_is_safe`, `_chunked_group_key.py:95-115`); **exclude float + decimal**
-  (str()/canonicalization + the 0.0/-0.0 collision trap). Non-safe sibling type declines to the oracle.
-- **The group_by column must be RESIDENT** in the source table / batch; admission confirms it, else decline.
+  (str()/collision trap) AND **exclude dictionary types in v1** (Codex P1-2: `group_by_type_is_safe`
+  recursively admits dictionaries, but `_ADMITTED_RESIDENT_TYPES` is an exact-type map that can't express
+  the recursive predicate; support them later with parity tests). Non-safe sibling type declines. The
+  safe-type check runs against the EFFECTIVE sibling value/type, not the target schema.
+- **Resident-plumbing (Codex P1-2):** `resident_contract_admission()` today looks up `source.schema.field(
+  TARGET)` and requires an input-schema field of the target name -- a binding whose input is `group_by`
+  would FAIL/raise, not decline. Add an EXPLICIT sibling-input field to the binding and special-case its
+  safe-predicate + residency validation BEFORE the target-name schema lookup, so a missing/unsafe sibling
+  is a clean DECLINE.
 - **FULL-FRAME route only** (chunked declines -- group_key is sibling-keyed, deliberately kept out of the
-  chunk-safe set, `_chunked_group_key.py:85`; the sibling-cell-identity guarantee is not met by eager
-  per-chunk emit).
+  chunk-safe set, `_chunked_group_key.py:85`).
 - Always deterministic; synthesized namespace; no non-det/namespace gates needed.
 
 ### Output typing (B0, but simpler than bucket_perturb)
@@ -73,10 +96,16 @@ through). PIN with an empty-frame golden asserting the oracle's `df[col]=[]` inf
 evidence says float64 via the hash precedent, but MEASURE + assert at the ExecutionResult boundary; do not
 assume).
 
-### The 9-seam checklist (+ the SIBLING-COLUMN plumbing, the genuinely new part)
+### The seam checklist (+ the raw-kernel loader seam and the SIBLING-COLUMN plumbing -- the new parts)
+0. **Raw-kernel loader + companion-status (Codex P0-2, NEW):** the Rust `derive_hex_raw_batch` pyfunction;
+   a Python protocol/wrapper + loader for it; and its integration into `native_companion_status()` +
+   loader-init so the raw symbol is capability-detected and its own type-and-byte KAT runs at both points.
+   A missing / KAT-mismatched raw symbol -> group_key cleanly DECLINES to the oracle. `derive_batch`
+   untouched.
 1. `native/_requirements.py`: add `group_key` to `NATIVE_KERNEL_STRATEGIES` + new `group_key_config_
    rejection` (group_by present; length even/in-range; the group_by column's RESIDENT type in the safe
-   set via `group_by_type_is_safe`).
+   set via `group_by_type_is_safe` EXCLUDING dictionaries; the group_by column NOT itself masked by an
+   earlier node -- order-dependence decline).
 2. `native/_plan.py` eligibility: a `group_key` branch that resolves + checks the GROUP_BY column (not the
    target); reject if absent/unsafe-typed.
 3. `native/_dispatch.py`: full-frame-only -- add to `CHUNKED_ROUTE_VETOED_STRATEGIES` + veto; positive
@@ -111,8 +140,12 @@ assume).
 3. **Stringify parity:** the vectorized sibling stringify == element-wise `str()` per admitted type (B0
    spike corpus).
 4. **KAT** for the new raw-hex kernel + the group_key operator.
-5. **Admission declines (positive):** float/decimal sibling declines; a missing/non-resident group_by
-   declines; chunked declines; full-frame with a safe-typed resident sibling EXECUTES native.
+5. **Admission declines (positive):** float/decimal sibling declines; a DICTIONARY-typed sibling declines
+   (v1); a missing/non-resident group_by declines; **group_by masked by an EARLIER node declines
+   (order-dependence), while an unmasked group_by EXECUTES native** (Codex P0-1 -- parity tested both
+   ways); chunked declines; full-frame with a safe-typed, unmasked, resident sibling EXECUTES native.
+   Also assert an ALL-NULL sibling column yields NON-NULL string keys (`str(None)="None"`), NOT a null
+   column.
 6. **Empty output type** golden (float64 per the tokenizing rule) at the ExecutionResult boundary.
 7. **Companion-absent:** native-path tests `@skipif(not companion.ok)`; production declines cleanly (the
    bucket_perturb/categorical CI lesson).
