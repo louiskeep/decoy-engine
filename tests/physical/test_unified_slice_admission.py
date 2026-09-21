@@ -83,18 +83,6 @@ def test_cheap_admission_declines_when_chunked(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source, route_chunked=True) is None
 
 
-def test_cheap_admission_declines_non_pandas_substrate(tmp_path: Path) -> None:
-    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
-    config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
-    profile, _ = _profile_and_plan(config, source)
-    # The lane returns a result identical to the PANDAS full-frame route only.
-    # A polars-substrate job runs a different legacy adapter that stamps its own
-    # provenance telemetry (executed_substrate, pa<->pl conversion timings), so
-    # admitting it would diverge on the caller-consumed quality_metrics. It must
-    # fall through to the unchanged old route.
-    assert _cheap_ok(config, profile, source, resolved_substrate="polars") is None
-
-
 def test_cheap_admission_admits_inert_sink_on_full_frame(tmp_path: Path) -> None:
     # Route activation (2026-09-20): a sink is inert on the full-frame route
     # (both legacy and admitted paths ignore it; the sink's fate is decided by
@@ -687,12 +675,6 @@ def test_resolved_substrate_env_change_after_resolution_does_not_flip_admission(
     monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
     admitted_post = _cheap_ok(config, profile, source, resolved_substrate="pandas")
     assert admitted_post is not None
-
-    # And the reverse: a resolved "polars" value must still decline even
-    # though the env now (again) says something else.
-    monkeypatch.setenv("DECOY_SUBSTRATE", "pandas")
-    declined = _cheap_ok(config, profile, source, resolved_substrate="polars")
-    assert declined is None
 
 
 # ---------------------------------------------------------------------------

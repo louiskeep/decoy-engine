@@ -401,10 +401,10 @@ class TestCodeSetJointMaskRekey:
 
 
 # --------------------------------------------------------------------------
-# Substrate coverage: polars-native + out-of-core streaming rekey.
+# Substrate coverage: full-frame + out-of-core streaming rekey.
 # --------------------------------------------------------------------------
 
-_POLARS_COLUMNS = [
+_REKEY_COLUMNS = [
     {"name": "email", "strategy": "hash", "namespace": "email_ns"},
     {
         "name": "dept",
@@ -419,10 +419,10 @@ _POLARS_COLUMNS = [
 
 class TestSubstrateRekey:
     @pytest.mark.parametrize("column", ["email", "dept", "dept2"])
-    def test_polars_native_changes_under_secret(self, tmp_path, column):
-        cfg = _config(tmp_path, columns=_POLARS_COLUMNS)
-        base = _run(tmp_path, cfg, substrate="polars")
-        secret = _run(tmp_path, cfg, key_provider=_SECRET, substrate="polars")
+    def test_full_frame_changes_under_secret(self, tmp_path, column):
+        cfg = _config(tmp_path, columns=_REKEY_COLUMNS)
+        base = _run(tmp_path, cfg)
+        secret = _run(tmp_path, cfg, key_provider=_SECRET)
         assert base[column].tolist() != secret[column].tolist()
 
     def test_out_of_core_mask_batch_changes_under_secret(self, tmp_path):
@@ -666,21 +666,6 @@ class TestPublicEntryPointsGated:
         plan, sources, ns = self._plan_and_sources(tmp_path)
         with pytest.raises(KeyedStrategyRequiresSecret):
             PandasExecutionAdapter().run(
-                plan,
-                sources,
-                registry=get_default_registry(),
-                relationship_graph=RelationshipGraph(edges=(), ordering=()),
-                namespace_registry=ns,
-            )
-
-    def test_direct_polars_adapter_run_gated(self, tmp_path, monkeypatch):
-        from decoy_engine.execution._substrate import select_execution_adapter
-
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
-        plan, sources, ns = self._plan_and_sources(tmp_path)
-        adapter = select_execution_adapter(substrate="polars")
-        with pytest.raises(KeyedStrategyRequiresSecret):
-            adapter.run(
                 plan,
                 sources,
                 registry=get_default_registry(),

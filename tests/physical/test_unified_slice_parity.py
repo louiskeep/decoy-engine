@@ -343,32 +343,6 @@ def test_null_bearing_int_under_hash_fails_identically_both_flags(tmp_path: Path
 
 
 # ---------------------------------------------------------------------------
-# Substrate gate: the lane is parity-guaranteed against the PANDAS full-frame
-# route only. A polars-substrate job must decline to the unchanged old route
-# (it runs a different legacy adapter with its own provenance telemetry).
-# ---------------------------------------------------------------------------
-
-
-def test_polars_substrate_declines_to_legacy_route(tmp_path: Path) -> None:
-    pytest.importorskip("polars")
-    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
-    path = write_read_only_fixture(tmp_path, source, "fixture")
-    config = build_config(tmp_path, "t", path, [{"name": "c", "strategy": "passthrough"}])
-
-    on = run_pipeline(
-        config,
-        {"t": pq.read_table(path)},
-        engine_version=ENGINE_VERSION,
-        key_provider=_key_provider(),
-        unified_slice_enabled=True,
-        substrate="polars",
-    )
-    # No activation leaf => the lane declined and the polars legacy route ran.
-    assert QUALITY_METRICS_KEY not in on.quality_metrics
-    assert on.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
-
-
-# ---------------------------------------------------------------------------
 # Batch boundary: a table larger than the coordinator's 50k internal batch
 # but below the 100k auto-chunk threshold both ACTIVATES the lane and spans
 # multiple coordinator batches, exercising per-batch reassembly. Non-hash so

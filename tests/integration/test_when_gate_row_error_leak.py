@@ -8,8 +8,7 @@ value shipped in the main output AND an innocent (unmatched) row was
 deleted from it.
 
 The fix remaps subset-relative indices back to full-table positions inside
-`run_with_when_gate` / `run_with_when_gate_polars` before the RowError
-leaves the gate. These tests assert, on BOTH substrates:
+`run_with_when_gate` before the RowError leaves the gate. These tests assert:
   - the uncoercible / leaked value is quarantined and ABSENT from main
     output;
   - the innocent unmatched row is NOT deleted.
@@ -187,35 +186,3 @@ class TestB1WhenDateShift:
         assert records[0]["dob"] == "not-a-date"
 
 
-class TestB1PolarsParity:
-    """T7 parity: the polars gate must remap identically."""
-
-    def _run_polars(self, config: dict[str, Any], sources: dict[str, pa.Table]) -> Any:
-        from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
-        from decoy_engine.plan import compile_plan
-        from decoy_engine.profile import profile_source
-        from decoy_engine.providers_v2 import get_default_registry
-        from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
-
-        profile = profile_source(config, seed=0)
-        plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
-        ns_registry = build_namespace_registry(config, profile)
-        graph = RelationshipGraph(edges=(), ordering=())
-        adapter = PolarsExecutionAdapter()
-        return adapter.run(
-            plan,
-            sources,
-            registry=get_default_registry(),
-            relationship_graph=graph,
-            namespace_registry=ns_registry,
-        )
-
-    def test_polars_bucketize_when_reports_full_table_index(self, tmp_path: Path) -> None:
-        config = _bucketize_when_config(
-            _write_source(tmp_path, _BUCKETIZE_SRC), str(tmp_path / "t.out.parquet")
-        )
-        result = self._run_polars(config, {"t": _BUCKETIZE_SRC})
-        assert len(result.row_errors) == 1
-        # Full-table position of "badX" is 5, not the subset position 2.
-        assert result.row_errors[0].row_index == 5
-        assert result.row_errors[0].column == "age"
