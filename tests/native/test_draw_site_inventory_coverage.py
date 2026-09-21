@@ -256,6 +256,11 @@ _ALLOWLIST = frozenset(
         # `derive_index` primitive to reproduce/verify deterministic pool selection.
         # Not a new draw site (mirrors the _crypto_reference.py entry above).
         "execution/native/_index_ext.py",
+        # S-slate group_key raw-hex kernel contract: the loader's KAT self-test and
+        # the `_ReferenceRawHexDerivation` oracle call the already-catalogued
+        # `derive` primitive (group_key's source-keyed HMAC site) to reproduce the
+        # uncanonicalized hex derivation. Not a new draw site (mirrors _index_ext.py).
+        "execution/native/_group_key_ext.py",
     }
 )
 
