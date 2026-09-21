@@ -357,6 +357,35 @@ def test_float_sibling_declines(tmp_path: Path) -> None:
     ), result.rejections
 
 
+def test_sibling_type_predicate_excludes_float_decimal_dictionary() -> None:
+    """The v1 safe-type gate admits string/large_string/int*/bool/date/timestamp
+    and EXCLUDES float, decimal, AND dictionary (Codex P1-2), plus anything else
+    (binary/list) by omission."""
+    from decoy_engine.execution.native._requirements import group_key_sibling_type_admitted as ok
+
+    for t in (
+        pa.string(),
+        pa.large_string(),
+        pa.int8(),
+        pa.int64(),
+        pa.uint64(),
+        pa.bool_(),
+        pa.date32(),
+        pa.timestamp("us"),
+        pa.timestamp("us", tz="UTC"),
+    ):
+        assert ok(t), t
+    for t in (
+        pa.float32(),
+        pa.float64(),
+        pa.decimal128(10, 2),
+        pa.dictionary(pa.int32(), pa.string()),
+        pa.binary(),
+        pa.list_(pa.string()),
+    ):
+        assert not ok(t), t
+
+
 def test_missing_group_by_declines(tmp_path: Path) -> None:
     # A group_key config with no group_by is rejected at plan-compile normally;
     # the native-eligibility query reports the coded decline from raw config.
