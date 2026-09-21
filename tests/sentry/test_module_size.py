@@ -104,6 +104,19 @@ ALLOWLIST: dict[str, int] = {
     # (`statistical_generate`), a pure code move with no logic change,
     # landing this file at 632 (693 -> 632). Ceiling lowered accordingly.
     "src/decoy_engine/generation/synthesize.py": 632,
+    # native bucket_perturb S-slate (2026-09-21): crossed the 600 cap (593 ->
+    # 651) adding the `bucket_perturb_config_rejection` resolver (+ its shared
+    # `_VALID_BUCKET_PERTURB_BUCKETS` constant and the `_config_gate_rejection`
+    # dispatch branch), following the same per-strategy config-gate pattern the
+    # module already carries for hash/truncate/redact/categorical. Decomposition
+    # target: split the `*_config_rejection` resolvers plus the arrow-type
+    # resolution they share (`resolve_input_arrow_type` / `_input_arrow_type` /
+    # `_DTYPE_TO_ARROW` / `is_admitted_native_hash_type`) into a
+    # `_config_rejections.py` sibling, re-exported from here so the wide import
+    # surface (`_plan.py`, `_shadow_bindings.py`) is unchanged; deferred to avoid
+    # bundling a shared-module refactor into this operator PR. Shrink-only from
+    # here.
+    "src/decoy_engine/execution/native/_requirements.py": 651,
     "src/decoy_engine/storm/detectors.py": 1049,
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,

@@ -133,6 +133,17 @@ class ExecutionBinding:
     bucket_perturb_bucket: str | None = None
     bucket_perturb_date_format: str | None = None
 
+    @property
+    def needs_index_kernel(self) -> bool:
+        """Whether this node draws through the compiled `derive_index_batch`
+        kernel: faker (pool selection), categorical, or bucket_perturb. The
+        coordinator loads the kernel once per run for any such node."""
+        return (
+            self.pool_binding is not None
+            or self.categorical_deterministic
+            or self.bucket_perturb_bucket is not None
+        )
+
 
 @dataclass(frozen=True)
 class RejectedAlternative:
