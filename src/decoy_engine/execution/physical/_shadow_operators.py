@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
@@ -44,6 +45,7 @@ _TRUNCATE: Final = "native_truncate"
 _KEYED_HASH: Final = "native_keyed_hash"
 _FAKER_SELECT: Final = "native_faker_select"
 _CATEGORICAL: Final = "native_categorical"
+_BUCKET_PERTURB: Final = "native_bucket_perturb"
 
 
 @dataclass
@@ -156,6 +158,26 @@ def run_operator(
             array,
             categories=binding.categorical_categories,
             cdf=binding.categorical_cdf,
+            mask_key=ctx.mask_key,
+            namespace=binding.key_binding.namespace,
+            index_kernel=index_kernel,
+            native_threads=ctx.native_threads,
+        )
+        evidence.compiled_kernel_executed = True
+    elif binding.operator_id == _BUCKET_PERTURB:
+        if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+            raise AssertionError("bucket_perturb node reached run_operator with no KeyBinding")
+        if binding.bucket_perturb_bucket is None or binding.bucket_perturb_date_format is None:
+            # pragma: no cover - C0 binds both together with the KeyBinding
+            raise AssertionError(
+                "bucket_perturb node reached run_operator with no resolved bucket/date_format"
+            )
+        if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+            raise AssertionError("bucket_perturb node reached run_operator with no index_kernel")
+        out = native_bucket_perturb(
+            array,
+            bucket=binding.bucket_perturb_bucket,
+            date_format=binding.bucket_perturb_date_format,
             mask_key=ctx.mask_key,
             namespace=binding.key_binding.namespace,
             index_kernel=index_kernel,

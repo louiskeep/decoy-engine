@@ -220,12 +220,14 @@ def _static_route_decision(
         column = node.columns[0]
         scalar_columns.append((column, node.strategy))
         if node.strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
-            # Phase 5 Track B: categorical is native on the full-frame route but
-            # explicitly vetoed on this chunked/streaming route (the eager
-            # per-chunk emit cannot resolve its data-dependent output type). It
-            # otherwise resolves fallback_policy == "native" and would reach the
-            # missing chunk handler, so veto the whole table to the oracle here.
-            reasons.append(f"categorical_not_native_chunked_route:{column}")
+            # categorical (Phase 5 Track B) and bucket_perturb (S-slate) are
+            # native on the full-frame route but explicitly vetoed on this
+            # chunked/streaming route: the eager per-chunk emit cannot resolve
+            # their data-dependent output type. Each otherwise resolves
+            # fallback_policy == "native" and would reach the missing chunk
+            # handler, so veto the whole table to the oracle here. The reason
+            # carries the strategy so the two stay distinguishable in evidence.
+            reasons.append(f"{node.strategy}_not_native_chunked_route:{column}")
             continue
         no_kernel = node.strategy not in NATIVE_KERNEL_STRATEGIES
         no_pool_path = node.strategy not in NATIVE_POOL_STRATEGIES

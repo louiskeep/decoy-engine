@@ -123,17 +123,22 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # route through this SAME constant rather than recompute its own admitted
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
-NATIVE_KERNEL_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash", "categorical"})
+NATIVE_KERNEL_STRATEGIES = frozenset(
+    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb"}
+)
 
-# Strategies admitted to the native FULL-FRAME route but explicitly VETOED on
-# the native CHUNKED/streaming route (Phase 5 Track B). categorical's oracle
-# output TYPE is data-dependent (all-null -> null, empty -> float64, else ->
-# string) and can only be resolved at a whole-column assembly point, which the
-# eager per-chunk emit (`_chunk_masking.py`) does not have. Adding categorical
-# to NATIVE_KERNEL_STRATEGIES alone would let `_static_route_decision` admit it
-# on the chunked route and hit the missing chunk handler, so the chunked
-# preflight vetoes it here and routes the whole table to the oracle instead.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical"})
+# Mirrors the oracle's `transforms.bucket_perturb._VALID_BUCKETS`; kept local to
+# avoid importing the transforms module into the planning boundary.
+_VALID_BUCKET_PERTURB_BUCKETS = frozenset({"week", "month", "quarter"})
+
+# Admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
+# route: categorical and bucket_perturb both have a data-dependent output TYPE
+# (all-null -> null, empty -> float64/null, else -> string) that only a
+# whole-column assembly point can resolve, which the eager per-chunk emit
+# (`_chunk_masking.py`) lacks. Without this veto `_static_route_decision` would
+# admit them on the chunked route and hit the missing chunk handler; instead the
+# preflight routes the whole table to the oracle.
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
@@ -488,6 +493,50 @@ def categorical_config_rejection(
     return None
 
 
+def bucket_perturb_config_rejection(
+    name: str,
+    table: str,
+    profile: Any | None,
+    *,
+    namespace: str | None,
+    provider_config: dict[str, Any],
+) -> str | None:
+    """The coded reason a `bucket_perturb` column cannot run natively, or None.
+
+    v1 admits ONLY the string-source, explicit-`date_format`, tz-free,
+    valid-bucket, namespaced variant; everything else declines to the oracle. The
+    oracle defaults a missing bucket to "month" (`_bucket_perturb.py:54`) and
+    treats a missing/empty/non-string `date_format` as autodetect (an
+    order-dependent parity hazard). A non-string source declines (`astype(str)`
+    is an identity only for strings, which keeps canonicalization byte-parity-
+    safe). Both native boundaries call this ONE resolver so they never diverge.
+    """
+    if not namespace:
+        return f"bucket_perturb_requires_namespace:{name}"
+    bucket = str(provider_config.get("bucket", "month"))
+    if bucket not in _VALID_BUCKET_PERTURB_BUCKETS:
+        return f"bucket_perturb_unsupported_bucket:{name}"
+    date_format = provider_config.get("date_format")
+    if not isinstance(date_format, str) or not date_format:
+        return f"bucket_perturb_requires_date_format:{name}"
+    # A tz directive (%z/%Z) declines: the oracle reduces each value to a naive
+    # `datetime.date` before strftime (dropping time AND tz) while the native
+    # kernel keeps tz-aware Timestamps. Imported lazily so the pandas-bearing
+    # kernel module stays off the planning boundary's module-load path.
+    from decoy_engine.execution.native._bucket_perturb_ext import has_timezone_directive
+
+    if has_timezone_directive(date_format):
+        return f"bucket_perturb_timezone_directive:{name}"
+    # An unresolved profile leaves the input type unknowable; defer to the
+    # unified-slice resident-type gate (matches hash). A RESOLVED non-string
+    # type is rejected here, early.
+    if profile is not None:
+        resolved = resolve_input_arrow_type(table, name, profile)
+        if resolved is not None and resolved != pa.string():
+            return f"bucket_perturb_source_not_string:{name}:{resolved!s}"
+    return None
+
+
 def _config_gate_rejection(
     node: Any, strategy_name: str, cfg: dict[str, Any], profile: Any
 ) -> str | None:
@@ -513,6 +562,14 @@ def _config_gate_rejection(
             name,
             deterministic=bool(getattr(slice_, "deterministic", False)),
             namespace=getattr(slice_, "namespace", None),
+            provider_config=cfg,
+        )
+    if strategy_name == "bucket_perturb":
+        return bucket_perturb_config_rejection(
+            name,
+            node.table,
+            profile,
+            namespace=getattr(node.plan_slice, "namespace", None),
             provider_config=cfg,
         )
     return None
@@ -579,6 +636,7 @@ __all__ = [
     "NATIVE_POOL_STRATEGIES",
     "FallbackPolicy",
     "NodeRequirements",
+    "bucket_perturb_config_rejection",
     "categorical_config_rejection",
     "faker_pool_precondition_met",
     "hash_config_rejection",

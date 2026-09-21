@@ -102,10 +102,11 @@ if TYPE_CHECKING:
 
 __all__ = ["ShadowCoordinator", "ShadowRunResult"]
 
-# Strategies whose masked output is a tokenized string regardless of input
-# type; passthrough is the one type-preserving strategy, handled separately.
-# Categorical's measured oracle output type is exactly this null-shape mapping.
+# Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
+# else -> string (passthrough is separate). bucket_perturb differs ONLY on empty
+# (it passes its source object series through -> Arrow null), so it is split out.
 _TOKENIZING_STRATEGIES = frozenset({"redact", "truncate", "hash", "faker", "categorical"})
+_NULL_ON_EMPTY_STRATEGIES = frozenset({"bucket_perturb"})
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,8 @@ def _assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
         # all-null one as `null`, a normal one stays exactly as produced.
         if n == 0:
             return pa.array([], type=pa.float64())
+        return pa.nulls(n, type=pa.null()) if combined.null_count == n else combined
+    if strategy in _NULL_ON_EMPTY_STRATEGIES:  # empty + all-null -> null, else string
         return pa.nulls(n, type=pa.null()) if combined.null_count == n else combined
     # passthrough is value-identity, so its OUTPUT SCHEMA is exactly whatever
     # the pandas full-frame oracle infers when the table round-trips
@@ -352,10 +355,7 @@ class ShadowCoordinator:
                 route_evidence[node.node_id] = evidence
 
                 pool: ValuePool | None = None
-                # Faker (pool selection) and categorical (Phase 5 Track B) both
-                # draw through the compiled index kernel, loaded once per run.
-                needs_index = binding.pool_binding is not None or binding.categorical_deterministic
-                if needs_index and index_kernel is None:
+                if binding.needs_index_kernel and index_kernel is None:
                     try:
                         index_kernel = load_compiled_index_kernel()
                     except CryptoExtensionUnavailableError as exc:

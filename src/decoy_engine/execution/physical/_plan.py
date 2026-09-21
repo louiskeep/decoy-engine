@@ -123,6 +123,26 @@ class ExecutionBinding:
     categorical_deterministic: bool = False
     categorical_categories: tuple[str, ...] | None = None
     categorical_cdf: tuple[int, ...] | None = None
+    # Phase 5 S-slate (native bucket_perturb); both defaulted, so no pre-existing
+    # ExecutionBinding construction changes shape. `bucket_perturb_bucket` is the
+    # resolved bucket name (week/month/quarter) and doubles as the "this is a
+    # bound bucket_perturb node" marker the coordinator's index-kernel-load check
+    # reads; `bucket_perturb_date_format` is the resolved explicit format string.
+    # A bound bucket_perturb node also carries a `KeyBinding` (it is source-keyed,
+    # like hash/categorical), reusing the `key_binding` field above.
+    bucket_perturb_bucket: str | None = None
+    bucket_perturb_date_format: str | None = None
+
+    @property
+    def needs_index_kernel(self) -> bool:
+        """Whether this node draws through the compiled `derive_index_batch`
+        kernel: faker (pool selection), categorical, or bucket_perturb. The
+        coordinator loads the kernel once per run for any such node."""
+        return (
+            self.pool_binding is not None
+            or self.categorical_deterministic
+            or self.bucket_perturb_bucket is not None
+        )
 
 
 @dataclass(frozen=True)

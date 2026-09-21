@@ -309,11 +309,20 @@ def _execute_admitted(
         # costs no extra conversion beyond the one admission already paid for.
         frame = candidate.source_frame
         masked_table = shadow_result.outputs[candidate.table]
+        # A ZERO-ROW overlay via to_pylist() assigns [], which pandas infers as
+        # float64 -- right for the tokenizing oracles (empty -> float64) but wrong
+        # for bucket_perturb, whose passed-through source object series is legacy
+        # null. For an empty table, to_pandas() carries the coordinator's
+        # authoritative empty dtype (from _assemble_column) through the
+        # reconstruction so flag-on matches flag-off's dtype + metadata; a non-empty
+        # column stays on to_pylist(), the exact legacy tokenizing assignment.
+        empty = masked_table.num_rows == 0
         for node in physical_table.nodes:
             if node.strategy == "passthrough":
                 continue
             column = node.columns[0]
-            frame[column] = masked_table.column(column).to_pylist()
+            masked_col = masked_table.column(column)
+            frame[column] = masked_col.to_pandas() if empty else masked_col.to_pylist()
         outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
         quality_metrics: dict[str, Any] = {}
         _pipeline_finalize.stamp_execution_metrics(
