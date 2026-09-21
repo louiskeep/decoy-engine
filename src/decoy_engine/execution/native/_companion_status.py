@@ -341,8 +341,56 @@ def native_companion_status() -> NativeCompanionStatus:
     )
 
 
+@dataclass(frozen=True)
+class KernelAvailability:
+    """Per-kernel availability of the optional companion, so an admission gate
+    can require ONLY the kernel(s) its operators actually use.
+
+    Each flag is True only when the companion imports, reports the expected ABI,
+    carries that kernel's symbol, and reproduces its known-answer vector. A
+    companion built before an ADDITIVE symbol landed (e.g. `derive_hex_raw_batch`
+    on an otherwise-valid abi-2 build) has `crypto`/`index` True but `raw_hex`
+    False -- so a hash-only or categorical/bucket_perturb table keeps native
+    acceleration while only group_key declines to the oracle. `native_companion_
+    status().ok` is the AND of all three (fully-capable); this is the per-kernel
+    breakdown a per-operator gate needs instead."""
+
+    crypto: bool
+    index: bool
+    raw_hex: bool
+
+
+def native_kernel_availability() -> KernelAvailability:
+    """Per-kernel availability of the companion; never raises.
+
+    Runs the same import + ABI guard as `native_companion_status`, then each
+    kernel's own KAT probe independently, so a missing additive symbol declines
+    only the operators that need it. An absent / unimportable / ABI-mismatched
+    companion yields all-False (nothing native runs)."""
+    try:
+        spec = importlib.util.find_spec("decoy_engine_native")
+    except Exception:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    if spec is None:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    try:
+        kernel = importlib.import_module("decoy_engine_native._kernel")
+        reported_abi = kernel.abi_version()
+    except Exception:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    if reported_abi != _EXPECTED_ABI_VERSION:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    return KernelAvailability(
+        crypto=_probe_hash_kat(kernel, reported_abi) is None,
+        index=_probe_index_kat(kernel, reported_abi) is None,
+        raw_hex=_probe_raw_hex_kat(kernel, reported_abi) is None,
+    )
+
+
 __all__ = [
+    "KernelAvailability",
     "NativeCompanionCheckError",
     "NativeCompanionStatus",
     "native_companion_status",
+    "native_kernel_availability",
 ]

@@ -48,8 +48,9 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
-from decoy_engine.execution.native._companion_status import native_companion_status
+from decoy_engine.execution.native._companion_status import native_kernel_availability
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -108,6 +109,20 @@ GROUP_KEY_OPERATOR_ID = "native_group_key"
 _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
     {HASH_OPERATOR_ID, CATEGORICAL_OPERATOR_ID, BUCKET_PERTURB_OPERATOR_ID, GROUP_KEY_OPERATOR_ID}
 )
+
+# Which compiled kernel each companion-dependent operator actually loads, so the
+# admission gate requires ONLY the kernel(s) this table's operators use (PER-
+# OPERATOR, not the global `.ok`). hash -> the crypto `derive_batch`; categorical
+# / bucket_perturb -> the index `derive_index_batch`; group_key -> the raw-hex
+# `derive_hex_raw_batch`. A companion missing only the additive raw-hex symbol
+# therefore keeps hash / categorical / bucket_perturb native and declines just
+# group_key (matching `_group_key_ext`'s own hash-only-stays-native contract).
+_OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
+    HASH_OPERATOR_ID: "crypto",
+    CATEGORICAL_OPERATOR_ID: "index",
+    BUCKET_PERTURB_OPERATOR_ID: "index",
+    GROUP_KEY_OPERATOR_ID: "raw_hex",
+}
 
 # The fixed, reviewed resident-type domain per slice strategy -- the actual
 # set the 4.4 shadow corpus characterizes, not the compiler's coarse profile
@@ -287,14 +302,28 @@ def cheap_admission(
         # only) would have missed.
         return None
 
-    # Root-cause fix: this is the SAME Arrow->pandas conversion the legacy
-    # route performs on this table (`to_pandas_fk_safe` reduces to a plain
-    # `to_pandas()` here -- `profile.relationships` was already declined
-    # above, so `fk_columns` is always empty); doing it once, here, and
-    # carrying the frame forward on `CheapCandidate` means `_unified_slice.
-    # _execute_admitted`'s source-shaped output assembly never re-converts.
+    # Root-cause fix: this is the SAME Arrow->pandas conversion the legacy route
+    # performs on this table (`_pandas_adapter.py`'s `to_pandas_fk_safe`), doing
+    # it once here and carrying the frame forward on `CheapCandidate` so
+    # `_unified_slice._execute_admitted`'s source-shaped output assembly never
+    # re-converts. `fk_columns` is empty (relationships were declined above), but
+    # a group_key `group_by` SIBLING is in the oracle's fk-safe set too
+    # (`_pandas_adapter.py`'s `group_key_group_by_columns`): an integer sibling
+    # must be read through the lossless nullable dtype (`int64`->`Int64`) the
+    # oracle uses, or a passthrough sibling's output pandas metadata (numpy_type)
+    # diverges from the oracle's and the flag-off/flag-on parity gate fails on
+    # `schema.equals(check_metadata=True)`. Mirroring the oracle's per-column
+    # routing keeps every non-group_key table on the plain path unchanged (the
+    # sibling set is empty then).
+    group_key_sibling_cols: set[str] = set()
+    for col in columns_cfg:
+        if col.get("strategy") != "group_key":
+            continue
+        pcfg = col.get("provider_config")
+        if isinstance(pcfg, dict) and isinstance(pcfg.get("group_by"), str):
+            group_key_sibling_cols.add(pcfg["group_by"])
     try:
-        frame = source.to_pandas()
+        frame = to_pandas_fk_safe(source, group_key_sibling_cols)
     except Exception:
         # Total-to-decline: any Arrow->pandas failure declines to the legacy
         # route rather than raising a different error than legacy's own coded
@@ -353,8 +382,9 @@ def _group_key_sibling_admitted(
     binding: Any, physical_table: PhysicalTable, source: pa.Table
 ) -> bool:
     """Whether a bound group_key node's `group_by` SIBLING column is admissible:
-    resident, a safe non-dictionary type, matching the binding's input_schema,
-    and NOT itself masked by another node in the table (the order-dependence
+    resident, an admitted type (v1: `{string, int64, bool}` via
+    `group_key_sibling_type_admitted`), matching the binding's input_schema, and
+    NOT itself masked by another node in the table (the order-dependence
     decline).
 
     Runs on the SIBLING, not the target: the oracle keys on `df[group_by]` at
@@ -449,7 +479,7 @@ def resident_contract_admission(
         return None
 
     covered: list[str] = []
-    companion_dependent_columns: list[str] = []
+    required_kernels: set[str] = set()
     for node in nodes:
         binding = node.execution
         if binding is None:
@@ -478,7 +508,7 @@ def resident_contract_admission(
                 key_binding.namespace.encode("utf-8")
             except UnicodeEncodeError:
                 return None
-            companion_dependent_columns.append(column)
+            required_kernels.add(_OPERATOR_REQUIRED_KERNEL[GROUP_KEY_OPERATOR_ID])
             covered.append(column)
             continue
         resident_type = source.schema.field(column).type
@@ -500,7 +530,7 @@ def resident_contract_admission(
                 key_binding.namespace.encode("utf-8")
             except UnicodeEncodeError:
                 return None
-            companion_dependent_columns.append(column)
+            required_kernels.add(_OPERATOR_REQUIRED_KERNEL[binding.operator_id])
         covered.append(column)
 
     # 1:1 coverage across configured columns / physical nodes / resident
@@ -512,8 +542,13 @@ def resident_contract_admission(
     if len(covered) != len(set(covered)) or set(covered) != set(source.column_names):
         return None
 
-    if companion_dependent_columns and not native_companion_status().ok:
-        return None
+    # PER-OPERATOR companion gate: require only the kernel(s) this table's
+    # operators use, so a companion missing an ADDITIVE symbol (e.g. raw-hex)
+    # declines just the operators that need it, not every native operator.
+    if required_kernels:
+        availability = native_kernel_availability()
+        if not all(getattr(availability, kernel) for kernel in required_kernels):
+            return None
     try:
         reject_null_bearing_int(plan, {table: source}, registry, graph)
     except ExecutionError:

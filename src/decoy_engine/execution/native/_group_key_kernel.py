@@ -21,11 +21,13 @@ drive this operator:
   never emits a null; its only degenerate shape is EMPTY.
 
 v1 scope (see docs/plans/2026-09-21-native-group-key.md): the `group_by` sibling
-must be an UNMASKED/passthrough column of a safe type (string, large_string,
-int*, bool, date, timestamp; float/decimal/dictionary excluded), on the
-FULL-FRAME route only; every other shape declines to the oracle at admission.
-The runtime invariants below mirror `native_categorical` so a malformed compiled
-kernel fails HERE, coded and fail-closed.
+must be an UNMASKED/passthrough column, on the FULL-FRAME route only; every other
+shape declines to the oracle at admission. This operator masks the full
+stringify-safe type set byte-identically, but production admission narrows the
+sibling to `{string, int64, bool}` (what a passthrough node can carry in
+production); the wider set is deferred to a later slice. The runtime invariants
+below mirror `native_categorical` so a malformed compiled kernel fails HERE,
+coded and fail-closed.
 """
 
 from __future__ import annotations

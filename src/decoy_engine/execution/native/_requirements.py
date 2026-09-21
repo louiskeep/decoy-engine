@@ -540,23 +540,27 @@ def bucket_perturb_config_rejection(
     return None
 
 
+# The native group_key route admits ONLY these sibling resident types in v1.
+# The full stringify-safe set is larger (`_chunked_group_key.group_by_type_is_safe`:
+# integer, bool, string, large_string, date, timestamp), and the operator itself
+# masks all of them byte-identically -- but the sibling MUST be an unmasked
+# passthrough node, and passthrough's own production resident set is exactly
+# {string, int64, bool} (`_unified_slice_admission._ADMITTED_RESIDENT_TYPES`).
+# So a large_string/int32/uint64/date/timestamp sibling could never activate
+# end-to-end anyway; admitting it here would over-advertise. Narrow to the
+# intersection so admission is honest; float/decimal/dictionary stay excluded
+# (str()/collision + exact-type-map reasons). Extending passthrough's resident
+# set + end-to-end coverage for the wider set is a later slice.
+_NATIVE_GROUP_KEY_SIBLING_TYPES = frozenset({pa.string(), pa.int64(), pa.bool_()})
+
+
 def group_key_sibling_type_admitted(arrow_type: pa.DataType) -> bool:
     """Whether a group_by sibling's Arrow type is admitted to the native
-    group_key route: the shared `group_by_type_is_safe` predicate (integer,
-    boolean, string, large_string, date, timestamp -- float/decimal excluded)
-    MINUS dictionary types.
-
-    Dictionary is excluded in v1 (Codex P1-2): `group_by_type_is_safe`
-    recursively admits a dictionary whose value type is safe, but the
-    unified-slice resident-type gate is an exact-type map that cannot express
-    that recursive predicate, so a dictionary sibling declines to the oracle
-    until a later slice adds it with its own parity tests. Imported lazily so
-    the pandas-bearing chunked-group_key module stays off the planning
-    boundary's module-load path (matching `bucket_perturb_config_rejection`'s
-    lazy import)."""
-    from decoy_engine.execution._chunked_group_key import group_by_type_is_safe
-
-    return group_by_type_is_safe(arrow_type) and not pa.types.is_dictionary(arrow_type)
+    group_key route in v1: exactly `{string, int64, bool}` (see
+    `_NATIVE_GROUP_KEY_SIBLING_TYPES`). Everything else -- including the wider
+    stringify-safe types the operator supports but production passthrough cannot
+    yet carry -- declines to the oracle."""
+    return arrow_type in _NATIVE_GROUP_KEY_SIBLING_TYPES
 
 
 def group_key_config_rejection(

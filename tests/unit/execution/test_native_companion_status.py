@@ -356,6 +356,43 @@ def test_kat_corrupt_when_raw_hex_kat_wrong_value(monkeypatch: pytest.MonkeyPatc
 
 
 # ---------------------------------------------------------------------------
+# native_kernel_availability: per-kernel breakdown (HIGH: per-operator gate)
+# ---------------------------------------------------------------------------
+
+
+def test_kernel_availability_all_true_on_full_companion(monkeypatch: pytest.MonkeyPatch) -> None:
+    from decoy_engine.execution.native._companion_status import native_kernel_availability
+
+    _install_fake_kernel(monkeypatch)
+    avail = native_kernel_availability()
+    assert (avail.crypto, avail.index, avail.raw_hex) == (True, True, True)
+
+
+def test_kernel_availability_missing_raw_hex_keeps_crypto_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The additive-symbol contract: a companion carrying derive_batch +
+    derive_index_batch but NOT derive_hex_raw_batch must report crypto/index
+    available and raw_hex UNavailable -- so a per-operator admission gate keeps
+    hash/categorical/bucket_perturb native and declines only group_key."""
+    from decoy_engine.execution.native._companion_status import native_kernel_availability
+
+    _install_fake_kernel(monkeypatch, derive_hex_raw_batch=_NO_ENTRY_POINT)
+    avail = native_kernel_availability()
+    assert avail.crypto is True
+    assert avail.index is True
+    assert avail.raw_hex is False
+
+
+def test_kernel_availability_all_false_on_abi_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from decoy_engine.execution.native._companion_status import native_kernel_availability
+
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-0-stale")
+    avail = native_kernel_availability()
+    assert (avail.crypto, avail.index, avail.raw_hex) == (False, False, False)
+
+
+# ---------------------------------------------------------------------------
 # present-ok
 # ---------------------------------------------------------------------------
 

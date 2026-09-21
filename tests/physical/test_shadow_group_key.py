@@ -8,10 +8,12 @@ ways: the FULL-FRAME route EXECUTES native group_key (positive route/kernel
 evidence), and the CHUNKED route DECLINES it to the oracle (group_key is
 sibling-keyed, kept out of the chunk-safe set).
 
-group_key keys on a SIBLING `group_by` column, not the target: v1 admits ONLY
-an UNMASKED (passthrough) sibling of a safe type (string, large_string, int*,
-bool, date, timestamp; float/decimal/dictionary excluded). A masked sibling, a
-non-resident sibling, or an unsafe-typed sibling declines to the oracle. The
+group_key keys on a SIBLING `group_by` column, not the target: v1 production
+admits ONLY an UNMASKED (passthrough) sibling of type `{string, int64, bool}`
+(the intersection of the stringify-safe set with passthrough's resident set); a
+masked sibling, a non-resident sibling, or any other type declines to the
+oracle. The operator itself masks the wider stringify-safe set byte-identically
+(proven at the operator level below), which a later slice can activate. The
 canonicalization-free differential proves the raw path is taken: on a
 decomposed-unicode / int / bool / date sibling the native key matches the raw
 oracle, where a canonicalizing derive would DIVERGE.
@@ -357,25 +359,24 @@ def test_float_sibling_declines(tmp_path: Path) -> None:
     ), result.rejections
 
 
-def test_sibling_type_predicate_excludes_float_decimal_dictionary() -> None:
-    """The v1 safe-type gate admits string/large_string/int*/bool/date/timestamp
-    and EXCLUDES float, decimal, AND dictionary (Codex P1-2), plus anything else
-    (binary/list) by omission."""
+def test_sibling_type_predicate_is_string_int64_bool_only() -> None:
+    """The v1 native group_key sibling gate admits EXACTLY {string, int64, bool}
+    -- the intersection of the stringify-safe set with passthrough's production
+    resident set. The wider stringify-safe types the operator itself supports
+    (large_string/int32/uint64/date/timestamp) DECLINE end-to-end (deferred to a
+    later slice), and float/decimal/dictionary/binary/list stay excluded."""
     from decoy_engine.execution.native._requirements import group_key_sibling_type_admitted as ok
 
+    for t in (pa.string(), pa.int64(), pa.bool_()):
+        assert ok(t), t
     for t in (
-        pa.string(),
         pa.large_string(),
         pa.int8(),
-        pa.int64(),
+        pa.int32(),
         pa.uint64(),
-        pa.bool_(),
         pa.date32(),
         pa.timestamp("us"),
         pa.timestamp("us", tz="UTC"),
-    ):
-        assert ok(t), t
-    for t in (
         pa.float32(),
         pa.float64(),
         pa.decimal128(10, 2),
@@ -443,16 +444,13 @@ def test_unified_slice_execution_result_byte_identical(
     source = _source(gb)
     off, on = _run_both(tmp_path, source, _gk_columns(length=length, prefix=prefix))
     ot, nt = off.outputs["t"], on.outputs["t"]
-    # The HARD gate is value + Arrow field type parity per column (the plan's
-    # byte-identity gate), for BOTH the group_key target and the passthrough
-    # sibling. The `pandas` schema-metadata sidecar is NOT compared: for an
-    # integer sibling the legacy adapter routes group_key siblings through
-    # lossless nullable typing (numpy_type "Int64"), while the native passthrough
-    # keeps plain "int64" -- the ARROW data (values, field type, null bitmap) is
-    # identical, only the pandas reconstruction hint differs (a known benign
-    # artifact the shadow comparator also never compares).
+    # The HARD gate (matching the categorical/bucket_perturb precedent): full
+    # schema equality INCLUDING the pandas metadata sidecar, plus per-column
+    # values. For an integer sibling this only holds because cheap_admission
+    # reads the group_key sibling through the oracle's `to_pandas_fk_safe`
+    # (numpy_type "Int64" on both arms) -- the BLOCKER 1 fix.
+    assert ot.schema.equals(nt.schema, check_metadata=True)
     for name in ot.column_names:
-        assert ot.schema.field(name).type == nt.schema.field(name).type, name
         assert ot.column(name).to_pylist() == nt.column(name).to_pylist(), name
     if native_companion_status().ok:
         # The lane actually ACTIVATED (not a decline that would pass against
@@ -484,6 +482,7 @@ def test_unified_slice_all_null_sibling_yields_non_null_keys(tmp_path: Path) -> 
     assert ot.column(_TARGET).to_pylist() == nt.column(_TARGET).to_pylist()
     assert all(v is not None for v in nt.column(_TARGET).to_pylist())
     assert nt.schema.field(_TARGET).type == pa.string()
+    assert ot.schema.equals(nt.schema, check_metadata=True)
 
 
 def test_unified_slice_masked_group_by_declines(tmp_path: Path) -> None:
@@ -496,7 +495,7 @@ def test_unified_slice_masked_group_by_declines(tmp_path: Path) -> None:
     ot, nt = off.outputs["t"], on.outputs["t"]
     assert ot.column(_TARGET).to_pylist() == nt.column(_TARGET).to_pylist()
     assert ot.column(_GB).to_pylist() == nt.column(_GB).to_pylist()
-    assert ot.schema.field(_TARGET).type == nt.schema.field(_TARGET).type
+    assert ot.schema.equals(nt.schema, check_metadata=True)
     # DECLINED: the unified slice never activated for this table.
     assert QUALITY_METRICS_KEY not in on.quality_metrics
 
@@ -513,6 +512,7 @@ def test_unified_slice_float_sibling_declines(tmp_path: Path) -> None:
     off, on = _run_both(tmp_path, source, _gk_columns())
     ot, nt = off.outputs["t"], on.outputs["t"]
     assert ot.column(_TARGET).to_pylist() == nt.column(_TARGET).to_pylist()
+    assert ot.schema.equals(nt.schema, check_metadata=True)
     assert QUALITY_METRICS_KEY not in on.quality_metrics
 
 
@@ -529,10 +529,53 @@ def test_unified_slice_int_null_sibling_declines(tmp_path: Path) -> None:
     )
     off, on = _run_both(tmp_path, source, _gk_columns())
     ot, nt = off.outputs["t"], on.outputs["t"]
+    assert ot.schema.equals(nt.schema, check_metadata=True)
     for name in ot.column_names:
-        assert ot.schema.field(name).type == nt.schema.field(name).type, name
         assert ot.column(name).to_pylist() == nt.column(name).to_pylist(), name
     assert QUALITY_METRICS_KEY not in on.quality_metrics
+
+
+@_NEEDS_COMPANION
+def test_per_operator_gate_hash_stays_native_when_only_raw_hex_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HIGH: the admission companion gate is PER-OPERATOR. Simulating a companion
+    with crypto+index but WITHOUT the additive raw-hex symbol, a hash table must
+    STILL activate natively (its crypto kernel loads), while a group_key table
+    DECLINES to the oracle (its raw-hex kernel is absent). A global `.ok` gate
+    would have forced BOTH to the oracle."""
+    import decoy_engine.execution._unified_slice_admission as adm
+    from decoy_engine.execution.native._companion_status import KernelAvailability
+
+    monkeypatch.setattr(
+        adm,
+        "native_kernel_availability",
+        lambda: KernelAvailability(crypto=True, index=True, raw_hex=False),
+    )
+
+    # Separate dirs: `_run_both` writes a read-only fixture, so the two runs
+    # cannot share one tmp_path.
+    hdir, gdir = tmp_path / "hash", tmp_path / "gk"
+    hdir.mkdir()
+    gdir.mkdir()
+
+    # hash-only table: crypto is available -> stays native (activates).
+    hsrc = pa.table({"h": pa.array(["a", "b", "c"], type=pa.string())})
+    hoff, hon = _run_both(hdir, hsrc, [{"name": "h", "strategy": "hash", "namespace": "ns"}])
+    assert hoff.outputs["t"].column("h").to_pylist() == hon.outputs["t"].column("h").to_pylist()
+    assert QUALITY_METRICS_KEY in hon.quality_metrics, (
+        "hash must stay native when only raw-hex is missing"
+    )
+
+    # group_key table: raw-hex is absent -> declines to the oracle (both arms agree).
+    gsrc = _source(pa.array(["a", "b", "a"], type=pa.string()))
+    goff, gon = _run_both(gdir, gsrc, _gk_columns())
+    got, gnt = goff.outputs["t"], gon.outputs["t"]
+    assert got.schema.equals(gnt.schema, check_metadata=True)
+    assert got.column(_TARGET).to_pylist() == gnt.column(_TARGET).to_pylist()
+    assert QUALITY_METRICS_KEY not in gon.quality_metrics, (
+        "group_key must decline when raw-hex is missing"
+    )
 
 
 def test_unified_slice_parquet_round_trip(tmp_path: Path) -> None:
@@ -544,6 +587,35 @@ def test_unified_slice_parquet_round_trip(tmp_path: Path) -> None:
     off_back, on_back = pq.read_table(off_path), pq.read_table(on_path)
     assert off_back.schema.equals(on_back.schema, check_metadata=True)
     assert off_back.column(_TARGET).to_pylist() == on_back.column(_TARGET).to_pylist()
+
+
+def test_unified_slice_int_sibling_parquet_round_trip_metadata(tmp_path: Path) -> None:
+    """BLOCKER 1 regression pin: an ACTIVATED integer group_by sibling survives a
+    Parquet round-trip with IDENTICAL schema metadata on both arms. Reads the
+    persisted files back and asserts `schema.equals(check_metadata=True)` -- the
+    exact divergence dennis reproduced (read_parquet gave `Int64` off vs `int64`
+    on) before the sibling was read through `to_pandas_fk_safe`."""
+    source = _source(pa.array([1, 2, 1, 3, 2], type=pa.int64()))
+    off, on = _run_both(tmp_path, source, _gk_columns(length=16, prefix="H"))
+    # The lane must have ACTIVATED (a decline would pass metadata parity against
+    # itself and prove nothing).
+    if native_companion_status().ok:
+        assert QUALITY_METRICS_KEY in on.quality_metrics
+    off_path, on_path = tmp_path / "off.parquet", tmp_path / "on.parquet"
+    pq.write_table(off.outputs["t"], off_path)
+    pq.write_table(on.outputs["t"], on_path)
+    off_back, on_back = pq.read_table(off_path), pq.read_table(on_path)
+    assert off_back.schema.equals(on_back.schema, check_metadata=True)
+    assert off_back.column(_GB).to_pylist() == on_back.column(_GB).to_pylist()
+    assert off_back.column(_TARGET).to_pylist() == on_back.column(_TARGET).to_pylist()
+    # The sibling's pandas metadata must match specifically (the BLOCKER 1 field).
+    import json
+
+    off_meta = json.loads(off_back.schema.metadata[b"pandas"])
+    on_meta = json.loads(on_back.schema.metadata[b"pandas"])
+    gb_off = next(c["numpy_type"] for c in off_meta["columns"] if c["name"] == _GB)
+    gb_on = next(c["numpy_type"] for c in on_meta["columns"] if c["name"] == _GB)
+    assert gb_off == gb_on == "Int64"
 
 
 # ── Runtime fail-closed guards at dispatch ───────────────────────────────────
