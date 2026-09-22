@@ -320,8 +320,12 @@ def cheap_admission(
         if col.get("strategy") != "group_key":
             continue
         pcfg = col.get("provider_config")
-        if isinstance(pcfg, dict) and isinstance(pcfg.get("group_by"), str):
-            group_key_sibling_cols.add(pcfg["group_by"])
+        # Mirror the oracle's non-empty guard (`_runner.py` `and group_by`): an
+        # empty `""` group_by is never a real sibling column, so it must not
+        # enter the routing set even though `to_pandas_fk_safe` would skip it.
+        group_by = pcfg.get("group_by") if isinstance(pcfg, dict) else None
+        if isinstance(group_by, str) and group_by:
+            group_key_sibling_cols.add(group_by)
     try:
         frame = to_pandas_fk_safe(source, group_key_sibling_cols)
     except Exception:
