@@ -92,10 +92,15 @@ ExecutionPath = Literal["full_frame", "out_of_core", "sequential"]
 # is priced correctly without touching this module. The capitalized `Int64` /
 # `boolean` / `Float64` spellings are pandas' NULLABLE extension dtypes, which a
 # pandas-origin (e.g. Parquet) source restores via its `b"pandas"` sidecar and
-# `canonical_dtype_label` passes through unchanged; they price at their base
-# storage width (the validity mask is ~1 bit/cell, negligible for an estimate).
-# Omitting them mis-routed a nullable bool/int/float column to the string-width
-# sampler, which crashed on a non-string cell.
+# `canonical_dtype_label` passes through unchanged. They price at their base
+# storage width, on the same Arrow-storage basis as the arrow-native labels
+# above (an arrow `bool` is priced at 1 with its validity buffer omitted, so the
+# nullable `boolean` is too). A column genuinely resident as a pandas extension
+# array carries a full 1-byte-per-cell null mask on top, so this slightly
+# under-counts that resident form (boolean ~2x, Int64 ~1/9); the gap is small
+# against the module's GB-scale route thresholds and conservative K-constants.
+# Omitting these labels mis-routed a nullable bool/int/float column to the
+# string-width sampler, which crashed on a non-string cell.
 _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "int64": 8,
     "uint64": 8,
