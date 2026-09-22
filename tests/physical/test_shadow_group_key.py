@@ -96,6 +96,13 @@ def _source(gb: pa.Array) -> pa.table:
     return pa.table({_GB: gb, _TARGET: pa.array(["seed"] * len(gb), type=pa.string())})
 
 
+def _sib(gb: pa.Array) -> pa.Table:
+    # The sibling as the coordinator feeds it: a single-column SLICE of the source
+    # table, so its field name and `b"pandas"` schema-metadata (when the source is
+    # pandas-origin) survive for the oracle-equivalent stringify.
+    return _source(gb).select([_GB])
+
+
 # The native shadow path REQUIRES the compiled companion; skip when absent.
 _NEEDS_COMPANION = pytest.mark.skipif(
     not native_companion_status().ok,
@@ -158,7 +165,7 @@ _SIBLINGS: dict[str, pa.Array] = {
 def test_operator_matches_oracle_byte_identical(label: str, length: int, prefix: str) -> None:
     gb = _SIBLINGS[label]
     native = native_group_key(
-        gb,
+        _sib(gb),
         length=length,
         prefix=prefix,
         mask_key=_MASK_KEY,
@@ -175,7 +182,7 @@ def test_operator_matches_oracle_byte_identical(label: str, length: int, prefix:
 @_NEEDS_COMPANION
 def test_empty_sibling_operator_is_empty_string_array() -> None:
     native = native_group_key(
-        pa.array([], type=pa.string()),
+        _sib(pa.array([], type=pa.string())),
         length=16,
         prefix="p",
         mask_key=_MASK_KEY,
@@ -190,7 +197,7 @@ def test_empty_sibling_operator_is_empty_string_array() -> None:
 def test_same_group_same_key_and_distinct_differ() -> None:
     gb = pa.array(["h1", "h2", "h1", "h3", "h2"], type=pa.string())
     out = native_group_key(
-        gb, length=16, prefix="", mask_key=_MASK_KEY, namespace=f"group_key/{_TARGET}"
+        _sib(gb), length=16, prefix="", mask_key=_MASK_KEY, namespace=f"group_key/{_TARGET}"
     ).to_pylist()
     assert out[0] == out[2]  # both h1
     assert out[1] == out[4]  # both h2
@@ -226,7 +233,7 @@ def test_canonicalization_free_differential(gb: pa.Array, diverges: bool) -> Non
 
     length = 16
     native = native_group_key(
-        gb, length=length, prefix="", mask_key=_MASK_KEY, namespace=f"group_key/{_TARGET}"
+        _sib(gb), length=length, prefix="", mask_key=_MASK_KEY, namespace=f"group_key/{_TARGET}"
     ).to_pylist()
     df = _source(gb).to_pandas()
     raw = [
@@ -264,7 +271,11 @@ def test_stringify_parity(label: str) -> None:
 def test_operator_kat() -> None:
     gb = pa.array(["alice", "bob", "alice", "carol"], type=pa.string())
     out = native_group_key(
-        gb, length=16, prefix="H-", mask_key=bytes(range(32)), namespace="group_key/household_id"
+        _sib(gb),
+        length=16,
+        prefix="H-",
+        mask_key=bytes(range(32)),
+        namespace="group_key/household_id",
     )
     assert out.to_pylist() == [
         "H-ba38a11936bfef1a",
@@ -483,6 +494,73 @@ def test_unified_slice_all_null_sibling_yields_non_null_keys(tmp_path: Path) -> 
     assert all(v is not None for v in nt.column(_TARGET).to_pylist())
     assert nt.schema.field(_TARGET).type == pa.string()
     assert ot.schema.equals(nt.schema, check_metadata=True)
+
+
+def _pandas_origin_source(values: list[Any], dtype: str) -> pa.Table:
+    """A source built through pandas (so it carries the `b"pandas"` sidecar that
+    marks a nullable extension dtype), exactly as a real Parquet input from a
+    pandas producer would. `_run_both` roundtrips it through Parquet, preserving
+    the sidecar, so a null sibling cell restores to the extension dtype's null."""
+    import pandas as pd
+
+    df = pd.DataFrame({_GB: pd.array(values, dtype=dtype), _TARGET: ["seed"] * len(values)})
+    return pa.Table.from_pandas(df)
+
+
+@pytest.mark.parametrize(
+    "dtype, values",
+    [
+        ("string", ["a", None, "a", "b"]),
+        ("boolean", [True, None, False, True]),
+    ],
+    ids=["StringDtype", "BooleanDtype"],
+)
+def test_unified_slice_nullable_extension_sibling_byte_identical(
+    tmp_path: Path, dtype: str, values: list[Any]
+) -> None:
+    """A pandas-origin (Parquet) source whose group_by sibling is a NULLABLE
+    extension dtype (`StringDtype`/`BooleanDtype`) with a null: the oracle
+    restores the extension dtype and stringifies the null as "<NA>", so the
+    native stringify must preserve the source's `b"pandas"` sidecar to match. The
+    metadata-free rebuild that this guards (Codex FINAL P0) stringified "None" and
+    diverged in VALUE while `schema.equals(check_metadata=True)` still passed --
+    the schema check alone never caught it, so value parity is asserted per
+    element AND the lane must actually ACTIVATE (not a decline agreeing with
+    itself)."""
+    source = _pandas_origin_source(values, dtype)
+    off, on = _run_both(tmp_path, source, _gk_columns())
+    ot, nt = off.outputs["t"], on.outputs["t"]
+    for name in ot.column_names:
+        assert ot.column(name).to_pylist() == nt.column(name).to_pylist(), name
+    assert ot.schema.equals(nt.schema, check_metadata=True)
+    if native_companion_status().ok:
+        assert QUALITY_METRICS_KEY in on.quality_metrics
+        node_ev = on.quality_metrics[QUALITY_METRICS_KEY]["nodes"]
+        gk = [ev for ev in node_ev.values() if ev["operator"] == "native_group_key"]
+        assert len(gk) == 1 and gk[0]["executed"] is True
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize(
+    "dtype, values",
+    [("string", ["a", None, "b"]), ("boolean", [True, None, False])],
+    ids=["StringDtype", "BooleanDtype"],
+)
+def test_operator_nullable_extension_null_hashes_na_not_none(dtype: str, values: list[Any]) -> None:
+    """Operator-level pin (defends against a BOTH-arms regression the parity test
+    could not see): a nullable extension sibling's null hashes the extension
+    dtype's null string "<NA>", NOT object's "None". Pinned by matching a raw
+    derive over the exact "<NA>" bytes, so a future change that made native emit
+    "None" -- even if the oracle changed with it -- fails here."""
+    import pandas as pd
+
+    df = pd.DataFrame({_GB: pd.array(values, dtype=dtype), _TARGET: ["s"] * len(values)})
+    sibling = pa.Table.from_pandas(df).select([_GB])
+    out = native_group_key(
+        sibling, length=16, prefix="", mask_key=_MASK_KEY, namespace=f"group_key/{_TARGET}"
+    ).to_pylist()
+    expected_na = derive(_MASK_KEY, f"group_key/{_TARGET}", b"<NA>")[:8].hex()
+    assert out[1] == expected_na, "null cell must hash the extension dtype's '<NA>', not 'None'"
 
 
 def test_unified_slice_masked_group_by_declines(tmp_path: Path) -> None:

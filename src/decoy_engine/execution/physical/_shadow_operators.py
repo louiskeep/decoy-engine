@@ -77,6 +77,7 @@ def run_operator(
     evidence: OperatorCallEvidence,
     pool: ValuePool | None = None,
     index_kernel: IndexDerivationKernel | None = None,
+    group_key_sibling: pa.Table | None = None,
 ) -> pa.Array:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
@@ -187,22 +188,25 @@ def run_operator(
         )
         evidence.compiled_kernel_executed = True
     elif binding.operator_id == _GROUP_KEY:
-        # group_key is the one operator whose input `array` is NOT the target
-        # column: the coordinator feeds `batch.column(group_by)` (the sibling),
-        # and the derived key is written to the target. The binding carries the
-        # resolved length/prefix and the SYNTHESIZED f"group_key/{target}"
+        # group_key is the one operator whose input is NOT the target column and
+        # NOT the bare `array`: the coordinator feeds the SIBLING as a
+        # single-column source slice (`batch.select([group_by])`) so its `b"pandas"`
+        # schema-metadata sidecar and field name survive for the oracle-equivalent
+        # stringify. The derived key is written to the target. The binding carries
+        # the resolved length/prefix and the SYNTHESIZED f"group_key/{target}"
         # namespace on its KeyBinding.
         if (
             binding.key_binding is None
             or binding.group_key_group_by is None
             or binding.group_key_length is None
+            or group_key_sibling is None
         ):  # pragma: no cover - C0 binds these together for group_key
             raise AssertionError(
-                "group_key node reached run_operator with no KeyBinding/group_by/length"
+                "group_key node reached run_operator with no KeyBinding/group_by/length/sibling"
             )
         try:
             out = native_group_key(
-                array,
+                group_key_sibling,
                 length=binding.group_key_length,
                 prefix=binding.group_key_prefix or "",
                 mask_key=ctx.mask_key,

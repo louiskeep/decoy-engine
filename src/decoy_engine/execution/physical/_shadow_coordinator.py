@@ -332,6 +332,17 @@ class ShadowCoordinator:
                             detail=f"node={node.node_id!r}: a batch exceeded the batch_size_rows budget",
                         )
                     array = batch.column(input_column)
+                    # group_key stringifies its sibling exactly as the oracle's
+                    # frame does, which turns on the source's `b"pandas"` sidecar
+                    # (StringDtype null -> "<NA>", not "None"). A bare column drops
+                    # that sidecar, so feed the single-column source SLICE, which
+                    # preserves the field name and schema metadata `table.slice`
+                    # carried through `_batches`.
+                    group_key_sibling = (
+                        batch.select([input_column])
+                        if binding.group_key_group_by is not None
+                        else None
+                    )
                     parts.append(
                         run_operator(
                             array,
@@ -340,6 +351,7 @@ class ShadowCoordinator:
                             evidence=evidence,
                             pool=pool,
                             index_kernel=index_kernel,
+                            group_key_sibling=group_key_sibling,
                         )
                     )
 

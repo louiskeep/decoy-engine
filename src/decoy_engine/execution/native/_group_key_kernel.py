@@ -12,13 +12,16 @@ drive this operator:
   never `derive_batch`.
 
 - PANDAS is the stringify authority. The oracle does `str(raw_val)` per element
-  over `df[group_by]`, where `df` is the pandas adapter's `to_pandas()` frame.
-  `pc.cast` diverges from that (`"1"` vs pandas' `"1.0"`, `"true"` vs `"True"`,
-  a preserved null vs `"None"`, tz `-0500` vs `-05:00`). A single formatter
-  matches it byte-for-byte for every admitted sibling type: converting the
-  column to a pandas Series and applying `Series.astype(str)` (the same path the
-  oracle's frame takes). A null cell becomes the string `"None"`, so group_key
-  never emits a null; its only degenerate shape is EMPTY.
+  over `df[group_by]`, where `df` is the pandas adapter's `to_pandas_fk_safe`
+  frame built over the WHOLE source table (metadata sidecar included). `pc.cast`
+  diverges from that (`"1"` vs pandas' `"1.0"`, `"true"` vs `"True"`, tz `-0500`
+  vs `-05:00`). A single formatter matches it byte-for-byte for every admitted
+  sibling type: converting the column to a pandas Series and applying
+  `Series.astype(str)` (the same path the oracle's frame takes), on a sibling
+  slice that PRESERVES the source metadata so the pandas dtype -- and the exact
+  string a null becomes (`"None"` for object, `"<NA>"` for a nullable extension
+  dtype) -- match the oracle (`_stringify_sibling`). A null cell always yields a
+  string, so group_key never emits a null; its only degenerate shape is EMPTY.
 
 v1 scope (see docs/plans/2026-09-21-native-group-key.md): the `group_by` sibling
 must be an UNMASKED/passthrough column, on the FULL-FRAME route only; every other
@@ -42,36 +45,46 @@ from decoy_engine.execution.native._group_key_ext import (
 )
 from decoy_engine.generation.pool import GenerationError
 
-# A fixed, arbitrary single-column name for the stringify round-trip; the derived
-# key never depends on it (astype(str) is per-value), only on the cell contents.
-_STRINGIFY_COL = "gb"
 
-
-def _stringify_sibling(col: pa.Array) -> pa.Array:
-    """Stringify a group_by column exactly as the oracle's frame path does,
+def _stringify_sibling(sibling: pa.Table) -> pa.Array:
+    """Stringify a group_by sibling exactly as the oracle's frame path does,
     giving a `pa.string()` array where a null cell becomes the oracle's own
     stringified null.
 
-    The oracle does NOT use a plain `to_pandas()`: the pandas adapter routes a
-    group_key `group_by` sibling through `to_pandas_fk_safe` (the lossless-typing
-    contract, `_pandas_adapter.py`), which re-reads an INTEGER sibling as its own
-    nullable pandas dtype (`int64` -> `Int64`, `uint64` -> `UInt64`, ...) rather
-    than the float64-on-null default. That is byte-load-bearing here: a plain
-    `to_pandas()` widens an int+null column to float64, so a null stringifies as
-    `"nan"` and a value past 2**53 rounds, while the oracle sees `"<NA>"` and the
-    exact integer. Applying the SAME conversion (then `astype(str)`, the proven
-    per-type formatter) is what keeps the derived key byte-identical to the
-    oracle for every admitted sibling type. Non-integer types are unchanged by
-    `to_pandas_fk_safe`, matching the oracle's plain per-column inference for
-    string/bool/date/timestamp.
+    The oracle builds its frame with `to_pandas_fk_safe(source_table, cols)` over
+    the WHOLE source table (`_pandas_adapter.py`), so two source facts must reach
+    this conversion unchanged, and `sibling` MUST be the single-column slice of
+    that source table (original field name, original schema metadata) rather than
+    a bare, rebuilt array:
+
+    - `to_pandas_fk_safe` re-reads an INTEGER sibling as its own nullable pandas
+      dtype (`int64` -> `Int64`, `uint64` -> `UInt64`) from the Arrow TYPE alone,
+      not the float64-on-null default: a plain widen makes a null stringify as
+      `"nan"` and rounds a value past 2**53, while the oracle sees `"<NA>"` and
+      the exact integer.
+
+    - The source's `b"pandas"` schema-metadata sidecar decides whether a
+      `pa.string()` / `pa.bool()` sibling restores to a NULLABLE extension dtype
+      (pandas `StringDtype`/`BooleanDtype`) or to plain `object`/`bool`. That
+      choice changes the stringified null: `StringDtype`'s null is `"<NA>"`, a
+      metadata-free `object` null is `"None"`. Rebuilding the column into a fresh
+      metadata-free table (the old bug) dropped that sidecar and diverged from the
+      oracle for any pandas-origin (e.g. Parquet) source. Passing the source's own
+      single-column slice preserves the sidecar, so the extension dtype -- and its
+      null form -- match the oracle byte-for-byte.
+
+    Applying that same conversion, then `astype(str)` (the proven per-type
+    formatter), keeps the derived key byte-identical to the oracle for every
+    admitted sibling type.
     """
-    df = to_pandas_fk_safe(pa.table({_STRINGIFY_COL: col}), {_STRINGIFY_COL})
-    stringified = df[_STRINGIFY_COL].astype(str)
+    name = sibling.schema.names[0]
+    df = to_pandas_fk_safe(sibling, {name})
+    stringified = df[name].astype(str)
     return pa.array(stringified.to_numpy(), type=pa.string())
 
 
 def native_group_key(
-    group_by_array: pa.Array | pa.ChunkedArray,
+    group_by_sibling: pa.Table,
     *,
     length: int,
     prefix: str,
@@ -82,14 +95,16 @@ def native_group_key(
 ) -> pa.Array:
     """Derive one consistent key per row from the `group_by` sibling column.
 
-    `group_by_array` is the SIBLING column's data (the coordinator feeds
-    `batch.column(group_by)`, not the target). Stringifies it with the oracle's
-    `astype(str)` path, derives the raw (uncanonicalized) hex key via the
-    compiled kernel, and prepends `prefix`. Output is always populated
-    `pa.string()` (a null sibling cell yields the key for `"None"`, never a
-    null); the empty-column reconciliation to the oracle's float64 inference
-    happens at final assembly (`_shadow_assembly.assemble_column`, the
-    tokenizing branch).
+    `group_by_sibling` is the SIBLING column as a SINGLE-COLUMN slice of the
+    source table (the coordinator feeds `batch.select([group_by])`, not the
+    target, and not a bare array): the slice preserves the source field name and
+    its `b"pandas"` schema-metadata sidecar, which `_stringify_sibling` needs to
+    restore the exact pandas dtype -- and null form -- the oracle sees. Derives
+    the raw (uncanonicalized) hex key via the compiled kernel and prepends
+    `prefix`. Output is always populated `pa.string()` (a null sibling cell
+    yields the key for the sibling's stringified null, never a null); the
+    empty-column reconciliation to the oracle's float64 inference happens at
+    final assembly (`_shadow_assembly.assemble_column`, the tokenizing branch).
 
     `namespace` is the SYNTHESIZED `f"group_key/{target}"` the caller resolved,
     NOT the plan namespace. `raw_hex_kernel` is loaded once here (mirroring
@@ -102,14 +117,9 @@ def native_group_key(
             "group_key reached with mask_key=None; require_mask_key always "
             "resolves a concrete key before the native route dispatches."
         )
-    col = (
-        group_by_array.combine_chunks()
-        if isinstance(group_by_array, pa.ChunkedArray)
-        else group_by_array
-    )
-    n = len(col)
+    n = group_by_sibling.num_rows
 
-    string_col = _stringify_sibling(col)
+    string_col = _stringify_sibling(group_by_sibling)
     kernel = raw_hex_kernel if raw_hex_kernel is not None else load_compiled_raw_hex_kernel()
     hex_out = kernel.derive_hex_raw_batch(
         string_col,
@@ -134,9 +144,9 @@ def native_group_key(
             message=f"derive_hex_raw_batch returned {len(hex_out)} keys for {n} input rows",
         )
     if hex_out.null_count != 0:
-        # The stringify makes every cell non-null (a null becomes "None"), so the
-        # kernel must return a fully-valid key column; a null here means the
-        # never-null group_key invariant was violated upstream.
+        # The stringify makes every cell non-null (a null becomes its stringified
+        # form, "None" or "<NA>"), so the kernel must return a fully-valid key
+        # column; a null here means the never-null invariant was violated upstream.
         raise GenerationError(
             code="raw_hex_batch_unexpected_null",
             message="derive_hex_raw_batch returned a null key for a populated string row",
