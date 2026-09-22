@@ -89,7 +89,13 @@ ExecutionPath = Literal["full_frame", "out_of_core", "sequential"]
 # the plain numpy spellings a caller may pass directly. These are exactly
 # `numpy.dtype(<label>).itemsize` -- not calibrated, just read off the numpy
 # dtype table -- so a schema with more/fewer/different fixed-width columns
-# is priced correctly without touching this module.
+# is priced correctly without touching this module. The capitalized `Int64` /
+# `boolean` / `Float64` spellings are pandas' NULLABLE extension dtypes, which a
+# pandas-origin (e.g. Parquet) source restores via its `b"pandas"` sidecar and
+# `canonical_dtype_label` passes through unchanged; they price at their base
+# storage width (the validity mask is ~1 bit/cell, negligible for an estimate).
+# Omitting them mis-routed a nullable bool/int/float column to the string-width
+# sampler, which crashed on a non-string cell.
 _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "int64": 8,
     "uint64": 8,
@@ -106,6 +112,18 @@ _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "int8": 1,
     "uint8": 1,
     "bool": 1,
+    # pandas nullable extension dtypes (base storage width).
+    "boolean": 1,
+    "Int64": 8,
+    "UInt64": 8,
+    "Float64": 8,
+    "Int32": 4,
+    "UInt32": 4,
+    "Float32": 4,
+    "Int16": 2,
+    "UInt16": 2,
+    "Int8": 1,
+    "UInt8": 1,
 }
 
 # dtype labels that are variable-width and therefore need a per-cell string
