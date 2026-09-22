@@ -1,23 +1,40 @@
-"""Sentry test: module size is ratcheted, not allowed to grow unbounded.
+"""Sentry test: module size is ratcheted, with a soft goal and a hard ceiling.
 
-engineering-best-practices section 4.1 caps orchestration modules at ~600
-LOC (CLAUDE.md names `graph/runner.py` as the reference threshold). A module
-that crosses that line is a signal to decompose, not to keep appending.
+engineering-best-practices section 4.1 treats ~600 LOC as the point where an
+orchestration module should be decomposed (CLAUDE.md names `graph/runner.py` as
+the reference threshold). LOC is a proxy for reviewability, not a truth: a
+genuinely-dense 680-LOC module should not be force-split just to satisfy a round
+number, but nothing should be allowed to grow without bound either. So this is a
+two-line policy (2026-09-22 revision):
 
-This sentry enforces the cap as a *ratchet* rather than a hard wall, because
-the codebase already has five modules over the line (see ALLOWLIST). A blunt
-`fail > 600` would land red against legitimately-large existing modules and
-block every merge until a large refactor finished. Instead:
+  - GOAL = 600. A module <= GOAL needs no entry and draws no attention.
+  - MAX = 700. A hard ceiling for new work. No new module, and no growth of an
+    existing dense module, may cross MAX. Over MAX means decompose.
 
-  - Any module NOT in the allowlist must stay at or under LIMIT.
-  - Any allowlisted module may not exceed its recorded ceiling, so the known
-    large files can only shrink. New bloat anywhere is blocked, and the
-    allowlist documents exactly which files owe a decomposition.
+The ALLOWLIST records every module over GOAL at its EXACT current LOC (a
+ratchet), split by value, not by a second dict:
 
-To add a module to the allowlist you must cross LIMIT and record the current
-size in the same PR, which puts the growth in the diff and the reviewer's
-attention (the allowlist-as-ratchet pattern, best-practices section 5.1).
-When you decompose an allowlisted file below LIMIT, delete its entry.
+  - DENSE (GOAL < size <= MAX): a reviewed dense-module exception. It MAY grow,
+    up to MAX, by bumping its recorded number in the same PR (the growth lands
+    in the diff for the reviewer). It MUST ratchet DOWN when it shrinks.
+  - LEGACY (size > MAX): pre-existing debt from before this policy. It may ONLY
+    shrink; its recorded number may never be raised. When it drops to <= MAX it
+    becomes an ordinary dense entry. No file may CROSS MAX fresh -- decompose.
+
+The recorded value must EQUAL the file's current LOC. That exact-match is what
+closes the old hole where a file could shrink below its stale ceiling and then
+silently regrow back up to it. A non-allowlisted file that crosses GOAL adds an
+entry (<= MAX) in the same PR; one that drops to <= GOAL deletes its entry.
+
+Guarantee boundary (what this test does and does not enforce): the exact-match
+enforces the rules against DRIFT -- an accidental growth, a silent regrow, an
+un-synced shrink all fail. It cannot by itself stop a DELIBERATE census edit in
+the same PR: someone could add a fresh > MAX file to the allowlist, or raise a
+legacy ceiling by growing the file and bumping its number together, and the test
+would pass. Both now require an actual file edit plus a visible census-line
+change in the diff, so they are caught by review of that diff, not by this test.
+That is strictly better than the prior `loc <= ceiling` policy, which let a
+ceiling be raised without even touching the file.
 """
 
 from __future__ import annotations
@@ -29,11 +46,15 @@ import pytest
 SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 REPO = Path(__file__).parents[2]
 
-# Orchestration cap (best-practices section 4.1). New modules may not exceed it.
-LIMIT = 600
+# Soft goal + hard ceiling (best-practices section 4.1; 2026-09-22 revision).
+# A module <= GOAL needs no entry. Nothing new may cross MAX -- decompose instead.
+GOAL = 600
+MAX = 700
 
-# Census 2026-06-14: modules already over LIMIT, with their current line count
-# as the ceiling. These may only shrink; decompose and remove the entry.
+# Census: every module over GOAL, recorded at its EXACT current LOC (a ratchet).
+# An entry <= MAX is a DENSE exception (may grow to MAX via a visible census bump,
+# must ratchet down on shrink); an entry > MAX is pre-policy LEGACY debt (may only
+# shrink, its number may never be raised). Recorded value must equal current LOC.
 # Each owes a decomposition target (tracked via ADR-0005 / the hardening plan).
 ALLOWLIST: dict[str, int] = {
     # round-3 Fix C SUB-FIX 4 (2026-07-20): crossed the 600 cap (596 -> 608)
@@ -104,9 +125,9 @@ ALLOWLIST: dict[str, int] = {
     # (`statistical_generate`), a pure code move with no logic change,
     # landing this file at 632 (693 -> 632). Ceiling lowered accordingly.
     "src/decoy_engine/generation/synthesize.py": 632,
-    "src/decoy_engine/storm/detectors.py": 1049,
-    "src/decoy_engine/generators/columns.py": 666,
-    "src/decoy_engine/storm/profiler.py": 639,
+    "src/decoy_engine/storm/detectors.py": 1046,
+    "src/decoy_engine/generators/columns.py": 660,
+    "src/decoy_engine/storm/profiler.py": 635,
     "src/decoy_engine/quality/synth_report.py": 863,
     # MLF-4 (2026-07-19): expanded ML training corpus split out of
     # fixtures.py (module-size cap); cohesive synthetic-data generators.
@@ -115,7 +136,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/storm/eval/corpus.py": 976,
     # Sprint B (ML2.x): monolithic train_and_evaluate; decompose into
     # separate split / fit / calibrate / evaluate modules in ML3.x.
-    "src/decoy_engine/storm/model_pack/trainer.py": 716,
+    "src/decoy_engine/storm/model_pack/trainer.py": 715,
     # SP-10 (2026-06-28): check_derived_column_refs (row 16) added to the
     # compile-check ownership table. Decompose the growing _checks.py into
     # per-strategy check sub-modules in a follow-up sprint when the check set
@@ -331,7 +352,7 @@ ALLOWLIST: dict[str, int] = {
     # only when `declared_fk_dtypes` is (dtype is optional in config, so an
     # undeclared hash FK key otherwise skipped predicate 12's real stage and an
     # unsafe date64/decimal256 reached the kernel). Comment + widened condition.
-    "src/decoy_engine/execution/_chunked.py": 816,
+    "src/decoy_engine/execution/_chunked.py": 809,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
@@ -376,7 +397,7 @@ ALLOWLIST: dict[str, int] = {
     # rewrites every participating column), which the prior exact-tuple match
     # missed. The child-endpoint-column decomposition + the corrected scope
     # comment. Same decomposition target stands.
-    "src/decoy_engine/execution/_chunked_fk.py": 972,
+    "src/decoy_engine/execution/_chunked_fk.py": 970,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
@@ -429,9 +450,9 @@ ALLOWLIST: dict[str, int] = {
     # Steps 1-2 (generate-kind tables, then mask-kind tables) to
     # `execution/_pipeline_generate_mask.py` (`run_generate_and_mask_steps`),
     # a pure code move with no logic change, landing the file at 599 --
-    # at/under LIMIT, so per this module's own docstring the entry is
+    # at/under GOAL, so per this module's own docstring the entry is
     # deleted rather than kept with a lowered ceiling. A future regrowth
-    # past 600 re-enters the allowlist through the normal cross-LIMIT path.
+    # past GOAL re-enters the allowlist through the normal cross-goal path.
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table
@@ -503,7 +524,7 @@ ALLOWLIST: dict[str, int] = {
     # Decompose verify_corpus + CorpusVerifyReport into a `_codeset_verify.py`
     # sibling when the next standalone-check consumer (CLI/platform) lands and
     # needs this module touched again.
-    "src/decoy_engine/transforms/_codeset_loader.py": 613,
+    "src/decoy_engine/transforms/_codeset_loader.py": 606,
     # NOTE: transforms/code_set.py was allowlisted at 637 during the HC-2 build;
     # the two-model-gate remediation then decomposed validate_code_set_config
     # into transforms/_codeset_config_checks.py (mirroring _checks_top_code.py),
@@ -527,7 +548,7 @@ ALLOWLIST: dict[str, int] = {
     # Task 5.2 (2026-09-11): the FF1 cutover renamed FPE_KEY_LABEL to
     # FF1_KEY_LABEL and updated the `mask.fpe` DrawSite's seed-derivation
     # notes and call-site reference, pushing the module from 927 to 931.
-    "src/decoy_engine/execution/native/_determinism_protocol.py": 931,
+    "src/decoy_engine/execution/native/_determinism_protocol.py": 927,
     # Native program Task 0.3 (2026-08-27): one determinism PROVIDER per
     # catalogued draw site (the registry that reproduces each shipped draw off
     # the hot path). One small class per draw mechanism plus the per-site
@@ -631,29 +652,81 @@ def _loc(py_file: Path) -> int:
     return py_file.read_text(encoding="utf-8").count("\n")
 
 
+def _size_verdict(rel: str, loc: int, ceiling: int | None) -> str | None:
+    """Pure policy decision: a failure message, or None to pass. `ceiling` is the
+    module's ALLOWLIST value (None if unrecorded). Kept side-effect-free so every
+    branch is unit-testable without planting real files."""
+    if ceiling is None:
+        if loc > MAX:
+            return (
+                f"{rel}: {loc} LOC, over the {MAX}-LOC hard max. Decompose to "
+                f"<= {MAX}; a new module cannot be grandfathered above {MAX}."
+            )
+        if loc > GOAL:
+            return (
+                f"{rel}: {loc} LOC, over the {GOAL}-LOC goal. Decompose to <= {GOAL}, "
+                f"or (if it is genuinely dense) add it to ALLOWLIST at {loc} in this "
+                f"same PR for review -- allowed up to {MAX}."
+            )
+        return None
+    if loc == ceiling:
+        return None
+    if loc < ceiling:
+        return (
+            f"{rel}: shrank to {loc} LOC (census records {ceiling}). Ratchet the "
+            f"census down to {loc} in this PR (or delete the entry if <= {GOAL})."
+        )
+    # loc > ceiling: the module grew.
+    if ceiling > MAX:
+        return (
+            f"{rel}: legacy over-max module grew to {loc} LOC (census {ceiling}). "
+            f"A module over {MAX} may only shrink -- decompose, never raise a "
+            f"legacy ceiling."
+        )
+    if loc > MAX:
+        return (
+            f"{rel}: grew to {loc} LOC, over the {MAX}-LOC hard max. Decompose to "
+            f"<= {MAX}; a dense entry's ceiling may not cross {MAX}."
+        )
+    return (
+        f"{rel}: grew to {loc} LOC (census {ceiling}). Allowed (<= {MAX}); bump "
+        f"the census to {loc} in this same PR so the growth is visible in review."
+    )
+
+
 @pytest.mark.parametrize(
     "py_file",
     sorted(SRC.rglob("*.py")),
     ids=lambda p: str(p.relative_to(REPO)),
 )
 def test_module_within_size_budget(py_file: Path) -> None:
-    """Non-allowlisted modules stay <= LIMIT; allowlisted modules may not grow."""
+    """A module <= GOAL needs no entry; a recorded module must match its census
+    exactly (dense may grow to MAX with a visible bump, legacy may only shrink);
+    nothing may cross MAX fresh."""
     rel = str(py_file.relative_to(REPO))
-    loc = _loc(py_file)
-    ceiling = ALLOWLIST.get(rel)
-    if ceiling is not None:
-        assert loc <= ceiling, (
-            f"{rel} grew to {loc} LOC, over its recorded ceiling of {ceiling}. "
-            f"Allowlisted modules may only shrink. Decompose toward <= {LIMIT} "
-            f"LOC; do not raise the ceiling."
-        )
-    else:
-        assert loc <= LIMIT, (
-            f"{rel} is {loc} LOC, over the {LIMIT}-LOC orchestration cap "
-            f"(best-practices section 4.1). Decompose it, or, if it genuinely "
-            f"cannot be split now, add it to ALLOWLIST with its current size in "
-            f"this same PR for tech-lead review."
-        )
+    reason = _size_verdict(rel, _loc(py_file), ALLOWLIST.get(rel))
+    assert reason is None, reason
+
+
+@pytest.mark.parametrize(
+    "loc, ceiling, passes",
+    [
+        (GOAL, None, True),  # exactly the goal, unrecorded: fine
+        (GOAL + 1, None, False),  # over goal, unrecorded: must add an entry
+        (MAX, None, False),  # dense but unrecorded: must add an entry
+        (MAX + 1, None, False),  # over max, unrecorded: hard fail
+        (660, 660, True),  # dense, synced: fine
+        (683, 660, False),  # dense grew within band: must bump the census (visible)
+        (700, 660, False),  # dense grew to max: must bump (still <= MAX)
+        (701, 660, False),  # dense grew past max: decompose, ceiling can't cross MAX
+        (620, 660, False),  # dense shrank: must ratchet the census down (regrow guard)
+        (809, 809, True),  # legacy, synced: fine
+        (815, 809, False),  # legacy grew: may only shrink, never raise
+        (800, 809, False),  # legacy shrank: must ratchet down
+    ],
+)
+def test_size_verdict_branches(loc: int, ceiling: int | None, passes: bool) -> None:
+    assert (_size_verdict("x/y.py", loc, ceiling) is None) is passes
 
 
 def test_allowlist_paths_exist() -> None:
@@ -662,25 +735,24 @@ def test_allowlist_paths_exist() -> None:
         assert (REPO / rel).exists(), f"ALLOWLIST lists a nonexistent file: {rel}"
 
 
-def test_allowlist_entries_are_still_oversized() -> None:
-    """Keep the allowlist honest: an entry that has dropped to <= LIMIT should be
-    removed, not left to silently permit future regrowth up to its old ceiling.
+def test_allowlist_entries_are_still_over_goal() -> None:
+    """Keep the census honest: an entry that dropped to <= GOAL should be deleted,
+    not left to silently permit regrowth up to its old ceiling. (The exact-match
+    in test_module_within_size_budget already forces the shrink-to-ratchet-down.)
     """
     for rel, ceiling in ALLOWLIST.items():
         loc = _loc(REPO / rel)
-        assert loc > LIMIT, (
-            f"{rel} is now {loc} LOC (<= {LIMIT}). It no longer needs an "
-            f"allowlist entry. Delete it so the {LIMIT}-LOC cap applies normally. "
+        assert loc > GOAL, (
+            f"{rel} is now {loc} LOC (<= {GOAL}). It no longer needs an entry. "
+            f"Delete it so the {GOAL}-LOC goal applies normally. "
             f"(Recorded ceiling was {ceiling}.)"
-        )
-        assert loc <= ceiling, (
-            f"{rel} ({loc} LOC) already exceeds its recorded ceiling {ceiling}; "
-            f"update the census only by shrinking, never by raising."
         )
 
 
 def test_sentry_catches_a_planted_violation(tmp_path: Path) -> None:
-    """Meta-test: prove the LOC check actually trips on an oversized file."""
+    """Meta-test: prove the measurement AND the verdict trip on an over-max file."""
     big = tmp_path / "huge.py"
-    big.write_text("\n".join(f"x{i} = {i}" for i in range(LIMIT + 50)) + "\n")
-    assert _loc(big) > LIMIT
+    big.write_text("\n".join(f"x{i} = {i}" for i in range(MAX + 50)) + "\n")
+    loc = _loc(big)
+    assert loc > MAX
+    assert _size_verdict("planted.py", loc, None) is not None
