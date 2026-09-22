@@ -159,8 +159,11 @@ def native_group_key(
     # separator (empty), so each element is the plain concatenation.
     prefix_col = pa.array([prefix] * n, type=pa.string())
     # `binary_join_element_wise(a, b, sep)` concatenates a + sep + b per row; the
-    # separator is the empty string, so each element is `prefix + key`.
-    return pc.binary_join_element_wise(prefix_col, hex_out, "")  # type: ignore[attr-defined]
+    # separator is the empty string, so each element is `prefix + key`. The paired
+    # `unused-ignore` code keeps this green across the pinned mypy (which resolves
+    # the pyarrow.compute stub, making the attr-defined ignore "unused") and newer
+    # mypy (which does not, so the ignore is needed).
+    return pc.binary_join_element_wise(prefix_col, hex_out, "")  # type: ignore[attr-defined, unused-ignore]
 
 
 __all__ = ["native_group_key"]
