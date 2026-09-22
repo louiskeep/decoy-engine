@@ -48,13 +48,15 @@ from decoy_engine.execution.native._capabilities import (
     StrategyCapabilities,
     capabilities_for,
 )
-from decoy_engine.execution.native._requirements import (
-    NodeRequirements,
+from decoy_engine.execution.native._operator_config_rejections import (
     bucket_perturb_config_rejection,
     categorical_config_rejection,
     group_key_config_rejection,
-    hash_config_rejection,
     is_deterministic_categorical,
+)
+from decoy_engine.execution.native._requirements import (
+    NodeRequirements,
+    hash_config_rejection,
     native_kernel_rejection,
     redact_config_rejection,
     requirements_for,

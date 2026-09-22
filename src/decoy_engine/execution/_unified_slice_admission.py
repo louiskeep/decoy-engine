@@ -399,7 +399,9 @@ def _group_key_sibling_admitted(
     would have mutated that column in the frame before group_key reads it, so
     native declines to the oracle (v1 does not model the effective-input
     dependency)."""
-    from decoy_engine.execution.native._requirements import group_key_sibling_type_admitted
+    from decoy_engine.execution.native._operator_config_rejections import (
+        group_key_sibling_type_admitted,
+    )
 
     group_by = binding.group_key_group_by
     if not isinstance(group_by, str) or not group_by:

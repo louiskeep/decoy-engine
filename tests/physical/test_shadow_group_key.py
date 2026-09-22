@@ -376,7 +376,9 @@ def test_sibling_type_predicate_is_string_int64_bool_only() -> None:
     resident set. The wider stringify-safe types the operator itself supports
     (large_string/int32/uint64/date/timestamp) DECLINE end-to-end (deferred to a
     later slice), and float/decimal/dictionary/binary/list stay excluded."""
-    from decoy_engine.execution.native._requirements import group_key_sibling_type_admitted as ok
+    from decoy_engine.execution.native._operator_config_rejections import (
+        group_key_sibling_type_admitted as ok,
+    )
 
     for t in (pa.string(), pa.int64(), pa.bool_()):
         assert ok(t), t
