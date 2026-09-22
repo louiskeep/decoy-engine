@@ -41,7 +41,16 @@ if TYPE_CHECKING:
 # Task 4.6 slice 1's faker addition); a node outside this set is never bound,
 # regardless of native admission.
 SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(
-    {"passthrough", "redact", "truncate", "hash", "faker", "categorical", "bucket_perturb"}
+    {
+        "passthrough",
+        "redact",
+        "truncate",
+        "hash",
+        "faker",
+        "categorical",
+        "bucket_perturb",
+        "group_key",
+    }
 )
 
 OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
@@ -52,6 +61,7 @@ OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
     "faker": "native_faker_select",
     "categorical": "native_categorical",
     "bucket_perturb": "native_bucket_perturb",
+    "group_key": "native_group_key",
 }
 
 _SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
@@ -197,6 +207,9 @@ def execution_binding_for_slice_node(
     categorical_cdf: tuple[int, ...] | None = None
     bucket_perturb_bucket: str | None = None
     bucket_perturb_date_format: str | None = None
+    group_key_group_by: str | None = None
+    group_key_length: int | None = None
+    group_key_prefix: str | None = None
     if strategy == "hash":
         if caps.key_source is None or plan_slice.namespace is None:
             # hash_requires_namespace is enforced upstream of the native
@@ -263,6 +276,31 @@ def execution_binding_for_slice_node(
             return None  # pragma: no cover - config gate guarantees an explicit format
         bucket_perturb_date_format = date_format
         key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
+    elif strategy == "group_key":
+        # group_key keys on a SIBLING column, not the target. Its namespace is the
+        # SYNTHESIZED f"group_key/{target}" (the oracle ignores the plan namespace,
+        # `_group_key.py`), and its `input_schema` is built from the GROUP_BY
+        # column's resident type, not the target's -- the admission gate validates
+        # the sibling against that type. `group_key_config_rejection` (checked via
+        # `requirements.fallback_policy == "native"` above) already proved group_by
+        # is present and `length` is a valid even int in range.
+        group_by = cfg.get("group_by")
+        if not isinstance(group_by, str) or not group_by:
+            return None  # pragma: no cover - config gate guarantees a group_by
+        if caps.key_source is None:
+            return None  # pragma: no cover - group_key is mask-keyed
+        length_cfg = cfg.get("length", 16)
+        if not isinstance(length_cfg, int) or isinstance(length_cfg, bool):
+            return None  # pragma: no cover - config gate guarantees an int length
+        group_key_group_by = group_by
+        group_key_length = length_cfg
+        group_key_prefix = str(cfg.get("prefix", ""))
+        key_binding = KeyBinding(key_source=caps.key_source, namespace=f"group_key/{column}")
+        # Rebind input_schema to the SIBLING column's resident type (not the
+        # target's): the coordinator feeds `batch.column(group_by)` and the
+        # admission gate checks that sibling's type, so the binding must carry it.
+        gb_type = resolve_input_arrow_type(table, group_by, inputs.profile) or pa.string()
+        input_schema = pa.schema([pa.field(group_by, gb_type)])
 
     return ExecutionBinding(
         operator_id=OPERATOR_ID_BY_STRATEGY[strategy],
@@ -282,4 +320,7 @@ def execution_binding_for_slice_node(
         categorical_cdf=categorical_cdf,
         bucket_perturb_bucket=bucket_perturb_bucket,
         bucket_perturb_date_format=bucket_perturb_date_format,
+        group_key_group_by=group_key_group_by,
+        group_key_length=group_key_length,
+        group_key_prefix=group_key_prefix,
     )

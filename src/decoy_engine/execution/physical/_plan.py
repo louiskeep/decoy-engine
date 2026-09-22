@@ -132,6 +132,17 @@ class ExecutionBinding:
     # like hash/categorical), reusing the `key_binding` field above.
     bucket_perturb_bucket: str | None = None
     bucket_perturb_date_format: str | None = None
+    # Phase 5 S-slate (native group_key); all defaulted, so no pre-existing
+    # ExecutionBinding construction changes shape. group_key keys on a DIFFERENT
+    # (sibling) column than the target: `group_key_group_by` is the resolved
+    # sibling column name and doubles as the "this is a bound group_key node"
+    # marker the coordinator's sibling-input feed reads; `group_key_length` /
+    # `group_key_prefix` are the resolved config. A bound group_key node also
+    # carries a `KeyBinding` whose namespace is the SYNTHESIZED f"group_key/{target}"
+    # (not the plan namespace), reusing the `key_binding` field above.
+    group_key_group_by: str | None = None
+    group_key_length: int | None = None
+    group_key_prefix: str | None = None
 
     @property
     def needs_index_kernel(self) -> bool:

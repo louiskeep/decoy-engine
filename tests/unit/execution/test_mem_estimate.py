@@ -81,6 +81,14 @@ class TestFixedWidthDtypeCosts:
             ("uint16", 2),
             ("int8", 1),
             ("bool", 1),
+            # pandas nullable extension dtypes (base storage width).
+            ("boolean", 1),
+            ("Int64", 8),
+            ("UInt64", 8),
+            ("Float64", 8),
+            ("Int32", 4),
+            ("Int16", 2),
+            ("Int8", 1),
         ],
     )
     def test_each_fixed_width_dtype_prices_its_known_itemsize(
@@ -201,6 +209,25 @@ class TestStringWidthSourcing:
         spec = table_size_spec_from_profile(profile_table)
         assert spec.columns[0].dtype == "int64"
         assert not spec.columns[0].unpriceable
+
+    @pytest.mark.parametrize("dtype", ["boolean", "Int64", "Float64"])
+    def test_nullable_extension_column_prices_fixed_width_not_string_sampled(
+        self, dtype: str
+    ) -> None:
+        """A pandas nullable extension column (from a pandas-origin/Parquet
+        source) carries resident sample data, so an unrecognized dtype label
+        would route it to the string-width sampler and crash on its non-string
+        cells. It must price as fixed-width instead."""
+        profile_table = TableProfile(
+            name="t",
+            row_count=3,
+            columns=(_col_profile("x", dtype=dtype, row_count=3),),
+        )
+        sample_col = pa.array([True, None, False]) if dtype == "boolean" else pa.array([1, None, 2])
+        spec = table_size_spec_from_profile(profile_table, sample={"x": sample_col})
+        assert spec.columns[0].dtype == dtype
+        assert not spec.columns[0].unpriceable
+        assert spec.columns[0].string_width_bytes is None
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,12 @@ pub enum KernelError {
     PoolSizeType,
     /// The `__arrow_c_array__` protocol failed or returned an unexpected shape.
     ProtocolError(String),
+    /// `derive_hex_raw_batch` received a non-`pa.string()` array. Carries
+    /// `batch::BatchError::RawInputNotString`.
+    RawInputNotString,
+    /// `derive_hex_raw_batch` received an out-of-contract `hex_chars`. Carries
+    /// `batch::BatchError::RawHexCharsInvalid`.
+    RawHexCharsInvalid,
 }
 
 impl KernelError {
@@ -51,6 +57,8 @@ impl KernelError {
             KernelError::PoolSizeOverflow => "pool_size_overflow",
             KernelError::PoolSizeType => "pool_size_type",
             KernelError::ProtocolError(_) => "mixed_object_not_native",
+            KernelError::RawInputNotString => "group_key_input_not_string",
+            KernelError::RawHexCharsInvalid => "group_key_hex_chars_invalid",
         }
     }
 
@@ -70,6 +78,13 @@ impl KernelError {
             KernelError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
             KernelError::PoolSizeType => "pool_size must be an int".to_string(),
             KernelError::ProtocolError(msg) => msg.clone(),
+            KernelError::RawInputNotString => {
+                "derive_hex_raw_batch accepts only a pa.string() array; got another Arrow type"
+                    .to_string()
+            }
+            KernelError::RawHexCharsInvalid => {
+                "hex_chars must be an even count in [2, 64]".to_string()
+            }
         }
     }
 }
@@ -100,6 +115,8 @@ impl From<crate::batch::BatchError> for KernelError {
             crate::batch::BatchError::PoolSizeInvalid => KernelError::PoolSizeInvalid,
             crate::batch::BatchError::PoolSizeOverflow => KernelError::PoolSizeOverflow,
             crate::batch::BatchError::PoolSizeType => KernelError::PoolSizeType,
+            crate::batch::BatchError::RawInputNotString => KernelError::RawInputNotString,
+            crate::batch::BatchError::RawHexCharsInvalid => KernelError::RawHexCharsInvalid,
         }
     }
 }

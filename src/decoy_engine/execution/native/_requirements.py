@@ -21,8 +21,6 @@ from typing import Any, Literal
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
-from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import (
     StrategyCapabilities,
     capabilities_for,
@@ -124,21 +122,20 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
 NATIVE_KERNEL_STRATEGIES = frozenset(
-    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb"}
+    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb", "group_key"}
 )
-
-# Mirrors the oracle's `transforms.bucket_perturb._VALID_BUCKETS`; kept local to
-# avoid importing the transforms module into the planning boundary.
-_VALID_BUCKET_PERTURB_BUCKETS = frozenset({"week", "month", "quarter"})
 
 # Admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
 # route: categorical and bucket_perturb both have a data-dependent output TYPE
 # (all-null -> null, empty -> float64/null, else -> string) that only a
 # whole-column assembly point can resolve, which the eager per-chunk emit
-# (`_chunk_masking.py`) lacks. Without this veto `_static_route_decision` would
-# admit them on the chunked route and hit the missing chunk handler; instead the
-# preflight routes the whole table to the oracle.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb"})
+# (`_chunk_masking.py`) lacks. group_key is here for a different reason: it keys
+# on a SIBLING column and is deliberately kept out of the chunk-safe set
+# (`_chunked_group_key.py`), so its native path is full-frame only too. Without
+# this veto `_static_route_decision` would admit them on the chunked route and
+# hit the missing chunk handler; instead the preflight routes the whole table to
+# the oracle.
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb", "group_key"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
@@ -433,110 +430,6 @@ def redact_config_rejection(name: str, provider_config: dict[str, Any]) -> str |
     return None
 
 
-def is_deterministic_categorical(resolved_config: Any) -> bool:
-    """Whether a categorical column's resolved config selects the deterministic
-    (source-keyed, row-local) path -- the SINGLE source of truth the native
-    determinism gate consults at the config-only boundary.
-
-    Reproduces the seed envelope's own determinism computation for a column
-    (`plan/_seed_envelope.py`): the first-class `deterministic: bool` field,
-    OR the `allow_collisions: true` alias that forces deterministic reuse. So
-    `ColumnSeed.deterministic == is_deterministic_categorical(col_config)` by
-    construction (pinned by a test), letting the config-only native-route query
-    decide determinism without a compiled `ColumnSeed`.
-    """
-    get = resolved_config.get if hasattr(resolved_config, "get") else (lambda _k, _d=None: _d)
-    return bool(get("deterministic", False)) or bool(get("allow_collisions", False))
-
-
-def categorical_config_rejection(
-    name: str,
-    *,
-    deterministic: bool,
-    namespace: str | None,
-    provider_config: dict[str, Any],
-) -> str | None:
-    """The coded reason a `categorical` column cannot run on the native
-    operator, or None when it can (Phase 5 Track B).
-
-    v1 admits ONLY the deterministic, namespaced, STRING-category variant. An
-    unseeded (non-deterministic) categorical draws a whole-column vector that
-    is not reproducible, so it declines to the oracle here rather than silently
-    running the always-deterministic native operator. Non-string categories
-    decline (the oracle's data-dependent output-type reconciliation for them is
-    a later slice). A weighted config whose CDF the oracle's `_build_cdf` would
-    reject (nonpositive total, a below-resolution weight) declines here too, so
-    the whole table routes to the oracle, which raises the identical error --
-    never a native-side compile failure the oracle would not produce.
-    """
-    if not deterministic:
-        return f"categorical_not_deterministic:{name}"
-    if not namespace:
-        return f"categorical_requires_namespace:{name}"
-    categories = provider_config.get("categories")
-    if not isinstance(categories, (list, tuple)) or not categories:
-        return f"categorical_categories_not_nonempty_list:{name}"
-    if not all(isinstance(c, str) for c in categories):
-        return f"categorical_categories_not_all_string:{name}"
-    weights = provider_config.get("weights")
-    if weights is not None:
-        if not isinstance(weights, (list, tuple)) or len(weights) != len(categories):
-            return f"categorical_weights_shape:{name}"
-        if any(isinstance(w, bool) or not isinstance(w, (int, float)) for w in weights):
-            return f"categorical_weights_not_numeric:{name}"
-        if any(w < 0 for w in weights):
-            return f"categorical_weights_negative:{name}"
-        try:
-            _build_cdf([float(w) for w in weights])
-        except StrategyError:
-            return f"categorical_weights_unbuildable_cdf:{name}"
-    return None
-
-
-def bucket_perturb_config_rejection(
-    name: str,
-    table: str,
-    profile: Any | None,
-    *,
-    namespace: str | None,
-    provider_config: dict[str, Any],
-) -> str | None:
-    """The coded reason a `bucket_perturb` column cannot run natively, or None.
-
-    v1 admits ONLY the string-source, explicit-`date_format`, tz-free,
-    valid-bucket, namespaced variant; everything else declines to the oracle. The
-    oracle defaults a missing bucket to "month" (`_bucket_perturb.py:54`) and
-    treats a missing/empty/non-string `date_format` as autodetect (an
-    order-dependent parity hazard). A non-string source declines (`astype(str)`
-    is an identity only for strings, which keeps canonicalization byte-parity-
-    safe). Both native boundaries call this ONE resolver so they never diverge.
-    """
-    if not namespace:
-        return f"bucket_perturb_requires_namespace:{name}"
-    bucket = str(provider_config.get("bucket", "month"))
-    if bucket not in _VALID_BUCKET_PERTURB_BUCKETS:
-        return f"bucket_perturb_unsupported_bucket:{name}"
-    date_format = provider_config.get("date_format")
-    if not isinstance(date_format, str) or not date_format:
-        return f"bucket_perturb_requires_date_format:{name}"
-    # A tz directive (%z/%Z) declines: the oracle reduces each value to a naive
-    # `datetime.date` before strftime (dropping time AND tz) while the native
-    # kernel keeps tz-aware Timestamps. Imported lazily so the pandas-bearing
-    # kernel module stays off the planning boundary's module-load path.
-    from decoy_engine.execution.native._bucket_perturb_ext import has_timezone_directive
-
-    if has_timezone_directive(date_format):
-        return f"bucket_perturb_timezone_directive:{name}"
-    # An unresolved profile leaves the input type unknowable; defer to the
-    # unified-slice resident-type gate (matches hash). A RESOLVED non-string
-    # type is rejected here, early.
-    if profile is not None:
-        resolved = resolve_input_arrow_type(table, name, profile)
-        if resolved is not None and resolved != pa.string():
-            return f"bucket_perturb_source_not_string:{name}:{resolved!s}"
-    return None
-
-
 def _config_gate_rejection(
     node: Any, strategy_name: str, cfg: dict[str, Any], profile: Any
 ) -> str | None:
@@ -547,6 +440,15 @@ def _config_gate_rejection(
     if not node.columns:
         return None
     name = node.columns[0]
+    # Lazy import breaks the cycle: `_operator_config_rejections` imports
+    # `resolve_input_arrow_type` from this module at load time, so it cannot be
+    # imported here at module top level.
+    from decoy_engine.execution.native._operator_config_rejections import (
+        bucket_perturb_config_rejection,
+        categorical_config_rejection,
+        group_key_config_rejection,
+    )
+
     if strategy_name == "hash":
         return hash_config_rejection(name, node.table, profile)
     if strategy_name == "truncate":
@@ -572,6 +474,8 @@ def _config_gate_rejection(
             namespace=getattr(node.plan_slice, "namespace", None),
             provider_config=cfg,
         )
+    if strategy_name == "group_key":
+        return group_key_config_rejection(name, node.table, profile, provider_config=cfg)
     return None
 
 
@@ -636,12 +540,9 @@ __all__ = [
     "NATIVE_POOL_STRATEGIES",
     "FallbackPolicy",
     "NodeRequirements",
-    "bucket_perturb_config_rejection",
-    "categorical_config_rejection",
     "faker_pool_precondition_met",
     "hash_config_rejection",
     "is_admitted_native_hash_type",
-    "is_deterministic_categorical",
     "native_kernel_rejection",
     "native_pool_rejection",
     "redact_config_rejection",

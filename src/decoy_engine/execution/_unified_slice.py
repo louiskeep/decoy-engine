@@ -293,9 +293,10 @@ def _execute_admitted(
         # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
         # trip of the coordinator's own metadata-free output. `candidate.
         # source_frame` is the SAME source-aware pandas conversion the legacy
-        # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`,
-        # which reduces to a plain `to_pandas()` here since cheap admission
-        # already declined any relationship-bearing job); leaving a passthrough
+        # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`; here
+        # `fk_columns` is empty (relationships declined) but a group_key `group_by`
+        # SIBLING is fk-safe-typed so an integer sibling reads as its nullable
+        # dtype exactly like the oracle -- see cheap_admission); leaving a passthrough
         # column untouched on it reproduces the legacy `PassthroughHandler`
         # exactly (it is a literal no-op, `_strategies/_passthrough.py`), and
         # overlaying a masked column's `to_pylist()` POSITIONALLY reproduces

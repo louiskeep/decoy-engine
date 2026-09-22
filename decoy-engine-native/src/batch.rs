@@ -9,7 +9,7 @@ use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer, OffsetBuffer, ScalarBuffer
 use rayon::prelude::*;
 
 use crate::canonicalize::{canonicalize_row, is_admitted_type, CanonError};
-use crate::derive::{hex_token_into, DeriveContext, DeriveError, HEX_LEN};
+use crate::derive::{hex_prefix_into, hex_token_into, DeriveContext, DeriveError, HEX_LEN};
 use crate::threads::shared_native_pool;
 
 /// Everything that can go wrong deriving a batch, independent of how the array arrived (Python
@@ -51,6 +51,15 @@ pub enum BatchError {
     /// guards are (after canon(first non-null), skipped when nothing is non-null), NOT eagerly at
     /// the PyO3 boundary, and the boundary maps it to `TypeError` rather than a coded `ValueError`.
     PoolSizeType,
+    /// `derive_hex_raw_batch` received an array that is not an Arrow `Utf8` (`pa.string()`) column.
+    /// The group_key native path stringifies its sibling column in Python (`Series.astype(str)`)
+    /// and hands the kernel a `pa.string()` array, so any other type is a wiring error, not a
+    /// route the raw-hex kernel supports. Defensive: fails closed rather than mis-reading buffers.
+    RawInputNotString,
+    /// `derive_hex_raw_batch` received a `hex_chars` that is not an even count in `[2, 64]`. The
+    /// Python wrapper resolves it from the config's even `length` in `[8, 64]` before the call,
+    /// so this is a defensive fail-closed for an out-of-contract truncation width.
+    RawHexCharsInvalid,
 }
 
 /// The `pool_size` argument to `derive_index_array_typed`. `NotAnInteger` carries a DEFERRED
@@ -91,6 +100,8 @@ impl BatchError {
             BatchError::PoolSizeInvalid => "pool_size_invalid",
             BatchError::PoolSizeOverflow => "pool_size_overflow",
             BatchError::PoolSizeType => "pool_size_type",
+            BatchError::RawInputNotString => "group_key_input_not_string",
+            BatchError::RawHexCharsInvalid => "group_key_hex_chars_invalid",
         }
     }
 
@@ -109,6 +120,13 @@ impl BatchError {
             BatchError::PoolSizeInvalid => "pool_size must be >= 1".to_string(),
             BatchError::PoolSizeOverflow => "pool_size exceeds the maximum of 2**56".to_string(),
             BatchError::PoolSizeType => "pool_size must be an int".to_string(),
+            BatchError::RawInputNotString => {
+                "derive_hex_raw_batch accepts only a pa.string() array; got another Arrow type"
+                    .to_string()
+            }
+            BatchError::RawHexCharsInvalid => {
+                "hex_chars must be an even count in [2, 64]".to_string()
+            }
         }
     }
 }
@@ -393,6 +411,136 @@ fn fill_range(
                 cursor += bytes.len();
             }
         }
+    }
+    Ok(())
+}
+
+/// Validate the mask key, then derive + hex-encode every row of a `pa.string()` column WITHOUT
+/// canonicalization, returning one hex string per input row (null in, null out).
+///
+/// This is the `group_key` derivation path. Its one difference from `derive_array` is the whole
+/// reason it exists: `derive_array` canonicalizes each row (`canonicalize_row`: NFC-normalize
+/// strings, length-prefix ints, special-encode bool/date) before deriving, but the group_key
+/// oracle hashes the RAW bytes of `str(value)` with no canonicalizer at all
+/// (`transforms/group_key.py`). So this kernel reads the UTF-8 bytes of an already-stringified
+/// column straight into `derive`, byte-parity target
+/// `derive(mask_key, namespace, s.encode())[:hex_chars//2].hex()`. The stringification itself is
+/// the caller's job (pandas `Series.astype(str)`, the one formatter proven to match the oracle),
+/// so the kernel only ever sees a `pa.string()` array.
+///
+/// `hex_chars` is the config `length` (even, `[8, 64]`); the truncation unit is converted to
+/// bytes in exactly one place here (`output_bytes = hex_chars / 2`), so no layer downstream can
+/// double it. Output is byte-identical at every thread count (each row's hash depends only on its
+/// own bytes and the shared per-batch key), the same invariant `derive_array` holds.
+pub fn derive_hex_raw_array(
+    array: &dyn Array,
+    mask_key: Option<&[u8]>,
+    namespace: &str,
+    hex_chars: usize,
+    threads: usize,
+) -> Result<StringArray, BatchError> {
+    let mask_key = match mask_key {
+        Some(k) if !k.is_empty() => k,
+        _ => return Err(BatchError::MaskKeyRequired),
+    };
+
+    // The truncation unit, converted to bytes in ONE place. Even and in `[2, 64]` mirrors the
+    // config `length`'s `[8, 64]`-even contract; a smaller even width (2..6) is still well-formed
+    // arithmetic and rejected only by the Python-side range check, so accepting it here keeps the
+    // kernel's own contract self-consistent rather than duplicating the config bound.
+    if hex_chars == 0 || !hex_chars.is_multiple_of(2) || hex_chars > HEX_LEN {
+        return Err(BatchError::RawHexCharsInvalid);
+    }
+    let output_bytes = hex_chars / 2;
+
+    let string_array = array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or(BatchError::RawInputNotString)?;
+
+    let len = string_array.len();
+    let non_null = len - string_array.null_count();
+    let width = hex_chars; // constant per non-null row: 2 hex chars per output byte
+
+    // Output validity == input validity. Materialize a FRESH bitmap (never `nulls().cloned()`,
+    // which pins the whole imported `Arc<FFI_ArrowArray>` -- Task 1.5 lesson, same as
+    // `derive_array`). In practice the caller's `astype(str)` leaves NO nulls (a null cell becomes
+    // the string "None"), so this branch is a defensive carry-through, not a live group_key shape.
+    let nulls = string_array
+        .nulls()
+        .map(|nb| NullBuffer::new(BooleanBuffer::from_iter(nb.iter())));
+
+    // No non-null row: the oracle never calls `derive()` for an empty column, so seed/namespace
+    // are never validated -- an empty batch must return cleanly even under a wrong-length key.
+    if non_null == 0 {
+        let offsets_buf = OffsetBuffer::new(ScalarBuffer::from(vec![0i32; len + 1]));
+        return StringArray::try_new(offsets_buf, Buffer::from_vec(Vec::<u8>::new()), nulls)
+            .map_err(assembly_error);
+    }
+
+    // The raw path has NO per-row canonicalization that can fail, so (unlike `derive_array`) a
+    // bad seed needs no first-scan to outrank it: the seed/namespace error surfaces directly from
+    // `DeriveContext::new`, exactly where the oracle's first `derive()` call would raise it.
+    let ctx = DeriveContext::new(mask_key, namespace)?;
+
+    // Serial pre-pass: full i32 offset layout from the null mask alone (no derivation yet).
+    let mut offsets: Vec<i32> = Vec::with_capacity(len + 1);
+    offsets.push(0);
+    let mut acc: i32 = 0;
+    for i in 0..len {
+        if string_array.is_valid(i) {
+            acc = acc
+                .checked_add(width as i32)
+                .ok_or(BatchError::OffsetOverflow)?;
+        }
+        offsets.push(acc);
+    }
+    let total_bytes = acc as usize;
+
+    let mut values = vec![0u8; total_bytes];
+    let tasks = partition_into_tasks(string_array, &offsets, &mut values, threads, non_null);
+    let results = run_range_tasks(tasks, |task| {
+        fill_raw_range(&ctx, string_array, output_bytes, task)
+    })?;
+    if let Some(err) = first_error_by_row_index(results) {
+        return Err(err);
+    }
+
+    let offsets_buf = OffsetBuffer::new(ScalarBuffer::from(offsets));
+    StringArray::try_new(offsets_buf, Buffer::from_vec(values), nulls).map_err(assembly_error)
+}
+
+/// Fill one range's output window for the raw-hex kernel: derive + hex-encode each non-null row's
+/// RAW UTF-8 bytes straight into `task.out`, no canonicalization. Mirrors `fill_range` but reads
+/// the string value directly (a `StringArray` value is always valid UTF-8 by Arrow construction,
+/// so there is no per-row canon error to surface; only a >4 GiB source length could fail, matching
+/// `derive_array`'s own reachable per-row error set).
+fn fill_raw_range(
+    ctx: &DeriveContext,
+    array: &StringArray,
+    output_bytes: usize,
+    task: RangeTask<'_>,
+) -> Result<(), (usize, BatchError)> {
+    // Same worker-panic injection as `fill_range`: fires only on a Rayon pool worker.
+    if task.row_hi > task.row_lo
+        && std::env::var_os("DECOY_ENGINE_NATIVE_FORCE_PANIC_IN_WORKER").is_some()
+        && rayon::current_thread_index().is_some()
+    {
+        panic!("test-only forced panic inside a Rayon worker");
+    }
+
+    let mut hex_buf = [0u8; HEX_LEN];
+    let mut cursor = 0usize;
+    for i in task.row_lo..task.row_hi {
+        if array.is_null(i) {
+            continue;
+        }
+        let raw = array.value(i).as_bytes();
+        let digest = ctx.derive_row(raw).map_err(|e| (i, BatchError::from(e)))?;
+        let token = hex_prefix_into(&digest, output_bytes, &mut hex_buf);
+        let bytes = token.as_bytes();
+        task.out[cursor..cursor + bytes.len()].copy_from_slice(bytes);
+        cursor += bytes.len();
     }
     Ok(())
 }
@@ -1027,6 +1175,153 @@ mod tests {
         let empty: &[u8] = &[];
         let err = derive_index_array(&array, Some(empty), "ns", 1000, 4).unwrap_err();
         assert_eq!(err.code(), "mask_key_required");
+    }
+
+    // --- derive_hex_raw_array (group_key) ---
+
+    /// The raw-hex kernel reproduces the oracle's `derive(mask_key, namespace,
+    /// str(value).encode())[:length//2].hex()` byte-for-byte over a string column, for the config
+    /// `length` bounds 8/16/64. This is the direct Rust-level parity oracle for the group_key path.
+    #[test]
+    fn derive_hex_raw_matches_reference_derive() {
+        use crate::derive::derive;
+        let array = StringArray::from(vec![Some("alice"), Some("bob"), Some("alice"), Some("")]);
+        let key = [7u8; 32];
+        for hex_chars in [8usize, 16, 64] {
+            let out =
+                derive_hex_raw_array(&array, Some(&key), "group_key/tgt", hex_chars, 4).unwrap();
+            let output_bytes = hex_chars / 2;
+            for row in 0..array.len() {
+                let s = array.value(row);
+                let digest = derive(&key, "group_key/tgt", s.as_bytes()).unwrap();
+                let expected = digest[..output_bytes]
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                assert_eq!(out.value(row), expected, "row {row} hex_chars {hex_chars}");
+            }
+            // Same group value -> same key (rows 0 and 2 are both "alice").
+            assert_eq!(out.value(0), out.value(2));
+        }
+    }
+
+    /// Canonicalization-FREE proof: for a decomposed-unicode string, the raw kernel must key on the
+    /// RAW bytes (matching the oracle), NOT on the NFC-normalized bytes the canonicalizing
+    /// `derive_array` uses. So `derive_hex_raw_array` must equal a raw `derive(...)` and must
+    /// DIFFER from `derive_array` on the same input -- proving the raw path is actually taken.
+    #[test]
+    fn derive_hex_raw_is_canonicalization_free() {
+        use crate::derive::derive;
+        // "é" as e + combining acute accent (NOT precomposed): NFC would fold it to U+00E9.
+        let decomposed = "e\u{0301}";
+        let array = StringArray::from(vec![Some(decomposed)]);
+        let key = [3u8; 32];
+        let hex_chars = 16usize;
+
+        let raw = derive_hex_raw_array(&array, Some(&key), "ns", hex_chars, 1).unwrap();
+        let reference = {
+            let digest = derive(&key, "ns", decomposed.as_bytes()).unwrap();
+            digest[..hex_chars / 2]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        };
+        assert_eq!(
+            raw.value(0),
+            reference,
+            "raw kernel must match the raw reference"
+        );
+
+        // The canonicalizing kernel NFC-normalizes the string, so it derives from different bytes
+        // and its hex output must differ -- the guardrail that this test really is exercising the
+        // no-canonicalization property, not a coincidental match.
+        let canonicalizing =
+            derive_array(&array, Some(&key), "ns", Some(hex_chars as isize), 1).unwrap();
+        assert_ne!(
+            raw.value(0),
+            canonicalizing.value(0),
+            "a decomposed-unicode string must derive differently under NFC canonicalization"
+        );
+    }
+
+    /// EXIT GATE: the raw-hex output is byte-identical at every thread count (each row is
+    /// independent), including empty-string rows and a mid-column null carried through.
+    #[test]
+    fn derive_hex_raw_thread_count_never_changes_output() {
+        let values: Vec<Option<String>> = (0..97)
+            .map(|i| match i % 5 {
+                0 => None,
+                1 => Some(String::new()),
+                n => Some(format!("row-{i}-{}", "x".repeat(n))),
+            })
+            .collect();
+        let array = StringArray::from(values);
+        let key = [9u8; 32];
+        for hex_chars in [8usize, 16, 64] {
+            let baseline = derive_hex_raw_array(&array, Some(&key), "ns", hex_chars, 1).unwrap();
+            for threads in [2usize, 3, 4, 8, 16] {
+                let out =
+                    derive_hex_raw_array(&array, Some(&key), "ns", hex_chars, threads).unwrap();
+                assert_eq!(
+                    out, baseline,
+                    "diverged at threads={threads} hex_chars={hex_chars}"
+                );
+            }
+            // A null carries through null; a non-null empty-string row is a valid empty output.
+            assert!(baseline.is_null(0));
+            assert!(baseline.is_valid(1) && baseline.value(1).len() == hex_chars);
+        }
+    }
+
+    /// Guards: a missing/empty key fails closed before any derivation; an odd or out-of-range
+    /// `hex_chars` is rejected; a non-string array is refused; an empty/all-null column validates
+    /// nothing (tolerates a wrong-length key), matching the oracle.
+    #[test]
+    fn derive_hex_raw_guards_and_degenerate_shapes() {
+        let array = StringArray::from(vec![Some("alice")]);
+        let key = [0u8; 32];
+        assert!(matches!(
+            derive_hex_raw_array(&array, Some(&[]), "ns", 16, 1).unwrap_err(),
+            BatchError::MaskKeyRequired
+        ));
+        assert_eq!(
+            derive_hex_raw_array(&array, Some(&key), "ns", 15, 1)
+                .unwrap_err()
+                .code(),
+            "group_key_hex_chars_invalid"
+        );
+        assert_eq!(
+            derive_hex_raw_array(&array, Some(&key), "ns", 66, 1)
+                .unwrap_err()
+                .code(),
+            "group_key_hex_chars_invalid"
+        );
+        // A non-string array declines with the coded reason (defensive: the caller stringifies).
+        let ints = int64_array_local(vec![Some(1), Some(2)]);
+        assert_eq!(
+            derive_hex_raw_array(&ints, Some(&key), "ns", 16, 1)
+                .unwrap_err()
+                .code(),
+            "group_key_input_not_string"
+        );
+        // Empty / all-null validate nothing: a wrong-length key must be tolerated.
+        let empty = StringArray::from(Vec::<Option<&str>>::new());
+        assert_eq!(
+            derive_hex_raw_array(&empty, Some(&[0u8; 20]), "", 16, 4)
+                .unwrap()
+                .len(),
+            0
+        );
+        let all_null = StringArray::from(vec![None::<&str>, None]);
+        let out = derive_hex_raw_array(&all_null, Some(&[0u8; 20]), "", 16, 4).unwrap();
+        assert_eq!(out.null_count(), 2);
+        // A non-null row present -> the wrong-length key fails closed with the reference code.
+        let err = derive_hex_raw_array(&array, Some(&[0u8; 20]), "ns", 16, 1).unwrap_err();
+        assert_eq!(err.code(), "seed_wrong_length");
+    }
+
+    fn int64_array_local(v: Vec<Option<i64>>) -> arrow_array::Int64Array {
+        arrow_array::Int64Array::from(v)
     }
 
     /// Type-agnostic: the parallel index path is byte-identical at threads {1,8} for int64 and bool,

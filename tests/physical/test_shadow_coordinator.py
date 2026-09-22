@@ -21,10 +21,10 @@ from decoy_engine.execution.physical._plan import (
     PhysicalTable,
     PoolBinding,
 )
+from decoy_engine.execution.physical._shadow_assembly import assemble_column
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_coordinator import (
     ShadowCoordinator,
-    _assemble_column,
     _batches,
     _pool_values_are_string_valued,
 )
@@ -215,7 +215,7 @@ def test_assemble_column_empty(
 ) -> None:
     native_type = pa.string() if strategy != "passthrough" else input_type
     parts = [pa.array([], type=native_type)]
-    out = _assemble_column(strategy, parts)
+    out = assemble_column(strategy, parts)
     assert out.type.equals(expected_type)
     assert len(out) == 0
 
@@ -235,21 +235,21 @@ def test_assemble_column_all_null(
 ) -> None:
     native_type = pa.string() if strategy != "passthrough" else input_type
     parts = [pa.array([None, None], type=native_type)]
-    out = _assemble_column(strategy, parts)
+    out = assemble_column(strategy, parts)
     assert out.type.equals(expected_type)
     assert out.to_pylist() == [None, None]
 
 
 def test_assemble_column_normal_case_keeps_native_type() -> None:
     parts = [pa.array(["a", None, "b"], type=pa.string())]
-    out = _assemble_column("redact", parts)
+    out = assemble_column("redact", parts)
     assert out.type.equals(pa.string())
     assert out.to_pylist() == ["a", None, "b"]
 
 
 def test_assemble_column_partial_null_int_passthrough_upcasts_to_float() -> None:
     parts = [pa.array([1, None, 3], type=pa.int64())]
-    out = _assemble_column("passthrough", parts)
+    out = assemble_column("passthrough", parts)
     assert out.type.equals(pa.float64())
     assert out.to_pylist() == [1.0, None, 3.0]
 

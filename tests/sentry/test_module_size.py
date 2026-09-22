@@ -104,19 +104,6 @@ ALLOWLIST: dict[str, int] = {
     # (`statistical_generate`), a pure code move with no logic change,
     # landing this file at 632 (693 -> 632). Ceiling lowered accordingly.
     "src/decoy_engine/generation/synthesize.py": 632,
-    # native bucket_perturb S-slate (2026-09-21): crossed the 600 cap (593 ->
-    # 651) adding the `bucket_perturb_config_rejection` resolver (+ its shared
-    # `_VALID_BUCKET_PERTURB_BUCKETS` constant and the `_config_gate_rejection`
-    # dispatch branch), following the same per-strategy config-gate pattern the
-    # module already carries for hash/truncate/redact/categorical. Decomposition
-    # target: split the `*_config_rejection` resolvers plus the arrow-type
-    # resolution they share (`resolve_input_arrow_type` / `_input_arrow_type` /
-    # `_DTYPE_TO_ARROW` / `is_admitted_native_hash_type`) into a
-    # `_config_rejections.py` sibling, re-exported from here so the wide import
-    # surface (`_plan.py`, `_shadow_bindings.py`) is unchanged; deferred to avoid
-    # bundling a shared-module refactor into this operator PR. Shrink-only from
-    # here.
-    "src/decoy_engine/execution/native/_requirements.py": 651,
     "src/decoy_engine/storm/detectors.py": 1049,
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,
@@ -225,24 +212,6 @@ ALLOWLIST: dict[str, int] = {
     # the 100-column line-length cap, forcing a multi-line call. Same
     # decomposition target stands.
     "src/decoy_engine/plan/_compile.py": 703,
-    # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
-    # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
-    # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
-    # per-route intercept the single source of truth the B5 drift detector
-    # removes before comparing slopes. It cannot be split just for one
-    # accessor; decompose the fixed-width/string cost tables into a
-    # `_mem_cost_tables.py` sibling when the next dtype/pricing batch lands.
-    # TB-5 #74 (2026-07-13): +50 LOC for the estimator-BASIS single source of
-    # truth -- `route_slope` + `estimator_basis_bytes` (and its `BasisEstimate`
-    # result). This is the load-bearing OOM-safety contract: the SEQUENTIAL
-    # route's basis is the working set (two largest tables + FK dedup), NOT
-    # total raw bytes, and telemetry MUST divide observed_slope by the SAME
-    # basis the estimator multiplies or it under-states the sequential slope
-    # (the OOM-unsafe direction). `estimate_peak_bytes` now derives its
-    # prediction from `estimator_basis_bytes`, so basis + intercept + slope are
-    # one computation, unsplittable from the estimator. Same `_mem_cost_tables.py`
-    # decomposition target stands for the pricing tables.
-    "src/decoy_engine/execution/_mem_estimate.py": 660,
     # B5 dennis-remediation (2026-07-11): the HIGH (percentile-knob
     # under-shoot) and MEDIUM (crashed-run miscount) fixes each needed a
     # safety invariant documented in the module's docstrings, not just

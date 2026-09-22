@@ -80,7 +80,8 @@ def test_flag_off_native_companion_probe_never_fires(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The one runtime host probe the admitted path calls
-    (`native_companion_status`); a flag-off run must not touch it either."""
+    (`native_kernel_availability`, the per-operator companion gate); a flag-off
+    run must not touch it either."""
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     path = write_read_only_fixture(tmp_path, source, "fixture")
     config = build_config(
@@ -88,9 +89,9 @@ def test_flag_off_native_companion_probe_never_fires(
     )
 
     def _poisoned() -> object:
-        raise AssertionError("native_companion_status must not be probed when the flag is off")
+        raise AssertionError("native_kernel_availability must not be probed when the flag is off")
 
-    monkeypatch.setattr(_unified_slice_admission, "native_companion_status", _poisoned)
+    monkeypatch.setattr(_unified_slice_admission, "native_kernel_availability", _poisoned)
     run_pipeline(config, {"t": source}, engine_version=ENGINE_VERSION, unified_slice_enabled=False)
 
 

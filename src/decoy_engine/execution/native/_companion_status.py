@@ -11,10 +11,11 @@ reuses the same staged primitives (`_EXPECTED_ABI_VERSION`, `HASH_KAT`,
 `INDEX_KAT`) the loaders already pin, in a read-only probe that never raises
 and never returns a usable kernel -- it only classifies.
 
-Both kernels are checked because the index kernel is an ADDITIVE symbol on the
-shared abi-2 companion (`_index_ext` module docstring): a companion built
-before it existed reports the right ABI and passes the hash KAT while lacking
-`derive_index_batch` entirely. Such a companion is real but incomplete, so
+All three kernels are checked because the index and raw-hex kernels are
+ADDITIVE symbols on the shared abi-2 companion (`_index_ext` / `_group_key_ext`
+module docstrings): a companion built before either existed reports the right
+ABI and passes the hash KAT while lacking `derive_index_batch` /
+`derive_hex_raw_batch` entirely. Such a companion is real but incomplete, so
 `ok` is False for it too -- a caller must not see `present-ok` for a partially
 capable companion.
 """
@@ -31,6 +32,7 @@ import pyarrow as pa
 from decoy_engine.errors import DecoyError
 
 from ._crypto_ext import _EXPECTED_ABI_VERSION, HASH_KAT
+from ._group_key_ext import RAW_HEX_KAT
 from ._index_ext import INDEX_KAT
 
 _DISTRIBUTION_NAME = "decoy-engine-native"
@@ -181,6 +183,41 @@ def _probe_index_kat(kernel: object, abi_actual: str) -> tuple[Reason, BaseExcep
     )
 
 
+def _probe_raw_hex_kat(kernel: object, abi_actual: str) -> tuple[Reason, BaseException] | None:
+    """Run `RAW_HEX_KAT` through `kernel.derive_hex_raw_batch`, mirroring
+    `load_compiled_raw_hex_kernel`'s load-time self-test exactly. A companion
+    built before the raw-hex kernel existed (a still-valid abi-2 build for the
+    hash/index routes alone) lacks `derive_hex_raw_batch` entirely, which is an
+    `AttributeError` caught here and classified `load-error` -- such a companion
+    is incomplete, so the overall probe must not report `present-ok` for it (see
+    the module docstring)."""
+    try:
+        derive_hex_raw_batch_fn = kernel.derive_hex_raw_batch  # type: ignore[attr-defined]
+        probe_out = derive_hex_raw_batch_fn(
+            pa.array(RAW_HEX_KAT.values, type=pa.string()),
+            mask_key=RAW_HEX_KAT.mask_key,
+            namespace=RAW_HEX_KAT.namespace,
+            hex_chars=RAW_HEX_KAT.hex_chars,
+            native_threads=1,
+        )
+    except Exception as exc:
+        return "load-error", exc
+    reproduces = (
+        isinstance(probe_out, pa.Array)
+        and probe_out.type == pa.string()
+        and probe_out.to_pylist() == list(RAW_HEX_KAT.expected)
+    )
+    if reproduces:
+        return None
+    return "kat-corrupt", NativeCompanionCheckError(
+        "the decoy-engine-native companion's derive_hex_raw_batch reproduced the "
+        "wrong value for the pinned RAW_HEX_KAT known-answer vector",
+        reason="kat-corrupt",
+        abi_expected=_EXPECTED_ABI_VERSION,
+        abi_actual=abi_actual,
+    )
+
+
 def _absent_status(exc: ModuleNotFoundError | None) -> NativeCompanionStatus:
     cause: BaseException = exc or NativeCompanionCheckError(
         "the decoy-engine-native companion is not installed (no 'native' extra "
@@ -215,10 +252,10 @@ def _load_error_status(exc: BaseException) -> NativeCompanionStatus:
 def native_companion_status() -> NativeCompanionStatus:
     """Probe the optional `decoy-engine-native` companion; never raises.
 
-    Drives the same staged check the two private loaders perform -- import,
-    ABI-tag compare, known-answer self-test -- for BOTH the crypto and index
-    kernels, so a partially-capable companion (only one kernel actually
-    works) is reported `ok=False`, never `present-ok`. Every failure stage
+    Drives the same staged check the three private loaders perform -- import,
+    ABI-tag compare, known-answer self-test -- for the crypto, index, AND
+    raw-hex kernels, so a partially-capable companion (only some kernels
+    actually work) is reported `ok=False`, never `present-ok`. Every failure stage
     populates `cause`: a real loader exception is preserved as caught; a
     stage with no natural exception (absent, ABI mismatch, a self-test that
     ran and returned the wrong value) gets a synthesized
@@ -279,6 +316,7 @@ def native_companion_status() -> NativeCompanionStatus:
     for outcome in (
         _probe_hash_kat(kernel, reported_abi),
         _probe_index_kat(kernel, reported_abi),
+        _probe_raw_hex_kat(kernel, reported_abi),
     ):
         if outcome is not None:
             kat_reason, kat_cause = outcome
@@ -303,8 +341,56 @@ def native_companion_status() -> NativeCompanionStatus:
     )
 
 
+@dataclass(frozen=True)
+class KernelAvailability:
+    """Per-kernel availability of the optional companion, so an admission gate
+    can require ONLY the kernel(s) its operators actually use.
+
+    Each flag is True only when the companion imports, reports the expected ABI,
+    carries that kernel's symbol, and reproduces its known-answer vector. A
+    companion built before an ADDITIVE symbol landed (e.g. `derive_hex_raw_batch`
+    on an otherwise-valid abi-2 build) has `crypto`/`index` True but `raw_hex`
+    False -- so a hash-only or categorical/bucket_perturb table keeps native
+    acceleration while only group_key declines to the oracle. `native_companion_
+    status().ok` is the AND of all three (fully-capable); this is the per-kernel
+    breakdown a per-operator gate needs instead."""
+
+    crypto: bool
+    index: bool
+    raw_hex: bool
+
+
+def native_kernel_availability() -> KernelAvailability:
+    """Per-kernel availability of the companion; never raises.
+
+    Runs the same import + ABI guard as `native_companion_status`, then each
+    kernel's own KAT probe independently, so a missing additive symbol declines
+    only the operators that need it. An absent / unimportable / ABI-mismatched
+    companion yields all-False (nothing native runs)."""
+    try:
+        spec = importlib.util.find_spec("decoy_engine_native")
+    except Exception:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    if spec is None:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    try:
+        kernel = importlib.import_module("decoy_engine_native._kernel")
+        reported_abi = kernel.abi_version()
+    except Exception:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    if reported_abi != _EXPECTED_ABI_VERSION:
+        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+    return KernelAvailability(
+        crypto=_probe_hash_kat(kernel, reported_abi) is None,
+        index=_probe_index_kat(kernel, reported_abi) is None,
+        raw_hex=_probe_raw_hex_kat(kernel, reported_abi) is None,
+    )
+
+
 __all__ = [
+    "KernelAvailability",
     "NativeCompanionCheckError",
     "NativeCompanionStatus",
     "native_companion_status",
+    "native_kernel_availability",
 ]

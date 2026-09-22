@@ -25,8 +25,10 @@ from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._dispatch import plan_native_route
+from decoy_engine.execution.native._operator_config_rejections import (
+    is_deterministic_categorical,
+)
 from decoy_engine.execution.native._plan import native_route_eligibility
-from decoy_engine.execution.native._requirements import is_deterministic_categorical
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
