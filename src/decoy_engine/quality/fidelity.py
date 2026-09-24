@@ -72,17 +72,34 @@ Prior art (per established-methodology rule):
     bounded in [0, 1], easy to interpret as "fraction of mass that
     would have to move from P's distribution to recover Q's".
 
+A2 (2026-09): additive goodness-of-fit extras. Each numeric column entry
+gains `extra_metrics.ks_complement` (a binned empirical-CDF approximation
+of KSComplement) and each categorical / bool column entry gains
+`extra_metrics.chi_cramers_v` (a common-partition two-sample chi-square,
+normalized to Cramer's V). Both are named nested fields alongside the
+existing `similarity` / `method` / `comparable` -- they do not replace or
+feed the primary similarity, `overall_score`, or the grade. See
+`_distribution_gof.py` for the formulas, source patterns
+(`scipy.stats.ks_2samp` / `scipy.stats.chisquare`), and guards.
+
 Out of scope (later sub-sprints own these):
   - Grade letter (A / B / C / D / F): D1d report assembly owns the
     mapping from score to grade.
   - Per-strategy expected-preservation bands: D4 policy.
   - Drift warnings that gate the job: D4 policy.
+  - Folding the A2 extras into overall_score / grade: additive-only by
+    design (plan open question 1); a separate, deliberate decision.
 """
 
 from __future__ import annotations
 
 import math
 from typing import Any
+
+from decoy_engine.quality._distribution_gof import (
+    chi_square_cramers_v,
+    ks_complement_binned,
+)
 
 QUALITY_FIDELITY_SCHEMA_VERSION = "quality-fidelity/v1"
 
@@ -173,6 +190,21 @@ def compute_fidelity(
     }
 
 
+# ── A2 goodness-of-fit wiring ────────────────────────────────────────────────
+
+
+def _finalize_gof(result: dict[str, Any]) -> dict[str, Any]:
+    """Round every float field of a `_distribution_gof` result to the same
+    precision pin the primary similarity scores use, so the JSON stays
+    byte-stable. The metric functions return raw floats on purpose (single
+    source of truth for the rounding pin lives here, not duplicated into
+    the sibling module)."""
+    return {
+        key: round(value, _SCORE_PRECISION) if isinstance(value, float) else value
+        for key, value in result.items()
+    }
+
+
 # ── per-kind comparators ────────────────────────────────────────────────────
 
 
@@ -248,6 +280,9 @@ def _numeric_similarity(
         "similarity": round(similarity, _SCORE_PRECISION),
         "method": "quantile_rmse",
         "comparable": True,
+        "extra_metrics": {
+            "ks_complement": _finalize_gof(ks_complement_binned(src_stats, out_stats)),
+        },
     }
 
 
@@ -278,6 +313,9 @@ def _categorical_similarity(
         "similarity": round(similarity, _SCORE_PRECISION),
         "method": "tvd",
         "comparable": True,
+        "extra_metrics": {
+            "chi_cramers_v": _finalize_gof(chi_square_cramers_v(src_stats, out_stats)),
+        },
     }
 
 
