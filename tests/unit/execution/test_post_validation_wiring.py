@@ -156,6 +156,79 @@ def _dup_pk_fk_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tabl
     return _validated(raw), {"parent": parent, "child": child}
 
 
+def _value_reuse_and_leak_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
+    """One table, two columns whose OUTPUT re-emits SOURCE values.
+
+    `name` uses shuffle, a value-reuse strategy: its output is a permutation of the
+    source, so every output value is a source value by design (the leakage scan
+    treats this as legitimate, so sampled_values is the only place it could leak).
+    `code` uses truncate and leaks ("AAAAA"[:3] == "AAA", a source value). Both
+    prove the same point: reading sampled_values off the output alone would carry
+    source PII into the manifest, so the source-equality filter must catch it.
+    """
+    src = pa.table(
+        {
+            "name": pa.array(["alice", "bob", "carol"], type=pa.string()),
+            "code": pa.array(["AAAAA", "AAA", "BBBBB"], type=pa.string()),
+        }
+    )
+    src_path = tmp_path / "t.parquet"
+    pq.write_table(src, src_path)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
+        "targets": {
+            "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
+        },
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "name", "strategy": "shuffle", "namespace": "ns"},
+                    {
+                        "name": "code",
+                        "strategy": "truncate",
+                        "provider": "person_email",
+                        "namespace": "ns",
+                        "provider_config": {"length": 3},
+                    },
+                ],
+            }
+        ],
+    }
+    return _validated(raw), {"t": src}
+
+
+def _quarantine_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
+    """A luhn-validated passthrough column with one bad row quarantined.
+
+    "4532015112830367" fails the luhn check and is routed to quarantine, so the
+    output has ONE FEWER row than the source. That row-count gap is exactly what
+    made null_audit false-fail before the scanned source was aligned to the
+    post-quarantine output.
+    """
+    src = pa.table({"cc": pa.array(["4111111111111111", "4532015112830367"], type=pa.string())})
+    src_path = tmp_path / "cc.parquet"
+    pq.write_table(src, src_path)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
+        "targets": {
+            "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
+        },
+        "tables": [{"name": "t", "columns": [{"name": "cc", "strategy": "passthrough"}]}],
+        "validators": [{"name": "luhn", "columns": {"t": ["cc"]}}],
+        "quarantine": {
+            "enabled": True,
+            "output_path": str(tmp_path / "quarantine.jsonl"),
+            "triggers": ["validation_fail"],
+        },
+    }
+    return _validated(raw), {"t": src}
+
+
 _POST_VALIDATION_KEYS = frozenset({"quality_summary", "failed_checks", "post_validation_enforce"})
 
 
@@ -381,6 +454,9 @@ class TestConfigRoundTripPrivacyCombined:
         assert all(len(v) == 2 for v in sampled.values())
 
     def test_summary_contains_no_source_pii(self, tmp_path: Path) -> None:
+        # Hash (substitution) output is synthetic, so no filtering is needed here;
+        # this is the original case, kept as the baseline. The value-reuse / leak
+        # case below is the one it missed.
         source_values = ["a@x.com", "b@x.com", "c@x.com"]
         cfg, src = _hash_config(tmp_path, source_values)
         r = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
@@ -388,6 +464,26 @@ class TestConfigRoundTripPrivacyCombined:
         emitted = {v for values in sampled.values() for v in values}
         assert emitted  # synthetic spot-check rows were captured
         assert not (emitted & set(source_values)), "a source value leaked into the summary"
+
+    def test_summary_no_source_pii_for_value_reuse_and_leak(self, tmp_path: Path) -> None:
+        # The gap the hash-only case missed: a shuffle column re-emits source
+        # values by design and a leaking truncate echoes one by accident, so
+        # reading sampled_values off the output alone would carry source PII into
+        # the manifest. The source-equality filter must keep every source value
+        # out. Fails on the pre-fix wiring (which forwarded the runner verbatim).
+        cfg, src = _value_reuse_and_leak_config(tmp_path)
+        r = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
+        sampled = r.quality_metrics["quality_summary"]["sampled_values"]
+        source_values = set(src["t"].column("name").to_pylist()) | set(
+            src["t"].column("code").to_pylist()
+        )
+        emitted = {v for values in sampled.values() for v in values}
+        assert not (emitted & source_values), "a source value reached sampled_values"
+        # The shuffle column is entirely source-equal -> its entry is dropped
+        # (no synthetic evidence to show), rather than surfacing an empty list.
+        assert "t.name" not in sampled
+        # The leaking truncate keeps only its non-source prefix.
+        assert sampled.get("t.code") == ["BBB"]
 
     def test_fidelity_and_post_validation_both_on(self, tmp_path: Path) -> None:
         # Both are full-frame-forcing report attachments; both must appear.
@@ -402,3 +498,25 @@ class TestConfigRoundTripPrivacyCombined:
         assert "fidelity_reports" in r.quality_metrics
         assert "quality_summary" in r.quality_metrics
         assert r.quality_metrics["execution"]["execution_mode"] == "full_frame"
+
+
+# --------------------------------------------------------------------------
+# Quarantine alignment: a successful quarantine is not a false null_audit fail
+# --------------------------------------------------------------------------
+
+
+class TestQuarantineAlignment:
+    def test_quarantine_does_not_false_fail_null_audit(self, tmp_path: Path) -> None:
+        # A quarantined row leaves the output with fewer rows than the source.
+        # The scans must run against the row-aligned source, so a successful
+        # quarantine does NOT read as a null_audit (row-count) hard failure.
+        # Fails on the pre-fix wiring (scanned the unfiltered source).
+        cfg, src = _quarantine_config(tmp_path)
+        r = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
+        # The bad row was quarantined: output has one fewer row than the source.
+        assert r.quality_metrics["quarantine"]["total_quarantined"] == 1
+        assert r.outputs["t"].num_rows == 1
+        assert src["t"].num_rows == 2
+        # The successful quarantine is not a false hard failure.
+        assert "null_audit" not in r.quality_metrics["quality_summary"]["failed_checks"]
+        assert not any(c["code"] == "null_audit" for c in r.quality_metrics["failed_checks"])

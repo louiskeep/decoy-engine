@@ -579,7 +579,7 @@ def run_pipeline(
     # see `_pipeline_finalize.finalize_validators_and_quarantine` for the
     # full "why" (trap T5, LOW-1 raise-before-write ordering, etc). Mutates
     # `quality_metrics` in place and returns the (possibly quarantine-filtered) outputs.
-    outputs = _pipeline_finalize.finalize_validators_and_quarantine(
+    outputs, quarantine_removed = _pipeline_finalize.finalize_validators_and_quarantine(
         outputs,
         config=config,
         caller_sources=resident_sources,
@@ -615,6 +615,7 @@ def run_pipeline(
         result,
         plan=plan,
         sources=resident_sources,
+        quarantine_row_mask=quarantine_removed,
         profile=profile,
         registry=resolved_registry,
         relationship_graph=graph,

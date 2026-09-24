@@ -182,11 +182,80 @@ def compute_fidelity_reports(
     return fidelity_reports
 
 
+def _align_sources_to_output(
+    sources: Mapping[str, pa.Table],
+    quarantine_row_mask: Mapping[str, set[int]],
+) -> Mapping[str, pa.Table]:
+    """Drop the quarantined rows from `sources` so it lines up with the output.
+
+    Quarantine filters rows out of the output but leaves `sources` (the pre-mask
+    input) whole, so a row-count-dependent scan (null_audit) would read the gap as
+    a mismatch and hard-fail on a job where quarantine merely did its job. The
+    post-mask output and its source are 1:1 by row on the full-frame path, so the
+    same per-table row indices quarantine removed from the output apply to the
+    source. Returns `sources` unchanged when nothing was quarantined.
+    """
+    if not quarantine_row_mask:
+        return sources
+    aligned: dict[str, pa.Table] = {}
+    for name, table in sources.items():
+        bad = quarantine_row_mask.get(name)
+        if not bad:
+            aligned[name] = table
+            continue
+        keep = pa.array([i not in bad for i in range(table.num_rows)], type=pa.bool_())
+        aligned[name] = table.filter(keep)
+    return aligned
+
+
+def _filter_sampled_values_source_equality(
+    quality_summary: dict[str, Any],
+    sources: Mapping[str, pa.Table],
+) -> None:
+    """Strip any sampled value equal to a source value in the same column (R18).
+
+    `sampled_values` is read from the masked OUTPUT of non-passthrough columns, on
+    the assumption the output is synthetic. That holds for substitution strategies
+    but not universally: a value-reuse strategy (shuffle, categorical) re-emits
+    source values by design, and a leaking substitution echoes one by accident, so
+    an output-only read can carry source PII into the manifest. This per-column
+    source-equality filter removes any sampled value that also appears in that
+    column's source. A column whose sampled values are all source-equal (e.g. a
+    shuffle column) drops its entry entirely rather than surfacing an empty list:
+    it has no synthetic evidence to show. Filters against the full pre-quarantine
+    source (not the row-aligned one) so a value that moved out of a quarantined
+    row's position still cannot slip through.
+    """
+    sampled: dict[str, list[Any]] = quality_summary.get("sampled_values") or {}
+    if not sampled:
+        return
+    # Build the key -> source-value-set map from `sources` (not by splitting the
+    # "table.column" key), so a column name containing a dot cannot be misread.
+    needed = set(sampled)
+    source_by_key: dict[str, set[Any]] = {}
+    for table_name, table in sources.items():
+        for col in table.column_names:
+            key = f"{table_name}.{col}"
+            if key in needed:
+                source_by_key[key] = {v for v in table.column(col).to_pylist() if v is not None}
+    filtered: dict[str, list[Any]] = {}
+    for key, values in sampled.items():
+        source_values = source_by_key.get(key)
+        if source_values is None:
+            filtered[key] = values  # no resolvable source column: leave untouched
+            continue
+        kept = [v for v in values if v not in source_values]
+        if kept:
+            filtered[key] = kept
+    quality_summary["sampled_values"] = filtered
+
+
 def compute_post_validation(
     execution_result: ExecutionResult,
     *,
     plan: Plan,
     sources: Mapping[str, pa.Table],
+    quarantine_row_mask: Mapping[str, set[int]],
     profile: Profile,
     registry: ProviderRegistry,
     relationship_graph: RelationshipGraph,
@@ -218,9 +287,17 @@ def compute_post_validation(
     change to branch on: enforce true + a non-empty `failed_checks` promotes the
     hard-fails to a job failure. The engine never fails the job itself.
 
-    Privacy (R18): the summary's `sampled_values` carries only synthetic,
-    non-passthrough masked values; this wiring forwards the runner's output
-    verbatim and never reads source PII into `quality_metrics`.
+    Privacy (R18): `sampled_values` is read from the masked output, but a
+    value-reuse strategy or a leaking substitution can echo a source value into
+    it, so this wiring runs a per-column source-equality filter over the runner's
+    output before it reaches `quality_metrics` (see
+    `_filter_sampled_values_source_equality`); no source PII survives into the
+    manifest.
+
+    Quarantine alignment: when quarantine removed rows, the output has fewer rows
+    than `sources`. The scans run against the row-aligned source (see
+    `_align_sources_to_output`) so a successful quarantine does not read as a
+    row-count mismatch; the privacy filter still uses the full source.
     """
     if not post_validation:
         return
@@ -229,7 +306,7 @@ def compute_post_validation(
     summary = PostValidationRunner().run(
         plan=plan,
         execution_result=execution_result,
-        sources=sources,
+        sources=_align_sources_to_output(sources, quarantine_row_mask),
         profile=profile,
         registry=registry,
         relationship_graph=relationship_graph,
@@ -243,6 +320,9 @@ def compute_post_validation(
     if summary is None:  # pragma: no cover - post_validation=True always returns a summary
         return
     qm = execution_result.quality_metrics
+    quality_summary = qm.get("quality_summary")
+    if quality_summary is not None:
+        _filter_sampled_values_source_equality(quality_summary, sources)
     qm["failed_checks"] = [
         {"code": name, "message": f"post-validation scan {name!r} hard-failed"}
         for name in summary.failed_checks
@@ -257,7 +337,7 @@ def finalize_validators_and_quarantine(
     caller_sources: dict[str, pa.Table],
     mask_row_errors: tuple[Any, ...],
     quality_metrics: dict[str, Any],
-) -> dict[str, pa.Table]:
+) -> tuple[dict[str, pa.Table], dict[str, set[int]]]:
     """SP-05 job-level validators (P5.INFRA.4) + D8 combined quarantine pass.
 
     Validators run AFTER all column passes complete, on the UNFILTERED
@@ -272,9 +352,12 @@ def finalize_validators_and_quarantine(
 
     Mutates `quality_metrics` in place (validation / row_errors /
     quarantine keys) and returns the (possibly quarantine-filtered)
-    `outputs` dict; the caller's `outputs` binding must be reassigned from
-    the return value.
+    `outputs` dict plus the per-table set of row indices quarantine removed
+    (empty when nothing was quarantined). The caller reassigns `outputs` from
+    the first return value; post-validation uses the second to align the
+    sources it scans to the filtered output.
     """
+    quarantine_removed: dict[str, set[int]] = {}
     validators_config: list[Any] = config.get("validators") or []
     v_report: Any = None
     if validators_config:
@@ -317,11 +400,20 @@ def finalize_validators_and_quarantine(
             raise RowErrorsFailedError(row_errors_uncovered)
 
         if validation_covered or row_errors_covered:
-            from decoy_engine.quarantine import apply_quarantine, quarantine_manifest
+            from decoy_engine.quarantine import (
+                apply_quarantine,
+                quarantine_manifest,
+                quarantine_row_mask,
+            )
 
+            # Capture the removed row set against the pre-filter outputs before
+            # apply_quarantine rebinds `outputs` to the filtered tables.
+            quarantine_removed = quarantine_row_mask(
+                outputs, v_report, quarantine_cfg, row_errors=mask_row_errors
+            )
             outputs, q_summary = apply_quarantine(
                 outputs, v_report, quarantine_cfg, row_errors=mask_row_errors
             )
             quality_metrics["quarantine"] = quarantine_manifest(q_summary)
 
-    return outputs
+    return outputs, quarantine_removed

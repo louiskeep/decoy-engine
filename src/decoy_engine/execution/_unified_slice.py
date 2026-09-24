@@ -342,7 +342,9 @@ def _execute_admitted(
             caller_sources={candidate.table: candidate.source},
             execution_plan_decision=execution_plan_decision,
         )
-        outputs = _pipeline_finalize.finalize_validators_and_quarantine(
+        # Post-validation declines the unified slice, so its quarantine keep-mask
+        # (second return) is unused here.
+        outputs, _ = _pipeline_finalize.finalize_validators_and_quarantine(
             outputs,
             config=config,
             caller_sources={candidate.table: candidate.source},
