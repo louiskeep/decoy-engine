@@ -34,7 +34,7 @@ never undermined by an eager materialization upstream of the route decision.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 import pyarrow as pa
 
@@ -63,6 +63,9 @@ def materialize_source(value: pa.Table | LazySource) -> pa.Table:
 
 def resolve_resident_sources(
     caller_sources: Mapping[str, pa.Table | LazySource],
+    *,
+    source_loader: Callable[[str], pa.Table] | None = None,
+    required_tables: Iterable[str] = (),
 ) -> dict[str, pa.Table]:
     """Materialize every source, for routes that need them all resident at once.
 
@@ -71,8 +74,26 @@ def resolve_resident_sources(
     all operate on whole `pa.Table` frames, so every remaining source is
     resolved once, here, at the point full_frame actually consumes them --
     never before that.
+
+    `source_loader` closes the loader-backed hole: a caller may hand
+    `run_pipeline` a `source_loader` with an EMPTY `sources` dict (the
+    sequential / out-of-core routes read one table at a time through the
+    loader, so nothing is resident up front). When such a job is diverted to
+    full_frame -- e.g. `post_validation` declines the bounded route it would
+    otherwise take -- `caller_sources` is empty, and materializing only that
+    would hand the adapter no tables and silently emit empty outputs. So for
+    any `required_tables` name missing from `caller_sources`, load it through
+    the `source_loader`, giving the full_frame path the same real tables the
+    route it displaced would have read. When `caller_sources` already holds a
+    table (the resident / LazySource path, where `source_loader` is None),
+    that entry wins and the loader is never called for it.
     """
-    return {name: materialize_source(src) for name, src in caller_sources.items()}
+    resident = {name: materialize_source(src) for name, src in caller_sources.items()}
+    if source_loader is not None:
+        for name in required_tables:
+            if name not in resident:
+                resident[name] = source_loader(name)
+    return resident
 
 
 def resolve_sequential_loader(

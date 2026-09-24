@@ -40,4 +40,24 @@ SCANS: tuple[tuple[str, ScanFn], ...] = (
     ("sampled_values", run_sampled_values),
 )
 
-__all__ = ["SCANS", "ScanFn"]
+# Scans whose HARD-FAIL privacy check is value-MEMBERSHIP against the source (a
+# source value reappearing in the masked output is a leak). The runner hands these
+# the FULL pre-quarantine source: quarantine can drop a source row whose value
+# still appears in a RETAINED masked row, and an aligned (post-quarantine) source
+# would no longer contain that value, hiding a real substitution leak. Positional /
+# row-count scans (null_audit, determinism_sample) instead need the row-ALIGNED
+# source so a successful quarantine is not read as a false failure -- they are NOT
+# listed here. A new value-membership scan MUST be added to this set or a
+# quarantine could hide its leaks (the source-selection seam is wiring, not
+# scan-internal logic).
+#
+# NOTE (dennis A1 LOW, tracked): leakage carries a SECOND, positional sub-branch --
+# the value-reuse fixed-point WARNING for shuffle/categorical -- guarded by a
+# len-equality check, so under quarantine (len mismatch) that WARN-only signal is
+# skipped. That is the safe degradation (a positional check against a misaligned
+# full source would be wrong), and hard-fail substitution-leak detection is the
+# priority. Splitting leakage's two sub-checks by source need (membership -> full,
+# fixed-point -> aligned) would require a scan-internal change and is deferred.
+FULL_SOURCE_SCANS: frozenset[str] = frozenset({"leakage"})
+
+__all__ = ["FULL_SOURCE_SCANS", "SCANS", "ScanFn"]

@@ -275,6 +275,32 @@ def apply_quarantine(
     return filtered_outputs, summary
 
 
+def quarantine_row_mask(
+    outputs: dict[str, pa.Table],
+    report: ValidationReport | None,
+    quarantine_config: dict[str, Any],
+    *,
+    row_errors: tuple[RowErrorRecord, ...] = (),
+) -> dict[str, set[int]]:
+    """Per-table row indices that ``apply_quarantine`` removes from ``outputs``.
+
+    The keep-complement of the filtered output: same ``_normalize_worklist`` +
+    trigger filtering + present-table guard that ``compute_quarantine`` uses to
+    build its removal set, exposed on its own so a caller can reproduce the exact
+    row set removed and apply it to a row-aligned companion frame (the post-mask
+    output and its source are 1:1 by row on the full-frame path). Post-validation
+    uses this to align the sources it scans to the post-quarantine output, so a
+    successful quarantine (fewer output rows than source rows) does not read as a
+    row-count mismatch. Empty dict when nothing is quarantined.
+    """
+    triggers: list[str] = quarantine_config.get("triggers") or []
+    rows_to_remove: dict[str, set[int]] = defaultdict(set)
+    for item in _normalize_worklist(report, row_errors, triggers):
+        if outputs.get(item.table) is not None:
+            rows_to_remove[item.table].add(item.row_index)
+    return dict(rows_to_remove)
+
+
 def _write_jsonl(path: str, records: list[dict[str, Any]]) -> None:
     """Write ``records`` to a JSON-lines file at ``path``.
 

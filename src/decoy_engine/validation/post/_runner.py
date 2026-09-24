@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine.generation.pool._events import QualityWarning
-from decoy_engine.validation.post._checks import SCANS
+from decoy_engine.validation.post._checks import FULL_SOURCE_SCANS, SCANS
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome
 from decoy_engine.validation.post._types import (
     CompositeCoherenceReport,
@@ -60,6 +60,7 @@ class PostValidationRunner:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
         config: dict[str, Any],
+        full_sources: Mapping[str, pa.Table] | None = None,
     ) -> QualitySummary | None:
         """Scan the masked output if `post_validation` is on, else return None.
 
@@ -67,6 +68,14 @@ class PostValidationRunner:
         on, walks the registered scans (minus `post_validation_skip`), merges their
         outcomes into one QualitySummary, sets failed_checks, and forwards the
         QualityWarning events + the phase timing.
+
+        `sources` is the row-ALIGNED source (quarantine-dropped rows removed) that
+        positional / row-count scans need. `full_sources`, when given, is the FULL
+        pre-quarantine source handed to the value-membership scans in
+        `FULL_SOURCE_SCANS` (e.g. leakage): a quarantine that drops a source row
+        whose value still appears in a retained masked row must not hide that leak.
+        `full_sources=None` (no quarantine, or a caller that draws no distinction)
+        keeps every scan on `sources`.
         """
         if not bool(config.get("post_validation", False)):
             return None
@@ -83,16 +92,21 @@ class PostValidationRunner:
             namespace_registry=namespace_registry,
             sample_size=int(config.get("post_validation_sample_size", 100)),
         )
+        # Value-membership scans read the full pre-quarantine source; every other
+        # scan keeps the aligned `sources`. Same context object when the caller
+        # draws no distinction, so the existing single-source callers are unchanged.
+        full_ctx = ctx if full_sources is None else replace(ctx, sources=full_sources)
 
         outcomes: list[ScanOutcome] = []
         for name, scan in SCANS:
             if name in skip:
                 continue
+            scan_ctx = full_ctx if name in FULL_SOURCE_SCANS else ctx
             # Failed-job evidence: a crashing scan becomes a failed outcome (with
             # the error recorded), never a lost manifest. The job still fails (the
             # scan is in failed_checks) but the quality_summary is produced.
             try:
-                outcomes.append(scan(ctx))
+                outcomes.append(scan(scan_ctx))
             except Exception as exc:
                 outcomes.append(
                     ScanOutcome(

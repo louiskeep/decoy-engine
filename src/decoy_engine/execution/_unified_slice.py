@@ -342,7 +342,9 @@ def _execute_admitted(
             caller_sources={candidate.table: candidate.source},
             execution_plan_decision=execution_plan_decision,
         )
-        outputs = _pipeline_finalize.finalize_validators_and_quarantine(
+        # Post-validation declines the unified slice, so its quarantine keep-mask
+        # (second return) is unused here.
+        outputs, _ = _pipeline_finalize.finalize_validators_and_quarantine(
             outputs,
             config=config,
             caller_sources={candidate.table: candidate.source},
@@ -398,6 +400,7 @@ def maybe_run_unified_slice(
     source_loader: Callable[[str], pa.Table] | None,
     sink: TransactionalSink | None,
     fidelity_report: bool,
+    post_validation: bool = False,
     vault_writer: Any,
     route: str,
     route_chunked: bool,
@@ -459,6 +462,7 @@ def maybe_run_unified_slice(
         sink=sink,
         source_loader=source_loader,
         fidelity_report=fidelity_report,
+        post_validation=post_validation,
         vault_writer=vault_writer,
         config=config,
         profile=profile,
@@ -525,6 +529,7 @@ _PIPELINE_LOCAL_KWARGS: Final[tuple[str, ...]] = (
     "source_loader",
     "sink",
     "fidelity_report",
+    "post_validation",
     "vault_writer",
     "route",
     "route_chunked",
