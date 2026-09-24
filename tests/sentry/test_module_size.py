@@ -453,6 +453,22 @@ ALLOWLIST: dict[str, int] = {
     # at/under GOAL, so per this module's own docstring the entry is
     # deleted rather than kept with a lowered ceiling. A future regrowth
     # past GOAL re-enters the allowlist through the normal cross-goal path.
+    # A1 post-validation wiring (2026-09-24): re-crossed GOAL (599 -> 635)
+    # threading the default-OFF post-validation scan suite through run_pipeline
+    # -- the four runtime args, the sampled-values source-equality filter, the
+    # full-source leak-scan selection, and the finalize hand-off to the
+    # quarantine-aware validator, mirroring the fidelity_report seam at one
+    # site. Dense reviewed exception (<= MAX). Decompose the finalize/validator
+    # hand-off into `_pipeline_finalize.py`'s owner cluster when the next
+    # post-validation change lands (that sibling already exists).
+    "src/decoy_engine/execution/_pipeline.py": 635,
+    # A1 post-validation wiring (2026-09-24): crossed GOAL (was under) threading
+    # the resident-source resolution the post-validation scans need -- the
+    # source_loader + required_tables plumbing and the admission-path source
+    # alignment so a forced full-frame slice keeps its sibling-table inputs.
+    # Dense reviewed exception (<= MAX). Decompose the admission-source helpers
+    # into `_unified_slice_admission.py` (already a sibling) on the next change.
+    "src/decoy_engine/execution/_unified_slice.py": 605,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table
@@ -479,7 +495,11 @@ ALLOWLIST: dict[str, int] = {
     # trio is one cohesive transactional unit that this fix extends, not appends
     # beside; decompose that publish cluster into a `_quarantine_transaction.py`
     # sibling when the next quarantine-sidecar change lands.
-    "src/decoy_engine/quarantine.py": 619,
+    # A1 post-validation wiring (2026-09-24): +26 LOC (619 -> 645) adding
+    # `quarantine_row_mask` so the post-validation finalize can drop the exact
+    # rows a scan quarantines while keeping the source row-aligned for the
+    # positional scans. Same publish-cluster decomposition target stands.
+    "src/decoy_engine/quarantine.py": 645,
     # HC-1 slice 1 (2026-07-17): crossed the 600 cap (639) wiring the code_set
     # corpus provenance stamp + pinned-record lookup into the out-of-core route
     # -- the per-chunk evidence stamp and the job-wide pinned corpus record are
