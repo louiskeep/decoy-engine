@@ -180,6 +180,7 @@ def cheap_admission(
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
     fidelity_report: bool,
+    post_validation: bool = False,
     vault_writer: Any,
     config: Mapping[str, Any],
     profile: Profile,
@@ -220,7 +221,11 @@ def cheap_admission(
     # only one that writes a sink -- is already declined above by the route check.
     # This is what lets the platform worker (which always attaches a
     # ParquetTransactionalSink) reach the certified lane.
-    if fidelity_report or vault_writer is not None:
+    if fidelity_report or post_validation or vault_writer is not None:
+        # A1: post_validation forces the full pandas full-frame path (same as
+        # fidelity_report) so the finalize seam runs the scan suite; the unified
+        # slice returns early without it, so admitting an opted-in job would
+        # silently skip post-validation while reporting success.
         return None
     if config.get("validators") or config.get("quarantine") or config.get("run_storm"):
         return None

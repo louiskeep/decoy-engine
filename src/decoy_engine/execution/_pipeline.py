@@ -148,6 +148,10 @@ def run_pipeline(
     instance_default_locale: str | None = None,
     vault_writer: Any = None,
     fidelity_report: bool = False,
+    post_validation: bool = False,
+    post_validation_skip: list[str] | None = None,
+    post_validation_sample_size: int = 100,
+    post_validation_enforce: bool = False,
     now_iso: str | None = None,
     execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
@@ -194,6 +198,27 @@ def run_pipeline(
     emitted; the intermediate snapshots (which carry category labels /
     raw values) are never attached. First slice is mask-kind tables,
     marginal-only (no joint_columns); generate-kind tables are skipped.
+
+    A1 (2026-09-23) post-execution validation surfacing. `post_validation` is
+    the opt-in, default-OFF switch that runs the post-execution scan suite
+    (`validation.post.PostValidationRunner`) over the masked output and attaches
+    a `quality_summary` manifest block under `ExecutionResult.quality_metrics`,
+    mirroring `fidelity_report`'s default-OFF, report-shaped contract. Default-OFF
+    leaves the hot path byte-for-byte unchanged (no `quality_summary`,
+    `failed_checks`, or `post_validation_enforce` key), so golden / compat-corpus
+    fixtures do not move; these are runtime kwargs, not `config` fields, so they
+    never feed `pipeline_config_hash`. `post_validation_skip` names scans to skip;
+    `post_validation_sample_size` caps the per-column `sampled_values` evidence
+    (default 100). The suite needs the full frame resident, so an opted-in job is
+    declined from the sequential / out-of-core routes (same as `fidelity_report`)
+    and runs full-frame, or is fail-closed-rejected when too large -- it is never
+    silently sent out-of-core where the checks cannot run. Job outcome is
+    warn-only by default: a hard-failed scan is recorded in
+    `quality_metrics["failed_checks"]` but the engine never fails the job.
+    `post_validation_enforce` is emitted as
+    `quality_metrics["post_validation_enforce"]` for the platform consumer to
+    promote hard-fails to a job failure. SECURITY: only synthetic masked values
+    reach the summary (R18); no source PII is emitted.
 
     Execution routing (`execution_mode`, `sink`, `source_loader`,
     `auto_chunk`, `chunk_size_rows`, `auto_chunk_threshold_rows`,
@@ -301,7 +326,16 @@ def run_pipeline(
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("unified_slice_enabled", unified_slice_enabled)
+    # A1 post-validation knobs share the substrate knobs' fail-early contract.
+    require_bool("post_validation", post_validation)
+    require_bool("post_validation_enforce", post_validation_enforce)
+    require_positive_int("post_validation_sample_size", post_validation_sample_size)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
+
+    # None-normalize the skip list here (a mutable [] default would be shared
+    # across calls); the unified-slice `locals()` forwarding reads the bound
+    # `post_validation` name directly.
+    post_validation_skip = list(post_validation_skip) if post_validation_skip else []
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
@@ -388,6 +422,7 @@ def run_pipeline(
         has_generate_table=has_generate_table,
         validators=(config.get("validators") or []),
         fidelity_report=fidelity_report,
+        post_validation=post_validation,
         vault_writer=vault_writer,
         execution_mode=execution_mode,
         resolved_substrate=resolved_substrate,
@@ -562,7 +597,7 @@ def run_pipeline(
         sources_resident=True,
     )
 
-    return ExecutionResult(
+    result = ExecutionResult(
         outputs=outputs,
         timings=mask_timings,
         boundary_conversion_ms=mask_conversion_ms,
@@ -571,3 +606,22 @@ def run_pipeline(
         table_kinds=table_kinds,
         row_errors=mask_row_errors,
     )
+
+    # A1: opt-in post-execution scan suite. Runs only on this full-frame finalize
+    # branch -- routing declined the sequential / out-of-core / unified-slice
+    # early returns for an opted-in job, so this is the one seam it reaches.
+    # Default-OFF returns before touching the result (byte-identical).
+    _pipeline_finalize.compute_post_validation(
+        result,
+        plan=plan,
+        sources=resident_sources,
+        profile=profile,
+        registry=resolved_registry,
+        relationship_graph=graph,
+        namespace_registry=ns_registry,
+        post_validation=post_validation,
+        post_validation_skip=post_validation_skip,
+        post_validation_sample_size=post_validation_sample_size,
+        post_validation_enforce=post_validation_enforce,
+    )
+    return result

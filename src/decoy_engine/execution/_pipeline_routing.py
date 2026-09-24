@@ -176,6 +176,7 @@ def _sequential_eligible(
     validators: list[Any],
     fidelity_report: bool,
     vault_writer: Any,
+    post_validation: bool = False,
     resolved_substrate: str = "pandas",
 ) -> tuple[bool, str]:
     """Decide whether a mask job may take the bounded-memory sequential path.
@@ -186,9 +187,19 @@ def _sequential_eligible(
     The sequential path streams/evicts table by table, so any run_pipeline
     post-mask step that needs every masked output resident at once
     disqualifies it: job-level validators (compare positionally against all
-    sources), the fidelity report, and the token-vault collection. Pure-generate
-    and mixed generate+mask jobs are disqualified because generate tables are
-    not masked table-by-table through this path.
+    sources), the fidelity report, the post-execution validation suite (it
+    materializes whole columns to compare output against source), and the
+    token-vault collection. Pure-generate and mixed generate+mask jobs are
+    disqualified because generate tables are not masked table-by-table through
+    this path.
+
+    `post_validation` (A1) mirrors `fidelity_report` exactly: the opt-in
+    post-execution scan suite needs the full frame resident, so an opted-in job
+    must NOT take the sequential (or the strict-subset out-of-core) route, where
+    the checks cannot run. Declining here diverts it to full-frame, or to the
+    fail-closed reject-before-read when it is too large for any full-frame box.
+    A silent out-of-core skip -- reporting success while the scans never ran --
+    is the costly defect this decline prevents.
 
     `resolved_substrate` (S3 reconciliation, P1 x S2): `run_sequential` is
     pandas-only by construction. Pandas is the only masking substrate, so any
@@ -208,6 +219,8 @@ def _sequential_eligible(
         return False, "validators_present"
     if fidelity_report:
         return False, "fidelity_report_requested"
+    if post_validation:
+        return False, "post_validation_requested"
     if vault_writer is not None:
         return False, "vault_writer_requested"
     if resolved_substrate != "pandas":
@@ -225,6 +238,7 @@ def decide_execution_route(
     vault_writer: Any,
     execution_mode: str,
     graph: RelationshipGraph,
+    post_validation: bool = False,
     resolved_substrate: str = "pandas",
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
@@ -346,6 +360,7 @@ def decide_execution_route(
         validators=validators,
         fidelity_report=fidelity_report,
         vault_writer=vault_writer,
+        post_validation=post_validation,
         resolved_substrate=resolved_substrate,
     )
     cyclic = _has_cross_table_fk_cycle(graph)

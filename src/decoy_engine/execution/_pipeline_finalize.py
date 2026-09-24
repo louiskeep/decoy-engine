@@ -25,14 +25,23 @@ Three independent pieces:
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 
+if TYPE_CHECKING:
+    from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.plan._types import Plan
+    from decoy_engine.profile import Profile
+    from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
+
 __all__ = [
     "compute_fidelity_reports",
+    "compute_post_validation",
     "finalize_validators_and_quarantine",
     "stamp_execution_metrics",
 ]
@@ -171,6 +180,74 @@ def compute_fidelity_reports(
             now_iso=now_iso,
         )
     return fidelity_reports
+
+
+def compute_post_validation(
+    execution_result: ExecutionResult,
+    *,
+    plan: Plan,
+    sources: Mapping[str, pa.Table],
+    profile: Profile,
+    registry: ProviderRegistry,
+    relationship_graph: RelationshipGraph,
+    namespace_registry: NamespaceRegistry,
+    post_validation: bool,
+    post_validation_skip: list[str],
+    post_validation_sample_size: int,
+    post_validation_enforce: bool,
+) -> None:
+    """A1: opt-in, default-OFF post-execution scan suite wired into the run path.
+
+    Sibling of `compute_fidelity_reports`: another report-shaped attachment to
+    `ExecutionResult.quality_metrics` that runs only when its runtime flag is on.
+    Flag off (the default) -> this returns before importing `validation.post`, so
+    the hot path is unchanged and the output byte-identical. Flag on -> it builds
+    the `config` dict the `PostValidationRunner` reads and calls it; the runner
+    scans the masked output against the sources and writes the full manifest block
+    under `quality_metrics["quality_summary"]` (mutating the mutable dict the
+    frozen `ExecutionResult` holds).
+
+    Job-outcome signal (LOCKED: warn-only default). The runner sets
+    `QualitySummary.failed_checks` (the hard-failed scan names). This surfaces them
+    as `quality_metrics["failed_checks"]`, a list of `{"code", "message"}` dicts --
+    the exact shape the platform node-run consumer already reads
+    (decoy-platform `api/jobs/v2_node_runs.py` `_classify_quality_failures`). By
+    default those codes are evidence-only there (a finding is recorded, the job
+    still succeeds). `post_validation_enforce` is emitted as
+    `quality_metrics["post_validation_enforce"]` for the platform's companion
+    change to branch on: enforce true + a non-empty `failed_checks` promotes the
+    hard-fails to a job failure. The engine never fails the job itself.
+
+    Privacy (R18): the summary's `sampled_values` carries only synthetic,
+    non-passthrough masked values; this wiring forwards the runner's output
+    verbatim and never reads source PII into `quality_metrics`.
+    """
+    if not post_validation:
+        return
+    from decoy_engine.validation.post import PostValidationRunner
+
+    summary = PostValidationRunner().run(
+        plan=plan,
+        execution_result=execution_result,
+        sources=sources,
+        profile=profile,
+        registry=registry,
+        relationship_graph=relationship_graph,
+        namespace_registry=namespace_registry,
+        config={
+            "post_validation": True,
+            "post_validation_skip": list(post_validation_skip),
+            "post_validation_sample_size": post_validation_sample_size,
+        },
+    )
+    if summary is None:  # pragma: no cover - post_validation=True always returns a summary
+        return
+    qm = execution_result.quality_metrics
+    qm["failed_checks"] = [
+        {"code": name, "message": f"post-validation scan {name!r} hard-failed"}
+        for name in summary.failed_checks
+    ]
+    qm["post_validation_enforce"] = post_validation_enforce
 
 
 def finalize_validators_and_quarantine(
