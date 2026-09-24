@@ -317,6 +317,34 @@ class TestRoutingDeclinesBoundedRoutes:
         assert on.quality_metrics["execution"]["execution_mode"] == "full_frame"
         assert "quality_summary" in on.quality_metrics
 
+    def test_post_validation_off_at_finalize_seam_is_inert(self, tmp_path: Path) -> None:
+        # Flag-off inertness must hold AT the finalize seam, not only on the
+        # unified-slice path the single-table off test exercises. An FK job
+        # reaches full_frame finalize, so with the flag off none of the
+        # post-validation keys may appear -- this guards the "a future
+        # unconditional run trips this" invariant at the seam itself.
+        cfg, src = _dup_pk_fk_config(tmp_path)
+        off = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION)
+        assert off.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        for key in ("quality_summary", "failed_checks", "post_validation_enforce"):
+            assert key not in off.quality_metrics
+
+    def test_forced_out_of_core_with_post_validation_fails_closed(self, tmp_path: Path) -> None:
+        # Symmetric to the forced-sequential case: an operator cannot force a job
+        # onto the out-of-core route (where the scans cannot run) while asking
+        # for post_validation -- fail closed rather than silently skip the suite.
+        from decoy_engine.errors import ConfigError
+
+        cfg, src = _dup_pk_fk_config(tmp_path)
+        with pytest.raises(ConfigError, match="post_validation_requested"):
+            run_pipeline(
+                cfg,
+                sources=src,
+                engine_version=_ENGINE_VERSION,
+                execution_mode="out_of_core",
+                post_validation=True,
+            )
+
 
 # --------------------------------------------------------------------------
 # Config round-trip + privacy + combined flags
