@@ -504,8 +504,15 @@ def run_pipeline(
     if unified_slice_result is not None:
         return unified_slice_result
 
-    # TB-1: only full_frame / auto-chunk below needs every source resident.
-    resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)
+    # TB-1: only full_frame / auto-chunk below needs every source resident. A
+    # loader-backed job (empty `caller_sources` + a `source_loader`) diverted here
+    # -- e.g. `post_validation` declined its bounded route -- must still get its
+    # real mask-table sources through the loader, never silently empty outputs.
+    resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(
+        caller_sources,
+        source_loader=source_loader,
+        required_tables=[name for name, kind in table_kinds.items() if kind == "mask"],
+    )
 
     # Steps 1-2 (generate-kind tables, then mask-kind tables): split into
     # `_pipeline_generate_mask.run_generate_and_mask_steps` to hold this

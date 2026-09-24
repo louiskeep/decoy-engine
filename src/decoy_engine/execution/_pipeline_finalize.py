@@ -229,15 +229,25 @@ def _filter_sampled_values_source_equality(
     sampled: dict[str, list[Any]] = quality_summary.get("sampled_values") or {}
     if not sampled:
         return
-    # Build the key -> source-value-set map from `sources` (not by splitting the
-    # "table.column" key), so a column name containing a dot cannot be misread.
+    # Build the key -> source-value-set map from the REAL (table, column) pairs in
+    # `sources`, never by splitting the "table.column" key. But `f"{table}.{col}"`
+    # is not injective: table "a.b"/column "c" and table "a"/column "b.c" both
+    # flatten to "a.b.c", so a plain assignment would let whichever pair iterates
+    # LAST overwrite the other, and a sample could then be filtered against the
+    # WRONG column and a source value survive. Accumulate the UNION of every
+    # colliding column's source values instead, so a sampled value is stripped
+    # when it equals a source value in ANY pair that maps to its key -- the result
+    # no longer depends on `sources` insertion order, and no source value slips
+    # through a dotted-name collision.
     needed = set(sampled)
     source_by_key: dict[str, set[Any]] = {}
     for table_name, table in sources.items():
         for col in table.column_names:
             key = f"{table_name}.{col}"
             if key in needed:
-                source_by_key[key] = {v for v in table.column(col).to_pylist() if v is not None}
+                source_by_key.setdefault(key, set()).update(
+                    v for v in table.column(col).to_pylist() if v is not None
+                )
     filtered: dict[str, list[Any]] = {}
     for key, values in sampled.items():
         source_values = source_by_key.get(key)
@@ -295,18 +305,25 @@ def compute_post_validation(
     manifest.
 
     Quarantine alignment: when quarantine removed rows, the output has fewer rows
-    than `sources`. The scans run against the row-aligned source (see
-    `_align_sources_to_output`) so a successful quarantine does not read as a
-    row-count mismatch; the privacy filter still uses the full source.
+    than `sources`. Positional / row-count scans (null_audit) run against the
+    row-aligned source (see `_align_sources_to_output`) so a successful quarantine
+    does not read as a row-count mismatch. Value-membership scans (leakage) instead
+    scan the FULL pre-quarantine source: a quarantine that drops a source row whose
+    value still appears in a retained masked row must not hide that substitution
+    leak. The runner selects per scan-class (see `PostValidationRunner.run` +
+    `validation.post._checks.FULL_SOURCE_SCANS`); the privacy filter also uses the
+    full source.
     """
     if not post_validation:
         return
     from decoy_engine.validation.post import PostValidationRunner
 
+    aligned_sources = _align_sources_to_output(sources, quarantine_row_mask)
     summary = PostValidationRunner().run(
         plan=plan,
         execution_result=execution_result,
-        sources=_align_sources_to_output(sources, quarantine_row_mask),
+        sources=aligned_sources,
+        full_sources=sources,
         profile=profile,
         registry=registry,
         relationship_graph=relationship_graph,

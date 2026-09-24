@@ -229,6 +229,57 @@ def _quarantine_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tab
     return _validated(raw), {"t": src}
 
 
+def _quarantine_hides_leak_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
+    """A truncate leak that a quarantined row would hide from an aligned source.
+
+    `code` truncates to length 3: row0 "AAAAA" -> "AAA" (published), row1 "AAA" ->
+    "AAA". The luhn validator on `cc` quarantines ONLY row1, so the output keeps
+    row0's published "AAA" -- which equals row1's SOURCE value. Aligning the
+    leakage source to the post-quarantine output drops row1, so "AAA" is no longer
+    a source value there and the leak goes uncaught; the full pre-quarantine source
+    still holds it. Substitution-leak membership must therefore scan the full
+    source.
+    """
+    src = pa.table(
+        {
+            "code": pa.array(["AAAAA", "AAA"], type=pa.string()),
+            "cc": pa.array(["4111111111111111", "4532015112830367"], type=pa.string()),
+        }
+    )
+    src_path = tmp_path / "t.parquet"
+    pq.write_table(src, src_path)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
+        "targets": {
+            "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
+        },
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {
+                        "name": "code",
+                        "strategy": "truncate",
+                        "provider": "person_email",
+                        "namespace": "ns",
+                        "provider_config": {"length": 3},
+                    },
+                    {"name": "cc", "strategy": "passthrough"},
+                ],
+            }
+        ],
+        "validators": [{"name": "luhn", "columns": {"t": ["cc"]}}],
+        "quarantine": {
+            "enabled": True,
+            "output_path": str(tmp_path / "quarantine.jsonl"),
+            "triggers": ["validation_fail"],
+        },
+    }
+    return _validated(raw), {"t": src}
+
+
 _POST_VALIDATION_KEYS = frozenset({"quality_summary", "failed_checks", "post_validation_enforce"})
 
 
@@ -520,3 +571,89 @@ class TestQuarantineAlignment:
         # The successful quarantine is not a false hard failure.
         assert "null_audit" not in r.quality_metrics["quality_summary"]["failed_checks"]
         assert not any(c["code"] == "null_audit" for c in r.quality_metrics["failed_checks"])
+
+    def test_quarantine_does_not_hide_substitution_leak(self, tmp_path: Path) -> None:
+        # The mirror of the null_audit case: a POSITIONAL scan wants the aligned
+        # source, but the leakage MEMBERSHIP scan must keep the full pre-quarantine
+        # source. Quarantining row1 (source code "AAA") leaves row0's published
+        # "AAA" -- a real source value -- in the output; the aligned source no
+        # longer contains "AAA", so scanning it would miss the leak. Fails on the
+        # pre-fix wiring, which aligned the source for every scan.
+        cfg, src = _quarantine_hides_leak_config(tmp_path)
+        r = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION, post_validation=True)
+        # The bad row was quarantined: output has one fewer row than the source.
+        assert r.quality_metrics["quarantine"]["total_quarantined"] == 1
+        assert r.outputs["t"].num_rows == 1
+        assert "AAA" in r.outputs["t"].column("code").to_pylist()  # the leak survived quarantine
+        # The leak IS caught despite the quarantine (full-source membership scan).
+        assert "leakage" in r.quality_metrics["quality_summary"]["failed_checks"]
+        assert any(c["code"] == "leakage" for c in r.quality_metrics["failed_checks"])
+        # The positional scan is still not a false failure (aligned source).
+        assert "null_audit" not in r.quality_metrics["quality_summary"]["failed_checks"]
+
+
+# --------------------------------------------------------------------------
+# Dotted-name key collision: the source-equality filter is injective
+# --------------------------------------------------------------------------
+
+
+class TestDottedNameCollision:
+    def test_dotted_name_collision_strips_source_value(self) -> None:
+        # table "a" / column "b.c" and table "a.b" / column "c" both flatten to the
+        # same "a.b.c" key. "AAA" is a real source value of a."b.c"; a filter that
+        # keyed by the flattened string alone would compare the sample against
+        # whichever colliding column iterated LAST (here a.b."c" = {"XXX"}) and let
+        # "AAA" survive. The union-over-collisions fix strips it regardless of the
+        # `sources` insertion order.
+        from decoy_engine.execution._pipeline_finalize import (
+            _filter_sampled_values_source_equality,
+        )
+
+        sources = {
+            "a": pa.table({"b.c": pa.array(["AAA"], type=pa.string())}),
+            "a.b": pa.table({"c": pa.array(["XXX"], type=pa.string())}),
+        }
+        quality_summary: dict[str, Any] = {"sampled_values": {"a.b.c": ["AAA", "SYNTH"]}}
+        _filter_sampled_values_source_equality(quality_summary, sources)
+        kept = quality_summary["sampled_values"]["a.b.c"]
+        assert "AAA" not in kept  # the source value is stripped despite the collision
+        assert kept == ["SYNTH"]  # a genuinely synthetic value still survives
+
+
+# --------------------------------------------------------------------------
+# Loader-backed job forced to full_frame: real outputs, not silent empties
+# --------------------------------------------------------------------------
+
+
+class TestLoaderBackedFullFrame:
+    def test_source_loader_fk_job_post_validation_produces_real_outputs(
+        self, tmp_path: Path
+    ) -> None:
+        # A relationship job supplied via `source_loader` with an EMPTY `sources`
+        # dict: sequential / out-of-core would read one table at a time through the
+        # loader, but post_validation declines those routes and forces full_frame.
+        # The full_frame continuation must MATERIALIZE the loader-backed tables, not
+        # emit empty outputs with an empty summary. Fails on the pre-fix wiring,
+        # which materialized only the (empty) caller_sources.
+        cfg, src = _dup_pk_fk_config(tmp_path)
+
+        def loader(name: str) -> pa.Table:
+            return src[name]
+
+        r = run_pipeline(
+            cfg,
+            sources={},  # lazy path: nothing resident up front
+            engine_version=_ENGINE_VERSION,
+            source_loader=loader,
+            post_validation=True,
+            use_byte_estimate_routing=False,  # rollback path: row-count routing
+        )
+        # Declined the bounded route -> full_frame, but with the REAL tables.
+        assert r.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert set(r.outputs) >= {"parent", "child"}
+        assert r.outputs["parent"].num_rows == 5
+        assert r.outputs["child"].num_rows == 5
+        # A real validation summary over real data: the truncated PK collides, so
+        # pk_uniqueness hard-fails. Empty outputs would leave failed_checks empty.
+        assert r.quality_metrics["quality_summary"]["failed_checks"] == ("pk_uniqueness",)
+        assert [c["code"] for c in r.quality_metrics["failed_checks"]] == ["pk_uniqueness"]

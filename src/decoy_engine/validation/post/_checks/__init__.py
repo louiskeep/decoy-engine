@@ -40,4 +40,16 @@ SCANS: tuple[tuple[str, ScanFn], ...] = (
     ("sampled_values", run_sampled_values),
 )
 
-__all__ = ["SCANS", "ScanFn"]
+# Scans whose privacy check is value-MEMBERSHIP against the source (a source
+# value reappearing in the masked output is a leak), NOT a positional / row-count
+# comparison. The runner hands these the FULL pre-quarantine source: quarantine
+# can drop a source row whose value still appears in a RETAINED masked row, and an
+# aligned (post-quarantine) source would no longer contain that value, hiding a
+# real substitution leak. Positional / row-count scans (null_audit,
+# determinism_sample) instead need the row-ALIGNED source so a successful
+# quarantine is not read as a false failure -- they are NOT listed here. A new
+# value-membership scan MUST be added to this set or a quarantine could hide its
+# leaks (the source-selection seam is wiring, not scan-internal logic).
+FULL_SOURCE_SCANS: frozenset[str] = frozenset({"leakage"})
+
+__all__ = ["FULL_SOURCE_SCANS", "SCANS", "ScanFn"]
