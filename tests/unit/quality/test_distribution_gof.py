@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 
 import pandas as pd
 import pytest
@@ -27,7 +28,7 @@ from decoy_engine.quality.snapshot import compute_distribution_snapshot
 # ── numeric: KS-complement ──────────────────────────────────────────────────
 
 
-def _numeric(bin_edges: list[float], bin_counts: list[int]) -> dict[str, object]:
+def _numeric(bin_edges: Sequence[float], bin_counts: Sequence[int]) -> dict[str, object]:
     return {"bin_edges": bin_edges, "bin_counts": bin_counts}
 
 
