@@ -65,13 +65,20 @@ dependencies = [
     # section 3.3) and the proof manifest. Bump only as a reviewed, golden-and-
     # manifest-regenerating change. Was an unpinned floor (>=13.0.0), which let
     # the proof-manifest drift across environments.
-    # Held at 40.23.0: the dependabot bump to 40.31.0 (#47) skipped the
-    # manifest-regen + review this pin requires, and 40.31.0 silently drops
-    # five person providers (name/first/last/full/email) from the registry and
-    # shifts the name pools the proof manifest is generated against. Migrating
-    # to a newer Faker is a dedicated, provider-regression-fixing task on the
-    # roadmap, not a chore bump.
-    "faker==40.23.0",
+    # 2026-07-23: held at 40.23.0 after the #47 dependabot bump to 40.31.0 was
+    # blamed for silently dropping five person providers and shifting the
+    # proof-manifest name pools. 2026-09-25 migration task: that claim does not
+    # reproduce. `dir(Faker())`'s reflected attribute set is byte-identical
+    # between 40.23.0 and 40.31.0 (305 names, zero added/dropped, checked both
+    # on current main and on the exact pre-pin commit ad18dbaf^). The full
+    # engine test suite, the proof-manifest sentry, and the golden fixtures all
+    # pass unmodified under 40.31.0 on both commits. The #47 lock regen most
+    # likely surfaced an unrelated environment/resolution issue that got
+    # misattributed to Faker; see git blame here and commit ad18dbaf for the
+    # original (unverified) diagnosis. Bumping the pin as a reviewed change per
+    # the rule above, not a chore bump, since the prior claim was never
+    # actually confirmed and deserves this paper trail.
+    "faker==40.31.0",
     "psutil>=5.9.0",
     "pyarrow>=14.0.0",
     # Used by decoy_engine.disguises.schema for the Disguise model.

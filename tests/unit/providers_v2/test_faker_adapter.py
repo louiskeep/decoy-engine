@@ -143,3 +143,59 @@ def test_stateful_faker_names_stay_denylisted_for_determinism() -> None:
 
     for name in ("unique", "random", "seed", "seed_instance"):
         assert name in _FAKER_DENYLIST
+
+
+class TestPersonProvidersSurviveFakerVersion:
+    """Faker 40.31.0 migration regression guard (2026-09-25).
+
+    The pin was held at 40.23.0 since 2026-07-23 on the belief that 40.31.0
+    silently drops person_name/first/last/full/email from the registry
+    (commit ad18dbaf). Investigation found that claim does not reproduce:
+    `dir(Faker())`'s reflected attribute set is byte-identical across the
+    two versions, and this file's own `test_generate_person_*` tests already
+    exercise the V2 catalog path. This class covers the two things those
+    didn't: the raw Faker methods the V1 + V2 layers both bind to
+    (`person_name`/`first`/`last`/`full`/`email`'s underlying
+    `name`/`first_name`/`last_name`/`email`), and the V1 reflection path
+    (`get_faker_providers`), so a real future provider-drop regression on
+    either layer fails loudly instead of needing a manual lock-regen
+    diagnosis again.
+    """
+
+    def test_underlying_faker_methods_present_on_instance(self) -> None:
+        from faker import Faker
+
+        fake = Faker()
+        for method_name in ("name", "first_name", "last_name", "email"):
+            assert hasattr(fake, method_name), (
+                f"Faker instance lost {method_name!r}; check the installed "
+                "faker version against the pyproject.toml pin"
+            )
+            assert callable(getattr(fake, method_name))
+
+    def test_v1_reflection_exposes_the_five_person_providers(self) -> None:
+        from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
+
+        fake = make_faker()
+        providers = get_faker_providers(fake)
+        for reflected_name in ("name", "first_name", "last_name", "email"):
+            assert reflected_name in providers, (
+                f"V1 reflection dropped {reflected_name!r} from get_faker_providers()"
+            )
+
+    def test_v2_registry_resolves_all_five_semantic_names(self) -> None:
+        # person_full_name maps to the same underlying `name` method as
+        # person_name (see _FAKER_METHOD_MAP); both are exercised here to
+        # match the roadmap's five-name framing (person_name/first/last/
+        # full/email) even though full and name share a backend call.
+        for semantic_name in (
+            "person_name",
+            "person_first_name",
+            "person_last_name",
+            "person_full_name",
+            "person_email",
+        ):
+            out = _adapter().generate(semantic_name, spec=_spec())
+            assert isinstance(out, str) and out, (
+                f"V2 registry failed to generate a value for {semantic_name!r}"
+            )
