@@ -120,3 +120,63 @@ def test_sdist_and_wheel_ship_model_pack_and_py_typed(tmp_path: Path) -> None:
         f"{leaked[:3]}). Check the .gitignore and "
         "[tool.hatch.build.targets.sdist] exclude entries."
     )
+
+
+def test_wheel_does_not_hard_require_cloud_sdks(tmp_path: Path) -> None:
+    """CLI install DX (2026-09-25): boto3/google-cloud-storage must stay
+    behind the opt-in `cloud` extra, not resurface as unconditional
+    Requires-Dist entries. This was the whole S14-CLOUD-SRC-S3GCS incident in
+    reverse: the extras-only model broke production because two decoy-platform
+    install sites did a bare `pip install decoy-engine`, so the fix there is
+    the Dockerfile/compose lines, not the engine's dependency list -- but a
+    silent re-promotion here (someone "fixing" a future fresh-install gap by
+    moving them back to [project.dependencies]) would reintroduce the ~40MB
+    default-install regression this extra exists to avoid. Read the wheel's
+    own METADATA rather than pyproject.toml so this proves what actually
+    SHIPS, not just what the source declares.
+    """
+    result = subprocess.run(  # noqa: S603 -- static argv (sys.executable + literals), no untrusted input
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(tmp_path)],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"wheel build failed (rc={result.returncode}).\n"
+        f"stdout:\n{result.stdout[-2000:]}\n\nstderr:\n{result.stderr[-2000:]}"
+    )
+    wheels = list(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
+
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        metadata_names = [n for n in wheel.namelist() if n.endswith(".dist-info/METADATA")]
+        assert len(metadata_names) == 1, f"expected one METADATA file, found {metadata_names}"
+        metadata_text = wheel.read(metadata_names[0]).decode("utf-8")
+
+    requires_dist_lines = [
+        line for line in metadata_text.splitlines() if line.startswith("Requires-Dist:")
+    ]
+    unconditional_cloud = [
+        line
+        for line in requires_dist_lines
+        if ("boto3" in line or "google-cloud-storage" in line) and "extra ==" not in line
+    ]
+    assert not unconditional_cloud, (
+        "boto3/google-cloud-storage must not be unconditional Requires-Dist "
+        f"entries (they belong behind the `cloud` extra): {unconditional_cloud}"
+    )
+    # hatchling renders the marker with single quotes (`extra == 'cloud'`),
+    # and the self-referential `gcs = ["decoy-engine[cloud]"]` compat alias
+    # expands to the SAME two deps repeated under `extra == 'gcs'` -- so the
+    # metadata carries boto3 + google-cloud-storage gated behind `cloud`
+    # AND again behind `gcs` (four lines total), never behind nothing.
+    gated_cloud = [
+        line
+        for line in requires_dist_lines
+        if ("boto3" in line or "google-cloud-storage" in line)
+        and ("extra == 'cloud'" in line or "extra == 'gcs'" in line)
+    ]
+    assert len(gated_cloud) == 4, (
+        "expected boto3 + google-cloud-storage each gated behind both `cloud` "
+        f"and its `gcs` compat alias (4 lines): {gated_cloud}"
+    )

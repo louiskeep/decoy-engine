@@ -88,8 +88,15 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
-      - name: Install engine + dev extras
-        run: pip install -e ".[dev]"
+      - name: Install engine + dev + cloud extras
+        # CLI install DX (2026-09-25): boto3/google-cloud-storage moved from
+        # hard deps to the opt-in `cloud` extra. tests/unit/test_v2_cloud_sources.py
+        # mocks google.cloud.storage.Client/boto3 directly (no importorskip
+        # guard), so this job needs `cloud` too or it fails on ModuleNotFoundError
+        # instead of running the connector suite. `[dev]` alone is now the true
+        # lean-install profile; see packaging-gate below for the corresponding
+        # "base wheel does not require boto3/google-cloud-storage" assertion.
+        run: pip install -e ".[dev,cloud]"
       - name: Routing guard (every named suite directory must exist)
         run: |
           for d in \

@@ -87,15 +87,6 @@ dependencies = [
     # against the 1.x I/O API, so cap below 2.0 until a 2.x validation pass.
     "polars>=1.0,<2.0",
     "duckdb>=0.10.0",
-    # S14-CLOUD-SRC-S3GCS (2026-05-30): cloud sources are R1 marketed scope
-    # (decoy_release_1_scope memory). boto3 was previously transitive via
-    # moto[s3] in [dev] and platform-side; the engine's _load_s3_source +
-    # platform's _fetch_s3_to_bytesio import it at function-call time, so
-    # the production Compose image needs it declared. google-cloud-storage
-    # ships alongside; the gcs extra below stays as a backwards-compat
-    # marker. Dennis S14 gate B1 (2026-05-30): pyproject promote.
-    "boto3>=1.26",
-    "google-cloud-storage>=2.0",
     # QA Q16 (2026-05-30): execution/_transforms.py pins df.eval to engine=numexpr
     # so the Python-engine fallback (which can expose @var-based builtin escapes
     # for user-supplied filter / derive expressions) cannot trip silently.
@@ -250,13 +241,22 @@ docs = [
     "sphinxcontrib-mermaid>=0.9",
 ]
 # First-party cloud-storage connector extras. S14-CLOUD-SRC-S3GCS
-# promoted boto3 + google-cloud-storage to [project] dependencies (above)
-# because R1 marketed scope includes cloud object storage and the
-# extras-only model broke the production Compose image (Dennis S14 gate
-# B1). The `gcs` extra below is now a no-op backwards-compat marker
-# (already pulled by the base install); kept so existing `pip install -e .[gcs]`
-# invocations still work. SFTP remains an opt-in extra pending S18.
-gcs = []
+# (2026-05-30) promoted boto3 + google-cloud-storage to [project]
+# dependencies because the extras-only model broke the production Compose
+# image (Dennis S14 gate B1): decoy-platform's Dockerfile.production and
+# docker-compose.yml did a bare `pip install decoy-engine` with no extras
+# declared, so cloud support silently vanished. Reverted back to an extra
+# (CLI install DX, 2026-09-25) now that both of those bare-install sites in
+# decoy-platform explicitly request `[cloud]` -- do not re-demote this
+# without also checking deploy/Dockerfile.production and
+# deploy/docker-compose.yml still request it. boto3/google-cloud-storage
+# imports are lazy (function-call time, not module top-level: see
+# connectors/s3.py, profile/_cloud_readers.py, connectors/gcs.py), so a
+# cloud-less install does not crash on `import decoy_engine`. `gcs` stays
+# as a compat alias pointing at `cloud`. SFTP remains a separate opt-in
+# extra pending S18.
+cloud = ["boto3>=1.26", "google-cloud-storage>=2.0"]
+gcs = ["decoy-engine[cloud]"]
 sftp = ["paramiko>=3.0"]
 # SP-08b (2026-06-28): H3 geospatial indexing for lat/lng generalization.
 # h3-py (Uber, Apache-2.0) is optional: the base install stays free of the
