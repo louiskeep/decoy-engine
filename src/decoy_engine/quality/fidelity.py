@@ -72,17 +72,34 @@ Prior art (per established-methodology rule):
     bounded in [0, 1], easy to interpret as "fraction of mass that
     would have to move from P's distribution to recover Q's".
 
+A2 (2026-09): additive goodness-of-fit extras. Each numeric column entry
+gains `extra_metrics.ks_complement` (a binned empirical-CDF approximation
+of KSComplement) and each categorical / bool column entry gains
+`extra_metrics.chi_cramers_v` (a common-partition two-sample chi-square,
+normalized to Cramer's V). Both are named nested fields alongside the
+existing `similarity` / `method` / `comparable` -- they do not replace or
+feed the primary similarity, `overall_score`, or the grade. See
+`_distribution_gof.py` for the formulas, source patterns
+(`scipy.stats.ks_2samp` / `scipy.stats.chisquare`), and guards.
+
 Out of scope (later sub-sprints own these):
   - Grade letter (A / B / C / D / F): D1d report assembly owns the
     mapping from score to grade.
   - Per-strategy expected-preservation bands: D4 policy.
   - Drift warnings that gate the job: D4 policy.
+  - Folding the A2 extras into overall_score / grade: additive-only by
+    design (plan open question 1); a separate, deliberate decision.
 """
 
 from __future__ import annotations
 
 import math
 from typing import Any
+
+from decoy_engine.quality._distribution_gof import (
+    chi_square_cramers_v,
+    ks_complement_binned,
+)
 
 QUALITY_FIDELITY_SCHEMA_VERSION = "quality-fidelity/v1"
 
@@ -173,6 +190,21 @@ def compute_fidelity(
     }
 
 
+# ── A2 goodness-of-fit wiring ────────────────────────────────────────────────
+
+
+def _finalize_gof(result: dict[str, Any]) -> dict[str, Any]:
+    """Round every float field of a `_distribution_gof` result to the same
+    precision pin the primary similarity scores use, so the JSON stays
+    byte-stable. The metric functions return raw floats on purpose (single
+    source of truth for the rounding pin lives here, not duplicated into
+    the sibling module)."""
+    return {
+        key: round(value, _SCORE_PRECISION) if isinstance(value, float) else value
+        for key, value in result.items()
+    }
+
+
 # ── per-kind comparators ────────────────────────────────────────────────────
 
 
@@ -199,9 +231,25 @@ def _column_similarity(
     out_stats = out_col.get("stats", {})
 
     if src_kind == "numeric":
-        return _numeric_similarity(src_stats, out_stats)
+        result = _numeric_similarity(src_stats, out_stats)
+        # Codex FINAL gate MEDIUM finding: ks_complement is computed from
+        # ITS OWN inputs (bin_edges/bin_counts) independent of whether the
+        # primary quantile-RMSE path found itself comparable. A DP
+        # snapshot (quality/dp.py:406) always carries a histogram but
+        # deliberately leaves quantiles empty, so the primary correctly
+        # returns comparable:false ("no_quantiles") while KS still has
+        # everything it needs -- gating extra_metrics on the primary's
+        # early return would silently drop a metric that was reachable.
+        result["extra_metrics"] = {
+            "ks_complement": _finalize_gof(ks_complement_binned(src_stats, out_stats)),
+        }
+        return result
     if src_kind in ("categorical", "bool"):
-        return _categorical_similarity(src_stats, out_stats)
+        result = _categorical_similarity(src_stats, out_stats)
+        result["extra_metrics"] = {
+            "chi_cramers_v": _finalize_gof(chi_square_cramers_v(src_stats, out_stats)),
+        }
+        return result
     if src_kind == "datetime":
         return _datetime_similarity(src_stats, out_stats)
     if src_kind == "freetext":

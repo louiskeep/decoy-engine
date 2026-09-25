@@ -36,6 +36,8 @@ def _numeric_col(
     hi: float = 100.0,
     null_count: int = 0,
     non_null_count: int = 100,
+    bin_edges: list[float] | None = None,
+    bin_counts: list[int] | None = None,
 ) -> dict[str, object]:
     return {
         "dtype": "float64",
@@ -49,8 +51,8 @@ def _numeric_col(
             "mean": (lo + hi) / 2,
             "std": (hi - lo) / 4,
             "quantiles": quantiles,
-            "bin_edges": [],
-            "bin_counts": [],
+            "bin_edges": bin_edges if bin_edges is not None else [],
+            "bin_counts": bin_counts if bin_counts is not None else [],
         },
     }
 
@@ -362,3 +364,199 @@ def test_symmetry_swap_does_not_change_score() -> None:
     assert f_ab["marginal"]["columns"][0]["similarity"] == pytest.approx(
         f_ba["marginal"]["columns"][0]["similarity"]
     )
+
+
+# ── A2: goodness-of-fit extras wiring ───────────────────────────────────────
+#
+# The metric formulas themselves are covered by test_distribution_gof.py;
+# these tests are about the fidelity-level contract: extra_metrics is
+# additive, present only where it should be, and never moves the primary
+# similarity / overall_score / grade.
+
+
+def test_numeric_column_carries_ks_complement_extra_metric() -> None:
+    snap = _snap(
+        {
+            "x": _numeric_col(
+                quantiles={"p50": 50.0},
+                lo=0.0,
+                hi=100.0,
+                bin_edges=[0, 25, 50, 75, 100],
+                bin_counts=[25, 25, 25, 25],
+            ),
+        }
+    )
+    fid = compute_fidelity(snap, snap)
+    col = fid["marginal"]["columns"][0]
+    extra = col["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["value"] == pytest.approx(1.0)
+    assert extra["method"] == "ks_complement_binned_cdf"
+
+
+def test_numeric_dp_snapshot_still_carries_ks_complement_without_quantiles() -> None:
+    # Codex FINAL gate MEDIUM finding. quality/dp.py's DP numeric snapshot
+    # shape (quality/dp.py:406) always carries bin_edges/bin_counts and
+    # min/max, but quantiles is deliberately left empty ({}) -- OpenDP
+    # releases a noised histogram, not exact quantiles. The primary
+    # quantile-RMSE path correctly can't score that (no shared quantile
+    # keys -> comparable:false, method "no_quantiles"), but KS only needs
+    # the histogram, which IS present, so it must not be starved by the
+    # primary's early return -- extra_metrics is computed from its own
+    # inputs, independent of whether the primary path found itself
+    # comparable.
+    def _dp_numeric_col(bin_edges: list[float], bin_counts: list[int]) -> dict[str, object]:
+        return {
+            "dtype": "float64",
+            "kind": "numeric",
+            "carrier": "number",
+            "null_count": 0,
+            "non_null_count": sum(bin_counts),
+            "distinct_count": sum(1 for c in bin_counts if c > 0),
+            "stats": {
+                "bin_edges": bin_edges,
+                "bin_counts": bin_counts,
+                "min": bin_edges[0],
+                "max": bin_edges[-1],
+                "mean": None,
+                "std": None,
+                "quantiles": {},
+            },
+        }
+
+    snap = _snap({"x": _dp_numeric_col([0, 25, 50, 75, 100], [25, 25, 25, 25])})
+    fid = compute_fidelity(snap, snap)
+    col = fid["marginal"]["columns"][0]
+    # Primary is unchanged: still incomparable, still "no_quantiles".
+    assert col["comparable"] is False
+    assert col["method"] == "no_quantiles"
+    assert col["similarity"] is None
+    # extra_metrics is independent and DOES have usable data here.
+    extra = col["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["value"] == pytest.approx(1.0)
+
+
+def test_categorical_column_carries_chi_cramers_v_extra_metric() -> None:
+    snap = _snap({"state": _categorical_col([("CA", 50), ("NY", 50)])})
+    fid = compute_fidelity(snap, snap)
+    col = fid["marginal"]["columns"][0]
+    extra = col["extra_metrics"]["chi_cramers_v"]
+    assert extra["comparable"] is True
+    assert extra["value"] == pytest.approx(1.0)
+    assert extra["method"] == "chi_square_common_partition_cramers_v"
+
+
+def test_extra_metrics_absent_for_non_gof_kinds() -> None:
+    # A2 is scoped to numeric (ks_complement) and categorical/bool
+    # (chi_cramers_v) only; datetime, freetext, empty, and kind-mismatch
+    # entries are untouched -- no extra_metrics key at all.
+    empty = {
+        "dtype": "object",
+        "kind": "empty",
+        "null_count": 100,
+        "non_null_count": 0,
+        "distinct_count": 0,
+        "stats": {},
+    }
+    src = _snap(
+        {
+            "d": _datetime_col([(2022, 50), (2023, 50)]),
+            "notes": _freetext_col(mean=20.0, max_len=40),
+            "empty_col": empty,
+        }
+    )
+    out_mismatch = _snap({"d": _numeric_col(quantiles={"p50": 50.0})})
+    fid_same_kind = compute_fidelity(src, src)
+    for col in fid_same_kind["marginal"]["columns"]:
+        assert "extra_metrics" not in col, col["column"]
+
+    fid_mismatch = compute_fidelity(_snap({"d": _datetime_col([(2022, 100)])}), out_mismatch)
+    assert "extra_metrics" not in fid_mismatch["marginal"]["columns"][0]
+
+
+def test_extra_metrics_do_not_change_similarity_or_overall_score() -> None:
+    # Additive-only: the same drifted numeric + categorical fixtures used
+    # by the pre-A2 tests above must keep the exact same similarity /
+    # marginal / overall_score now that extra_metrics is attached.
+    src = _snap(
+        {
+            "x": _numeric_col(
+                quantiles={"p50": 50.0},
+                lo=0.0,
+                hi=100.0,
+                bin_edges=[0, 50, 100],
+                bin_counts=[50, 50],
+            ),
+            "state": _categorical_col([("CA", 50), ("NY", 50)]),
+        }
+    )
+    out = _snap(
+        {
+            "x": _numeric_col(
+                quantiles={"p50": 75.0},
+                lo=0.0,
+                hi=100.0,
+                bin_edges=[0, 50, 100],
+                bin_counts=[20, 80],
+            ),
+            "state": _categorical_col([("CA", 100)]),
+        }
+    )
+    fid = compute_fidelity(src, out)
+    cols = {c["column"]: c for c in fid["marginal"]["columns"]}
+    # Same primary numbers as test_numeric_quantile_drift_lowers_score /
+    # test_categorical_tvd_distribution_shift, unaffected by the new key.
+    assert cols["x"]["similarity"] == pytest.approx(0.75)
+    assert cols["x"]["method"] == "quantile_rmse"
+    assert cols["state"]["similarity"] == pytest.approx(0.5)
+    assert cols["state"]["method"] == "tvd"
+    assert fid["overall_score"] == pytest.approx(0.625)
+    # extra_metrics present but does not feed the aggregate.
+    assert "extra_metrics" in cols["x"]
+    assert "extra_metrics" in cols["state"]
+
+
+def test_grade_and_overall_score_unchanged() -> None:
+    # Regression proof: a shipped fixture's marginal / pairwise / overall
+    # score and per-column similarity/method/comparable are pinned to
+    # their pre-A2 values, matching score_to_grade's mapping.
+    from decoy_engine.quality.report import score_to_grade
+
+    src = _snap(
+        {"a": _categorical_col([("x", 100)]), "b": _categorical_col([("1", 100)])},
+        joints=[_joint(["a", "b"], [(["x", "1"], 100)])],
+    )
+    out = _snap(
+        {"a": _categorical_col([("x", 80), ("y", 20)]), "b": _categorical_col([("1", 100)])},
+        joints=[_joint(["a", "b"], [(["x", "1"], 60), (["y", "1"], 40)])],
+    )
+    fid = compute_fidelity(src, out)
+    cols = {c["column"]: c for c in fid["marginal"]["columns"]}
+    assert cols["a"]["similarity"] == pytest.approx(0.8)
+    assert cols["a"]["method"] == "tvd"
+    assert cols["a"]["comparable"] is True
+    assert cols["b"]["similarity"] == pytest.approx(1.0)
+    assert fid["marginal"]["score"] == pytest.approx(0.9)
+    assert fid["pairwise"]["joints"][0]["similarity"] == pytest.approx(0.6)
+    assert fid["pairwise"]["score"] == pytest.approx(0.6)
+    assert fid["overall_score"] == pytest.approx(0.75)
+    assert score_to_grade(fid["overall_score"]) == "C"
+
+
+def test_scores_are_byte_stable_with_extra_metrics() -> None:
+    snap = _snap(
+        {
+            "x": _numeric_col(
+                quantiles={"p05": 5.0, "p50": 50.0, "p95": 95.0},
+                lo=0.0,
+                hi=100.0,
+                bin_edges=[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+                bin_counts=[10] * 10,
+            ),
+            "state": _categorical_col([("CA", 50), ("NY", 30), ("TX", 20)]),
+        }
+    )
+    f1 = compute_fidelity(snap, snap)
+    f2 = compute_fidelity(snap, snap)
+    assert json.dumps(f1, sort_keys=True) == json.dumps(f2, sort_keys=True)
