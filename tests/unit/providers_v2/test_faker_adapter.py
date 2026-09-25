@@ -146,20 +146,19 @@ def test_stateful_faker_names_stay_denylisted_for_determinism() -> None:
 
 
 class TestPersonProvidersSurviveFakerVersion:
-    """Faker 40.31.0 migration regression guard (2026-09-25).
+    """person_name/first/last/full/email provider-drop regression guard (2026-09-25).
 
-    The pin was held at 40.23.0 since 2026-07-23 on the belief that 40.31.0
-    silently drops person_name/first/last/full/email from the registry
-    (commit ad18dbaf). Investigation found that claim does not reproduce:
-    `dir(Faker())`'s reflected attribute set is byte-identical across the
-    two versions, and this file's own `test_generate_person_*` tests already
-    exercise the V2 catalog path. This class covers the two things those
-    didn't: the raw Faker methods the V1 + V2 layers both bind to
-    (`person_name`/`first`/`last`/`full`/`email`'s underlying
-    `name`/`first_name`/`last_name`/`email`), and the V1 reflection path
-    (`get_faker_providers`), so a real future provider-drop regression on
-    either layer fails loudly instead of needing a manual lock-regen
-    diagnosis again.
+    The pin was held at 40.23.0 since 2026-07-23 on the belief that Faker
+    40.31.0 drops these five providers. That was misdiagnosed: the actual
+    cause is the optional `mimesis` extra, which rebinds them to
+    MimesisAdapter regardless of Faker version (see the registry's adoption
+    matrix). This class covers the raw Faker methods the V1 + V2 layers both
+    bind to (`person_name`/`first`/`last`/`full`/`email`'s underlying
+    `name`/`first_name`/`last_name`/`email`), the V1 reflection path
+    (`get_faker_providers`), and that the V2 registry still resolves these
+    names through whichever backend actually owns them, so a real future
+    provider-drop regression on any layer fails loudly instead of needing a
+    manual lock-regen diagnosis again.
     """
 
     def test_underlying_faker_methods_present_on_instance(self) -> None:
@@ -184,10 +183,15 @@ class TestPersonProvidersSurviveFakerVersion:
             )
 
     def test_v2_registry_resolves_all_five_semantic_names(self) -> None:
+        # Goes through the actual registry, not a hand-picked adapter: these
+        # five names rebind from FakerAdapter to MimesisAdapter when the
+        # mimesis extra is installed (see _registry.py's adoption matrix), so
+        # fetching a fixed Faker-only adapter here would test the wrong path.
         # person_full_name maps to the same underlying `name` method as
         # person_name (see _FAKER_METHOD_MAP); both are exercised here to
         # match the roadmap's five-name framing (person_name/first/last/
         # full/email) even though full and name share a backend call.
+        registry = get_default_registry()
         for semantic_name in (
             "person_name",
             "person_first_name",
@@ -195,7 +199,11 @@ class TestPersonProvidersSurviveFakerVersion:
             "person_full_name",
             "person_email",
         ):
-            out = _adapter().generate(semantic_name, spec=_spec())
+            assert semantic_name in registry.known_providers(), (
+                f"{semantic_name!r} missing from the registry entirely"
+            )
+            registry.get_capabilities(semantic_name)  # must not raise
+            out = registry.get_adapter(semantic_name).generate(semantic_name, spec=_spec())
             assert isinstance(out, str) and out, (
                 f"V2 registry failed to generate a value for {semantic_name!r}"
             )

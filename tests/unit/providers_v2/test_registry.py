@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from decoy_engine.providers_v2 import (
@@ -12,6 +14,11 @@ from decoy_engine.providers_v2 import (
     get_default_registry,
     register_faker_provider_v2,
 )
+
+# Mirrors providers_v2/mimesis/test_optional_dep.py's detection: person_email
+# and person_name rebind away from the faker_providers() view when this
+# extra is installed (see the registry's adoption matrix).
+_MIMESIS_INSTALLED = importlib.util.find_spec("mimesis") is not None
 
 
 class TestDefaultRegistry:
@@ -66,7 +73,14 @@ class TestFakerProviders:
         assert all(isinstance(cap, CapabilityMatrix) for cap in result)
 
     def test_known_faker_provider_present(self) -> None:
-        names = {cap.provider for cap in get_default_registry().faker_providers()}
+        registry = get_default_registry()
+        # Unconditional: both names are always registered, regardless of
+        # which backend (faker or mimesis) actually serves them.
+        assert "person_email" in registry.known_providers()
+        assert "person_name" in registry.known_providers()
+        if _MIMESIS_INSTALLED:
+            return  # rebound to MimesisAdapter; not in the faker-only view
+        names = {cap.provider for cap in registry.faker_providers()}
         assert "person_email" in names
         assert "person_name" in names
 

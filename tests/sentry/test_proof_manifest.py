@@ -10,6 +10,12 @@ To fix a failure, run:
     python scripts/gen_proof_manifest.py
 
 and commit the updated docs/proof-manifest.json.
+
+Known gap (2026-09-25, tracked carry-forward, not fixed here): the manifest's
+provider names depend on whether the optional `mimesis` extra is installed at
+generation time (it rebinds five person_* providers to MimesisAdapter). CI
+generates it without mimesis. Whether the sentry should pin a required
+generation profile or regenerate per-profile is undecided.
 """
 
 from __future__ import annotations
