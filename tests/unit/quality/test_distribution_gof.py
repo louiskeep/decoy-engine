@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 
+import pandas as pd
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -21,6 +22,7 @@ from decoy_engine.quality._distribution_gof import (
     chi_square_cramers_v,
     ks_complement_binned,
 )
+from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
 # ── numeric: KS-complement ──────────────────────────────────────────────────
 
@@ -148,6 +150,35 @@ def test_ks_complement_overshoot_clamps_to_exactly_one() -> None:
     result = ks_complement_binned(src, out)
     assert result["d_statistic"] == 1.0
     assert result["value"] == 0.0
+
+
+def test_ks_complement_constant_vs_spanning_bin_gap_before_mass() -> None:
+    # Codex FINAL gate HIGH finding: the binned CDF is right-continuous,
+    # so a point mass's jump was only ever checked AT and AFTER the jump,
+    # never just before it. src is a constant column at 0 (a single
+    # degenerate bin, all mass as one point); out spans [-9, 1] as one
+    # uniform bin. Built via the real snapshot pipeline (numeric_bins=1),
+    # matching the reported repro exactly.
+    #
+    # CDF_src(x) = 0 for x < 0, jumps to 1 at x = 0 (right-continuous).
+    # CDF_out(x) = (x + 9) / 10 for x in [-9, 1], continuous.
+    # As x -> 0 from below: CDF_src(x) = 0, CDF_out(x) -> 0.9 -> gap -> 0.9.
+    # At x = 0 exactly: CDF_src(0) = 1, CDF_out(0) = 0.9 -> gap = 0.1.
+    # The true sup over all x is the LEFT-approach gap, 0.9, not the
+    # right-continuous value at the jump, 0.1. So D = 0.9, ks_complement
+    # = 0.1 (not the 0.9 a right-continuous-only evaluation would give).
+    src_df = pd.DataFrame({"x": [0] * 10})
+    out_df = pd.DataFrame({"x": [-9, 1] * 5})
+    src_stats = compute_distribution_snapshot(src_df, numeric_bins=1)["columns"]["x"]["stats"]
+    out_stats = compute_distribution_snapshot(out_df, numeric_bins=1)["columns"]["x"]["stats"]
+
+    forward = ks_complement_binned(src_stats, out_stats)
+    assert forward["d_statistic"] == pytest.approx(0.9)
+    assert forward["value"] == pytest.approx(0.1)
+
+    backward = ks_complement_binned(out_stats, src_stats)
+    assert backward["d_statistic"] == pytest.approx(0.9)
+    assert backward["value"] == pytest.approx(0.1)
 
 
 def test_binned_cdf_below_all_bins_is_zero() -> None:

@@ -140,13 +140,30 @@ def ks_complement_binned(
     # float summation order must not depend on dict/set iteration order.
     breakpoints = sorted(set(src_edges_f) | set(out_edges_f))
 
+    # A binned CDF is right-continuous (`_binned_cdf`'s degenerate-bin
+    # branch includes a point mass's edge itself), so it can jump at a
+    # point-mass edge. The true KS statistic is a supremum over ALL real
+    # x, and for two right-continuous, piecewise-linear-between-jumps
+    # functions that supremum is attained at a breakpoint approached from
+    # EITHER side: evaluating only the right-continuous value at each
+    # breakpoint (the old behavior) misses the gap approached from just
+    # below a jump, which can be the larger one (Codex FINAL gate HIGH
+    # finding; see test_ks_complement_constant_vs_spanning_bin_gap_before_
+    # mass for a worked repro). So every breakpoint is checked twice: once
+    # at its right-continuous value, once at its left limit.
     d_statistic = 0.0
     for x in breakpoints:
-        cdf_src = _binned_cdf(x, src_edges_f, src_counts, src_total)
-        cdf_out = _binned_cdf(x, out_edges_f, out_counts, out_total)
-        gap = abs(cdf_src - cdf_out)
-        if gap > d_statistic:
-            d_statistic = gap
+        cdf_src_right = _binned_cdf(x, src_edges_f, src_counts, src_total)
+        cdf_out_right = _binned_cdf(x, out_edges_f, out_counts, out_total)
+        gap_right = abs(cdf_src_right - cdf_out_right)
+        if gap_right > d_statistic:
+            d_statistic = gap_right
+
+        cdf_src_left = _binned_cdf(x, src_edges_f, src_counts, src_total, left_limit=True)
+        cdf_out_left = _binned_cdf(x, out_edges_f, out_counts, out_total, left_limit=True)
+        gap_left = abs(cdf_src_left - cdf_out_left)
+        if gap_left > d_statistic:
+            d_statistic = gap_left
 
     # `gap` is always >= 0 (an abs()), so d_statistic never needs a lower
     # clamp. The upper clamp is load-bearing: mass fractions summed over
@@ -168,12 +185,22 @@ def _binned_cdf(
     edges: list[float],
     counts: list[int],
     total: int,
+    *,
+    left_limit: bool = False,
 ) -> float:
     """Empirical CDF at `x` for a histogram, mass allocated uniformly per bin.
 
     A zero-width bin (`hi == lo`, the constant-column single-bin fallback
     in `_numeric_stats`) is a point mass: its full mass counts once `x`
-    reaches it, never spread across an interval.
+    reaches it, never spread across an interval. The within-bin ramp for a
+    normal (non-degenerate) bin is continuous, so it needs no left/right
+    distinction; only a point mass actually jumps.
+
+    `left_limit=True` computes lim_{t -> x-} F(t) instead of F(x): the
+    point mass at `x` (if any) is excluded rather than included. Callers
+    that need the true supremum of |F - G| (the KS statistic) must check
+    both, since the sup can be attained approaching a jump from below, not
+    only at or after it.
     """
     cumulative = 0.0
     for i, count in enumerate(counts):
@@ -182,7 +209,8 @@ def _binned_cdf(
         lo, hi = edges[i], edges[i + 1]
         mass = count / total
         if hi == lo:
-            if x >= lo:
+            included = x > lo if left_limit else x >= lo
+            if included:
                 cumulative += mass
             continue
         if x <= lo:
