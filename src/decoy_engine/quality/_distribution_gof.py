@@ -275,24 +275,33 @@ def chi_square_cramers_v(
     if src_other_adj > 0 or out_other_adj > 0:
         columns.append((src_other_adj, out_other_adj))
 
-    if len(columns) < 2:
+    # Codex FINAL gate MEDIUM finding: a common label present as a dict
+    # key on both sides but with count 0 on BOTH (e.g. a malformed/edge-
+    # case top_values entry) used to count toward "identifiable support"
+    # just for existing, even though it carries zero mass and contributes
+    # nothing to the chi-square sum below -- inflating len(columns) past
+    # the guard on what is really a single live bucket. Drop dead columns
+    # FIRST, then gate on what is actually left to compare.
+    live_columns = [(s, o) for s, o in columns if s > 0 or o > 0]
+
+    if len(live_columns) < 2:
         return _incomparable(_CHI_METHOD, "insufficient_identifiable_support")
 
     grand_total = src_total + out_total
     chi2_statistic = 0.0
-    for src_count, out_count in columns:
+    for src_count, out_count in live_columns:
         col_total = src_count + out_count
-        if col_total <= 0:
-            continue
+        # col_total > 0 always here (live_columns filtered above), and
+        # src_total/out_total > 0 (guarded above), so expected_* > 0 --
+        # no divide-by-zero.
         expected_src = src_total * col_total / grand_total
         expected_out = out_total * col_total / grand_total
-        # expected_* > 0 here: col_total > 0 and src_total/out_total > 0
-        # (guarded above), so no divide-by-zero.
         chi2_statistic += (src_count - expected_src) ** 2 / expected_src
         chi2_statistic += (out_count - expected_out) ** 2 / expected_out
 
     # 2 rows (source, output) always -> min(rows - 1, cols - 1) == 1
-    # whenever cols >= 2 (guaranteed by the len(columns) < 2 guard above).
+    # whenever cols >= 2 (guaranteed by the len(live_columns) < 2 guard
+    # above).
     # sqrt() is never negative, so cramers_v never needs a lower clamp; the
     # upper clamp is load-bearing for the same summed-rounding-error reason
     # as ks_complement_binned's d_statistic clamp.

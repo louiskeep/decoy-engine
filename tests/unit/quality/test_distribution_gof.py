@@ -325,6 +325,26 @@ def test_chi_similarity_single_fully_covered_label_is_insufficient_support() -> 
     assert result["reason"] == "insufficient_identifiable_support"
 
 
+def test_chi_similarity_one_positive_bucket_is_insufficient_support() -> None:
+    # Codex FINAL gate MEDIUM finding: identical snapshots with a common
+    # label "A" that carries count 0 on BOTH sides ("A" is still a dict
+    # key in both top_values, so it is "common" by the intersection test)
+    # plus a common label "B" with real mass. Before dropping zero-total
+    # columns, `columns` counted A as a second "identifiable" column
+    # purely because it existed as a key -- even though it collapses to
+    # (0, 0) and gets skipped in the chi-square sum, contributing nothing.
+    # That let the len(columns) >= 2 guard pass on what is really only
+    # ONE live bucket (B), which cannot support a 2-sample comparison any
+    # more than a single common label can (see the fully-covered-label
+    # test above).
+    src = _categorical([("A", 0), ("B", 50)])
+    out = _categorical([("A", 0), ("B", 50)])
+    result = chi_square_cramers_v(src, out)
+    assert result["comparable"] is False
+    assert result["reason"] == "insufficient_identifiable_support"
+    assert result["value"] is None
+
+
 def test_chi_similarity_skips_zero_total_common_label_column() -> None:
     # "A" has count 0 on both sides (col_total == 0), positioned before a
     # real divergent common label "B" and the folded `other` bucket. The
