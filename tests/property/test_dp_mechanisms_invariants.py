@@ -58,7 +58,7 @@ does NOT do"). These tests stay on the STRUCTURAL/behavioral guarantees
 - INPUT COVERAGE. Empty, single-row, and all-same-value frames are ordinary
   (non-adversarial) inputs, not a special case the module carves out; gated
   `dp_certified` since they exercise the real OpenDP-backed fit, and skip
-  cleanly off the certified 77-dist dev+lint+vault Python 3.10.20 profile
+  cleanly off the certified 77-dist dev+lint+vault+cloud Python 3.10.20 profile
   exactly like the rest of `test_dp.py` (see `tests/_dp_cert.py`).
 
 Source patterns cited per CLAUDE.md's "use established methodology" rule

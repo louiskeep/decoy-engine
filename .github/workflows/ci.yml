@@ -55,8 +55,10 @@ jobs:
       - name: Install engine + dev extras
         # mypy pinned for the same reason as ruff: a minor bump can surface
         # new error categories on unchanged code. Version mirrors the [lint]
-        # dev-deps group in pyproject.toml.
-        run: pip install -e ".[dev]" mypy==2.1.0
+        # dev-deps group in pyproject.toml. [cloud] is required so
+        # connectors/gcs.py's google.api_core/google.oauth2 imports resolve;
+        # the pyproject mypy override only covers google.cloud.
+        run: pip install -e ".[dev,cloud]" mypy==2.1.0
       - name: Type check
         # testflight/ holds real runner+invariant logic (acceptance suite); it
         # lives outside src/tests so it must be named explicitly. scripts/ stays
@@ -215,8 +217,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Pin the exact certified CPython patch
         run: uv python install 3.10.20
-      - name: Sync the certified profile (77-dist dev+lint+vault)
-        run: uv sync --frozen --extra dev --extra lint --extra vault --python 3.10.20
+      - name: Sync the certified profile (77-dist dev+lint+vault+cloud)
+        # cloud extra required: boto3 partially survives via moto[s3], but
+        # google-cloud-storage does not survive at all once cloud is optional,
+        # which fails check_fit_environment() below. Reproduces the original
+        # 895b9a20... fingerprint exactly (77 dists); no re-certification needed.
+        run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python 3.10.20
       - name: Assert this profile is certified (fail loud on drift)
         run: >
           uv run python -c

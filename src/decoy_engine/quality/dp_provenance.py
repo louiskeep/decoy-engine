@@ -236,13 +236,16 @@ CERTIFIED_PLATFORM = PlatformTriple(
 # Certified rows keyed by (platform, cpython_full) -> lock_fingerprint.
 #
 # The 3.10 row below is pinned from a REPRODUCIBLE synced environment: exactly
-# ``uv sync --frozen --extra dev --extra lint --extra vault`` (77 distributions =
-# 76 registry + the editable ``decoy-engine``). That exact command is the frozen
-# profile -- anyone who runs it against this ``uv.lock`` on Linux/x86-64/CPython
-# 3.10.20 reproduces this fingerprint. (An earlier draft pinned a "dirty" working
-# ``.venv`` that no single ``uv sync`` reproduced; that was the phase-3 Codex
-# MEDIUM -- fixed by pinning the clean ``dev+lint+vault`` profile the CI workflow
-# actually syncs.) See ``assert_lock_matches_installed`` for the guard that proves
+# ``uv sync --frozen --extra dev --extra lint --extra vault --extra cloud`` (77
+# distributions = 76 registry + the editable ``decoy-engine``). That exact command
+# is the frozen profile -- anyone who runs it against this ``uv.lock`` on
+# Linux/x86-64/CPython 3.10.20 reproduces this fingerprint. (An earlier draft
+# pinned a "dirty" working ``.venv`` that no single ``uv sync`` reproduced; that
+# was the phase-3 Codex MEDIUM -- fixed by pinning the clean ``dev+lint+vault``
+# profile the CI workflow actually syncs. ``cloud`` was added when
+# boto3/google-cloud-storage moved from base deps to an opt-in extra, since
+# google-cloud-storage does not survive the profile without it.) See
+# ``assert_lock_matches_installed`` for the guard that proves
 # the installed set is exactly the lock's marker-selected pins.
 #
 # CI ADDS THE OTHER ROWS. The dependency-matrix workflow
@@ -267,8 +270,9 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
     (CERTIFIED_PLATFORM, "3.10.20.final"): frozenset(
         {
             # decoy-engine dev/CI certification profile: 77 distributions from
-            # `uv sync --frozen --extra dev --extra lint --extra vault` on Python
-            # 3.10.20 (the profile the dps-dependency-matrix workflow installs).
+            # `uv sync --frozen --extra dev --extra lint --extra vault --extra
+            # cloud` on Python 3.10.20 (the profile the dps-dependency-matrix
+            # workflow installs).
             # Reproduces from the regenerated 0.5.0 uv.lock. The prior value
             # (6c0b2bbd...) was this same 77-dist profile on the PRE-0.5.0 lock,
             # before the release bump and the packaging>=21.0 direct dep, so it

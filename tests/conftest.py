@@ -23,7 +23,7 @@ CONFIG_DIR = os.path.join(TEST_DATA_DIR, "config")
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip `dp_certified` items off the certified DP proof-stack.
 
-    `fit_dp_snapshot` only completes on the certified 77-dist `dev+lint+vault`
+    `fit_dp_snapshot` only completes on the certified 77-dist `dev+lint+vault+cloud`
     Python 3.10.20 profile; every other profile -- including the default
     `regression-gate` job -- fails closed with `dp_stack_uncertified` before
     reading any private cell. Tests marked `dp_certified` call it expecting a
