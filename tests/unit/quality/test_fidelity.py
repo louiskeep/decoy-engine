@@ -394,6 +394,49 @@ def test_numeric_column_carries_ks_complement_extra_metric() -> None:
     assert extra["method"] == "ks_complement_binned_cdf"
 
 
+def test_numeric_dp_snapshot_still_carries_ks_complement_without_quantiles() -> None:
+    # Codex FINAL gate MEDIUM finding. quality/dp.py's DP numeric snapshot
+    # shape (quality/dp.py:406) always carries bin_edges/bin_counts and
+    # min/max, but quantiles is deliberately left empty ({}) -- OpenDP
+    # releases a noised histogram, not exact quantiles. The primary
+    # quantile-RMSE path correctly can't score that (no shared quantile
+    # keys -> comparable:false, method "no_quantiles"), but KS only needs
+    # the histogram, which IS present, so it must not be starved by the
+    # primary's early return -- extra_metrics is computed from its own
+    # inputs, independent of whether the primary path found itself
+    # comparable.
+    def _dp_numeric_col(bin_edges: list[float], bin_counts: list[int]) -> dict[str, object]:
+        return {
+            "dtype": "float64",
+            "kind": "numeric",
+            "carrier": "number",
+            "null_count": 0,
+            "non_null_count": sum(bin_counts),
+            "distinct_count": sum(1 for c in bin_counts if c > 0),
+            "stats": {
+                "bin_edges": bin_edges,
+                "bin_counts": bin_counts,
+                "min": bin_edges[0],
+                "max": bin_edges[-1],
+                "mean": None,
+                "std": None,
+                "quantiles": {},
+            },
+        }
+
+    snap = _snap({"x": _dp_numeric_col([0, 25, 50, 75, 100], [25, 25, 25, 25])})
+    fid = compute_fidelity(snap, snap)
+    col = fid["marginal"]["columns"][0]
+    # Primary is unchanged: still incomparable, still "no_quantiles".
+    assert col["comparable"] is False
+    assert col["method"] == "no_quantiles"
+    assert col["similarity"] is None
+    # extra_metrics is independent and DOES have usable data here.
+    extra = col["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["value"] == pytest.approx(1.0)
+
+
 def test_categorical_column_carries_chi_cramers_v_extra_metric() -> None:
     snap = _snap({"state": _categorical_col([("CA", 50), ("NY", 50)])})
     fid = compute_fidelity(snap, snap)

@@ -231,9 +231,25 @@ def _column_similarity(
     out_stats = out_col.get("stats", {})
 
     if src_kind == "numeric":
-        return _numeric_similarity(src_stats, out_stats)
+        result = _numeric_similarity(src_stats, out_stats)
+        # Codex FINAL gate MEDIUM finding: ks_complement is computed from
+        # ITS OWN inputs (bin_edges/bin_counts) independent of whether the
+        # primary quantile-RMSE path found itself comparable. A DP
+        # snapshot (quality/dp.py:406) always carries a histogram but
+        # deliberately leaves quantiles empty, so the primary correctly
+        # returns comparable:false ("no_quantiles") while KS still has
+        # everything it needs -- gating extra_metrics on the primary's
+        # early return would silently drop a metric that was reachable.
+        result["extra_metrics"] = {
+            "ks_complement": _finalize_gof(ks_complement_binned(src_stats, out_stats)),
+        }
+        return result
     if src_kind in ("categorical", "bool"):
-        return _categorical_similarity(src_stats, out_stats)
+        result = _categorical_similarity(src_stats, out_stats)
+        result["extra_metrics"] = {
+            "chi_cramers_v": _finalize_gof(chi_square_cramers_v(src_stats, out_stats)),
+        }
+        return result
     if src_kind == "datetime":
         return _datetime_similarity(src_stats, out_stats)
     if src_kind == "freetext":
@@ -280,9 +296,6 @@ def _numeric_similarity(
         "similarity": round(similarity, _SCORE_PRECISION),
         "method": "quantile_rmse",
         "comparable": True,
-        "extra_metrics": {
-            "ks_complement": _finalize_gof(ks_complement_binned(src_stats, out_stats)),
-        },
     }
 
 
@@ -313,9 +326,6 @@ def _categorical_similarity(
         "similarity": round(similarity, _SCORE_PRECISION),
         "method": "tvd",
         "comparable": True,
-        "extra_metrics": {
-            "chi_cramers_v": _finalize_gof(chi_square_cramers_v(src_stats, out_stats)),
-        },
     }
 
 
