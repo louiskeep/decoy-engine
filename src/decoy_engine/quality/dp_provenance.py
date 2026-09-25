@@ -273,12 +273,22 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # `uv sync --frozen --extra dev --extra lint --extra vault --extra
             # cloud` on Python 3.10.20 (the profile the dps-dependency-matrix
             # workflow installs).
-            # Reproduces from the regenerated 0.5.0 uv.lock. The prior value
-            # (6c0b2bbd...) was this same 77-dist profile on the PRE-0.5.0 lock,
-            # before the release bump and the packaging>=21.0 direct dep, so it
-            # no longer matches a clean build; reverting only decoy-engine to
-            # 0.4.0 reproduces it exactly.
-            "895b9a20f0fc8a5cd84c94c49a4a7537866f9b45e656a9eb7463103dc8e81161",
+            # Verified directly (uv sync + installed_distribution_set +
+            # compute_lock_fingerprint, not assumed): the dist SET here is
+            # byte-identical to the pre-cloud-extra 895b9a20... profile except
+            # for decoy-engine's own version string, because boto3/botocore
+            # were already present via `moto[s3]` in [dev] and adding
+            # `--extra cloud` only pulls in the google-cloud-storage closure
+            # that wasn't there before -- so this fingerprint changed for two
+            # independent reasons landing in the same change: the cloud extra
+            # split, AND the decoy-engine 0.5.0 -> 0.6.0 version bump (dennis
+            # M6) that the version string is itself part of the hashed set.
+            # The prior value (6c0b2bbd...) was this same 77-dist profile on
+            # the PRE-0.5.0 lock, before the release bump and the
+            # packaging>=21.0 direct dep; 895b9a20... was the 0.5.0,
+            # pre-cloud-extra profile. Reverting only decoy-engine to 0.4.0
+            # reproduces 6c0b2bbd... exactly.
+            "56bff582448795670017468995df712f2f12c7745e1e225f1c2c9bb8fbaf371f",
             # decoy-cli pristine RUNTIME profile: engine 0.5.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
             # The exact third-party set is pinned in the CLI repo's
