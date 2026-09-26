@@ -289,18 +289,22 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # pre-cloud-extra profile. Reverting only decoy-engine to 0.4.0
             # reproduces 6c0b2bbd... exactly.
             "56bff582448795670017468995df712f2f12c7745e1e225f1c2c9bb8fbaf371f",
-            # decoy-cli pristine RUNTIME profile: engine 0.5.0 + CLI (typer/rich/
+            # decoy-cli pristine RUNTIME profile: engine 0.6.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
             # The exact third-party set is pinned in the CLI repo's
-            # decoy-fix/requirements-certified.txt (proof-critical opendp/
+            # requirements-certified.txt (proof-critical opendp/
             # dp-accounting/numpy/scipy/pandas/pyarrow at the annotated versions,
             # packaging==26.2). To reproduce: `--no-dev` install that file into a
             # 3.10.20 venv and run the CLI repo's scripts/cert_smoke.py, which
             # recomputes compute_lock_fingerprint over the running set (this hash)
             # and then exercises fit -> dps-marginal/v3 -> generate end to end.
-            # Its legitimacy is verified in the CLI repo, not here. An earlier
-            # draft pinned a dev-polluted env (c2c766...); this is the clean one.
-            "5a2f7ef75ba38c5c338d5dcbc0a790f1c104cb7f6b49c2b25908540e63bb8495",
+            # Its legitimacy is verified in the CLI repo, not here.
+            # Verified directly (65 dists, real 3.10.20 install): reverting only
+            # decoy-engine 0.6.0 -> 0.5.0 in this set reproduces the prior
+            # 5a2f7ef7... exactly, so the change is purely the version bump (dennis
+            # M6), not a proof-critical library change. An earlier draft pinned a
+            # dev-polluted env (c2c766...); this is the clean one.
+            "e75c87e93fc7bf2d85a3aaaec9128f4070ff7654717cf50460bb03038c586552",
         }
     ),
 }
