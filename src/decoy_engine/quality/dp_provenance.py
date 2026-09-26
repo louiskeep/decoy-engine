@@ -281,8 +281,8 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # `--extra cloud` only pulls in the google-cloud-storage closure
             # that wasn't there before -- so this fingerprint changed for two
             # independent reasons landing in the same change: the cloud extra
-            # split, AND the decoy-engine 0.5.0 -> 0.6.0 version bump (dennis
-            # M6) that the version string is itself part of the hashed set.
+            # split, AND the decoy-engine 0.5.0 -> 0.6.0 version bump, since
+            # the version string is itself part of the hashed set.
             # The prior value (6c0b2bbd...) was this same 77-dist profile on
             # the PRE-0.5.0 lock, before the release bump and the
             # packaging>=21.0 direct dep; 895b9a20... was the 0.5.0,
@@ -301,8 +301,8 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # Its legitimacy is verified in the CLI repo, not here.
             # Verified directly (65 dists, real 3.10.20 install): reverting only
             # decoy-engine 0.6.0 -> 0.5.0 in this set reproduces the prior
-            # 5a2f7ef7... exactly, so the change is purely the version bump (dennis
-            # M6), not a proof-critical library change. An earlier draft pinned a
+            # 5a2f7ef7... exactly, so the change is purely the version bump,
+            # not a proof-critical library change. An earlier draft pinned a
             # dev-polluted env (c2c766...); this is the clean one.
             "e75c87e93fc7bf2d85a3aaaec9128f4070ff7654717cf50460bb03038c586552",
         }
