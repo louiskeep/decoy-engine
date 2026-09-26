@@ -1,6 +1,6 @@
 """Shared DP certification predicate for the test suite (CI fix #4).
 
-`fit_dp_snapshot` only completes on the certified 77-dist `dev+lint+vault`
+`fit_dp_snapshot` only completes on the certified 77-dist `dev+lint+vault+cloud`
 Python 3.10.20 profile (`decoy_engine.quality.dp_provenance.
 check_fit_environment`); every other installed profile -- including the
 default `regression-gate` CI job -- fails closed with `dp_stack_uncertified`

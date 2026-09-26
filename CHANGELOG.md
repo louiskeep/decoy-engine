@@ -9,6 +9,16 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (cloud connectors now opt-in, 2026-09-25)
+
+**Breaking (pre-GA API):** `boto3` and `google-cloud-storage` moved from base
+dependencies to the new `cloud` extra (`pip install decoy-engine[cloud]`). A
+self-hosted single-org install writing to local disk never needed them; the S3/GCS
+connector imports are lazy (function-scoped), so a plain install still imports and
+runs cleanly against local sources/targets. `gcs` now points at `cloud` instead of
+being a no-op alias. Bumped to 0.6.0 so `decoy-cli`'s `decoy-engine>=0.6.0` floor can
+guarantee the extra exists.
+
 ### Removed (Polars masking adapter, 2026-09-21)
 
 **Breaking (pre-GA API):** removed the dormant Polars MASKING adapter. `"polars"` was a

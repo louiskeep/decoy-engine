@@ -55,8 +55,10 @@ jobs:
       - name: Install engine + dev extras
         # mypy pinned for the same reason as ruff: a minor bump can surface
         # new error categories on unchanged code. Version mirrors the [lint]
-        # dev-deps group in pyproject.toml.
-        run: pip install -e ".[dev]" mypy==2.1.0
+        # dev-deps group in pyproject.toml. [cloud] is required so
+        # connectors/gcs.py's google.api_core/google.oauth2 imports resolve;
+        # the pyproject mypy override only covers google.cloud.
+        run: pip install -e ".[dev,cloud]" mypy==2.1.0
       - name: Type check
         # testflight/ holds real runner+invariant logic (acceptance suite); it
         # lives outside src/tests so it must be named explicitly. scripts/ stays
@@ -88,8 +90,15 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
-      - name: Install engine + dev extras
-        run: pip install -e ".[dev]"
+      - name: Install engine + dev + cloud extras
+        # CLI install DX (2026-09-25): boto3/google-cloud-storage moved from
+        # hard deps to the opt-in `cloud` extra. tests/unit/test_v2_cloud_sources.py
+        # mocks google.cloud.storage.Client/boto3 directly (no importorskip
+        # guard), so this job needs `cloud` too or it fails on ModuleNotFoundError
+        # instead of running the connector suite. `[dev]` alone is now the true
+        # lean-install profile; see packaging-gate below for the corresponding
+        # "base wheel does not require boto3/google-cloud-storage" assertion.
+        run: pip install -e ".[dev,cloud]"
       - name: Routing guard (every named suite directory must exist)
         run: |
           for d in \
@@ -208,8 +217,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Pin the exact certified CPython patch
         run: uv python install 3.10.20
-      - name: Sync the certified profile (77-dist dev+lint+vault)
-        run: uv sync --frozen --extra dev --extra lint --extra vault --python 3.10.20
+      - name: Sync the certified profile (77-dist dev+lint+vault+cloud)
+        # cloud extra required: boto3 partially survives via moto[s3], but
+        # google-cloud-storage does not survive at all once cloud is optional,
+        # which fails check_fit_environment() below. The dist set matches the
+        # pre-split 895b9a20... profile except decoy-engine's own version
+        # (0.5.0 -> 0.6.0), so the certified row is now 56bff582... (see
+        # dp_provenance._CERTIFIED_STACKS).
+        run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python 3.10.20
       - name: Assert this profile is certified (fail loud on drift)
         run: >
           uv run python -c

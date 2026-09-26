@@ -73,7 +73,7 @@ jobs:
         # rather than silently changing the certified hash. Maintainer TODO on
         # first green run: confirm this invocation reproduces the pinned 3.10.20
         # fingerprint, then lock it.
-        run: uv sync --frozen --extra dev --extra lint --extra vault --python ${{ matrix.python-version }}
+        run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python ${{ matrix.python-version }}
 
       - name: Guard -- lock == installed (Codex round-6)
         # The fingerprint is only reproducible once the installed set is proven

@@ -236,13 +236,16 @@ CERTIFIED_PLATFORM = PlatformTriple(
 # Certified rows keyed by (platform, cpython_full) -> lock_fingerprint.
 #
 # The 3.10 row below is pinned from a REPRODUCIBLE synced environment: exactly
-# ``uv sync --frozen --extra dev --extra lint --extra vault`` (77 distributions =
-# 76 registry + the editable ``decoy-engine``). That exact command is the frozen
-# profile -- anyone who runs it against this ``uv.lock`` on Linux/x86-64/CPython
-# 3.10.20 reproduces this fingerprint. (An earlier draft pinned a "dirty" working
-# ``.venv`` that no single ``uv sync`` reproduced; that was the phase-3 Codex
-# MEDIUM -- fixed by pinning the clean ``dev+lint+vault`` profile the CI workflow
-# actually syncs.) See ``assert_lock_matches_installed`` for the guard that proves
+# ``uv sync --frozen --extra dev --extra lint --extra vault --extra cloud`` (77
+# distributions = 76 registry + the editable ``decoy-engine``). That exact command
+# is the frozen profile -- anyone who runs it against this ``uv.lock`` on
+# Linux/x86-64/CPython 3.10.20 reproduces this fingerprint. (An earlier draft
+# pinned a "dirty" working ``.venv`` that no single ``uv sync`` reproduced; that
+# was the phase-3 Codex MEDIUM -- fixed by pinning the clean ``dev+lint+vault``
+# profile the CI workflow actually syncs. ``cloud`` was added when
+# boto3/google-cloud-storage moved from base deps to an opt-in extra, since
+# google-cloud-storage does not survive the profile without it.) See
+# ``assert_lock_matches_installed`` for the guard that proves
 # the installed set is exactly the lock's marker-selected pins.
 #
 # CI ADDS THE OTHER ROWS. The dependency-matrix workflow
@@ -267,26 +270,41 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
     (CERTIFIED_PLATFORM, "3.10.20.final"): frozenset(
         {
             # decoy-engine dev/CI certification profile: 77 distributions from
-            # `uv sync --frozen --extra dev --extra lint --extra vault` on Python
-            # 3.10.20 (the profile the dps-dependency-matrix workflow installs).
-            # Reproduces from the regenerated 0.5.0 uv.lock. The prior value
-            # (6c0b2bbd...) was this same 77-dist profile on the PRE-0.5.0 lock,
-            # before the release bump and the packaging>=21.0 direct dep, so it
-            # no longer matches a clean build; reverting only decoy-engine to
-            # 0.4.0 reproduces it exactly.
-            "895b9a20f0fc8a5cd84c94c49a4a7537866f9b45e656a9eb7463103dc8e81161",
-            # decoy-cli pristine RUNTIME profile: engine 0.5.0 + CLI (typer/rich/
+            # `uv sync --frozen --extra dev --extra lint --extra vault --extra
+            # cloud` on Python 3.10.20 (the profile the dps-dependency-matrix
+            # workflow installs).
+            # Verified directly (uv sync + installed_distribution_set +
+            # compute_lock_fingerprint, not assumed): the dist SET here is
+            # byte-identical to the pre-cloud-extra 895b9a20... profile except
+            # for decoy-engine's own version string, because boto3/botocore
+            # were already present via `moto[s3]` in [dev] and adding
+            # `--extra cloud` only pulls in the google-cloud-storage closure
+            # that wasn't there before -- so this fingerprint changed for two
+            # independent reasons landing in the same change: the cloud extra
+            # split, AND the decoy-engine 0.5.0 -> 0.6.0 version bump, since
+            # the version string is itself part of the hashed set.
+            # The prior value (6c0b2bbd...) was this same 77-dist profile on
+            # the PRE-0.5.0 lock, before the release bump and the
+            # packaging>=21.0 direct dep; 895b9a20... was the 0.5.0,
+            # pre-cloud-extra profile. Reverting only decoy-engine to 0.4.0
+            # reproduces 6c0b2bbd... exactly.
+            "56bff582448795670017468995df712f2f12c7745e1e225f1c2c9bb8fbaf371f",
+            # decoy-cli pristine RUNTIME profile: engine 0.6.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
             # The exact third-party set is pinned in the CLI repo's
-            # decoy-fix/requirements-certified.txt (proof-critical opendp/
+            # requirements-certified.txt (proof-critical opendp/
             # dp-accounting/numpy/scipy/pandas/pyarrow at the annotated versions,
             # packaging==26.2). To reproduce: `--no-dev` install that file into a
             # 3.10.20 venv and run the CLI repo's scripts/cert_smoke.py, which
             # recomputes compute_lock_fingerprint over the running set (this hash)
             # and then exercises fit -> dps-marginal/v3 -> generate end to end.
-            # Its legitimacy is verified in the CLI repo, not here. An earlier
-            # draft pinned a dev-polluted env (c2c766...); this is the clean one.
-            "5a2f7ef75ba38c5c338d5dcbc0a790f1c104cb7f6b49c2b25908540e63bb8495",
+            # Its legitimacy is verified in the CLI repo, not here.
+            # Verified directly (65 dists, real 3.10.20 install): reverting only
+            # decoy-engine 0.6.0 -> 0.5.0 in this set reproduces the prior
+            # 5a2f7ef7... exactly, so the change is purely the version bump,
+            # not a proof-critical library change. An earlier draft pinned a
+            # dev-polluted env (c2c766...); this is the clean one.
+            "e75c87e93fc7bf2d85a3aaaec9128f4070ff7654717cf50460bb03038c586552",
         }
     ),
 }
