@@ -312,7 +312,9 @@ def execution_binding_for_slice_node(
     elif strategy == "date_shift":
         # `requirements.fallback_policy == "native"` (checked above) already
         # proved `date_shift_config_rejection` passed: a namespace, no group_by,
-        # an explicit tz-free format, and int-or-absent day bounds. Resolve the
+        # an explicit tz-free format, and each day bound either absent (the
+        # oracle default applies) or a non-bool int; an explicit null is
+        # rejected there as `date_shift_<key>_not_int`. Resolve the
         # oracle's defaults here once so the operator never re-reads config.
         namespace = plan_slice.namespace
         if caps.key_source is None or namespace is None:

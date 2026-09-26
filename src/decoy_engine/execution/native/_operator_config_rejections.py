@@ -1,9 +1,9 @@
 """Per-operator config/type admission gates for the native planning boundary.
 
-Extracted verbatim from ``_requirements.py``: the categorical / bucket_perturb /
-group_key ``*_config_rejection`` resolvers (date_shift's was added here directly) plus the small constants and helpers
-they own. Each returns the coded reason a column cannot run on its native
-operator, or None when it can. Both native admission boundaries (the compiler's
+The categorical / bucket_perturb / group_key / date_shift
+``*_config_rejection`` resolvers plus the small constants and helpers they own.
+Each returns the coded reason a column cannot run on its native operator, or
+None when it can. Both native admission boundaries (the compiler's
 ``_config_gate_rejection`` and the config-only ``native_route_eligibility``
 query) call these SAME functions so they can never reach a different verdict for
 the same column.
@@ -134,8 +134,13 @@ def bucket_perturb_config_rejection(
 _PANDAS_SPECIAL_DATE_FORMATS = frozenset({"mixed", "ISO8601"})
 
 
+# Distinguishes an ABSENT bound (the oracle applies its default) from one set
+# explicitly to null (the oracle's `int(None)` raises), which `.get()` conflates.
+_ABSENT = object()
+
+
 def _date_shift_bound_rejection(name: str, key: str, value: Any) -> str | None:
-    if value is None:
+    if value is _ABSENT:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
         return f"date_shift_{key}_not_int:{name}"
@@ -180,7 +185,7 @@ def date_shift_config_rejection(
     if has_timezone_directive(date_format):
         return f"date_shift_timezone_directive:{name}"
     for key in ("min_days", "max_days"):
-        reason = _date_shift_bound_rejection(name, key, provider_config.get(key))
+        reason = _date_shift_bound_rejection(name, key, provider_config.get(key, _ABSENT))
         if reason is not None:
             return reason
     # An unresolved profile defers to the unified-slice resident-type gate

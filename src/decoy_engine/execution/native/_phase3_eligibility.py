@@ -45,6 +45,7 @@ from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.execution.native._requirements import (
     _PARTITION_INDEPENDENT_CARDINALITY_MODES,
+    CHUNKED_ROUTE_VETOED_STRATEGIES,
 )
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._pool_size import resolve_pool_size
@@ -101,12 +102,20 @@ def phase3_c1_eligibility(
     # membership set used only to strip the base predicate's kernel rejections.
     faker_columns: list[tuple[str, dict[str, Any]]] = []
     faker_names: set[str] = set()
+    # C1 IS the chunked route, and `native_route_eligibility` is route-agnostic:
+    # it admits the full-frame-only strategies the chunked dispatcher vetoes
+    # (`_dispatch._static_route_decision`). Apply the same veto, with the same
+    # reason code, so this predicate cannot admit a table that route refuses.
+    chunked_vetoes: list[str] = []
     if table_cfg is not None:
         for col in table_cfg.get("columns", ()) or ():
             if not isinstance(col, dict):
                 continue
             name = col.get("name")
-            if not name or col.get("strategy") != "faker":
+            strategy = col.get("strategy")
+            if name and strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
+                chunked_vetoes.append(f"{strategy}_not_native_chunked_route:{name}")
+            if not name or strategy != "faker":
                 continue
             if provider_is_composite(col.get("provider"), registry):
                 # Composite fan-out: a different pool_native family, out of
@@ -123,6 +132,7 @@ def phase3_c1_eligibility(
         reason = _faker_column_rejection(name, col, table=table, registry=registry)
         if reason is not None:
             reasons.append(reason)
+    reasons.extend(chunked_vetoes)
 
     # Stable-dedupe: two identical declarations of the same unsafe column yield
     # the same reason string; report it once (each reason already carries its

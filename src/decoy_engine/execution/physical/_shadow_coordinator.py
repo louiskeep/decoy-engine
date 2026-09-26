@@ -88,7 +88,11 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_fk import build_fk_dispatch, resolve_admitted_fk_node
-from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
+from decoy_engine.execution.physical._shadow_operators import (
+    OperatorCallEvidence,
+    operator_invariants_fail_loud,
+    run_operator,
+)
 from decoy_engine.execution.physical._shadow_snapshot import ShadowSnapshot
 from decoy_engine.execution.physical._types import DriverId
 from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
@@ -349,16 +353,17 @@ class ShadowCoordinator:
                         if binding.group_key_group_by is not None
                         else None
                     )
-                    out, batch_errors = run_operator(
-                        array,
-                        binding=binding,
-                        ctx=self.ctx,
-                        evidence=evidence,
-                        pool=pool,
-                        index_kernel=index_kernel,
-                        group_key_sibling=group_key_sibling,
-                        column=column,
-                    )
+                    with operator_invariants_fail_loud(binding.operator_id):
+                        out, batch_errors = run_operator(
+                            array,
+                            binding=binding,
+                            ctx=self.ctx,
+                            evidence=evidence,
+                            pool=pool,
+                            index_kernel=index_kernel,
+                            group_key_sibling=group_key_sibling,
+                            column=column,
+                        )
                     parts.append(out)
                     # Rebase batch-local indices to table-global and attribute the
                     # table: the oracle records `row_index` over the whole column.

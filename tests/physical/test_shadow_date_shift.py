@@ -42,7 +42,7 @@ from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution._pipeline_finalize import finalize_validators_and_quarantine
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
-from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
+from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY, UnifiedSliceInvariantError
 from decoy_engine.execution.native._companion_status import (
     KernelAvailability,
     native_companion_status,
@@ -56,9 +56,20 @@ from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
-from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
+from decoy_engine.execution.physical._shadow_diff_codes import (
+    OPERATOR_INVARIANT_VIOLATION,
+    ShadowDifference,
+)
+from decoy_engine.execution.physical._shadow_operators import (
+    INDEX_KERNEL_INVARIANT_CODES,
+    OperatorCallEvidence,
+    operator_invariant_violation,
+    operator_invariants_fail_loud,
+    run_operator,
+)
 from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+from decoy_engine.generation.pool import GenerationError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.plan._types import ColumnSeed
@@ -420,6 +431,21 @@ def test_native_route_taken_multi_batch(tmp_path: Path) -> None:
 
 
 @_NEEDS_COMPANION
+def test_coordinator_honors_a_non_iso_format(tmp_path: Path) -> None:
+    """A day-first format: the binding's `date_format` must reach the operator.
+    Autodetect would read "05/02/2024" month-first and format it ISO-style."""
+    fmt = "%d/%m/%Y"
+    source = pa.table({"c": pa.array(["05/02/2024", "31/12/2023", None], type=pa.string())})
+    write_read_only_fixture(tmp_path, source, "ds")
+    config = build_config(tmp_path, "t", tmp_path / "ds.parquet", [_ds_column(date_format=fmt)])
+    run = run_shadow_and_oracle(config, "t", source, key_provider=_kp(), batch_size_rows=2)
+    assert_shadow_matches_oracle(run)
+    assert run.shadow.row_errors == ()
+    out = run.shadow.outputs["t"].column("c").to_pylist()
+    assert all(v is None or (len(v) == 10 and v[2] == "/" and v[5] == "/") for v in out)
+
+
+@_NEEDS_COMPANION
 def test_date_shift_node_loads_kernel_without_pool_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -484,6 +510,32 @@ def test_native_row_errors_are_table_global_before_reroute(tmp_path: Path) -> No
     config = build_config(tmp_path, "t", path, [_ds_column()])
     shadow = _shadow_only(config, source, batch_size_rows=2)
     assert shadow.row_errors == (_ERR_RECORD,)
+    with pytest.raises(RowErrorsFailedError) as oracle_exc:
+        _run(config, path, flag=False)
+    assert tuple(oracle_exc.value.records) == shadow.row_errors
+
+
+@_NEEDS_COMPANION
+def test_native_row_error_offsets_accumulate_across_batches(tmp_path: Path) -> None:
+    """Bad values at rows 1, 4 and 7 with batches of 2 sit in batches 1, 3 and 4,
+    so the table-global index only comes out right if the row offset ACCUMULATES
+    across every batch (a per-batch reset or last-batch-size offset shifts 4 and 7)."""
+    values = [
+        "2024-01-01",
+        "bad-1",
+        "2023-05-05",
+        "2022-02-02",
+        "bad-4",
+        None,
+        "2021-12-31",
+        "bad-7",
+    ]
+    source = pa.table({"c": pa.array(values, type=pa.string())})
+    path = write_read_only_fixture(tmp_path, source, "ds")
+    config = build_config(tmp_path, "t", path, [_ds_column()])
+    shadow = _shadow_only(config, source, batch_size_rows=2)
+    assert [r.row_index for r in shadow.row_errors] == [1, 4, 7]
+    assert all(r.table == "t" and r.trigger == "format_error" for r in shadow.row_errors)
     with pytest.raises(RowErrorsFailedError) as oracle_exc:
         _run(config, path, flag=False)
     assert tuple(oracle_exc.value.records) == shadow.row_errors
@@ -765,6 +817,9 @@ def test_diagnostic_gate_still_declines_other_operators(tmp_path: Path) -> None:
         (_ds_column({"min_days": 1.5}), "date_shift_min_days_not_int:c"),
         (_ds_column({"max_days": "30"}), "date_shift_max_days_not_int:c"),
         (_ds_column({"min_days": True}), "date_shift_min_days_not_int:c"),
+        # An explicit null is not "absent": the oracle's `int(None)` raises.
+        (_ds_column({"min_days": None}), "date_shift_min_days_not_int:c"),
+        (_ds_column({"max_days": None}), "date_shift_max_days_not_int:c"),
         (_ds_column({"max_days": 106_752}), "date_shift_max_days_out_of_range:c"),
         (_ds_column({"min_days": -106_752}), "date_shift_min_days_out_of_range:c"),
     ],
@@ -788,6 +843,30 @@ def test_eligible_config_accepted_on_native_route(tmp_path: Path) -> None:
         config = build_config(tmp_path, "t", tmp_path / "x.parquet", [column])
         result = native_route_eligibility(config, table="t")
         assert result.accepted, result.rejections
+
+
+@pytest.mark.parametrize(
+    "arrow_type, reason",
+    [
+        (pa.int64(), "date_shift_source_not_string:c:int64"),
+        (pa.string(), None),
+    ],
+)
+def test_resolved_source_type_gates_the_native_route(
+    tmp_path: Path, arrow_type: pa.DataType, reason: str | None
+) -> None:
+    """With a profile, a RESOLVED non-string source rejects at the config gate;
+    a resolved string source is admitted."""
+    values = [20240101, 20231231] if arrow_type == pa.int64() else ["2024-01-01", "2023-12-31"]
+    source = pa.table({"c": pa.array(values, type=arrow_type)})
+    profile = first_chunk_profile(source, table="t", engine_version=ENGINE_VERSION)
+    config = build_config(tmp_path, "t", tmp_path / "x.parquet", [_ds_column()])
+    result = native_route_eligibility(config, table="t", profile=profile)
+    if reason is None:
+        assert result.accepted, result.rejections
+    else:
+        assert not result.accepted
+        assert reason in result.rejections, result.rejections
 
 
 def test_no_date_format_leaves_node_unbound(tmp_path: Path) -> None:
@@ -917,3 +996,175 @@ def test_run_operator_returns_batch_local_row_errors() -> None:
     assert [(e.column, e.row_index, e.trigger, e.reason) for e in errors] == [
         ("c", 1, "format_error", FORMAT_ERROR_REASON)
     ]
+
+
+# ── Operator contract failures surface; input-domain failures reroute ─
+
+
+class _BrokenIndexKernel:
+    """A compiled-kernel stand-in whose result breaks one contract clause."""
+
+    def __init__(self, fault: str) -> None:
+        self.fault = fault
+
+    def derive_index_batch(self, values: pa.Array, *, pool_size: int, **_k: Any) -> Any:
+        n = len(values)
+        if self.fault == "type":
+            return pa.array([0] * n, type=pa.int64())
+        if self.fault == "length":
+            return pa.array([0] * (n + 1), type=pa.uint64())
+        if self.fault == "null":
+            return pa.array([None] * n, type=pa.uint64())
+        return pa.array([pool_size] * n, type=pa.uint64())  # out of bounds
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("fault", ["type", "length", "null", "bounds"])
+def test_broken_index_kernel_fails_loud_instead_of_rerouting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    """A kernel that violates its own contract must not silently degrade the job
+    to the oracle forever: the unified slice raises its invariant error."""
+    monkeypatch.setattr(
+        _shadow_coordinator, "load_compiled_index_kernel", lambda: _BrokenIndexKernel(fault)
+    )
+    source = pa.table({"c": pa.array(["2024-01-01", "2023-06-30"], type=pa.string())})
+    path = write_read_only_fixture(tmp_path, source, "ds")
+    config = build_config(tmp_path, "t", path, [_ds_column()])
+    with pytest.raises(UnifiedSliceInvariantError) as exc:
+        _run(config, path, flag=True)
+    cause = exc.value.__cause__
+    assert isinstance(cause, ShadowDifference)
+    assert cause.code == OPERATOR_INVARIANT_VIOLATION
+    assert "native_date_shift" in cause.detail
+    assert isinstance(cause.__cause__, GenerationError)
+    assert cause.__cause__.code.startswith("index_batch_")
+
+
+@_NEEDS_COMPANION
+def test_dispatch_assertion_fails_loud_instead_of_rerouting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _assert(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("date_shift node reached run_operator with no target column")
+
+    monkeypatch.setattr(_shadow_coordinator, "run_operator", _assert)
+    source = pa.table({"c": pa.array(["2024-01-01"], type=pa.string())})
+    path = write_read_only_fixture(tmp_path, source, "ds")
+    config = build_config(tmp_path, "t", path, [_ds_column()])
+    with pytest.raises(UnifiedSliceInvariantError) as exc:
+        _run(config, path, flag=True)
+    assert isinstance(exc.value.__cause__, ShadowDifference)
+    assert exc.value.__cause__.code == OPERATOR_INVARIANT_VIOLATION
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GenerationError(code="float_canonicalization_unsupported"),
+        OverflowError("Timestamp out of bounds"),
+        ValueError("unparseable"),
+    ],
+    ids=["other_generation_code", "overflow", "value_error"],
+)
+def test_input_domain_errors_pass_through_unconverted(error: Exception) -> None:
+    """Only contract failures convert; everything else keeps its own type so the
+    unified slice's reroute (and the oracle's identical raise) still applies."""
+    with pytest.raises(type(error)) as exc:
+        with operator_invariants_fail_loud("native_date_shift"):
+            raise error
+    assert exc.value is error
+
+
+def test_invariant_codes_cover_every_index_kernel_consumer() -> None:
+    """Each module that checks a `derive_index_batch` result raises only codes
+    the loud translation recognises, so a new check cannot silently reroute."""
+    import re
+
+    src = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
+    raised: set[str] = set()
+    for path in src.rglob("*.py"):
+        raised.update(re.findall(r'code="(index_batch_[a-z_]+)"', path.read_text()))
+    assert raised == set(INDEX_KERNEL_INVARIANT_CODES)
+
+
+@pytest.mark.parametrize(
+    "overrides, kwargs, message",
+    [
+        (
+            {"key_binding": None},
+            {},
+            "date_shift node reached run_operator with no KeyBinding",
+        ),
+        (
+            {"date_shift_date_format": None},
+            {},
+            "date_shift node reached run_operator with no resolved date_format/min_days/max_days",
+        ),
+        (
+            {"date_shift_min_days": None},
+            {},
+            "date_shift node reached run_operator with no resolved date_format/min_days/max_days",
+        ),
+        (
+            {"date_shift_max_days": None},
+            {},
+            "date_shift node reached run_operator with no resolved date_format/min_days/max_days",
+        ),
+        (
+            {},
+            {"index_kernel": None},
+            "date_shift node reached run_operator with no index_kernel",
+        ),
+        (
+            {},
+            {"column": None},
+            "date_shift node reached run_operator with no target column",
+        ),
+    ],
+    ids=["key_binding", "date_format", "min_days", "max_days", "index_kernel", "column"],
+)
+def test_run_operator_fails_closed_on_each_missing_binding_field(
+    overrides: dict[str, Any], kwargs: dict[str, Any], message: str
+) -> None:
+    ctx = SimpleNamespace(mask_key=_MASK_KEY, native_threads=None)
+    call: dict[str, Any] = {"index_kernel": object(), "column": "c", **kwargs}
+    with pytest.raises(AssertionError) as exc:
+        run_operator(
+            pa.array(["2024-01-01"], type=pa.string()),
+            binding=_binding(**overrides),
+            ctx=ctx,  # type: ignore[arg-type]
+            evidence=OperatorCallEvidence(planned_operator="native_date_shift"),
+            **call,
+        )
+    assert str(exc.value) == message
+
+
+@pytest.mark.parametrize(
+    "error, expected_detail",
+    [
+        (
+            AssertionError("x"),
+            "operator='op': dispatch precondition failed",
+        ),
+        *[
+            (
+                GenerationError(code=code),
+                f"operator='op': compiled index kernel violated {code}",
+            )
+            for code in sorted(INDEX_KERNEL_INVARIANT_CODES)
+        ],
+        (GenerationError(code="dtype_unsafe"), None),
+        (OverflowError("x"), None),
+    ],
+)
+def test_operator_invariant_violation_classifies(
+    error: BaseException, expected_detail: str | None
+) -> None:
+    diff = operator_invariant_violation("op", error)
+    if expected_detail is None:
+        assert diff is None
+    else:
+        assert diff is not None
+        assert diff.code == OPERATOR_INVARIANT_VIOLATION
+        assert diff.detail == expected_detail

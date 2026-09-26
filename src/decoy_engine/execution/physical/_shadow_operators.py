@@ -11,6 +11,8 @@ of failing, and the comparison would "pass" against itself.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -33,14 +35,22 @@ from decoy_engine.execution.physical._plan import ExecutionBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     NATIVE_COMPANION_UNAVAILABLE,
+    OPERATOR_INVARIANT_VIOLATION,
     ShadowDifference,
 )
+from decoy_engine.generation.pool import GenerationError
 
 if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.pool import ValuePool
 
-__all__ = ["OperatorCallEvidence", "run_operator"]
+__all__ = [
+    "INDEX_KERNEL_INVARIANT_CODES",
+    "OperatorCallEvidence",
+    "operator_invariant_violation",
+    "operator_invariants_fail_loud",
+    "run_operator",
+]
 
 _PASSTHROUGH: Final = "native_passthrough"
 _REDACT: Final = "native_redact"
@@ -51,6 +61,52 @@ _CATEGORICAL: Final = "native_categorical"
 _BUCKET_PERTURB: Final = "native_bucket_perturb"
 _GROUP_KEY: Final = "native_group_key"
 _DATE_SHIFT: Final = "native_date_shift"
+
+# The `GenerationError` codes every index-kernel consumer raises when the
+# compiled `derive_index_batch` result violates its contract (type, length,
+# null mask, range). They describe a broken kernel, never a bad input row.
+INDEX_KERNEL_INVARIANT_CODES: Final = frozenset(
+    {
+        "index_batch_type_mismatch",
+        "index_batch_length_mismatch",
+        "index_batch_null_mask_mismatch",
+        "index_batch_out_of_bounds",
+    }
+)
+
+
+@contextmanager
+def operator_invariants_fail_loud(operator_id: str) -> Iterator[None]:
+    """Re-raise a bound operator's own contract failures as a coded
+    `ShadowDifference`, which the unified slice surfaces as an invariant error
+    instead of quietly rerouting to the oracle. Every other exception (the
+    input-domain failures the oracle raises identically, e.g. a Timestamp
+    overflow) passes through untouched so the reroute still handles it."""
+    try:
+        yield
+    except (AssertionError, GenerationError) as exc:
+        difference = operator_invariant_violation(operator_id, exc)
+        if difference is None:
+            raise
+        raise difference from exc
+
+
+def operator_invariant_violation(operator_id: str, exc: BaseException) -> ShadowDifference | None:
+    """The coded difference for an operator contract failure, or None when
+    `exc` is an input-domain error that must keep its own type. A plain
+    function rather than inline in the context manager so mutation testing
+    can grade it (mutmut skips decorated functions)."""
+    if isinstance(exc, AssertionError):
+        return ShadowDifference(
+            code=OPERATOR_INVARIANT_VIOLATION,
+            detail=f"operator={operator_id!r}: dispatch precondition failed",
+        )
+    if isinstance(exc, GenerationError) and exc.code in INDEX_KERNEL_INVARIANT_CODES:
+        return ShadowDifference(
+            code=OPERATOR_INVARIANT_VIOLATION,
+            detail=f"operator={operator_id!r}: compiled index kernel violated {exc.code}",
+        )
+    return None
 
 
 @dataclass

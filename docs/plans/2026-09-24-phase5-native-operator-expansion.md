@@ -22,6 +22,19 @@ Resolution (for the build gate to verify):
 - Item 1: `run_operator` returns `(out, tuple[RowError, ...])` with BATCH-LOCAL indices and no table. The coordinator rebases each record by the batch's running row offset and builds the `RowErrorRecord` with the table, mirroring `drain_row_errors`' adapter-attributes-the-table split. `ShadowRunResult.row_errors` carries them. Tests assert the native `ShadowRunResult.row_errors` (row 3 in the second batch of 2) directly on the coordinator result, and in production by spying the coordinator before the reroute; the dropped-record guard is kept.
 - Item 2: main already separated the two conditions: kernel load reads `ExecutionBinding.needs_index_kernel`, pool resolution reads `pool_binding`. date_shift sets `date_shift_date_format` (which `needs_index_kernel` reads) and no `pool_binding`; a test proves one kernel load and zero pool resolutions. The index-companion admission check also exists on main (`_OPERATOR_REQUIRED_KERNEL` + `native_kernel_availability()` in `resident_contract_admission`); `native_date_shift` is registered there as needing the `index` kernel, so an absent index kernel declines at admission instead of raising `UnifiedSliceInvariantError` from the coordinator. An absent-index-kernel test covers it.
 
+## date_shift throughput (2026-09-26, shared 4-core devbox)
+
+End-to-end `run_pipeline` wall time, native unified slice (`unified_slice_enabled=True`) vs the pandas oracle (`False`), one string date column, 5% nulls, `%Y-%m-%d`, bounds -365/365. Each run asserts which route actually executed. One warm-up per arm, then the arms alternate so host-load drift hits both equally.
+
+| rows | auto_chunk | runs | native median (stdev) | oracle median (stdev) | speedup |
+|---|---|---|---|---|---|
+| 40k | on (default) | 15 | 0.25 s (0.06) | 1.13 s (0.27) | 4.5x |
+| 1M | off (full-frame forced) | 7 | 4.21 s (1.32) | 22.03 s (1.98) | 5.2x |
+
+The box was NOT idle: other agents' pytest runs held about 3 of the 4 cores throughout (vmstat 87-96% user before and after), so the absolute times are inflated and the variance is wide. The acceptance bar (native wall at or below oracle wall) holds with a wide margin on every run, including the slowest native sample against the fastest oracle sample. A clean re-measurement on the reference host is still owed before any speed claim ships. The earlier 9.5x spot-check was a single loaded sample and is superseded by these numbers.
+
+Scope note: with the default `auto_chunk` threshold, a table above it takes the chunked route, where date_shift is vetoed, so it runs on the oracle. The native gain therefore reaches only below-threshold tables, or jobs that turn auto-chunking off, until a chunked date_shift slice lands.
+
 ## Redact/truncate re-baseline (2026-09-26, shared 4-core devbox, load ~6, median of 5)
 
 Serial native kernel vs a 4-thread `array.slice` fan-out prototype, string column with 5% nulls:
@@ -40,9 +53,9 @@ Decision: do not build the fan-out now. redact gets slower and plain truncate sa
 
 ROADMAP Stage B item 6 ("Phase 5 native operator expansion") asks to parallelize the native redact/truncate operators and add native implementations of `date_shift`, `bucketize`, `code_set`, and `categorical`, folding in the held NER batched-inference port. Since that item was written, the ground truth changed and the gate corrected two of my earlier assumptions:
 
-1. `categorical` is already natively ported and green-but-unmerged on `feat/phase5-categorical` (`src/decoy_engine/execution/native/_categorical_ext.py`): deterministic mode, string categories, full-frame route only, reusing the compiled `derive_index_batch` kernel with NO new Rust. `bucket_perturb` (a distinct date-snap strategy, NOT numeric `bucketize`) is likewise built on `feat/native-bucket-perturb` (`_bucket_perturb_ext.py`). Both are chunked-route-vetoed (`CHUNKED_ROUTE_VETOED_STRATEGIES`, a new constant on that stack) and both extend the single contested allowlist `NATIVE_KERNEL_STRATEGIES` in `src/decoy_engine/execution/native/_requirements.py`.
+1. `categorical` is natively ported and merged to main (#171, from `feat/phase5-categorical`; `src/decoy_engine/execution/native/_categorical_ext.py`): deterministic mode, string categories, full-frame route only, reusing the compiled `derive_index_batch` kernel with NO new Rust. `bucket_perturb` (a distinct date-snap strategy, NOT numeric `bucketize`) is likewise merged (#173, `_bucket_perturb_ext.py`). Both are chunked-route-vetoed (`CHUNKED_ROUTE_VETOED_STRATEGIES`) and both extend the allowlist `NATIVE_KERNEL_STRATEGIES` in `src/decoy_engine/execution/native/_requirements.py`.
 2. The standalone redact/truncate parallel fan-out was explicitly VOIDED on that same stack (commit `7b8907a4 docs(plan): void Track A fan-out (stale-baseline premise)`); only a thread-budget clamp landed (`decoy-engine-native/src/threads.rs`, `DEFAULT_NATIVE_MASK_THREAD_KNEE=4`). So "parallelize redact/truncate" is a measure-first question, not a settled build.
-3. The NER batch helper `iter_ner_spans_batch` (`src/decoy_engine/storm/ner.py`) is BUILT, wired into all four callsites, double-gated, and HELD on `feat/phase5-hard-tail` (`docs/plans/2026-09-08-p5-ner-batch-helper.md`). It is a pure throughput refactor with no route/model/allowlist change.
+3. The NER batch helper `iter_ner_spans_batch` (`src/decoy_engine/storm/ner.py`) is built, wired into all four callsites, double-gated, and merged to main (#127; `docs/plans/2026-09-08-p5-ner-batch-helper.md`). It is a pure throughput refactor with no route/model/allowlist change.
 
 Two constraints the gate surfaced, both verified in code, bound the design:
 
@@ -58,7 +71,7 @@ Genuinely unbuilt on any branch: native `date_shift`, native `bucketize`, native
 - `code_set` stays on the oracle in v1, with the byte-inequivalence reason recorded; a native `code_set` is a separate future item that must reproduce the exact excluding-salted-HMAC reduction (not `derive_index_batch`).
 - `bucketize`: a measured decision is recorded. The oracle handler is already numpy-vectorized (no per-row Python loop), so a native port's value is low; build a thin Arrow-compute operator only if a re-baseline shows measurable benefit on the target host, otherwise leave it on the oracle with the finding documented.
 - Redact/truncate parallelization: a re-baseline on current main decides. Build the GIL-released slice fan-out over the existing pyarrow-vectorized kernels only if the measured serial cost justifies it; otherwise record the voided-premise finding and keep them serial.
-- The held NER helper (`feat/phase5-hard-tail`) is landed as a dependency-free perf slice; a native non-FK text handler is an explicitly separate follow-on.
+- The held NER helper (`feat/phase5-hard-tail`) is landed as a dependency-free perf slice; a native non-FK text handler is an explicitly separate follow-on. (Done: merged in #127.)
 - Every activated operator declares its admission gate (config + resident type), its route, and passes byte-parity, determinism/FK-joinability, quarantine parity (date_shift), and mutation gates on the routing/dispatch before activation. Activation stays a per-operator Cam call on measured evidence.
 
 ### Boundaries
@@ -106,7 +119,7 @@ Parallelize (measure-first, likely no build): redact/truncate. Their native entr
 Newly native-ize / land, in order:
 1. C0 — land the reviewed stack (`categorical` + `bucket_perturb` + seam edits) to `main`, re-running its acceptance + parity suite against the FINAL ASSEMBLED operator output. Prerequisite for everything else.
 2. S1 — native `date_shift` v1 on fresh `main` (`_date_shift_ext.py`): keyed offset via `derive_index_batch` + pandas date post-step (bucket_perturb template) + the coordinator diagnostic-route relaxation + explicit-format-only admission.
-3. N1 — land the held NER helper (`feat/phase5-hard-tail`), independent of 1–2.
+3. N1 — land the held NER helper (`feat/phase5-hard-tail`), independent of 1–2. (Done: merged in #127.)
 4. Measure/defer — redact/truncate re-baseline; `bucketize` re-baseline. Build only on evidence.
 5. Deferred (recorded, not built) — native `code_set` (needs its own excluding-salted-HMAC kernel); native non-FK text handler consuming `iter_ner_spans_batch`.
 

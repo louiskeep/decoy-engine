@@ -46,6 +46,7 @@ _EXPECTED_CODES = frozenset(
         "global-strategy-unsupported",
         "global-shuffle-determinism-unsupported",
         "full-frame-runtime-feature-unsupported",
+        "operator-invariant-violation",
     }
 )
 
