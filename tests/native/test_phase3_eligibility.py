@@ -479,11 +479,12 @@ def test_duplicate_name_across_faker_and_another_no_kernel_strategy_keeps_both_v
     config = _config(
         "t",
         _faker_col("X"),  # otherwise perfectly C1-admissible
-        {"name": "X", "strategy": "date_shift", "namespace": "ns2"},
+        # bucketize has no native kernel (date_shift gained one).
+        {"name": "X", "strategy": "bucketize", "provider_config": {"width": 10}},
     )
     result = phase3_c1_eligibility(config, table="t")
     assert result.admitted is False
-    assert result.reasons == ("no_native_kernel:X:date_shift",)
+    assert result.reasons == ("no_native_kernel:X:bucketize",)
 
 
 # ---------------------------------------------------------------------------

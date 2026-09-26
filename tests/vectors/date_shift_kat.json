@@ -1,0 +1,127 @@
+{
+  "_provenance": "Pinned from the pure-Python oracle: offset = min_days + (int.from_bytes(derive(mask_key, namespace, _canonicalize_source(value))[:8], 'big') % range_size) after the oracle's inverted-range swap; expected_output from DateShiftStrategyHandler.run. min_days/max_days null = oracle defaults (-365, 365). Equivalent to derive_index_batch(source, pool_size=range_size) + min_days.",
+  "mask_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "namespace": "kat_ns",
+  "cases": [
+    {
+      "min_days": null,
+      "max_days": null,
+      "date_format": "%Y-%m-%d",
+      "source": [
+        "2024-01-15",
+        "2024-02-29",
+        "2023-02-28",
+        "1999-12-31",
+        "2000-01-01",
+        "2024-01-15"
+      ],
+      "expected_offsets": [
+        -288,
+        -90,
+        -315,
+        30,
+        -94,
+        -288
+      ],
+      "expected_output": [
+        "2023-04-02",
+        "2023-12-01",
+        "2022-04-19",
+        "2000-01-30",
+        "1999-09-29",
+        "2023-04-02"
+      ]
+    },
+    {
+      "min_days": 0,
+      "max_days": 0,
+      "date_format": "%Y-%m-%d",
+      "source": [
+        "2024-03-01",
+        "1970-01-01"
+      ],
+      "expected_offsets": [
+        0,
+        0
+      ],
+      "expected_output": [
+        "2024-03-01",
+        "1970-01-01"
+      ]
+    },
+    {
+      "min_days": -1,
+      "max_days": 1,
+      "date_format": "%m/%d/%Y",
+      "source": [
+        "02/29/2024",
+        "12/31/1999",
+        "01/01/2000"
+      ],
+      "expected_offsets": [
+        0,
+        1,
+        1
+      ],
+      "expected_output": [
+        "02/29/2024",
+        "01/01/2000",
+        "01/02/2000"
+      ]
+    },
+    {
+      "min_days": 30,
+      "max_days": -30,
+      "date_format": "%Y%m%d",
+      "source": [
+        "20240115",
+        "20230704",
+        "19991231"
+      ],
+      "expected_offsets": [
+        -8,
+        8,
+        -4
+      ],
+      "expected_output": [
+        "20240107",
+        "20230712",
+        "19991227"
+      ]
+    },
+    {
+      "min_days": 1,
+      "max_days": 1000,
+      "date_format": "%Y-%m-%dT%H:%M:%S",
+      "source": [
+        "2024-01-15T13:45:10",
+        "2020-06-30T00:00:00"
+      ],
+      "expected_offsets": [
+        759,
+        195
+      ],
+      "expected_output": [
+        "2026-02-12T13:45:10",
+        "2021-01-11T00:00:00"
+      ]
+    },
+    {
+      "min_days": -106751,
+      "max_days": 0,
+      "date_format": "%Y-%m-%d",
+      "source": [
+        "2262-04-11",
+        "2200-01-01"
+      ],
+      "expected_offsets": [
+        -55515,
+        -43754
+      ],
+      "expected_output": [
+        "2110-04-13",
+        "2080-03-16"
+      ]
+    }
+  ]
+}

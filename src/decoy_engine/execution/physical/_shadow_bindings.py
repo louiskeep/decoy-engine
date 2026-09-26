@@ -26,6 +26,7 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._chunk_masking import _resolve_truncate_keep
+from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
 from decoy_engine.execution.native._phase3_eligibility import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
@@ -50,6 +51,7 @@ SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(
         "categorical",
         "bucket_perturb",
         "group_key",
+        "date_shift",
     }
 )
 
@@ -62,6 +64,7 @@ OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
     "categorical": "native_categorical",
     "bucket_perturb": "native_bucket_perturb",
     "group_key": "native_group_key",
+    "date_shift": "native_date_shift",
 }
 
 _SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
@@ -175,7 +178,9 @@ def execution_binding_for_slice_node(
     # No slice strategy declares a prepass (every admitted strategy is
     # row-local, non-global); a future strategy added to SLICE_STRATEGIES
     # without updating the shadow coordinator's "no prepasses" contract
-    # (C1) must fail loudly here rather than bind silently.
+    # (C1) must fail loudly here rather than bind silently. date_shift declares
+    # `format_detect` only without an explicit date_format, and that config is
+    # rejected by `date_shift_config_rejection`, so it returned above.
     if (
         requirements.required_prepasses
     ):  # pragma: no cover - unreachable while SLICE_STRATEGIES stays prepass-free
@@ -210,6 +215,9 @@ def execution_binding_for_slice_node(
     group_key_group_by: str | None = None
     group_key_length: int | None = None
     group_key_prefix: str | None = None
+    date_shift_date_format: str | None = None
+    date_shift_min_days: int | None = None
+    date_shift_max_days: int | None = None
     if strategy == "hash":
         if caps.key_source is None or plan_slice.namespace is None:
             # hash_requires_namespace is enforced upstream of the native
@@ -301,6 +309,25 @@ def execution_binding_for_slice_node(
         # admission gate checks that sibling's type, so the binding must carry it.
         gb_type = resolve_input_arrow_type(table, group_by, inputs.profile) or pa.string()
         input_schema = pa.schema([pa.field(group_by, gb_type)])
+    elif strategy == "date_shift":
+        # `requirements.fallback_policy == "native"` (checked above) already
+        # proved `date_shift_config_rejection` passed: a namespace, no group_by,
+        # an explicit tz-free format, and int-or-absent day bounds. Resolve the
+        # oracle's defaults here once so the operator never re-reads config.
+        namespace = plan_slice.namespace
+        if caps.key_source is None or namespace is None:
+            return None  # pragma: no cover - config gate guarantees both
+        date_format = cfg.get("date_format")
+        if not isinstance(date_format, str) or not date_format:
+            return None  # pragma: no cover - config gate guarantees an explicit format
+        min_cfg = cfg.get("min_days", DEFAULT_MIN_DAYS)
+        max_cfg = cfg.get("max_days", DEFAULT_MAX_DAYS)
+        if not isinstance(min_cfg, int) or not isinstance(max_cfg, int):
+            return None  # pragma: no cover - config gate guarantees int bounds
+        date_shift_date_format = date_format
+        date_shift_min_days = min_cfg
+        date_shift_max_days = max_cfg
+        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
 
     return ExecutionBinding(
         operator_id=OPERATOR_ID_BY_STRATEGY[strategy],
@@ -323,4 +350,7 @@ def execution_binding_for_slice_node(
         group_key_group_by=group_key_group_by,
         group_key_length=group_key_length,
         group_key_prefix=group_key_prefix,
+        date_shift_date_format=date_shift_date_format,
+        date_shift_min_days=date_shift_min_days,
+        date_shift_max_days=date_shift_max_days,
     )

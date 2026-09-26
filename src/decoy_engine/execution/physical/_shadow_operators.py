@@ -16,10 +16,12 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON, native_date_shift
 from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
@@ -48,6 +50,7 @@ _FAKER_SELECT: Final = "native_faker_select"
 _CATEGORICAL: Final = "native_categorical"
 _BUCKET_PERTURB: Final = "native_bucket_perturb"
 _GROUP_KEY: Final = "native_group_key"
+_DATE_SHIFT: Final = "native_date_shift"
 
 
 @dataclass
@@ -78,11 +81,19 @@ def run_operator(
     pool: ValuePool | None = None,
     index_kernel: IndexDerivationKernel | None = None,
     group_key_sibling: pa.Table | None = None,
-) -> pa.Array:
+    column: str | None = None,
+) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
     back to the oracle -- when the compiled hash companion is missing or
     ABI-incompatible (C2/C4).
+
+    Returns `(out, row_errors)`. `row_errors` are BATCH-LOCAL `RowError`s
+    (0-based within `array`, no table): the coordinator is the layer that knows
+    the table and the batch offset, so it attributes and rebases them, the same
+    split `drain_row_errors` makes for the oracle's handlers. Only date_shift
+    emits any; every other operator returns `()`. `column` is the target column
+    name the records carry, required by date_shift.
 
     `pool` is used only by the faker branch; `index_kernel` by faker AND
     categorical (Phase 5 Track B): the coordinator resolves the pool once per
@@ -91,6 +102,7 @@ def run_operator(
     the native chunked route's own preflight-once, thread-through contract).
     """
     cfg = dict(binding.resolved_config)
+    row_errors: tuple[RowError, ...] = ()
     if binding.operator_id == _PASSTHROUGH:
         out = native_passthrough(array)
     elif binding.operator_id == _REDACT:
@@ -219,9 +231,55 @@ def run_operator(
                 detail=f"operator={binding.operator_id!r}: compiled raw-hex companion unavailable",
             ) from exc
         evidence.compiled_kernel_executed = True
+    elif binding.operator_id == _DATE_SHIFT:
+        out, row_errors = _run_date_shift(
+            array, binding=binding, ctx=ctx, index_kernel=index_kernel, column=column
+        )
+        evidence.compiled_kernel_executed = True
     else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
         raise AssertionError(f"unbound operator id {binding.operator_id!r}")
     evidence.actual_operator = binding.operator_id
     evidence.executed = True
     evidence.batches_run += 1
-    return out
+    return out, row_errors
+
+
+def _run_date_shift(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    binding: ExecutionBinding,
+    ctx: ShadowContext,
+    index_kernel: IndexDerivationKernel | None,
+    column: str | None,
+) -> tuple[pa.Array, tuple[RowError, ...]]:
+    if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+        raise AssertionError("date_shift node reached run_operator with no KeyBinding")
+    if (
+        binding.date_shift_date_format is None
+        or binding.date_shift_min_days is None
+        or binding.date_shift_max_days is None
+    ):  # pragma: no cover - C0 binds all three together with the KeyBinding
+        raise AssertionError(
+            "date_shift node reached run_operator with no resolved date_format/min_days/max_days"
+        )
+    if column is None:
+        # The records must name their column; a caller that cannot say which
+        # column it is masking cannot attribute a format_error, so fail closed.
+        raise AssertionError("date_shift node reached run_operator with no target column")
+    if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+        raise AssertionError("date_shift node reached run_operator with no index_kernel")
+    out, positions = native_date_shift(
+        array,
+        min_days=binding.date_shift_min_days,
+        max_days=binding.date_shift_max_days,
+        date_format=binding.date_shift_date_format,
+        mask_key=ctx.mask_key,
+        namespace=binding.key_binding.namespace,
+        index_kernel=index_kernel,
+        native_threads=ctx.native_threads,
+    )
+    errors = tuple(
+        RowError(column=column, row_index=i, trigger="format_error", reason=FORMAT_ERROR_REASON)
+        for i in positions
+    )
+    return out, errors

@@ -143,16 +143,28 @@ class ExecutionBinding:
     group_key_group_by: str | None = None
     group_key_length: int | None = None
     group_key_prefix: str | None = None
+    # Native date_shift; all defaulted, so no pre-existing construction changes
+    # shape. `date_shift_date_format` is the resolved explicit format and doubles
+    # as the "bound date_shift node" marker; the day bounds are the raw config
+    # values (swap + range_size are resolved by the operator, as in the oracle).
+    # A bound date_shift node carries a source-keyed `KeyBinding` and NO
+    # `pool_binding`: it derives over the source directly, it is not pool-backed.
+    date_shift_date_format: str | None = None
+    date_shift_min_days: int | None = None
+    date_shift_max_days: int | None = None
 
     @property
     def needs_index_kernel(self) -> bool:
         """Whether this node draws through the compiled `derive_index_batch`
-        kernel: faker (pool selection), categorical, or bucket_perturb. The
-        coordinator loads the kernel once per run for any such node."""
+        kernel: faker (pool selection), categorical, bucket_perturb, or
+        date_shift. The coordinator loads the kernel once per run for any such
+        node. Deliberately separate from `pool_binding`, which alone gates POOL
+        RESOLUTION: a date_shift node needs the kernel but has no pool."""
         return (
             self.pool_binding is not None
             or self.categorical_deterministic
             or self.bucket_perturb_bucket is not None
+            or self.date_shift_date_format is not None
         )
 
 

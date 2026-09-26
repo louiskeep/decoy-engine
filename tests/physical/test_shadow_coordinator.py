@@ -182,7 +182,7 @@ def test_planned_vs_actual_route_diff_is_raised_on_mismatch(
     def _wrong_operator(array, *, binding, ctx, evidence, **_kwargs):
         evidence.actual_operator = "not-the-planned-operator"
         evidence.executed = True
-        return array
+        return array, ()
 
     monkeypatch.setattr(
         "decoy_engine.execution.physical._shadow_coordinator.run_operator", _wrong_operator
@@ -270,8 +270,9 @@ def test_run_operator_truncate_defaults_keep_to_head_when_config_omits_it() -> N
     evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
     array = pa.array(["abcdef"], type=pa.string())
 
-    out = run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
+    out, row_errors = run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
     assert out.to_pylist() == ["abc"]  # head-kept, not tail
+    assert row_errors == ()  # truncate is zero-diagnostic
 
 
 def test_run_operator_truncate_falls_back_to_length_zero_which_fails_closed() -> None:

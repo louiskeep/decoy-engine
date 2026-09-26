@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pyarrow as pa
 
+from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
@@ -109,8 +110,9 @@ class ShadowRunResult:
     """The staged (never published) result of one shadow run: the masked
     output tables, per-node route evidence keyed by `node_id`, and
     diagnostics. `warnings`/`row_errors` mirror `ExecutionResult`'s shape for
-    multiset comparison; every scalar/chunked/faker strategy here is
-    zero-diagnostic, but slice 5b-ii's FK resolution can populate `warnings`.
+    multiset comparison. Slice 5b-ii's FK resolution can populate `warnings`;
+    native date_shift populates `row_errors` with table-attributed,
+    table-global `RowErrorRecord`s (its format_error rows).
 
     `driver_invocation` (slice 3, widened by slice 6) is the `SeamContext`
     the OUT_OF_CORE or FULL_FRAME branch recorded (`None` elsewhere -- the
@@ -277,6 +279,7 @@ class ShadowCoordinator:
         # Slice 5b-ii: an FK-child column resolves against its parent ahead of native binding.
         fk = build_fk_dispatch(snapshot, self.ctx.relationship_graph, admitted_edges)
         warnings: list[QualityWarning] = []
+        row_errors: list[RowErrorRecord] = []
 
         for table in plan.tables:
             source = snapshot.tables[table.table]
@@ -325,6 +328,9 @@ class ShadowCoordinator:
                 # and writes to `column`; every other operator reads `column`.
                 input_column = binding.group_key_group_by or column
                 parts: list[pa.Array] = []
+                # `_batches` slices in order from 0, so the running row count is
+                # each batch's table-global start offset.
+                row_offset = 0
                 for batch in _batches(source, self.ctx.batch_size_rows):
                     if batch.num_rows > self.ctx.batch_size_rows:  # pragma: no cover
                         raise ShadowDifference(
@@ -343,17 +349,30 @@ class ShadowCoordinator:
                         if binding.group_key_group_by is not None
                         else None
                     )
-                    parts.append(
-                        run_operator(
-                            array,
-                            binding=binding,
-                            ctx=self.ctx,
-                            evidence=evidence,
-                            pool=pool,
-                            index_kernel=index_kernel,
-                            group_key_sibling=group_key_sibling,
-                        )
+                    out, batch_errors = run_operator(
+                        array,
+                        binding=binding,
+                        ctx=self.ctx,
+                        evidence=evidence,
+                        pool=pool,
+                        index_kernel=index_kernel,
+                        group_key_sibling=group_key_sibling,
+                        column=column,
                     )
+                    parts.append(out)
+                    # Rebase batch-local indices to table-global and attribute the
+                    # table: the oracle records `row_index` over the whole column.
+                    row_errors.extend(
+                        RowErrorRecord(
+                            table=table.table,
+                            column=e.column,
+                            row_index=e.row_index + row_offset,
+                            trigger=e.trigger,
+                            reason=e.reason,
+                        )
+                        for e in batch_errors
+                    )
+                    row_offset += batch.num_rows
 
                 if not evidence.executed:  # pragma: no cover - run_operator always sets this
                     raise ShadowDifference(
@@ -392,7 +411,10 @@ class ShadowCoordinator:
                 outputs[table.table] = pa.table({name: columns[name] for name in source_order})
 
         return ShadowRunResult(
-            outputs=outputs, route_evidence=route_evidence, warnings=tuple(warnings)
+            outputs=outputs,
+            route_evidence=route_evidence,
+            warnings=tuple(warnings),
+            row_errors=tuple(row_errors),
         )
 
     def _dispatch_synthesis(

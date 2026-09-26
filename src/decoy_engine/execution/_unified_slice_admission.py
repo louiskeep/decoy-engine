@@ -67,6 +67,7 @@ __all__ = [
     "ALLOWED_OPERATOR_IDS",
     "BUCKET_PERTURB_OPERATOR_ID",
     "CATEGORICAL_OPERATOR_ID",
+    "DATE_SHIFT_OPERATOR_ID",
     "GROUP_KEY_OPERATOR_ID",
     "HASH_OPERATOR_ID",
     "CheapCandidate",
@@ -88,6 +89,7 @@ ALLOWED_OPERATOR_IDS = frozenset(
         "native_categorical",
         "native_bucket_perturb",
         "native_group_key",
+        "native_date_shift",
     }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
@@ -99,6 +101,7 @@ HASH_OPERATOR_ID = "native_keyed_hash"
 CATEGORICAL_OPERATOR_ID = "native_categorical"
 BUCKET_PERTURB_OPERATOR_ID = "native_bucket_perturb"
 GROUP_KEY_OPERATOR_ID = "native_group_key"
+DATE_SHIFT_OPERATOR_ID = "native_date_shift"
 
 # The operators whose native execution needs the compiled companion loadable at
 # this host: hash (its crypto kernel), the two index-kernel operators
@@ -107,7 +110,13 @@ GROUP_KEY_OPERATOR_ID = "native_group_key"
 # the CI `substrate(pandas)` leg. Named as a set so a new index/crypto operator
 # joins by one edit, not another ad-hoc branch in `resident_contract_admission`.
 _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
-    {HASH_OPERATOR_ID, CATEGORICAL_OPERATOR_ID, BUCKET_PERTURB_OPERATOR_ID, GROUP_KEY_OPERATOR_ID}
+    {
+        HASH_OPERATOR_ID,
+        CATEGORICAL_OPERATOR_ID,
+        BUCKET_PERTURB_OPERATOR_ID,
+        GROUP_KEY_OPERATOR_ID,
+        DATE_SHIFT_OPERATOR_ID,
+    }
 )
 
 # Which compiled kernel each companion-dependent operator actually loads, so the
@@ -122,6 +131,17 @@ _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
     CATEGORICAL_OPERATOR_ID: "index",
     BUCKET_PERTURB_OPERATOR_ID: "index",
     GROUP_KEY_OPERATOR_ID: "raw_hex",
+    DATE_SHIFT_OPERATOR_ID: "index",
+}
+
+# The ONE diagnostic obligation the coordinator routes, per operator: date_shift's
+# format_error row errors, which the coordinator collects, rebases, and hands to
+# `finalize_validators_and_quarantine` (a non-empty set raises there and the
+# unified slice reroutes the table to the oracle, which fails identically). Any
+# other obligation (a warning reducer, a second trigger) or any other operator
+# carrying one still declines: nothing else is routed.
+_ROUTED_DIAGNOSTIC_OBLIGATIONS: dict[str, frozenset[str]] = {
+    DATE_SHIFT_OPERATOR_ID: frozenset({"reduce_row_error:format_error"}),
 }
 
 # The fixed, reviewed resident-type domain per slice strategy -- the actual
@@ -146,6 +166,8 @@ _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     # on that same STRING source (astype(str) identity keeps canonicalization
     # byte-parity-safe); a non-string source declines to the oracle.
     "bucket_perturb": frozenset({pa.string()}),
+    # date_shift parses a STRING date column and keys on that same string.
+    "date_shift": frozenset({pa.string()}),
 }
 
 
@@ -447,8 +469,8 @@ def resident_contract_admission(
     """The dominating, ALL-NODE resident-contract gate (root-cause fix,
     replacing the prior hash-only resident guard): proves the compiled plan
     is shaped correctly (an admitted native binding on every node, an
-    operator from the four-entry allowlist, no prepass/diagnostic
-    obligation, complete 1:1 coverage of the source's columns) AND that the
+    operator from the allowlist, no prepass, no diagnostic obligation beyond
+    the routed set, complete 1:1 coverage of the source's columns) AND that the
     ACTUAL resident Arrow table -- not the profile's coarse approximation of
     it -- belongs to the one finite, reviewed equivalence domain this
     slice's 4.4 corpus characterizes, for every node regardless of strategy.
@@ -499,7 +521,10 @@ def resident_contract_admission(
             return None
         if binding.operator_id not in ALLOWED_OPERATOR_IDS:
             return None
-        if binding.required_prepasses or binding.diagnostic_obligations:
+        if binding.required_prepasses:
+            return None
+        routed = _ROUTED_DIAGNOSTIC_OBLIGATIONS.get(binding.operator_id, frozenset())
+        if not set(binding.diagnostic_obligations) <= routed:
             return None
         column = node.columns[0]
         if binding.operator_id == GROUP_KEY_OPERATOR_ID:
@@ -530,7 +555,7 @@ def resident_contract_admission(
         if resident_type not in _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset()):
             return None
         if binding.operator_id in _COMPANION_DEPENDENT_OPERATOR_IDS:
-            # hash / categorical / bucket_perturb all consume their namespace
+            # hash / categorical / bucket_perturb / date_shift consume their namespace
             # through the compiled companion at every batch; a missing KeyBinding
             # or a non-UTF-8 namespace declines to the oracle (the compiled
             # kernel requires an encodable namespace).
