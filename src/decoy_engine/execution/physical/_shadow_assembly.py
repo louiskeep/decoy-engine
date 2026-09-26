@@ -19,8 +19,9 @@ __all__ = ["assemble_column"]
 # (it passes its source object series through -> Arrow null), so it is split out.
 # group_key never emits all-null (a null cell keys on "None") but its empty ->
 # float64 rule matches, so it belongs here (the empty golden pins this).
+# date_shift assigns a fresh list (`df[column] = out`), so it is tokenizing too.
 _TOKENIZING_STRATEGIES = frozenset(
-    {"redact", "truncate", "hash", "faker", "categorical", "group_key"}
+    {"redact", "truncate", "hash", "faker", "categorical", "group_key", "date_shift"}
 )
 _NULL_ON_EMPTY_STRATEGIES = frozenset({"bucket_perturb"})
 

@@ -51,6 +51,7 @@ from decoy_engine.execution.native._capabilities import (
 from decoy_engine.execution.native._operator_config_rejections import (
     bucket_perturb_config_rejection,
     categorical_config_rejection,
+    date_shift_config_rejection,
     group_key_config_rejection,
     is_deterministic_categorical,
 )
@@ -297,7 +298,8 @@ def _config_rejection(
 ) -> str | None:
     """The coded reason `name`'s resolved CONFIG or INPUT type is one the
     native kernel for `strategy` cannot honor, or None. Only the admitted set's
-    strategies (hash/truncate/redact/categorical/bucket_perturb/group_key) get a
+    strategies (hash/truncate/redact/categorical/bucket_perturb/group_key/
+    date_shift) get a
     gate here; every other strategy that passed the capability check above is
     unaffected (narrowing, never widening)."""
     if strategy == "hash":
@@ -326,6 +328,15 @@ def _config_rejection(
     if strategy == "bucket_perturb":
         provider_config = col.get("provider_config")
         return bucket_perturb_config_rejection(
+            name,
+            table,
+            profile,
+            namespace=col.get("namespace"),
+            provider_config=provider_config if isinstance(provider_config, dict) else {},
+        )
+    if strategy == "date_shift":
+        provider_config = col.get("provider_config")
+        return date_shift_config_rejection(
             name,
             table,
             profile,

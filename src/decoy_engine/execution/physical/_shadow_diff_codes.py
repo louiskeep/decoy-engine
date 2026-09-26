@@ -33,6 +33,7 @@ __all__ = [
     "NULL_MASK_DIFF",
     "OOC_DISPATCH_MISSING_DEPENDENCY",
     "OOC_FK_PARITY_DIFF",
+    "OPERATOR_INVARIANT_VIOLATION",
     "OPERATOR_NOT_EXECUTED",
     "PLANNED_VS_ACTUAL_ROUTE_DIFF",
     "PUBLICATION_ATTEMPT",
@@ -159,6 +160,14 @@ FULL_FRAME_RUNTIME_FEATURE_UNSUPPORTED: Final = "full-frame-runtime-feature-unsu
 # ^ also covers item 5's FK half: a relationship edge naming the one
 # admitted table (sink/source_loader/vault/fidelity/validators/quarantine
 # share this code too -- see _shadow_full_frame.py's module docstring).
+# A bound operator broke its own contract: a compiled index kernel returned a
+# wrong-typed/sized/null/out-of-range result (the `index_batch_*`
+# `GenerationError`s), or run_operator's dispatch preconditions failed. Either
+# means the native path itself is broken, so it must surface loudly; silently
+# rerouting to the oracle would hide a defective kernel behind the slow path.
+# Input-domain failures (unparseable or out-of-range data) are NOT this code.
+# `detail` names the operator and the error code/class only.
+OPERATOR_INVARIANT_VIOLATION: Final = "operator-invariant-violation"
 
 DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -189,6 +198,7 @@ DIFFERENCE_CODES: Final[frozenset[str]] = frozenset(
         GLOBAL_STRATEGY_UNSUPPORTED,
         GLOBAL_SHUFFLE_DETERMINISM_UNSUPPORTED,
         FULL_FRAME_RUNTIME_FEATURE_UNSUPPORTED,
+        OPERATOR_INVARIANT_VIOLATION,
     }
 )
 

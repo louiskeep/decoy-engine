@@ -1,9 +1,9 @@
 """Per-operator config/type admission gates for the native planning boundary.
 
-Extracted verbatim from ``_requirements.py``: the categorical / bucket_perturb /
-group_key ``*_config_rejection`` resolvers plus the small constants and helpers
-they own. Each returns the coded reason a column cannot run on its native
-operator, or None when it can. Both native admission boundaries (the compiler's
+The categorical / bucket_perturb / group_key / date_shift
+``*_config_rejection`` resolvers plus the small constants and helpers they own.
+Each returns the coded reason a column cannot run on its native operator, or
+None when it can. Both native admission boundaries (the compiler's
 ``_config_gate_rejection`` and the config-only ``native_route_eligibility``
 query) call these SAME functions so they can never reach a different verdict for
 the same column.
@@ -128,6 +128,75 @@ def bucket_perturb_config_rejection(
     return None
 
 
+# pandas `format=` values that are NOT strptime directives: "mixed" infers a
+# format per element and "ISO8601" accepts any ISO shape. Neither is an explicit
+# format in the v1 sense, so both decline.
+_PANDAS_SPECIAL_DATE_FORMATS = frozenset({"mixed", "ISO8601"})
+
+
+# Distinguishes an ABSENT bound (the oracle applies its default) from one set
+# explicitly to null (the oracle's `int(None)` raises), which `.get()` conflates.
+_ABSENT = object()
+
+
+def _date_shift_bound_rejection(name: str, key: str, value: Any) -> str | None:
+    if value is _ABSENT:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return f"date_shift_{key}_not_int:{name}"
+    # Imported lazily: the kernel module pulls in pandas, which the planning
+    # boundary keeps off its module-load path.
+    from decoy_engine.execution.native._date_shift_ext import MAX_ABS_SHIFT_DAYS
+
+    if abs(value) > MAX_ABS_SHIFT_DAYS:
+        return f"date_shift_{key}_out_of_range:{name}"
+    return None
+
+
+def date_shift_config_rejection(
+    name: str,
+    table: str,
+    profile: Any | None,
+    *,
+    namespace: str | None,
+    provider_config: dict[str, Any],
+) -> str | None:
+    """The coded reason a `date_shift` column cannot run natively, or None.
+
+    v1 admits ONLY the namespaced, string-source, explicit-`date_format`,
+    tz-free, no-`group_by` variant with integer day bounds. The oracle treats a
+    missing/empty format as whole-column autodetect (`_detect_format`, a
+    `format_detect` prepass) and a truthy `group_by` as a pre-mask sibling
+    anchor; both stay on the oracle. `min_days`/`max_days` pass through the
+    oracle's `int()`, which also accepts floats and numeric strings; v1 narrows
+    to real ints so the native bound resolution cannot diverge from it.
+    """
+    if not namespace:
+        return f"date_shift_requires_namespace:{name}"
+    if provider_config.get("group_by"):
+        return f"date_shift_group_by_not_native:{name}"
+    date_format = provider_config.get("date_format")
+    if not isinstance(date_format, str) or not date_format:
+        return f"date_shift_requires_date_format:{name}"
+    if date_format in _PANDAS_SPECIAL_DATE_FORMATS:
+        return f"date_shift_special_date_format:{name}"
+    from decoy_engine.execution.native._bucket_perturb_ext import has_timezone_directive
+
+    if has_timezone_directive(date_format):
+        return f"date_shift_timezone_directive:{name}"
+    for key in ("min_days", "max_days"):
+        reason = _date_shift_bound_rejection(name, key, provider_config.get(key, _ABSENT))
+        if reason is not None:
+            return reason
+    # An unresolved profile defers to the unified-slice resident-type gate
+    # (matches hash/bucket_perturb); a RESOLVED non-string type rejects here.
+    if profile is not None:
+        resolved = resolve_input_arrow_type(table, name, profile)
+        if resolved is not None and resolved != pa.string():
+            return f"date_shift_source_not_string:{name}:{resolved!s}"
+    return None
+
+
 # The native group_key route admits ONLY these sibling resident types in v1.
 # The full stringify-safe set is larger (`_chunked_group_key.group_by_type_is_safe`:
 # integer, bool, string, large_string, date, timestamp), and the operator itself
@@ -189,6 +258,7 @@ def group_key_config_rejection(
 __all__ = [
     "bucket_perturb_config_rejection",
     "categorical_config_rejection",
+    "date_shift_config_rejection",
     "group_key_config_rejection",
     "group_key_sibling_type_admitted",
     "is_deterministic_categorical",

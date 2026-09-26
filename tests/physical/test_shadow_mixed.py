@@ -170,7 +170,7 @@ def test_dispatch_mixed_runs_generate_before_mask_and_stitches(
     mask_calls: list[Any] = []
     original_run_operator = _coordinator_module.run_operator  # type: ignore[attr-defined]
 
-    def _spy_mask(*args: Any, **kwargs: Any) -> pa.Array:
+    def _spy_mask(*args: Any, **kwargs: Any) -> Any:
         mask_calls.append(args)
         return original_run_operator(*args, **kwargs)
 

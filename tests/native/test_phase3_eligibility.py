@@ -12,6 +12,7 @@ totality over the live provider registry, and the layering cross-check against
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -479,11 +480,12 @@ def test_duplicate_name_across_faker_and_another_no_kernel_strategy_keeps_both_v
     config = _config(
         "t",
         _faker_col("X"),  # otherwise perfectly C1-admissible
-        {"name": "X", "strategy": "date_shift", "namespace": "ns2"},
+        # bucketize has no native kernel (date_shift gained one).
+        {"name": "X", "strategy": "bucketize", "provider_config": {"width": 10}},
     )
     result = phase3_c1_eligibility(config, table="t")
     assert result.admitted is False
-    assert result.reasons == ("no_native_kernel:X:date_shift",)
+    assert result.reasons == ("no_native_kernel:X:bucketize",)
 
 
 # ---------------------------------------------------------------------------
@@ -617,3 +619,71 @@ def test_jc5_admitted_set_is_exactly_deterministic_source_keyed_partition_indepe
         result.reasons,
     )
     assert result.admitted == (result.reasons == ())
+
+
+# ---------------------------------------------------------------------------
+# C1 is the chunked route: the full-frame-only strategies the chunked
+# dispatcher vetoes must not be admitted here just because the route-agnostic
+# base predicate accepts them.
+# ---------------------------------------------------------------------------
+
+
+_FULL_FRAME_ONLY_COLUMNS: list[dict[str, Any]] = [
+    {
+        "name": "D",
+        "strategy": "date_shift",
+        "namespace": "ns_d",
+        "provider_config": {"date_format": "%Y-%m-%d"},
+    },
+    {
+        "name": "B",
+        "strategy": "bucket_perturb",
+        "namespace": "ns_b",
+        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
+    },
+    {
+        "name": "C",
+        "strategy": "categorical",
+        "namespace": "ns_c",
+        "deterministic": True,
+        "provider_config": {"categories": ["a", "b"]},
+    },
+    {
+        "name": "G",
+        "strategy": "group_key",
+        "provider_config": {"group_by": "P", "length": 16},
+    },
+]
+
+
+@pytest.mark.parametrize("column", _FULL_FRAME_ONLY_COLUMNS, ids=lambda c: c["strategy"])
+def test_chunked_vetoed_strategy_is_not_admitted_on_the_c1_route(column: dict) -> None:
+    config = _config("t", column)
+    assert native_route_eligibility(config, table="t").accepted, (
+        "precondition: the base predicate admits it, so only the veto can reject"
+    )
+    result = phase3_c1_eligibility(config, table="t")
+    assert result.admitted is False
+    assert result.reasons == (f"{column['strategy']}_not_native_chunked_route:{column['name']}",)
+
+
+def test_chunked_veto_does_not_hide_a_faker_rejection() -> None:
+    config = _config("t", _FULL_FRAME_ONLY_COLUMNS[0], _faker_col("F", deterministic=False))
+    result = phase3_c1_eligibility(config, table="t")
+    assert set(result.reasons) == {
+        "date_shift_not_native_chunked_route:D",
+        "faker_not_deterministic:F",
+    }
+
+
+def test_chunked_veto_set_matches_the_dispatcher() -> None:
+    """Every strategy the dispatcher vetoes is vetoed here, via the one shared set."""
+    from decoy_engine.execution.native import _dispatch, _phase3_eligibility
+
+    assert (
+        _phase3_eligibility.CHUNKED_ROUTE_VETOED_STRATEGIES
+        is _dispatch.CHUNKED_ROUTE_VETOED_STRATEGIES
+    )
+    assert {c["strategy"] for c in _FULL_FRAME_ONLY_COLUMNS} == set(
+        _dispatch.CHUNKED_ROUTE_VETOED_STRATEGIES
+    )

@@ -122,7 +122,16 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
 NATIVE_KERNEL_STRATEGIES = frozenset(
-    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb", "group_key"}
+    {
+        "passthrough",
+        "redact",
+        "truncate",
+        "hash",
+        "categorical",
+        "bucket_perturb",
+        "group_key",
+        "date_shift",
+    }
 )
 
 # Admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
@@ -131,11 +140,15 @@ NATIVE_KERNEL_STRATEGIES = frozenset(
 # whole-column assembly point can resolve, which the eager per-chunk emit
 # (`_chunk_masking.py`) lacks. group_key is here for a different reason: it keys
 # on a SIBLING column and is deliberately kept out of the chunk-safe set
-# (`_chunked_group_key.py`), so its native path is full-frame only too. Without
+# (`_chunked_group_key.py`), so its native path is full-frame only too. date_shift
+# shares categorical's null-shape output type and also carries a format_error
+# row-error obligation that only the full-frame coordinator routes. Without
 # this veto `_static_route_decision` would admit them on the chunked route and
 # hit the missing chunk handler; instead the preflight routes the whole table to
 # the oracle.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"categorical", "bucket_perturb", "group_key"})
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset(
+    {"categorical", "bucket_perturb", "group_key", "date_shift"}
+)
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
@@ -446,6 +459,7 @@ def _config_gate_rejection(
     from decoy_engine.execution.native._operator_config_rejections import (
         bucket_perturb_config_rejection,
         categorical_config_rejection,
+        date_shift_config_rejection,
         group_key_config_rejection,
     )
 
@@ -476,6 +490,14 @@ def _config_gate_rejection(
         )
     if strategy_name == "group_key":
         return group_key_config_rejection(name, node.table, profile, provider_config=cfg)
+    if strategy_name == "date_shift":
+        return date_shift_config_rejection(
+            name,
+            node.table,
+            profile,
+            namespace=getattr(node.plan_slice, "namespace", None),
+            provider_config=cfg,
+        )
     return None
 
 

@@ -300,6 +300,20 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_dispatch.py",
         "src/decoy_engine/execution/native/_plan.py",
         "src/decoy_engine/execution/native/_requirements.py",
+        # Phase 5 S1 (native date_shift operator, 2026-09-24): the operator's
+        # config-only admission rejections (`_operator_config_rejections.py`,
+        # which gains the date_shift bound/unit/format checks) and its kernel
+        # (`_date_shift_ext.py`, new). Both live under execution/native/, and
+        # neither imports `execution.physical` (the kernel imports only
+        # numpy/pandas/pyarrow, `generation.pool`, and `native._index_ext`
+        # under TYPE_CHECKING), so the import-direction sweeps and the
+        # run_pipeline dynamic check below stay green.
+        "src/decoy_engine/execution/native/_date_shift_ext.py",
+        "src/decoy_engine/execution/native/_operator_config_rejections.py",
+        # The C1 (chunked) admission predicate applies the chunked-route veto
+        # the dispatcher already enforces, so it cannot admit a full-frame-only
+        # strategy. It imports only execution.native modules, never physical.
+        "src/decoy_engine/execution/native/_phase3_eligibility.py",
     }
     unexpected = [
         name

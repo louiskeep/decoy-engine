@@ -11,15 +11,19 @@ of failing, and the comparison would "pass" against itself.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON, native_date_shift
 from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
@@ -31,14 +35,22 @@ from decoy_engine.execution.physical._plan import ExecutionBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     NATIVE_COMPANION_UNAVAILABLE,
+    OPERATOR_INVARIANT_VIOLATION,
     ShadowDifference,
 )
+from decoy_engine.generation.pool import GenerationError
 
 if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.pool import ValuePool
 
-__all__ = ["OperatorCallEvidence", "run_operator"]
+__all__ = [
+    "INDEX_KERNEL_INVARIANT_CODES",
+    "OperatorCallEvidence",
+    "operator_invariant_violation",
+    "operator_invariants_fail_loud",
+    "run_operator",
+]
 
 _PASSTHROUGH: Final = "native_passthrough"
 _REDACT: Final = "native_redact"
@@ -48,6 +60,53 @@ _FAKER_SELECT: Final = "native_faker_select"
 _CATEGORICAL: Final = "native_categorical"
 _BUCKET_PERTURB: Final = "native_bucket_perturb"
 _GROUP_KEY: Final = "native_group_key"
+_DATE_SHIFT: Final = "native_date_shift"
+
+# The `GenerationError` codes every index-kernel consumer raises when the
+# compiled `derive_index_batch` result violates its contract (type, length,
+# null mask, range). They describe a broken kernel, never a bad input row.
+INDEX_KERNEL_INVARIANT_CODES: Final = frozenset(
+    {
+        "index_batch_type_mismatch",
+        "index_batch_length_mismatch",
+        "index_batch_null_mask_mismatch",
+        "index_batch_out_of_bounds",
+    }
+)
+
+
+@contextmanager
+def operator_invariants_fail_loud(operator_id: str) -> Iterator[None]:
+    """Re-raise a bound operator's own contract failures as a coded
+    `ShadowDifference`, which the unified slice surfaces as an invariant error
+    instead of quietly rerouting to the oracle. Every other exception (the
+    input-domain failures the oracle raises identically, e.g. a Timestamp
+    overflow) passes through untouched so the reroute still handles it."""
+    try:
+        yield
+    except (AssertionError, GenerationError) as exc:
+        difference = operator_invariant_violation(operator_id, exc)
+        if difference is None:
+            raise
+        raise difference from exc
+
+
+def operator_invariant_violation(operator_id: str, exc: BaseException) -> ShadowDifference | None:
+    """The coded difference for an operator contract failure, or None when
+    `exc` is an input-domain error that must keep its own type. A plain
+    function rather than inline in the context manager so mutation testing
+    can grade it (mutmut skips decorated functions)."""
+    if isinstance(exc, AssertionError):
+        return ShadowDifference(
+            code=OPERATOR_INVARIANT_VIOLATION,
+            detail=f"operator={operator_id!r}: dispatch precondition failed",
+        )
+    if isinstance(exc, GenerationError) and exc.code in INDEX_KERNEL_INVARIANT_CODES:
+        return ShadowDifference(
+            code=OPERATOR_INVARIANT_VIOLATION,
+            detail=f"operator={operator_id!r}: compiled index kernel violated {exc.code}",
+        )
+    return None
 
 
 @dataclass
@@ -78,11 +137,19 @@ def run_operator(
     pool: ValuePool | None = None,
     index_kernel: IndexDerivationKernel | None = None,
     group_key_sibling: pa.Table | None = None,
-) -> pa.Array:
+    column: str | None = None,
+) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
     back to the oracle -- when the compiled hash companion is missing or
     ABI-incompatible (C2/C4).
+
+    Returns `(out, row_errors)`. `row_errors` are BATCH-LOCAL `RowError`s
+    (0-based within `array`, no table): the coordinator is the layer that knows
+    the table and the batch offset, so it attributes and rebases them, the same
+    split `drain_row_errors` makes for the oracle's handlers. Only date_shift
+    emits any; every other operator returns `()`. `column` is the target column
+    name the records carry, required by date_shift.
 
     `pool` is used only by the faker branch; `index_kernel` by faker AND
     categorical (Phase 5 Track B): the coordinator resolves the pool once per
@@ -91,6 +158,7 @@ def run_operator(
     the native chunked route's own preflight-once, thread-through contract).
     """
     cfg = dict(binding.resolved_config)
+    row_errors: tuple[RowError, ...] = ()
     if binding.operator_id == _PASSTHROUGH:
         out = native_passthrough(array)
     elif binding.operator_id == _REDACT:
@@ -219,9 +287,55 @@ def run_operator(
                 detail=f"operator={binding.operator_id!r}: compiled raw-hex companion unavailable",
             ) from exc
         evidence.compiled_kernel_executed = True
+    elif binding.operator_id == _DATE_SHIFT:
+        out, row_errors = _run_date_shift(
+            array, binding=binding, ctx=ctx, index_kernel=index_kernel, column=column
+        )
+        evidence.compiled_kernel_executed = True
     else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
         raise AssertionError(f"unbound operator id {binding.operator_id!r}")
     evidence.actual_operator = binding.operator_id
     evidence.executed = True
     evidence.batches_run += 1
-    return out
+    return out, row_errors
+
+
+def _run_date_shift(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    binding: ExecutionBinding,
+    ctx: ShadowContext,
+    index_kernel: IndexDerivationKernel | None,
+    column: str | None,
+) -> tuple[pa.Array, tuple[RowError, ...]]:
+    if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+        raise AssertionError("date_shift node reached run_operator with no KeyBinding")
+    if (
+        binding.date_shift_date_format is None
+        or binding.date_shift_min_days is None
+        or binding.date_shift_max_days is None
+    ):  # pragma: no cover - C0 binds all three together with the KeyBinding
+        raise AssertionError(
+            "date_shift node reached run_operator with no resolved date_format/min_days/max_days"
+        )
+    if column is None:
+        # The records must name their column; a caller that cannot say which
+        # column it is masking cannot attribute a format_error, so fail closed.
+        raise AssertionError("date_shift node reached run_operator with no target column")
+    if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+        raise AssertionError("date_shift node reached run_operator with no index_kernel")
+    out, positions = native_date_shift(
+        array,
+        min_days=binding.date_shift_min_days,
+        max_days=binding.date_shift_max_days,
+        date_format=binding.date_shift_date_format,
+        mask_key=ctx.mask_key,
+        namespace=binding.key_binding.namespace,
+        index_kernel=index_kernel,
+        native_threads=ctx.native_threads,
+    )
+    errors = tuple(
+        RowError(column=column, row_index=i, trigger="format_error", reason=FORMAT_ERROR_REASON)
+        for i in positions
+    )
+    return out, errors
