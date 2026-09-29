@@ -9,9 +9,11 @@ by the rest of the predicate.
 Two shapes are exercised over a REAL spawned child (not the in-process
 `isolate=False` fallback, which never sets a sink):
 
-- A CSV source stays NON-admissible (admission requires a Parquet file source),
-  so its resident-vs-streamed staging classification is byte-for-byte unchanged
-  with the flag on and off, and no activation leaf appears.
+- A CSV source, plain string column, resident and profiled the same way (Track
+  A Option 2 widened admission to {parquet, csv, fixed_width}): the flag-on arm
+  ACTIVATES; the flag-off arm never does (the lane is off entirely); the
+  resident-vs-streamed staging classification is byte-for-byte unchanged either
+  way, since that is a staging question, not a masking-route one.
 - A Parquet source in the admitted domain now ACTIVATES when the flag is omitted
   (the new default) and matches the explicit-`False` legacy run exactly, staged
   through `_finalize_outputs` (never the sink). This is the sink-present
@@ -54,7 +56,7 @@ def _sources(tmp_path) -> dict[str, pa.Table]:
 
 
 @pytest.mark.parametrize("unified_slice_enabled", [False, True])
-def test_isolated_worker_classification_unchanged_by_the_flag(
+def test_isolated_worker_csv_classification_unchanged_by_the_flag(
     tmp_path, unified_slice_enabled: bool
 ) -> None:
     cfg = _config(tmp_path)
@@ -71,13 +73,20 @@ def test_isolated_worker_classification_unchanged_by_the_flag(
     assert result.outcome == "completed"
     assert result.isolated is True
     execution = result.quality_metrics.get("execution") or {}
-    # A CSV source is non-admissible (admission requires a Parquet file source),
-    # so the unified slice declines regardless of the flag -- the resident-vs-
-    # streamed classification must read identically in both arms, and no
-    # activation leaf appears.
+    # A CSV source is now admissible (Track A Option 2 widened the format check
+    # to {parquet, csv, fixed_width}); this plain string column is resident- and
+    # profile-agreeing either way, so it activates when the flag is on. The
+    # resident-vs-streamed STAGING classification is a separate question from
+    # the masking route and reads identically regardless of the flag.
     assert execution.get("outputs_streamed") is False
     assert execution.get("loaded_fully_in_memory") is True
-    assert "unified_slice_activation" not in result.quality_metrics
+    if unified_slice_enabled:
+        assert "unified_slice_activation" in result.quality_metrics
+        leaf = result.quality_metrics["unified_slice_activation"]
+        assert leaf["activated"] is True
+        assert all(evidence["executed"] is True for evidence in leaf["nodes"].values())
+    else:
+        assert "unified_slice_activation" not in result.quality_metrics
     assert result.outputs is not None
     assert result.outputs["t"].column("c").to_pylist() == [f"v{i}" for i in range(20)]
 

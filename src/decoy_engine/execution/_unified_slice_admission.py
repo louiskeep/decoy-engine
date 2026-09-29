@@ -170,6 +170,12 @@ _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     "date_shift": frozenset({pa.string()}),
 }
 
+# Track A Option 2: the sanctioned single-file-source formats. Widened from
+# parquet-only once compilation sources its types from the resident Arrow
+# table rather than a separate descriptor-backed re-read (see the format
+# check below); a non-file source (s3/gcs) stays out of scope.
+_ADMITTED_SOURCE_FORMATS = frozenset({"parquet", "csv", "fixed_width"})
+
 
 def _find_table(config: Mapping[str, Any], table: str) -> dict[str, Any] | None:
     for tbl in config.get("tables") or ():
@@ -263,14 +269,16 @@ def cheap_admission(
     if (
         not isinstance(source_descriptor, dict)
         or source_descriptor.get("type") != "file"
-        or source_descriptor.get("format") != "parquet"
+        or source_descriptor.get("format") not in _ADMITTED_SOURCE_FORMATS
     ):
-        # D3 scopes the initial slice to a single non-FK PARQUET file source
-        # (plan "Initial slice"). A csv / fixed_width / non-file source profiles
-        # under a different (often loosely-typed) reader than the resident Arrow
-        # table this lane masks, so its compiled plan can diverge from what the
-        # legacy route would have run. Anything but the sanctioned Parquet file
-        # shape declines to the unchanged old route.
+        # Track A Option 2: parquet, csv, and fixed_width all admit here. The
+        # divergence risk this check used to guard against -- a csv/fixed_width
+        # source profiling under a different (often loosely-typed) reader than
+        # the resident Arrow table this lane masks -- is closed by making
+        # compilation source its column types from that SAME resident table
+        # (`resolve_input_arrow_type`'s `resident_sources` argument, threaded
+        # through `_shadow_bindings`/`native/_requirements`), not by excluding
+        # the format. A non-file source (s3/gcs) is still out of scope.
         return None
 
     if set(caller_sources) != {table}:
@@ -440,14 +448,14 @@ def _group_key_sibling_admitted(
     if not group_key_sibling_type_admitted(sibling_type):
         # float / decimal / dictionary (and any unlisted type) decline.
         return False
-    # The binding's input_schema is built from the SIBLING column's type, so it
-    # must carry exactly that field at that type (not the target's).
+    # Track A Option 2 guard reconciliation: `execution_binding_for_slice_node`
+    # now builds `input_schema` from this SAME resident sibling type (not a
+    # profile re-read), so comparing the two types here would always be true --
+    # a tautology, not a check. What is still load-bearing is the STRUCTURAL
+    # shape (exactly one field, named `group_by`): a binding of any other shape
+    # would be a compiler bug, not a resident-type question.
     input_schema = binding.input_schema
-    if (
-        len(input_schema) != 1
-        or group_by not in input_schema.names
-        or input_schema.field(group_by).type != sibling_type
-    ):
+    if len(input_schema) != 1 or input_schema.names != [group_by]:
         return False
     # Order-dependence: the sibling must be an UNMASKED (passthrough) node. Any
     # other node masking it means the oracle would key on the mutated value.
@@ -475,17 +483,20 @@ def resident_contract_admission(
     it -- belongs to the one finite, reviewed equivalence domain this
     slice's 4.4 corpus characterizes, for every node regardless of strategy.
 
-    Two independent per-node type checks, both required: the resident type
-    must equal the compiled binding's OWN `input_schema` type exactly (a
-    dictionary/large_string/extension/null-typed/etc. resident column never
-    equals the plain `pa.string()`/`pa.int64()`/`pa.bool_()` the compiler
-    bound, so this alone rejects most exotic types); and the resident type
-    must fall inside `_ADMITTED_RESIDENT_TYPES[node.strategy]` -- the fixed
-    domain, needed because the compiler gates redact/truncate on CONFIG
-    only, never on input type (`native/_requirements.py`'s own
-    `redact_config_rejection` / `truncate_config_rejection`), so a
-    genuinely non-string column bound to either would still "match" its own
-    compiled type under the first check alone.
+    Track A Option 2 guard reconciliation: this used to run two independent
+    per-node type checks -- the resident type against the compiled binding's
+    OWN `input_schema` type, and the resident type against `_ADMITTED_
+    RESIDENT_TYPES[node.strategy]`. The first is now tautological: `input_
+    schema` is built from this SAME resident type (`resolve_input_arrow_type`'s
+    `resident_sources` argument, threaded from `execution_binding_for_slice_
+    node` through the compiler), not a separate profile re-read, so it can
+    never disagree with `source.schema.field(column).type` for a well-formed
+    binding. Only the structural shape (exactly one field, correctly named)
+    is still checked; the type comparison is dropped. The domain check stays,
+    and stays load-bearing: the compiler gates redact/truncate on CONFIG only,
+    never on input type (`native/_requirements.py`'s own `redact_config_
+    rejection` / `truncate_config_rejection`), so a genuinely non-string
+    column bound to either would still compile a "matching" binding.
 
     Also runs the checks that need real data or a real host probe: a hash
     node's compiled native companion must actually be loadable
@@ -548,10 +559,15 @@ def resident_contract_admission(
             covered.append(column)
             continue
         resident_type = source.schema.field(column).type
-        if len(binding.input_schema) != 1 or binding.input_schema.field(column).type != (
-            resident_type
-        ):
+        # Structural shape only (see the docstring): the type-equality half of
+        # this check is dropped as tautological now that `input_schema` is
+        # itself built from `resident_type`.
+        if len(binding.input_schema) != 1 or binding.input_schema.names != [column]:
             return None
+        # An untyped/all-null-inferred resident column (`pa.null()`, the type
+        # pandas/Arrow give a wholly-null CSV column with no declared dtype)
+        # is not in any strategy's admitted domain, so it declines here rather
+        # than being treated as compatible with whatever the strategy expects.
         if resident_type not in _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset()):
             return None
         if binding.operator_id in _COMPANION_DEPENDENT_OPERATOR_IDS:

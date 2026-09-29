@@ -11,6 +11,7 @@ the same column.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pyarrow as pa
@@ -91,6 +92,7 @@ def bucket_perturb_config_rejection(
     *,
     namespace: str | None,
     provider_config: dict[str, Any],
+    resident_sources: Mapping[str, Any] | None = None,
 ) -> str | None:
     """The coded reason a `bucket_perturb` column cannot run natively, or None.
 
@@ -118,11 +120,14 @@ def bucket_perturb_config_rejection(
 
     if has_timezone_directive(date_format):
         return f"bucket_perturb_timezone_directive:{name}"
-    # An unresolved profile leaves the input type unknowable; defer to the
-    # unified-slice resident-type gate (matches hash). A RESOLVED non-string
-    # type is rejected here, early.
-    if profile is not None:
-        resolved = resolve_input_arrow_type(table, name, profile)
+    # With neither a profile nor a resident source, the input type is
+    # unknowable; defer to the unified-slice resident-type gate (matches
+    # hash). A RESOLVED non-string type is rejected here, early.
+    # `resident_sources`, when given, makes the resolution resident-Arrow-
+    # authoritative (Track A Option 2); in the unified-slice lane it is
+    # always given, so this deferral never actually fires there.
+    if profile is not None or resident_sources is not None:
+        resolved = resolve_input_arrow_type(table, name, profile, resident_sources=resident_sources)
         if resolved is not None and resolved != pa.string():
             return f"bucket_perturb_source_not_string:{name}:{resolved!s}"
     return None
@@ -160,6 +165,7 @@ def date_shift_config_rejection(
     *,
     namespace: str | None,
     provider_config: dict[str, Any],
+    resident_sources: Mapping[str, Any] | None = None,
 ) -> str | None:
     """The coded reason a `date_shift` column cannot run natively, or None.
 
@@ -188,10 +194,14 @@ def date_shift_config_rejection(
         reason = _date_shift_bound_rejection(name, key, provider_config.get(key, _ABSENT))
         if reason is not None:
             return reason
-    # An unresolved profile defers to the unified-slice resident-type gate
+    # With neither a profile nor a resident source, the input type is
+    # unknowable and this defers to the unified-slice resident-type gate
     # (matches hash/bucket_perturb); a RESOLVED non-string type rejects here.
-    if profile is not None:
-        resolved = resolve_input_arrow_type(table, name, profile)
+    # `resident_sources` makes the resolution resident-Arrow-authoritative
+    # (Track A Option 2); the unified-slice lane always gives it, so this
+    # deferral never actually fires there.
+    if profile is not None or resident_sources is not None:
+        resolved = resolve_input_arrow_type(table, name, profile, resident_sources=resident_sources)
         if resolved is not None and resolved != pa.string():
             return f"date_shift_source_not_string:{name}:{resolved!s}"
     return None
@@ -226,6 +236,7 @@ def group_key_config_rejection(
     profile: Any | None,
     *,
     provider_config: dict[str, Any],
+    resident_sources: Mapping[str, Any] | None = None,
 ) -> str | None:
     """The coded reason a `group_key` column cannot run natively, or None.
 
@@ -234,9 +245,11 @@ def group_key_config_rejection(
     float/decimal/dictionary excluded), with a valid even `length` in `[8, 64]`.
     `group_by` and `length` are already validated at plan-compile
     (`GroupKeyConfig.from_dict`), so those checks are defensive; the load-bearing
-    gate here is the SIBLING type. An unresolved profile leaves the sibling type
-    unknowable, so this defers to the unified-slice resident-type gate (matching
-    hash) rather than guessing. The order-dependence decline (the sibling must
+    gate here is the SIBLING type. With neither a profile nor a resident source,
+    the sibling type is unknowable, so this defers to the unified-slice
+    resident-type gate (matching hash) rather than guessing; `resident_sources`
+    makes the resolution resident-Arrow-authoritative (Track A Option 2) and is
+    always given in that lane. The order-dependence decline (the sibling must
     not itself be masked by another node) needs cross-node visibility the config
     boundary lacks and is enforced at `resident_contract_admission`, the
     full-visibility shadow-vs-oracle arbiter."""
@@ -248,8 +261,10 @@ def group_key_config_rejection(
         return f"group_key_length_not_int:{name}"
     if length % 2 != 0 or length < 8 or length > 64:
         return f"group_key_length_out_of_range:{name}"
-    if profile is not None:
-        resolved = resolve_input_arrow_type(table, group_by, profile)
+    if profile is not None or resident_sources is not None:
+        resolved = resolve_input_arrow_type(
+            table, group_by, profile, resident_sources=resident_sources
+        )
         if resolved is not None and not group_key_sibling_type_admitted(resolved):
             return f"group_key_group_by_type_not_native:{name}:{group_by}:{resolved!s}"
     return None

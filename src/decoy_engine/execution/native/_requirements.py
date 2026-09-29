@@ -15,6 +15,7 @@ consult.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -298,13 +299,24 @@ def _required_input_columns(node: Any, cfg: dict[str, Any]) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def _output_arrow_schema(node: Any, caps: StrategyCapabilities, profile: Any) -> pa.Schema | None:
+def _output_arrow_schema(
+    node: Any,
+    caps: StrategyCapabilities,
+    profile: Any,
+    *,
+    resident_sources: Mapping[str, Any] | None = None,
+) -> pa.Schema | None:
     if not caps.output_type_is_static:
         return None
     fields: list[pa.Field] = []
     for col in node.columns:
         if node.strategy in _TYPE_PRESERVING:
-            arrow_type = _input_arrow_type(node.table, col, profile)
+            # passthrough's output type equals its input type, so this is the
+            # site that makes passthrough's OUTPUT schema resident-authoritative
+            # too (not only its input_schema): both come from the same call.
+            arrow_type = _input_arrow_type(
+                node.table, col, profile, resident_sources=resident_sources
+            )
         else:
             # A masked/tokenized/generalized surface is a string.
             arrow_type = pa.string()
@@ -312,18 +324,40 @@ def _output_arrow_schema(node: Any, caps: StrategyCapabilities, profile: Any) ->
     return pa.schema(fields)
 
 
-def resolve_input_arrow_type(table: str, column: str, profile: Any) -> pa.DataType | None:
-    """The Arrow type `column` resolves to from the profile, or None when it
-    cannot be resolved (the column is not in the profile, or its dtype label
-    is not one `_DTYPE_TO_ARROW` / the tz-aware datetime pattern recognizes).
+def resolve_input_arrow_type(
+    table: str,
+    column: str,
+    profile: Any,
+    *,
+    resident_sources: Mapping[str, Any] | None = None,
+) -> pa.DataType | None:
+    """The Arrow type `column` resolves to, or None when it cannot be resolved
+    at all (see below).
 
-    None is the "unknowable" signal a caller must not paper over with a
-    default: `_input_arrow_type` below still defaults to `pa.string()` for the
-    type-preserving output-schema use (a determinate schema is required
-    there and string is the safe universal fallback), but a caller deciding
-    whether a value is admissible to the native hash kernel must treat None
-    as "cannot prove this is safe," not as "assume Utf8."
+    Track A Option 2: when `resident_sources` carries a resident `pa.Table`
+    for `table` that has `column`, that table's OWN Arrow type is authoritative
+    and is returned directly -- no profile lookup. This is what makes the
+    unified-slice compilation path agree with the data both routes actually
+    mask, rather than a separate descriptor-backed re-read that a loosely-typed
+    reader (csv, fixed_width) can disagree with (e.g. a decimal-looking CSV
+    column the platform loads as string while the profiler infers float64).
+    Every caller outside that one compilation path omits `resident_sources`
+    (the default, `None`), which reproduces the exact pre-existing
+    profile-only behavior below.
+
+    Without a usable resident source, falls back to the profile: `column`'s
+    dtype label, mapped through `_DTYPE_TO_ARROW` / the tz-aware datetime
+    pattern. None is the "unknowable" signal a caller must not paper over
+    with a default: `_input_arrow_type` below still defaults to `pa.string()`
+    for the type-preserving output-schema use (a determinate schema is
+    required there and string is the safe universal fallback), but a caller
+    deciding whether a value is admissible to the native hash kernel must
+    treat None as "cannot prove this is safe," not as "assume Utf8."
     """
+    if resident_sources is not None:
+        source = resident_sources.get(table)
+        if isinstance(source, pa.Table) and column in source.schema.names:
+            return source.schema.field(column).type
     for tbl in getattr(profile, "tables", ()):
         if tbl.name != table:
             continue
@@ -339,8 +373,12 @@ def resolve_input_arrow_type(table: str, column: str, profile: Any) -> pa.DataTy
     return None
 
 
-def _input_arrow_type(table: str, column: str, profile: Any) -> pa.DataType:
-    return resolve_input_arrow_type(table, column, profile) or pa.string()
+def _input_arrow_type(
+    table: str, column: str, profile: Any, *, resident_sources: Mapping[str, Any] | None = None
+) -> pa.DataType:
+    return resolve_input_arrow_type(table, column, profile, resident_sources=resident_sources) or (
+        pa.string()
+    )
 
 
 def _required_prepasses(
@@ -372,13 +410,27 @@ def _diagnostic_reducers(caps: StrategyCapabilities) -> tuple[str, ...]:
     return tuple(reducers)
 
 
-def hash_config_rejection(name: str, table: str, profile: Any | None) -> str | None:
+def hash_config_rejection(
+    name: str,
+    table: str,
+    profile: Any | None,
+    *,
+    resident_sources: Mapping[str, Any] | None = None,
+) -> str | None:
     """The coded reason a `hash` column's resolved input type cannot run on the
     compiled hash kernel, or None when it can.
 
-    Without a profile the input type cannot be resolved at all; this returns
-    None (deferred, not admitted-by-default) rather than guessing, matching
-    `native_route_eligibility`'s documented profile-optional boundary.
+    `resident_sources`, when given, makes the resolved type authoritative from
+    the resident Arrow table (see `resolve_input_arrow_type`) -- this is what
+    lets a decimal-looking CSV column (resident string, profiled float64) admit
+    to hash instead of declining on the profile's type alone.
+
+    Without a profile OR a resident source for this column, the input type
+    cannot be resolved at all; this returns None (deferred, not
+    admitted-by-default) rather than guessing, matching `native_route_
+    eligibility`'s documented profile-optional boundary. In the unified-slice
+    lane `resident_sources` is always given (the caller's whole resident-table
+    mapping), so this deferral never actually fires there.
 
     `mixed_object_not_native` fires for a dtype label `resolve_input_arrow_type`
     does not recognize at all (it returns None) -- e.g. `timedelta64[ns]` or an
@@ -390,9 +442,9 @@ def hash_config_rejection(name: str, table: str, profile: Any | None) -> str | N
     Arrow conversion is the backstop there, since the coarse label cannot tell
     it from a plain string column.
     """
-    if profile is None:
+    if profile is None and resident_sources is None:
         return None
-    resolved = resolve_input_arrow_type(table, name, profile)
+    resolved = resolve_input_arrow_type(table, name, profile, resident_sources=resident_sources)
     if resolved is None:
         return f"mixed_object_not_native:{name}"
     if not is_admitted_native_hash_type(resolved):
@@ -444,7 +496,12 @@ def redact_config_rejection(name: str, provider_config: dict[str, Any]) -> str |
 
 
 def _config_gate_rejection(
-    node: Any, strategy_name: str, cfg: dict[str, Any], profile: Any
+    node: Any,
+    strategy_name: str,
+    cfg: dict[str, Any],
+    profile: Any,
+    *,
+    resident_sources: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Dispatch to the config/type gate for `strategy_name`, or None for a
     strategy that has none. Shared with `native_route_eligibility` via the
@@ -464,7 +521,7 @@ def _config_gate_rejection(
     )
 
     if strategy_name == "hash":
-        return hash_config_rejection(name, node.table, profile)
+        return hash_config_rejection(name, node.table, profile, resident_sources=resident_sources)
     if strategy_name == "truncate":
         return truncate_config_rejection(name, cfg)
     if strategy_name == "redact":
@@ -487,9 +544,12 @@ def _config_gate_rejection(
             profile,
             namespace=getattr(node.plan_slice, "namespace", None),
             provider_config=cfg,
+            resident_sources=resident_sources,
         )
     if strategy_name == "group_key":
-        return group_key_config_rejection(name, node.table, profile, provider_config=cfg)
+        return group_key_config_rejection(
+            name, node.table, profile, provider_config=cfg, resident_sources=resident_sources
+        )
     if strategy_name == "date_shift":
         return date_shift_config_rejection(
             name,
@@ -497,6 +557,7 @@ def _config_gate_rejection(
             profile,
             namespace=getattr(node.plan_slice, "namespace", None),
             provider_config=cfg,
+            resident_sources=resident_sources,
         )
     return None
 
@@ -520,11 +581,20 @@ def _fallback_policy(
     return "native" if native_ready else "python_only"
 
 
-def requirements_for(node: Any, *, plan: Any, profile: Any) -> NodeRequirements:
+def requirements_for(
+    node: Any, *, plan: Any, profile: Any, resident_sources: Mapping[str, Any] | None = None
+) -> NodeRequirements:
     """Resolve one WorkNode's native execution requirements.
 
     ``plan`` is accepted for future resolution needs (namespace bindings,
     relationship edges) and is not read for the scalar node kinds today.
+
+    ``resident_sources`` (Track A Option 2), when given, makes every physical
+    type decision below resident-Arrow-authoritative rather than profile-
+    derived -- see `resolve_input_arrow_type`. The unified-slice compiler is
+    the one caller that passes it; every other caller (`native/_plan.py`'s
+    still-unwired `native_route_eligibility`) omits it and keeps the
+    pre-existing profile-only behavior.
     """
     strategy_name = _resolve_strategy_name(node)
     caps = capabilities_for(strategy_name)
@@ -543,11 +613,15 @@ def requirements_for(node: Any, *, plan: Any, profile: Any) -> NodeRequirements:
         kernel_reason = native_pool_rejection(node, column_name, strategy_name)
     else:
         kernel_reason = native_kernel_rejection(column_name, strategy_name)
-    config_reason = _config_gate_rejection(node, strategy_name, cfg, profile)
+    config_reason = _config_gate_rejection(
+        node, strategy_name, cfg, profile, resident_sources=resident_sources
+    )
     state_tables = tuple(t for t in (_STATE_TABLE_BY_STRATEGY.get(strategy_name),) if t is not None)
     return NodeRequirements(
         required_input_columns=_required_input_columns(node, cfg),
-        output_arrow_schema=_output_arrow_schema(node, caps, profile),
+        output_arrow_schema=_output_arrow_schema(
+            node, caps, profile, resident_sources=resident_sources
+        ),
         lowering_id=f"{node.kind}:{strategy_name}",
         required_prepasses=_required_prepasses(node, caps, cfg),
         required_state_tables=state_tables,

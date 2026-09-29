@@ -596,14 +596,23 @@ def test_unified_slice_float_sibling_declines(tmp_path: Path) -> None:
     assert QUALITY_METRICS_KEY not in on.quality_metrics
 
 
-def test_unified_slice_int_null_sibling_declines(tmp_path: Path) -> None:
-    """An integer group_by sibling that carries a NULL declines to the oracle at
-    the production boundary (the pre-existing cheap-admission gate: an int+null
-    column round-trips lossy through plain pandas), so both arms take the legacy
-    route and agree byte-for-byte with no activation. The operator-level
-    stringify parity (native `to_pandas_fk_safe` == oracle) is proven separately;
-    this pins that the end-to-end lane fails CLOSED for the shape it cannot yet
-    admit rather than diverging."""
+def test_unified_slice_int_null_sibling_admits_and_matches(tmp_path: Path) -> None:
+    """An integer group_by sibling that carries a NULL used to decline at the
+    production boundary, but for a reason that turned out to be an artifact,
+    not a real divergence risk: the PROFILER's own plain-pandas read of a
+    null-bearing int64 Parquet column upcasts it to float64 (pyarrow's `to_
+    pandas()` default for an integer column with nulls), while the resident
+    Arrow column stays int64 -- so the old profile-vs-resident type check
+    declined a case where the actual masked VALUES always agreed (the oracle
+    itself reads this same sibling through the lossless nullable `Int64`
+    dtype, `_pandas_adapter.py`'s `group_key_group_by_columns`). Track A
+    Option 2 makes `input_schema` resident-Arrow-authoritative, which removes
+    that artifact: the table now admits and the two routes match, because
+    they were always keying on the same values.
+
+    Requires the compiled native companion (group_key's raw-hex kernel);
+    without it, the table still declines on the companion gate and both arms
+    still agree, just without activation to assert."""
     source = pa.table(
         {_GB: pa.array([1, None, 2**60, 1], type=pa.int64()), _TARGET: pa.array(["s"] * 4)}
     )
@@ -612,7 +621,14 @@ def test_unified_slice_int_null_sibling_declines(tmp_path: Path) -> None:
     assert ot.schema.equals(nt.schema, check_metadata=True)
     for name in ot.column_names:
         assert ot.column(name).to_pylist() == nt.column(name).to_pylist(), name
-    assert QUALITY_METRICS_KEY not in on.quality_metrics
+    if native_companion_status().ok:
+        leaf = on.quality_metrics[QUALITY_METRICS_KEY]
+        assert leaf["activated"] is True
+        operators = {ev["operator"] for ev in leaf["nodes"].values()}
+        assert "native_group_key" in operators
+        assert all(ev["executed"] is True for ev in leaf["nodes"].values())
+    else:
+        assert QUALITY_METRICS_KEY not in on.quality_metrics
 
 
 @_NEEDS_COMPANION

@@ -306,7 +306,20 @@ def _build_nodes(table: str, inputs: PhysicalPlanInputs) -> tuple[PhysicalNode, 
     for work_node in build_work_list(inputs.plan, inputs.registry):
         if work_node.table != table:
             continue
-        requirements = requirements_for(work_node, plan=inputs.plan, profile=inputs.profile)
+        # Track A Option 2: `compile_physical_plan` is reached in production
+        # only from the unified-slice lane (module docstring), whose own
+        # `cheap_admission` already proved `inputs.caller_sources` holds
+        # exactly this job's single resident table -- so threading it into
+        # every node's requirements here is scoped, not a general widening of
+        # what `requirements_for` sees elsewhere (`native/_plan.py`'s own
+        # unwired caller omits it and keeps the pre-existing profile-only
+        # behavior).
+        requirements = requirements_for(
+            work_node,
+            plan=inputs.plan,
+            profile=inputs.profile,
+            resident_sources=inputs.caller_sources,
+        )
         policy = requirements.fallback_policy
         if policy not in ("native", "python_only"):
             # Invariant 5 (design doc): `reject_large` is a vestigial

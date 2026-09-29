@@ -749,10 +749,15 @@ def test_cheap_admission_declines_transplanted_lying_pandas_metadata(tmp_path: P
     assert _cheap_ok(config, profile, lying) is None
 
 
-def test_cheap_admission_declines_non_parquet_source(tmp_path: Path) -> None:
-    # D3 scopes the slice to a single non-FK PARQUET file source; csv,
-    # fixed_width, and non-file sources profile under a different reader than the
-    # resident Arrow table and must decline to the legacy route.
+def test_cheap_admission_admits_parquet_csv_and_fixed_width_sources(tmp_path: Path) -> None:
+    # Track A Option 2: the sanctioned single-file-source format check widened
+    # from parquet-only to {parquet, csv, fixed_width} -- resident-authoritative
+    # typing (proved at the compiled-plan level below) is what makes a
+    # loosely-typed reader safe to admit here, not excluding the format.
+    # `cheap_admission` never reads the file itself (it only inspects the
+    # descriptor's declared `format` plus the caller's resident table), so
+    # mutating the descriptor's format in place is a valid, isolated way to
+    # exercise this check without a real non-parquet fixture on disk.
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     profile, _ = _profile_and_plan(config, source)
@@ -763,9 +768,12 @@ def test_cheap_admission_declines_non_parquet_source(tmp_path: Path) -> None:
         return cfg
 
     assert _cheap_ok(config, profile, source) is not None  # baseline: parquet admits
-    assert _cheap_ok(_with_source(format="csv"), profile, source) is None
-    assert _cheap_ok(_with_source(format="fixed_width"), profile, source) is None
+    assert _cheap_ok(_with_source(format="csv"), profile, source) is not None
+    assert _cheap_ok(_with_source(format="fixed_width"), profile, source) is not None
+    # A non-file source (s3/gcs) is still out of scope.
     assert _cheap_ok(_with_source(type="s3"), profile, source) is None
+    # An unrecognized format string still declines.
+    assert _cheap_ok(_with_source(format="tsv"), profile, source) is None
     # A missing source descriptor for the table also declines.
     cfg_no_src = dict(config)
     cfg_no_src["sources"] = {}
