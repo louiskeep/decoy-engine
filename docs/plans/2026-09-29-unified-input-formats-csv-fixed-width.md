@@ -211,3 +211,39 @@ IN: engine admission format-widen + binding input-type-from-resident + parity te
 LocalRef fixed-width fix. OUT: multi-table/FK/generation/mixed (Track B); non-native strategies +
 faker-generation promotion (Track B); mask-columns-as-typed (deferred product change); output-format
 handling (unchanged). PRESERVE: pandas oracle fallback, mask-as-text, byte-parity invariant.
+
+## Plan-gate r2 (2026-09-29): GO-with-revisions, FOLDED. Confirmed BOUNDED (one engine compilation/admission slice + platform LocalRef fix; no full-profile rebuild). Build to this.
+
+1. Resident typing must drive ALL physical type decisions in the unified-slice compilation path, not
+   only `ExecutionBinding.input_schema`. Route resident Arrow types into:
+   - target + group-key-sibling `input_schema`;
+   - type-preserving `output_arrow_schema`;
+   - passthrough output schema (native/_requirements.py:301);
+   - hash native eligibility (native/_requirements.py:375/398 - e.g. a decimal-looking CSV is resident
+     string but profiles as float; without this, hash stays python_only despite fixing input_schema);
+   - bucket-perturb / date-shift / group-key type gates (native/_operator_config_rejections.py:121/191/251);
+   - `requirements_for` is called with the profile at physical/_compiler.py:305 - feed it resident-derived
+     types for this lane.
+   KEEP the rest of the descriptor profile as-is (relationships, null/cardinality stats, warnings,
+   seed-envelope): both the oracle and unified routes share the same logical `Plan`
+   (plan/_compile.py:281/447) and this lane already excludes relationships. Those facts are NOT
+   reconstructed from Arrow.
+2. Guard reconciliation (only valid after item 1 is complete): the profile-vs-resident equality at
+   _unified_slice_admission.py:550 (and the group-key-sibling equality at :443) becomes tautological -
+   remove it. RETAIN: per-strategy `_ADMITTED_RESIDENT_TYPES` (:154), the resident-to-pandas value/type
+   round-trip protection (:378), group-key sibling domain/order checks, and the coverage / companion /
+   namespace / null-bearing-integer gates.
+3. Parquet decision: apply resident-authoritative typing UNIFORMLY (all formats). Normal platform
+   parquet is unaffected (resident == file profile: v2_cloud_staging.py:286, profile/_readers.py:174).
+   A direct caller whose supplied resident table differs from the descriptor parquet profile currently
+   DECLINES on the equality and would now ADMIT: this is a SAFE route-widening (output stays
+   oracle-equivalent) - explicitly ACCEPT it and add a test, do not treat it as a regression.
+4. Platform LocalRef fixed-width fix: preserve the recipe's `fixed_width` format + layout, substitute
+   only the local path. Make the merge CONDITIONAL on recipe format == fixed_width so CSV LocalRef is
+   unchanged.
+5. Acceptance additions: integer-looking AND decimal-looking CSV hash cases; a passthrough case proving
+   both input and output binding schemas come from resident Arrow; targeted resident-type eligibility
+   cases for hash, bucket/date, and group-key sibling resolution (not just end-to-end hash admission);
+   platform end-to-end tests for LocalRef fixed-width layout preservation + a CSV LocalRef regression
+   control. Classify resident `null`/all-null CSV columns as DECLINE unless separately admitted. Keep
+   the route-evidence / native-companion / poison-pandas / parity / MUST-DECLINE requirements.
