@@ -104,3 +104,48 @@ explicit profile-vs-resident-Arrow type-agreement guard (decline, fail-closed, o
 - Fixed-width typing edge cases: covered by dedicated fixtures; decline-and-defer if not
   cleanly byte-parity.
 - Perf: negligible (same resident Arrow masked; format affects only the platform's existing read).
+
+## Codex plan-gate (2026-09-29): GO-with-revisions (0 blocker, 2 HIGH, 2 MEDIUM)
+
+Findings that reshape scope:
+
+1. (HIGH) Corrected enabling-fact: `profile_source` (_pipeline.py:341/365, profile/_source.py:126/207,
+   profile/_readers.py:330) independently RE-READS the descriptor file to build the compiled plan; it
+   does NOT profile the passed-in resident Arrow. Both execution routes mask the resident Arrow, but
+   COMPILATION profiles a separate descriptor-backed read. So the divergence risk is real.
+2. (HIGH) The guard already exists: `resident_contract_admission` (_unified_slice_admission.py:478/550)
+   already requires the profile-derived compiled-binding input type to EXACTLY equal the resident Arrow
+   type (+ strategy allowlist). Reuse/extend THAT (not the L388-402 round-trip check). Widening the
+   format check is safe under it: it cannot admit a profile/resident mismatch.
+   BUT: the platform reads CSV as dtype=str (v2_cloud_staging.py:242/282, all columns string) while the
+   engine profiler uses pandas type inference (profile/_readers.py:242). So integer-looking and all-null
+   CSV columns MISMATCH and correctly DECLINE. Consequence: format widening alone admits only
+   type-AGREEING CSV (effectively all-string) + fixed-width; the COMMON integer-column CSV job still
+   declines. Hitting the end goal (common CSV on Rust) requires READER-SEMANTICS ALIGNMENT, a bigger change.
+3. (MEDIUM) Platform LocalRef binding derives format from the stored file EXTENSION (binding_resolve.py:103)
+   and the recipe format LOSES to the extension (_service.py:446); a fixed-width `.txt` upload becomes
+   format=txt and loses the fixed_width LAYOUT the engine requires (config/_sources.py:49). Fix: preserve
+   the recipe's fixed_width format+layout while replacing only the locator, OR exclude LocalRef fixed-width
+   from this track.
+4. (MEDIUM) Acceptance: distinguish MUST-ADMIT (type-agreeing) vs MUST-DECLINE (mismatch); require
+   activated=True + every node executed=True; compiled_kernel_executed=True on the HASH node (passthrough/
+   redact/truncate intentionally leave it False); a native-companion env (so success is not a fallback/skip);
+   a non-vacuity (poison-pandas) check; at least one fixed-width job cleanly admitted or the track is not
+   complete. The parity harness compares columns/types/values/metadata/warnings/metrics, not literal file
+   bytes; clarify "byte-identical" accordingly. Config strategy name is `hash`, not `keyed_hash`.
+
+## Scope decision (for Cam)
+
+- OPTION 1 (small, the genuinely-easy part): widen the admission format check to {parquet, csv, fixed_width}
+  + fix the LocalRef fixed-width descriptor/layout loss + rely on the existing resident-contract guard.
+  Result: all-string CSV and fixed-width jobs (types agree) run on Rust; integer-column CSV still declines.
+  Does NOT fully hit the end goal for the common CSV job.
+- OPTION 2 (hits the end goal): also align the type source of truth so the common CSV case admits. Cleanest
+  candidate: make the unified-slice lane profile/compile from the RESIDENT ARROW the platform already loaded
+  (the data actually masked), instead of a separate file re-read. Since a parquet file's resident Arrow
+  already matches its file profile, existing parquet parity is unaffected; the change only affects the
+  currently-declining CSV/fixed-width cases, so the blast radius is bounded. Bigger + needs a careful parity
+  proof, but it is the change that actually makes real CSV jobs run Rust.
+
+Recommendation: Option 2 (goal-hitting, bounded blast radius via profile-from-resident-Arrow), re-gated by
+Codex before build. Option 1 alone leaves the common CSV job on pandas, which is the flaw we set out to fix.
