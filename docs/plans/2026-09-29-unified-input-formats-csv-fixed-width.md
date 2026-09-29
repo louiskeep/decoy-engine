@@ -149,3 +149,65 @@ Findings that reshape scope:
 
 Recommendation: Option 2 (goal-hitting, bounded blast radius via profile-from-resident-Arrow), re-gated by
 Codex before build. Option 1 alone leaves the common CSV job on pandas, which is the flaw we set out to fix.
+
+## REVISED PLAN: Option 2 chosen (Cam, 2026-09-29). This section is the authoritative build spec.
+
+End goal (unchanged): a real single-table mask job with CSV or fixed-width input, INCLUDING
+number-looking columns, runs on the Rust unified-slice lane with output byte-identical to the
+pandas oracle. Mask-as-text semantics are preserved (Cam confirmed: CSV columns stay masked as
+text; masking columns as typed is a separate, deferred product change).
+
+### Approach
+Make the unified-slice lane source its input column types from the RESIDENT Arrow table (the data
+the platform already loaded and that BOTH routes actually mask), instead of the profiler's
+independent descriptor-backed file re-read. Once the plan compiles against the resident table, the
+profile-vs-resident type divergence disappears for every format, so CSV/fixed-width jobs are
+admitted and masked on Rust, on the exact same in-memory table the pandas route masks today, hence
+byte-parity by construction. Parquet is unaffected (its file profile already equals its resident
+types). The strategy allowlist and the admitted-resident-type domain still gate what can run.
+
+### Changes
+1. Engine `_unified_slice_admission.py`: widen the source `format` check from parquet-only to
+   `{parquet, csv, fixed_width}` for the sanctioned single non-FK file source. Keep every other
+   decline (single table, native strategies, exact schema, no transforms/when/vault/FK/STORM/
+   post_validation).
+2. Engine compilation input-type source: make the compiled binding's input type authoritative from
+   the resident Arrow table (`caller_sources[table]`), not the profile-derived type
+   (`_shadow_bindings.py:204`; compiler at `physical/_live_inputs.py:74`; profiler at
+   `profile/_source.py`). Reconcile `resident_contract_admission` (`:478/:550`) so it still
+   MEANINGFULLY validates the strategy allowlist + the resident type against the admitted-type
+   domain (`_ADMITTED_RESIDENT_TYPES`), rather than becoming a moot resident-vs-resident
+   self-comparison. Builder determines the minimal correct wiring; the Codex plan-gate validates it.
+3. Platform: fix LocalRef fixed-width so the recipe's `fixed_width` format + layout is preserved
+   when only the file locator is substituted (today the stored `.txt` extension overrides it and
+   the layout is dropped, `binding_resolve.py:103` / `_service.py:446` / engine
+   `config/_sources.py:49`). The CSV local path already flows unchanged.
+
+### Acceptance tests (the end-goal signal)
+- MUST-ADMIT + BYTE-PARITY: single-table mask jobs on (a) a CSV with number-looking AND text
+  columns, (b) a fixed-width file, using native strategies on admitted resident types, run on the
+  unified-slice lane with output equal to the pandas full-frame route via the existing parity
+  harness (columns, types, values, schema metadata, warnings, row errors, metrics; note this is
+  not literal target-file bytes). At least one number-column CSV job AND one fixed-width job must
+  admit cleanly, else the track is not complete.
+- ROUTE EVIDENCE: `activated=True`, every node `executed=True`, and `compiled_kernel_executed=True`
+  on the HASH node (passthrough/redact/truncate intentionally leave that flag False). Run in a
+  native-companion-present environment so success cannot be a silent fallback/skip; include a
+  poison-pandas (non-vacuity) check.
+- MUST-DECLINE (fail-closed, unchanged): FK/relationships, multi-table, `run_storm`/validators/
+  quarantine/post_validation/fidelity_report/vault, transforms, `when:` gates, non-native
+  strategies, non-admitted resident types. If any strategy diverges on a text column, it declines.
+- NO REGRESSION: parquet parity and all existing declines unchanged.
+- Config strategy name is `hash`, not `keyed_hash`.
+
+### Perf / gates
+Perf-neutral (same resident table masked; format affects only the platform read); confirm no D9
+regression or give the perf-neutrality rationale. Gates: Codex re-plan-gate on THIS revised spec
+BEFORE build; then Sonnet build; dennis; Codex FINAL; STOP at Cam activation gate (production
+default flip is Cam's call).
+
+### Scope / non-goals
+IN: engine admission format-widen + binding input-type-from-resident + parity tests; platform
+LocalRef fixed-width fix. OUT: multi-table/FK/generation/mixed (Track B); non-native strategies +
+faker-generation promotion (Track B); mask-columns-as-typed (deferred product change); output-format
+handling (unchanged). PRESERVE: pandas oracle fallback, mask-as-text, byte-parity invariant.
