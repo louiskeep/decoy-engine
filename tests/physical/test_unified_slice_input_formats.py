@@ -696,3 +696,76 @@ def test_compiled_source_not_admitted_source_declines(
     off, on = _run_both(config, {"t": resident})
     assert QUALITY_METRICS_KEY not in on.quality_metrics
     assert off.outputs["t"].equals(on.outputs["t"])
+
+
+# ---------------------------------------------------------------------------
+# Edge values through the platform's own readers: CSV via read_csv(dtype=str),
+# fixed-width via the engine reader the platform calls. Leading zeros, blank
+# and whitespace-only cells, Unicode, and padded fields must stay byte-parity.
+# ---------------------------------------------------------------------------
+
+
+def _assert_hash_kernels_ran(leaf: dict[str, Any], expected: int) -> None:
+    if not native_companion_status().ok:
+        return
+    hashed = [e for e in leaf["nodes"].values() if e["operator"] == "native_keyed_hash"]
+    assert len(hashed) == expected
+    assert all(e["compiled_kernel_executed"] is True for e in hashed)
+
+
+def test_csv_edge_values_from_platform_reader_admit_and_match(tmp_path: Path) -> None:
+    csv_path = tmp_path / "edge.csv"
+    csv_path.write_text(
+        'id,name,note,raw\n00123,  José ,héllo wörld,x\n00456,,  ,\n07890,Zoë,"a,b",  lead\n',
+        encoding="utf-8",
+    )
+    resident = pa.Table.from_pandas(pd.read_csv(csv_path, dtype=str), preserve_index=False)
+    assert resident.column("id").to_pylist() == ["00123", "00456", "07890"]
+    assert resident.column("name").to_pylist()[1] is None
+    columns = [
+        {"name": "id", "strategy": "hash", "namespace": "ns_id"},
+        {"name": "name", "strategy": "redact"},
+        {"name": "note", "strategy": "truncate", "provider_config": {"length": 3}},
+        {"name": "raw", "strategy": "passthrough"},
+    ]
+    config = _csv_config(tmp_path, "t", csv_path, columns)
+    off, on = _run_both(config, {"t": resident})
+    leaf = _assert_full_parity(off, on)
+    _assert_hash_kernels_ran(leaf, expected=1)
+    out = on.outputs["t"]
+    assert out.column("note").to_pylist() == ["hél", "  ", "a,b"]
+    assert out.column("raw").to_pylist() == ["x", None, "  lead"]
+
+
+def test_fixed_width_padded_fields_from_engine_reader_admit_and_match(tmp_path: Path) -> None:
+    from decoy_engine.profile._fixed_width_reader import read_fixed_width
+
+    layout_columns = [
+        {"name": "id", "start": 0, "width": 6, "type": "int", "align": "right", "pad": "0"},
+        {"name": "code", "start": 6, "width": 6, "type": "str", "align": "right"},
+        {"name": "name", "start": 12, "width": 8, "type": "str"},
+    ]
+    fw_path = tmp_path / "edge.txt"
+    _write_fixed_width(
+        fw_path,
+        layout_columns,
+        [
+            {"id": "42", "code": "007", "name": "Zoë"},
+            {"id": "100001", "code": "A1", "name": "  x"},
+            {"id": "7", "code": "", "name": ""},
+        ],
+    )
+    resident = pa.Table.from_pandas(
+        read_fixed_width(str(fw_path), {"columns": layout_columns}), preserve_index=False
+    )
+    assert resident.schema.field("id").type == pa.int64()
+    columns = [
+        {"name": "id", "strategy": "hash", "namespace": "ns_fw_id"},
+        {"name": "code", "strategy": "hash", "namespace": "ns_fw_code"},
+        {"name": "name", "strategy": "passthrough"},
+    ]
+    config = _fixed_width_config(tmp_path, "t", fw_path, layout_columns, columns)
+    off, on = _run_both(config, {"t": resident})
+    leaf = _assert_full_parity(off, on)
+    _assert_hash_kernels_ran(leaf, expected=2)
+    assert on.outputs["t"].column("name").to_pylist() == resident.column("name").to_pylist()
