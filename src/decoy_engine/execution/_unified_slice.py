@@ -219,6 +219,11 @@ def _execute_admitted(
         )
         physical_plan = compile_physical_plan(inputs)
 
+        # Binding types are read from the table the plan compiled against; the
+        # resident gate only proves parity if that is the exact table we mask.
+        if inputs.caller_sources.get(candidate.table) is not candidate.source:
+            return None
+
         physical_table = _admission.resident_contract_admission(
             physical_plan,
             table=candidate.table,

@@ -659,3 +659,40 @@ def test_csv_all_null_column_declines_to_pandas_route(tmp_path: Path) -> None:
     off, on = _run_both(config, {"t": resident})
     assert off.outputs["t"].column("y").to_pylist() == on.outputs["t"].column("y").to_pylist()
     assert QUALITY_METRICS_KEY not in on.quality_metrics
+
+
+# ---------------------------------------------------------------------------
+# MUST-DECLINE: binding types come from the table the plan compiled against,
+# so if that is ever not the exact object admission hands the lane to mask,
+# the lane must decline rather than trust a type it did not check.
+# ---------------------------------------------------------------------------
+
+
+def test_compiled_source_not_admitted_source_declines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution.physical import _live_inputs
+
+    csv_path = tmp_path / "src.csv"
+    _write_csv(csv_path, {"id": ["1001", "1002", "1003"]})
+    resident = pa.table({"id": pa.array(["1001", "1002", "1003"], type=pa.string())})
+    config = _csv_config(
+        tmp_path, "t", csv_path, [{"name": "id", "strategy": "hash", "namespace": "ns_id"}]
+    )
+
+    _, admitted = _run_both(config, {"t": resident})
+    assert QUALITY_METRICS_KEY in admitted.quality_metrics
+
+    real_build = _live_inputs.build_live_physical_plan_inputs
+
+    def _swapped_build(*args: Any, **kwargs: Any) -> Any:
+        kwargs["caller_sources"] = {
+            name: pa.table(table.columns, schema=table.schema)
+            for name, table in kwargs["caller_sources"].items()
+        }
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(_live_inputs, "build_live_physical_plan_inputs", _swapped_build)
+    off, on = _run_both(config, {"t": resident})
+    assert QUALITY_METRICS_KEY not in on.quality_metrics
+    assert off.outputs["t"].equals(on.outputs["t"])
