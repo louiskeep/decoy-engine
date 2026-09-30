@@ -538,8 +538,7 @@ class TestFailClosed:
         result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
         # Route-agnostic: the job may take the unified (Rust) lane, which adds its
         # own activation block, but never auto-chunk or adapter-selection metrics.
-        assert "auto_chunk" not in result.quality_metrics
-        assert "execution_adapter" not in result.quality_metrics
+        assert set(result.quality_metrics) - {"unified_slice_activation"} == {"execution"}
         assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
         forced = run_pipeline(
             cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False
@@ -983,6 +982,8 @@ class TestRoutedResultSurface:
         cfg, sources = _single_column_job(tmp_path, "hash")
         # Both legs on the pandas route: this compares the chunked route's timing
         # surface against the full-frame pandas route that records the same timings.
+        # The unified lane records none yet (tracked by the strict xfail
+        # test_admitted_job_reports_per_column_timings).
         auto, forced = _run_pair(cfg, sources, monkeypatch, unified_slice_enabled=False)
         assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
         assert auto.boundary_conversion_ms > 0.0

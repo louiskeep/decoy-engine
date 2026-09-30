@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
     import pyarrow as pa
 
-    from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.execution._adapter import ExecutionAdapter, ExecutionResult
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
@@ -140,6 +140,7 @@ def _execute_admitted(
     fpe_chunk_count: int,
     max_workers: int,
     fallback_to_pandas: bool,
+    adapter: ExecutionAdapter,
     out_of_core_reorder_threshold_rows: int | None,
     out_of_core_budget_bytes: int | None,
     engine_version: str,
@@ -162,18 +163,13 @@ def _execute_admitted(
     `resolve_substrate(substrate)` call here would re-read `DECOY_SUBSTRATE`
     from the process environment a second time -- a TOCTOU window where an
     env change mid-run could disagree with what admission already gated on.
-    `adapter` (`select_execution_adapter(...)`) is still built here from the
-    now-single `resolved_substrate` value plus the other raw knobs already
-    required for `stamp_execution_metrics` parity: it is a pure function of
-    its arguments, not a second env read, so building it here (rather than
-    accepting a third parameter) costs nothing and keeps `_pipeline.py`'s
-    one call site to fewer duplicate pointers into the same state.
+    `adapter` is `run_pipeline`'s own up-front selection, reused for
+    `stamp_execution_metrics` parity rather than selected a second time.
     """
     import pyarrow as pa
 
     from decoy_engine.execution import _pipeline_finalize, _pipeline_route_exec
     from decoy_engine.execution._adapter import ExecutionResult
-    from decoy_engine.execution._substrate import select_execution_adapter
     from decoy_engine.execution.physical._activation import build_unified_slice_activation
     from decoy_engine.execution.physical._compiler import compile_physical_plan
     from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
@@ -227,15 +223,6 @@ def _execute_admitted(
         )
         if physical_table is None:
             return None
-
-        # Built only once admitted: a declined job falls back to the old route,
-        # which selects its own adapter, and must not have selected one here too.
-        adapter = select_execution_adapter(
-            substrate=resolved_substrate,
-            fpe_chunk_count=fpe_chunk_count,
-            max_workers=max_workers,
-            fallback_to_pandas=fallback_to_pandas,
-        )
 
         activation = build_unified_slice_activation(
             physical_plan,
@@ -417,6 +404,7 @@ def maybe_run_unified_slice(
     fpe_chunk_count: int,
     max_workers: int,
     fallback_to_pandas: bool,
+    adapter: ExecutionAdapter,
     auto_chunk: bool,
     chunk_size_rows: int,
     auto_chunk_threshold_rows: int,
@@ -501,6 +489,7 @@ def maybe_run_unified_slice(
         fpe_chunk_count=fpe_chunk_count,
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,
+        adapter=adapter,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         out_of_core_budget_bytes=out_of_core_budget_bytes,
         engine_version=engine_version,
@@ -527,6 +516,7 @@ _PIPELINE_RESOLVED_NAMES: Final[dict[str, str]] = {
 # local of the identical name by the time it reaches this lane's call site.
 _PIPELINE_LOCAL_KWARGS: Final[tuple[str, ...]] = (
     "unified_slice_enabled",
+    "adapter",
     "config",
     "plan",
     "profile",

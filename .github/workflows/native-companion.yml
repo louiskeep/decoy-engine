@@ -264,6 +264,10 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Build and install the companion (maturin, same-platform)
         run: pip install ./decoy-engine-native
+      # Every test below skips when the companion is absent, so a companion that
+      # builds but fails to load would otherwise leave this job green with nothing run.
+      - name: Assert the companion loads
+        run: python -c "from decoy_engine.execution.native._companion_status import native_companion_status as s; st = s(); print(st); assert st.ok, st"
       - name: Native ABI test (companion-present case)
         run: pytest tests/native/test_native_ext_abi.py -v --tb=short
       - name: Compiled-kernel-vs-live-reference parity harness

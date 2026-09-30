@@ -710,8 +710,6 @@ def test_compiled_source_not_admitted_source_declines(
 
 
 def _assert_hash_kernels_ran(leaf: dict[str, Any], expected: int) -> None:
-    if not native_companion_status().ok:
-        return
     hashed = [e for e in leaf["nodes"].values() if e["operator"] == "native_keyed_hash"]
     assert len(hashed) == expected
     assert all(e["compiled_kernel_executed"] is True for e in hashed)
@@ -775,3 +773,28 @@ def test_fixed_width_padded_fields_from_engine_reader_admit_and_match(tmp_path: 
     leaf = _assert_full_parity(off, on)
     _assert_hash_kernels_ran(leaf, expected=2)
     assert on.outputs["t"].column("name").to_pylist() == resident.column("name").to_pylist()
+
+
+# ---------------------------------------------------------------------------
+# Known gap: the unified lane returns `timings=()` and `boundary_conversion_ms
+# = 0.0`, so the platform reports 0 ms execute time for every admitted job. The
+# D9 parity contract excludes these fields; this strict xfail tracks the gap
+# (decoy-platform docs/ROADMAP.md, "Rust lane per-column timings") and fails
+# loudly once the lane starts stamping them, so it gets removed then.
+# ---------------------------------------------------------------------------
+
+
+@_NEEDS_COMPANION
+@pytest.mark.xfail(strict=True, reason="unified lane stamps no per-column timings yet")
+def test_admitted_job_reports_per_column_timings(tmp_path: Path) -> None:
+    csv_path = tmp_path / "t.csv"
+    _write_csv(csv_path, {"id": ["1", "2", "3"], "name": ["a", "b", "c"]})
+    resident = pa.Table.from_pandas(pd.read_csv(csv_path, dtype=str), preserve_index=False)
+    columns = [
+        {"name": "id", "strategy": "hash", "namespace": "ns_t"},
+        {"name": "name", "strategy": "redact"},
+    ]
+    config = _csv_config(tmp_path, "t", csv_path, columns)
+    _, on = _run_both(config, {"t": resident})
+    assert QUALITY_METRICS_KEY in on.quality_metrics
+    assert {(t.strategy_type, t.column) for t in on.timings} == {("hash", "id"), ("redact", "name")}

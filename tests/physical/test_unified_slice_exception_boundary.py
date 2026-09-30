@@ -70,8 +70,7 @@ def _raise_on_nth_call(monkeypatch: pytest.MonkeyPatch, module: Any, attr: str, 
     """Patch `module.attr` so its Nth call (1-indexed) raises a plain
     `RuntimeError`; every other call delegates to the real implementation.
 
-    Several wrapped stages (`select_execution_adapter`, `stamp_execution_
-    metrics`, `finalize_validators_and_quarantine`, `execution_telemetry`)
+    Several wrapped stages (`stamp_execution_metrics`, `finalize_validators_and_quarantine`, `execution_telemetry`)
     are ALSO called by the legacy route this test expects the reroute to
     complete through -- a permanent patch would poison that very legacy
     run, failing the "reroute completes" assertion for the wrong reason.
@@ -93,14 +92,6 @@ def _raise_on_nth_call(monkeypatch: pytest.MonkeyPatch, module: Any, attr: str, 
 # One setup function per wrapped stage (Codex re-gate: exhaustive). Each
 # installs a fault that fires exactly once, at the point the plan names.
 # ---------------------------------------------------------------------------
-
-
-def _stage_select_execution_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    from decoy_engine.execution import _substrate
-
-    # call 1 is _pipeline.py's own upfront resolution (must succeed so the
-    # legacy reroute has a working adapter); call 2 is _execute_admitted's.
-    _raise_on_nth_call(monkeypatch, _substrate, "select_execution_adapter", n=2)
 
 
 def _stage_build_live_physical_plan_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,7 +193,6 @@ def _stage_execution_result_construction(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 _STAGES: list[tuple[str, Any]] = [
-    ("select_execution_adapter", _stage_select_execution_adapter),
     ("build_live_physical_plan_inputs", _stage_build_live_physical_plan_inputs),
     ("compile_physical_plan", _stage_compile_physical_plan),
     ("resident_contract_admission", _stage_resident_contract_admission),

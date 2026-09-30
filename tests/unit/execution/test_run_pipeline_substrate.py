@@ -136,7 +136,7 @@ def _schema_type_names(table):
 
 
 class TestDefaultPandasRoute:
-    def test_default_selects_pandas_adapter_with_default_knobs(
+    def test_pandas_route_selects_pandas_adapter_with_default_knobs(
         self, tmp_path, monkeypatch, select_spy
     ):
         monkeypatch.setenv("DECOY_SUBSTRATE", "polars")  # must be ignored by default

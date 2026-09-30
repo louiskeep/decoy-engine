@@ -468,10 +468,12 @@ ALLOWLIST: dict[str, int] = {
     # alignment so a forced full-frame slice keeps its sibling-table inputs.
     # Dense reviewed exception (<= MAX). Decompose the admission-source helpers
     # into `_unified_slice_admission.py` (already a sibling) on the next change.
-    # Track A input formats (2026-09-30): +7 for the admission-path identity
-    # guard (the compiled plan's resident source must be the admitted table)
-    # and adapter selection moved after admission.
-    "src/decoy_engine/execution/_unified_slice.py": 612,
+    # Track A input formats (2026-09-30): the admission-path identity guard (the
+    # compiled plan's resident source must be the admitted table); the lane now
+    # reuses run_pipeline's adapter instead of selecting its own. Next change:
+    # move the admission-source helpers into a new sibling module (the named
+    # `_unified_slice_admission.py` target is itself over GOAL now).
+    "src/decoy_engine/execution/_unified_slice.py": 602,
     # Track A input formats (2026-09-30): format admission widened to csv and
     # fixed_width, with the resident-type gates documented alongside. Dense
     # reviewed exception (<= MAX). Split the per-strategy resident-type gates
