@@ -1,105 +1,138 @@
 # Rust engine program
 
-Status: plan (draft for Cam's review; Codex plan-gate pending)
+Status: plan (revision 2: folds the Codex plan-gate NO-GO of revision 1; for Cam's review)
 
-Date: 2026-09-30. Input: `docs/records/2026-09-30-rust-coverage-evidence-audit.md` (the evidence record; every "today" statement below cites it). Roadmap: decoy-platform `docs/ROADMAP.md`, TOP PRIORITY and Order of work step 2.
+Date: 2026-09-30. Input: `docs/records/2026-09-30-rust-coverage-evidence-audit.md` (the evidence record; every "today" statement below cites it) and `docs/records/audit-2026-09-30/codex-independent-audit.md`. Roadmap: decoy-platform `docs/ROADMAP.md`, TOP PRIORITY and Order of work step 2.
 
 ## Goal and end state
 
 A fast mask and generate engine, with the Rust companion doing the per-value work on every route and at every size up to 100M+ rows. Pandas remains the fallback for CLI users without the companion and the byte-parity oracle for tests; it is not a production route for jobs the companion can run.
 
-End state, per route:
-
 | Route | Data layer | Math today | Math at end state |
 |---|---|---|---|
-| Unified slice (full-frame, single table) | in memory | Rust for hash, categorical, bucket_perturb, group_key, date_shift; Arrow/Py for redact, truncate, passthrough | same, plus Faker, FPE, text strategies |
-| Chunked (engine auto-chunk, platform Phase 1, CLI `--chunked`) | chunk-bounded (platform); resident (engine auto-chunk) | pandas (deterministic Faker selection compiled) | Rust dispatcher, streaming on every entry point |
-| Out-of-core FK | DuckDB scan, join, reorder, spill | Python kernels | Rust kernels, DuckDB unchanged |
+| Unified slice (full-frame, single table) | in memory | Rust for hash, categorical (deterministic), bucket_perturb, group_key, date_shift; Arrow/Py for redact, truncate, passthrough | plus Faker, FPE, text strategies, non-deterministic categorical, `when` |
+| Chunked (engine auto-chunk, platform Phase 1, CLI `--chunked`) | platform: chunk-bounded; engine: resident input and output | pandas (deterministic Faker selection compiled) | Rust dispatcher; bounded input and output on every entry point |
+| Engine independent multi-table | full-frame per table | pandas | Rust dispatch per table |
+| Out-of-core FK | DuckDB scan, join, reorder, spill | Python kernels | Rust kernels; the final external-reorder design implemented |
 | Sequential FK | table by table | pandas | Rust per table |
-| Generation | full-frame | Python/NumPy/Faker | Rust selection for pooled and deterministic generators |
+| Generation and mixed jobs | full-frame | Python/NumPy/Faker; masking in mixed jobs on pandas | bounded generation with an incremental sink; masking in mixed jobs on Rust |
 
 ## Rules for every slice
 
-- **Byte parity** with the pandas oracle on every admitted case, including the edge values the audit used (nulls, empty strings, leading zeros, Unicode, padded fixed-width).
-- **Fail closed per table:** anything the Rust path cannot prove it handles goes to the oracle with a recorded reason, never to a silent partial result.
-- **Evidence in the result:** per-node backend (`compiled_kernel_executed` or `pool_select_executed`), the route and its reason, and real per-column timings (so the platform stops reporting 0 ms).
-- **Faster than the oracle** on the slice's benchmark, and **absolute peak memory** within the 32 GB box at the slice's largest tested size. The D9 ratio bar is dropped.
-- **Gates:** Opus plan, Codex plan-gate, Sonnet build, dennis, Codex final. A Rust slice merges under Cam's standing rule (dennis GO, Codex final GO, CI green, byte-identical, faster, peak within 32 GB); anything short of that stops for Cam. Platform slices merge only with Cam's go.
-- One writer per worktree. One heavy test process at a time on the devbox.
+**Evidence.** Every positive fixture asserts, per column: `planned_backend`, `executed_backend`, call count, elapsed time, and zero unintended oracle fallbacks. Backend values distinguish `rust_companion`, `rust_pool_select`, `arrow_python` and `pandas_oracle`. CI fails if a column admitted to a Rust backend records zero compiled calls. Negative fixtures assert exactly one whole-table oracle route and its typed reason.
+
+**Parity** against the pandas oracle covers values, Arrow schema and metadata, row and column order, warnings, errors, quality evidence, vault side effects, empty / all-null / ragged chunks, every supported dtype, several chunk sizes, and thread-count invariance. No fallback may happen after output is published; a runtime failure aborts the transactional sink.
+
+**Performance and memory.** Benchmarks run the candidate alone in an isolated process, on a frozen workload and thread budget, with warmup and repeated trials reported as p50 and p95. Each slice declares its absolute memory ceiling, with host headroom, before it is measured. The D9 ratio bar is dropped.
+
+**Operations.** Platform activation requires backend, fallback reason, per-column timing and thread budget to cross the engine-to-platform boundary and appear in the job-detail and evidence APIs, under contract tests. Each activation has a bounded rollout and a disable path.
+
+**Docs.** Every slice updates the roadmap, the shipped log, the compatibility / support matrix and the affected public docs.
+
+**Gates.** Opus plan, Codex plan-gate, Sonnet build, dennis, Codex final. A Rust slice merges under Cam's standing rule (dennis GO, Codex final GO, CI green, byte-identical, faster, within its declared memory ceiling); anything short of that stops for Cam. Platform and CLI slices merge only with Cam's go. One writer per worktree; one heavy test process at a time on the devbox.
 
 ## Phase A: prerequisites (correctness and security)
 
-These fix real breakage and do not wait for the Rust work. Sizes are the record's (Codex estimates where larger).
-
 | Slice | Content | Size | Notes |
 |---|---|---|---|
-| A1 | **Owner scope on upload bindings** (record P2): `resolve_binding` takes the authenticated user; a local upload must belong to that user or the user must be an admin, matching `api/files/router.py:781`; 404 otherwise. Connections stay org-wide (by design, `CloudAccount` is org-level); a test pins that. | S | HIGH security. Lands first. |
-| A2 | **Cloud descriptors** (P1): strip `connection_id`, `connection_name` and GCS `region` from the engine copy before validation; keep them in the snapshot for evidence. Tests: the stored snapshot runs through `run_v2_pipeline_from_config` for S3 and GCS, source and target, against moto / fake-gcs-server. | S | After A1 for tidiness; no security dependency (connections are org-wide by design). |
-| A3 | **Platform FK cycle routing** (P3): cycle check in `v2_sequential._should_use_sequential_relationship_path` and admission pricing, so cross-table cycles take the full-frame path that works. | S-M | Regression test from R063. |
+| A1 | **Owner scope on upload bindings** (record P2): `resolve_binding` takes the authenticated user; a local upload must belong to that user or the user must be an admin, matching `api/files/router.py:781`; 404 otherwise. Connections stay org-wide (by design: `CloudAccount` is org-level and project access control is dormant); a test pins that. | S | HIGH security. Lands first. Built on the #74 branch, which restructures the same file. |
+| A2 | **Cloud descriptors** (P1): remove `connection_id`, `connection_name` and GCS `region` from the executable `Job.yaml_snapshot`; keep them only in a separate binding-provenance / evidence record. Tests: the stored snapshot runs through `run_v2_pipeline_from_config` for S3 and GCS, source and target, against moto / fake-gcs-server. | S | After A1 for tidiness; no security dependency. |
+| A3 | **Platform FK cycle routing** (P3): cycle check in `v2_sequential._should_use_sequential_relationship_path` and admission pricing. | S-M | Regression test from R063. Needed only before platform sequential activation (D2c). |
 | A4 | **Phase 1 fixed-width** (P4): reject fixed-width in Phase 1 eligibility until a streaming reader exists. | S | |
-| A5 | **CLI fixed-width** (P5): read fixed-width with the engine reader, not as CSV. | S | decoy-cli repo. |
-| A6 | **Rust lane timings** (P6): the unified slice returns real per-column `timings` and `boundary_conversion_ms`; removes the engine #180 strict xfail. | S | Engine. |
-| A7 | **Retire the D9 ratio check** (R14) in `scripts/bench-unified-slice/bench_compare.py`; keep an absolute-peak check. | S | Needed before B2 activation. |
-| A8 | **Transforms parity** (P7): decide where transforms live (engine `run_pipeline` or explicitly platform-only) and make engine, CLI and platform agree. | M | Needs a Cam decision on ownership. |
+| A5 | **CLI fixed-width** (P5): read fixed-width with the engine reader. | S | decoy-cli. |
+| A6 | **Rust lane timings** (P6): the unified slice returns real per-column `timings` and `boundary_conversion_ms`; removes the engine #180 strict xfail. | S | |
+| A7 | **Retire the D9 ratio check** (R14); keep an absolute-peak check. | S | Before B3. |
+| A8 | **Transforms ownership** (P7): transforms live in the engine `run_pipeline`, or are explicitly platform-only; engine, CLI and platform agree. | M | Needs Cam's decision. |
 
 ## Phase B: the chunked dispatcher in production (record R1)
 
-Goal: large single-table and independent multi-table mask jobs run the compiled dispatcher (`run_native_or_oracle_chunked`) instead of pandas, on every chunked entry point. Measured on the tested fixture: 5.9x to 8.4x faster at 1M rows, byte-identical (R074, R075). Covers tables whose columns are all hash, redact, truncate, passthrough, or deterministic-REUSE Faker; everything else keeps going to the oracle until Phase C.
+Scope: large single-table and independent multi-table mask jobs on the compiled dispatcher (`run_native_or_oracle_chunked`) instead of pandas. On the tested 1M-row fixture: 5.9x to 8.4x faster, byte-identical (R074, R075). Platform Phase 1 covers hash, redact, truncate and passthrough. Deterministic-REUSE Faker is additionally available only to engine and CLI callers that satisfy its gates; platform Faker waits for its C admission slice.
 
 | Slice | Content | Size |
 |---|---|---|
-| B1 | **Dispatcher production contract** (engine): accept what production callers pass (`registry`, `adapter`, `vault_writer`, `chunk_result_sink`, `base_row_offset`); reconcile its output schema with the oracle route's in the degenerate cases the parity gate currently allowlists (all-null column, zero-row batch); emit `ExecutionResult` timings and route evidence; map `NativeChunkSchemaDriftError` to a typed engine error; a thread-budget parameter (default derived from the job's reservation, not a fixed 1). Exposed as one public engine entry point. | M |
-| B2 | **Engine auto-chunk on the dispatcher**: `run_pipeline`'s chunked route calls B1's entry point, with the per-table oracle fallback. Parity suite across the audit's single-table cells at 150k and 1M. | S-M |
-| B3 | **Platform Phase 1 on the dispatcher**: `_run_v2_pipeline_streaming` calls B1's entry point; the platform maps the new error and records per-node backend and timings on the job. | S-M |
-| B4 | **CLI `--chunked` and `--native`**: `--chunked` uses B1; `--native` stops rejecting jobs that route to chunking (record R10) and reads per-node evidence instead of the "any node compiled" label. | S |
-| B5 | **Admission pricing**: price native chunk cost and the thread budget in the platform's admission. | S-M |
-| B6 | **Engine auto-chunk streaming**: auto-chunk currently keeps every masked chunk resident; stream chunks to the sink so the engine route is memory-bounded like platform Phase 1. Also remove the platform's eager full read below 256 MiB (record R7). | M |
+| B1 | **Dispatcher production contract** (engine): accept what production callers pass (`registry`, `adapter`, `vault_writer`, `chunk_result_sink`, `base_row_offset`); reconcile output schema with the oracle route in the degenerate cases the parity gate currently allowlists; emit `ExecutionResult` timings and the per-column evidence above; map `NativeChunkSchemaDriftError` to a typed engine error; thread budget as a parameter (library default 1; production callers pass the admitted reservation). One public engine entry point. | M |
+| B2 | **Engine auto-chunk on the dispatcher**, with the per-table oracle fallback. | S-M |
+| B7 | **Engine `run_pipeline` independent multi-table dispatch**: each independent table goes to the dispatcher (today only platform Phase 1 handles several tables). | M |
+| B5 | **Platform admission pricing and reservation** for native chunk cost and the thread budget. | S-M |
+| B3 | **Platform Phase 1 on the dispatcher**, against an exact engine and companion artifact; the platform maps the new error and surfaces backend, reason, timing and threads on the job. | S-M |
+| B4 | **CLI**: dependency and native-extra update to the released engine and companion; `--chunked` uses B1; `--native` stops rejecting chunked jobs (record R10) and reads per-column evidence; CLI release and clean-install smoke test. | S-M |
+| B6a | **Engine auto-chunk incremental output sink**; input stays resident. | M |
+| B6b | **`LazySource` batch input plus the incremental sink**, proving bounded input and output. | M |
+| B6c | **Platform drops the sub-256-MiB eager route** for eligible jobs (record R7). Depends on A4, B3, B5. | S-M |
 
-Phase B total: M-L (the record's 500 to 1,000 lines for B1 to B5, plus B6).
+Phase B total: L.
 
 ## Phase C: operator coverage (record R2, R3, R6)
 
-Goal: one column no longer sends a large table to pandas.
+Each C slice depends only on B1's frozen contract. Each platform admission step (C9) depends on B3, B5 and the matching C slice.
 
 | Slice | Content | Size |
 |---|---|---|
-| C1 to C4 | Lift the chunked-dispatcher vetoes one operator at a time: categorical (deterministic), bucket_perturb, group_key, date_shift. Reuse the unified-slice kernels; each needs its cross-chunk semantics proven (group_key sibling state, date_shift prepass). | M each |
-| C5 | Faker on the unified slice and the dispatcher for default (non-deterministic) columns and non-string sources, or a documented reason it stays Python. | M |
-| C6 | FPE (FF1) and text_mask / text_redact on the Rust paths. | M each |
-| C7 | Widen platform Phase 1's strategy allowlist to everything C1 to C6 admit (record R6). | M |
+| C1 | Chunked dispatcher: categorical (deterministic). | M |
+| C1b | Non-deterministic categorical: define its semantics under chunking, then Rust execution. | M |
+| C2 | Chunked dispatcher: bucket_perturb. | M |
+| C3 | Chunked dispatcher: group_key (cross-chunk sibling state). | M |
+| C4 | Chunked dispatcher: date_shift (prepass). | M |
+| C5a | Pooled Faker on the unified slice. | M |
+| C5b | Default (non-deterministic) Faker selection on the Rust paths. | M |
+| C5c | Non-string Faker sources. | S-M |
+| C6a | FPE (FF1) on the Rust paths. | M |
+| C6b | text_mask on the Rust paths. | M |
+| C6c | text_redact on the Rust paths. | M |
+| C8 | `when` predicates without a whole-table pandas fallback (and expressible through `PipelineConfig`). | M |
+| C9 | Platform Phase 1 admission, one slice per operator, driven by an engine-owned compatibility decision rather than a hardcoded platform list (record R6). | S each |
 
-## Phase D: FK routes (record R4, R5, R9, A3 first)
+## Phase D: FK routes (record R4, R5, R9)
+
+D1 and D2 engine work does not depend on A3; only platform sequential activation (D2c) does.
 
 | Slice | Content | Size |
 |---|---|---|
-| D1 | Rust kernels for out-of-core FK payload masking; DuckDB keeps scan, join and reorder. Start with hash, categorical, bucket_perturb (already out-of-core compatible). | L, ~1,000 to 2,000 LOC |
-| D2 | Rust per-table masking on the sequential FK route (diamonds, self-FKs, out-of-core-incompatible strategies). | XL, ~2,000 to 4,000 LOC |
-| D3 | Platform out-of-core with validators or vault keeps outputs bounded (record R9). | M |
-| D4 | FK out-of-core memory at 100M+ (the July OOC-B revert: DuckDB global sort >21 GB at 200M). Separate design slice; survey external-sort approaches first. | L |
+| D1 | Rust kernels for out-of-core FK payload masking; DuckDB keeps scan, join, reorder. Starts with hash, categorical, bucket_perturb. | L, ~1,000 to 2,000 LOC |
+| D2a | Sequential FK executor contract, with hash on Rust. | L |
+| D2b | Sequential FK: activation across FK shapes (diamond, self-FK, out-of-core-incompatible strategies). | M-L |
+| D2c | Sequential FK: remaining operator families; platform sequential activation (after A3). | L |
+| D3a | Platform out-of-core with validators keeps outputs bounded. | M |
+| D3b | Platform out-of-core with the vault keeps outputs bounded. | M |
+| D4a | Revalidate the existing final external-reorder design (`docs/plans/2026-07-22-ooc-b-external-reorder-implementation.md`) against current main; record only invalidating changes. No new survey. | S |
+| D4b | Implement it in separately reviewed sorter, join, budgeting and route-wiring slices. | L |
+| D4c | 100M and 200M parent-growth and child-growth proof with spill and peak-memory evidence. | M |
 
-## Phase E: 100M proof
+## Phase E: mask and FK 100M milestone
 
-A GCP run at 1M, 10M and 100M rows through the platform worker (real claim, streaming plan), for single-table mask and an FK tree, asserting per-node Rust evidence, byte parity at 1M, wall time, and absolute peak within 32 GB. Uses the existing 50-run GCP budget; Slack before running. This is the capacity proof the audit could not give.
+A GCP run at 1M, 10M and 100M rows through the platform worker (real claim, streaming plan), asserting per-column Rust evidence, byte parity at 1M, p50/p95 wall and the declared absolute peak. Uses the existing 50-run GCP budget; Slack before running.
+- Single-table: depends on B1 to B7 and the C slices for the operators in the workload.
+- FK tree: depends on D1, D4b, platform admission and the exact engine artifact.
 
-Then the prodsim rebuild (roadmap Order of work step 4) grades every job's per-node backend and treats any pandas fallback as a defect.
+## Phase F: generation and mixed jobs
 
-## Phase F: breadth (after the 100M proof, order to be set then)
+| Slice | Content | Size |
+|---|---|---|
+| F1 | Bounded generation with an incremental output sink. | L |
+| F2 | Mixed mask + generate and FK + generate, with the masking routed through Rust. | L |
+| F3 | Rust generation selection for pooled and deterministic generators (record R12). | M |
+| F4 | Capacity gate for generation and mixed jobs at 1M, 10M and 100M. | M |
 
-Rust generation selection for pooled and deterministic generators (R12); fixed-width output (R13); streaming subset materialization (R11, L-XL); enforced post-validation on streaming, sequential and out-of-core routes (R8, L-XL); the adaptive-scheduler entry point exercised on an integration host (scheduler S13 VERIFY).
+Then prodsim (roadmap Order of work step 4). Until the end state is reached, prodsim treats an unexpected fallback within the currently admitted matrix as a defect; expected declines stay tracked as coverage gaps.
 
-## Order and first steps
+## Phase G: breadth
 
-1. A1 with A2 (one platform PR or two back to back, A1 first), A3, A4, A6, A7. Small and independent; they can run in parallel worktrees, one writer each.
-2. B1, then B2 to B5 (B3 and B4 can run in parallel after B1), then B6.
-3. C1 to C4 in parallel after B2; C5 to C7 after.
-4. E after B and C; D in parallel with C where people and memory allow.
+Fixed-width output (R13); streaming subset materialization (R11, L-XL); enforced post-validation on streaming, sequential and out-of-core routes (R8, L-XL); the adaptive-scheduler entry point on an integration host (scheduler S13 VERIFY).
 
-Rough scale: Phase A about a week of slices; Phase B one to two weeks; Phase C two to three weeks; Phase D several weeks, D2 the largest. These are estimates from the record's sizes, not commitments.
+## Order
+
+1. Phase A: A1, then A2; A3, A4, A5, A6, A7 in parallel worktrees (one writer each). A8 once Cam decides.
+2. B1, then B2 and B7; merge and identify the exact engine and companion artifact; B5; B3 against that artifact; a paired engine and companion release; B4 (CLI dependency and release, clean-install smoke). B6a, B6b after B2; B6c after A4, B3, B5.
+3. C slices start as soon as B1's contract is frozen, in parallel; each C9 platform step after B3, B5 and its C slice.
+4. D1, D4a, D4b in parallel with C; D2 after D1's operator work; E after the dependencies listed there.
+5. F after E; G after F.
+
+Rough scale: Phase A about a week; Phase B two to three weeks; Phase C three to five weeks (parallel); Phase D several weeks, with D2 and D4b the largest; F two to three weeks. Estimates from the record's sizes, not commitments.
 
 ## Decisions for Cam
 
 1. Approve this order, or reorder (for example D before C if FK jobs matter more to early customers).
 2. A8: where transforms should live.
-3. Confirm the standing Rust-slice merge rule covers Phase B to D slices, and whether Phase A platform fixes may merge under the same rule once CI is back, or each needs your go.
-4. Phase E spend: the 100M GCP runs under the existing budget.
-5. B1 adds a public engine entry point; fine pre-GA, but it becomes part of the compatibility contract at GA.
+3. Whether the standing Rust-slice merge rule covers Phase B to F engine slices, and whether Phase A platform fixes may merge under the same rule once CI is back, or each needs your go.
+4. Phase E spend under the existing 50-run GCP budget.
+5. B1's public engine entry point and the paired engine / companion release cadence (publishing the companion for CLI users is a release decision).
