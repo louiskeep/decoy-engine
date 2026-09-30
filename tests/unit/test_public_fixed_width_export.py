@@ -1,8 +1,8 @@
 """A5a (2026-09-30): `read_fixed_width` on the public `decoy_engine` surface.
 
-A `format: fixed_width` `FileSource` can only be read today through the
-private (`_`-prefixed) `decoy_engine.profile._fixed_width_reader` module,
-which the compatibility contract says may change without a version bump.
+Before this export the reader lived only in the private (`_`-prefixed)
+`decoy_engine.profile._fixed_width_reader` module, which the compatibility
+contract says may change without a version bump.
 This pins the public re-export of `read_fixed_width` and
 `FixedWidthParseError`: it does not re-verify the reader's own parsing
 logic (that is `test_v2_fixed_width_source.py`'s job), only that each

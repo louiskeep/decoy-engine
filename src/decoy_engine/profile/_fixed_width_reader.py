@@ -26,15 +26,13 @@ and neither chains it in via `__cause__` or `__context__` (see
 `errors.FixedWidthParseError` and `_cast_value` below) -- source files
 may carry PII, and a chained cause OR context leaks through
 tracebacks/`logging.exception`/`exc_info=True` even when the message
-itself is clean. `_cast_value` gets this right by capturing only the
-caster's type name inside its `except` block, then raising
-`FixedWidthParseError` after that block has exited: Python auto-attaches
-`__context__` to a newly raised exception only while another exception
-is actively being handled, so `raise` from OUTSIDE the handler carries
-no context no matter what. Raising `from None` inside the handler is
-NOT equivalent -- `__context__` is (re)populated by the `raise`
-statement itself at the moment it executes, so it silently overwrites
-any `some_exc.__context__ = None` set beforehand in the same handler.
+itself is clean. Bad data never raises inside the code that holds it:
+`_cast_value` and `_parse_records` return a failure message (position,
+column name, value length, caster type name) instead of raising, and
+`read_fixed_width` raises only after they have returned, from a frame
+that holds no line, value or record. An exception raised while another is
+being handled gets it attached as `__context__` even with `from None`,
+which is why no raise happens inside an `except` block here.
 
 Zero-padded numerics: an `int`/`float` column whose pad character
 strips the value down to `""` is retried against the RAW (unstripped)
@@ -114,9 +112,8 @@ def _resolve_layout(layout: FixedWidthLayout | dict[str, Any], *, path: str) -> 
 
     A dict is schema-shape detail (field names, declared widths/types),
     not file content, but there is no reason to chain the pydantic error
-    in either -- raise the safe wrapper once the `except` block below has
-    exited (see `_cast_value`'s comment for why raising INSIDE the
-    handler cannot avoid `__context__`).
+    in either: only the error count is kept, and the wrapper is raised
+    after the `except` block has exited (see the module docstring).
     """
     if isinstance(layout, FixedWidthLayout):
         return layout
@@ -154,9 +151,9 @@ def read_fixed_width(
         max_records: SC7a bounded-read cap. `None` (default) reads every
             record. Otherwise must be a non-negative `int`: the file is
             read only up to and including the line that produces the
-            `max_records`-th record, and no further (the file is read in
-            binary one physical line at a time, so no bytes past that line
-            are decoded or examined) -- a bounded
+            `max_records`-th record: lines are read in binary one at a
+            time, so no bytes past that line are decoded or examined
+            (buffered I/O may still fetch them from disk) -- a bounded
             profiling sample never reads one line past what it needed,
             let alone the whole file. `0` reads zero lines. A skipped
             blank line does not count against the cap.
