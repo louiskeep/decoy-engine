@@ -13,7 +13,6 @@ embeds the offending cell value (source files may carry PII; see
 
 from __future__ import annotations
 
-import re
 import traceback
 from pathlib import Path
 from typing import Any
