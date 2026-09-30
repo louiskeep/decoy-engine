@@ -311,7 +311,7 @@ def test_rss_gate_withheld_when_ceiling_not_declared() -> None:
     cells = [_cell("city", 25_000, on_rss_max_kb=1_000)]
     result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=None)
     assert result.ok is False
-    assert result.reasons
+    assert "not declared" in result.reasons[0]
 
 
 def test_rss_gate_ignores_cells_below_the_recommended_tier() -> None:
@@ -332,12 +332,16 @@ def test_build_recommendation_withheld_when_rss_gate_fails() -> None:
 
 
 def test_build_recommendation_withheld_when_ceiling_not_declared() -> None:
+    """Distinct from a MEASURED RSS-gate failure (LOW-3, 2026-09-30 Codex
+    gate on 8454ab4b): the reason must say "not declared", not "RSS gate
+    failed" -- there was nothing to measure against."""
     crossovers = {"city": bc.CrossoverResult(tier=25_000, boundary_fallback=False)}
     cells = [_cell("city", 25_000, on_rss_max_kb=1_000)]
     rec = bc.build_recommendation(crossovers, cells, max_peak_rss_mb=None)
     assert rec["recommended_threshold_raw"] == 25_000
     assert rec["recommended_threshold_rounded"] is None
-    assert "RSS gate failed" in rec["withheld_reason"]
+    assert "not declared" in rec["withheld_reason"]
+    assert "RSS gate failed" not in rec["withheld_reason"]
 
 
 def test_build_recommendation_withheld_when_a_type_never_confirms() -> None:
@@ -563,6 +567,66 @@ def test_gp1_result_schema_v2_keys_and_removed_keys() -> None:
     assert "on_rss_max_kb" in cell
 
 
+_GP1_TOP_LEVEL_KEYS = frozenset(
+    {
+        "run_ok",
+        "full_sweep",
+        "harness_version",
+        "seed",
+        "memory_gate_declared",
+        "max_peak_rss_mb",
+        "cells",
+        "recommendation",
+    }
+)
+_GP1_CELL_KEYS = frozenset(
+    {
+        "faker_type",
+        "n_rows",
+        "warmups",
+        "reps",
+        "off_wall_median",
+        "on_wall_median",
+        "off_rows_per_s_median",
+        "on_rows_per_s_median",
+        "ratio_median",
+        "ratio_p95",
+        "ci_low",
+        "ci_high",
+        "off_rss_max_kb",
+        "on_rss_max_kb",
+        "rss_ratio",
+        "rss_delta_kb",
+        "raw_reps",
+    }
+)
+
+
+def test_gp1_result_exact_key_sets_top_level_and_cell() -> None:
+    """LOW-1 (2026-09-30 Codex gate on 8454ab4b): pins the EXACT key set at
+    both levels, including confirming `off_rss_max_kb` -- the arm the RSS
+    gate does NOT check anymore -- is still kept as information."""
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    config = bc.RunConfig(
+        tiers=[500],
+        types=["city"],
+        reps=2,
+        warmup=0,
+        bootstrap=10,
+        seed=1,
+        timeout_s=5.0,
+        max_peak_rss_mb=200.0,
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+
+    assert set(result) == _GP1_TOP_LEVEL_KEYS  # no "error" key on a clean run
+    cell = result["cells"]["city@500"]
+    assert set(cell) == _GP1_CELL_KEYS
+    assert "off_rss_max_kb" in cell
+
+
 def test_is_full_sweep_shape_requires_the_exact_default_shape() -> None:
     assert bc.is_full_sweep_shape(
         bc._DEFAULT_TIERS, bc._ALL_TYPES, reps=20, warmup=3, bootstrap=10_000
@@ -636,7 +700,8 @@ def test_full_sweep_ceiling_not_declared_withholds_but_keeps_run_ok(
     result = bc.run_bench_compare(_full_sweep_config(max_peak_rss_mb=None), arm_runner=runner)
     assert result["run_ok"] is True
     assert result["full_sweep"] is True
-    assert result["recommendation"]["withheld_reason"] is not None
+    assert "not declared" in result["recommendation"]["withheld_reason"]
+    assert "RSS gate failed" not in result["recommendation"]["withheld_reason"]
     assert "d9_certified" not in result
 
 

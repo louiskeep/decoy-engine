@@ -9,6 +9,32 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (D9/GP1 bench harnesses: absolute peak-RSS ceiling replaces the ratio gate, 2026-09-30)
+
+Dev/bench tooling only (`scripts/`), not the PyPI distribution; no package
+behavior changes. Cam dropped the peak-memory ratio bar: a Rust arm that is
+much faster but uses more memory should not fail certification just for
+that. Both harnesses' `harness_version` moves `1.0.0` -> `2.0.0`.
+
+`scripts/bench-unified-slice/bench_compare.py` (D9): the RSS gate now
+compares the on-arm's peak against a declared `--max-peak-rss-mb` ceiling
+(MiB, inclusive, Linux `ru_maxrss` only) instead of a ratio against the
+off-arm's peak. `gates["rss"]` is `null` when no ceiling is declared,
+`true`/`false` when one is. New result keys `memory_gate_declared` and
+`max_peak_rss_mb`; `d9_certified` now also requires a declared, met ceiling,
+not just the cert-shape sample sizes. `--require-cert` without a declared
+ceiling is refused before any measurement.
+
+`scripts/bench-generation-pool/bench_compare_gen.py` (GP1): the `--max-rss-ratio`
+and `--max-rss-delta-kb` flags, and their matching result keys, are removed.
+The RSS gate is the same absolute `--max-peak-rss-mb` ceiling, checked
+against the pooled arm's own peak; no default, so an undeclared ceiling
+withholds any recommendation, same as an exceeded one. `rss_ratio` and
+`rss_delta_kb` stay on each cell as information. GP1 gains no cert concept.
+
+Both harnesses now refuse to run on a non-Linux platform (`ru_maxrss`'s units
+are not portable). See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
+
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 
 **Breaking (pre-GA API):** `boto3` and `google-cloud-storage` moved from base
@@ -152,8 +178,11 @@ unified-slice lane for a real caller. Dev/bench tooling only -- ships in the
 repo, not in the PyPI distribution, and changes no package behavior. Runs the
 frozen `bench_worker_unified.py` off/on at the same revision across the
 10k/100k/1M tiers, alternating arm order per rep, and gates on a paired-ratio
-median/p95, a seeded bootstrap CI, and a peak-RSS ratio (fail-closed if any
-evidence is missing). A `run_ok`/`d9_certified` split keeps a tiny smoke run
+median/p95, a seeded bootstrap CI, and peak-RSS evidence (fail-closed if any
+evidence is missing). **The peak-RSS gate described here was a ratio against
+the pandas arm's peak; retired 2026-09-30 for an absolute `--max-peak-rss-mb`
+ceiling -- see the Unreleased entry below.** A `run_ok`/`d9_certified` split
+keeps a tiny smoke run
 honestly labelled (never a false `D9 PASSED`); `d9_certified` stays false until
 the real offline 10k/100k/1M sweep is run on a bench node and passes. The old
 cross-revision "flag-off vs main" baseline is descoped (Cam, 2026-09-15): see

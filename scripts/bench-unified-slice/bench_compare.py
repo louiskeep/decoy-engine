@@ -203,6 +203,36 @@ def apply_gates(
     return gates
 
 
+_LARGE_TIER_GATE_KEYS = frozenset({"median", "p95", "ci", "rss"})
+_SMALL_TIER_GATE_KEYS = frozenset({"point", "ci", "rss"})
+
+
+def _check_gates(gates: dict[str, bool | None], n_rows: int, max_peak_rss_mb: float | None) -> None:
+    """Explicit fail-closed gate verification (2026-09-30 HIGH-1 remediation
+    from the Codex final gate on 8454ab4b). The prior `any(v is False for v
+    in gates.values())` check failed OPEN on three shapes it never
+    considered: a wall gate silently holding `None` instead of a real
+    boolean, a gate key dropped from the dict entirely, and a falsy-but-not-
+    identical value such as `numpy.bool_(False)` (`x is False` never matches
+    across types, even when `bool(x)` is `False`). This function instead
+    demands the EXACT expected key set for the tier size, and the EXACT
+    `True` singleton for every gate except `rss`, which may legitimately be
+    `None` when no ceiling was declared and must otherwise also be `True`.
+    Anything else -- missing key, extra key, `None`, `numpy.bool_(False)`,
+    `1`, or any other non-identical value -- fails closed."""
+    expected_keys = (
+        _LARGE_TIER_GATE_KEYS if n_rows > _SMALL_TIER_MAX_ROWS else _SMALL_TIER_GATE_KEYS
+    )
+    if set(gates) != expected_keys:
+        raise FailClosedError(
+            f"tier {n_rows}: gate key set {sorted(gates)} != expected {sorted(expected_keys)}"
+        )
+    for key, value in gates.items():
+        expected = None if (key == "rss" and max_peak_rss_mb is None) else True
+        if value is not expected:
+            raise FailClosedError(f"tier {n_rows}: gate breach {gates}")
+
+
 # ---------------------------------------------------------------------------
 # Strict worker-record validation (plan §5) -- pure, no subprocess.
 # ---------------------------------------------------------------------------
@@ -637,10 +667,7 @@ def _run_tier(
         on_rss_max_kb=on_rss_max,
         max_peak_rss_mb=max_peak_rss_mb,
     )
-    # `gates["rss"]` can be `None` (no ceiling declared) -- that is not a
-    # breach, only an actual `False` verdict is.
-    if any(v is False for v in gates.values()):
-        raise FailClosedError(f"tier {n_rows}: gate breach {gates}")
+    _check_gates(gates, n_rows, max_peak_rss_mb)
 
     return {
         "n_rows": n_rows,

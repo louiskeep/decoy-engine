@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from decoy_engine.execution.native._companion_status import native_companion_status
@@ -282,6 +283,64 @@ def test_rss_gate_passes_at_1_5x_pandas_peak_when_under_ceiling() -> None:
 def test_rss_gate_fails_closed_on_missing_evidence_even_with_ceiling() -> None:
     kwargs = {**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 0, "max_peak_rss_mb": 200.0}
     assert bc.apply_gates(50_000, **kwargs)["rss"] is False
+
+
+# ---------------------------------------------------------------------------
+# `_check_gates` (HIGH-1 remediation, 2026-09-30 Codex gate on 8454ab4b): the
+# prior `any(v is False for v in gates.values())` check fails OPEN on a
+# `None` wall gate, a dropped key, and a falsy-but-not-identical value such
+# as `numpy.bool_(False)` (an `is False` identity check never matches across
+# types). Each of these must now raise `FailClosedError`.
+# ---------------------------------------------------------------------------
+
+
+def _small_tier_gates(**overrides: Any) -> dict[str, Any]:
+    gates: dict[str, Any] = {"point": True, "ci": True, "rss": None}
+    gates.update(overrides)
+    return gates
+
+
+def test_check_gates_accepts_the_real_all_pass_shape() -> None:
+    bc._check_gates(_small_tier_gates(), 500, None)  # must not raise
+    bc._check_gates({"median": True, "p95": True, "ci": True, "rss": True}, 50_000, 10.0)
+
+
+def test_check_gates_rejects_none_wall_gate() -> None:
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=None), 500, None)
+
+
+def test_check_gates_rejects_missing_key() -> None:
+    gates = _small_tier_gates()
+    del gates["point"]
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(gates, 500, None)
+
+
+def test_check_gates_rejects_extra_key() -> None:
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(unexpected=True), 500, None)
+
+
+def test_check_gates_rejects_numpy_bool_false() -> None:
+    """`numpy.bool_(False) is False` is `False` (different objects, same
+    truthiness) -- exactly the identity-check blind spot the old `any(v is
+    False ...)` check missed."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=np.bool_(False)), 500, None)
+
+
+def test_check_gates_rejects_rss_true_string_ceiling_undeclared() -> None:
+    """`rss` may be `None` only when no ceiling was declared; `True` (or
+    anything else) in that state is itself a defect worth catching, not a
+    lucky pass."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(rss=True), 500, None)
+
+
+def test_check_gates_rejects_rss_none_when_ceiling_declared() -> None:
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(rss=None), 500, 200.0)
 
 
 def test_bootstrap_ci_is_seeded_and_reproducible() -> None:
@@ -564,6 +623,28 @@ def test_memory_gate_declared_and_exceeded_fails_run() -> None:
     assert result["run_ok"] is False
     assert result["d9_certified"] is False
     assert result["memory_gate_declared"] is True
+    # The breach must be attributable to the rss gate specifically, not just
+    # "some gate failed" -- the other gates (point/ci) pass at these walls.
+    assert "'rss': False" in result["error"]
+
+
+def test_fail_closed_missing_ru_maxrss_even_with_ceiling_declared() -> None:
+    """Missing RSS evidence is fatal regardless of whether a ceiling was
+    declared -- a declared ceiling cannot certify a peak it never measured."""
+    off = _raw_ok(_record_json(500, False), ru_maxrss_kb=None)
+    on = _raw_ok(_record_json(500, True))
+    runner = _make_runner([off], [on])
+    with pytest.raises(bc.FailClosedError):
+        bc._run_tier(
+            500,
+            warmup=0,
+            reps=1,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=100.0,
+        )
 
 
 def test_memory_gate_declared_and_met_passes_but_needs_cert_shape_too() -> None:
@@ -609,6 +690,41 @@ def test_full_cert_shape_with_declared_ceiling_certifies() -> None:
     assert result["run_ok"] is True
     assert result["memory_gate_declared"] is True
     assert result["d9_certified"] is True
+
+
+def test_full_cert_shape_without_declared_ceiling_is_never_certified() -> None:
+    """HIGH-2 remediation (2026-09-30 Codex gate on 8454ab4b): the exact
+    cert tiers/reps/warmup/bootstrap alone must NOT certify -- a real,
+    declared, met ceiling is required too. This is the direct mutation-kill
+    test for `and memory_gate_declared` in `run_bench_compare`'s
+    `d9_certified` expression: deleting that clause leaves `run_ok and
+    cert_shape` both `True` here, which would flip every assertion below."""
+    tiers = [10_000, 100_000, 1_000_000]
+    off_queue: list[bc.RawArmResult] = []
+    on_queue: list[bc.RawArmResult] = []
+    for n_rows in tiers:
+        for _ in range(3 + 20):  # cert-minimum warmup + reps
+            off, on = _valid_pair(n_rows, off_wall=1.0, on_wall=1.0)
+            off_queue.append(off)
+            on_queue.append(on)
+    runner = _make_runner(off_queue, on_queue)
+    config = bc.RunConfig(
+        tiers=tiers,
+        reps=20,
+        warmup=3,
+        bootstrap=2000,
+        seed=1,
+        timeout_s=5.0,
+        max_peak_rss_mb=None,  # no ceiling declared
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+    assert result["run_ok"] is True
+    for tier in result["tiers"].values():
+        assert tier["gates"]["rss"] is None
+    assert result["memory_gate_declared"] is False
+    assert result["d9_certified"] is False
+    assert bc.banner_for(result) != "D9 PASSED"
+    assert bc.exit_code_for(result, require_cert=True) != 0
 
 
 def _unreachable_arm_runner(*_args: Any, **_kwargs: Any) -> bc.RawArmResult:
@@ -699,6 +815,59 @@ def test_result_schema_v2_keys_present_and_ratio_gate_gone() -> None:
     assert "on_rss_max_kb" in tier
     assert "rss_ratio" in tier
     assert not hasattr(bc, "rss_budget_ratio")
+
+
+_D9_TOP_LEVEL_KEYS = frozenset(
+    {
+        "run_ok",
+        "d9_certified",
+        "harness_version",
+        "seed",
+        "descoped",
+        "memory_gate_declared",
+        "max_peak_rss_mb",
+        "tiers",
+    }
+)
+_D9_TIER_KEYS = frozenset(
+    {
+        "n_rows",
+        "warmups",
+        "reps",
+        "off_wall_median",
+        "on_wall_median",
+        "off_wall_p95",
+        "on_wall_p95",
+        "ratio_median",
+        "ratio_p95",
+        "ci_low",
+        "ci_high",
+        "off_rss_max_kb",
+        "on_rss_max_kb",
+        "rss_ratio",
+        "gates",
+        "raw_reps",
+    }
+)
+
+
+def test_result_exact_key_sets_top_level_tier_and_gates() -> None:
+    """LOW-1 (2026-09-30 Codex gate on 8454ab4b): the schema test above
+    checks presence/absence of specific keys; this one pins the EXACT set at
+    every level (a stray or accidentally-dropped key elsewhere would slip
+    past a presence-only check)."""
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=200.0
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+
+    assert set(result) == _D9_TOP_LEVEL_KEYS  # no "error" key on a clean run
+    tier = result["tiers"]["500"]
+    assert set(tier) == _D9_TIER_KEYS
+    assert set(tier["gates"]) == bc._SMALL_TIER_GATE_KEYS  # n_rows=500 is the small-tier shape
 
 
 # ---------------------------------------------------------------------------
@@ -1009,7 +1178,14 @@ def test_real_worker_tiny_tier_smoke(tmp_path: Path) -> None:
     """The plan's own acceptance smoke: `--tiers 200 --reps 2 --warmup 1`
     against the REAL frozen worker. Guarded on the compiled companion (the
     hash columns in the fixed nine-column workload need it to activate the
-    unified slice); companion-absent legs skip this test entirely."""
+    unified slice); companion-absent legs skip this test entirely.
+
+    A generous 4096 MiB ceiling exercises the real (declared, met) memory
+    gate end to end against real `ru_maxrss` evidence, not just a stub; the
+    magnitude bounds (10 MiB-4 GiB) catch a badly wrong unit (e.g. bytes
+    instead of KiB) without pinning an exact figure this tiny pandas/pyarrow
+    process could drift on.
+    """
     out_path = tmp_path / "smoke.json"
     rc = bc.main(
         [
@@ -1023,6 +1199,8 @@ def test_real_worker_tiny_tier_smoke(tmp_path: Path) -> None:
             str(out_path),
             "--timeout",
             "120",
+            "--max-peak-rss-mb",
+            "4096",
         ]
     )
     assert rc == 0
@@ -1033,3 +1211,5 @@ def test_real_worker_tiny_tier_smoke(tmp_path: Path) -> None:
     assert tier["off_rss_max_kb"] > 0
     assert tier["on_rss_max_kb"] > 0
     assert tier["ratio_median"] > 0
+    assert tier["gates"]["rss"] is True
+    assert 10 * 1024 <= tier["on_rss_max_kb"] <= 4 * 1024 * 1024

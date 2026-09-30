@@ -227,7 +227,7 @@ def apply_rss_gate(
     if max_peak_rss_mb is None:
         return RssGateResult(
             ok=False,
-            reasons=["no --max-peak-rss-mb ceiling declared; a recommendation requires one"],
+            reasons=["--max-peak-rss-mb not declared; a recommendation requires a ceiling"],
         )
     ceiling_kb = max_peak_rss_mb * 1024
     reasons: list[str] = []
@@ -261,6 +261,16 @@ def build_recommendation(
             "withheld_reason": f"no confirmed crossover for type(s): {', '.join(unconfirmed)}",
         }
     raw_max = max(c.tier for c in per_type_crossover.values() if c.tier is not None)
+    if max_peak_rss_mb is None:
+        # Distinct from a MEASURED gate failure below: there is nothing to
+        # measure against without a declared ceiling, so this is withheld
+        # for a different reason and must read differently (LOW-3, 2026-09-30
+        # Codex gate on 8454ab4b).
+        return {
+            "recommended_threshold_raw": raw_max,
+            "recommended_threshold_rounded": None,
+            "withheld_reason": "--max-peak-rss-mb not declared; a recommendation requires a ceiling",
+        }
     rss = apply_rss_gate(cells, recommended_tier=raw_max, max_peak_rss_mb=max_peak_rss_mb)
     if not rss.ok:
         return {

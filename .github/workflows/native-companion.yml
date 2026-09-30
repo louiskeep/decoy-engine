@@ -43,9 +43,10 @@ on:
       - "tests/parity/native/**"
       # The D9 harness's own real-worker integration test is a companion-
       # present-only case run by this workflow (job below, ~308); a change to
-      # the harness or that test must trigger this workflow too.
-      - "scripts/bench-unified-slice/bench_compare.py"
-      - "tests/physical/test_bench_compare_harness.py"
+      # anything under the harness directory, or to its smoke test, must
+      # trigger this workflow too.
+      - "scripts/bench-unified-slice/**"
+      - "tests/physical/test_bench_unified_slice_harness_smoke.py"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
   pull_request:
@@ -54,8 +55,8 @@ on:
       - "src/decoy_engine/execution/native/**"
       - "tests/native/**"
       - "tests/parity/native/**"
-      - "scripts/bench-unified-slice/bench_compare.py"
-      - "tests/physical/test_bench_compare_harness.py"
+      - "scripts/bench-unified-slice/**"
+      - "tests/physical/test_bench_unified_slice_harness_smoke.py"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
 

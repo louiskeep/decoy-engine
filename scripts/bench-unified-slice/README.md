@@ -1,25 +1,30 @@
-# Unified-slice benchmark (Task 4.5 D9): CERTIFIED 2026-09-20 (route activated)
+# Unified-slice benchmark (Task 4.5 D9): v1 CERTIFIED 2026-09-20 (historical), v2 recert pending
 
 Status: the statistical comparison harness (`bench_compare.py`) is **built**,
 covered by its own fast test suite
-(`tests/physical/test_bench_compare_harness.py`), and **D9-certified** as of
-2026-09-20 on the reference host (GCE n2-standard-8), re-run on the route-
-activation commit: `d9_certified: true`, all tiers pass — 10k RSS 1.023x, 100k
-1.048x, 1M 1.094x (under the per-tier band), wall ~4.3x faster at 1M. Cert
-artifact: `decoy-platform` `docs/product/release-1-validation-runs/2026-09-20-
-d9-recert/`. (The 2026-09-18 cert under `.../2026-09-18-tb6-50m/` remains the
-per-tier RSS-budget baseline; this recert confirms the activation commit is
-unchanged on the measured lane.) `d9_certified` only flips true after the
-harness's real 10k/100k/1M sweep runs on a bench node and every gate passes
-there; that sweep is a deliberate offline invocation (multi-minute per arm),
-never a CI step.
+(`tests/physical/test_bench_compare_harness.py`), and was **D9-certified**
+(schema v1, the retired ratio gate) as of 2026-09-20 on the reference host
+(GCE n2-standard-8), re-run on the route-activation commit: `d9_certified:
+true`, all tiers pass -- 10k RSS 1.023x, 100k 1.048x, 1M 1.094x (under the
+per-tier band), wall ~4.3x faster at 1M. Cert artifact: `decoy-platform`
+`docs/product/release-1-validation-runs/2026-09-20-d9-recert/`. (The
+2026-09-18 cert under `.../2026-09-18-tb6-50m/` remains the per-tier
+RSS-budget baseline; this recert confirms the activation commit is unchanged
+on the measured lane.) `d9_certified` only flips true after the harness's
+real 10k/100k/1M sweep runs on a bench node and every gate passes there;
+that sweep is a deliberate offline invocation (multi-minute per arm), never
+a CI step.
 
-**2026-09-30: the RSS ratio gate is retired.** The 1.023x/1.048x/1.094x
-figures above are the measured record of the cert run that used the old
-per-tier ratio band; they still describe what actually ran. The gate itself
-is now the absolute `--max-peak-rss-mb` ceiling below, and `d9_certified`
-additionally requires that ceiling to be declared and met (not just cert-
-shape sample sizes) -- see `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
+**2026-09-30: the RSS ratio gate is retired; the 2026-09-20 v1 certification
+above is historical and no longer current.** The gate itself is now the
+absolute `--max-peak-rss-mb` ceiling below, and `d9_certified` additionally
+requires that ceiling to be declared and met (not just cert-shape sample
+sizes), so schema v2 (`harness_version: "2.0.0"`) needs its own
+recertification run on the reference host under `--max-peak-rss-mb 6656`
+before it can be cited as current. That v2 recert is PENDING -- the
+1.023x/1.048x/1.094x figures above are the measured record of the v1 run
+under the old per-tier ratio band; they describe what actually ran then, not
+a live v2 result. See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 
 ## What is here now
 
