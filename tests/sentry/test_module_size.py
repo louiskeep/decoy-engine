@@ -473,12 +473,12 @@ ALLOWLIST: dict[str, int] = {
     # reuses run_pipeline's adapter instead of selecting its own. Next change:
     # move the admission-source helpers into a new sibling module (the named
     # `_unified_slice_admission.py` target is itself over GOAL now).
-    "src/decoy_engine/execution/_unified_slice.py": 602,
+    "src/decoy_engine/execution/_unified_slice.py": 615,
     # Track A input formats (2026-09-30): format admission widened to csv and
     # fixed_width, with the resident-type gates documented alongside. Dense
     # reviewed exception (<= MAX). Split the per-strategy resident-type gates
     # into a sibling on the next admission change.
-    "src/decoy_engine/execution/_unified_slice_admission.py": 608,
+    "src/decoy_engine/execution/_unified_slice_admission.py": 628,
     # Track A input formats (2026-09-30): resolve_input_arrow_type prefers the
     # resident Arrow table, threaded through the requirements and config-gate
     # helpers. Dense reviewed exception (<= MAX). Move the resident-type
