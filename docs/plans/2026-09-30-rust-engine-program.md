@@ -41,7 +41,8 @@ A fast mask and generate engine at every size up to 100M+ rows, with **no pandas
 | A2 | **Cloud descriptors** (P1): remove `connection_id`, `connection_name` and GCS `region` from the executable `Job.yaml_snapshot`; keep them only in a separate binding-provenance / evidence record. Tests: the stored snapshot runs through `run_v2_pipeline_from_config` for S3 and GCS, source and target, against moto / fake-gcs-server. | S | After A1 for tidiness; no security dependency. |
 | A3 | **Platform FK cycle routing** (P3): cycle check in `v2_sequential._should_use_sequential_relationship_path` and admission pricing. | S-M | Regression test from R063. Needed only before platform sequential activation (D2c). |
 | A4 | **Phase 1 fixed-width** (P4): reject fixed-width in Phase 1 eligibility until a streaming reader exists. | S | |
-| A5 | **CLI fixed-width** (P5): read fixed-width with the engine reader. | S | decoy-cli. |
+| A5a | **Public fixed-width reader** (engine): export `read_fixed_width` through `decoy_engine.__all__` and the compatibility contract, so the CLI does not import private engine code. | S | Engine; ships in the Phase A paired release. |
+| A5b | **CLI reads sources by declared format** (P5): one shared reader for run, demo and the Python API, a format-dispatching chunked iterator (fixed-width rejected under `--chunked`), and the CLI native gate widened to CSV and fixed-width (it hard-codes Parquet, while engine #180 admits all three). | S-M | decoy-cli; after the A5a release. |
 | A6 | **Rust lane timings** (P6): the unified slice returns real per-column `timings` and `boundary_conversion_ms`; removes the engine #180 strict xfail. | S | |
 | A7 | **Retire the D9 ratio check** (R14); keep an absolute-peak check. | S | Before B3. |
 | A8 | **Transforms ownership** (P7): transforms live in the engine `run_pipeline`, or are explicitly platform-only; engine, CLI and platform agree. | M | Needs Cam's decision. |
