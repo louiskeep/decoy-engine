@@ -6,7 +6,7 @@ Decoy processes the sensitive data it masks. This note says what the engine's er
 
 ## What the engine promises
 
-- **Errors about bad input data do not contain that data.** When the engine rejects a value, a record or a line (a failed cast, a short fixed-width record, bytes that are not valid UTF-8), the message names the position (file, line, column, length) and never the value. The exception carries no chained cause or context holding the value. The fixed-width reader (`decoy_engine.read_fixed_width`) also raises these errors from a frame that holds no file data, and its tests check the message, the chain and the captured frame locals.
+- **The fixed-width reader's bad-data errors do not contain that data.** For a failed cast, a short record, bytes that are not valid UTF-8, and a malformed layout, `decoy_engine.read_fixed_width` names the position (file, line, column, length) and never the value, and does not chain the internal exception that held it. The first three are raised from a frame that holds no file data; tests check the message, the chain and the captured frame locals for those three, and the message and chain for the malformed layout (which fails before the file is opened). Other engine code paths make no frame-level promise yet.
 - **Row-level errors follow the same rule** (`RowErrorsFailedError` and the row-error framework): positions and reasons, never cell values.
 
 ## What it does not promise
