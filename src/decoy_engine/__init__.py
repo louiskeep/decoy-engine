@@ -22,9 +22,10 @@ Public API (the contract CLI and platform code depend on):
                       synthesis for generate-mode configs.
     read_fixed_width  (decoy_engine.profile._fixed_width_reader) parse a
                       newline-delimited fixed-width file into a DataFrame per
-                      a FixedWidthLayout (or the equivalent config dict); the
-                      CLI/platform boundary for a `format: fixed_width`
-                      FileSource, so callers never import the private
+                      a FixedWidthLayout, or the equivalent validated-config
+                      dict (`FileSource.layout`); raises FixedWidthParseError
+                      or ConfigError. Exported so a `format: fixed_width`
+                      FileSource can be read without importing the private
                       `profile._fixed_width_reader` module directly.
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
@@ -37,7 +38,7 @@ Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
     ConnectorError, ConnectorAuthError,
     LicenseError, LicenseExpiredError,
-    FlagPauseSignal
+    FlagPauseSignal, FixedWidthParseError
 
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
@@ -88,6 +89,7 @@ from decoy_engine.errors import (
     ConnectorAuthError,
     ConnectorError,
     DecoyError,
+    FixedWidthParseError,
     FlagPauseSignal,
     LicenseError,
     LicenseExpiredError,
@@ -329,6 +331,7 @@ __all__ = [
     "FileMeta",
     "FileSink",
     "FileSource",
+    "FixedWidthParseError",
     "FkValidityReport",
     "FlagPauseSignal",
     "GenerationError",

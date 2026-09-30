@@ -22,8 +22,40 @@ from pydantic import ValidationError
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.config._fixed_width import FixedWidthLayout
-from decoy_engine.errors import FixedWidthParseError
+from decoy_engine.errors import ConfigError, FixedWidthParseError
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
+
+
+class _ReadlineCountingFile:
+    """Wraps a real file handle, counting `readline()` calls, so a test
+    can assert exactly how many lines a reader actually pulled from disk
+    instead of inferring it indirectly from validation side effects."""
+
+    def __init__(self, fh: Any) -> None:
+        self._fh = fh
+        self.readline_calls = 0
+
+    def readline(self, *args: Any, **kwargs: Any) -> str:
+        self.readline_calls += 1
+        return self._fh.readline(*args, **kwargs)  # type: ignore[no-any-return]
+
+    def __iter__(self) -> _ReadlineCountingFile:
+        return self
+
+    def __next__(self) -> str:
+        line = self.readline()
+        if line == "":
+            raise StopIteration
+        return line
+
+    def __enter__(self) -> _ReadlineCountingFile:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._fh.__exit__(*exc_info)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._fh, name)
 
 
 def _base_config() -> dict[str, Any]:
@@ -306,9 +338,18 @@ class TestFixedWidthSourceEndToEnd:
 
     def test_read_fixed_width_bad_cast_raises_without_leaking_value(self, tmp_path: Path) -> None:
         """The bad-cast path must never leak the raw cell value -- not in
-        the exception's message, not via a chained `__cause__`, and not
-        in a fully rendered traceback (the surfaces `logging.exception`/
-        `exc_info=True` and an uncaught-exception printout actually use).
+        the exception's message, not via `__cause__` or `__context__`
+        (chained OR not), and not in a fully rendered traceback (the
+        surfaces `logging.exception`/`exc_info=True` and an uncaught-
+        exception printout actually use).
+
+        `__context__ is None` is the load-bearing assertion here: Python
+        auto-populates `__context__` with the currently-handled exception
+        for ANY `raise` executed inside that handler, `from None` or not
+        (see `_fixed_width_reader._cast_value`'s comment) -- checking only
+        `__cause__` (which `from None` reliably sets to `None`) misses
+        this leak entirely, since `str(None)` never contains the token
+        regardless of what `__context__` holds.
 
         The CAST column here (`code`, an `int` field) wholly contains the
         secret token, so the token is the exact string handed to `int()`
@@ -331,10 +372,14 @@ class TestFixedWidthSourceEndToEnd:
         rendered_traceback = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
         assert "code" in str(exc)
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
         # PII safety: the raw offending value must never appear anywhere --
-        # not the message, not the chained cause, not a rendered traceback.
+        # not the message, not a chain, not `repr`, not a rendered traceback.
         assert secret_token not in str(exc)
+        assert secret_token not in repr(exc)
         assert secret_token not in str(exc.__cause__)
+        assert secret_token not in str(exc.__context__)
         assert secret_token not in rendered_traceback
 
     def test_profile_source_end_to_end_fixed_width(self, tmp_path: Path) -> None:
@@ -359,3 +404,177 @@ class TestFixedWidthSourceEndToEnd:
         assert profile.tables[0].name == "t"
         column_names = {c.name for c in profile.tables[0].columns}
         assert column_names == {"name", "age", "score"}
+
+
+# ---------------------------------------------------------------------
+# A5a gate remediation: malformed layout, undecodable bytes, max_records
+# argument validation and read bound, byte-vs-character characterization.
+# ---------------------------------------------------------------------
+
+
+class TestFixedWidthErrorWrapping:
+    def test_malformed_layout_dict_raises_config_error_without_chaining(
+        self, tmp_path: Path
+    ) -> None:
+        """A dict that fails `FixedWidthLayout.model_validate` must surface
+        as the engine's own `ConfigError`, not a raw pydantic
+        `ValidationError` -- and, per the same outside-the-handler rule as
+        the cast path, with no `__cause__`/`__context__` chain."""
+        data = tmp_path / "irrelevant.txt"
+        data.write_text("abc\n", encoding="utf-8")
+        bad_layout = {"columns": [{"name": "a", "start": 0, "type": "str"}]}  # missing width
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_fixed_width(str(data), bad_layout)
+
+        exc = excinfo.value
+        assert not isinstance(exc, ValidationError)
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
+
+    def test_non_utf8_file_raises_fixed_width_parse_error_without_leaking_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        """`UnicodeDecodeError.object` holds the raw undecodable bytes,
+        which may themselves carry PII -- the wrapper must never expose
+        them, and must not chain the original `UnicodeDecodeError` in via
+        `__cause__`/`__context__`."""
+        layout = FixedWidthLayout.model_validate(
+            {"columns": [{"name": "a", "start": 0, "width": 3, "type": "str"}]}
+        )
+        data = tmp_path / "not_utf8.txt"
+        secret_bytes = b"\xff\xfe\x00SECRET"
+        data.write_bytes(secret_bytes + b"\n")
+
+        with pytest.raises(FixedWidthParseError) as excinfo:
+            read_fixed_width(str(data), layout)
+
+        exc = excinfo.value
+        rendered_traceback = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
+        assert "SECRET" not in str(exc)
+        assert "SECRET" not in rendered_traceback
+
+
+class TestMaxRecordsValidation:
+    def test_rejects_bool_max_records(self, tmp_path: Path) -> None:
+        """`bool` is a subclass of `int`; treating `True`/`False` as 1/0
+        records is almost certainly a caller mistake, so it is rejected
+        rather than silently accepted."""
+        layout = FixedWidthLayout.model_validate(_simple_layout())
+        data = tmp_path / "people.txt"
+        data.write_text("alice    3012.50\n", encoding="utf-8")
+
+        with pytest.raises(TypeError, match="max_records"):
+            read_fixed_width(str(data), layout, max_records=True)
+
+    def test_rejects_non_int_max_records(self, tmp_path: Path) -> None:
+        layout = FixedWidthLayout.model_validate(_simple_layout())
+        data = tmp_path / "people.txt"
+        data.write_text("alice    3012.50\n", encoding="utf-8")
+
+        with pytest.raises(TypeError, match="max_records"):
+            read_fixed_width(str(data), layout, max_records="1")  # type: ignore[arg-type]
+
+    def test_rejects_negative_max_records(self, tmp_path: Path) -> None:
+        layout = FixedWidthLayout.model_validate(_simple_layout())
+        data = tmp_path / "people.txt"
+        data.write_text("alice    3012.50\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="max_records"):
+            read_fixed_width(str(data), layout, max_records=-1)
+
+    def test_max_records_zero_reads_zero_records(self, tmp_path: Path) -> None:
+        layout = FixedWidthLayout.model_validate(_simple_layout())
+        data = tmp_path / "people.txt"
+        data.write_text("alice    3012.50\nbob      2503.00\n", encoding="utf-8")
+
+        df = read_fixed_width(str(data), layout, max_records=0)
+
+        assert list(df.columns) == ["name", "age", "score"]
+        assert len(df) == 0
+
+    def test_max_records_cap_never_reads_more_lines_than_the_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression for the SC7a bounded-read cap reading one line past
+        what it needed, instrumented directly on the file handle's
+        `readline()` call count.
+
+        Two easier-looking proxies for this turned out to be unreliable
+        and were rejected: a too-short-but-valid line 2 is silently
+        discarded by the row-width check either way, so it cannot tell
+        "line 2 was never fetched" apart from "line 2 was fetched, then
+        discarded before validation" -- both look identical from the
+        outside. A non-UTF-8 line 2 does distinguish old from new code,
+        but for the wrong reason: `TextIOWrapper` reads and decodes in
+        internal chunks, so a short file can trip `UnicodeDecodeError` on
+        the very first `readline()` call regardless of the cap logic --
+        an unrelated buffering artifact, not the over-read this test is
+        for. Counting actual `readline()` calls on the real file handle
+        is the only thing that isolates the cap's own behavior from both.
+        """
+        layout = FixedWidthLayout.model_validate(
+            {"columns": [{"name": "a", "start": 0, "width": 3, "type": "str"}]}
+        )
+        data = tmp_path / "three_lines.txt"
+        data.write_text("abc\ndef\nghi\n", encoding="utf-8")
+
+        real_open = open
+        opened: list[_ReadlineCountingFile] = []
+
+        def fake_open(*args: Any, **kwargs: Any) -> _ReadlineCountingFile:
+            wrapped = _ReadlineCountingFile(real_open(*args, **kwargs))
+            opened.append(wrapped)
+            return wrapped
+
+        monkeypatch.setattr(
+            "decoy_engine.profile._fixed_width_reader.open", fake_open, raising=False
+        )
+
+        df = read_fixed_width(str(data), layout, max_records=1)
+
+        assert df["a"].tolist() == ["abc"]
+        assert len(opened) == 1
+        assert opened[0].readline_calls == 1, (
+            f"expected exactly 1 readline() call for max_records=1, got "
+            f"{opened[0].readline_calls} -- the cap read past what it needed"
+        )
+
+
+class TestFixedWidthByteVsCharacterCharacterization:
+    def test_read_fixed_width_slices_by_character_not_byte_offset(self, tmp_path: Path) -> None:
+        """CHARACTERIZATION, not a correctness claim: `FixedWidthLayout`
+        documents `start`/`width` as BYTE offsets (config._fixed_width
+        module docstring), but this reader opens the file as decoded
+        UTF-8 TEXT and slices by Python string index (character
+        position), not by encoded byte position. The two coincide for
+        ASCII-only data and diverge once a multibyte character appears.
+
+        This pins TODAY's character-based behavior so a future switch to
+        true byte slicing -- tracked in
+        docs/plans/2026-07-22-input-format-parity.md:197 ("Fixed-width
+        core") -- shows up here as a reviewed, intentional change instead
+        of a silent one. Do not "fix" this test to assert byte slicing;
+        that is a separate, out-of-scope change.
+        """
+        layout = FixedWidthLayout.model_validate(
+            {
+                "columns": [
+                    {"name": "a", "start": 0, "width": 1},
+                    {"name": "b", "start": 1, "width": 3},
+                ]
+            }
+        )
+        data = tmp_path / "multibyte.txt"
+        # "e" is one Python character but two UTF-8 bytes (0xC3 0xA9); a
+        # true byte-offset reader would not draw the column boundary
+        # after that single character the way this character-index
+        # reader does.
+        data.write_text("éxyz\n", encoding="utf-8")
+
+        df = read_fixed_width(str(data), layout)
+
+        assert df["a"].tolist() == ["é"]
+        assert df["b"].tolist() == ["xyz"]

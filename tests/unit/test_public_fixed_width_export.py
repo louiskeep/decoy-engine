@@ -1,14 +1,15 @@
 """A5a (2026-09-30): `read_fixed_width` on the public `decoy_engine` surface.
 
-The CLI reads a `format: fixed_width` `FileSource` today by importing
-`decoy_engine.profile._fixed_width_reader.read_fixed_width` directly --
-a private (`_`-prefixed) module the compatibility contract says may
-change without a version bump. This pins the public re-export: it does
-not re-verify the reader's own parsing logic (that is
-`test_v2_fixed_width_source.py`'s job), only that the surface exists, is
-the SAME object the private module defines (no accidental copy/drift),
-and is listed in `__all__` so the CLI can rely on it across engine
-versions.
+A `format: fixed_width` `FileSource` can only be read today through the
+private (`_`-prefixed) `decoy_engine.profile._fixed_width_reader` module,
+which the compatibility contract says may change without a version bump.
+This pins the public re-export of `read_fixed_width` and
+`FixedWidthParseError`: it does not re-verify the reader's own parsing
+logic (that is `test_v2_fixed_width_source.py`'s job), only that each
+surface exists, is the SAME object the private module/errors module
+defines (no accidental copy/drift), and is listed in `__all__` so a
+caller can depend on it across engine versions without reaching into the
+private module.
 """
 
 from __future__ import annotations
@@ -16,7 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import decoy_engine
-from decoy_engine import read_fixed_width
+from decoy_engine import FixedWidthParseError, read_fixed_width
+from decoy_engine.errors import FixedWidthParseError as _InternalFixedWidthParseError
 from decoy_engine.profile._fixed_width_reader import read_fixed_width as _internal_read_fixed_width
 
 
@@ -31,7 +33,15 @@ def test_read_fixed_width_is_listed_in_all():
     assert "read_fixed_width" in decoy_engine.__all__
 
 
-def test_read_fixed_width_returns_the_same_table_on_a_small_fixture(tmp_path: Path) -> None:
+def test_fixed_width_parse_error_is_the_same_class_the_reader_raises():
+    assert FixedWidthParseError is _InternalFixedWidthParseError
+
+
+def test_fixed_width_parse_error_is_listed_in_all():
+    assert "FixedWidthParseError" in decoy_engine.__all__
+
+
+def test_read_fixed_width_parses_a_small_fixture(tmp_path: Path) -> None:
     layout = {
         "columns": [
             {"name": "name", "start": 0, "width": 8, "type": "str"},
@@ -41,9 +51,7 @@ def test_read_fixed_width_returns_the_same_table_on_a_small_fixture(tmp_path: Pa
     data = tmp_path / "people.txt"
     data.write_text("alice    30\nbob      25\n", encoding="utf-8")
 
-    via_public = read_fixed_width(str(data), layout)
-    via_private = _internal_read_fixed_width(str(data), layout)
+    df = read_fixed_width(str(data), layout)
 
-    assert via_public.equals(via_private)
-    assert via_public["name"].tolist() == ["alice", "bob"]
-    assert via_public["age"].tolist() == [30, 25]
+    assert df["name"].tolist() == ["alice", "bob"]
+    assert df["age"].tolist() == [30, 25]
