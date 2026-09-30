@@ -1,54 +1,88 @@
 # Engine-owned table transforms (Rust engine program A8)
 
-Status: plan (revision 1)
+Status: plan (revision 2: folds the Codex plan-gate NO-GO on revision 1)
 
-Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase A, item A8 (Cam decision 2, 2026-09-30: transforms move into the engine's `run_pipeline` so the engine, CLI and platform behave the same). Branch `feat/engine-owned-transforms`, off engine main `8dc559e5`. A paired platform change (A8p) follows in decoy-platform.
+Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase A, item A8 (Cam decision 2, 2026-09-30: transforms move into the engine's `run_pipeline` so the engine, CLI and platform behave the same). Branch `feat/engine-owned-transforms`, off engine main `8dc559e5`. Paired platform work: A8p-0 and A8p below, each its own platform branch.
 
 ## Problem
 
-A mask table's `transforms` block (filter, sort, limit, dedupe, derive, drop_column; `config/_transforms.py`, validated on `TableConfig.transforms`, `config/_tables.py` ~282-328) is accepted by the engine schema but never executed by the engine. The only caller of `execution._transforms.apply_transforms` is the platform (`api/jobs/v2_runner.py::_apply_per_table_transforms`, reused by `v2_sequential.py` ~127 and `v2_preview.py` ~133), which converts each mask table Arrow to pandas, applies the ops, and converts back before calling `run_pipeline`.
+A mask table's `transforms` block (filter, sort, limit, dedupe, derive, drop_column; `config/_transforms.py`, field `TableConfig.transforms`, `config/_tables.py` ~279-328) passes engine validation but no engine code path applies it. The only production caller of `execution._transforms.apply_transforms` is the platform: `api/jobs/v2_runner.py::_apply_per_table_transforms` (~162-211), which `v2_sequential.py` (~124-135, and again for vault reload ~221-237) and `v2_preview.py` (~125-135) reuse.
 
-So the same valid config gives different output depending on the caller: the platform filters, derives and drops columns; `decoy_engine.run_pipeline`, the CLI (`decoy run`) and `decoy.mask(config=...)` silently mask the untransformed table. The `_transforms.py` module docstring ("called by the mask path's PandasExecutionAdapter") describes a call site that does not exist.
+So one valid config gives different output by caller. The platform filters, derives and drops; `decoy_engine.run_pipeline`, the CLI and `decoy.mask(config=...)` mask the untransformed table without a warning. The `_transforms.py` module docstring names a call site that does not exist.
 
-The platform also owns the route rules that make transforms safe: Phase 1 streaming rejects them (`_phase1_eligibility.py` ~154), out-of-core rejects them (`v2_out_of_core.py` ~184, `admission_fk.py` ~390), and unified-slice admission declines them (engine `_unified_slice_admission.py` ~308). Inside the engine only the last one exists; the engine's own out-of-core route selection (`_pipeline_routing.resolve_execution_route`) has no transforms check, so an engine-direct FK job with transforms can take out-of-core and drop them.
+## Ownership contract
 
-## Design
+- **`run_pipeline` owns transforms.** It applies each mask table's transforms exactly once, over the whole table, before any strategy reads it, or it rejects the job with a coded error. Callers hand it raw sources.
+- **Plan-level APIs take prepared inputs.** `PandasExecutionAdapter.run`, `run_sequential` and `run_fk_out_of_core` receive a `Plan`, not the config, so they cannot see transforms. Their docstrings state that inputs must already be transformed; callers that use them directly apply the public helper themselves.
+- **Config-taking entry points outside `run_pipeline` reject.** `run_mask_pipeline_chunked` (`_chunked.py` ~358, public from `decoy_engine.execution` and top level) and everything that forwards the config to it (`physical/drivers/_chunked.py` ~58-88, `native/_dispatch.py` ~483-525) fail with `TransformError(code="per_table_transforms_present")` from `check_chunked_compatibility` (~250) when the target table declares transforms. Zero applications, no silent drop.
+- **Public helper.** `decoy_engine.apply_table_transforms(config, table_name, table: pa.Table) -> pa.Table`, exported in `__all__` and the compatibility contract. It returns the same object when the table has no transforms or is generate-kind, and validates ops through `TableConfig`.
 
-One engine function owns transform application, and every engine route either applies it exactly once over the whole table before any strategy sees the data, or is ineligible for a table that declares transforms.
+## Routes inside `run_pipeline`
 
-1. `execution/_transforms.py` gains `apply_table_transforms(config, table_name, table: pa.Table) -> pa.Table`: looks up the table config, returns the input unchanged (same object) when the table has no transforms or is generate-kind, otherwise converts with the existing FK-safe Arrow-to-pandas helper used by the mask path, runs `apply_transforms`, and converts back with `preserve_index=False`. The Arrow/pandas round-trip matches the platform's today, so outputs stay byte-identical to current platform behavior. Ops are validated through `TableConfig`, not re-parsed from raw dicts.
-2. **Full-frame and auto-chunk.** `_pipeline_sources.resolve_resident_sources` applies it to each materialized mask table. Auto-chunk slices after that point, so sort, limit and dedupe see the whole table.
-3. **Sequential.** The sequential route loads each table whole through its loader; wrap the loader so each mask table is transformed once on load (`_psrc.resolve_sequential_loader`).
-4. **Out-of-core.** Ineligible for any job with a mask table that declares transforms: add a coded reason (`per_table_transforms_present`, the platform's existing string) to the engine's out-of-core eligibility in `_pipeline_routing`. With `execution_mode=auto` the job falls back to sequential or full-frame by the existing rules; an explicit `out_of_core` request fails before any read, with that reason.
-5. **Unified slice.** Admission keeps declining tables with transforms (unchanged). Widening it is a later Phase B/C item, since a filter or derive before the Rust lane is cheap but sort/dedupe/limit are whole-table.
-6. **Other entry points.** Any engine path that masks caller data outside `run_pipeline` (search for direct uses of the mask adapter on caller sources, for example preview helpers) either routes through the same function or is listed in the build report as not taking transforms, with a test.
-7. **Public surface.** Export `apply_table_transforms` from `decoy_engine` (and the compatibility contract's public list) so the platform preview (`v2_preview.py`, which slices sources for a sample and never calls `run_pipeline` on the transformed full table) uses the engine function instead of the private module.
-8. Fix the stale `_transforms.py` docstring to name the real call sites.
+| Route | Behavior for a mask table with transforms |
+|---|---|
+| Full-frame (incl. generate+mask, isolated runs, which call `run_pipeline`) | Applied once in `_pipeline_sources.resolve_resident_sources` |
+| Auto-chunk | Ineligible: `decide_chunk_route` does not chunk a job with any transform-bearing mask table; it runs full-frame. Whole-table sort, limit and dedupe cannot be chunk-local, and a resident preprocess followed by chunking would not bound memory anyway. |
+| Sequential | Applied once per table on load, by wrapping the loader in `_psrc.resolve_sequential_loader` |
+| Out-of-core, `auto` | Declined; falls back by existing rules. `route_reason` keeps its current value; a new telemetry field `out_of_core_declined` carries `per_table_transforms_present` so the cause is visible |
+| Out-of-core, explicit | A config-only preflight before `profile_source` raises `per_table_transforms_present`, so nothing is read |
+| Unified slice | Declines, unchanged (`_unified_slice_admission.py` ~307-309) |
 
-Profiling is unchanged: `profile_source` profiles the declared file sources before transforms, exactly as the platform path does today (the platform transforms caller tables after the engine has the config, and the engine still profiles the raw files). A config whose mask strategy targets a derived column behaves the same as today on the platform; that case is not widened here and gets a pinning test either way.
+## Memory admission
 
-### Platform pairing (A8p, separate plan, decoy-platform)
+Routing runs on the raw profile before transforms. Row counts stay conservative (filter, limit and dedupe only shrink; sort, drop and derive keep the count), but `derive` widens rows and the raw byte estimate (`_pipeline_routing_signals.py` ~236-312) does not see derived columns.
 
-Removing the platform's own application is required, not optional: after this engine change a platform that still transforms before calling `run_pipeline` would apply every op twice (a second derive fails on "column already present", a second drop_column fails on "not in table", a second limit or filter silently narrows again). A8p deletes `_apply_per_table_transforms` from the run and sequential paths, switches preview to the public engine function, and raises the platform's minimum engine version to the release that contains A8. A8 and A8p ship in the same Phase A paired release; A8 must not reach a platform environment without A8p.
+- The byte estimate adds, per `derive` op, the per-row bytes of the widest raw column in that table.
+- A transform-bearing job cannot be confirmed by the raw static-fit shortcut; it goes through the existing measured path.
+- `TableConfig.transforms` gets a maximum length of 32 ops (pre-GA hard change) so width growth is bounded.
 
-## Acceptance tests (written first)
+## Arrow/pandas conversion
 
-1. Engine-direct `run_pipeline` with each op type (filter, sort, limit, dedupe, derive, drop_column, and a chained sequence) on a mask table produces the same output as the platform's current pre-transform path (reference: apply `apply_transforms` to the source, then run `run_pipeline` on the transformed table with no transforms in config). Fails before the change.
-2. The same through the sequential route (FK job, `execution_mode=sequential` and `auto`), with transforms on both parent and child tables. Fails before the change.
-3. Auto-chunk (`auto_chunk=True`, table above the threshold, small chunk size): sort, limit and dedupe act on the whole table, not per chunk (a limit of N returns exactly N rows; a dedupe across a chunk boundary removes the duplicate).
-4. Out-of-core: a transforms-bearing FK job is not selected for out-of-core under `auto` (route_reason names the coded reason), and explicit `out_of_core` fails before any source read with `per_table_transforms_present`.
-5. Transforms are applied exactly once per table per run (spy on `apply_transforms`), on every route above.
-6. Generate-kind tables and tables with no transforms pass through as the same Arrow object (identity, not equality), so unified-slice admission and its identity guard are unaffected; the unified-slice suites pass unmodified.
-7. Invalid transforms (derive onto an existing column, drop_column of a missing column, sort on a missing column) raise the existing `TransformError` codes from `run_pipeline`, before any output table, quarantine, vault or manifest is written.
-8. `from decoy_engine import apply_table_transforms` works and is listed in `__all__` and the compatibility contract.
-9. A derived-column masking config behaves as today (pinning test of the current outcome, pass or coded failure).
+The platform today converts with bare `table.to_pandas()` and back with `pa.Table.from_pandas(preserve_index=False)`. For a nullable unsigned 64-bit FK column holding values above 2^53, that route turns the column into float64 and rounds the keys (Codex reproduced it with `2**63 + 1`), which breaks joinability.
 
-Tests that need the companion carry `@_NEEDS_COMPANION`.
+Decision: the engine helper converts with the engine's FK-safe path (`_fk_keys.to_pandas_fk_safe`, passing the table's FK columns from the relationship config) and keeps the platform's `preserve_index=False` on the way back. That is an intentional correction, not byte parity. It changes output only for nullable integer FK columns whose values pandas cannot hold exactly in float64. Every other column is byte-identical to the platform's current behavior. The correction is recorded in the CHANGELOG and flagged to Cam at merge.
+
+## Platform work (decoy-platform, Cam's go to merge)
+
+**Version skew.** The platform declares `decoy-engine>=0.5.0` with no lockfile, so an old platform can install the new engine and apply transforms twice. The four combinations:
+
+| Platform | Engine | Result | Prevented by |
+|---|---|---|---|
+| old | old | platform applies, correct | |
+| old | new | double application | A8p-0 upper bound |
+| new | old | never applied | A8p minimum version |
+| new | new | engine applies, correct | |
+
+- **A8p-0 (ships first, before A8 releases):** cap `decoy-engine<V`, where V is the engine release containing A8. No behavior change.
+- **A8p (ships with V):** raise the minimum to `>=V` and remove the cap, and change the call sites:
+  - Main run (`v2_runner.py` ~283-300): stop preprocessing; pass raw sources to `run_pipeline`.
+  - Sequential (`v2_sequential.py`), which calls `run_sequential` directly: keep calling a transform on load, now the public `apply_table_transforms`, in both the execution loader and the vault-reload loader, so vault rows stay aligned with filtered, sorted, deduped or limited output.
+  - Preview (`v2_preview.py`): transform the full source with `apply_table_transforms`, slice, then pass `run_pipeline` a config copy with that table's `transforms` cleared.
+  - Delete `_apply_per_table_transforms` and the platform's private import of `decoy_engine.execution._transforms`.
+- **Rollback:** roll back the platform to A8p-0 and the engine to the release before V together. Rolling back one side alone is blocked by the version bounds (install fails rather than running wrong).
+
+## Acceptance tests (written first; each behavioral test records its red-before output)
+
+Engine (A8):
+
+1. **Applied once, correct output.** For each op and a chained sequence, `run_pipeline` output equals an independent oracle: raw source, then `apply_transforms` via the platform's own conversion, then `run_pipeline` with transforms cleared. Compare full Arrow schema and values, not row counts. Routes: resident full-frame, generate+mask (mask table), sequential with transforms on parent and child, isolated execution.
+2. **Exactly once.** Spy on `apply_transforms`: one call per transform-bearing mask table on each route in test 1; zero calls on declined or rejected routes (test 4-6).
+3. **Auto-chunk ineligible.** With `auto_chunk=True` above the threshold, a transform-bearing job runs full-frame; `limit` N returns exactly N rows; a dedupe across what would have been a chunk boundary removes the duplicate.
+4. **Out-of-core.** Under `auto`, not selected, with `out_of_core_declined="per_table_transforms_present"`; explicit `out_of_core` raises before `profile_source` is called (poisoned reader and profiler prove no read).
+5. **Direct chunked entry points reject.** `run_mask_pipeline_chunked`, the native-or-oracle chunked dispatcher and the physical chunked driver each raise `per_table_transforms_present` for a transform-bearing table, and succeed unchanged without transforms.
+6. **Unified slice.** Still declines; no-transform and generate-kind tables pass through as the identical Arrow object, and the unified-slice suites pass unmodified.
+7. **Admission.** A table with several wide `derive` ops gets a higher byte estimate than its raw profile and is not confirmed by static fit; a 33-op transforms list fails validation.
+8. **Conversion.** Nullable int64 and uint64 FK columns (including `2**63 + 1` and nulls, and a composite key) keep exact values and types; non-FK columns match the bare platform conversion byte for byte; no pandas index leaks into the output schema.
+9. **Invalid transforms** (derive onto an existing column, drop of a missing column, sort on a missing column) raise the existing `TransformError` codes. Full-frame writes no output, quarantine, vault or manifest. Sequential commits and publishes nothing; a plain callable sink may already hold earlier tables (documented limitation of non-transactional sinks, `_sequential.py` ~229-241).
+10. **Public surface.** `from decoy_engine import apply_table_transforms` works and is in `__all__` and the compatibility contract; Plan-level API docstrings state the prepared-input contract.
+11. **Derived-column masking** keeps today's outcome (characterization only, not red-before).
+
+Platform (A8p): main run, sequential (including a vault-bearing job with filter and sort, checking vault alignment), pipeline preview, node preview and bounded-child preview each apply transforms exactly once and match the pre-change platform output except for the recorded FK conversion correction. A8p-0: the cap is present and the suite passes unchanged.
 
 ## Out of scope
 
-Generate-side transforms; transforms on the Rust lane or the compiled chunked dispatcher (Phase B/C); transform timing in `ExecutionResult` (the platform's `phase_timing` transform bucket moves to A8p to decide).
+Generate-side transforms; running transforms on the Rust lane or the compiled chunked dispatcher (a later Phase B/C item may admit row-local ops there); transform timing in `ExecutionResult`.
 
 ## Gates
 
-Codex plan-gate, Sonnet build, dennis, Codex final. Engine slice: merges under the standing Rust rule once CI is back, and only together with A8p (A8p's merge needs Cam's go).
+Codex plan-gate (re-gate of this revision), Sonnet build, dennis, Codex final, for A8 and for each platform branch. Merge order: A8p-0, then A8 plus the engine release, then A8p. A8 merges under the standing Rust rule only after A8p-0 is merged; A8p-0 and A8p need Cam's go.
