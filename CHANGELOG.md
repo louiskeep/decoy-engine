@@ -45,8 +45,11 @@ private module (A5a, engine program Phase A).
 
 The reader was hardened before becoming public, which changes behavior:
 - Errors about bad data carry no file content: a bad cast, a short record, an
-  undecodable line and a malformed layout dict raise with no chained exception,
-  from a frame that holds no file data, with the path escaped onto one line.
+  undecodable line and a malformed layout dict are raised without chaining the
+  reader's own internal exception (a caller that calls the reader while handling
+  another exception will still see that one as context, as Python always does),
+  the first three from a frame that holds no file data, with the path escaped
+  onto one line.
   Failures that are not about the data (a disk error mid-read, running out of
   memory) are out of scope; see `docs/security/error-reporting-and-data-exposure.md`,
   which also tells operators to keep local-variable capture off in error trackers.

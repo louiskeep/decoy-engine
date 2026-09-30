@@ -31,7 +31,7 @@ link to GitHub rather than into the rendered API reference.
 
 ## Security
 
-- [Error reporting and data exposure](security/error-reporting-and-data-exposure.md): what error messages promise about masked data, and why error trackers must not capture frame locals.
+- [Error reporting and data exposure](security/error-reporting-and-data-exposure.md): what error messages promise about the sensitive input data being masked, and why error trackers must not capture frame locals.
 - [Key derivation](security/key-derivation.md): the KeyProvider / `mask_secret_ref` model and HKDF-SHA256 derivation contract.
 - [SQL surfaces](security/sql-surfaces.md): parameter-binding posture across in-tree connectors.
 - [Token vault](security/token-vault.md): handling and threat model for the reversible token vault.

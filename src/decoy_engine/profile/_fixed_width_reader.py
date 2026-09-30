@@ -183,10 +183,12 @@ def read_fixed_width(
             sliced value fails its column's declared cast, or a line's
             bytes are not valid UTF-8 (reported with that line's number).
         OSError: `path` does not exist or cannot be opened (e.g. the
-            built-in `FileNotFoundError`, `PermissionError`, `IsADirectoryError`).
-            Passed through unwrapped -- these are ordinary filesystem
-            errors, not fixed-width-specific ones, and carry no file
-            content to leak.
+            built-in `FileNotFoundError`, `PermissionError`, `IsADirectoryError`),
+            or the read fails part-way. Passed through unwrapped. An open
+            failure happens before any content is read; a mid-read failure is
+            outside the data-error guarantee and its traceback frames may hold
+            records already parsed (see
+            docs/security/error-reporting-and-data-exposure.md).
     """
     if isinstance(max_records, bool) or not isinstance(max_records, (int, type(None))):
         raise TypeError(f"max_records must be an int or None, got {type(max_records).__name__}")
