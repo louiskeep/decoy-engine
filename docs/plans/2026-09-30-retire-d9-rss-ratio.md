@@ -6,12 +6,12 @@ Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md` (on de
 
 ## Why
 
-Cam dropped the D9 peak-memory ratio bar on 2026-09-30: speed matters more than a few extra GB, and nobody trades a ~4x slowdown for the memory. The rule that remains is absolute: a run's peak memory must fit the box it runs on, with headroom. The certification harnesses still enforce the ratio:
+Cam dropped the D9 peak-memory ratio bar on 2026-09-30: speed matters more than a few extra GB, and nobody trades a ~4x slowdown for the memory. The rule that remains is absolute: a run's peak memory must fit the box it runs on, with headroom. Before this slice (engine main `8dc559e5`), the certification harnesses enforced the ratio:
 
 - `scripts/bench-unified-slice/bench_compare.py`: `gates["rss"]` requires the Rust arm's peak to stay within `rss_budget_ratio(n_rows)` (1.10 below 1M rows, 1.25 at 1M and above) of the pandas arm's peak (~76-96, ~202-206).
 - `scripts/bench-generation-pool/bench_compare_gen.py`: `apply_rss_gate` with `_DEFAULT_MAX_RSS_RATIO = 1.25` and `_DEFAULT_MAX_RSS_DELTA_KB = 51_200` (~87-88, ~212).
 
-A Rust slice that is much faster but uses 30% more memory would fail certification today, which is the outcome Cam ruled out.
+Under those gates, a Rust slice that is much faster but uses 30% more memory failed certification, which is the outcome Cam ruled out.
 
 ## Design
 
