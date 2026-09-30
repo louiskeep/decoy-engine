@@ -34,19 +34,20 @@ a benchmark that silently fell back to the legacy oracle (a regression in
 admission, an unavailable native companion) must FAIL LOUD here, not report
 a misleadingly-fast "unified slice" number that never actually ran one.
 
-Per-strategy timing (Codex final-gate HIGH): the 4.4 shadow coordinator
-carries no per-node elapsed-time evidence (`OperatorCallEvidence`,
-`execution/physical/_shadow_operators.py`, has no timing field), unlike the
-legacy oracle's `TimingCollector` (`result.timings`, consumed by `bench_
-worker.py`'s own per-strategy breakdown) or the native route's `kernel_
-elapsed_s` (consumed by `bench_worker_native.py`). Splitting the combined
-run's wall time by strategy would be a fabricated number, not a real one, so
-`hash_ms` / `redact_ms` / `truncate_ms` / `passthrough_ms` are each measured
-by a SEPARATE isolated unified-slice run over just that strategy's own
-columns, at the same row count -- a real, directly-measured wall-clock
-number per strategy, at the cost of running the pipeline five times per rep
-instead of once. This is bench-script-only instrumentation; it does not
-touch the lane or the shared 4.4 coordinator.
+Per-strategy timing (Codex final-gate HIGH, superseded by A6): the unified
+lane now returns real per-node timing (`ExecutionResult.timings`, stamped by
+the 4.4 shadow coordinator's own `timed_strategy` scope, one `StrategyTimingRecord`
+per bound node -- the same `TimingCollector` the legacy oracle already used).
+This worker still measures `hash_ms` / `redact_ms` / `truncate_ms` /
+`passthrough_ms` via a SEPARATE isolated unified-slice run over just that
+strategy's own columns rather than reading `result.timings` off the combined
+run, because `timed_strategy` samples RSS per node (`psutil.Process.memory_
+info()`, twice per node) on top of the clock, and that sampling cost would
+perturb the wall-clock number this D9 harness measures externally
+(`bench_driver.py`'s own process-level timing). The isolated-run wall clock
+stays the real, unperturbed per-strategy measurement here; `result.timings`
+is the platform-facing per-job total, a different consumer with a different
+tolerance for in-band overhead.
 
 Sampled profiling reads Parquet, not CSV (Codex determination remediation):
 `build_config` declares its source as CSV, but `tr_phone`/`tr_card` are

@@ -399,3 +399,78 @@ def test_faker_non_string_registry_override_is_declined() -> None:
     with pytest.raises(ShadowDifference) as excinfo:
         coordinator._resolve_pool(binding=binding, pools_by_identity={}, pool_cache=PoolCache())
     assert excinfo.value.code == FAKER_POOL_NON_STRING_OUTPUT
+
+
+# ---------------------------------------------------------------------------
+# A6: per-node timing instrumentation (one `timed_strategy` scope per bound
+# node, using `node.strategy` and `",".join(node.columns)` directly).
+# ---------------------------------------------------------------------------
+
+
+def test_bound_node_run_under_a_collector_records_exactly_one_timing() -> None:
+    """A6 AT2/AT3: `node.strategy` + the comma-joined `node.columns` name the
+    record, matching the pandas route's own `timed_strategy(node.strategy,
+    ",".join(node.columns))` call (`_pandas_adapter.py`)."""
+    from decoy_engine.instrumentation.timing import TimingCollector, use_collector
+
+    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    snapshot = capture_shadow_snapshot(
+        {"t": pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})}
+    )
+    ctx = ShadowContext(mask_key=b"\x03" * 32)
+    collector = TimingCollector()
+    with use_collector(collector):
+        result = ShadowCoordinator(ctx=ctx).run(plan, snapshot)
+
+    assert result.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
+    assert len(collector.records) == 1
+    record = collector.records[0]
+    assert record.strategy_type == "passthrough"
+    assert record.column == "c"
+    assert record.elapsed_ms >= 0
+    assert record.peak_memory_delta_kb >= 0
+
+
+def test_multi_batch_run_produces_one_timing_record_not_one_per_batch() -> None:
+    """A6 AT2: one `timed_strategy` scope encloses the ENTIRE batch loop per
+    node, so forcing several batches with a small `batch_size_rows` still
+    yields exactly one record -- batches must never multiply records."""
+    from decoy_engine.instrumentation.timing import TimingCollector, use_collector
+
+    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    source = pa.table({"c": pa.array([f"v{i}" for i in range(7)], type=pa.string())})
+    snapshot = capture_shadow_snapshot({"t": source})
+    # 7 rows over batch_size_rows=2 forces 4 batches (2, 2, 2, 1 rows).
+    ctx = ShadowContext(mask_key=b"\x03" * 32, batch_size_rows=2)
+    collector = TimingCollector()
+    with use_collector(collector):
+        result = ShadowCoordinator(ctx=ctx).run(plan, snapshot)
+
+    assert result.outputs["t"].column("c").to_pylist() == [f"v{i}" for i in range(7)]
+    assert len(collector.records) == 1
+
+
+def test_no_active_collector_makes_no_clock_or_rss_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A6 AT6: `timed_strategy`'s no-collector path must stay a true no-op
+    once the coordinator wires it into the per-node loop -- no clock read, no
+    RSS sample, for every existing caller that never binds a collector (the
+    shadow parity suites, the chunked shadow driver)."""
+    import time
+
+    import decoy_engine.instrumentation.timing as timing_module
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("perf_counter/_rss_kb must not run with no active collector")
+
+    monkeypatch.setattr(timing_module, "_rss_kb", _boom)
+    monkeypatch.setattr(time, "perf_counter", _boom)
+
+    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    snapshot = capture_shadow_snapshot(
+        {"t": pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})}
+    )
+    ctx = ShadowContext(mask_key=b"\x03" * 32)
+    result = ShadowCoordinator(ctx=ctx).run(plan, snapshot)
+    assert result.outputs["t"].column("c").to_pylist() == ["a", "b", "c"]
