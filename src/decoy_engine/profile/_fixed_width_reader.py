@@ -208,6 +208,8 @@ def read_fixed_width(
                 # break; the safe wrapper raises below, outside this
                 # handler, once the `with` block (and this handler) has
                 # closed.
+                # The text layer decodes in ~8 KB chunks, so the bad bytes
+                # sit somewhere at or after this line, not necessarily on it.
                 decode_error_line = line_no + 1
                 break
             if raw_line == "":
@@ -233,7 +235,8 @@ def read_fixed_width(
 
     if decode_error_line is not None:
         raise FixedWidthParseError(
-            f"{path}: line {decode_error_line}: file is not valid UTF-8 text"
+            f"{path}: file is not valid UTF-8 text (undecodable bytes at or "
+            f"after line {decode_error_line})"
         )
 
     column_names = [column.name for column in spec.columns]

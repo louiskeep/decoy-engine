@@ -432,12 +432,12 @@ class FixedWidthParseError(DecoyError):
     `RowErrorsFailedError`), the message never embeds the offending
     cell value -- only the file path, 1-based line number, and column
     name -- since the file being parsed may itself carry the PII this
-    is a masking product for. The bad-cast case raises with `from None`
-    (see `profile._fixed_width_reader._cast_value`), and the exception's
-    `__context__` is explicitly cleared, so the caught `ValueError`
-    or `TypeError` -- whose own text embeds the raw value -- is never
-    surfaced via `__cause__`, `__context__`, or exception chaining, even
-    if someone later inspects the raised exception's attributes.
+    is a masking product for. Every raise in
+    `profile._fixed_width_reader` happens after its `except` block has
+    exited (the handler records only safe position data), so the caught
+    `ValueError`, `TypeError` or `UnicodeDecodeError` -- whose own text or
+    `.object` embeds the raw value -- is never attached as `__cause__` or
+    `__context__`, even if someone later inspects the raised exception.
     """
 
 
