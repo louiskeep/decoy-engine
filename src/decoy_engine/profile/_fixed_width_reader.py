@@ -72,7 +72,13 @@ def _strip_pad(raw: str, column: FixedWidthColumn) -> str:
 
 def _cast_value(
     stripped: str, raw: str, column: FixedWidthColumn, *, path: str, line_no: int
-) -> Any:
+) -> tuple[Any, str | None]:
+    """Return `(value, None)`, or `(None, message)` when the cast fails.
+
+    Never raises: the caller raises from a frame that holds no file data (see
+    `read_fixed_width`), and the message carries only position, column name
+    and value length, never the value.
+    """
     caster = _CASTERS[column.type]
     candidate = stripped
     if stripped == "" and column.type in ("int", "float"):
@@ -82,34 +88,25 @@ def _cast_value(
         # no value here". Retry the cast on the RAW (unstripped) slice:
         # `int("0000") == 0` succeeds for genuine zero-padded data, while
         # an honestly-blank numeric field (raw is pure pad/whitespace,
-        # e.g. "   ") still fails `int("   ")`/`float("   ")` and raises
-        # below -- whitespace is never silently coerced to 0.
+        # e.g. "   ") still fails `int("   ")`/`float("   ")` -- whitespace
+        # is never silently coerced to 0.
         candidate = raw
-    cast_failure: str | None = None
     try:
-        return caster(candidate)
+        return caster(candidate), None
     except (ValueError, TypeError) as exc:
-        # The caught ValueError/TypeError's own text embeds the raw
-        # offending value (e.g. "invalid literal for int() with base 10:
-        # 'SECRET-1234'"), so only its type name is safe to disclose.
-        # Build the message here, but do NOT raise here: Python
-        # auto-attaches this exception as `__context__` to anything
-        # raised while this handler is active, REGARDLESS of `from None`
-        # or an explicit `some_exc.__context__ = None` -- the `raise`
-        # statement (re)populates `__context__` at the moment it runs,
-        # silently overwriting a prior assignment. Recording the message
-        # and raising once this `except` block has exited (below) means
-        # there is no exception being handled at raise time, so Python
-        # has nothing to attach.
-        cast_failure = (
-            f"{path}: line {line_no}: column {column.name!r} "
+        # The caught exception's text embeds the raw value, so only its type
+        # name is disclosed.
+        return None, (
+            f"{_render_path(path)}: line {line_no}: column {column.name!r} "
             f"(value length {len(candidate)}) cannot cast to type {column.type!r} "
             f"(caster raised {type(exc).__name__})"
         )
-    # Outside the `except` block: no exception is being handled here, so
-    # this `raise` gets `__cause__ is None` and `__context__ is None` for
-    # free, with no `from None` needed.
-    raise FixedWidthParseError(cast_failure)
+
+
+def _render_path(path: str) -> str:
+    """`path` with control and unpaired-surrogate characters escaped, so an
+    error message stays one line and always encodes as UTF-8."""
+    return "".join(ch if ch.isprintable() else ascii(ch)[1:-1] for ch in path)
 
 
 def _resolve_layout(layout: FixedWidthLayout | dict[str, Any], *, path: str) -> FixedWidthLayout:
@@ -123,15 +120,14 @@ def _resolve_layout(layout: FixedWidthLayout | dict[str, Any], *, path: str) -> 
     """
     if isinstance(layout, FixedWidthLayout):
         return layout
-    layout_error: PydanticValidationError | None = None
+    error_count = 0
     try:
         return FixedWidthLayout.model_validate(layout)
     except PydanticValidationError as exc:
-        layout_error = exc
+        error_count = exc.error_count()
     raise ConfigError(
-        f"{path}: fixed_width layout failed schema validation "
-        f"({layout_error.error_count()} error(s)); see FixedWidthLayout "
-        "for the expected shape."
+        f"{_render_path(path)}: fixed_width layout failed schema validation "
+        f"({error_count} error(s)); see FixedWidthLayout for the expected shape."
     )
 
 
@@ -203,11 +199,34 @@ def read_fixed_width(
     if "\x00" in path:
         raise ValueError("path must not contain a NUL character")
     spec = _resolve_layout(layout, path=path)
-    required_width = spec.record_width
 
+    records, failure = _parse_records(path, spec, max_records)
+    if failure is not None:
+        # Raised here, after `_parse_records` has returned: this frame holds
+        # no line, value or parsed record, so nothing reachable from the
+        # exception (chain, traceback frames, captured locals) carries file
+        # content.
+        raise FixedWidthParseError(failure)
+    if records is None:  # pragma: no cover - _parse_records returns one or the other
+        raise RuntimeError("fixed-width parser returned neither records nor a failure")
+
+    column_names = [column.name for column in spec.columns]
+    return pd.DataFrame.from_records(records, columns=column_names)
+
+
+__all__ = ["read_fixed_width"]
+
+
+def _parse_records(
+    path: str, spec: FixedWidthLayout, max_records: int | None
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Parse up to `max_records` records. Returns `(records, None)`, or
+    `(None, message)` on the first bad line; never raises for bad data, so
+    no exception is ever created in a frame that holds file content."""
+    required_width = spec.record_width
     records: list[dict[str, Any]] = []
     line_no = 0
-    decode_error_line: int | None = None
+    rendered = _render_path(path)
     # Binary, one physical line per read: a text-mode reader decodes ahead in
     # ~8 KB chunks, so a capped read could fail on bytes past the cap and a
     # decode error could not name its real line.
@@ -220,17 +239,13 @@ def read_fixed_width(
             try:
                 raw_line = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                # `exc.object` holds the raw bytes, which may be the PII this
-                # reader exists to mask: record only the line and raise after
-                # the handler has exited, so nothing is chained.
-                decode_error_line = line_no
-                break
+                return None, f"{rendered}: line {line_no}: not valid UTF-8 text"
             line = raw_line.rstrip("\r\n")
             if line == "":
                 continue
             if len(line) < required_width:
-                raise FixedWidthParseError(
-                    f"{path}: line {line_no}: record is {len(line)} chars, "
+                return None, (
+                    f"{rendered}: line {line_no}: record is {len(line)} chars, "
                     f"shorter than the layout's required {required_width} chars "
                     "(row-width mismatch)"
                 )
@@ -238,16 +253,11 @@ def read_fixed_width(
             for column in spec.columns:
                 raw_value = line[column.start : column.start + column.width]
                 stripped = _strip_pad(raw_value, column)
-                row[column.name] = _cast_value(
+                value, cast_failure = _cast_value(
                     stripped, raw_value, column, path=path, line_no=line_no
                 )
+                if cast_failure is not None:
+                    return None, cast_failure
+                row[column.name] = value
             records.append(row)
-
-    if decode_error_line is not None:
-        raise FixedWidthParseError(f"{path}: line {decode_error_line}: not valid UTF-8 text")
-
-    column_names = [column.name for column in spec.columns]
-    return pd.DataFrame.from_records(records, columns=column_names)
-
-
-__all__ = ["read_fixed_width"]
+    return records, None
