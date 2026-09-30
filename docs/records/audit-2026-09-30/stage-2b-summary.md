@@ -61,7 +61,7 @@ monkeypatched to raise `AssertionError` if constructed, guard held for every
 sub-cell (`no_cloud_call_proven: true`). File:line: `api/jobs/binding_resolve.py:128-151`
 (emission), `config/_sources.py:71-125` + `config/_targets.py:38-92`
 (`extra="forbid"` models), `api/jobs/v2_config.py:29-46` (the choke-point
-`validate_v2_config`), `api/jobs/v2_submission.py:96` (called first, before
+`validate_v2_config`), `api/jobs/v2_submission.py:128` (called first, before
 `resolve_v2_source_paths`). Agrees with the Codex independent audit's check 2
 answer exactly.
 

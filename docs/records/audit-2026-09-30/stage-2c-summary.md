@@ -218,12 +218,16 @@ MEDIAN wall = 429.9s <= 600s target ... peak RSS 447MB ... Hash kernel: 1280s ba
 backing that median are committed at
 `decoy-platform/docs/product/release-1-validation-runs/2026-09-10-tb6-50m/engine-bench-feat-native-throughput-consolidation-20260910T140112Z-tb6-50m/remote-results/native-threadsweep.log`
 (read directly this pass): the 8-thread, 100M-row record shows `wall_median_s: 429.85`,
-`peak_rss_max_mb: 446.9`, and per-rep fields `hash_ms: ~95-104k` (~95-104s), `redact_ms:
-~142-146k` (~142-146s), `truncate_ms: ~174-178k` (~174-178s), `execution_mode:
-"native_streaming"`, `compiled_kernel_executed: true`. `RECENTLY-SHIPPED.md`'s prose and the
-platform's `docs/product/engine-efficiency-outcomes-2026-09-18.md` ("100M rows mask in ~430
-seconds flat ... 13.5x faster ... peak at ~450 MB RSS") both consolidate this same run; no
-separate, later benchmark reproduces these exact numbers.
+`peak_rss_max_mb: 446.9`, and per-rep fields `hash_ms` 87.4 to 103.9s across the 3 reps,
+`redact_ms: ~128-146s`, `truncate_ms: ~159-178s`, `execution_mode: "native_streaming"`,
+`compiled_kernel_executed: true`. `RECENTLY-SHIPPED.md`'s prose and the platform's
+`docs/product/engine-efficiency-outcomes-2026-09-18.md` ("100M rows mask in ~430 seconds flat
+... 13.5x faster ... peak at ~450 MB RSS") both consolidate this same run; no separate, later
+benchmark reproduces these exact numbers. This raw log
+(`native-threadsweep.log`) is gitignored (`decoy-platform/.gitignore:16`, a blanket `*.log`
+rule) and is not itself committed; only the summarized gate-outcome note in the plan doc is
+tracked, so a reader without local access to that log file can verify the numbers above only
+against this record, not by re-reading the source file from a fresh clone.
 
 **Which route it measured: neither the unified lane nor any currently-reachable production
 path.** The raw log's `execution_mode: "native_streaming"` and the benchmark worker script
@@ -247,16 +251,21 @@ by a real customer job, from the day it was measured (2026-09-10) through today
 first place.
 
 **The "13.5x" is a hash-kernel figure, not a whole-job figure.** The gate-outcome note is
-explicit: "Hash kernel: 1280s baseline -> ... 94.8s at 8t (~13.5x total)" is the isolated
-hash-operator speedup (single-threaded Python reference vs. the 8-thread Rayon-parallel
-compiled kernel), measured on the same W2 workload's hash columns alone. `RECENTLY-SHIPPED.md`
-and the outcomes report both place "13.5x" in the same sentence as "100M rows masked in ...
-429.9s", which is accurate as written (both numbers are about the same benchmark) but reads
-easily as "the whole job got 13.5x faster," which it did not: at 8 threads, the same raw
-record shows hash at ~95-104s but redact+truncate together at ~317-324s -- more than 3x the
-hash time -- because both operators still ran the OLD per-row Python loop in this benchmark.
-The gate-outcome note's own "BOTTLENECK SHIFT" line says so directly: "redact (~142s) +
-truncate (~173s) now dominate and run single-threaded."
+explicit: "Hash kernel: 1280s baseline -> 299.7s single-thread (Tasks 1.2+1.5 alone, 4.3x) ->
+94.8s at 8t (~13.5x total)" is the isolated hash-operator speedup, and both ends are native:
+the 1280s baseline is the Phase 0 native single-thread hash time (`docs/plans/native-throughput-phase0-baseline.md`,
+~234k rows/s/col over 3 hash columns at 100M rows, already compiled, already beating the
+pandas oracle 2.9x, just single-threaded and not yet Rayon-parallel), not a per-row Python
+reference; the 94.8s figure is the SAME compiled kernel run with 8 Rayon threads. So 13.5x is
+a single-thread-native-vs-8-thread-native comparison, not native-vs-Python. It is measured on
+the same W2 workload's hash columns alone. `RECENTLY-SHIPPED.md` and the outcomes report both
+place "13.5x" in the same sentence as "100M rows masked in ... 429.9s", which is accurate as
+written (both numbers are about the same benchmark) but reads easily as "the whole job got
+13.5x faster," which it did not: at 8 threads, the same raw record shows hash at 87.4 to
+103.9s across the 3 reps but redact+truncate together at ~317-324s -- more than 3x the hash
+time -- because both operators still ran the OLD per-row Python loop in this benchmark. The
+gate-outcome note's own "BOTTLENECK SHIFT" line says so directly: "redact (~142s) + truncate
+(~173s) now dominate and run single-threaded."
 
 **The wall-time number is also now stale, separately from the routing question.** The
 vectorized Arrow/Python redact/truncate fast path landed the next day (2026-09-11, `d4885f7a`).
