@@ -2,7 +2,7 @@
 
 Status: plan (revision 2: folds the Codex plan-gate GO-with-revisions)
 
-Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase A (record gap P6). Evidence: `docs/records/2026-09-30-rust-coverage-evidence-audit.md`, runs R029, R030, R082. Branch `fix/unified-lane-timings`, off engine main `8dc559e5`.
+Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md` (on engine branch `docs/reality-2026-09-30`, which merges before this one), Phase A (record gap P6). Evidence: `docs/records/2026-09-30-rust-coverage-evidence-audit.md` (same branch), runs R029, R030, R082. Branch `fix/unified-lane-timings`, off engine main `8dc559e5`.
 
 ## Problem
 

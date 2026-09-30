@@ -136,7 +136,8 @@ def _time_strategy(
     unified-slice lane (and raises loudly, matching the D7 vacuity guard, if
     that isolated run does not itself activate the slice); with `flag_on`
     False it runs the identical shape through the legacy route, so the two arms
-    are compared over the same nine-column workload rather than different ones."""
+    are compared over the same strategy-specific column subset at the same row
+    count rather than different ones."""
     sample_path = _write_sample_parquet(src, columns, strategy)
     try:
         cfg = build_config(sample_path)
