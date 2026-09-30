@@ -1,12 +1,12 @@
 # Rust engine program
 
-Status: plan (revision 2: folds the Codex plan-gate NO-GO of revision 1; for Cam's review)
+Status: plan (revision 3: folds the Codex plan-gate NO-GO of revision 1 and GO-with-revisions of revision 2; for Cam's review)
 
 Date: 2026-09-30. Input: `docs/records/2026-09-30-rust-coverage-evidence-audit.md` (the evidence record; every "today" statement below cites it) and `docs/records/audit-2026-09-30/codex-independent-audit.md`. Roadmap: decoy-platform `docs/ROADMAP.md`, TOP PRIORITY and Order of work step 2.
 
 ## Goal and end state
 
-A fast mask and generate engine, with the Rust companion doing the per-value work on every route and at every size up to 100M+ rows. Pandas remains the fallback for CLI users without the companion and the byte-parity oracle for tests; it is not a production route for jobs the companion can run.
+A fast mask and generate engine at every size up to 100M+ rows, with **no pandas on admitted production routes**: masking runs on Rust companion kernels or on named Arrow kernels (redact, truncate, passthrough), and declared Faker-provider construction stays Python. Pandas remains the fallback for CLI users without the companion and the parity oracle for tests.
 
 | Route | Data layer | Math today | Math at end state |
 |---|---|---|---|
@@ -21,15 +21,17 @@ A fast mask and generate engine, with the Rust companion doing the per-value wor
 
 **Evidence.** Every positive fixture asserts, per column: `planned_backend`, `executed_backend`, call count, elapsed time, and zero unintended oracle fallbacks. Backend values distinguish `rust_companion`, `rust_pool_select`, `arrow_python` and `pandas_oracle`. CI fails if a column admitted to a Rust backend records zero compiled calls. Negative fixtures assert exactly one whole-table oracle route and its typed reason.
 
-**Parity** against the pandas oracle covers values, Arrow schema and metadata, row and column order, warnings, errors, quality evidence, vault side effects, empty / all-null / ragged chunks, every supported dtype, several chunk sizes, and thread-count invariance. No fallback may happen after output is published; a runtime failure aborts the transactional sink.
+**Parity.** Deterministic slices require byte parity with the pandas oracle and thread-count invariance, covering values, Arrow schema and metadata, row and column order, warnings, errors, quality evidence, vault side effects, empty / all-null / ragged chunks, every supported dtype and several chunk sizes. Non-deterministic slices (C1b, C5b) cannot match an unseeded oracle byte for byte (`_strategies/_categorical.py:214`, `tests/parity/SEMANTIC_DIFFERENCES.md:42`); they require the same schema, null, order, error, evidence and side-effect invariants, plus a seeded test hook and a distributional test with its sample size, metric and tolerance declared before the build. No fallback may happen after output is published; a runtime failure aborts the transactional sink.
 
 **Performance and memory.** Benchmarks run the candidate alone in an isolated process, on a frozen workload and thread budget, with warmup and repeated trials reported as p50 and p95. Each slice declares its absolute memory ceiling, with host headroom, before it is measured. The D9 ratio bar is dropped.
 
-**Operations.** Platform activation requires backend, fallback reason, per-column timing and thread budget to cross the engine-to-platform boundary and appear in the job-detail and evidence APIs, under contract tests. Each activation has a bounded rollout and a disable path.
+**Operations.** Platform activation requires backend, fallback reason, per-column timing and thread budget to cross the engine-to-platform boundary and appear in the job-detail and evidence APIs, under contract tests. Every activation and release declares: owner, exact artifact, exposure bound, health signals, observation window, numeric abort criteria, the disable / rollback command, and a post-disable verification.
+
+**Release chain.** Every platform activation, in any phase, follows: engine and companion slice, exact artifacts, paired release, platform dependency pin, contract tests, bounded rollout.
 
 **Docs.** Every slice updates the roadmap, the shipped log, the compatibility / support matrix and the affected public docs.
 
-**Gates.** Opus plan, Codex plan-gate, Sonnet build, dennis, Codex final. A Rust slice merges under Cam's standing rule (dennis GO, Codex final GO, CI green, byte-identical, faster, within its declared memory ceiling); anything short of that stops for Cam. Platform and CLI slices merge only with Cam's go. One writer per worktree; one heavy test process at a time on the devbox.
+**Gates.** Opus plan, Codex plan-gate, Sonnet build, dennis, Codex final. A Rust slice merges under Cam's standing rule (dennis GO, Codex final GO, CI green, passes the applicable parity contract, faster, within its declared memory ceiling); anything short of that stops for Cam. Platform and CLI slices merge only with Cam's go. One writer per worktree; one heavy test process at a time on the devbox.
 
 ## Phase A: prerequisites (correctness and security)
 
@@ -89,6 +91,8 @@ D1 and D2 engine work does not depend on A3; only platform sequential activation
 | Slice | Content | Size |
 |---|---|---|
 | D1 | Rust kernels for out-of-core FK payload masking; DuckDB keeps scan, join, reorder. Starts with hash, categorical, bucket_perturb. | L, ~1,000 to 2,000 LOC |
+| D1b | Rust kernels for every remaining out-of-core-admitted operator. | M |
+| D5 | Platform out-of-core activation of the Rust FK kernels: admission, exact artifact pin, contract tests, rollout. | S-M |
 | D2a | Sequential FK executor contract, with hash on Rust. | L |
 | D2b | Sequential FK: activation across FK shapes (diamond, self-FK, out-of-core-incompatible strategies). | M-L |
 | D2c | Sequential FK: remaining operator families; platform sequential activation (after A3). | L |
@@ -102,7 +106,7 @@ D1 and D2 engine work does not depend on A3; only platform sequential activation
 
 A GCP run at 1M, 10M and 100M rows through the platform worker (real claim, streaming plan), asserting per-column Rust evidence, byte parity at 1M, p50/p95 wall and the declared absolute peak. Uses the existing 50-run GCP budget; Slack before running.
 - Single-table: depends on B1 to B7 and the C slices for the operators in the workload.
-- FK tree: depends on D1, D4b, platform admission and the exact engine artifact.
+- FK tree: depends on D1, D4a then D4b then D4c, D5, and the exact engine artifact. D3a / D3b only if the milestone workload includes validators or the vault.
 
 ## Phase F: generation and mixed jobs
 
@@ -115,17 +119,17 @@ A GCP run at 1M, 10M and 100M rows through the platform worker (real claim, stre
 
 Then prodsim (roadmap Order of work step 4). Until the end state is reached, prodsim treats an unexpected fallback within the currently admitted matrix as a defect; expected declines stay tracked as coverage gaps.
 
-## Phase G: breadth
+## Out of this program: breadth backlog
 
-Fixed-width output (R13); streaming subset materialization (R11, L-XL); enforced post-validation on streaming, sequential and out-of-core routes (R8, L-XL); the adaptive-scheduler entry point on an integration host (scheduler S13 VERIFY).
+Not part of this program's end state; each becomes its own planned and sized item on the roadmap later: fixed-width output (R13); streaming subset materialization (R11, L-XL); enforced post-validation on streaming, sequential and out-of-core routes (R8, L-XL); the adaptive-scheduler entry point on an integration host (scheduler S13 VERIFY).
 
 ## Order
 
 1. Phase A: A1, then A2; A3, A4, A5, A6, A7 in parallel worktrees (one writer each). A8 once Cam decides.
-2. B1, then B2 and B7; merge and identify the exact engine and companion artifact; B5; B3 against that artifact; a paired engine and companion release; B4 (CLI dependency and release, clean-install smoke). B6a, B6b after B2; B6c after A4, B3, B5.
+2. B1, then B2 and B7; merge and identify the exact engine and companion artifact; B5; B3 against that artifact; a paired engine and companion release; B4 (CLI dependency and release, clean-install smoke). B6a after B2, then B6b; B6c after A4, B3, B5.
 3. C slices start as soon as B1's contract is frozen, in parallel; each C9 platform step after B3, B5 and its C slice.
-4. D1, D4a, D4b in parallel with C; D2 after D1's operator work; E after the dependencies listed there.
-5. F after E; G after F.
+4. D1 then D1b, and D4a then D4b then D4c, in parallel with C; D2 after D1's operator work; D5 after D1 and D4b; E after the dependencies listed there.
+5. F after E: F1 then F2; F3 alongside; F4 after F1, F2, F3 and their released artifacts. The breadth backlog after F.
 
 Rough scale: Phase A about a week; Phase B two to three weeks; Phase C three to five weeks (parallel); Phase D several weeks, with D2 and D4b the largest; F two to three weeks. Estimates from the record's sizes, not commitments.
 
