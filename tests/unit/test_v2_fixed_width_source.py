@@ -13,6 +13,7 @@ embeds the offending cell value (source files may carry PII; see
 
 from __future__ import annotations
 
+import re
 import traceback
 from pathlib import Path
 from typing import Any
@@ -568,7 +569,7 @@ class TestFixedWidthByteVsCharacterCharacterization:
             }
         )
         data = tmp_path / "multibyte.txt"
-        # "e" is one Python character but two UTF-8 bytes (0xC3 0xA9); a
+        # "é" is one Python character but two UTF-8 bytes (0xC3 0xA9); a
         # true byte-offset reader would not draw the column boundary
         # after that single character the way this character-index
         # reader does.
@@ -578,3 +579,20 @@ class TestFixedWidthByteVsCharacterCharacterization:
 
         assert df["a"].tolist() == ["é"]
         assert df["b"].tolist() == ["xyz"]
+
+
+def test_read_fixed_width_decode_error_names_a_lower_bound_line(tmp_path) -> None:
+    """A bad byte past the decoder's first chunk is reported as "at or after"
+    an earlier line, never as the exact line, since text-mode decoding runs in
+    chunks. Exact per-line reporting belongs to the byte-offset reader."""
+    good = b"abc\n" * 5000
+    path = tmp_path / "bad.dat"
+    path.write_bytes(good + b"a\xffc\n")
+    layout = {"columns": [{"name": "v", "start": 0, "width": 3}]}
+    with pytest.raises(FixedWidthParseError) as info:
+        read_fixed_width(path, layout)
+    msg = str(info.value)
+    assert "not valid UTF-8" in msg
+    match = re.search(r"at or after line (\d+)", msg)
+    assert match is not None
+    assert int(match.group(1)) <= 5001
