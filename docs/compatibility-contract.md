@@ -177,6 +177,10 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and
   `decoy_engine/sdk.py`, with their signatures and output-affecting defaults.
+  As of 2026-09-30 this includes `read_fixed_width` (A5a): the `decoy` CLI
+  reads a `format: fixed_width` `FileSource` through this name instead of
+  importing the private `decoy_engine.profile._fixed_width_reader` module,
+  which the additive-only rule in §4.1 does not cover.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

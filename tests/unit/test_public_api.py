@@ -223,6 +223,12 @@ def test_all_lists_every_public_name():
         # (ADR-0001) through a stable name.
         "NativeCompanionStatus",
         "native_companion_status",
+        # A5a (2026-09-30): the fixed-width source reader, re-exported so
+        # the CLI can read a `format: fixed_width` FileSource without
+        # importing the private `profile._fixed_width_reader` module (the
+        # compatibility contract says non-top-level symbols may change
+        # without a version bump).
+        "read_fixed_width",
     }
     assert set(decoy_engine.__all__) == expected
 
