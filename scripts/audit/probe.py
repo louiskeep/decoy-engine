@@ -482,6 +482,16 @@ def run_cell(spec: dict) -> dict:
         faker_cols, faker_src = _strategy_faker_pooled(rows)
         columns = columns + faker_cols
         src_columns = {**src_columns, **faker_src}
+    elif kind == "mix_fpe_textmask":
+        # Stage 2b check A4: one FPE column and one text_mask column added to
+        # an otherwise all-native mix, to witness which gate declines the
+        # whole table (mirrors R014's faker fallout cell, same B028 operator
+        # allowlist decline, different non-native strategies).
+        columns, src_columns = _mix_columns_and_source(rows)
+        fpe_cols, fpe_src = _strategy_fpe(rows)
+        tm_cols, tm_src = _strategy_text_mask(rows)
+        columns = columns + fpe_cols + tm_cols
+        src_columns = {**src_columns, **fpe_src, **tm_src}
     elif kind == "mix_when":
         columns, src_columns = _mix_columns_and_source(rows)
     elif kind == "hash_size":

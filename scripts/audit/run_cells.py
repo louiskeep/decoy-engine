@@ -228,6 +228,15 @@ CELLS = [
         ["B007"],
         rows=10_000,
     ),
+    # -- stage 2b check A4: non-native fallout, FPE + text_mask variant --
+    _cell(
+        "R033_mix_native_plus_fpe_textmask_10k",
+        "mix_fpe_textmask",
+        "all-native mix plus one FPE column and one text_mask column, 10k rows, "
+        "Parquet (non-native fallout check, check A4)",
+        ["B028"],
+        rows=10_000,
+    ),
 ]
 
 
