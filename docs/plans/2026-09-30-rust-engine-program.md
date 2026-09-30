@@ -45,7 +45,10 @@ A fast mask and generate engine at every size up to 100M+ rows, with **no pandas
 | A5b | **CLI reads sources by declared format** (P5): one shared reader for run, demo and the Python API, a format-dispatching chunked iterator (fixed-width rejected under `--chunked`), and the CLI native gate widened to CSV and fixed-width (it hard-codes Parquet, while engine #180 admits all three). | S-M | decoy-cli; after the A5a release. |
 | A6 | **Rust lane timings** (P6): the unified slice returns real per-column `timings` and `boundary_conversion_ms`; removes the engine #180 strict xfail. | S | |
 | A7 | **Retire the D9 ratio check** (R14); keep an absolute-peak check. | S | Before B3. |
-| A8 | **Transforms ownership** (P7): transforms live in the engine `run_pipeline`, or are explicitly platform-only; engine, CLI and platform agree. | M | Needs Cam's decision. |
+| A8 | **Transforms ownership** (P7): transforms move into the engine `run_pipeline` (Cam decision 2); engine, CLI and platform agree. Plan `docs/plans/2026-09-30-engine-owned-transforms.md`. | M | Ships with A8p-0 (platform engine-version cap, merges first) and A8p (platform call sites). |
+| A9 | **Platform uses the public fixed-width reader**: switch the platform's three imports of `decoy_engine.profile._fixed_width_reader` (`api/fixed_width_layouts/router.py`, `api/jobs/preview_sample.py`, `api/jobs/v2_cloud_staging.py`) to `decoy_engine.read_fixed_width`. | S | Platform; after the A5a release. |
+| A10 | **Fixed-width byte offsets**: the reader slices by character while `FixedWidthLayout` defines byte ranges, so a multibyte character shifts later columns. Switch to byte slicing (decode per field, reject a split character), per Cam decision 8. | S-M | Engine; before GA. Replaces the characterization test A5a added. |
+| A11 | **Rename the masking-strategy package** `decoy_engine/transforms/` to `decoy_engine/strategies/`, so "transforms" means only table reshaping and code uses the config's word `strategy`. Pre-GA hard rename across engine, platform and CLI; compatibility contract updated. | M (mechanical) | Right after Phase A merges, before Phase B starts, so no open worktree conflicts. |
 
 ## Phase B: the chunked dispatcher in production (record R1)
 
@@ -126,7 +129,7 @@ Not part of this program's end state; each becomes its own planned and sized ite
 
 ## Order
 
-1. Phase A: A1, then A2; A3, A4, A5, A6, A7 in parallel worktrees (one writer each). A8 once Cam decides.
+1. Phase A: A1, then A2; A3, A4, A5, A6, A7 in parallel worktrees (one writer each). A8 with A8p-0 first and A8p after the release; A9 after the A5a release; A10 any time before GA. A11 once every Phase A branch has merged.
 2. B1, then B2 and B7; merge and identify the exact engine and companion artifact; B5; B3 against that artifact; a paired engine and companion release; B4 (CLI dependency and release, clean-install smoke). B6a after B2, then B6b; B6c after A4, B3, B5.
 3. C slices start as soon as B1's contract is frozen, in parallel; each C9 platform step after B3, B5 and its C slice.
 4. D1 then D1b, and D4a then D4b then D4c, in parallel with C; D2 after D1's operator work; D5 after D1 and D4b; E after the dependencies listed there.
@@ -142,3 +145,5 @@ Rough scale: Phase A about a week; Phase B two to three weeks; Phase C three to 
 4. Phase E runs under the existing 50-run GCP budget, with a Slack message before each run.
 5. The engine and native companion release together at each phase boundary, and the companion wheels are published so CLI users get the Rust path. Each publish is announced on Slack first.
 6. A2b (added): the adaptive-scheduler claim path (`scheduler_claim_loop.claim_one_flag_on`) gets the same legacy cloud-job cancellation as the standard claim path.
+7. A1/A2 claim loop: after two gate failures in the same code, the plan is remediated first (a re-select loop that excludes finished jobs, as the adaptive claimer does), gated by dennis and Codex, then rebuilt.
+8. Masking-package rename (A11) goes on the roadmap for right after Phase A; A8's transform round-trip keeps every integer column's exact type (the output change is recorded in the CHANGELOG); the fixed-width reader moves to byte offsets before GA (A10).
