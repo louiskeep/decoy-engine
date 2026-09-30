@@ -1,0 +1,103 @@
+{
+  "generated_at": "2026-09-30T09:08:19.253754+00:00",
+  "plan": "docs/plans/2026-09-30-rust-coverage-evidence-audit.md",
+  "python_executable": "/home/cam/vscode/decoy-engine/.venv/bin/python3",
+  "docker": {
+    "docker_ps_ok": true,
+    "docker_ps_error": null,
+    "server_version": "20.10.24+dfsg1",
+    "containers_running": 2
+  },
+  "postgres": {
+    "container": "v3-0-fix-pg",
+    "credentials_source": "docker inspect v3-0-fix-pg --format '{{json .Config.Env}}'",
+    "docker_inspect_ok": true,
+    "user": "postgres",
+    "dbname": "postgres",
+    "password_found": true,
+    "host": "127.0.0.1",
+    "port": 55438,
+    "port_source": "docker port v3-0-fix-pg 5432/tcp",
+    "check_method": "psql -tAc 'select version();'",
+    "reachable": true,
+    "server_reports": "PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit"
+  },
+  "cgroup_job_supervisor_socket": {
+    "source": "decoy-platform origin/main api/config.py Settings.adaptive_scheduler_supervisor_socket_path",
+    "config_read_ok": true,
+    "expected_path": "/run/decoy-supervisor/cgroup-supervisor.sock",
+    "path_exists": false,
+    "is_socket": false,
+    "detail": "socket path does not exist -- the adaptive-scheduler cgroup supervisor is not running on this host; any cell needing it (entry point 4, DispatchPlan launch) must run on an integration host, per the plan's preflight note"
+  },
+  "cgroup_v2_delegation": {
+    "cgroup_v2_mounted": true,
+    "proc_self_cgroup_raw": "0::/system.slice/system-code\\x2dserver.slice/code-server@cam.service",
+    "own_cgroup_path": "/sys/fs/cgroup/system.slice/system-code\\x2dserver.slice/code-server@cam.service",
+    "controllers_at_root": [
+      "cpuset",
+      "cpu",
+      "io",
+      "memory",
+      "hugetlb",
+      "pids",
+      "rdma",
+      "misc",
+      "dmem"
+    ],
+    "subtree_control_own_slice": "",
+    "can_create_child_cgroup": false,
+    "mkdir_error": "[Errno 13] Permission denied: '/sys/fs/cgroup/system.slice/system-code\\\\x2dserver.slice/code-server@cam.service/audit-preflight-probe-1773300'",
+    "test_path": "/sys/fs/cgroup/system.slice/system-code\\x2dserver.slice/code-server@cam.service/audit-preflight-probe-1773300"
+  },
+  "native_companion": {
+    "engine_src_used": "/home/cam/vscode/decoy-engine/.claude/worktrees/docs-reality/src",
+    "note": "this worktree's src/ was prepended to sys.path so the probe reflects this worktree's HEAD, not the shared .venv's editable install (which points at the main checkout, currently behind the pinned commit -- see pinned_commits.engine below)",
+    "present": false,
+    "ok": false,
+    "reason": "absent",
+    "abi_expected": "decoy-native-abi-2",
+    "abi_actual": null,
+    "version": null,
+    "cause": "the decoy-engine-native companion is not installed (no 'native' extra exists yet; install it directly, see docs/native/supported-matrix.md)",
+    "module_path": null,
+    "module_sha256": null
+  },
+  "pinned_commits": {
+    "engine": {
+      "repo": "/home/cam/vscode/decoy-engine/.claude/worktrees/docs-reality",
+      "worktree_head": "a13c4fcb8243c96b81d219b739ef81223c7d6a56",
+      "branch": "docs/reality-2026-09-30",
+      "plan_pinned_baseline": "8dc559e5",
+      "baseline_is_ancestor_of_head": true
+    },
+    "platform": {
+      "repo": "/home/cam/vscode/decoy-platform",
+      "origin_main": "0701a95422e405cff76eb38c12cfb4f372b151d4",
+      "error": null,
+      "note": "read from the local origin/main ref as of this preflight run; this script does not run `git fetch` itself (no network side effect), so re-run after fetching if the remote has moved"
+    },
+    "cli": {
+      "repo": "/home/cam/vscode/decoy",
+      "origin_main": "b8274b0194748d5a60262b78b5969a8c85aeeac7",
+      "error": null
+    }
+  },
+  "summary": {
+    "available": [
+      "postgres",
+      "docker_ps",
+      "pinned_commits_resolved"
+    ],
+    "missing": [
+      "cgroup_job_supervisor_socket",
+      "cgroup_v2_delegation",
+      "native_companion"
+    ],
+    "notes": [
+      "adaptive-scheduler entry point (4) needs an integration host with the cgroup supervisor running; not available locally",
+      "no cgroup v2 delegation in this container; cgroup-based peak-memory reads and cgroup-scoped job launches need an integration host too",
+      "decoy-engine-native is not installed in the shared .venv; every 'Rust companion' cell will show compiled_kernel_executed=False until it is built/installed for this worktree's commit"
+    ]
+  }
+}
