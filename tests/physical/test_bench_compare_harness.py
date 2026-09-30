@@ -330,7 +330,7 @@ def test_check_gates_rejects_numpy_bool_false() -> None:
         bc._check_gates(_small_tier_gates(point=np.bool_(False)), 500, None)
 
 
-def test_check_gates_rejects_rss_true_string_ceiling_undeclared() -> None:
+def test_check_gates_rejects_rss_true_when_ceiling_undeclared() -> None:
     """`rss` may be `None` only when no ceiling was declared; `True` (or
     anything else) in that state is itself a defect worth catching, not a
     lucky pass."""
@@ -341,6 +341,74 @@ def test_check_gates_rejects_rss_true_string_ceiling_undeclared() -> None:
 def test_check_gates_rejects_rss_none_when_ceiling_declared() -> None:
     with pytest.raises(bc.FailClosedError):
         bc._check_gates(_small_tier_gates(rss=None), 500, 200.0)
+
+
+def test_check_gates_rejects_int_one_for_a_wall_gate() -> None:
+    """LOW-B (2026-09-30 Codex re-gate on 83c5d3c4): `1 == True` but `1 is
+    not True`. An equality-based check (`value != expected`) would accept
+    this; the docstring's identity promise requires the EXACT `True`
+    singleton, so this must still raise."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=1), 500, None)
+
+
+def test_check_gates_rejects_numpy_bool_true_for_a_wall_gate() -> None:
+    """Same identity-vs-equality distinction as the int-1 case above:
+    `numpy.bool_(True) == True` but `numpy.bool_(True) is not True`."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=np.bool_(True)), 500, None)
+
+
+# ---------------------------------------------------------------------------
+# Integration-level proof that `_run_tier` is actually WIRED to
+# `_check_gates` (HIGH-A, 2026-09-30 Codex re-gate on 83c5d3c4): the unit
+# tests above call `_check_gates` directly, so they would keep passing even
+# if the `_run_tier` call site silently reverted to the old fail-open `any(v
+# is False for v in gates.values())` check. These monkeypatch `apply_gates`
+# itself to return a malformed dict and drive the real `_run_tier` path.
+# ---------------------------------------------------------------------------
+
+
+def test_run_tier_integration_rejects_none_wall_gate_from_apply_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bc, "apply_gates", lambda *a, **k: {"point": None, "ci": True, "rss": None})
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    with pytest.raises(bc.FailClosedError):
+        bc._run_tier(
+            500,
+            warmup=0,
+            reps=2,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=None,
+        )
+
+
+def test_run_tier_integration_rejects_numpy_bool_false_from_apply_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bc, "apply_gates", lambda *a, **k: {"point": np.bool_(False), "ci": True, "rss": None}
+    )
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    with pytest.raises(bc.FailClosedError):
+        bc._run_tier(
+            500,
+            warmup=0,
+            reps=2,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=None,
+        )
 
 
 def test_bootstrap_ci_is_seeded_and_reproducible() -> None:

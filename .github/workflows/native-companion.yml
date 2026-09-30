@@ -41,12 +41,13 @@ on:
       # companion-dependent route/parity tests live under tests/parity/native.
       - "tests/native/**"
       - "tests/parity/native/**"
-      # The D9 harness's own real-worker integration test is a companion-
-      # present-only case run by this workflow (job below, ~308); a change to
-      # anything under the harness directory, or to its smoke test, must
-      # trigger this workflow too.
+      # Both the worker smoke test and the D9 harness's own real-worker
+      # integration test are companion-present-only cases run by this
+      # workflow (job below, ~308); a change to anything under the harness
+      # directory, or to either test, must trigger this workflow too.
       - "scripts/bench-unified-slice/**"
       - "tests/physical/test_bench_unified_slice_harness_smoke.py"
+      - "tests/physical/test_bench_compare_harness.py"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
   pull_request:
@@ -57,6 +58,7 @@ on:
       - "tests/parity/native/**"
       - "scripts/bench-unified-slice/**"
       - "tests/physical/test_bench_unified_slice_harness_smoke.py"
+      - "tests/physical/test_bench_compare_harness.py"
       - "pyproject.toml"
       - ".github/workflows/native-companion.yml"
 

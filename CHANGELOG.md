@@ -181,7 +181,7 @@ frozen `bench_worker_unified.py` off/on at the same revision across the
 median/p95, a seeded bootstrap CI, and peak-RSS evidence (fail-closed if any
 evidence is missing). **The peak-RSS gate described here was a ratio against
 the pandas arm's peak; retired 2026-09-30 for an absolute `--max-peak-rss-mb`
-ceiling -- see the Unreleased entry below.** A `run_ok`/`d9_certified` split
+ceiling -- see the Unreleased entry above.** A `run_ok`/`d9_certified` split
 keeps a tiny smoke run
 honestly labelled (never a false `D9 PASSED`); `d9_certified` stays false until
 the real offline 10k/100k/1M sweep is run on a bench node and passes. The old
