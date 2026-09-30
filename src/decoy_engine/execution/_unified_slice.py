@@ -306,11 +306,10 @@ def _execute_admitted(
         # not by hand-copying bytes. `candidate.source_frame` is single-use
         # (admission built it once for this call only), so mutating it in place
         # costs no extra conversion beyond the one admission already paid for.
-        # The output bridge: Arrow column extraction/overlay through the final
-        # `Table.from_pandas`, timed the same way `cheap_admission` already
-        # timed its own two boundary crossings, so `boundary_conversion_ms`
-        # reports every Arrow/pandas boundary cost this admitted run actually
-        # paid, not just the admission-side half of it.
+        # The output bridge (Arrow column extraction and overlay through the
+        # final `Table.from_pandas`) is added to the admission crossings, so
+        # `boundary_conversion_ms` covers all lane boundary work outside the
+        # per-node scopes and never overlaps `timings`.
         bridge_t0 = time.perf_counter()
         frame = candidate.source_frame
         masked_table = shadow_result.outputs[candidate.table]

@@ -34,20 +34,15 @@ a benchmark that silently fell back to the legacy oracle (a regression in
 admission, an unavailable native companion) must FAIL LOUD here, not report
 a misleadingly-fast "unified slice" number that never actually ran one.
 
-Per-strategy timing (Codex final-gate HIGH, superseded by A6): the unified
-lane now returns real per-node timing (`ExecutionResult.timings`, stamped by
-the 4.4 shadow coordinator's own `timed_strategy` scope, one `StrategyTimingRecord`
-per bound node -- the same `TimingCollector` the legacy oracle already used).
-This worker still measures `hash_ms` / `redact_ms` / `truncate_ms` /
-`passthrough_ms` via a SEPARATE isolated unified-slice run over just that
-strategy's own columns rather than reading `result.timings` off the combined
-run, because `timed_strategy` samples RSS per node (`psutil.Process.memory_
-info()`, twice per node) on top of the clock, and that sampling cost would
-perturb the wall-clock number this D9 harness measures externally
-(`bench_driver.py`'s own process-level timing). The isolated-run wall clock
-stays the real, unperturbed per-strategy measurement here; `result.timings`
-is the platform-facing per-job total, a different consumer with a different
-tolerance for in-band overhead.
+Per-strategy timing: this worker measures `hash_ms` / `redact_ms` /
+`truncate_ms` / `passthrough_ms` as the wall time of a SEPARATE run_pipeline
+call over just that strategy's columns, on each arm. That is a whole-pipeline
+subset time (profile, compile, admission, conversion, masking, finalize), not
+a strategy-only time, and on both arms it includes the per-node clock and RSS
+sampling that `timed_strategy` does (the lane's collector since A6, the legacy
+adapter's since before). The method is kept for comparability with earlier D9
+records and because it treats the two arms symmetrically. The in-band
+per-node figure is `ExecutionResult.timings`, which the platform consumes.
 
 Sampled profiling reads Parquet, not CSV (Codex determination remediation):
 `build_config` declares its source as CSV, but `tr_phone`/`tr_card` are

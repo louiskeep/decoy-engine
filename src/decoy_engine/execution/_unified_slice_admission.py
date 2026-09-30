@@ -196,13 +196,14 @@ class CheapCandidate:
     rather than converting a second time.
 
     `boundary_conversion_ms` is the wall-clock cost of the two Arrow/pandas
-    boundary crossings `cheap_admission` already pays for regardless (the
-    `to_pandas_fk_safe` conversion and the round-trip `Table.from_pandas`
-    consistency check): `_unified_slice._execute_admitted` starts its own
-    output-bridge measurement from this value rather than from zero, so
-    `ExecutionResult.boundary_conversion_ms` reports the full admitted-path
-    total, the same quantity the pandas oracle's own `conversion_ms` reports
-    (`_pandas_adapter.py`'s `t0`/`t1` pair).
+    crossings `cheap_admission` pays (the `to_pandas_fk_safe` conversion and
+    the admission-only round-trip `Table.from_pandas` consistency check).
+    `_unified_slice._execute_admitted` adds its output bridge to it, so
+    `ExecutionResult.boundary_conversion_ms` is the lane's boundary overhead
+    outside the per-node timing scopes, disjoint from `timings`. It is not the
+    same quantity as the pandas oracle's `conversion_ms` (the oracle has no
+    consistency round-trip), and conversions inside a node's scope, such as
+    passthrough assembly, are counted in that node's timing instead.
     """
 
     table: str
