@@ -201,7 +201,19 @@ def execution_binding_for_slice_node(
     if strategy == "truncate":
         resolved_config["keep"] = _resolve_truncate_keep(cfg)
 
-    input_type = resolve_input_arrow_type(table, column, inputs.profile) or pa.string()
+    # Track A Option 2: resident-Arrow-authoritative typing. `inputs.
+    # caller_sources` is the same resident table BOTH the unified-slice and
+    # pandas-oracle routes actually mask, so binding this node's input type
+    # from it (rather than the profiler's separate descriptor-backed re-read)
+    # is what lets a loosely-typed source (csv, fixed_width) admit and stay
+    # byte-parity-safe instead of drifting between a resident string column
+    # and a profiled numeric one.
+    input_type = (
+        resolve_input_arrow_type(
+            table, column, inputs.profile, resident_sources=inputs.caller_sources
+        )
+        or pa.string()
+    )
     input_schema = pa.schema([pa.field(column, input_type)])
 
     caps = capabilities_for(strategy)
@@ -306,8 +318,15 @@ def execution_binding_for_slice_node(
         key_binding = KeyBinding(key_source=caps.key_source, namespace=f"group_key/{column}")
         # Rebind input_schema to the SIBLING column's resident type (not the
         # target's): the coordinator feeds `batch.column(group_by)` and the
-        # admission gate checks that sibling's type, so the binding must carry it.
-        gb_type = resolve_input_arrow_type(table, group_by, inputs.profile) or pa.string()
+        # admission gate checks that sibling's type, so the binding must carry
+        # it. Resident-Arrow-authoritative (Track A Option 2), matching the
+        # target-column binding above.
+        gb_type = (
+            resolve_input_arrow_type(
+                table, group_by, inputs.profile, resident_sources=inputs.caller_sources
+            )
+            or pa.string()
+        )
         input_schema = pa.schema([pa.field(group_by, gb_type)])
     elif strategy == "date_shift":
         # `requirements.fallback_policy == "native"` (checked above) already

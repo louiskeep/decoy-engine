@@ -136,13 +136,17 @@ def _schema_type_names(table):
 
 
 class TestDefaultPandasRoute:
-    def test_default_selects_pandas_adapter_with_default_knobs(
+    def test_pandas_route_selects_pandas_adapter_with_default_knobs(
         self, tmp_path, monkeypatch, select_spy
     ):
         monkeypatch.setenv("DECOY_SUBSTRATE", "polars")  # must be ignored by default
         cfg = _scalar_mask_config(tmp_path)
         sources = _scalar_mask_sources(tmp_path)
-        run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+        # Pinned to the pandas route this class covers; with the native companion
+        # installed this job is otherwise admitted to the unified (Rust) lane.
+        run_pipeline(
+            cfg, sources=sources, engine_version=_ENGINE_VERSION, unified_slice_enabled=False
+        )
         assert len(select_spy) == 1
         call = select_spy[0]
         assert isinstance(call["adapter"], PandasExecutionAdapter)
@@ -184,7 +188,9 @@ class TestDefaultPandasRoute:
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         cfg = _scalar_mask_config(tmp_path)
         sources = _scalar_mask_sources(tmp_path)
-        result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+        result = run_pipeline(
+            cfg, sources=sources, engine_version=_ENGINE_VERSION, unified_slice_enabled=False
+        )
         assert set(result.quality_metrics) == {"execution"}
         assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
 
