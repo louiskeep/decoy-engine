@@ -776,16 +776,14 @@ def test_fixed_width_padded_fields_from_engine_reader_admit_and_match(tmp_path: 
 
 
 # ---------------------------------------------------------------------------
-# Known gap: the unified lane returns `timings=()` and `boundary_conversion_ms
-# = 0.0`, so the platform reports 0 ms execute time for every admitted job. The
-# D9 parity contract excludes these fields; this strict xfail tracks the gap
-# (decoy-platform docs/ROADMAP.md, "Rust lane per-column timings") and fails
-# loudly once the lane starts stamping them, so it gets removed then.
+# A6: the unified lane stamps real per-column timings (`ExecutionResult.
+# timings`), so the platform no longer reports 0 ms execute time for an
+# admitted job (decoy-platform docs/ROADMAP.md, "Rust lane per-column
+# timings").
 # ---------------------------------------------------------------------------
 
 
 @_NEEDS_COMPANION
-@pytest.mark.xfail(strict=True, reason="unified lane stamps no per-column timings yet")
 def test_admitted_job_reports_per_column_timings(tmp_path: Path) -> None:
     csv_path = tmp_path / "t.csv"
     _write_csv(csv_path, {"id": ["1", "2", "3"], "name": ["a", "b", "c"]})

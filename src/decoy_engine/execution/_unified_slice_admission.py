@@ -41,6 +41,7 @@ decline.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -193,11 +194,21 @@ class CheapCandidate:
     performs (`cheap_admission` builds and validates it); `_unified_slice.
     _execute_admitted` reuses it verbatim for source-shaped output assembly
     rather than converting a second time.
+
+    `boundary_conversion_ms` is the wall-clock cost of the two Arrow/pandas
+    boundary crossings `cheap_admission` already pays for regardless (the
+    `to_pandas_fk_safe` conversion and the round-trip `Table.from_pandas`
+    consistency check): `_unified_slice._execute_admitted` starts its own
+    output-bridge measurement from this value rather than from zero, so
+    `ExecutionResult.boundary_conversion_ms` reports the full admitted-path
+    total, the same quantity the pandas oracle's own `conversion_ms` reports
+    (`_pandas_adapter.py`'s `t0`/`t1` pair).
     """
 
     table: str
     source: pa.Table
     source_frame: pd.DataFrame
+    boundary_conversion_ms: float
 
 
 def cheap_admission(
@@ -361,6 +372,7 @@ def cheap_admission(
         group_by = pcfg.get("group_by") if isinstance(pcfg, dict) else None
         if isinstance(group_by, str) and group_by:
             group_key_sibling_cols.add(group_by)
+    conversion_t0 = time.perf_counter()
     try:
         frame = to_pandas_fk_safe(source, group_key_sibling_cols)
     except Exception:
@@ -371,6 +383,7 @@ def cheap_admission(
         # would instead reach its own reject-before-read guard (e.g.
         # `null_bearing_int_unsupported`). Declining preserves failure parity.
         return None
+    boundary_conversion_ms = (time.perf_counter() - conversion_t0) * 1000.0
     if frame.index.name is not None or not frame.index.equals(pd.RangeIndex(len(frame))):
         # A named index (possibly reconstructed purely from the resident
         # table's own `b"pandas"` schema metadata, with no physical index
@@ -393,10 +406,12 @@ def cheap_admission(
     # the same values; decline any column where the metadata disagrees with the
     # physical buffer. (Ignore schema metadata here -- this is a physical-
     # consistency gate, distinct from the D9 output-metadata parity assertion.)
+    round_trip_t0 = time.perf_counter()
     try:
         round_trip = pa.Table.from_pandas(frame, preserve_index=False)
     except Exception:
         return None
+    boundary_conversion_ms += (time.perf_counter() - round_trip_t0) * 1000.0
     for name in source.column_names:
         resident_col = source.column(name).combine_chunks()
         if resident_col.null_count == len(resident_col):
@@ -409,7 +424,12 @@ def cheap_admission(
         if rt_col.type != resident_col.type or not rt_col.equals(resident_col):
             return None
 
-    return CheapCandidate(table=table, source=source, source_frame=frame)
+    return CheapCandidate(
+        table=table,
+        source=source,
+        source_frame=frame,
+        boundary_conversion_ms=boundary_conversion_ms,
+    )
 
 
 def _has_when_gate(col: Mapping[str, Any]) -> bool:
