@@ -14,6 +14,13 @@ harness's real 10k/100k/1M sweep runs on a bench node and every gate passes
 there; that sweep is a deliberate offline invocation (multi-minute per arm),
 never a CI step.
 
+**2026-09-30: the RSS ratio gate is retired.** The 1.023x/1.048x/1.094x
+figures above are the measured record of the cert run that used the old
+per-tier ratio band; they still describe what actually ran. The gate itself
+is now the absolute `--max-peak-rss-mb` ceiling below, and `d9_certified`
+additionally requires that ceiling to be declared and met (not just cert-
+shape sample sizes) -- see `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
+
 ## What is here now
 
 - `bench_worker_unified.py` -- the frozen workload substrate: one process that
@@ -26,14 +33,16 @@ never a CI step.
 - `bench_compare.py` -- the statistical comparison driver. Runs the worker as a
   fresh subprocess per arm per rep, alternating off/on order by rep parity, and
   reports a paired per-rep ratio (median + inclusive p95), a seeded bootstrap
-  CI, and a peak-RSS ratio (`ru_maxrss` from `os.wait4`, the authoritative
-  terminal source) per tier. Every tier is gated by size (the 100k/1M ratio
-  rule, or the 10k point-difference-plus-50ms-floor rule), and RSS is gated at
-  every tier. A `run_ok`/`d9_certified` two-state model keeps a tiny smoke
-  invocation (`--tiers 200 --reps 2 --warmup 1`) honestly labelled
-  `SMOKE COMPLETE (d9_certified=false)` -- it can never print `D9 PASSED`.
-  `--require-cert` makes a non-certifying run exit non-zero, for the offline
-  cert invocation to use.
+  CI, and the peak-RSS evidence (`ru_maxrss` from `os.wait4`, the authoritative
+  terminal source, plus the ratio as information) per tier. Every tier is
+  gated by size (the 100k/1M ratio rule, or the 10k point-difference-plus-
+  50ms-floor rule) on wall time; RSS is gated against a declared absolute
+  `--max-peak-rss-mb` ceiling, at every tier. A `run_ok`/`d9_certified`
+  two-state model keeps a tiny smoke invocation (`--tiers 200 --reps 2
+  --warmup 1`) honestly labelled `SMOKE COMPLETE (d9_certified=false)` -- it
+  can never print `D9 PASSED`. `--require-cert` makes a non-certifying run
+  exit non-zero (and refuses to run at all without a declared ceiling), for
+  the offline cert invocation to use.
 
 ## Owed: the offline D9 certification run
 
@@ -41,12 +50,13 @@ Before Task 4.6 caller activation, run the harness for real:
 
 ```
 python scripts/bench-unified-slice/bench_compare.py --require-cert \
-    --out d9_cert_results.json
+    --max-peak-rss-mb 6656 --out d9_cert_results.json
 ```
 
 on a quiet bench node (the default tiers/reps/warmup/bootstrap already match
 the cert minima: 10k/100k/1M rows, 20 reps, 3 warmups, 10000 bootstrap
-resamples). `d9_certified: true` in the output plus the `D9 PASSED` banner is
+resamples; `6656` MiB is the documented 6.5 GiB-at-100M reference-host
+ceiling). `d9_certified: true` in the output plus the `D9 PASSED` banner is
 the certification; anything else (including a clean exit without
 `--require-cert`) is not.
 
@@ -82,8 +92,9 @@ does not attempt.
 - **Activation, enforced:** the `on` arm must actually activate the unified slice
   (`unified_slice_activated is True`); a silent legacy fallback fails closed.
 - **Thresholds:** 100k & 1M median new/old wall <= 1.10 and p95 <= 1.15; 10k median
-  regression <= max(10%, 50 ms); peak RSS <= `rss_budget_ratio(n_rows)` (1.10x below
-  1M, 1.25x at 1M and above).
+  regression <= max(10%, 50 ms); peak RSS <= a declared `--max-peak-rss-mb`
+  absolute ceiling (no ratio against the pandas arm's peak; retired 2026-09-30,
+  docs/plans/2026-09-30-retire-d9-rss-ratio.md).
 - **Fail-closed RSS:** a missing peak-RSS sample (per rep OR aggregate) is a
   FAILURE -- the RSS bound cannot be certified without the evidence, so the harness
   never silently drops it and reports PASS.
@@ -101,18 +112,14 @@ does not attempt.
   proven separately by `tests/physical/test_unified_slice_inertness.py`, so this
   is a known residual, not a false claim in shipped output. Making the harness
   observe (rather than trust) the off-arm route is a worker + harness change.
-- **RSS gate compares max-of-max (MEDIUM-3).** The peak-RSS gate is
-  `max_on_ru_maxrss <= rss_budget_ratio(n_rows) * max_off_ru_maxrss`, a per-tier
-  regression band: 1.10x for tiers below 1M, 1.25x at 1M and above. The wider 1M
-  band reflects the unified lane's larger transient reconstruction buffer, a
-  space-for-time trade against its ~4x wall-time win; absolute peak there (~1.8GB)
-  stays far under the 6.5GiB reference-host ceiling, so this is a regression band,
-  not a safety limit.
-  Under non-physical per-rep variance (one off rep spiking to match on's peak) a
-  paired memory regression could be masked. Peak RSS of this fixed deterministic
-  workload is near-constant across reps, so a real consistent regression still
-  trips the gate; paired per-rep RSS deltas would be strictly more sensitive and
-  are a possible spec follow-up, not a defect in the current implementation.
+- **RSS gate compares max-of-max (MEDIUM-3, historical).** This applied to the
+  since-retired ratio gate: `max_on_ru_maxrss <= rss_budget_ratio(n_rows) *
+  max_off_ru_maxrss`. As of 2026-09-30 the gate is `max_on_ru_maxrss <=
+  max_peak_rss_mb * 1024`, an absolute ceiling with no dependency on the
+  pandas arm's peak, so a masked paired regression on the off arm no longer
+  matters to this gate -- only the on arm's own peak does. Kept for history:
+  under the old gate, non-physical per-rep variance (one off rep spiking to
+  match on's peak) could mask a paired memory regression.
 
 ## Separate follow-up: FOLLOWUP-BENCH-DRIVER-HARDEN
 

@@ -253,59 +253,88 @@ def test_crossover_none_when_pooling_never_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RSS gate withholds the recommendation when the budget is exceeded.
+# RSS gate: an absolute peak-RSS ceiling (2026-09-30: the ratio+delta gate is
+# retired -- docs/plans/2026-09-30-retire-d9-rss-ratio.md). `rss_ratio` and
+# `rss_delta_kb` stay on the cell as information; the gate itself now checks
+# `on_rss_max_kb` against a declared `max_peak_rss_mb` ceiling. No ceiling
+# declared means the recommendation is always withheld, with a reason.
 # ---------------------------------------------------------------------------
 
 
-def _cell(faker_type: str, n_rows: int, *, rss_ratio: float, rss_delta_kb: int) -> dict[str, Any]:
+def _cell(
+    faker_type: str,
+    n_rows: int,
+    *,
+    on_rss_max_kb: int,
+    rss_ratio: float = 1.0,
+    rss_delta_kb: int = 0,
+) -> dict[str, Any]:
     return {
         "faker_type": faker_type,
         "n_rows": n_rows,
+        "on_rss_max_kb": on_rss_max_kb,
         "rss_ratio": rss_ratio,
         "rss_delta_kb": rss_delta_kb,
     }
 
 
-def test_rss_gate_passes_within_budget() -> None:
-    cells = [_cell("city", 25_000, rss_ratio=1.05, rss_delta_kb=1000)]
-    result = bc.apply_rss_gate(
-        cells, recommended_tier=25_000, max_rss_ratio=1.25, max_rss_delta_kb=51_200
-    )
+def test_rss_gate_passes_within_ceiling() -> None:
+    cells = [_cell("city", 25_000, on_rss_max_kb=100_000)]
+    result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=200.0)
     assert result.ok is True
 
 
-def test_rss_gate_fails_on_ratio_breach() -> None:
-    cells = [_cell("city", 25_000, rss_ratio=1.30, rss_delta_kb=1000)]
-    result = bc.apply_rss_gate(
-        cells, recommended_tier=25_000, max_rss_ratio=1.25, max_rss_delta_kb=51_200
-    )
+def test_rss_gate_fails_when_ceiling_exceeded() -> None:
+    cells = [_cell("city", 25_000, on_rss_max_kb=300_000)]
+    result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=200.0)
     assert result.ok is False
-    assert "rss_ratio" in result.reasons[0]
+    assert "on_rss_max_kb" in result.reasons[0]
 
 
-def test_rss_gate_fails_on_delta_breach() -> None:
-    cells = [_cell("city", 25_000, rss_ratio=1.05, rss_delta_kb=60_000)]
-    result = bc.apply_rss_gate(
-        cells, recommended_tier=25_000, max_rss_ratio=1.25, max_rss_delta_kb=51_200
-    )
+def test_rss_gate_boundary_equal_to_ceiling_passes() -> None:
+    ceiling_mib = 100.0
+    cells = [_cell("city", 25_000, on_rss_max_kb=int(ceiling_mib * 1024))]
+    result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=ceiling_mib)
+    assert result.ok is True
+
+
+def test_rss_gate_boundary_one_kib_over_ceiling_fails() -> None:
+    ceiling_mib = 100.0
+    cells = [_cell("city", 25_000, on_rss_max_kb=int(ceiling_mib * 1024) + 1)]
+    result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=ceiling_mib)
     assert result.ok is False
-    assert "rss_delta_kb" in result.reasons[0]
+
+
+def test_rss_gate_withheld_when_ceiling_not_declared() -> None:
+    """No ceiling means a recommendation can never be emitted, whatever the
+    cells look like -- always withheld, always with a stated reason."""
+    cells = [_cell("city", 25_000, on_rss_max_kb=1_000)]
+    result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=None)
+    assert result.ok is False
+    assert result.reasons
 
 
 def test_rss_gate_ignores_cells_below_the_recommended_tier() -> None:
-    """A blown budget below the recommended tier must not withhold it --
+    """A blown ceiling below the recommended tier must not withhold it --
     only cells AT OR ABOVE the recommendation are in scope."""
-    cells = [_cell("city", 1_000, rss_ratio=5.0, rss_delta_kb=999_999)]
-    result = bc.apply_rss_gate(
-        cells, recommended_tier=25_000, max_rss_ratio=1.25, max_rss_delta_kb=51_200
-    )
+    cells = [_cell("city", 1_000, on_rss_max_kb=999_999_999)]
+    result = bc.apply_rss_gate(cells, recommended_tier=25_000, max_peak_rss_mb=200.0)
     assert result.ok is True
 
 
 def test_build_recommendation_withheld_when_rss_gate_fails() -> None:
     crossovers = {"city": bc.CrossoverResult(tier=25_000, boundary_fallback=False)}
-    cells = [_cell("city", 25_000, rss_ratio=2.0, rss_delta_kb=1000)]
-    rec = bc.build_recommendation(crossovers, cells, max_rss_ratio=1.25, max_rss_delta_kb=51_200)
+    cells = [_cell("city", 25_000, on_rss_max_kb=300_000)]
+    rec = bc.build_recommendation(crossovers, cells, max_peak_rss_mb=200.0)
+    assert rec["recommended_threshold_raw"] == 25_000
+    assert rec["recommended_threshold_rounded"] is None
+    assert "RSS gate failed" in rec["withheld_reason"]
+
+
+def test_build_recommendation_withheld_when_ceiling_not_declared() -> None:
+    crossovers = {"city": bc.CrossoverResult(tier=25_000, boundary_fallback=False)}
+    cells = [_cell("city", 25_000, on_rss_max_kb=1_000)]
+    rec = bc.build_recommendation(crossovers, cells, max_peak_rss_mb=None)
     assert rec["recommended_threshold_raw"] == 25_000
     assert rec["recommended_threshold_rounded"] is None
     assert "RSS gate failed" in rec["withheld_reason"]
@@ -316,8 +345,8 @@ def test_build_recommendation_withheld_when_a_type_never_confirms() -> None:
         "city": bc.CrossoverResult(tier=25_000, boundary_fallback=False),
         "job": bc.CrossoverResult(tier=None, boundary_fallback=True),
     }
-    cells = [_cell("city", 25_000, rss_ratio=1.0, rss_delta_kb=0)]
-    rec = bc.build_recommendation(crossovers, cells, max_rss_ratio=1.25, max_rss_delta_kb=51_200)
+    cells = [_cell("city", 25_000, on_rss_max_kb=1_000)]
+    rec = bc.build_recommendation(crossovers, cells, max_peak_rss_mb=200.0)
     assert rec["recommended_threshold_raw"] is None
     assert "job" in rec["withheld_reason"]
 
@@ -328,10 +357,10 @@ def test_build_recommendation_emits_raw_and_rounded_when_clean() -> None:
         "job": bc.CrossoverResult(tier=25_000, boundary_fallback=False),
     }
     cells = [
-        _cell("city", 25_000, rss_ratio=1.0, rss_delta_kb=0),
-        _cell("job", 25_000, rss_ratio=1.0, rss_delta_kb=0),
+        _cell("city", 25_000, on_rss_max_kb=1_000),
+        _cell("job", 25_000, on_rss_max_kb=1_000),
     ]
-    rec = bc.build_recommendation(crossovers, cells, max_rss_ratio=1.25, max_rss_delta_kb=51_200)
+    rec = bc.build_recommendation(crossovers, cells, max_peak_rss_mb=200.0)
     assert rec["recommended_threshold_raw"] == 25_000  # MAX across types
     assert rec["recommended_threshold_rounded"] is not None
     assert rec["recommended_threshold_rounded"] >= 25_000
@@ -495,14 +524,43 @@ def test_smoke_invocation_never_emits_a_recommendation() -> None:
         bootstrap=10,
         seed=1,
         timeout_s=5.0,
-        max_rss_ratio=1.25,
-        max_rss_delta_kb=51_200,
+        max_peak_rss_mb=None,
     )
     result = bc.run_bench_compare(config, arm_runner=runner)
     assert result["run_ok"] is True
     assert result["full_sweep"] is False
     assert result["recommendation"] is None
     assert bc.banner_for(result) == "SMOKE COMPLETE"
+    assert "d9_certified" not in result  # GP1 gains no cert concept
+
+
+def test_gp1_result_schema_v2_keys_and_removed_keys() -> None:
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    config = bc.RunConfig(
+        tiers=[500],
+        types=["city"],
+        reps=2,
+        warmup=0,
+        bootstrap=10,
+        seed=1,
+        timeout_s=5.0,
+        max_peak_rss_mb=200.0,
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+
+    assert result["harness_version"] == "2.0.0"
+    assert result["memory_gate_declared"] is True
+    assert result["max_peak_rss_mb"] == 200.0
+    assert "max_rss_ratio" not in result
+    assert "max_rss_delta_kb" not in result
+    assert "d9_certified" not in result
+
+    cell = result["cells"]["city@500"]
+    assert "rss_ratio" in cell  # information, kept
+    assert "rss_delta_kb" in cell  # information, kept
+    assert "on_rss_max_kb" in cell
 
 
 def test_is_full_sweep_shape_requires_the_exact_default_shape() -> None:
@@ -516,6 +574,83 @@ def test_is_full_sweep_shape_requires_the_exact_default_shape() -> None:
     assert not bc.is_full_sweep_shape(
         bc._DEFAULT_TIERS, ["city"], reps=20, warmup=3, bootstrap=10_000
     )
+
+
+# ---------------------------------------------------------------------------
+# GP1 memory-gate transition-table row: "not declared or exceeded" withholds
+# the recommendation but leaves run_ok/full_sweep untouched, and GP1 gains no
+# cert concept either way.
+# ---------------------------------------------------------------------------
+
+
+def _full_sweep_config(*, max_peak_rss_mb: float | None) -> bc.RunConfig:
+    return bc.RunConfig(
+        tiers=[500, 1_000],
+        types=["city"],
+        reps=20,
+        warmup=3,
+        bootstrap=10_000,
+        seed=1,
+        timeout_s=5.0,
+        max_peak_rss_mb=max_peak_rss_mb,
+    )
+
+
+def _pair_with_wall(
+    n_rows: int, faker_type: str, *, off_wall: float, on_wall: float
+) -> tuple[Any, Any]:
+    """Unlike `_valid_pair` (fixed 0.5s for both arms), lets the on arm win
+    consistently -- `rows_per_s` is overridden alongside `wall_s` since
+    `validate_worker_record` fails closed on a derived-field mismatch."""
+    off = _raw_ok(
+        _record_json(n_rows, faker_type, False, wall_s=off_wall, rows_per_s=n_rows / off_wall)
+    )
+    on = _raw_ok(
+        _record_json(n_rows, faker_type, True, wall_s=on_wall, rows_per_s=n_rows / on_wall)
+    )
+    return off, on
+
+
+def _confirmed_crossover_runner(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The on arm consistently wins at both tiers, so `find_crossover_tier`
+    confirms a crossover at the smaller tier and `build_recommendation`
+    reaches the RSS gate (rather than withholding for an unconfirmed
+    crossover first) -- monkeypatched down to a 2-tier, 1-type full-sweep
+    shape so the test stays fast."""
+    monkeypatch.setattr(bc, "_DEFAULT_TIERS", (500, 1_000))
+    monkeypatch.setattr(bc, "_ALL_TYPES", ("city",))
+    off_queue: list[Any] = []
+    on_queue: list[Any] = []
+    for n_rows in (500, 1_000):
+        for _ in range(3 + 20):
+            off, on = _pair_with_wall(n_rows, "city", off_wall=1.0, on_wall=0.5)
+            off_queue.append(off)
+            on_queue.append(on)
+    return _make_runner(off_queue, on_queue)
+
+
+def test_full_sweep_ceiling_not_declared_withholds_but_keeps_run_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _confirmed_crossover_runner(monkeypatch)
+    result = bc.run_bench_compare(_full_sweep_config(max_peak_rss_mb=None), arm_runner=runner)
+    assert result["run_ok"] is True
+    assert result["full_sweep"] is True
+    assert result["recommendation"]["withheld_reason"] is not None
+    assert "d9_certified" not in result
+
+
+def test_full_sweep_ceiling_exceeded_withholds_but_keeps_run_ok(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _confirmed_crossover_runner(monkeypatch)
+    # `_valid_pair`'s default ru_maxrss_kb is 1000; a near-zero ceiling
+    # guarantees the gate trips without needing to fabricate huge RSS values.
+    result = bc.run_bench_compare(_full_sweep_config(max_peak_rss_mb=0.001), arm_runner=runner)
+    assert result["run_ok"] is True
+    assert result["full_sweep"] is True
+    assert result["recommendation"]["withheld_reason"] is not None
+    assert "RSS gate failed" in result["recommendation"]["withheld_reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -553,3 +688,46 @@ def test_cli_accepts_minimal_valid_shape() -> None:
     args = bc.parse_and_validate_args(["--tiers", "1000", "--types", "city", "--reps", "2"])
     assert args.tiers == [1_000]
     assert args.types == ["city"]
+
+
+# ---------------------------------------------------------------------------
+# --max-peak-rss-mb CLI validation (2026-09-30: replaces the retired
+# --max-rss-ratio / --max-rss-delta-kb flags)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
+def test_cli_rejects_bad_max_peak_rss_mb(value: str) -> None:
+    _expect_exit_2(["--tiers", "1000", "--types", "city", "--max-peak-rss-mb", value])
+
+
+def test_cli_accepts_valid_max_peak_rss_mb() -> None:
+    args = bc.parse_and_validate_args(
+        ["--tiers", "1000", "--types", "city", "--max-peak-rss-mb", "500"]
+    )
+    assert args.max_peak_rss_mb == 500.0
+
+
+def test_cli_max_peak_rss_mb_defaults_to_none() -> None:
+    args = bc.parse_and_validate_args(["--tiers", "1000", "--types", "city"])
+    assert args.max_peak_rss_mb is None
+
+
+def test_cli_no_longer_has_max_rss_ratio_or_delta_flags() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        bc.parse_and_validate_args(["--max-rss-ratio", "1.25"])
+    assert exc_info.value.code == 2
+    with pytest.raises(SystemExit) as exc_info:
+        bc.parse_and_validate_args(["--max-rss-delta-kb", "51200"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_rejects_non_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RSS evidence (`os.wait4`'s `ru_maxrss`) is Linux-only; a non-Linux run
+    must be refused rather than silently mis-scaled."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _expect_exit_2(["--tiers", "1000", "--types", "city"])
+
+
+def test_harness_version_is_2_0_0() -> None:
+    assert bc.HARNESS_VERSION == "2.0.0"

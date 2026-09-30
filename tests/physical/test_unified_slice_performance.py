@@ -4,7 +4,9 @@ This is a fast, in-process, small-row-count paired comparison -- a
 functional sanity check (the unified slice actually runs, its output
 matches the legacy oracle, timing is in the right ballpark) at ~2,000 rows,
 never the statistical claim D9 requires at 10k/100k/1M rows (>=20 alternating
-trials, bootstrap CI, peak-RSS ratio via external process measurement).
+trials, bootstrap CI, peak-RSS evidence via external process measurement
+against a declared absolute ceiling, not a ratio -- 2026-09-30, the D9 RSS
+gate is `--max-peak-rss-mb`, docs/plans/2026-09-30-retire-d9-rss-ratio.md).
 That statistical claim is DEFERRED to a separate, not-yet-built follow-up
 task, specified in:
 

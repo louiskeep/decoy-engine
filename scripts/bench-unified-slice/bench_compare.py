@@ -57,7 +57,7 @@ WORKER_PATH = HERE / "bench_worker_unified.py"
 VENV_PY = Path(sys.executable)
 _WORKER_ENV_BASE = {**os.environ, "PYTHONPATH": str(ENGINE / "src")}
 
-HARNESS_VERSION = "1.0.0"
+HARNESS_VERSION = "2.0.0"
 # Fixed default seed: the bootstrap CI must be reproducible run-to-run, never
 # drawn from unseeded randomness.
 _DEFAULT_SEED = 20260915
@@ -74,26 +74,13 @@ _CERT_MIN_WARMUP = 3
 _CERT_MIN_BOOTSTRAP = 2000
 _SMALL_TIER_MAX_ROWS = 10_000
 
-# Peak-RSS regression budget (unified/"on" arm vs legacy/"off" arm), per tier.
-# This is a RELATIVE regression-detection band (on vs off at the same revision),
-# not an absolute-safety limit -- absolute safety is enforced elsewhere (the
-# frozen mem limit / mem telemetry). At 1M the unified lane's absolute peak is
-# ~1.8GB, far under the 6.5GiB-at-100M reference-host ceiling, and it trades a
-# larger transient reconstruction buffer for a ~4x wall-time win, so the
-# 1M-and-up tier carries a wider band; the smaller tiers, where no such buffer
-# dominates, keep the tight default. The band stays open above 1M by intent
-# (a bigger job carries a proportionally similar buffer); the ~1.8GB figure is
-# the 1M measurement, not an absolute claim for larger custom runs.
-_RSS_BUDGET_DEFAULT = 1.10
-_RSS_BUDGET_LARGE_TIER = 1.25
-_RSS_LARGE_TIER_MIN_ROWS = 1_000_000
-
-
-def rss_budget_ratio(n_rows: int) -> float:
-    """The peak-RSS ratio the "on" arm must stay within for this tier."""
-    if n_rows >= _RSS_LARGE_TIER_MIN_ROWS:
-        return _RSS_BUDGET_LARGE_TIER
-    return _RSS_BUDGET_DEFAULT
+# Peak-RSS gate: an ABSOLUTE ceiling, not a ratio against the pandas arm's
+# peak (retired 2026-09-30, docs/plans/2026-09-30-retire-d9-rss-ratio.md --
+# Cam: speed matters more than a few extra GB, and nobody trades a ~4x
+# slowdown for the memory). `--max-peak-rss-mb` is optional; when unset the
+# gate is `None` (no verdict), never a silent pass. `ru_maxrss` is Linux-only
+# in the units this harness assumes (KiB; macOS reports bytes), so execution
+# is refused outright on any other platform rather than silently mis-scaled.
 
 
 def is_cert_shape(tiers: Sequence[int], *, reps: int, warmup: int, bootstrap: int) -> bool:
@@ -173,7 +160,8 @@ def apply_gates(
     ci_high: float,
     off_rss_max_kb: int,
     on_rss_max_kb: int,
-) -> dict[str, bool]:
+    max_peak_rss_mb: float | None,
+) -> dict[str, bool | None]:
     """Every tier is gated, selected by size, so no tier (default or custom)
     ever runs un-gated (plan §4). `ratio_median`/`ratio_p95` must be the
     PAIRED per-rep ratio's statistics -- never a ratio of independent
@@ -184,8 +172,15 @@ def apply_gates(
     "point" rather than "median" since it compares raw wall medians, not a
     ratio -- named for what it actually checks, not to match a literal key
     list the plan does not exhaustively enumerate.
+
+    `gates["rss"]` is `None` when `max_peak_rss_mb` is undeclared (no
+    verdict, not a silent pass), else the inclusive `on_rss_max_kb <=
+    max_peak_rss_mb * 1024` check against the declared absolute ceiling
+    (docs/plans/2026-09-30-retire-d9-rss-ratio.md). Missing/zero RSS
+    evidence fails the check even with a declared ceiling -- the bound
+    cannot be certified without the evidence.
     """
-    gates: dict[str, bool] = {}
+    gates: dict[str, bool | None] = {}
     if n_rows > _SMALL_TIER_MAX_ROWS:
         gates["median"] = ratio_median <= 1.10
         gates["p95"] = ratio_p95 <= 1.15
@@ -199,11 +194,12 @@ def apply_gates(
         gates["point"] = (on_wall_median - off_wall_median) <= point_floor
         ci_floor = 1.0 + max(0.10, 0.050 / off_wall_median)
         gates["ci"] = ci_high <= ci_floor
-    gates["rss"] = (
-        off_rss_max_kb > 0
-        and on_rss_max_kb > 0
-        and on_rss_max_kb <= rss_budget_ratio(n_rows) * off_rss_max_kb
-    )
+    if max_peak_rss_mb is None:
+        gates["rss"] = None
+    else:
+        gates["rss"] = (
+            off_rss_max_kb > 0 and on_rss_max_kb > 0 and on_rss_max_kb <= max_peak_rss_mb * 1024
+        )
     return gates
 
 
@@ -592,6 +588,7 @@ def _run_tier(
     seed: int,
     timeout_s: float,
     arm_runner: ArmRunner,
+    max_peak_rss_mb: float | None,
 ) -> dict[str, Any]:
     raw_reps: list[dict[str, Any]] = []
     off_walls: list[float] = []
@@ -638,8 +635,11 @@ def _run_tier(
         ci_high=ci_high,
         off_rss_max_kb=off_rss_max,
         on_rss_max_kb=on_rss_max,
+        max_peak_rss_mb=max_peak_rss_mb,
     )
-    if not all(gates.values()):
+    # `gates["rss"]` can be `None` (no ceiling declared) -- that is not a
+    # breach, only an actual `False` verdict is.
+    if any(v is False for v in gates.values()):
         raise FailClosedError(f"tier {n_rows}: gate breach {gates}")
 
     return {
@@ -670,6 +670,7 @@ class RunConfig:
     bootstrap: int
     seed: int
     timeout_s: float
+    max_peak_rss_mb: float | None
 
 
 def run_bench_compare(config: RunConfig, arm_runner: ArmRunner) -> dict[str, Any]:
@@ -689,6 +690,7 @@ def run_bench_compare(config: RunConfig, arm_runner: ArmRunner) -> dict[str, Any
                 seed=config.seed,
                 timeout_s=config.timeout_s,
                 arm_runner=arm_runner,
+                max_peak_rss_mb=config.max_peak_rss_mb,
             )
         except FailClosedError as exc:
             error = str(exc)
@@ -698,12 +700,18 @@ def run_bench_compare(config: RunConfig, arm_runner: ArmRunner) -> dict[str, Any
     cert_shape = is_cert_shape(
         config.tiers, reps=config.reps, warmup=config.warmup, bootstrap=config.bootstrap
     )
+    memory_gate_declared = config.max_peak_rss_mb is not None
     result: dict[str, Any] = {
         "run_ok": run_ok,
-        "d9_certified": run_ok and cert_shape,
+        # A met-but-undeclared memory gate never certifies: a real ceiling,
+        # not just cert-shape sample sizes, is what D9 certifies against
+        # now (docs/plans/2026-09-30-retire-d9-rss-ratio.md).
+        "d9_certified": run_ok and cert_shape and memory_gate_declared,
         "harness_version": HARNESS_VERSION,
         "seed": config.seed,
         "descoped": list(_DESCOPED),
+        "memory_gate_declared": memory_gate_declared,
+        "max_peak_rss_mb": config.max_peak_rss_mb,
         "tiers": tiers_out,
     }
     if error is not None:
@@ -746,6 +754,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="exit 0 requires d9_certified, not just run_ok (the offline cert invocation uses this)",
     )
+    p.add_argument(
+        "--max-peak-rss-mb",
+        type=float,
+        default=None,
+        help=(
+            "absolute ceiling in MiB for the on-arm's peak RSS (Linux ru_maxrss); "
+            "omit to skip the memory gate (the run can never certify without one); "
+            "the reference-host D9 command uses 6656 (6.5 GiB)"
+        ),
+    )
     return p
 
 
@@ -757,6 +775,25 @@ def parse_and_validate_args(
     a bad invocation never reaches measurement or writes a PASS artifact."""
     parser = parser or build_arg_parser()
     args = parser.parse_args(argv)
+
+    if sys.platform != "linux":
+        # `ru_maxrss` units are platform-dependent (KiB on Linux, bytes on
+        # macOS); this harness's math assumes KiB throughout, so a non-Linux
+        # run is refused rather than silently mis-scaling every RSS figure.
+        parser.error(
+            f"this harness's RSS evidence (os.wait4 ru_maxrss) is Linux-only; "
+            f"refusing on sys.platform={sys.platform!r}"
+        )
+
+    if args.max_peak_rss_mb is not None and not (
+        math.isfinite(args.max_peak_rss_mb) and args.max_peak_rss_mb > 0
+    ):
+        parser.error("--max-peak-rss-mb must be a finite number > 0")
+    if args.require_cert and args.max_peak_rss_mb is None:
+        # d9_certified now requires a declared, met ceiling (plan's state-
+        # transition table); a --require-cert run with no ceiling can never
+        # certify, so refuse it before any measurement, not after a wasted run.
+        parser.error("--require-cert requires --max-peak-rss-mb (no ceiling declared)")
 
     try:
         tiers = [int(x) for x in args.tiers.split(",")]
@@ -802,6 +839,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         bootstrap=args.bootstrap,
         seed=args.seed,
         timeout_s=args.timeout,
+        max_peak_rss_mb=args.max_peak_rss_mb,
     )
     result = run_bench_compare(config, arm_runner=_spawn_worker_arm)
     result["status"] = "complete"

@@ -187,6 +187,10 @@ IS "production default." Three preconditions, all hard:
   artifact. The cert arms set the flag explicitly, so the number is unchanged by the
   flip -- this is a confirmation run on the exact merge artifact, not a re-derivation.
   One GCP run (budget 30, 1 used). Merge precondition.
+  **Superseded 2026-09-30:** the 1.25x ratio budget is retired. `d9_certified`
+  now also requires a declared, met `--max-peak-rss-mb` absolute ceiling (the
+  reference-host command uses 6656, i.e. 6.5 GiB) -- see
+  `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 - **P2 (HIGH) -- AST omitted-flag caller sweep (not grep).** Flipping the default
   silently changes every `run_pipeline` / isolated-worker `**kwargs` caller that
   omitted the flag AND can satisfy admission. Build an AST inventory of direct calls,

@@ -67,10 +67,14 @@ production's real auto-pooling behavior.
 ## Running the real offline sweep
 
 ```
-python scripts/bench-generation-pool/bench_compare_gen.py --out gp1_sweep_results.json
+python scripts/bench-generation-pool/bench_compare_gen.py \
+    --max-peak-rss-mb 6656 --out gp1_sweep_results.json
 ```
 
-on a quiet bench node. The default flags already match the full-sweep shape
+`--max-peak-rss-mb` is required for a recommendation to ever be emitted (see
+"Reading the output" below); `6656` MiB (6.5 GiB) matches the D9 reference-
+host ceiling, but any declared value gates the pooled arm's own peak RSS.
+The rest of the default flags already match the full-sweep shape
 (tiers 1,000 through 1,000,000, all ten allowlisted types, 20 reps, 3
 warmups, 10,000 bootstrap resamples) -- this is a real cost: 8 tiers x 10
 types x 23 reps x 2 arms = 3,680 subprocess launches, several of them at up
@@ -101,9 +105,12 @@ or beyond sweep boundary" rather than a false confirmed number. The overall
 recommendation is the MAX of every type's confirmed crossover (both the raw
 value and a rounded, padded number are reported); it is withheld, with a
 stated reason, if any type never confirms a crossover within the sweep, or
-if the peak-RSS gate trips at or above the recommended tier
-(`--max-rss-ratio` default 1.25x, `--max-rss-delta-kb` default 51,200, i.e.
-50 MB).
+if the peak-RSS gate trips at or above the recommended tier. The gate itself
+(2026-09-30, docs/plans/2026-09-30-retire-d9-rss-ratio.md) is an absolute
+`--max-peak-rss-mb` ceiling on the pooled arm's own peak RSS, with no
+default: an undeclared ceiling always withholds the recommendation, same as
+an exceeded one. `rss_ratio` and `rss_delta_kb` stay on each cell as
+information, no longer gated on.
 
 The RSS gate is a COARSE gross-regression guard, not a per-pool memory
 guarantee. `os.wait4`'s `ru_maxrss` is whole-process peak RSS, dominated by
