@@ -234,8 +234,8 @@ def test_small_tier_50ms_floor_fail() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Absolute peak-RSS ceiling gate (2026-09-30: the ratio gate is retired --
-# docs/plans/2026-09-30-retire-d9-rss-ratio.md). `max_peak_rss_mb` is None
+# Absolute peak-RSS ceiling gate; the ratio gate is retired
+# (docs/plans/2026-09-30-retire-d9-rss-ratio.md). `max_peak_rss_mb` is None
 # when no ceiling was declared; a declared ceiling is compared inclusively
 # against `on_rss_max_kb` in KiB.
 # ---------------------------------------------------------------------------
@@ -268,9 +268,9 @@ def test_rss_gate_boundary_one_kib_over_ceiling_fails() -> None:
 
 
 def test_rss_gate_passes_at_1_5x_pandas_peak_when_under_ceiling() -> None:
-    """Cam's 2026-09-30 call: a Rust arm using 1.5x the pandas peak is fine as
-    long as it fits an absolute ceiling -- the retired ratio gate would have
-    failed this at any tier."""
+    """A Rust arm using 1.5x the pandas peak is fine as long as it fits an
+    absolute ceiling -- the retired ratio gate would have failed this at
+    any tier."""
     kwargs = {
         **_base_large_tier_gate_kwargs(),
         "off_rss_max_kb": 100_000,
@@ -286,11 +286,11 @@ def test_rss_gate_fails_closed_on_missing_evidence_even_with_ceiling() -> None:
 
 
 # ---------------------------------------------------------------------------
-# `_check_gates` (HIGH-1 remediation, 2026-09-30 Codex gate on 8454ab4b): the
-# prior `any(v is False for v in gates.values())` check fails OPEN on a
-# `None` wall gate, a dropped key, and a falsy-but-not-identical value such
-# as `numpy.bool_(False)` (an `is False` identity check never matches across
-# types). Each of these must now raise `FailClosedError`.
+# `_check_gates`: the prior `any(v is False for v in gates.values())` check
+# fails OPEN on a `None` wall gate, a dropped key, and a falsy-but-not-
+# identical value such as `numpy.bool_(False)` (an `is False` identity check
+# never matches across types). Each of these must now raise
+# `FailClosedError`.
 # ---------------------------------------------------------------------------
 
 
@@ -344,10 +344,9 @@ def test_check_gates_rejects_rss_none_when_ceiling_declared() -> None:
 
 
 def test_check_gates_rejects_int_one_for_a_wall_gate() -> None:
-    """LOW-B (2026-09-30 dennis re-gate on 83c5d3c4): `1 == True` but `1 is
-    not True`. An equality-based check (`value != expected`) would accept
-    this; the docstring's identity promise requires the EXACT `True`
-    singleton, so this must still raise."""
+    """`1 == True` but `1 is not True`. An equality-based check (`value !=
+    expected`) would accept this; the docstring's identity promise requires
+    the EXACT `True` singleton, so this must still raise."""
     with pytest.raises(bc.FailClosedError):
         bc._check_gates(_small_tier_gates(point=1), 500, None)
 
@@ -361,11 +360,11 @@ def test_check_gates_rejects_numpy_bool_true_for_a_wall_gate() -> None:
 
 # ---------------------------------------------------------------------------
 # Integration-level proof that `_run_tier` is actually WIRED to
-# `_check_gates` (HIGH-A, 2026-09-30 dennis re-gate on 83c5d3c4): the unit
-# tests above call `_check_gates` directly, so they would keep passing even
-# if the `_run_tier` call site silently reverted to the old fail-open `any(v
-# is False for v in gates.values())` check. These monkeypatch `apply_gates`
-# itself to return a malformed dict and drive the real `_run_tier` path.
+# `_check_gates`: the unit tests above call `_check_gates` directly, so they
+# would keep passing even if the `_run_tier` call site silently reverted to
+# the old fail-open `any(v is False for v in gates.values())` check. These
+# monkeypatch `apply_gates` itself to return a malformed dict and drive the
+# real `_run_tier` path.
 # ---------------------------------------------------------------------------
 
 
@@ -761,9 +760,9 @@ def test_full_cert_shape_with_declared_ceiling_certifies() -> None:
 
 
 def test_full_cert_shape_without_declared_ceiling_is_never_certified() -> None:
-    """HIGH-2 remediation (2026-09-30 Codex gate on 8454ab4b): the exact
-    cert tiers/reps/warmup/bootstrap alone must NOT certify -- a real,
-    declared, met ceiling is required too. This is the direct mutation-kill
+    """The exact cert tiers/reps/warmup/bootstrap alone must NOT certify --
+    a real, declared, met ceiling is required too. This is the direct
+    mutation-kill
     test for `and memory_gate_declared` in `run_bench_compare`'s
     `d9_certified` expression: deleting that clause leaves `run_ok and
     cert_shape` both `True` here, which would flip every assertion below."""
@@ -920,10 +919,9 @@ _D9_TIER_KEYS = frozenset(
 
 
 def test_result_exact_key_sets_top_level_tier_and_gates() -> None:
-    """LOW-1 (2026-09-30 Codex gate on 8454ab4b): the schema test above
-    checks presence/absence of specific keys; this one pins the EXACT set at
-    every level (a stray or accidentally-dropped key elsewhere would slip
-    past a presence-only check)."""
+    """The schema test above checks presence/absence of specific keys; this
+    one pins the EXACT set at every level (a stray or accidentally-dropped
+    key elsewhere would slip past a presence-only check)."""
     off1, on1 = _valid_pair(500)
     off2, on2 = _valid_pair(500)
     runner = _make_runner([off1, off2], [on1, on2])

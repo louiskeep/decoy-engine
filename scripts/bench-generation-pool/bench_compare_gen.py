@@ -264,8 +264,7 @@ def build_recommendation(
     if max_peak_rss_mb is None:
         # Distinct from a MEASURED gate failure below: there is nothing to
         # measure against without a declared ceiling, so this is withheld
-        # for a different reason and must read differently (LOW-3, 2026-09-30
-        # Codex gate on 8454ab4b).
+        # for a different reason and must read differently.
         return {
             "recommended_threshold_raw": raw_max,
             "recommended_threshold_rounded": None,

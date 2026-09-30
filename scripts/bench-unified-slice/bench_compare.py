@@ -208,9 +208,8 @@ _SMALL_TIER_GATE_KEYS = frozenset({"point", "ci", "rss"})
 
 
 def _check_gates(gates: dict[str, bool | None], n_rows: int, max_peak_rss_mb: float | None) -> None:
-    """Explicit fail-closed gate verification (2026-09-30 HIGH-1 remediation
-    from the Codex final gate on 8454ab4b). The prior `any(v is False for v
-    in gates.values())` check failed OPEN on three shapes it never
+    """Explicit fail-closed gate verification. A prior `any(v is False for
+    v in gates.values())` check failed OPEN on three shapes it never
     considered: a wall gate silently holding `None` instead of a real
     boolean, a gate key dropped from the dict entirely, and a falsy-but-not-
     identical value such as `numpy.bool_(False)` (`x is False` never matches

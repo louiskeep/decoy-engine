@@ -253,8 +253,8 @@ def test_crossover_none_when_pooling_never_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RSS gate: an absolute peak-RSS ceiling (2026-09-30: the ratio+delta gate is
-# retired -- docs/plans/2026-09-30-retire-d9-rss-ratio.md). `rss_ratio` and
+# RSS gate: an absolute peak-RSS ceiling; the ratio+delta gate is retired
+# (docs/plans/2026-09-30-retire-d9-rss-ratio.md). `rss_ratio` and
 # `rss_delta_kb` stay on the cell as information; the gate itself now checks
 # `on_rss_max_kb` against a declared `max_peak_rss_mb` ceiling. No ceiling
 # declared means the recommendation is always withheld, with a reason.
@@ -332,9 +332,9 @@ def test_build_recommendation_withheld_when_rss_gate_fails() -> None:
 
 
 def test_build_recommendation_withheld_when_ceiling_not_declared() -> None:
-    """Distinct from a MEASURED RSS-gate failure (LOW-3, 2026-09-30 Codex
-    gate on 8454ab4b): the reason must say "not declared", not "RSS gate
-    failed" -- there was nothing to measure against."""
+    """Distinct from a MEASURED RSS-gate failure: the reason must say "not
+    declared", not "RSS gate failed" -- there was nothing to measure
+    against."""
     crossovers = {"city": bc.CrossoverResult(tier=25_000, boundary_fallback=False)}
     cells = [_cell("city", 25_000, on_rss_max_kb=1_000)]
     rec = bc.build_recommendation(crossovers, cells, max_peak_rss_mb=None)
@@ -603,9 +603,9 @@ _GP1_CELL_KEYS = frozenset(
 
 
 def test_gp1_result_exact_key_sets_top_level_and_cell() -> None:
-    """LOW-1 (2026-09-30 Codex gate on 8454ab4b): pins the EXACT key set at
-    both levels, including confirming `off_rss_max_kb` -- the arm the RSS
-    gate does NOT check anymore -- is still kept as information."""
+    """Pins the EXACT key set at both levels, including confirming
+    `off_rss_max_kb` -- the arm the RSS gate does NOT check anymore -- is
+    still kept as information."""
     off1, on1 = _valid_pair(500)
     off2, on2 = _valid_pair(500)
     runner = _make_runner([off1, off2], [on1, on2])
@@ -756,8 +756,8 @@ def test_cli_accepts_minimal_valid_shape() -> None:
 
 
 # ---------------------------------------------------------------------------
-# --max-peak-rss-mb CLI validation (2026-09-30: replaces the retired
-# --max-rss-ratio / --max-rss-delta-kb flags)
+# --max-peak-rss-mb CLI validation (replaces the retired --max-rss-ratio
+# / --max-rss-delta-kb flags)
 # ---------------------------------------------------------------------------
 
 
