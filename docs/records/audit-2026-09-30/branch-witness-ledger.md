@@ -486,3 +486,9 @@ Engine entry points, summarized: **default** → `run_pipeline(...)` no override
 4. **`out_of_core/_compat.py`'s `_DEFERRED_GROUP_B` / `_DEFERRED_GROUP_C` / `_GROUP_C_CONDITIONAL` dicts and `_group_c_conditional_rejection`** (B123-B124) were seen only as call sites, not their per-strategy code/reason contents (the dicts and the ~30-line helper starting at line 323 were not read). A follow-up pass should read lines 1-160 and 320-408 of that file in full.
 5. **`_chunked.py`'s `gate_fk_child_edges`** (backing B061-B065) was not opened directly; the codes are taken from `check_chunked_compatibility`'s own docstring, not verified against the implementation.
 6. **Platform admission_fk.py / v2_out_of_core.py / DispatchPlan** line numbers in section 15 are from the `origin/main` git blob as fetched at preflight time (commit recorded in `docs/records/audit-2026-09-30/preflight.json`); if origin/main advances before the run stage, re-fetch and re-cite rather than trusting these line numbers.
+
+## Correction: native companion "absent" in the preflight
+
+The preflight reported the native companion absent. That is an artifact of this worktree, not a product fact: the worktree has no virtualenv of its own, and the environment the preflight borrowed does not have `decoy_engine_native` installed. The Track A worktree's environment on the same host reports `present=True, ok=True, abi decoy-native-abi-2, version 0.1.0`. B039's decline therefore applies only where the companion is missing. The run stage must use a dedicated environment with the companion built from the pinned engine tree, and must record `native_companion_status()` in every run.
+
+Also noted for the map: the CLI's `classify_route` (B200) reports a job as `native` when at least one node has `compiled_kernel_executed` truthy, so a mixed job can be reported as native by the CLI. The map records per-node backends and does not use that label.
