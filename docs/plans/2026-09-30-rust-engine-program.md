@@ -33,8 +33,8 @@ These fix real breakage and do not wait for the Rust work. Sizes are the record'
 
 | Slice | Content | Size | Notes |
 |---|---|---|---|
-| A1 | **Owner scope on binding resolution** (record P2): `resolve_binding` takes the authenticated user; local uploads and connections are looked up within the owner's scope (admins as today's router rules allow); 404 otherwise. Cross-owner tests for both. | S | HIGH security. **Blocks A2.** |
-| A2 | **Cloud descriptors** (P1): strip `connection_id`, `connection_name` and GCS `region` from the engine copy before validation; keep them in the snapshot for evidence. Tests: the stored snapshot runs through `run_v2_pipeline_from_config` for S3 and GCS, source and target, against moto / fake-gcs-server. | S | Lands with or after A1, never before. |
+| A1 | **Owner scope on upload bindings** (record P2): `resolve_binding` takes the authenticated user; a local upload must belong to that user or the user must be an admin, matching `api/files/router.py:781`; 404 otherwise. Connections stay org-wide (by design, `CloudAccount` is org-level); a test pins that. | S | HIGH security. Lands first. |
+| A2 | **Cloud descriptors** (P1): strip `connection_id`, `connection_name` and GCS `region` from the engine copy before validation; keep them in the snapshot for evidence. Tests: the stored snapshot runs through `run_v2_pipeline_from_config` for S3 and GCS, source and target, against moto / fake-gcs-server. | S | After A1 for tidiness; no security dependency (connections are org-wide by design). |
 | A3 | **Platform FK cycle routing** (P3): cycle check in `v2_sequential._should_use_sequential_relationship_path` and admission pricing, so cross-table cycles take the full-frame path that works. | S-M | Regression test from R063. |
 | A4 | **Phase 1 fixed-width** (P4): reject fixed-width in Phase 1 eligibility until a streaming reader exists. | S | |
 | A5 | **CLI fixed-width** (P5): read fixed-width with the engine reader, not as CSV. | S | decoy-cli repo. |

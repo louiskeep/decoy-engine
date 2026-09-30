@@ -230,3 +230,7 @@ shape table cell.
 - **`--chunked --no-native` together** (B207) was not tested this pass
   (only the four single-flag CLI modes were run); the ledger's existing
   code-inferred citation for B207 stands unwitnessed.
+
+## Correction (2026-09-30, after the audit record's final gate)
+
+The upload-ownership check above said `ConnectionRef` has "the identical missing-scope shape". It does not have a gap. `CloudAccount` is an org-level resource: an admin registers it once and every user picks from the list (`api/models.py` `CloudAccount` docstring). Project access control that could scope connections exists but is dormant (`api/authz/projects.py`: "Nothing in this module is wired into an artifact route"). The real gap is local uploads: the files router checks `owner_id` (`api/files/router.py:781`), and `resolve_binding` does not.
