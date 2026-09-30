@@ -281,7 +281,8 @@ class TableConfig(BaseModel):
     # the mask path. Empty by default. Generate tables MAY also carry
     # transforms (they apply post-synthesis); current S17 scope wires only
     # the mask side (Phase B + a follow-up enables generate-side transforms).
-    transforms: list[TransformOp] = Field(default_factory=list)
+    # The cap bounds derived-column width growth (each derive can add a column).
+    transforms: list[TransformOp] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def _mask_xor_generate(self) -> TableConfig:

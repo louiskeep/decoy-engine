@@ -137,8 +137,8 @@ def run_fk_out_of_core(
     EXCEPT the divergences inventoried in `_batch_join.py`'s module docstring
     (fixed-schema typing and composite partial-null orphan handling).
     With a sink, each table is staged as a stream of bounded record batches
-    (never whole-table resident); without one, the streamed batches are
-    reassembled into in-memory tables with whole-column type semantics.
+    (never whole-table resident); without one, the batches are reassembled into
+    in-memory tables with whole-column type semantics. Inputs must already be transformed.
 
     Residency precondition (caller-managed; P4-A). This exported primitive does
     not enforce boundedness: its peak residency is bounded w.r.t. row cardinality

@@ -19,10 +19,15 @@ exactly the bounded input shape that most needs it.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._transforms_gate import (
+    PER_TABLE_TRANSFORMS_PRESENT,
+    transform_bearing_mask_tables,
+)
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -208,6 +213,7 @@ def out_of_core_routing_signals(
     caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     has_mask_table: bool,
+    config: Mapping[str, Any] | None = None,
 ) -> tuple[bool, str | None, int | None, bool]:
     """The `(out_of_core_compatible, reject_code, largest_table_rows,
     largest_table_rows_exact)` tuple `decide_execution_route`'s SC2 gates
@@ -227,6 +233,9 @@ def out_of_core_routing_signals(
     if not (getattr(profile, "relationships", None) and has_mask_table):
         return False, None, None, True
     compatible, reject_code = out_of_core_admission(plan, registry=registry, graph=graph)
+    if config is not None and transform_bearing_mask_tables(config):
+        # Out-of-core streams raw sources and cannot apply a table's transforms.
+        compatible, reject_code = False, PER_TABLE_TRANSFORMS_PRESENT
     rows, exact = _resolve_largest_mask_table_rows(
         profile, caller_sources=caller_sources, table_kinds=table_kinds
     )
@@ -534,6 +543,7 @@ def resolve_execution_route(
     `out_of_core._spill_estimate`'s module docstring.
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
+    from decoy_engine.execution._transforms_admission import admission_signals
 
     (
         out_of_core_compatible,
@@ -548,19 +558,17 @@ def resolve_execution_route(
         caller_sources=caller_sources,
         table_kinds=table_kinds,
         has_mask_table=has_mask_table,
-    )
-    full_frame_fits_estimate = resolve_full_frame_fits_estimate(
-        use_byte_estimate_routing, profile, caller_sources, table_kinds, out_of_core_budget_bytes
-    )
-    probe_recovers_full_frame = resolve_probe_recovery(
-        use_probe_routing,
-        use_byte_estimate_routing,
-        profile,
-        caller_sources,
-        table_kinds,
-        out_of_core_budget_bytes,
-        full_frame_fits_estimate,
         config=config,
+    )
+    full_frame_fits_estimate, probe_recovers_full_frame = admission_signals(
+        config,
+        profile=profile,
+        caller_sources=caller_sources,
+        table_kinds=table_kinds,
+        execution_mode=execution_mode,
+        use_byte_estimate_routing=use_byte_estimate_routing,
+        use_probe_routing=use_probe_routing,
+        out_of_core_budget_bytes=out_of_core_budget_bytes,
         engine_version=engine_version,
     )
     route, route_reason = decide_execution_route(

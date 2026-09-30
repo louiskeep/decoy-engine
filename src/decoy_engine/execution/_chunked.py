@@ -88,7 +88,7 @@ Rejected at compile time (`check_chunked_compatibility`):
 - faker / categorical with the conditions above unmet:
   `chunked_strategy_conditions_unmet`, naming each unmet condition;
 - FK child edges that fail the self-mask gate (see below);
-- generate tables (generation is not masking; row_count is whole-run).
+- generate tables (row_count is whole-run); tables with transforms (`per_table_transforms_present`).
 
 FK child self-masking (SC1 port, Option 1, docs/relationships-memory-scaling.md
 §2):
@@ -177,6 +177,7 @@ from ._chunked_fk_dtype import (
     fk_declared_dtypes_for_table,
     reject_mismatched_chunked_fk_declared_dtype,
 )
+from ._transforms_gate import reject_per_table_transforms
 
 # Admitted only when the column's config pins the deterministic
 # value-keyed path (see module docstring for the per-strategy rules).
@@ -261,16 +262,14 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         chunked_fk_child_strategy_missing: child column has no explicit strategy.
         chunked_fk_child_strategy_mismatch: child strategy != parent strategy.
         strategy_not_chunk_safe: a non-FK column uses a non-chunk-safe strategy.
-        chunked_strategy_conditions_unmet: faker/categorical admission conditions
-            are not met; message names each unmet condition.
+        chunked_strategy_conditions_unmet: faker/categorical conditions unmet (listed).
         chunked_windowed_date_when_not_supported: `windowed_date` + `when:`.
         chunked_text_mask_when_not_supported: `text_mask` + `when:`.
         chunked_code_set_when_not_supported: `code_set` + `when:`.
-        chunked_code_set_fk_key_unsupported: `code_set` used as an FK key
-            column, as parent or child.
+        chunked_code_set_fk_key_unsupported: `code_set` as an FK key column.
         chunked_bucket_perturb_when_not_supported: `bucket_perturb` + `when:`.
-        chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` used as
-            an FK key column, as parent or child.
+        chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` as an FK key column.
+        per_table_transforms_present: `table` declares transforms.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -291,6 +290,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
                 "state)."
             ),
         )
+    reject_per_table_transforms(config, table=table, route="chunked execution")
     # Gate FK edges where `table` is the child. Admitted edges self-mask via the
     # child's own value-keyed strategy under the shared namespace. Rejected edges
     # raise PlanCompileError (fail closed). Edges where `table` is a parent only

@@ -183,6 +183,7 @@ class PandasExecutionAdapter:
         row_offset: int = 0,
         code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult:
+        """Mask every table in `sources`; inputs must already be transformed (a Plan has none)."""
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
         # float. Backstops the plan-compile check for the no_profile path; both

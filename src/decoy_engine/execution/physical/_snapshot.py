@@ -77,17 +77,14 @@ def capture_physical_plan_inputs(
     captures the same routing facts an unspecified `run_pipeline` kwarg would.
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
-    from decoy_engine.execution._pipeline_routing_signals import (
-        out_of_core_routing_signals,
-        resolve_full_frame_fits_estimate,
-        resolve_probe_recovery,
-    )
+    from decoy_engine.execution._pipeline_routing_signals import out_of_core_routing_signals
     from decoy_engine.execution._substrate import (
         require_bool,
         require_positive_int,
         resolve_substrate,
         select_execution_adapter,
     )
+    from decoy_engine.execution._transforms_admission import admission_signals
     from decoy_engine.execution.native._companion_status import native_companion_status
     from decoy_engine.execution.out_of_core import resolve_budget
     from decoy_engine.execution.out_of_core._route_policy import (
@@ -178,19 +175,17 @@ def capture_physical_plan_inputs(
         caller_sources=caller_sources,
         table_kinds=table_kinds,
         has_mask_table=has_mask_table,
-    )
-    full_frame_fits_estimate = resolve_full_frame_fits_estimate(
-        use_byte_estimate_routing, profile, caller_sources, table_kinds, out_of_core_budget_bytes
-    )
-    probe_recovers_full_frame = resolve_probe_recovery(
-        use_probe_routing,
-        use_byte_estimate_routing,
-        profile,
-        caller_sources,
-        table_kinds,
-        out_of_core_budget_bytes,
-        full_frame_fits_estimate,
         config=config,
+    )
+    full_frame_fits_estimate, probe_recovers_full_frame = admission_signals(
+        config,
+        profile=profile,
+        caller_sources=caller_sources,
+        table_kinds=table_kinds,
+        execution_mode=execution_mode,
+        use_byte_estimate_routing=use_byte_estimate_routing,
+        use_probe_routing=use_probe_routing,
+        out_of_core_budget_bytes=out_of_core_budget_bytes,
         engine_version=engine_version,
     )
     resolved_budget = resolve_budget(out_of_core_budget_bytes)

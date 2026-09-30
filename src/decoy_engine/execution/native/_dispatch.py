@@ -46,6 +46,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_profile import first_chunk_profile
+from decoy_engine.execution._transforms_gate import reject_per_table_transforms
 from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
@@ -479,7 +480,13 @@ def run_native_or_oracle_chunked(
     existing caller is unaffected; an explicit count lets either kernel derive rows
     in parallel within the one shared pool. It changes only throughput, never
     output bytes (both compiled kernels are thread-invariant).
+
+    A table that declares transforms raises `per_table_transforms_present`
+    before any chunk is read: this entry masks raw chunks, so the ops would be
+    dropped silently.
     """
+    # Before `iter(chunks)`: a rejected job must not consume a chunk.
+    reject_per_table_transforms(config, table=table, route="native chunked execution")
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
     if first is None:

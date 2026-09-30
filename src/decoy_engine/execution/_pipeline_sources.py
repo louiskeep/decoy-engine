@@ -35,9 +35,12 @@ never undermined by an eager materialization upstream of the route decision.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
+from decoy_engine.execution._transforms_table import transform_resolved_source
 from decoy_engine.profile._readers import LazySource
 
 __all__ = [
@@ -66,6 +69,7 @@ def resolve_resident_sources(
     *,
     source_loader: Callable[[str], pa.Table] | None = None,
     required_tables: Iterable[str] = (),
+    config: Mapping[str, Any] | None = None,
 ) -> dict[str, pa.Table]:
     """Materialize every source, for routes that need them all resident at once.
 
@@ -87,18 +91,34 @@ def resolve_resident_sources(
     route it displaced would have read. When `caller_sources` already holds a
     table (the resident / LazySource path, where `source_loader` is None),
     that entry wins and the loader is never called for it.
+
+    `config`, when given, is the validated config dump: each mask table that
+    declares transforms is transformed exactly once here, as it is resolved, so
+    every later stage (adapter, validators, post-validation) sees the transformed
+    table. A `LazySource` is schema-checked before it is read.
     """
-    resident = {name: materialize_source(src) for name, src in caller_sources.items()}
+    bearing = transform_bearing_mask_tables(config) if config is not None else frozenset()
+    resident: dict[str, pa.Table] = {}
+    for name, src in caller_sources.items():
+        if name in bearing and config is not None:
+            resident[name] = transform_resolved_source(config, name, src)
+        else:
+            resident[name] = materialize_source(src)
     if source_loader is not None:
         for name in required_tables:
             if name not in resident:
-                resident[name] = source_loader(name)
+                loaded = source_loader(name)
+                if name in bearing and config is not None:
+                    loaded = transform_resolved_source(config, name, loaded)
+                resident[name] = loaded
     return resident
 
 
 def resolve_sequential_loader(
     source_loader: Callable[[str], pa.Table] | None,
     caller_sources: Mapping[str, pa.Table | LazySource],
+    *,
+    config: Mapping[str, Any] | None = None,
 ) -> Callable[[str], pa.Table]:
     """Build the per-table loader `run_sequential_route` calls.
 
@@ -109,10 +129,33 @@ def resolve_sequential_loader(
     caller-supplied `source_loader` always wins (it already returns
     residents by its own contract); otherwise fall back to resolving from
     `caller_sources`.
+
+    With `config`, a mask table that declares transforms is transformed once, as
+    the sequential runner loads it (and schema-checked before any value is read).
     """
+    bearing = transform_bearing_mask_tables(config) if config is not None else frozenset()
     if source_loader is not None:
-        return source_loader
-    return lambda t: materialize_source(caller_sources[t])
+        raw_loader = source_loader
+    else:
+
+        def raw_loader(t: str) -> pa.Table:
+            return materialize_source(caller_sources[t])
+
+    if not bearing or config is None:
+        return raw_loader
+    resolved_config = config
+
+    def load(t: str) -> pa.Table:
+        if t not in bearing:
+            return raw_loader(t)
+        # A caller-resident LazySource is checked on its footer schema before it
+        # is read; a loader already returns a resident table.
+        source: pa.Table | LazySource = (
+            caller_sources[t] if source_loader is None else source_loader(t)
+        )
+        return transform_resolved_source(resolved_config, t, source)
+
+    return load
 
 
 def lazy_source_rejection(src: pa.Table | LazySource, *, table: str) -> str | None:

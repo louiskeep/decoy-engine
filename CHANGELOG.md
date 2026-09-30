@@ -64,6 +64,31 @@ The reader was hardened before becoming public, which changes behavior:
 - `path` accepts `os.PathLike[str]`; a non-`str` path raises `TypeError` and a
   path containing NUL raises `ValueError`.
 
+### Changed (engine-owned table transforms, 2026-09-30)
+
+**Breaking (pre-GA API):** `run_pipeline` now applies a mask table's `transforms` (filter, sort,
+limit, dedupe, derive, drop_column). Previously only the platform did, so the same config gave
+different output by caller. `decoy_engine.apply_table_transforms(config, table_name, table)` is the
+new public helper for callers that use the plan-level APIs (`PandasExecutionAdapter.run`,
+`run_sequential`, `run_fk_out_of_core`), which take prepared inputs and never see transforms.
+
+The behavior applies only to tables with transforms. Source columns keep their exact Arrow type,
+nullability, field metadata and values, and every nullable integer column on a transform-bearing
+table is exact instead of rounded through float64. That can change filter, stable-sort, dedupe and
+derive results relative to the old platform rounding: a `derive` at an integer-width boundary wraps
+as that integer type does (`int8` 127 + 1 is -128, where the float64 path gave 128), and a filter or
+dedupe beyond 2^53 keeps rows the rounding path merged. The new `duplicate_source_field_names` and
+`config_references_stored_index` errors apply only to transform-bearing tables. Tables without
+transforms keep their current rounding, stored-index and duplicate-name behavior (tracked as roadmap
+§EXACT-INT and §INDEX-FIELDS). `to_pandas_fk_safe` is unchanged.
+
+Routing: a transform-bearing job is never auto-chunked, never routed to out-of-core, and never
+admitted to full-frame by the static byte estimate (only a measured probe can recover it). The
+direct chunked entry points, the native-or-oracle dispatcher and explicit
+`execution_mode="out_of_core"` raise `per_table_transforms_present` instead of dropping the ops.
+Under `auto`, telemetry gains `out_of_core_declined` when transforms are why out-of-core was
+skipped. `TableConfig.transforms` accepts at most 32 ops.
+
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 
 **Breaking (pre-GA API):** `boto3` and `google-cloud-storage` moved from base
