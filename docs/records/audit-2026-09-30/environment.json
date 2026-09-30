@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-09-30T09:45:00+00:00",
+  "purpose": "Dedicated audit environment for stage 2a probe runs (docs/plans/2026-09-30-rust-coverage-evidence-audit.md).",
+  "venv_path": "/dev/shm/audit-2026-09-30/venv",
+  "venv_note": "created with `uv venv --python 3.11` under /dev/shm (tmpfs, not in any repo); system python3 had no ensurepip/pip so uv supplied its own managed CPython 3.11.15 build and pip-equivalent resolver.",
+  "python": {
+    "version": "3.11.15",
+    "implementation": "CPython",
+    "managed_by": "uv 0.11.19",
+    "executable": "/dev/shm/audit-2026-09-30/venv/bin/python"
+  },
+  "engine": {
+    "repo": "/home/cam/vscode/decoy-engine/.claude/worktrees/docs-reality",
+    "branch": "docs/reality-2026-09-30",
+    "commit": "7cadcde08ea5876217de2490b06a7f9e1ced5a40",
+    "plan_pinned_baseline": "8dc559e5",
+    "install_method": "uv pip install -e '.[dev,cloud]' from this worktree",
+    "installed_version": "0.6.0",
+    "top_level_package": "decoy_engine",
+    "package_file": "/home/cam/vscode/decoy-engine/.claude/worktrees/docs-reality/src/decoy_engine/__init__.py"
+  },
+  "native_companion": {
+    "source_tree": "/home/cam/vscode/decoy-engine/.claude/worktrees/docs-reality/decoy-engine-native",
+    "install_method": "uv pip install ./decoy-engine-native (maturin build backend, PyO3/pyo3-build; Rust toolchain from /home/cam/.cargo/bin, cargo 1.98.0 / rustc 1.98.0)",
+    "build_time_seconds": 34.4,
+    "installed_version": "0.1.0",
+    "module_path": "/dev/shm/audit-2026-09-30/venv/lib/python3.11/site-packages/decoy_engine_native/_kernel.cpython-311-x86_64-linux-gnu.so",
+    "module_sha256": "1a3b2d18e4e092691e05f7ab0c8e1725f6aeb94bc19e46f9adaced472510b061",
+    "native_companion_status": {
+      "present": true,
+      "ok": true,
+      "abi_expected": "decoy-native-abi-2",
+      "abi_actual": "decoy-native-abi-2",
+      "version": "0.1.0",
+      "reason": "present-ok",
+      "cause": null
+    },
+    "read_via": "decoy_engine.execution.native._companion_status.native_companion_status()",
+    "note": "confirms the branch-witness ledger's correction note: the preflight's companion-absent reading was an artifact of the shared .venv lacking the companion, not a product fact. This dedicated environment builds the companion from this worktree's pinned HEAD and reports present=True ok=True."
+  },
+  "platform": {
+    "repo_origin_checkout": "/home/cam/vscode/decoy-platform",
+    "worktree": "/home/cam/vscode/decoy-platform/.claude/worktrees/audit-pinned",
+    "created_via": "git -C /home/cam/vscode/decoy-platform worktree add --detach /home/cam/vscode/decoy-platform/.claude/worktrees/audit-pinned origin/main",
+    "commit": "0701a95422e405cff76eb38c12cfb4f372b151d4",
+    "commit_matches_preflight": true,
+    "fetch_before_worktree": true,
+    "install_method": "uv pip install -e '.[dev]' from the audit-pinned worktree",
+    "installed_version": "0.1.0",
+    "top_level_package": "api",
+    "package_file": "/home/cam/vscode/decoy-platform/.claude/worktrees/audit-pinned/api/__init__.py"
+  },
+  "cli": {
+    "repo": "/home/cam/vscode/decoy",
+    "commit": "b8274b0194748d5a60262b78b5969a8c85aeeac7",
+    "commit_matches_preflight": true,
+    "fetch_before_check": true,
+    "installed_in_venv": false,
+    "note": "not installed into the stage 2a venv: stage 2a's cell batch uses the engine-direct entry point only. The CLI commit is recorded here for provenance; CLI-entry-point cells are deferred to a later stage per the plan (each of the six entry points gets its own real run, not necessarily in stage 2a)."
+  },
+  "resolved_dependency_versions_of_note": {
+    "pandas": "2.3.3",
+    "pyarrow": "25.0.1",
+    "polars": "1.44.2",
+    "numpy": "2.4.6",
+    "faker": "40.23.0"
+  }
+}
