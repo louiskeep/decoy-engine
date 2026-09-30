@@ -133,10 +133,11 @@ Not part of this program's end state; each becomes its own planned and sized ite
 
 Rough scale: Phase A about a week; Phase B two to three weeks; Phase C three to five weeks (parallel); Phase D several weeks, with D2 and D4b the largest; F two to three weeks. Estimates from the record's sizes, not commitments.
 
-## Decisions for Cam
+## Decisions (Cam, 2026-09-30)
 
-1. Approve this order, or reorder (for example D before C if FK jobs matter more to early customers).
-2. A8: where transforms should live.
-3. Whether the standing Rust-slice merge rule covers Phase B to F engine slices, and whether Phase A platform fixes may merge under the same rule once CI is back, or each needs your go.
-4. Phase E spend under the existing 50-run GCP budget.
-5. B1's public engine entry point and the paired engine / companion release cadence (publishing the companion for CLI users is a release decision).
+1. Order after Phase B: C, then D, then E, then F.
+2. A8: transforms move into the engine `run_pipeline`, so engine, CLI and platform behave the same.
+3. Cam's standing Rust merge rule covers every engine slice in Phases B to F. Platform and CLI slices, including the Phase A platform fixes, need Cam's go.
+4. Phase E runs under the existing 50-run GCP budget, with a Slack message before each run.
+5. The engine and native companion release together at each phase boundary, and the companion wheels are published so CLI users get the Rust path. Each publish is announced on Slack first.
+6. A2b (added): the adaptive-scheduler claim path (`scheduler_claim_loop.claim_one_flag_on`) gets the same legacy cloud-job cancellation as the standard claim path.
