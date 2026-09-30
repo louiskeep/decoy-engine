@@ -35,6 +35,15 @@ withholds any recommendation, same as an exceeded one. `rss_ratio` and
 Both harnesses now refuse to run on a non-Linux platform (`ru_maxrss`'s units
 are not portable). See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 
+### Added (public fixed-width reader, 2026-09-30)
+
+`read_fixed_width` is now exported from `decoy_engine.__all__`, re-exported from
+the existing `profile._fixed_width_reader.read_fixed_width` implementation
+(same function, no behavior change). The CLI's `format: fixed_width`
+`FileSource` handling previously had to import that private module directly;
+this closes the gap so it can depend on the versioned public surface instead
+(A5a, engine program Phase A).
+
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 
 **Breaking (pre-GA API):** `boto3` and `google-cloud-storage` moved from base

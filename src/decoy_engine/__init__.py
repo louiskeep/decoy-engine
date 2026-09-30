@@ -20,6 +20,12 @@ Public API (the contract CLI and platform code depend on):
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
                       synthesis for generate-mode configs.
+    read_fixed_width  (decoy_engine.profile._fixed_width_reader) parse a
+                      newline-delimited fixed-width file into a DataFrame per
+                      a FixedWidthLayout (or the equivalent config dict); the
+                      CLI/platform boundary for a `format: fixed_width`
+                      FileSource, so callers never import the private
+                      `profile._fixed_width_reader` module directly.
     RELEASE_PHASE / ReleasePhase / is_pre_ga:
                       (decoy_engine.release) the single pre-GA/GA switch the rule
                       inversions and CI gates read. Pre-GA: hard-delete is allowed
@@ -153,6 +159,7 @@ from decoy_engine.plan.validate import (
     PlanValidationResult,
     validate_plan,
 )
+from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.providers import (
     atomic_swap_db_providers,
     list_generate_faker_providers,
@@ -409,6 +416,7 @@ __all__ = [
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "read_fixed_width",
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
