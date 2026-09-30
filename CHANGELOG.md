@@ -44,10 +44,12 @@ are not portable). See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 private module (A5a, engine program Phase A).
 
 The reader was hardened before becoming public, which changes behavior:
-- Errors never carry raw file content: a bad cast, a short record, an
+- Errors about bad data carry no file content: a bad cast, a short record, an
   undecodable line and a malformed layout dict raise with no chained exception,
-  from a frame that holds no file data (so traceback-local capture, as error
-  trackers do, finds none), with the path escaped onto one line.
+  from a frame that holds no file data, with the path escaped onto one line.
+  Failures that are not about the data (a disk error mid-read, running out of
+  memory) are out of scope; see `docs/security/error-reporting-and-data-exposure.md`,
+  which also tells operators to keep local-variable capture off in error trackers.
 - A malformed layout dict raises `ConfigError` instead of pydantic's
   `ValidationError`; an undecodable line raises `FixedWidthParseError` naming
   its exact line instead of `UnicodeDecodeError`.

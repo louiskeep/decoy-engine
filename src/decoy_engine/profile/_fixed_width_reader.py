@@ -30,7 +30,10 @@ itself is clean. Bad data never raises inside the code that holds it:
 `_cast_value` and `_parse_records` return a failure message (position,
 column name, value length, caster type name) instead of raising, and
 `read_fixed_width` raises only after they have returned, from a frame
-that holds no line, value or record. An exception raised while another is
+that holds no line, value or record. This covers errors about the data;
+a failure that is not (a disk error mid-read, running out of memory) may
+surface from a frame holding records, as in any data-processing code --
+see docs/security/error-reporting-and-data-exposure.md. An exception raised while another is
 being handled gets it attached as `__context__` even with `from None`,
 which is why no raise happens inside an `except` block here.
 
