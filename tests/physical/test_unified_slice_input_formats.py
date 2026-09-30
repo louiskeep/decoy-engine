@@ -319,6 +319,7 @@ def test_group_key_config_rejection_admits_via_resident_sibling_type() -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_csv_number_columns_admit_and_match_pandas(tmp_path: Path) -> None:
     """The end-goal case: a real CSV job with an integer-looking column AND a
     decimal-looking column, masked with `hash` (the config strategy name, not
@@ -413,6 +414,7 @@ def test_csv_number_column_hash_route_evidence_and_non_vacuity(
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_csv_wide_strategy_coverage_admits_and_matches_pandas(tmp_path: Path) -> None:
     csv_path = tmp_path / "src.csv"
     _write_csv(
@@ -486,6 +488,7 @@ def test_csv_wide_strategy_coverage_admits_and_matches_pandas(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_fixed_width_number_column_admits_and_matches_pandas(tmp_path: Path) -> None:
     layout_columns = [
         {"name": "id", "start": 0, "width": 6, "type": "int"},
@@ -668,6 +671,7 @@ def test_csv_all_null_column_declines_to_pandas_route(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@_NEEDS_COMPANION
 def test_compiled_source_not_admitted_source_declines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -713,6 +717,7 @@ def _assert_hash_kernels_ran(leaf: dict[str, Any], expected: int) -> None:
     assert all(e["compiled_kernel_executed"] is True for e in hashed)
 
 
+@_NEEDS_COMPANION
 def test_csv_edge_values_from_platform_reader_admit_and_match(tmp_path: Path) -> None:
     csv_path = tmp_path / "edge.csv"
     csv_path.write_text(
@@ -737,6 +742,7 @@ def test_csv_edge_values_from_platform_reader_admit_and_match(tmp_path: Path) ->
     assert out.column("raw").to_pylist() == ["x", None, "  lead"]
 
 
+@_NEEDS_COMPANION
 def test_fixed_width_padded_fields_from_engine_reader_admit_and_match(tmp_path: Path) -> None:
     from decoy_engine.profile._fixed_width_reader import read_fixed_width
 

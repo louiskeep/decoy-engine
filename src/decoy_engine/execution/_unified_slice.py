@@ -183,13 +183,6 @@ def _execute_admitted(
     from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
 
     try:
-        adapter = select_execution_adapter(
-            substrate=resolved_substrate,
-            fpe_chunk_count=fpe_chunk_count,
-            max_workers=max_workers,
-            fallback_to_pandas=fallback_to_pandas,
-        )
-
         inputs = build_live_physical_plan_inputs(
             config=config,
             plan=plan,
@@ -234,6 +227,15 @@ def _execute_admitted(
         )
         if physical_table is None:
             return None
+
+        # Built only once admitted: a declined job falls back to the old route,
+        # which selects its own adapter, and must not have selected one here too.
+        adapter = select_execution_adapter(
+            substrate=resolved_substrate,
+            fpe_chunk_count=fpe_chunk_count,
+            max_workers=max_workers,
+            fallback_to_pandas=fallback_to_pandas,
+        )
 
         activation = build_unified_slice_activation(
             physical_plan,

@@ -453,8 +453,10 @@ class TestObserveOnly:
         explain_result = run_pipeline(
             cfg, sources=sources, engine_version=_ENGINE_VERSION, explain_plan=True
         )
-        assert set(default_result.quality_metrics) == {"execution"}
-        assert set(explain_result.quality_metrics) == {"execution", "execution_plan"}
+        assert "execution_plan" not in default_result.quality_metrics
+        assert set(explain_result.quality_metrics) - set(default_result.quality_metrics) == {
+            "execution_plan"
+        }
         assert default_result.outputs["customers"].equals(explain_result.outputs["customers"])
 
     def test_explain_plan_never_changes_routing(self, tmp_path, monkeypatch):
@@ -474,8 +476,14 @@ class TestObserveOnly:
 
         monkeypatch.setattr(_substrate, "select_execution_adapter", spy)
         run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+        default_adapters = list(adapters)
+        adapters.clear()
         run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, explain_plan=True)
-        assert adapters == ["PandasExecutionAdapter", "PandasExecutionAdapter"]
+        # Route-agnostic: the job may take the unified (Rust) lane or the pandas
+        # route depending on the native companion, but explain must not change it.
+        assert default_adapters
+        assert adapters == default_adapters
+        assert set(adapters) == {"PandasExecutionAdapter"}
 
 
 # --------------------------------------------------------------------------
