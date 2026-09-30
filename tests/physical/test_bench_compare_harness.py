@@ -344,7 +344,7 @@ def test_check_gates_rejects_rss_none_when_ceiling_declared() -> None:
 
 
 def test_check_gates_rejects_int_one_for_a_wall_gate() -> None:
-    """LOW-B (2026-09-30 Codex re-gate on 83c5d3c4): `1 == True` but `1 is
+    """LOW-B (2026-09-30 dennis re-gate on 83c5d3c4): `1 == True` but `1 is
     not True`. An equality-based check (`value != expected`) would accept
     this; the docstring's identity promise requires the EXACT `True`
     singleton, so this must still raise."""
@@ -361,7 +361,7 @@ def test_check_gates_rejects_numpy_bool_true_for_a_wall_gate() -> None:
 
 # ---------------------------------------------------------------------------
 # Integration-level proof that `_run_tier` is actually WIRED to
-# `_check_gates` (HIGH-A, 2026-09-30 Codex re-gate on 83c5d3c4): the unit
+# `_check_gates` (HIGH-A, 2026-09-30 dennis re-gate on 83c5d3c4): the unit
 # tests above call `_check_gates` directly, so they would keep passing even
 # if the `_run_tier` call site silently reverted to the old fail-open `any(v
 # is False for v in gates.values())` check. These monkeypatch `apply_gates`

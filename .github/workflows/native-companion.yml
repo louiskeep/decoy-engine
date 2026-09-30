@@ -43,7 +43,7 @@ on:
       - "tests/parity/native/**"
       # Both the worker smoke test and the D9 harness's own real-worker
       # integration test are companion-present-only cases run by this
-      # workflow (job below, ~308); a change to anything under the harness
+      # workflow (job below, step "Physical shadow corpus + unified-slice hash equivalence"); a change to anything under the harness
       # directory, or to either test, must trigger this workflow too.
       - "scripts/bench-unified-slice/**"
       - "tests/physical/test_bench_unified_slice_harness_smoke.py"
