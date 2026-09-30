@@ -2,7 +2,7 @@
 
 Status: record (input to `docs/plans/2026-09-30-rust-coverage-evidence-audit.md`)
 
-Runs R069-R084 in `docs/records/audit-2026-09-30/runs.jsonl`, continuing from stage 2c's
+Runs R069-R084 (plus R085, added after the dennis re-gate: default `deterministic: false` Faker, 0 compiled calls) in `docs/records/audit-2026-09-30/runs.jsonl`, continuing from stage 2c's
 R068, in the same dedicated environment (`docs/records/audit-2026-09-30/environment.json`):
 engine editable from this worktree (commit `7cadcde08ea5876217de2490b06a7f9e1ced5a40`, no
 `src/` change since; companion present, ok, `decoy-native-abi-2`, SHA-256
@@ -285,4 +285,4 @@ This document.
 ## Commit
 
 This stage's commit SHA, its companion SHA-256, and the platform/CLI commits it used are
-recorded per-run in `runs.jsonl` (R069-R084) and repeated at the top of this document.
+recorded per-run in `runs.jsonl` (R069-R085) and repeated at the top of this document.
