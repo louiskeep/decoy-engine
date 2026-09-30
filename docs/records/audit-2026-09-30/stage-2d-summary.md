@@ -125,8 +125,8 @@ Arrow type per strategy across every batch shape, while the pandas oracle's
 shapes (an all-null column -> null-type; a zero-row batch -> float64, pandas' empty-column
 default) -- the test suite explicitly allowlists exactly these two type-pairs
 (`EMPTY_DOUBLE_NORMALIZATION`, `_GATE_ALLOWED_DIFFS`) before comparing, rather than treating
-raw schema equality as the bar. On real, non-degenerate 1M-row data (this task's own R074,
-R075, R084), schemas and values matched the oracle exactly with no reconciliation needed;
+raw schema equality as the bar. On real, non-degenerate 1M-row data (this task's own R074 and
+R075; R084 is 150k rows), schemas and values matched the oracle exactly with no reconciliation needed;
 the gap is specific to those two degenerate shapes, and no caller anywhere applies the
 reconciliation the test suite needs, because no caller invokes this function at all.
 
@@ -251,7 +251,8 @@ one-time answer, and is left as recorded.
   hash-kernel baseline is the Phase 0 NATIVE single-thread hash time
   (`docs/plans/native-throughput-phase0-baseline.md`, ~234k rows/s/col, already compiled,
   already 2.9x faster than the pandas oracle, just single-threaded), not a per-row Python
-  reference -- the 13.5x figure is single-thread-native vs. 8-thread-native, both compiled.
+  reference. The 13.5x combines kernel work (1280s to 299.7s at 1 thread, 4.3x) and threading
+  (299.7s to 94.8s at 8 threads, about 3.2x); both ends are compiled.
 - Noted in `stage-2c-summary.md` that the PR #129 raw `native-threadsweep.log` is
   gitignored (`decoy-platform/.gitignore:16`, a blanket `*.log` rule) and not itself
   committed, so a reader without local access to that file can only verify the numbers

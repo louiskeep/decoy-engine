@@ -119,22 +119,22 @@ def _install_compiled_call_counter() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _faker_column(name: str = "nm", *, pool_size: int = 30) -> dict:
+def _faker_column(name: str = "nm", *, pool_size: int = 30, deterministic: bool = True) -> dict:
     return {
         "name": name,
         "strategy": "faker",
         "provider": "person_first_name",
-        "deterministic": True,
+        "deterministic": deterministic,
         "namespace": "ns_faker",
         "pool_size": pool_size,
     }
 
 
-def cell_r010_pooled_faker(n: int) -> tuple[dict, dict]:
+def cell_r010_pooled_faker(n: int, *, deterministic: bool = True) -> tuple[dict, dict]:
     """R010's spec: single-table pooled Faker mask, 10k rows."""
     import pyarrow as pa
 
-    col = _faker_column()
+    col = _faker_column(deterministic=deterministic)
     src = {"nm": pa.array([f"id-{i}" for i in range(n)], type=pa.string())}
     table = pa.table(src)
     path = _write_parquet("stage2d_r010", table)
@@ -279,7 +279,9 @@ def cell_fk_faker_sequential(n_parent: int, n_child: int) -> tuple[dict, dict]:
 
 
 _CELLS = {
-    "r010_pooled_faker": lambda spec: cell_r010_pooled_faker(spec.get("rows", 10_000)),
+    "r010_pooled_faker": lambda spec: cell_r010_pooled_faker(
+        spec.get("rows", 10_000), deterministic=spec.get("deterministic", True)
+    ),
     "r014_mix_plus_faker": lambda spec: cell_r014_mix_plus_faker(spec.get("rows", 10_000)),
     "chunked_faker_150k": lambda spec: cell_chunked_faker_150k(spec.get("rows", 150_000)),
     "r023_generate_only": lambda spec: cell_r023_generate_only(spec.get("rows", 10_000)),
@@ -320,6 +322,7 @@ def run_cell(spec: dict) -> dict:
             "rows": spec.get("rows"),
             "sizes": spec.get("sizes"),
             "run_kwargs": run_kwargs,
+            "deterministic": spec.get("deterministic", True),
             "entry_point": "engine_direct",
         },
         "compiled_kernel_evidence": {

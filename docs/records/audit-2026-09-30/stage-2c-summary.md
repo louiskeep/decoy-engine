@@ -215,7 +215,7 @@ specifically the Task 1.6 gate-outcome note recorded in
 (2026-09-10): *"GCP n2-standard-8 thread sweep, frozen 100M W2, 3 reps/thread. 8-thread 100M
 MEDIAN wall = 429.9s <= 600s target ... peak RSS 447MB ... Hash kernel: 1280s baseline ->
 299.7s single-thread (4.3x) -> 94.8s at 8t (~13.5x total)."* The raw per-rep JSON lines
-backing that median are committed at
+backing that median are in (gitignored, not committed)
 `decoy-platform/docs/product/release-1-validation-runs/2026-09-10-tb6-50m/engine-bench-feat-native-throughput-consolidation-20260910T140112Z-tb6-50m/remote-results/native-threadsweep.log`
 (read directly this pass): the 8-thread, 100M-row record shows `wall_median_s: 429.85`,
 `peak_rss_max_mb: 446.9`, and per-rep fields `hash_ms` 87.4 to 103.9s across the 3 reps,
@@ -256,8 +256,9 @@ explicit: "Hash kernel: 1280s baseline -> 299.7s single-thread (Tasks 1.2+1.5 al
 the 1280s baseline is the Phase 0 native single-thread hash time (`docs/plans/native-throughput-phase0-baseline.md`,
 ~234k rows/s/col over 3 hash columns at 100M rows, already compiled, already beating the
 pandas oracle 2.9x, just single-threaded and not yet Rayon-parallel), not a per-row Python
-reference; the 94.8s figure is the SAME compiled kernel run with 8 Rayon threads. So 13.5x is
-a single-thread-native-vs-8-thread-native comparison, not native-vs-Python. It is measured on
+reference. The 13.5x combines kernel work (1280s to 299.7s at 1 thread, 4.3x) and threading
+(299.7s to 94.8s at 8 Rayon threads, about 3.2x): the 94.8s kernel is not the same code as the
+1280s baseline. Both ends are native, not native-vs-Python. It is measured on
 the same W2 workload's hash columns alone. `RECENTLY-SHIPPED.md` and the outcomes report both
 place "13.5x" in the same sentence as "100M rows masked in ... 429.9s", which is accurate as
 written (both numbers are about the same benchmark) but reads easily as "the whole job got
