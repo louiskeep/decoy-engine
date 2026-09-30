@@ -1,6 +1,6 @@
 # Engine-owned table transforms (Rust engine program A8)
 
-Status: plan (revision 2: folds the Codex plan-gate NO-GO on revision 1)
+Status: plan (revision 3: folds the Codex plan-gate NO-GO on revisions 1 and 2)
 
 Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase A, item A8 (Cam decision 2, 2026-09-30: transforms move into the engine's `run_pipeline` so the engine, CLI and platform behave the same). Branch `feat/engine-owned-transforms`, off engine main `8dc559e5`. Paired platform work: A8p-0 and A8p below, each its own platform branch.
 
@@ -14,7 +14,7 @@ So one valid config gives different output by caller. The platform filters, deri
 
 - **`run_pipeline` owns transforms.** It applies each mask table's transforms exactly once, over the whole table, before any strategy reads it, or it rejects the job with a coded error. Callers hand it raw sources.
 - **Plan-level APIs take prepared inputs.** `PandasExecutionAdapter.run`, `run_sequential` and `run_fk_out_of_core` receive a `Plan`, not the config, so they cannot see transforms. Their docstrings state that inputs must already be transformed; callers that use them directly apply the public helper themselves.
-- **Config-taking entry points outside `run_pipeline` reject.** `run_mask_pipeline_chunked` (`_chunked.py` ~358, public from `decoy_engine.execution` and top level) and everything that forwards the config to it (`physical/drivers/_chunked.py` ~58-88, `native/_dispatch.py` ~483-525) fail with `TransformError(code="per_table_transforms_present")` from `check_chunked_compatibility` (~250) when the target table declares transforms. Zero applications, no silent drop.
+- **Config-taking chunked entry points reject.** `check_chunked_compatibility` (`_chunked.py` ~250) raises `PlanCompileError(code="per_table_transforms_present")` when the target table declares transforms. Keeping its existing exception type matters: `_planner._chunked_rejection` (~259, ~318) catches `PlanCompileError` and turns incompatibility into a full-frame fallback, and every direct `classify_job` consumer (physical-plan capture and compile, `explain_plan`) relies on the same contract. Callers that reach it and must reject: `run_mask_pipeline_chunked` (~358, public), the native-or-oracle dispatcher (`native/_dispatch.py` ~483-525), which must call the gate before `iter(chunks)` so a rejected job consumes no chunk (today it reads the first chunk before any gate), and all three config-taking physical adapters in `physical/drivers/_chunked.py` (mask ~50, native-or-oracle ~91, resident aggregator ~128). Zero applications, no silent drop.
 - **Public helper.** `decoy_engine.apply_table_transforms(config, table_name, table: pa.Table) -> pa.Table`, exported in `__all__` and the compatibility contract. It returns the same object when the table has no transforms or is generate-kind, and validates ops through `TableConfig`.
 
 ## Routes inside `run_pipeline`
@@ -22,7 +22,7 @@ So one valid config gives different output by caller. The platform filters, deri
 | Route | Behavior for a mask table with transforms |
 |---|---|
 | Full-frame (incl. generate+mask, isolated runs, which call `run_pipeline`) | Applied once in `_pipeline_sources.resolve_resident_sources` |
-| Auto-chunk | Ineligible: `decide_chunk_route` does not chunk a job with any transform-bearing mask table; it runs full-frame. Whole-table sort, limit and dedupe cannot be chunk-local, and a resident preprocess followed by chunking would not bound memory anyway. |
+| Auto-chunk | Ineligible through the same gate: the planner sees `PlanCompileError(per_table_transforms_present)` and falls back to full-frame. Whole-table sort, limit and dedupe cannot be chunk-local, and a resident preprocess followed by chunking would not bound memory anyway. |
 | Sequential | Applied once per table on load, by wrapping the loader in `_psrc.resolve_sequential_loader` |
 | Out-of-core, `auto` | Declined; falls back by existing rules. `route_reason` keeps its current value; a new telemetry field `out_of_core_declined` carries `per_table_transforms_present` so the cause is visible |
 | Out-of-core, explicit | A config-only preflight before `profile_source` raises `per_table_transforms_present`, so nothing is read |
@@ -32,15 +32,18 @@ So one valid config gives different output by caller. The platform filters, deri
 
 Routing runs on the raw profile before transforms. Row counts stay conservative (filter, limit and dedupe only shrink; sort, drop and derive keep the count), but `derive` widens rows and the raw byte estimate (`_pipeline_routing_signals.py` ~236-312) does not see derived columns.
 
-- The byte estimate adds, per `derive` op, the per-row bytes of the widest raw column in that table.
-- A transform-bearing job cannot be confirmed by the raw static-fit shortcut; it goes through the existing measured path.
+- Derived-column width is treated as unpriceable: pandas and numexpr can promote narrow inputs (an int8 expression can yield int64 or float64), so no raw-profile formula is a safe upper bound. A transform-bearing job is therefore never confirmed by the raw static-fit shortcut and always goes through the existing measured path, which sees real bytes.
 - `TableConfig.transforms` gets a maximum length of 32 ops (pre-GA hard change) so width growth is bounded.
 
 ## Arrow/pandas conversion
 
-The platform today converts with bare `table.to_pandas()` and back with `pa.Table.from_pandas(preserve_index=False)`. For a nullable unsigned 64-bit FK column holding values above 2^53, that route turns the column into float64 and rounds the keys (Codex reproduced it with `2**63 + 1`), which breaks joinability.
+Invariant: a table with transforms masks exactly as the same data would without them. The round-trip through pandas must not change the Arrow type of any column the transforms leave alone.
 
-Decision: the engine helper converts with the engine's FK-safe path (`_fk_keys.to_pandas_fk_safe`, passing the table's FK columns from the relationship config) and keeps the platform's `preserve_index=False` on the way back. That is an intentional correction, not byte parity. It changes output only for nullable integer FK columns whose values pandas cannot hold exactly in float64. Every other column is byte-identical to the platform's current behavior. The correction is recorded in the CHANGELOG and flagged to Cam at merge.
+The platform's current bare `table.to_pandas()` breaks that for every nullable integer column, not only FK keys: any integer column with a null becomes float64, stays float64 after `pa.Table.from_pandas`, and loses exactness above 2^53. That also changes downstream behavior, because the strategies and `reject_null_bearing_int` (`_pandas_adapter.py` ~191) see a float column instead of a nullable integer one, and the adapter's own lossless sets (FK keys, `date_shift.group_by`, `top_code`, `group_key.group_by`, ~193-215) are defeated because the precision is already gone before the adapter runs.
+
+Decision: `apply_table_transforms` converts with `to_pandas_fk_safe(table, <every Arrow integer column of the table>)`, which maps each integer type to its own same-width, same-signedness nullable dtype, and converts back with `preserve_index=False`. Protecting every integer column is a superset of the adapter's four protected sets, so none of them can be defeated upstream, and there is no second collector to drift.
+
+Compatibility delta against today's platform, for transform-bearing tables only: every nullable integer column (any width, signed or unsigned, including small values like `[1, null]` and all-null integer columns) keeps its integer type instead of becoming float64; values above 2^53 are also no longer rounded; and a hash, truncate or categorical strategy on a nullable integer column now hits the same `reject_null_bearing_int` rejection it already hits on tables without transforms. Tables without transforms are unaffected. This goes in the CHANGELOG and is flagged to Cam at merge.
 
 ## Platform work (decoy-platform, Cam's go to merge)
 
@@ -53,8 +56,8 @@ Decision: the engine helper converts with the engine's FK-safe path (`_fk_keys.t
 | new | old | never applied | A8p minimum version |
 | new | new | engine applies, correct | |
 
-- **A8p-0 (ships first, before A8 releases):** cap `decoy-engine<V`, where V is the engine release containing A8. No behavior change.
-- **A8p (ships with V):** raise the minimum to `>=V` and remove the cap, and change the call sites:
+- **A8p-0 (ships first, before A8 releases):** cap `decoy-engine<0.7.0`. V = 0.7.0, the engine release containing A8 (engine main is 0.6.0); if the release number changes, A8p-0 is amended before it merges. No behavior change.
+- **A8p (ships with 0.7.0):** raise the minimum to `>=0.7.0` and remove the cap, and change the call sites:
   - Main run (`v2_runner.py` ~283-300): stop preprocessing; pass raw sources to `run_pipeline`.
   - Sequential (`v2_sequential.py`), which calls `run_sequential` directly: keep calling a transform on load, now the public `apply_table_transforms`, in both the execution loader and the vault-reload loader, so vault rows stay aligned with filtered, sorted, deduped or limited output.
   - Preview (`v2_preview.py`): transform the full source with `apply_table_transforms`, slice, then pass `run_pipeline` a config copy with that table's `transforms` cleared.
@@ -65,19 +68,20 @@ Decision: the engine helper converts with the engine's FK-safe path (`_fk_keys.t
 
 Engine (A8):
 
-1. **Applied once, correct output.** For each op and a chained sequence, `run_pipeline` output equals an independent oracle: raw source, then `apply_transforms` via the platform's own conversion, then `run_pipeline` with transforms cleared. Compare full Arrow schema and values, not row counts. Routes: resident full-frame, generate+mask (mask table), sequential with transforms on parent and child, isolated execution.
+1. **Applied once, correct output.** For each op and a chained sequence, `run_pipeline` output equals an independent oracle: raw source, then the ops applied by a test-local type-preserving reference (pandas nullable dtypes built in the test, not the new helper), then `run_pipeline` with transforms cleared. Compare full Arrow schema and values, not row counts. Routes: resident full-frame, generate+mask (mask table), sequential with transforms on parent and child, isolated execution.
 2. **Exactly once.** Spy on `apply_transforms`: one call per transform-bearing mask table on each route in test 1; zero calls on declined or rejected routes (test 4-6).
 3. **Auto-chunk ineligible.** With `auto_chunk=True` above the threshold, a transform-bearing job runs full-frame; `limit` N returns exactly N rows; a dedupe across what would have been a chunk boundary removes the duplicate.
 4. **Out-of-core.** Under `auto`, not selected, with `out_of_core_declined="per_table_transforms_present"`; explicit `out_of_core` raises before `profile_source` is called (poisoned reader and profiler prove no read).
-5. **Direct chunked entry points reject.** `run_mask_pipeline_chunked`, the native-or-oracle chunked dispatcher and the physical chunked driver each raise `per_table_transforms_present` for a transform-bearing table, and succeed unchanged without transforms.
-6. **Unified slice.** Still declines; no-transform and generate-kind tables pass through as the identical Arrow object, and the unified-slice suites pass unmodified.
-7. **Admission.** A table with several wide `derive` ops gets a higher byte estimate than its raw profile and is not confirmed by static fit; a 33-op transforms list fails validation.
-8. **Conversion.** Nullable int64 and uint64 FK columns (including `2**63 + 1` and nulls, and a composite key) keep exact values and types; non-FK columns match the bare platform conversion byte for byte; no pandas index leaks into the output schema.
+5. **Direct chunked entry points reject.** `run_mask_pipeline_chunked`, the native-or-oracle dispatcher and each of the three physical chunked adapters raise `PlanCompileError(per_table_transforms_present)` for a transform-bearing table, given a poisoned chunk iterable that fails if consumed; without transforms they run unchanged.
+5b. **Planner fallback, not an exception.** `classify_job`, `capture_physical_plan_inputs` followed by `compile_physical_plan`, `run_pipeline(auto_chunk=True)` and `run_pipeline(explain_plan=True)` on a transform-bearing job each fall back to full-frame with the coded reason, and none raises.
+6. **Unified slice and identity.** Unified slice still declines. Called directly, `apply_table_transforms` returns the identical Arrow object for a no-transform table and for a generate-kind table; the unified-slice suites pass unmodified.
+7. **Admission.** A transform-bearing job, including one whose `derive` promotes an int8 input to int64 and float64, is never confirmed by static fit and reaches the measured path; a 33-op transforms list fails validation.
+8. **Type preservation.** For a table covering int8 through int64, uint8 through uint64 (each with and without nulls, small values, an all-null column, `2**63 + 1`), float, string, bool, date32, timestamp with and without tz, decimal and dictionary columns, a transform list that touches none of them (e.g. `limit`) leaves every column's Arrow type and values unchanged. Same for FK parent and child keys (single and composite, under each orphan policy), `top_code`, `date_shift.group_by` and `group_key.group_by` columns carrying nullable large integers, each through `run_pipeline` with transforms. No pandas index leaks into the output schema.
 9. **Invalid transforms** (derive onto an existing column, drop of a missing column, sort on a missing column) raise the existing `TransformError` codes. Full-frame writes no output, quarantine, vault or manifest. Sequential commits and publishes nothing; a plain callable sink may already hold earlier tables (documented limitation of non-transactional sinks, `_sequential.py` ~229-241).
 10. **Public surface.** `from decoy_engine import apply_table_transforms` works and is in `__all__` and the compatibility contract; Plan-level API docstrings state the prepared-input contract.
 11. **Derived-column masking** keeps today's outcome (characterization only, not red-before).
 
-Platform (A8p): main run, sequential (including a vault-bearing job with filter and sort, checking vault alignment), pipeline preview, node preview and bounded-child preview each apply transforms exactly once and match the pre-change platform output except for the recorded FK conversion correction. A8p-0: the cap is present and the suite passes unchanged.
+Platform (A8p-0): a packaging test resolves each of the four platform/engine combinations and shows the two bad ones fail to install; the rollback pairing is exercised the same way. Platform (A8p): main run, sequential (including a vault-bearing job with filter and sort, checking vault alignment), pipeline preview, node preview and bounded-child preview each apply transforms exactly once and match the pre-change platform output except for the recorded FK conversion correction. A8p-0 otherwise passes the platform suite unchanged.
 
 ## Out of scope
 
