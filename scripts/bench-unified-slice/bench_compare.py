@@ -1,7 +1,9 @@
 """Task 4.5 D9 statistical comparison harness: certifies that the unified-
-slice lane (flag on) is not a performance or memory regression against the
-legacy full-frame route (flag off), at the SAME revision, across the
-10k/100k/1M row tiers `scripts/bench-unified-slice/README.md` requires.
+slice lane (flag on) is not a performance regression against the legacy
+full-frame route (flag off), at the SAME revision, and that its peak memory
+stays within a declared absolute ceiling (`--max-peak-rss-mb`), across the
+10k/100k/1M row tiers `scripts/bench-unified-slice/README.md` requires. Peak
+memory above the legacy arm's is allowed; the arms' ratio is reported only.
 
 Runs the frozen `bench_worker_unified.py` as a fresh subprocess per arm per
 rep, alternating arm order by rep parity so a short host load spike cannot
