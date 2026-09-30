@@ -49,9 +49,11 @@ a live v2 result. See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
   exit non-zero (and refuses to run at all without a declared ceiling), for
   the offline cert invocation to use.
 
-## Owed: the offline D9 certification run
+## Owed: the v2 offline D9 certification run
 
-Before Task 4.6 caller activation, run the harness for real:
+The lane is already the production default (activated 2026-09-20 on the v1
+certification). The schema 2.0.0 harness has not yet certified a revision, so do
+not cite a v2 certification as current until this run passes:
 
 ```
 python scripts/bench-unified-slice/bench_compare.py --require-cert \
@@ -134,15 +136,9 @@ shared tooling unilaterally. Harden it with its own consumers in scope: None-saf
 tier-summary formatting (a `None` `hash_tput` must not crash the summary line) and
 fail-closed per-rep RSS aggregation.
 
-## Separate follow-up: FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY (before Task 4.6)
+## Done: the lane's exception boundary
 
-The lane's fail-closed boundary in `src/decoy_engine/execution/_unified_slice.py`
-catches only `ShadowDifference`. For an ALREADY-ADMITTED job, an unexpected raise
-from `compile_physical_plan`, a `build_live_physical_plan_inputs` helper, or the
-native kernel mid-batch would propagate to the caller (flag-on) rather than reroute
-to the legacy route. No known trigger exists given how narrow admission is, and the
-lane is default-off with caller activation deferred, so this does not block the 4.5
-merge. Before Task 4.6 flips any caller default on, widen the boundary so any
-unexpected exception on an admitted job also fails closed (reroute to the legacy
-route, or raise `UnifiedSliceInvariantError`), never a raw compiler/kernel type.
-(dennis final-review LOW-1, 2026-09-15.)
+An unexpected exception on an admitted job no longer propagates as a raw
+compiler or kernel type: `src/decoy_engine/execution/_unified_slice.py` re-raises
+`UnifiedSliceInvariantError` and reroutes any other exception to the legacy route
+with a warning log.
