@@ -44,13 +44,15 @@ are not portable). See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 private module (A5a, engine program Phase A).
 
 The reader was hardened before becoming public, which changes behavior:
-- Errors never carry raw file content: a bad cast, an undecodable line and a
-  malformed layout dict raise with no chained exception.
+- Errors never carry raw file content: a bad cast, a short record, an
+  undecodable line and a malformed layout dict raise with no chained exception,
+  from a frame that holds no file data (so traceback-local capture, as error
+  trackers do, finds none), with the path escaped onto one line.
 - A malformed layout dict raises `ConfigError` instead of pydantic's
   `ValidationError`; an undecodable line raises `FixedWidthParseError` naming
   its exact line instead of `UnicodeDecodeError`.
-- The file is read in binary one line at a time, so `max_records` reads no
-  byte past the capped record. Records end at `\n` (a trailing `\r` is
+- The file is read in binary one line at a time, so `max_records` decodes
+  or examines no byte past the capped record. Records end at `\n` (a trailing `\r` is
   stripped); a file that uses a bare `\r` as its line ending is no longer
   split on it.
 - `max_records` rejects `bool`, non-int and negative values; `0` reads nothing.

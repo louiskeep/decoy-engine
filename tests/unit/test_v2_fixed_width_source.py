@@ -547,8 +547,8 @@ class TestFixedWidthByteVsCharacterCharacterization:
     def test_read_fixed_width_slices_by_character_not_byte_offset(self, tmp_path: Path) -> None:
         """CHARACTERIZATION, not a correctness claim: `FixedWidthLayout`
         documents `start`/`width` as BYTE offsets (config._fixed_width
-        module docstring), but this reader opens the file as decoded
-        UTF-8 TEXT and slices by Python string index (character
+        module docstring), but this reader decodes each line as UTF-8
+        and slices the decoded text by Python string index (character
         position), not by encoded byte position. The two coincide for
         ASCII-only data and diverge once a multibyte character appears.
 
@@ -616,3 +616,62 @@ def test_read_fixed_width_rejects_invalid_paths(bad_path: Any, exc_type: type) -
     layout = {"columns": [{"name": "v", "start": 0, "width": 3}]}
     with pytest.raises(exc_type):
         read_fixed_width(bad_path, layout)
+
+
+_SENTINEL = "SECRETX9Q"
+_SENTINEL_STEM = _SENTINEL[:7]
+
+
+def _assert_sentinel_unreachable(exc: BaseException) -> None:
+    """The sentinel must not be reachable from the raised error: message,
+    chain, rendered traceback with captured locals, or any traceback frame's
+    locals (error trackers record frame locals)."""
+    assert exc.__cause__ is None and exc.__context__ is None
+    assert _SENTINEL_STEM not in str(exc) and _SENTINEL_STEM not in repr(exc)
+    # Only the engine's frames: the test's own frame legitimately holds the
+    # payload it wrote.
+    engine_frames = [
+        frame
+        for frame in traceback.TracebackException.from_exception(exc, capture_locals=True).stack
+        if "decoy_engine" in frame.filename
+    ]
+    assert engine_frames, "expected the reader's frame in the traceback"
+    for frame in engine_frames:
+        assert _SENTINEL_STEM not in repr(frame.locals)
+    tb = exc.__traceback__
+    while tb is not None:
+        if "decoy_engine" in tb.tb_frame.f_code.co_filename:
+            for value in tb.tb_frame.f_locals.values():
+                assert _SENTINEL_STEM not in repr(value)
+        tb = tb.tb_next
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        (f"{_SENTINEL}\n").encode(),  # bad int cast
+        ("123456789\n" + _SENTINEL[:7] + "\n").encode(),  # short record after a good one
+        b"\xff" + _SENTINEL.encode() + b"\n",  # undecodable line
+    ],
+)
+def test_read_fixed_width_errors_hold_no_file_content_in_frames(tmp_path, payload: bytes) -> None:
+    path = tmp_path / "leak.dat"
+    path.write_bytes(payload)
+    layout = {"columns": [{"name": "n", "start": 0, "width": 9, "type": "int"}]}
+    with pytest.raises(FixedWidthParseError) as info:
+        read_fixed_width(path, layout)
+    _assert_sentinel_unreachable(info.value)
+
+
+def test_read_fixed_width_error_paths_are_rendered_on_one_line(tmp_path) -> None:
+    odd = tmp_path / "a\nb\udcff.dat"
+    try:
+        odd.write_bytes(b"x\n")
+    except (OSError, UnicodeEncodeError):
+        pytest.skip("filesystem cannot hold this name")
+    layout = {"columns": [{"name": "n", "start": 0, "width": 3, "type": "int"}]}
+    with pytest.raises(FixedWidthParseError) as info:
+        read_fixed_width(odd, layout)
+    msg = str(info.value)
+    assert "\n" not in msg
+    msg.encode("utf-8")  # strict encoding must succeed
