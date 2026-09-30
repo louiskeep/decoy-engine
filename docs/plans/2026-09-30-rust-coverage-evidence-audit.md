@@ -1,91 +1,97 @@
 # Rust coverage evidence audit
 
-Status: plan
+Status: plan (revision 2, folds the Codex plan-gate NO-GO of revision 1)
 
 Date: 2026-09-30. Owner: consolidation loop, phase 3. Roadmap: decoy-platform `docs/ROADMAP.md`, "Order of work" step 1.
 
 ## Goal
 
-Establish, by running real jobs, which job shapes and sizes execute on the Rust path today, which run on pandas or Python kernels, and which are not built. The output is a capability map and a gap list ranked by one question: does closing this gap move a real job size or shape onto Rust? The Rust engine program plan (phase 4) is built from that list, so every cell must rest on a recorded run or a cited line of code, not on docs or memory.
+Establish, by running real jobs through the real entry points, what each job actually executes on today: the Rust companion, Arrow/Python "native" kernels, or pandas. The output is a capability map and a gap list ranked by one question: does closing this gap move a real job onto Rust? The phase-4 Rust engine program is planned from that list, so every cell must rest on a recorded run or a cited line of code, never on docs or memory.
 
 This is not §AUDIT (the pre-release security and code audit under `~/dev-rules/pre-release-audit.md`). It does not edit production code.
 
-## The map
+## Pinned commits
 
-Rows are job shapes, columns are size tiers, and each cell records the route taken and what did the math.
+- decoy-engine `8dc559e5` (main after #180).
+- decoy-platform `origin/main` at probe time, in a fresh detached worktree (the main checkout lags origin). The commit is recorded in every run.
 
-Job shapes:
-1. single-table mask
-2. single-table generate
-3. single-table mask + generate
-4. multi-table mask, no relationships
-5. FK mask (pure mask)
-6. FK mask with validators / vault / fidelity / post-validation
-7. FK with generate tables (generate-only and mixed mask + generate)
+## Dimensions
 
-Size tiers: under 100k; 100k to 5M; 5M to 100M+ (as the routing sees it).
+| Dimension | Values |
+|---|---|
+| Operation | mask, generate, mask + generate, subset |
+| Strategy / generator family | the native mask operators (hash, categorical, bucket_perturb, group_key, date_shift, redact, truncate, passthrough); Faker (pooled and non-pooled); FPE (FF1); text_mask / text_redact; each generator family the registry exposes; at least one custom/unsupported strategy |
+| Relationship topology | none; multi-table no relationships; FK tree; FK diamond; FK cycle |
+| Gates | validators, quarantine, vault writer, fidelity / post-validation, STORM, transforms |
+| Size tier | under 100k; 100k to 5M; 5M to 100M+ (as each routing layer sees it) |
+| Input | resident Arrow vs lazy / loader-backed; Parquet, CSV, fixed-width |
+| Transport | local file, S3, GCS (source and target) |
+| Output format | Parquet, CSV. Fixed-width output is rejected by the target config schema (`config/_targets.py`); recorded once as a known gap, not probed per cell |
+| Entry point | (1) engine direct `decoy_engine.run_pipeline`; (2) platform full-frame wrapper; (3) the real claim -> worker path, including `phase1_streaming_tables` set at claim; (4) the adaptive-scheduler worker consuming an immutable `DispatchPlan` (flag on); (5) the CLI; (6) subset |
 
-Axes recorded per cell:
-- input format: Parquet, CSV, fixed-width
-- output format: Parquet, CSV, fixed-width
-- entry point: engine direct (`decoy_engine.run_pipeline`) and platform (`api.jobs.v2_runner.run_v2_pipeline_from_config`, which applies `admission_fk.py`'s own FK routing)
-- masking strategy families: the 8 native operators, and at least one non-native strategy (Faker, FPE) to show where a single column forces the whole job off Rust
+The full cross-product is not run. Each dimension is varied against a baseline cell (single-table hash mask, Parquet, local, under 100k, engine direct), plus the combinations the routing code actually branches on. The record lists which combinations were run and which were inferred, and why.
 
-Cell values:
-- **Rust**: `unified_slice_activation` present, every node `executed`, and hash nodes `compiled_kernel_executed=True`.
-- **Rust (partial)**: some operators native, the rest Python.
-- **pandas** / **Python-Arrow** (out-of-core per-batch kernels) / **DuckDB+Python** (OOC FK).
-- **shadow only**: a Rust implementation exists but only runs in shadow parity tests.
-- **not built** / **rejected** (the job refuses at this size).
+## What a cell records
 
-## Method
+Per execution node, the backend that did the work:
+- **Rust companion**: a companion-dependent operator (hash, categorical, bucket_perturb, group_key, date_shift, Faker `pool_select`) with `compiled_kernel_executed=True`. Required for every companion-dependent node, not only hash.
+- **Arrow/Python native**: passthrough, redact and truncate on the unified lane run as Arrow/Python kernels (`native/_kernels_scalar.py`), not Rust.
+- **pandas**: the legacy adapter.
+- **mixed**: a job whose nodes span backends.
 
-### Evidence recorded per run
-- the route: `quality_metrics["execution"]["execution_mode"]` and `route_reason`, `quality_metrics["auto_chunk"]` when present, `unified_slice_activation` when present, and the out-of-core / sequential markers;
-- output byte-parity against the pandas oracle (`unified_slice_enabled=False`) wherever the Rust lane admitted the job;
-- wall time and peak RSS (`resource.getrusage`) for each run, and the input row count;
-- the exact commit (engine main, platform main) and the command.
+Faker pool selection is recorded separately, distinguishing a production-connected compiled path from shadow-only or low-level-only execution.
 
-### Scale on a 12 GB devbox
-Real row counts are used up to ~1M rows (one heavy process at a time, per the devbox memory rule). Routing above that is exercised by lowering the routing knobs so small data takes the large-tier route: `auto_chunk_threshold_rows`, `out_of_core_threshold_rows`, `full_frame_reject_rows`, and the platform's `OUT_OF_CORE_ADMISSION_THRESHOLD_ROWS`. Each such cell is labelled "routed by knob" and paired with a code citation showing that the default threshold routes a real job of that size the same way. Byte-estimate routing (the engine default) is exercised by passing a controlled memory budget, not by allocating the real data.
+Per cell, the route as each layer decided it: the engine's `quality_metrics["execution"]` (`execution_mode`, `route_reason`), `auto_chunk`, `unified_slice_activation`, the out-of-core / sequential markers; and on the platform the admission classification, the claim-time `phase1_streaming_tables` plan, the `DispatchPlan` route, and the runtime out-of-core decision, all read back from the persisted job, not from the knobs set.
 
-The 100M tier is established by code reading plus the knob runs; it is not run on the devbox. Absolute peak memory at 100M is left to the phase-4 GCP proof.
+Per run: output byte-parity against the pandas oracle where a non-pandas backend ran; wall time; peak RSS; row count; commits; command. **Every measured run is a fresh subprocess**, because `ru_maxrss` is a process-lifetime high-water mark.
 
-### Platform-route coverage
-FK jobs without generation are routed by the platform (`api/jobs/admission_fk.py`), not by the engine's `decide_execution_route`. Every FK cell is therefore run through both entry points, and a cell is only marked by what the platform path actually does.
+## Scale on a 12 GB devbox
 
-### Specific checks carried in from phase 1 and 2
-1. **Cloud descriptor keys.** Confirm or refute that S3/GCS job descriptors carrying `connection_id` / `connection_name` (and `region` for GCS) fail engine validation. Run a real job through `run_v2_pipeline_from_config` against a local fake S3 (moto server in-process) and a stored snapshot built by `resolve_binding`. Record pass/fail and the exact error.
-2. **Rust timings gap.** Confirm the Rust lane's `timings=()` shows as 0 ms in the platform job record.
-3. **Output formats.** For each Rust-admitted cell, write CSV and Parquet output through the platform output layer and confirm byte-equivalence with the pandas route's output; record that fixed-width output is unsupported.
-4. **Non-native strategy fallout.** One Faker or FPE column in an otherwise native job: record whether the whole table leaves the Rust lane.
-5. **Upload ownership.** Re-verify the cross-owner binding finding by reading the code path only (no exploit run).
+Real row counts up to ~1M, one heavy process at a time.
 
-### Independent cross-check
-Codex runs a separate, code-reading audit of the same map in parallel (it does not see the probe results first). Disagreements between the two are resolved by running the disputed cell.
+Large tiers are split into two separate claims:
+- **route-equivalent**: the run took the same code path a real large job would. Reached by overriding the knobs each layer actually reads: engine `auto_chunk_threshold_rows`, `out_of_core_threshold_rows`, `full_frame_reject_rows`, the byte budget and memory detection used by byte-estimate routing (with probe on and off); platform `v2_out_of_core._OUT_OF_CORE_THRESHOLD_ROWS` (runtime) and `admission_fk.OUT_OF_CORE_ADMISSION_THRESHOLD_ROWS` (admission pricing), overridden together with an assertion that admission and runtime agree; `streaming_min_input_mb` with a real claim so the streaming plan is created and persisted. The record lists every route predicate and its inputs: width estimates, budget source, probe result, Parquet footer counts, host/cgroup limit.
+- **capacity-proven**: only for sizes actually run. 5M to 100M+ cells are labelled "route inferred; capacity unproven" until the phase-4 GCP run. Small fixtures do not exercise spill, cardinality, Arrow offset limits, row groups or disk admission, and the record says so.
+
+## Specific checks
+
+1. **Cloud descriptor keys**, as two separate tests:
+   (a) a descriptor produced by `resolve_binding` for S3 and for GCS, stored and passed to `run_v2_pipeline_from_config`: assert whether validation rejects it, and that no cloud client or network call happens first;
+   (b) a schema-valid descriptor with the platform-only keys stripped, run against an in-process moto S3 server end to end.
+   (a) is not described as a moto test.
+2. **Rust timings gap**: confirm the Rust lane's empty `timings` shows as 0 ms in the platform job record.
+3. **Output**: for each non-pandas cell, CSV and Parquet output through the platform output layer, compared with the pandas route's output.
+4. **Non-native fallout**: one Faker, FPE or text column in an otherwise native job; record whether the whole table leaves the Rust lane and on which gate.
+5. **Platform streaming**: which engine code the claim-time `phase1_streaming_tables` path runs after engine #166 deleted the native streaming lane, and on what backend.
+6. **Upload ownership**: re-verify the cross-owner binding finding by reading the code path only.
+
+## Independent cross-check
+
+Codex runs a separate, code-reading audit of the same dimensions in parallel, without seeing the probe results. Every disagreement is resolved by running the disputed cell.
 
 ## Deliverables
 
-1. `docs/records/2026-09-30-rust-coverage-evidence-audit.md` (Status: record) in decoy-engine: the map, one row per shape, each cell citing its run id or code line.
-2. The raw run log (JSON lines: shape, tier, formats, entry point, knobs, route evidence, parity, wall, peak RSS, commits) committed beside it.
-3. The probe script, committed under `scripts/audit/` so the map can be regenerated after each engine slice.
-4. A ranked gap list: each gap with the shapes/sizes it unlocks, the evidence, whether a shadow implementation exists, and rough size (port, wire-up, or new build).
-5. A plain-language summary for Cam (Slack) and a roadmap update.
+1. `docs/records/2026-09-30-rust-coverage-evidence-audit.md` (Status: record) in decoy-engine: the map, each cell citing its run id or file:line, with route-equivalent and capacity-proven kept separate.
+2. The raw run log (JSON lines) committed beside it.
+3. The probe harness under `scripts/audit/`, so the map can be regenerated after each engine slice.
+4. A ranked gap list: each gap with the shapes and sizes it unlocks, the evidence, whether a shadow or historical (engine #166) implementation exists, and rough size (port, wire-up, or new build).
+5. A plain-language summary for Cam and a roadmap update.
 
 ## Acceptance criteria
 
-- Every cell of the map has a value and a citation (run id or file:line). No cell rests on docs or memory alone.
-- Every "Rust" cell is backed by a byte-parity check against the pandas oracle and by kernel-execution evidence.
-- Every FK cell reflects the platform route, not only the engine route.
-- Every "routed by knob" cell has a code citation tying it to the default-threshold behavior.
-- The cloud descriptor question is answered yes or no with the exact error or a passing run.
+- Every cell has a value and a citation. No cell rests on docs or memory alone.
+- "Rust companion" is claimed only for nodes with `compiled_kernel_executed=True`; Arrow/Python native is never reported as Rust.
+- Every platform cell reflects the persisted claim/dispatch route, or the entry point is marked untested with the reason.
+- Large-tier cells separate route-equivalent from capacity-proven, and 100M cells say "capacity unproven".
+- The cloud question is answered by test (a), and test (b) shows whether a clean descriptor works.
 - The Codex cross-check is done and every disagreement is resolved by a run.
 - dennis reviews the record for unsupported claims before it feeds the phase-4 plan.
 
 ## Failure modes to guard against
 
-- Reading "admitted" from docs or from a flag instead of from `unified_slice_activation` in the result.
-- Testing only the engine entry point and missing the platform's FK override.
-- Treating a knob-routed small run as proof of 100M behavior without the code citation.
-- A probe that silently falls back to pandas and is recorded as success because output matched (parity alone does not prove the route).
-- Running several heavy probes at once on the devbox.
+- Reading "admitted" or "Rust" from docs, flags or knob settings instead of the persisted result.
+- Counting Arrow/Python native kernels as Rust.
+- Calling platform functions directly and missing claim-time or dispatch-time route decisions.
+- Treating a knob-routed small run as proof of 100M capacity.
+- Parity alone taken as proof of the route (a silent pandas fallback also matches).
+- Several heavy probes at once on the devbox, or peak memory read from a long-lived process.
