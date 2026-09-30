@@ -144,7 +144,9 @@ def read_fixed_width(
     """Parse a fixed-width file at `path` into a DataFrame per `layout`.
 
     Args:
-        path: filesystem path to the newline-delimited fixed-width file.
+        path: filesystem path (`str` or `os.PathLike[str]`) to the
+            newline-delimited fixed-width file. Records end at `\n`; a
+            trailing `\r` is stripped, so CRLF files read the same.
         layout: a `FixedWidthLayout` instance, or the equivalent plain
             dict a validated `PipelineConfig` carries at `FileSource.layout`
             (e.g. `PipelineConfig.model_validate(...).model_dump()`'s
@@ -156,7 +158,9 @@ def read_fixed_width(
         max_records: SC7a bounded-read cap. `None` (default) reads every
             record. Otherwise must be a non-negative `int`: the file is
             read only up to and including the line that produces the
-            `max_records`-th record, and no further -- a bounded
+            `max_records`-th record, and no further (the file is read in
+            binary one physical line at a time, so no bytes past that line
+            are decoded or examined) -- a bounded
             profiling sample never reads one line past what it needed,
             let alone the whole file. `0` reads zero lines. A skipped
             blank line does not count against the cap.
@@ -171,14 +175,17 @@ def read_fixed_width(
     Raises:
         TypeError: `max_records` is not an `int` (a `bool` counts as not
             an `int` here, since `True`/`False` as a record count is
-            almost certainly a caller mistake, not an intentional 0/1).
-        ValueError: `max_records` is negative.
+            almost certainly a caller mistake, not an intentional 0/1), or
+            `path` is not a `str` or does not resolve to one via
+            `os.fspath` (e.g. a `bytes` path).
+        ValueError: `max_records` is negative, or `path` contains a NUL
+            character.
         ConfigError: `layout` is a dict that fails `FixedWidthLayout`'s
             schema validation.
         FixedWidthParseError: a non-blank line is shorter than the
             layout's required width (`FixedWidthLayout.record_width`), a
-            sliced value fails its column's declared cast, or the file's
-            bytes are not valid UTF-8 text.
+            sliced value fails its column's declared cast, or a line's
+            bytes are not valid UTF-8 (reported with that line's number).
         OSError: `path` does not exist or cannot be opened (e.g. the
             built-in `FileNotFoundError`, `PermissionError`, `IsADirectoryError`).
             Passed through unwrapped -- these are ordinary filesystem
@@ -191,30 +198,33 @@ def read_fixed_width(
         raise ValueError(f"max_records must be >= 0, got {max_records}")
 
     path = os.fspath(path)
+    if not isinstance(path, str):
+        raise TypeError(f"path must be a str or os.PathLike[str], got {type(path).__name__}")
+    if "\x00" in path:
+        raise ValueError("path must not contain a NUL character")
     spec = _resolve_layout(layout, path=path)
     required_width = spec.record_width
 
     records: list[dict[str, Any]] = []
     line_no = 0
     decode_error_line: int | None = None
-    with open(path, encoding="utf-8") as fh:
+    # Binary, one physical line per read: a text-mode reader decodes ahead in
+    # ~8 KB chunks, so a capped read could fail on bytes past the cap and a
+    # decode error could not name its real line.
+    with open(path, "rb") as fh:
         while max_records is None or len(records) < max_records:
-            try:
-                raw_line = fh.readline()
-            except UnicodeDecodeError:
-                # `exc.object` holds the raw undecodable bytes, which may
-                # themselves be (partially) the PII this reader exists to
-                # mask -- do not touch it. Record only the position and
-                # break; the safe wrapper raises below, outside this
-                # handler, once the `with` block (and this handler) has
-                # closed.
-                # The text layer decodes in ~8 KB chunks, so the bad bytes
-                # sit somewhere at or after this line, not necessarily on it.
-                decode_error_line = line_no + 1
-                break
-            if raw_line == "":
+            raw_bytes = fh.readline()
+            if raw_bytes == b"":
                 break  # EOF
             line_no += 1
+            try:
+                raw_line = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # `exc.object` holds the raw bytes, which may be the PII this
+                # reader exists to mask: record only the line and raise after
+                # the handler has exited, so nothing is chained.
+                decode_error_line = line_no
+                break
             line = raw_line.rstrip("\r\n")
             if line == "":
                 continue
@@ -234,10 +244,7 @@ def read_fixed_width(
             records.append(row)
 
     if decode_error_line is not None:
-        raise FixedWidthParseError(
-            f"{path}: file is not valid UTF-8 text (undecodable bytes at or "
-            f"after line {decode_error_line})"
-        )
+        raise FixedWidthParseError(f"{path}: line {decode_error_line}: not valid UTF-8 text")
 
     column_names = [column.name for column in spec.columns]
     return pd.DataFrame.from_records(records, columns=column_names)

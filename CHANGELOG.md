@@ -38,11 +38,24 @@ are not portable). See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 ### Added (public fixed-width reader, 2026-09-30)
 
 `read_fixed_width` (plus its `FixedWidthParseError`) is now exported from
-`decoy_engine.__all__`, re-exported from the existing
-`profile._fixed_width_reader` implementation (same objects, no behavior
-change). Callers reading a `format: fixed_width` `FileSource` can now depend
-on this versioned public surface instead of importing the private
-`profile._fixed_width_reader` module directly (A5a, engine program Phase A).
+`decoy_engine.__all__` (the same objects as the private
+`profile._fixed_width_reader` module). Callers reading a `format: fixed_width`
+`FileSource` can now depend on this versioned public surface instead of the
+private module (A5a, engine program Phase A).
+
+The reader was hardened before becoming public, which changes behavior:
+- Errors never carry raw file content: a bad cast, an undecodable line and a
+  malformed layout dict raise with no chained exception.
+- A malformed layout dict raises `ConfigError` instead of pydantic's
+  `ValidationError`; an undecodable line raises `FixedWidthParseError` naming
+  its exact line instead of `UnicodeDecodeError`.
+- The file is read in binary one line at a time, so `max_records` reads no
+  byte past the capped record. Records end at `\n` (a trailing `\r` is
+  stripped); a file that uses a bare `\r` as its line ending is no longer
+  split on it.
+- `max_records` rejects `bool`, non-int and negative values; `0` reads nothing.
+- `path` accepts `os.PathLike[str]`; a non-`str` path raises `TypeError` and a
+  path containing NUL raises `ValueError`.
 
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 

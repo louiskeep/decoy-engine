@@ -581,18 +581,39 @@ class TestFixedWidthByteVsCharacterCharacterization:
         assert df["b"].tolist() == ["xyz"]
 
 
-def test_read_fixed_width_decode_error_names_a_lower_bound_line(tmp_path) -> None:
-    """A bad byte past the decoder's first chunk is reported as "at or after"
-    an earlier line, never as the exact line, since text-mode decoding runs in
-    chunks. Exact per-line reporting belongs to the byte-offset reader."""
-    good = b"abc\n" * 5000
+def test_read_fixed_width_decode_error_names_the_exact_line(tmp_path) -> None:
+    """The bad byte sits well past the first 8 KB; the error names its line."""
     path = tmp_path / "bad.dat"
-    path.write_bytes(good + b"a\xffc\n")
+    path.write_bytes(b"abc\n" * 5000 + b"a\xffc\n")
     layout = {"columns": [{"name": "v", "start": 0, "width": 3}]}
-    with pytest.raises(FixedWidthParseError) as info:
+    with pytest.raises(FixedWidthParseError, match=r": line 5001: not valid UTF-8"):
         read_fixed_width(path, layout)
-    msg = str(info.value)
-    assert "not valid UTF-8" in msg
-    match = re.search(r"at or after line (\d+)", msg)
-    assert match is not None
-    assert int(match.group(1)) <= 5001
+
+
+def test_read_fixed_width_capped_read_never_examines_bytes_past_the_cap(tmp_path) -> None:
+    """A valid capped record followed immediately by undecodable bytes: the cap
+    is honored and the tail is never decoded."""
+    path = tmp_path / "tail.dat"
+    path.write_bytes(b"abc\n" + b"\xff\xfe\xfd\n" * 3000)
+    layout = {"columns": [{"name": "v", "start": 0, "width": 3}]}
+    df = read_fixed_width(path, layout, max_records=1)
+    assert df["v"].tolist() == ["abc"]
+
+
+def test_read_fixed_width_crlf_lines_read_like_lf(tmp_path) -> None:
+    layout = {"columns": [{"name": "v", "start": 0, "width": 3}]}
+    lf = tmp_path / "lf.dat"
+    crlf = tmp_path / "crlf.dat"
+    lf.write_bytes(b"abc\ndef\n")
+    crlf.write_bytes(b"abc\r\ndef\r\n")
+    assert read_fixed_width(crlf, layout).equals(read_fixed_width(lf, layout))
+
+
+@pytest.mark.parametrize(
+    ("bad_path", "exc_type"),
+    [(b"/tmp/x.dat", TypeError), (123, TypeError), ("/tmp/a\x00b.dat", ValueError)],
+)
+def test_read_fixed_width_rejects_invalid_paths(bad_path: Any, exc_type: type) -> None:
+    layout = {"columns": [{"name": "v", "start": 0, "width": 3}]}
+    with pytest.raises(exc_type):
+        read_fixed_width(bad_path, layout)
