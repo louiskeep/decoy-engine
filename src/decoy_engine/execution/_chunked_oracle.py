@@ -15,6 +15,7 @@ that need a first chunk run after it, and per-chunk checks stay in the loop.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,7 @@ from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
 from . import _chunked_text_mask as text_mask_gate
 from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
+from ._chunked_carry import adapter_fk_safe_columns, plan_carry
 from ._chunked_fk import (
     fk_hash_strategy_columns_for_table,
     fk_passthrough_columns_for_table,
@@ -37,6 +39,7 @@ from ._chunked_fk_dtype import (
     fk_declared_dtypes_for_table,
     reject_mismatched_chunked_fk_declared_dtype,
 )
+from ._chunked_profile import profile_input
 
 
 @dataclass
@@ -66,6 +69,8 @@ class OraclePreflightState:
     guard_passthrough_fk_columns: Any = None
     declared_fk_dtypes: Any = None
     hash_fk_key_columns: Any = None
+    # `run_mask_chunked` only (revision 9): which passthrough columns never enter pandas.
+    carry: Any = None
 
 
 def _oracle_preflight(
@@ -81,11 +86,16 @@ def _oracle_preflight(
     base_row_offset: int = 0,
     pool_cache: Any = None,
     warm_pools: bool = True,
+    carry_passthrough: bool = False,
 ) -> OraclePreflightState:
     """The eager half of the oracle: every check that runs before a chunk masks.
 
     `warm_pools=False` leaves faker pool warming to the caller: the native route
     builds its pools itself, and warming here too would look the cache up twice.
+
+    `carry_passthrough=True` (`run_mask_chunked` only) plans which passthrough
+    columns are carried: the profile and the adapter then see them as all-null
+    placeholders (see `_chunked_carry`). The public oracle never sets it.
     """
     dgrn.validate_base_row_offset(base_row_offset)
     from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
@@ -103,10 +113,20 @@ def _oracle_preflight(
     # fail the fail-closed gate, so the profile/plan/gate sequence runs for an
     # empty source too (from `empty_input_profile`) and the empty-input return
     # comes after the gate.
+    carry = None
     if first is None:
         profile = empty_input_profile(config, table=table, engine_version=engine_version)
-    else:
+    elif not carry_passthrough:
         profile = first_chunk_profile(first, table=table, engine_version=engine_version)
+    else:
+        carry = plan_carry(config, table=table, first_schema=first.schema, adapter=adapter)
+        try:
+            profile = first_chunk_profile(
+                first, table=table, engine_version=engine_version, carried=carry.carried
+            )
+        except Exception as exc:
+            carry.diagnose_profile(exc, profile_input(first, carry.carried), table=table)
+            raise
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
     # Public entry point: resolve the config's `mask_secret_ref` when no
     # programmatic provider was passed, then run the fail-closed gate up front.
@@ -201,6 +221,9 @@ def _oracle_preflight(
         if chunked_adapter_touches_pandas_ingestion(adapter, config, table)
         else set()
     )
+    if carry is not None:
+        # A carried key never reaches pandas, so the lossy-key guard covers the rest.
+        guard_passthrough_fk_columns = guard_passthrough_fk_columns - carry.carried
     # One cache for the whole run: faker pools build once (eagerly, so a provider
     # failure surfaces before any output streams) and every chunk samples from
     # the same pool via the handler's cache consult. A caller-supplied cache is
@@ -230,6 +253,7 @@ def _oracle_preflight(
         guard_passthrough_fk_columns=guard_passthrough_fk_columns,
         declared_fk_dtypes=declared_fk_dtypes,
         hash_fk_key_columns=hash_fk_key_columns,
+        carry=carry,
     )
 
 
@@ -254,13 +278,14 @@ def _oracle_masked(
     """
     from decoy_engine.errors import RowErrorsFailedError
 
+    carry = state.carry
     first = state.first
     if first is None:  # pragma: no cover - callers return early for a zero-chunk state
         raise AssertionError("_oracle_masked called with a zero-chunk preflight state")
 
     def _masked() -> Iterator[pa.Table]:
         row_offset = base_row_offset  # DGRN counter; inert for value-keyed strategies.
-        for chunk in _chunked_mod._chain_first(first, state.chunk_iter):
+        for chunk_index, chunk in enumerate(_chunked_mod._chain_first(first, state.chunk_iter)):
             if state.guard_passthrough_fk_columns:
                 reject_lossy_chunked_fk_passthrough(
                     chunk, table=table, passthrough_fk_columns=state.guard_passthrough_fk_columns
@@ -293,18 +318,38 @@ def _oracle_masked(
                 )
             # Per-chunk DGRN domain guard (no whole-stream row count); see `_chunked_dgrn.py`.
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
-            result = state.adapter.run(
-                state.plan,
-                {table: chunk},
-                registry=state.registry,
-                pool_cache=state.pool_cache,
-                relationship_graph=state.graph,
-                namespace_registry=state.ns_registry,
-                unconfigured_column_policy=state.projection_policy,
-                key_provider=state.key_provider,
-                row_offset=row_offset,
-                code_set_records=state.code_set_records,
-            )
+            try:
+                result = state.adapter.run(
+                    state.plan,
+                    {table: chunk if carry is None else carry.adapter_input(chunk)},
+                    registry=state.registry,
+                    pool_cache=state.pool_cache,
+                    relationship_graph=state.graph,
+                    namespace_registry=state.ns_registry,
+                    unconfigured_column_policy=state.projection_policy,
+                    key_provider=state.key_provider,
+                    row_offset=row_offset,
+                    code_set_records=state.code_set_records,
+                )
+            except Exception as exc:
+                if carry is not None:
+                    carry.diagnose_adapter(
+                        exc,
+                        chunk,
+                        table=table,
+                        chunk_index=chunk_index,
+                        fk_safe=lambda: adapter_fk_safe_columns(
+                            state.plan, state.registry, state.graph, table
+                        ),
+                    )
+                raise
+            if carry is not None and carry.carried and result.row_errors:
+                # The failing chunk is reported with the real carried columns, never the
+                # placeholders the adapter saw.
+                result = dataclasses.replace(
+                    result,
+                    outputs={**result.outputs, table: carry.reattach(result.outputs[table], chunk)},
+                )
             if chunk_result_sink is not None and (on_chunk is None or result.row_errors):
                 chunk_result_sink.append(result)
             # The chunked path has no quarantine machinery, so a per-row strategy

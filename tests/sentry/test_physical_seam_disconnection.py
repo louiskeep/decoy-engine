@@ -344,6 +344,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `execution.physical`, and nothing in production calls the entry yet, so
         # the import-direction sweeps and the fresh-import probe stay green.
         "src/decoy_engine/execution/_chunked_oracle.py",
+        # Revision 9: `_chunked_carry.py` decides which passthrough columns
+        # `run_mask_chunked` carries past pandas; `_chunked_profile.py` gains the
+        # Arrow-native column profile. Neither imports `execution.physical`.
+        "src/decoy_engine/execution/_chunked_carry.py",
+        "src/decoy_engine/execution/_chunked_profile.py",
         "src/decoy_engine/execution/native/_chunk_schema.py",
         "src/decoy_engine/execution/native/_chunked_entry.py",
         "src/decoy_engine/execution/native/_chunked_evidence.py",

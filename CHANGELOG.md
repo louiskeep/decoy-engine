@@ -60,9 +60,10 @@ keeps its behavior and signature.
   `null`-typed in the first chunk and typed in a later one raises
   `ExecutionError(code="chunked_leading_null_type")` on both routes (a stream's
   type is fixed by its first chunk).
-- Values equal the oracle's except for one stated exception: a passthrough column
-  is the source column itself, so a nullable integer above 2^53 is returned
-  exactly where the oracle's pandas round trip rounds it.
+- Values equal the oracle's except for one stated exception: a carried passthrough
+  column is the source column itself and never goes through pandas, so values the
+  oracle's round trip rounds or refuses are returned exactly (see "carried
+  passthrough columns never enter pandas" below).
 - Faker admission resolves each pool once from the caller's registry before the
   route is committed. A provider whose non-null output is not string-compatible
   (for example a caller registry that rebinds `person_first_name` to a
@@ -84,6 +85,50 @@ keeps its behavior and signature.
   depend on the binding.
 - `run_mask_chunked(config, chunks, *, table, engine_version, ...)`: `config` and
   `chunks` are positional-or-keyword, the rest keyword-only.
+
+### Changed (`run_mask_chunked`: carried passthrough columns never enter pandas, 2026-10-01)
+
+On `run_mask_chunked` only; `run_mask_pipeline_chunked` and
+`run_native_or_oracle_chunked` behave exactly as before. A passthrough column is
+unchanged by definition, so when the adapter is `None` or exactly
+`PandasExecutionAdapter` the profile and the adapter see it as an all-null
+placeholder and the output takes the source column itself, on both routes and in
+every chunk, chunk 0 included. Where the oracle's pandas round trip refuses or
+alters a passthrough value, this entry now returns the exact source value:
+
+- a nullable integer above 2^53 (the oracle rounds it) and a null-bearing FK
+  passthrough key above 2^53 (the oracle refuses it; the FK guard here covers
+  only keys a `when:` predicate or sibling reference reads);
+- `time64[ns]` values that are not whole microseconds, `date32` and `date64`
+  values outside years 1 to 9999, `time32` and `time64` values outside one day;
+- dictionary columns whose values hold a null, a duplicate or a float NaN, and
+  dictionaries with `uint64` indices;
+- `-2^63` in a timestamp or duration column (the oracle yields it as null), at
+  every unit, under pandas 2.3.3 with pyarrow 24.0.0 and 25.0.1;
+- list, struct and map columns (the oracle's first-chunk profile refuses them).
+
+The profile of a carried column is computed from Arrow (`arrow_column_profile`),
+field for field equal to pandas', so the compiled plan, the HC-7 free-text
+advisory and the route decision do not change.
+
+Two limits. A passthrough column that a `when:` predicate or a sibling-reading
+strategy reads (a `group_by`, an `anchor`, any string value another column's
+entry holds) still goes through pandas and behaves as on the oracle, except that
+a value pandas refuses in it raises the new
+`ExecutionError(code="chunked_passthrough_value_unrepresentable")`, naming the
+table, column and chunk index, with the oracle's exception as `__cause__`. With a
+custom or subclass adapter nothing is carried, so every passthrough column behaves
+exactly as on the oracle, raw exceptions included. The scan that finds read columns
+over-approximates on purpose: a passthrough column whose name equals any string in
+another column's config entry (a column named `redact` next to a `redact` column)
+is read.
+
+Each chunk's `quality_metrics["chunked_route"]` gains `pandas_read_passthrough`, the
+sorted list of passthrough columns that still go through pandas.
+`aggregate_chunked_route_evidence` carries it and raises
+`ExecutionError(code="chunked_route_evidence_inconsistent")` when chunks disagree.
+A chunk that fails on a row error is appended to `chunk_result_sink` with the real
+carried columns, not placeholders.
 
 ### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
 

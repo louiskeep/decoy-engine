@@ -6,8 +6,14 @@ table admits, and on the pandas oracle otherwise, behind one contract:
 - Every validation the oracle runs (`check_chunked_compatibility` and the eager
   checks of `_oracle_preflight`) runs first on every call, so a config is
   accepted or rejected identically on both routes, before any chunk is yielded.
-- Values equal the oracle's value for value. Output types follow the schema rule
-  in `_chunked_schema_rule` on both routes, and no chunk carries pandas metadata.
+- Values equal the oracle's value for value, with one stated exception: on the
+  stock-adapter path a carried passthrough column (one no `when:` predicate or
+  sibling-reading strategy reads, see `_chunked_carry`) is the source column itself
+  and never goes through pandas, so a value the oracle's round trip alters or
+  refuses (a nullable integer above 2^53, `time64[ns]` that is not whole
+  microseconds, out-of-range dates, `-2^63` timestamps, nested columns) comes back
+  exact. Output types follow the schema rule in `_chunked_schema_rule` on both
+  routes, and no chunk carries pandas metadata.
 - `vault_writer`, `chunk_result_sink` and `base_row_offset` behave the same on
   both routes. The sink receives one `ExecutionResult` per chunk whose
   `quality_metrics["chunked_route"]` records each column's planned and executed
@@ -88,6 +94,7 @@ def _oracle_route(
     rule: SchemaRule | None,
     columns: tuple[ColumnPlan, ...],
     reroute_reason: str | None,
+    read_passthrough: tuple[str, ...],
 ) -> Iterator[pa.Table]:
     # Eager, like the oracle's own preflight: a provider failure surfaces now.
     _chunked._warm_faker_pools(
@@ -118,6 +125,7 @@ def _oracle_route(
                 reroute_reason=reroute_reason,
                 columns=columns,
                 elapsed_ms=elapsed,
+                pandas_read_passthrough=read_passthrough,
             )
             chunk_result_sink.append(
                 dataclasses.replace(
@@ -153,6 +161,7 @@ def _native_route(
     native_threads: int | None,
     rule: SchemaRule | None,
     columns: tuple[ColumnPlan, ...],
+    read_passthrough: tuple[str, ...],
 ) -> Iterator[pa.Table]:
     """The one native chunk loop. Per chunk: row-offset domain check, mask, schema rule (when `rule` is given), result for the sink
     (when one is given), offset advance, vault entries, yield. Source drift was
@@ -220,6 +229,7 @@ def _native_route(
                                 reroute_reason=None,
                                 columns=columns,
                                 elapsed_ms=elapsed_ms,
+                                pandas_read_passthrough=read_passthrough,
                             )
                         },
                         row_errors=(),
@@ -303,6 +313,7 @@ def _run_chunked(
         base_row_offset=base_row_offset,
         pool_cache=pool_cache,
         warm_pools=False,
+        carry_passthrough=enforce_schema_rule,
     )
     if state.first is None:
         if route_evidence_sink is not None:
@@ -337,6 +348,7 @@ def _run_chunked(
     rule = (
         build_schema_rule(config, table=table, first=state.first) if enforce_schema_rule else None
     )
+    read_passthrough = state.carry.read if state.carry is not None else ()
     if not decision.native_admitted:
         return _oracle_route(
             state,
@@ -348,6 +360,7 @@ def _run_chunked(
             rule=rule,
             columns=columns,
             reroute_reason=decision.reroute_reason,
+            read_passthrough=read_passthrough,
         )
     return _native_route(
         state,
@@ -362,6 +375,7 @@ def _run_chunked(
         native_threads=native_threads,
         rule=rule,
         columns=columns,
+        read_passthrough=read_passthrough,
     )
 
 
@@ -394,6 +408,16 @@ def run_mask_chunked(
     has columns the config does not cover. `chunk_result_sink` receives one
     `ExecutionResult` per chunk on either route, with per-column `timings` and
     `quality_metrics["chunked_route"]` (see `aggregate_chunked_route_evidence`).
+
+    Passthrough columns: with `adapter` `None` or exactly `PandasExecutionAdapter`,
+    a passthrough column that no `when:` predicate and no sibling-reading strategy
+    reads is returned as the source holds it and never converted to pandas, on both
+    routes. One that is read still goes through pandas, and a value pandas refuses in
+    it raises `ExecutionError(code="chunked_passthrough_value_unrepresentable")` with
+    the oracle's exception as its cause. With any other adapter every passthrough
+    column behaves as on the public oracle, raw exceptions included.
+    `quality_metrics["chunked_route"]["pandas_read_passthrough"]` lists the columns
+    that still go through pandas.
 
     Admission uses the first chunk's real Arrow types and each Faker provider's
     output type, and both routes run the same per-chunk ingest guards, so an

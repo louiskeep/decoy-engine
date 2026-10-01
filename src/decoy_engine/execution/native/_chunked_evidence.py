@@ -78,12 +78,19 @@ def chunk_route_evidence(
     reroute_reason: str | None,
     columns: Iterable[ColumnPlan],
     elapsed_ms: Mapping[str, float],
+    pandas_read_passthrough: Iterable[str] = (),
 ) -> dict[str, Any]:
-    """One chunk's evidence: every column called once, with its own elapsed time."""
+    """One chunk's evidence: every column called once, with its own elapsed time.
+
+    `pandas_read_passthrough` lists the passthrough columns that still go through
+    pandas because a `when:` predicate or a sibling-reading strategy reads them (every
+    passthrough column under a custom adapter); all other passthrough columns are carried
+    and never converted."""
     return {
         "table": table,
         "native_admitted": native_admitted,
         "reroute_reason": reroute_reason,
+        "pandas_read_passthrough": sorted(pandas_read_passthrough),
         "columns": [
             {
                 "column": c.column,
@@ -101,6 +108,7 @@ def chunk_route_evidence(
 def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
     """Sum calls and elapsed time per column across the chunk results' evidence."""
     head: dict[str, Any] | None = None
+    read_head: list[str] | None = None
     sums: dict[str, dict[str, Any]] = {}
     for result in results:
         evidence = result.quality_metrics.get("chunked_route")
@@ -116,6 +124,18 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
                     f"{head['table']!r} and {evidence['table']!r}."
                 ),
             )
+        listed = evidence.get("pandas_read_passthrough")
+        if head is evidence:
+            read_head = listed
+        elif listed != read_head:
+            raise ExecutionError(
+                code="chunked_route_evidence_inconsistent",
+                message=(
+                    "aggregate_chunked_route_evidence takes the results of one call; chunk "
+                    f"evidence disagrees on pandas_read_passthrough ({read_head!r} then "
+                    f"{listed!r})."
+                ),
+            )
         for col in evidence["columns"]:
             acc = sums.get(col["column"])
             if acc is None:
@@ -124,10 +144,17 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
                 acc["calls"] += col["calls"]
                 acc["elapsed_ms"] += col["elapsed_ms"]
     if head is None:
-        return {"table": None, "native_admitted": False, "reroute_reason": None, "columns": []}
+        return {
+            "table": None,
+            "native_admitted": False,
+            "reroute_reason": None,
+            "pandas_read_passthrough": [],
+            "columns": [],
+        }
     return {
         "table": head["table"],
         "native_admitted": head["native_admitted"],
         "reroute_reason": head["reroute_reason"],
+        "pandas_read_passthrough": [] if read_head is None else list(read_head),
         "columns": list(sums.values()),
     }
