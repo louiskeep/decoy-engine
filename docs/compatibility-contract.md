@@ -181,6 +181,12 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `run_mask_chunked` (2026-10-01): the chunked
+  dispatcher as a public entry point. Its parameters are keyword-only and
+  additive; its pinned guarantees are value equality with
+  `run_mask_pipeline_chunked`, one output type per column per call (`string` for
+  hash, truncate and string-redact columns, the source type for passthrough), no
+  pandas metadata on yielded chunks, and identical validation on both routes.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
@@ -325,6 +331,10 @@ acceptable cost.
 - [ ] Any CLI/API removal goes through a deprecation shim with a `CHANGELOG`
       entry.
 - [ ] The cross-version compatibility corpus still passes.
+- [ ] If I touched `run_mask_chunked` or the oracle preflight it shares with
+      `run_mask_pipeline_chunked`: both entry points still raise the same error
+      for the same rejected config before any chunk beyond the first is read, and
+      the pinned output types (§3.4) did not change.
 
 ---
 

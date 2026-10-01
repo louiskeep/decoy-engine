@@ -12,9 +12,10 @@ from __future__ import annotations
 import pyarrow as pa
 
 from decoy_engine.errors import DecoyError
+from decoy_engine.execution._errors import ExecutionError
 
 
-class NativeChunkSchemaDriftError(DecoyError):
+class NativeChunkSchemaDriftError(ExecutionError, DecoyError):
     """A chunk after the first no longer matches the schema the native route
     admitted at PREFLIGHT: a column went missing, an extra one appeared, or a
     column's Arrow type changed. Preflight only inspects the FIRST chunk (an
@@ -29,10 +30,15 @@ class NativeChunkSchemaDriftError(DecoyError):
     code: str = "native_chunk_schema_drift"
 
     def __init__(self, message: str, *, table: str, chunk_index: int, detail: str) -> None:
-        super().__init__(message)
+        super().__init__(code="native_chunk_schema_drift", message=message)
         self.table = table
         self.chunk_index = chunk_index
         self.detail = detail
+
+    def __str__(self) -> str:
+        # Callers that map errors by `.code` read `.message`; the bare message keeps
+        # `str()` identical to what this class has always printed.
+        return self.message
 
 
 def _check_chunk_schema_drift(

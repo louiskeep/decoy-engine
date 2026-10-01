@@ -137,16 +137,36 @@ def test_native_or_oracle_chunked_adapter_forwards_result_unchanged(
         return sentinel
 
     monkeypatch.setattr(
-        "decoy_engine.execution.physical.drivers._chunked.run_native_or_oracle_chunked",
+        "decoy_engine.execution.physical.drivers._chunked.run_chunked_masking",
         _stub,
     )
     adapter = NativeOrOracleChunkedAdapter()
     chunks_marker = iter([pa.table({"c": [1]})])
+    markers = {
+        "registry": object(),
+        "adapter": object(),
+        "vault_writer": object(),
+        "chunk_result_sink": [],
+        "key_provider": object(),
+        "base_row_offset": 123,
+        "native_threads": 4,
+        "route_evidence_sink": [],
+        "pool_cache": object(),
+    }
 
-    result = adapter.run({"cfg": 1}, chunks_marker, table="t", engine_version="v")
+    result = adapter.run(
+        {"cfg": 1},
+        chunks_marker,
+        table="t",
+        engine_version="v",
+        **markers,  # type: ignore[arg-type]
+    )
 
     assert result is sentinel
     assert calls[0]["chunks"] is chunks_marker
+    for name, marker in markers.items():
+        assert calls[0][name] is marker or calls[0][name] == marker, name
+    assert set(calls[0]) == {"config", "chunks", "table", "engine_version", *markers}
 
 
 def test_resident_chunked_aggregator_forwards_result_unchanged(

@@ -445,3 +445,73 @@ def test_mixed_admitted_and_non_admitted_columns_stays_fully_on_oracle() -> None
     assert evidence.kernel_calls == {}
     assert evidence.compiled_kernel_executed is False
     _assert_gate_parity(native_table, oracle)
+
+
+# ---------------------------------------------------------------------------
+# `run_mask_chunked`: the two degenerate shapes above need no allowlist entry.
+# Its output type is route-independent, so the native route and the oracle route
+# of the same call agree exactly (no `allowed_physical_diffs` at all).
+# ---------------------------------------------------------------------------
+
+
+class _OracleForcingAdapter:
+    """A non-pandas adapter object: `run_mask_chunked` sends the table to the
+    oracle route for it, and the oracle route then runs it unchanged."""
+
+    def __init__(self) -> None:
+        from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+
+        self._inner = PandasExecutionAdapter()
+
+    def run(self, *args: Any, **kwargs: Any) -> Any:
+        return self._inner.run(*args, **kwargs)
+
+
+def _run_entry(
+    config: dict, source: pa.Table, chunks: list[pa.Table], *, force_oracle: bool
+) -> tuple[pa.Table, list[NativeRouteEvidence]]:
+    from decoy_engine import run_mask_chunked
+
+    sink: list[NativeRouteEvidence] = []
+    out = list(
+        run_mask_chunked(
+            config,
+            chunks,
+            table="w2",
+            engine_version=_ENGINE_VERSION,
+            key_provider=_key_provider(),
+            adapter=_OracleForcingAdapter() if force_oracle else None,
+            route_evidence_sink=sink,
+        )
+    )
+    return pa.concat_tables(out).combine_chunks(), sink
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("shape", ["all_null_column", "zero_row_chunk"])
+def test_run_mask_chunked_degenerate_shapes_match_across_routes_without_allowlist(
+    shape: str,
+) -> None:
+    if shape == "all_null_column":
+        source = _build_source(9)
+        source = source.set_column(
+            source.schema.get_field_index("rd_notes"),
+            "rd_notes",
+            pa.array([None] * 9, type=pa.string()),
+        )
+        chunks = _chunk(source, 4)
+    else:
+        source = _build_source(0)
+        chunks = [source]
+    config = _build_config(source, key=f"entry_{shape}")
+
+    native, native_ev = _run_entry(config, source, chunks, force_oracle=False)
+    via_oracle, oracle_ev = _run_entry(config, source, chunks, force_oracle=True)
+
+    assert native_ev[0].native_admitted is True
+    assert oracle_ev[0].reroute_reason == "adapter_requested"
+    assert_logical_parity(
+        LogicalResult(outputs={"w2": native}),
+        LogicalResult(outputs={"w2": via_oracle}),
+        allowed_physical_diffs=(),
+    )

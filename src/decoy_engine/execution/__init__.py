@@ -112,6 +112,7 @@ from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
 )
 from decoy_engine.execution.capacity import estimate_job_capacity
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.out_of_core import (
     SUPPORTED_STRATEGIES as OUT_OF_CORE_SUPPORTED_STRATEGIES,
 )
@@ -170,6 +171,7 @@ __all__ = [
     "probe_peak_bytes",
     "resolve_substrate",
     "run_job_with_governor",
+    "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
     "run_pipeline_isolated",
