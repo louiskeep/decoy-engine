@@ -288,8 +288,13 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # packaging>=21.0 direct dep; 895b9a20... was the 0.5.0,
             # pre-cloud-extra profile. Reverting only decoy-engine to 0.4.0
             # reproduces 6c0b2bbd... exactly.
-            "56bff582448795670017468995df712f2f12c7745e1e225f1c2c9bb8fbaf371f",
-            # decoy-cli pristine RUNTIME profile: engine 0.6.0 + CLI (typer/rich/
+            # 0.6.0 -> 0.7.0 release re-pin: prior value 56bff582... Verified
+            # directly (fresh 3.10.20 venv, uv sync --frozen with the extras
+            # above): still 77 dists, and setting only decoy-engine back to
+            # 0.6.0 in the installed set reproduces 56bff582... exactly, so
+            # the change is the version string alone.
+            "72c034289a661e03a9cb34d587367f7ee7a3875acfa47c0bfdc618299acb4aa0",
+            # decoy-cli pristine RUNTIME profile: engine 0.7.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
             # The exact third-party set is pinned in the CLI repo's
             # requirements-certified.txt (proof-critical opendp/
@@ -304,7 +309,11 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # 5a2f7ef7... exactly, so the change is purely the version bump,
             # not a proof-critical library change. An earlier draft pinned a
             # dev-polluted env (c2c766...); this is the clean one.
-            "e75c87e93fc7bf2d85a3aaaec9128f4070ff7654717cf50460bb03038c586552",
+            # 0.6.0 -> 0.7.0 release re-pin: prior value e75c87e9... Verified
+            # (65 dists, fresh 3.10.20 venv from requirements-certified.txt +
+            # this engine + decoy-cli): setting only decoy-engine back to
+            # 0.6.0 reproduces e75c87e9... exactly.
+            "f2a5910ff713219a6c923e8295c4085da2f1c680d74e128e02b795f0bb91aa77",
         }
     ),
 }
