@@ -40,7 +40,7 @@ def test_invalid_native_threads_raise_the_knob_error(bad: Any) -> None:
     with pytest.raises(ExecutionError) as raised:
         ac.require_lane_knobs(bad, True)
     assert raised.value.code == "invalid_execution_knob"
-    assert "native_threads" in str(raised.value)
+    assert "native_threads must be" in str(raised.value)
 
 
 def test_the_upper_bound_message_names_the_limit_and_the_value() -> None:
@@ -54,13 +54,13 @@ def test_invalid_dispatcher_flag_raises_the_knob_error(bad: Any) -> None:
     with pytest.raises(ExecutionError) as raised:
         ac.require_lane_knobs(1, bad)
     assert raised.value.code == "invalid_execution_knob"
-    assert "chunked_dispatcher_enabled" in str(raised.value)
+    assert "chunked_dispatcher_enabled must be" in str(raised.value)
 
 
 def test_native_threads_is_checked_before_the_dispatcher_flag() -> None:
     with pytest.raises(ExecutionError) as raised:
         ac.require_lane_knobs(0, "nope")
-    assert "native_threads" in str(raised.value)
+    assert "native_threads must be" in str(raised.value)
 
 
 def test_merge_lane_stamp_keeps_the_six_keys_and_adds_the_lane_keys() -> None:
@@ -133,13 +133,20 @@ def test_join_keeps_column_order_and_rejects_a_reordered_chunk() -> None:
     assert raised.value.code == "chunked_schema_mismatch"
 
 
-def test_join_error_messages_name_the_table_and_the_column() -> None:
+def test_join_error_messages_name_the_table_the_column_and_the_disagreement() -> None:
     with pytest.raises(ExecutionError) as raised:
         ac.join_dispatcher_chunks([pa.table({"a": ["x"]}), pa.table({"a": [1]})], table="people")
-    assert "people" in str(raised.value) and "'a'" in str(raised.value)
+    message = str(raised.value)
+    assert "people" in message and "'a'" in message
+    assert "disagreeing types" in message and "string" in message and "int64" in message
     with pytest.raises(ExecutionError) as raised:
         ac.join_dispatcher_chunks([pa.table({"a": ["x"]}), pa.table({"b": ["x"]})], table="people")
-    assert "people" in str(raised.value)
+    message = str(raised.value)
+    assert "people" in message and "column names differ across chunks" in message
+    assert "['a']" in message and "['b']" in message
+    with pytest.raises(ExecutionError) as raised:
+        ac.join_dispatcher_chunks([], table="people")
+    assert "people" in str(raised.value) and "no chunks to join" in str(raised.value)
 
 
 def test_join_takes_the_non_null_type_from_any_position_and_casts_the_rest() -> None:
@@ -223,6 +230,7 @@ def test_run_auto_chunk_dispatcher_lane_returns_the_five_part_shape() -> None:
     assert warnings == ()
     assert metrics["auto_chunk"] == {"lane": "dispatcher", "lane_reason": None, "native_threads": 2}
     route = metrics["chunked_route"]
+    assert route["table"] == "t"
     assert route["native_admitted"] is True and route["reroute_reason"] is None
     assert route["pandas_read_passthrough"] == []
     assert [c["column"] for c in route["columns"]] == ["r", "p"]
@@ -243,6 +251,7 @@ def test_run_auto_chunk_legacy_lane_reports_the_same_shape_on_pandas() -> None:
         "native_threads": 7,
     }
     route = metrics["chunked_route"]
+    assert route["table"] == "t"
     assert route["native_admitted"] is False
     assert route["reroute_reason"] == "dispatcher_disabled"
     assert route["pandas_read_passthrough"] == ["p"]
@@ -259,11 +268,116 @@ def test_run_auto_chunk_logs_the_lane_without_values(caplog: pytest.LogCaptureFi
     cfg, src = _native_table()
     with caplog.at_level(logging.INFO, logger=ac.__name__):
         _call(cfg, src)
-    (record,) = [r for r in caplog.records if r.name == ac.__name__]
-    message = record.getMessage()
-    assert "table=t" in message and "lane=dispatcher" in message
-    assert "native_admitted=True" in message and "reroute_reason=None" in message
-    assert "keep-" not in message and "s1" not in message
+        _call(cfg, src, dispatcher_enabled=False)
+    messages = [r.getMessage() for r in caplog.records if r.name == ac.__name__]
+    assert messages == [
+        "auto-chunk table=t lane=dispatcher native_admitted=True reroute_reason=None",
+        "auto-chunk table=t lane=legacy_oracle native_admitted=False "
+        "reroute_reason=dispatcher_disabled",
+    ]
+
+
+def test_the_dispatcher_lane_forwards_the_run_context_to_b1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.providers_v2 import get_default_registry
+
+    cfg, src = _native_table()
+    spies = support.spy_lanes(monkeypatch)
+    registry, adapter = get_default_registry(), PandasExecutionAdapter()
+    _call(cfg, src, registry=registry, adapter=adapter, native_threads=3)
+    ((args, kwargs),) = spies["entry.run_mask_chunked"]
+    assert args[0] is cfg
+    assert kwargs["table"] == "t" and kwargs["engine_version"] == support.ENGINE_VERSION
+    assert kwargs["registry"] is registry and kwargs["adapter"] is adapter
+    assert kwargs["vault_writer"] is None and kwargs["key_provider"] is None
+    assert kwargs["base_row_offset"] == 0 and kwargs["native_threads"] == 3
+    assert isinstance(kwargs["chunk_result_sink"], list)
+    assert spies["oracle.run_mask_pipeline_chunked"] == []
+
+
+def test_the_legacy_lane_forwards_the_run_context_to_the_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.keyprovider import SecretKeyProvider
+    from decoy_engine.providers_v2 import get_default_registry
+
+    cfg, src = _native_table()
+    spies = support.spy_lanes(monkeypatch)
+    registry, adapter = get_default_registry(), PandasExecutionAdapter()
+    provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
+    _call(
+        cfg,
+        src,
+        dispatcher_enabled=False,
+        registry=registry,
+        adapter=adapter,
+        key_provider=provider,
+    )
+    ((args, kwargs),) = spies["oracle.run_mask_pipeline_chunked"]
+    assert args[0] is cfg
+    assert kwargs["table"] == "t" and kwargs["engine_version"] == support.ENGINE_VERSION
+    assert kwargs["registry"] is registry and kwargs["adapter"] is adapter
+    assert kwargs["key_provider"] is provider and kwargs["vault_writer"] is None
+    assert isinstance(kwargs["chunk_result_sink"], list)
+    assert spies["entry.run_mask_chunked"] == []
+
+
+def test_the_legacy_evidence_is_planned_from_this_tables_config_and_engine_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.execution import _chunked_profile
+    from decoy_engine.execution.native import _chunked_evidence
+
+    seen: dict[str, Any] = {}
+    real_profile = _chunked_profile.empty_input_profile
+    real_plan = _chunked_evidence.plan_column_backends
+
+    def spy_profile(config: Any, **kw: Any) -> Any:
+        seen["profile"] = kw
+        return real_profile(config, **kw)
+
+    def spy_plan(config: Any, profile: Any, **kw: Any) -> Any:
+        seen["plan"] = kw
+        return real_plan(config, profile, **kw)
+
+    monkeypatch.setattr(_chunked_profile, "empty_input_profile", spy_profile)
+    monkeypatch.setattr(_chunked_evidence, "plan_column_backends", spy_plan)
+    cfg, src = _native_table()
+    ac._legacy_route_evidence(
+        cfg, src, table="t", engine_version="ev-1", chunk_count=3, lane_reason="dispatcher_disabled"
+    )
+    assert seen["profile"] == {"table": "t", "engine_version": "ev-1"}
+    assert seen["plan"] == {"table": "t", "engine_version": "ev-1"}
+
+
+def _schema_disagreement(monkeypatch: pytest.MonkeyPatch, target: Any, name: str) -> None:
+    chunks = [pa.table({"a": ["x"]}), pa.table({"a": [1]})]
+    monkeypatch.setattr(target, name, lambda *a, **k: iter(chunks))
+
+
+def test_a_join_failure_on_the_dispatcher_lane_names_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.execution.native import _chunked_entry
+
+    _schema_disagreement(monkeypatch, _chunked_entry, "run_mask_chunked")
+    cfg, src = _native_table()
+    with pytest.raises(ExecutionError) as raised:
+        _call(cfg, src, table="people")
+    assert raised.value.code == "chunked_schema_mismatch" and "people" in str(raised.value)
+
+
+def test_a_join_failure_on_the_legacy_lane_names_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.execution import _chunked
+
+    _schema_disagreement(monkeypatch, _chunked, "run_mask_pipeline_chunked")
+    cfg, src = _native_table()
+    with pytest.raises(ExecutionError) as raised:
+        _call(cfg, src, table="people", dispatcher_enabled=False)
+    assert raised.value.code == "chunked_schema_mismatch" and "people" in str(raised.value)
 
 
 def test_the_delegate_forwards_every_argument_and_returns_the_result_unchanged(
