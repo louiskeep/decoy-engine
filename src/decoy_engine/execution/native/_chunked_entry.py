@@ -25,13 +25,14 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_dgrn as dgrn
-from decoy_engine.execution import _chunked_oracle
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._guards import run_chunk_ingest_guards
 from decoy_engine.execution.native._chunk_masking import _mask_chunk_native, _resolve_faker_pools
-from decoy_engine.execution.native._chunk_schema import _check_chunk_schema_drift
+from decoy_engine.execution.native._chunk_schema import conformed_rest
 from decoy_engine.execution.native._chunked_evidence import (
     ColumnPlan,
     aggregate_chunked_route_evidence,
@@ -51,16 +52,23 @@ from decoy_engine.execution.native._dispatch import (
 from decoy_engine.generation.pool import PoolCache
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
+# Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
+# kernels refuse a larger request, so the entry point refuses it before any work.
+MAX_NATIVE_THREADS = 1024
+
 
 def _validate_native_threads(native_threads: Any) -> None:
     if (
         isinstance(native_threads, bool)
         or not isinstance(native_threads, int)
-        or native_threads < 1
+        or not 1 <= native_threads <= MAX_NATIVE_THREADS
     ):
         raise ExecutionError(
             code="invalid_native_threads",
-            message=f"native_threads must be an int >= 1; got {native_threads!r}.",
+            message=(
+                f"native_threads must be an int in 1..={MAX_NATIVE_THREADS}; "
+                f"got {native_threads!r}."
+            ),
         )
 
 
@@ -72,10 +80,23 @@ def _oracle_route(
     vault_writer: Any,
     chunk_result_sink: list[Any] | None,
     base_row_offset: int,
-    rule: SchemaRule,
+    rule: SchemaRule | None,
     columns: tuple[ColumnPlan, ...],
     reroute_reason: str | None,
 ) -> Iterator[pa.Table]:
+    # Eager, like the oracle's own preflight: a provider failure surfaces now.
+    _chunked._warm_faker_pools(
+        state.plan, table=table, registry=state.registry, pool_cache=state.pool_cache
+    )
+    if rule is None:
+        return _chunked_oracle._oracle_masked(
+            state,
+            config=config,
+            table=table,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            base_row_offset=base_row_offset,
+        )
     produced = 0
 
     def on_chunk(result: Any, chunk: pa.Table) -> pa.Table:
@@ -123,10 +144,14 @@ def _native_route(
     vault_writer: Any,
     chunk_result_sink: list[Any] | None,
     base_row_offset: int,
-    native_threads: int,
-    rule: SchemaRule,
+    native_threads: int | None,
+    rule: SchemaRule | None,
     columns: tuple[ColumnPlan, ...],
 ) -> Iterator[pa.Table]:
+    """The one native chunk loop. Per chunk: row-offset domain check, the shared
+    ingest guards, mask, schema rule (when `rule` is given), result for the sink
+    (when one is given), offset advance, vault entries, yield. Source drift was
+    already conformed or refused by `state.chunk_iter`."""
     from decoy_engine.keyprovider import require_mask_key
 
     first = state.first
@@ -148,8 +173,8 @@ def _native_route(
     def _masked() -> Iterator[pa.Table]:
         row_offset = base_row_offset
         for i, chunk in enumerate(_chain_first(first, state.chunk_iter)):
-            _check_chunk_schema_drift(first.schema, chunk, table=table, chunk_index=i)
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
+            run_chunk_ingest_guards(plan, {table: chunk}, state.registry, state.graph)
             elapsed_s: dict[str, float] = {}
             masked = _mask_chunk_native(
                 chunk,
@@ -161,7 +186,11 @@ def _native_route(
                 index_kernel=index_kernel,
                 column_elapsed_s=elapsed_s,
             )
-            out = normalize_chunk(rule, masked, chunk, table=table, chunk_index=i)
+            out = (
+                masked
+                if rule is None
+                else normalize_chunk(rule, masked, chunk, table=table, chunk_index=i)
+            )
             if chunk_result_sink is not None:
                 elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
                 chunk_result_sink.append(
@@ -200,7 +229,7 @@ def _native_route(
     return _masked()
 
 
-def run_mask_chunked(
+def _run_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
     *,
@@ -212,31 +241,14 @@ def run_mask_chunked(
     chunk_result_sink: list[Any] | None = None,
     key_provider: Any = None,
     base_row_offset: int = 0,
-    native_threads: int = 1,
+    native_threads: int | None = 1,
     route_evidence_sink: list[NativeRouteEvidence] | None = None,
     pool_cache: PoolCache | None = None,
+    enforce_schema_rule: bool = True,
 ) -> Iterator[pa.Table]:
-    """Mask `table` chunk-by-chunk, natively when the whole table admits.
-
-    Accepts everything `run_mask_pipeline_chunked` accepts, plus `native_threads`
-    (an int >= 1, the thread budget of the compiled kernels; output bytes do not
-    depend on it), `route_evidence_sink` (receives one `NativeRouteEvidence`) and
-    `pool_cache` (one `PoolCache` shared by both routes and across calls).
-
-    The whole table runs on the oracle when any masked column is not natively
-    capable, any column carries a nonblank `when:` predicate, `adapter` is
-    neither `None` nor the pandas adapter, a companion is missing, or the source
-    has columns the config does not cover. `chunk_result_sink` receives one
-    `ExecutionResult` per chunk on either route, with per-column `timings` and
-    `quality_metrics["chunked_route"]` (see `aggregate_chunked_route_evidence`).
-
-    Validation and route choice happen eagerly at call time; only the per-chunk
-    masking is lazy. A chunk whose output cannot be made schema-stable without
-    losing data raises `ExecutionError(code="chunked_schema_mismatch")`; schema
-    drift on a later chunk of the native route raises
-    `NativeChunkSchemaDriftError` (an `ExecutionError`).
-    """
-    _validate_native_threads(native_threads)
+    """Preflight, route choice and the two chunk loops behind both public entry
+    points. `enforce_schema_rule=False` is the legacy `run_native_or_oracle_chunked`
+    contract: each route yields what it produces, with no type normalization."""
     state = _chunked_oracle._oracle_preflight(
         config,
         chunks,
@@ -248,12 +260,15 @@ def run_mask_chunked(
         key_provider=key_provider,
         base_row_offset=base_row_offset,
         pool_cache=pool_cache,
+        warm_pools=False,
     )
     if state.first is None:
         if route_evidence_sink is not None:
             route_evidence_sink.append(_oracle_evidence(table, "empty_input"))
         return iter(())
 
+    # One drift contract for both routes, applied before either loop sees a chunk.
+    state.chunk_iter = conformed_rest(state.first, state.chunk_iter, table=table)
     preflight = plan_native_route(
         config,
         state.profile,
@@ -265,10 +280,14 @@ def run_mask_chunked(
     decision = preflight.evidence
     if route_evidence_sink is not None:
         route_evidence_sink.append(decision)
-    columns = plan_column_backends(
-        config, state.profile, table=table, engine_version=engine_version
+    columns = (
+        plan_column_backends(config, state.profile, table=table, engine_version=engine_version)
+        if chunk_result_sink is not None
+        else ()
     )
-    rule = build_schema_rule(config, table=table, first=state.first)
+    rule = (
+        build_schema_rule(config, table=table, first=state.first) if enforce_schema_rule else None
+    )
     if not decision.native_admitted:
         return _oracle_route(
             state,
@@ -293,6 +312,65 @@ def run_mask_chunked(
         native_threads=native_threads,
         rule=rule,
         columns=columns,
+    )
+
+
+def run_mask_chunked(
+    config: dict[str, Any],
+    chunks: Iterable[pa.Table],
+    *,
+    table: str,
+    engine_version: str,
+    registry: Any = None,
+    adapter: Any = None,
+    vault_writer: Any = None,
+    chunk_result_sink: list[Any] | None = None,
+    key_provider: Any = None,
+    base_row_offset: int = 0,
+    native_threads: int = 1,
+    route_evidence_sink: list[NativeRouteEvidence] | None = None,
+    pool_cache: PoolCache | None = None,
+) -> Iterator[pa.Table]:
+    """Mask `table` chunk-by-chunk, natively when the whole table admits.
+
+    Accepts everything `run_mask_pipeline_chunked` accepts, plus `native_threads`
+    (an int in 1..=1024, the thread budget of the compiled kernels; output bytes do not
+    depend on it), `route_evidence_sink` (receives one `NativeRouteEvidence`) and
+    `pool_cache` (one `PoolCache` shared by both routes and across calls).
+
+    The whole table runs on the oracle when any masked column is not natively
+    capable, any column carries a nonblank `when:` predicate, `adapter` is
+    neither `None` nor the pandas adapter, a companion is missing, or the source
+    has columns the config does not cover. `chunk_result_sink` receives one
+    `ExecutionResult` per chunk on either route, with per-column `timings` and
+    `quality_metrics["chunked_route"]` (see `aggregate_chunked_route_evidence`).
+
+    Admission uses the first chunk's real Arrow types and each Faker provider's
+    output type, and both routes run the same per-chunk ingest guards, so an
+    input the oracle masks or refuses is masked or refused the same way.
+
+    Validation and route choice happen eagerly at call time; only the per-chunk
+    masking is lazy. A chunk whose output cannot be made schema-stable without
+    losing data raises `ExecutionError(code="chunked_schema_mismatch")`. On both
+    routes, a source column whose Arrow type changes after the first chunk
+    raises `NativeChunkSchemaDriftError` (an `ExecutionError`), except an
+    all-null `null`-typed chunk, which is cast to the first chunk's type.
+    """
+    _validate_native_threads(native_threads)
+    return _run_chunked(
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+        native_threads=native_threads,
+        route_evidence_sink=route_evidence_sink,
+        pool_cache=pool_cache,
     )
 
 

@@ -93,14 +93,10 @@ def normalize_chunk(
         column = produced.column(i)
         name = field.name
         if name in rule.passthrough_types and name in source.column_names:
-            declared = rule.passthrough_types[name]
+            # Source drift was already conformed or refused upstream, so the
+            # source column has exactly the declared type.
             column = source.column(name)
             field = source.schema.field(name)
-            if column.type != declared:
-                column = _safe_cast(
-                    column, declared, table=table, name=name, chunk_index=chunk_index
-                )
-                field = pa.field(name, declared, nullable=field.nullable)
         elif name in rule.string_columns and column.type != pa.string():
             column = _safe_cast(
                 column, pa.string(), table=table, name=name, chunk_index=chunk_index
