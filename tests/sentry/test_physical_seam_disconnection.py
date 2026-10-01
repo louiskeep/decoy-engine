@@ -67,6 +67,9 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
     "execution/_pipeline_route_exec.py",
+    # B2 (auto-chunk on the chunked dispatcher): a routing executor, so it must
+    # not import `execution.physical` either.
+    "execution/_pipeline_auto_chunk.py",
     "execution/_pipeline_sources.py",
     "execution/_pipeline_finalize.py",
     "execution/_planner.py",
@@ -359,6 +362,16 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # routes call.
         # None imports `execution.physical`.
         "src/decoy_engine/execution/native/_real_type_admission.py",
+        # B2 (auto-chunk on the chunked dispatcher): `_pipeline_auto_chunk.py` is
+        # the new lane executor (it calls `run_mask_chunked` and joins the chunks);
+        # `_pipeline_route_exec.run_mask_chunked` becomes its delegate; the generate
+        # and finalize modules thread `native_threads` / `dispatcher_enabled` and
+        # merge the lane stamp into `quality_metrics["auto_chunk"]`. None imports
+        # `execution.physical`, so the import-direction sweeps stay green.
+        "src/decoy_engine/execution/_pipeline_auto_chunk.py",
+        "src/decoy_engine/execution/_pipeline_generate_mask.py",
+        "src/decoy_engine/execution/_pipeline_finalize.py",
+        "src/decoy_engine/execution/_pipeline_chunk_route.py",
     }
     unexpected = [
         name
