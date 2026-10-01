@@ -9,6 +9,153 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (`run_mask_chunked`: the chunked dispatcher as a public entry point, 2026-10-01)
+
+`decoy_engine.run_mask_chunked(config, chunks, *, table, engine_version, registry=None, adapter=None, vault_writer=None, chunk_result_sink=None, key_provider=None, base_row_offset=0, native_threads=1, route_evidence_sink=None, pool_cache=None)`
+masks one table chunk by chunk, on the compiled native kernels when the whole
+table admits and on the pandas oracle otherwise. It accepts everything
+`run_mask_pipeline_chunked` accepts plus `native_threads`, an evidence sink and
+a shared `PoolCache`. Nothing in production calls it yet; `run_mask_pipeline_chunked`
+keeps its behavior and signature.
+
+- Validation runs first on every call, for both routes: `check_chunked_compatibility`
+  and the oracle's eager checks (now one shared `_oracle_preflight`, in the new
+  `execution/_chunked_oracle.py`), so a config is rejected with the same code
+  before any chunk is yielded, including for a zero-chunk call.
+- A column with a nonblank `when:` predicate, or an `adapter` other than `None`
+  or the pandas adapter, sends the whole table to the oracle (reasons
+  `when_predicate_not_native:<column>` and `adapter_requested`). The native
+  kernels mask every row, so they cannot honor a predicate.
+- Output types are stable per call. Hash, truncate and redact (string
+  `redact_with`, no `when:`) columns are always `string`, converted with Arrow's
+  checked cast; a value that cannot convert without loss raises
+  `ExecutionError(code="chunked_schema_mismatch")`. Passthrough columns, configured
+  or unconfigured, are the source column itself, which also keeps nullable
+  integers above 2^53 exact. Yielded chunks carry no pandas schema metadata.
+  Columns of strategies that only run on the oracle keep the oracle's per-chunk types.
+- `vault_writer`, `chunk_result_sink` and `base_row_offset` behave the same on
+  both routes. The sink gets one `ExecutionResult` per chunk with per-column
+  `timings`; the native route takes them from the kernel timer it already runs
+  (no RSS sampling).
+- `ExecutionResult.quality_metrics["chunked_route"]` records, per column, the
+  planned and executed backend (`rust_companion`, `rust_pool_select`,
+  `arrow_python`, `pandas_oracle`), call count and elapsed time, as JSON-safe
+  data. `aggregate_chunked_route_evidence(results)` (in
+  `execution/native/_chunked_entry.py`) sums it across chunks. The existing
+  `NativeRouteEvidence` is unchanged.
+- `native_threads` must be an `int` in `1..=1024` (the compiled kernels' ceiling);
+  otherwise `ExecutionError(code="invalid_native_threads")`, raised at call time.
+  Output bytes do not depend on it.
+- Admission uses the first chunk's real Arrow types and each Faker provider's
+  output type: a hash column the compiled kernel does not take (dictionary,
+  date32, decimal128) or a Faker provider outside the C1 allowlist sends the
+  table to the oracle with a coded reason. Both routes run the same per-chunk
+  ingest guards (`run_chunk_ingest_guards`, including the null-bearing-integer
+  check), so truncate or hash over an integer column that gains a null in a later
+  chunk raises `null_bearing_int_unsupported` on both.
+- One source-drift contract: a column whose Arrow type changes after the first
+  chunk raises `native_chunk_schema_drift` on both routes, except an all-null
+  `null`-typed chunk, which is masked as the source produced it and then brought
+  to the first chunk's type. A column that is
+  `null`-typed in the first chunk and typed in a later one raises
+  `ExecutionError(code="chunked_leading_null_type")` on both routes (a stream's
+  type is fixed by its first chunk).
+- Values equal the oracle's except for one stated exception: a carried passthrough
+  column is the source column itself and never goes through pandas, so values the
+  oracle's round trip rounds or refuses are returned exactly (see "carried
+  passthrough columns never enter pandas" below).
+- Faker admission resolves each pool once from the caller's registry before the
+  route is committed. A provider whose non-null output is not string-compatible
+  (for example a caller registry that rebinds `person_first_name` to a
+  date-returning adapter) sends the table to the oracle with reason
+  `faker_provider_output_not_string:<column>:<provider>`.
+- No guard suppression. Every chunk is first checked against the first chunk's
+  schema (drift or a leading `null`-typed column raises); the oracle route then
+  hands the adapter the chunk exactly as the source produced it, so the adapter
+  that runs (stock, a subclass, or a custom adapter that delegates to the stock
+  one) runs the ingest guards itself, once, on the same chunk the public oracle
+  sees. No private argument is passed to any adapter. The native route runs
+  `run_chunk_ingest_guards` on the raw chunk and only then casts `null`-typed
+  columns for its kernels. A later `null`-typed passthrough column is brought to
+  the first chunk's type by the output schema rule, after masking.
+- A Faker pool's cache identity now includes the provider binding (the adapter
+  class and object the registry resolves). A `PoolCache` reused after
+  `person_first_name` is rebound to another adapter no longer returns the old
+  binding's pool on either route; the pool seed, and so the values, do not
+  depend on the binding.
+- `run_mask_chunked(config, chunks, *, table, engine_version, ...)`: `config` and
+  `chunks` are positional-or-keyword, the rest keyword-only.
+
+### Changed (`run_mask_chunked`: carried passthrough columns never enter pandas, 2026-10-01)
+
+On `run_mask_chunked` only; `run_mask_pipeline_chunked` and
+`run_native_or_oracle_chunked` behave exactly as before. A passthrough column is
+unchanged by definition, so when the adapter is `None` or exactly
+`PandasExecutionAdapter` the profile and the adapter see it as an all-null
+placeholder and the output takes the source column itself, on both routes and in
+every chunk, chunk 0 included. Where the oracle's pandas round trip refuses or
+alters a passthrough value, this entry now returns the exact source value:
+
+- a nullable integer above 2^53 (the oracle rounds it) and a null-bearing FK
+  passthrough key above 2^53 (the oracle refuses it; the FK guard here covers
+  only keys a `when:` predicate or sibling reference reads);
+- `time64[ns]` values that are not whole microseconds, `date32` and `date64`
+  values outside years 1 to 9999, `time32` and `time64` values outside one day;
+- dictionary columns whose values hold a null, a duplicate or a float NaN, and
+  dictionaries with `uint64` indices;
+- `-2^63` in a timestamp or duration column (the oracle yields it as null), at
+  every unit, under pandas 2.3.3 with pyarrow 24.0.0 and 25.0.1;
+- list, struct and map columns (the oracle's first-chunk profile refuses them).
+
+The profile of a carried column is computed from Arrow (`arrow_column_profile`),
+field for field equal to pandas', so the compiled plan, the HC-7 free-text
+advisory and the route decision do not change.
+
+Two limits. A passthrough column that a `when:` predicate or a sibling-reading
+strategy reads (a `group_by`, an `anchor`, any string value another column's
+entry holds) still goes through pandas and behaves as on the oracle, except that
+a value pandas refuses in it raises the new
+`ExecutionError(code="chunked_passthrough_value_unrepresentable")`, naming the
+table, column and chunk index, with the oracle's exception as `__cause__`. With a
+custom or subclass adapter nothing is carried, so every passthrough column behaves
+exactly as on the oracle, raw exceptions included. The scan that finds read columns
+over-approximates on purpose: a passthrough column whose name equals any string in
+another column's config entry (a column named `redact` next to a `redact` column)
+is read.
+
+Each chunk's `quality_metrics["chunked_route"]` gains `pandas_read_passthrough`, the
+sorted list of passthrough columns that still go through pandas.
+`aggregate_chunked_route_evidence` carries it and raises
+`ExecutionError(code="chunked_route_evidence_inconsistent")` when chunks disagree.
+A chunk that fails on a row error is appended to `chunk_result_sink` with the real
+carried columns, not placeholders.
+
+### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
+
+- `NativeChunkSchemaDriftError` is now an `ExecutionError` as well as a
+  `DecoyError`, with `code="native_chunk_schema_drift"`, a `.message` that names
+  the table, chunk index and detail, and `str()` equal to that message.
+  `run_native_or_oracle_chunked` keeps its other behavior, apart from the new
+  `when:` veto and real-type admission in `plan_native_route`. It now shares the
+  one native chunk loop with `run_mask_chunked`, so it also runs the oracle's
+  eager preflight and the per-chunk ingest guards. `plan_native_route` detects the
+  pandas adapter by exact type, so a subclass that overrides `run` takes the
+  oracle route. `aggregate_chunked_route_evidence` raises
+  `chunked_route_evidence_mixed_tables` for results from more than one table.
+- `run_native_or_oracle_chunked` now accepts a later null-typed chunk, which it
+  refused before this slice. With `enforce_schema_rule=False` its native route
+  yields the cast type for that chunk and its oracle route yields `null`. Its
+  callers are tests only.
+- The Faker pool cache identity now includes the provider binding. A caller that
+  builds a fresh adapter instance per job while sharing a process-wide `PoolCache`
+  rebuilds that pool per job: correct, with a lower hit rate.
+- On `run_mask_chunked`, a first-chunk ingest-guard refusal now raises at the
+  first `next()` on both routes (the native route used to raise at call time), and
+  a later null-typed passthrough chunk keeps the first chunk's field metadata and
+  nullability on both routes.
+- `NativeOrOracleChunkedAdapter` (physical seam, still unconnected to production)
+  now forwards to `run_mask_chunked` and passes the new parameters through unchanged.
+
 ### Changed (D9/GP1 bench harnesses: absolute peak-RSS ceiling replaces the ratio gate, 2026-09-30)
 
 Dev/bench tooling only (`scripts/`), not the PyPI distribution; no package

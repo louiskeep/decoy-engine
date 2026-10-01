@@ -113,6 +113,7 @@ from decoy_engine.execution import (
 )
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.execution._transforms_table import apply_table_transforms
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked
 from decoy_engine.execution.native._companion_status import (
     NativeCompanionStatus,
     native_companion_status,
@@ -427,6 +428,7 @@ __all__ = [
     "register_faker_provider_v2",
     "run_config_only_checks",
     "run_discovery_sql",
+    "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
     "run_storm",

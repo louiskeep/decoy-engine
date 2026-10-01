@@ -181,6 +181,28 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   (A5a): a `format: fixed_width` `FileSource` can now be read through these
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
+  It also includes `run_mask_chunked` (2026-10-01): the chunked
+  dispatcher as a public entry point. Its signature is
+  `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,
+  adapter=None, vault_writer=None, chunk_result_sink=None, key_provider=None,
+  base_row_offset=0, native_threads=1, route_evidence_sink=None,
+  pool_cache=None)`: `config` and `chunks` are positional-or-keyword, everything
+  after the `*` is keyword-only, and new parameters are additive. Its pinned
+  guarantees are value equality with `run_mask_pipeline_chunked` (one stated
+  exception: on the stock-adapter path, a passthrough column no `when:` predicate
+  or sibling-reading strategy reads is the source column itself and never goes
+  through pandas, so a value the oracle's round trip rounds or refuses, such as a
+  nullable integer above 2^53, comes back exact; a read passthrough column that
+  pandas refuses raises `chunked_passthrough_value_unrepresentable`, and a custom
+  or subclass adapter carries nothing), one output type per column per call (`string` for hash, truncate
+  and string-redact columns, the source type for passthrough), no pandas
+  metadata on yielded chunks, and identical validation on both routes. A column
+  that is `null`-typed in the first chunk and typed in a later one raises
+  `chunked_leading_null_type` on both routes. Its error codes are
+  `invalid_native_threads`, `native_chunk_schema_drift`, `chunked_schema_mismatch`,
+  `chunked_leading_null_type`, `chunked_passthrough_value_unrepresentable` and
+  `chunked_route_evidence_inconsistent`; each chunk's
+  `quality_metrics["chunked_route"]` carries `pandas_read_passthrough`.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
@@ -325,6 +347,14 @@ acceptable cost.
 - [ ] Any CLI/API removal goes through a deprecation shim with a `CHANGELOG`
       entry.
 - [ ] The cross-version compatibility corpus still passes.
+- [ ] If I touched `run_mask_chunked` or the oracle preflight it shares with
+      `run_mask_pipeline_chunked`: both entry points still raise the same error
+      for the same rejected config before any chunk beyond the first is read, and
+      the pinned output types (§3.4) did not change.
+- [ ] If I touched passthrough handling on `run_mask_chunked`: the exception list
+      in §3.4 (what a carried column returns that the oracle alters or refuses)
+      and the read-set rule still match the code, and the public oracle and
+      `run_native_or_oracle_chunked` still convert every passthrough column.
 
 ---
 

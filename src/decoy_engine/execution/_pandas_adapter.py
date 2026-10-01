@@ -56,7 +56,7 @@ from decoy_engine.execution._fk_resolve import (
     gather_errored_parent_keys,
     resolve_fk_keys,
 )
-from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._guards import run_chunk_ingest_guards
 from decoy_engine.execution._output_projection import enforce_output_projection
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import (
@@ -189,7 +189,7 @@ class PandasExecutionAdapter:
         # float. Backstops the plan-compile check for the no_profile path; both
         # adapters reject identically (no silent cross-substrate divergence). FK
         # children are exempt (resolved via the edge, not masked).
-        reject_null_bearing_int(plan, sources, registry, relationship_graph)
+        run_chunk_ingest_guards(plan, sources, registry, relationship_graph)
         t0 = time.perf_counter()
         # DE-10: FK parent/child key columns route through the lossless-typing
         # contract (execution/_fk_keys.py) instead of a bare `to_pandas()`, so a

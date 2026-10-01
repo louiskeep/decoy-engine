@@ -59,6 +59,8 @@ def test_all_lists_every_public_name():
         "job_seed_for_config",
         # WS4 chunked mask execution (2026-06-12).
         "run_mask_pipeline_chunked",
+        # Chunked dispatcher entry point (2026-10-01).
+        "run_mask_chunked",
         # WS1 detokenization (2026-06-12): fpe inversion entry + report types.
         "unmask_pipeline",
         "UnmaskColumnReport",

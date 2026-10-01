@@ -332,6 +332,33 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the dispatcher already enforces, so it cannot admit a full-frame-only
         # strategy. It imports only execution.native modules, never physical.
         "src/decoy_engine/execution/native/_phase3_eligibility.py",
+        # Chunked dispatcher production contract: the public
+        # `run_mask_chunked` entry point and the pieces it is built from. The
+        # oracle's eager preflight and per-chunk loop move out of `_chunked.py`
+        # into `_chunked_oracle.py` so both routes share one validation path;
+        # `_chunked_entry.py` / `_chunked_schema_rule.py` / `_chunked_evidence.py`
+        # are the new entry, its output-schema rule, and its per-column route
+        # evidence; `_chunk_schema.py` makes the drift error an `ExecutionError`;
+        # `_dispatch.py` and `_chunk_masking.py` gain the `when:`/adapter vetoes,
+        # the per-column timing sample and the registry parameter. None imports
+        # `execution.physical`, and nothing in production calls the entry yet, so
+        # the import-direction sweeps and the fresh-import probe stay green.
+        "src/decoy_engine/execution/_chunked_oracle.py",
+        # Revision 9: `_chunked_carry.py` decides which passthrough columns
+        # `run_mask_chunked` carries past pandas; `_chunked_profile.py` gains the
+        # Arrow-native column profile. Neither imports `execution.physical`.
+        "src/decoy_engine/execution/_chunked_carry.py",
+        "src/decoy_engine/execution/_chunked_profile.py",
+        "src/decoy_engine/execution/native/_chunk_schema.py",
+        "src/decoy_engine/execution/native/_chunked_entry.py",
+        "src/decoy_engine/execution/native/_chunked_evidence.py",
+        "src/decoy_engine/execution/native/_chunked_schema_rule.py",
+        # Round-1 gate fixes: admission from real Arrow types and provider
+        # output type (`_real_type_admission.py`, imported only by `_dispatch.py`),
+        # one per-chunk ingest-guard helper in `_guards.py` that both chunked
+        # routes call.
+        # None imports `execution.physical`.
+        "src/decoy_engine/execution/native/_real_type_admission.py",
     }
     unexpected = [
         name

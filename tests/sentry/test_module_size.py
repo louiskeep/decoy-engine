@@ -352,7 +352,11 @@ ALLOWLIST: dict[str, int] = {
     # only when `declared_fk_dtypes` is (dtype is optional in config, so an
     # undeclared hash FK key otherwise skipped predicate 12's real stage and an
     # unsafe date64/decimal256 reached the kernel). Comment + widened condition.
-    "src/decoy_engine/execution/_chunked.py": 809,
+    # 2026-10-01: the oracle's eager preflight and per-chunk loop
+    # moved into `_chunked_oracle.py` (809 -> 608) so `run_mask_chunked` shares one
+    # validation path with it. The remaining bulk is the module docstring and the
+    # admission checks (`check_chunked_compatibility` and its helpers).
+    "src/decoy_engine/execution/_chunked.py": 608,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all

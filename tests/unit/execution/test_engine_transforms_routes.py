@@ -309,6 +309,18 @@ class TestDirectChunkedEntryPointsReject:
             )
         assert exc.value.code == _NEEDS_TRANSFORMS
 
+    def test_run_mask_chunked(self, tmp_path):
+        """The public chunked dispatcher rejects at call time, before reading a
+        chunk, with the same code as the oracle it shares a preflight with."""
+        from decoy_engine.execution import run_mask_chunked
+
+        cfg, _ = self._cfg(tmp_path)
+        with pytest.raises(PlanCompileError) as exc:
+            run_mask_chunked(cfg, _poisoned_iterable(), table="t", engine_version=ENGINE_VERSION)
+        assert exc.value.code == _NEEDS_TRANSFORMS
+        assert exc.value.path == "tables.t.transforms"
+        assert "chunked execution would skip them" in str(exc.value)
+
     def test_physical_mask_and_native_adapters(self, tmp_path):
         from decoy_engine.execution.physical.drivers._chunked import (
             MaskPipelineChunkedAdapter,

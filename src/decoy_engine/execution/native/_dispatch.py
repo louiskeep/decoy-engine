@@ -44,18 +44,13 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.execution._chunked import run_mask_pipeline_chunked
-from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution._transforms_gate import reject_per_table_transforms
-from decoy_engine.execution.native._chunk_masking import (
+from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-exported for tests
     _mask_chunk_native,
     _resolve_faker_pools,
-    _resolve_truncate_keep,  # noqa: F401 -- re-exported (tests access via _dispatch._resolve_truncate_keep)
+    _resolve_truncate_keep,
 )
-from decoy_engine.execution.native._chunk_schema import (
-    NativeChunkSchemaDriftError,
-    _check_chunk_schema_drift,
-)
+from decoy_engine.execution.native._chunk_schema import NativeChunkSchemaDriftError
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
@@ -65,6 +60,7 @@ from decoy_engine.execution.native._index_ext import (
     load_compiled_index_kernel,
 )
 from decoy_engine.execution.native._plan import compile_native_plan
+from decoy_engine.execution.native._real_type_admission import real_type_rejection
 from decoy_engine.execution.native._requirements import (
     CHUNKED_ROUTE_VETOED_STRATEGIES,
     NATIVE_KERNEL_STRATEGIES,
@@ -175,6 +171,25 @@ def _table_in_declared_relationship(config: dict[str, Any], table: str) -> bool:
     return False
 
 
+def _first_when_column(config: dict[str, Any], table: str) -> str | None:
+    """The first column of `table` carrying a nonblank `when:` predicate.
+
+    A conditional column masks only the rows its predicate selects, and leaves the
+    rest with their original value and type, so the native kernels (which mask
+    every row) must not run it. A blank predicate has no effect and does not veto;
+    this is the same normalization the plan compiler applies.
+    """
+    for table_cfg in config.get("tables") or ():
+        if not isinstance(table_cfg, dict) or table_cfg.get("name") != table:
+            continue
+        for col in table_cfg.get("columns") or ():
+            if isinstance(col, dict):
+                when = col.get("when")
+                if isinstance(when, str) and when.strip():
+                    return str(col.get("name", "?"))
+    return None
+
+
 def _static_route_decision(
     config: dict[str, Any], profile: Any, *, table: str, engine_version: str
 ) -> NativeRouteEvidence:
@@ -269,8 +284,8 @@ class NativePreflight:
     `index_kernel` is `None` whenever the route is not native-admitted or
     admits no faker node -- there is nothing to select, so nothing was loaded.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
-    per chunk; the verified wrapper is threaded through `_mask_native` ->
-    `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
+    per chunk; the verified wrapper is threaded through `_chunked_entry._native_route`
+    -> `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
     makes exactly one real batch call.
     """
 
@@ -285,6 +300,7 @@ def plan_native_route(
     table: str,
     engine_version: str,
     first_schema: pa.Schema | None = None,
+    adapter: Any = None,
 ) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
@@ -304,8 +320,29 @@ def plan_native_route(
     the static/config-level decision alone): they get static admission plus
     the companion probes, with no schema-based guard applied -- exactly what
     those callers assert.
+
+    A nonblank `when:` predicate on any column, or an `adapter` that is neither
+    `None` nor the pandas adapter, reroutes the whole table to the oracle right
+    after static admission (reasons `when_predicate_not_native:<column>` and
+    `adapter_requested`; the adapter reason applies only to a table that would
+    otherwise admit).
     """
     decision = _static_route_decision(config, profile, table=table, engine_version=engine_version)
+    # A `when:` predicate names the reroute reason even when another column would
+    # have vetoed the table anyway: its meaning (leave unselected rows untouched)
+    # is the one a caller can act on.
+    when_column = _first_when_column(config, table)
+    if when_column is not None:
+        decision = _downgrade_to_oracle(decision, f"when_predicate_not_native:{when_column}")
+    elif decision.native_admitted and adapter is not None:
+        from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+
+        # The native route masks through Arrow kernels and never calls an
+        # adapter, so a caller that asked for any adapter but the stock pandas
+        # one gets the oracle route, which calls it. An exact type check: a
+        # subclass may override `run`, and the native route would bypass that.
+        if type(adapter) is not PandasExecutionAdapter:
+            decision = _downgrade_to_oracle(decision, "adapter_requested")
     if not decision.native_admitted:
         return NativePreflight(decision, None)
 
@@ -351,6 +388,15 @@ def plan_native_route(
                     )
                     break
 
+        if decision.native_admitted:
+            # Admission rests on the first chunk's real Arrow types and each
+            # provider's output type, never the profile's coarse dtype labels.
+            reason = real_type_rejection(
+                config, decision.node_routes, first_schema, table=table, profile=profile
+            )
+            if reason is not None:
+                decision = _downgrade_to_oracle(decision, reason)
+
     if decision.native_admitted and any(n.strategy == "hash" for n in decision.node_routes):
         try:
             load_compiled_crypto_kernel()
@@ -366,78 +412,6 @@ def plan_native_route(
             index_kernel = None
 
     return NativePreflight(decision, index_kernel)
-
-
-def _rechain(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:
-    yield first
-    yield from rest
-
-
-def _mask_native(
-    config: dict[str, Any],
-    chunks: Iterator[pa.Table],
-    *,
-    table: str,
-    engine_version: str,
-    key_provider: Any,
-    evidence: NativeRouteEvidence,
-    pool_cache: PoolCache | None = None,
-    native_threads: int | None = None,
-    index_kernel: IndexDerivationKernel | None = None,
-) -> Iterator[pa.Table]:
-    """Eagerly resolve the plan + mask key, then return the lazy per-chunk
-    native masking generator (mirrors `run_mask_pipeline_chunked`'s own
-    eager-validation-then-lazy-masking contract). Every admitted faker
-    column's pool is resolved here too (Task 3.1 Step 2), before any chunk
-    is masked, so the pool is built exactly once per invocation. `index_kernel`
-    is the preflight-verified compiled index kernel (Task 2.3), threaded
-    through to `_mask_chunk_native` -> `_sample_faker_chunk` so every faker
-    column-chunk selection makes exactly one real batch call; it is `None`
-    whenever the admitted table has no faker node."""
-    from decoy_engine.keyprovider import require_mask_key
-    from decoy_engine.plan import compile_plan
-
-    first = next(chunks, None)
-    if first is None:
-        return iter(())
-    profile = first_chunk_profile(first, table=table, engine_version=engine_version)
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
-
-    if key_provider is None:
-        ref = (config.get("global_settings") or {}).get("mask_secret_ref")
-        if ref:
-            from decoy_engine.keyprovider import key_provider_from_ref
-
-            key_provider = key_provider_from_ref(ref)
-    mask_key = require_mask_key(plan, key_provider)
-
-    table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
-    if table_seed is None:  # pragma: no cover - admission implies a seed envelope
-        raise AssertionError(
-            f"native route admitted {table!r} but the compiled plan has no seed "
-            "envelope for it; the admission precondition should have excluded this."
-        )
-    col_seed_by_name = dict(table_seed.per_column)
-    cache = pool_cache if pool_cache is not None else PoolCache()
-    pool_by_column = _resolve_faker_pools(
-        col_seed_by_name, job_seed=plan.seed_envelope.job_seed, pool_cache=cache
-    )
-
-    def _masked() -> Iterator[pa.Table]:
-        expected_schema = first.schema
-        for i, chunk in enumerate(_rechain(first, chunks)):
-            _check_chunk_schema_drift(expected_schema, chunk, table=table, chunk_index=i)
-            yield _mask_chunk_native(
-                chunk,
-                col_seed_by_name=col_seed_by_name,
-                mask_key=mask_key,
-                evidence=evidence,
-                pool_by_column=pool_by_column,
-                native_threads=native_threads,
-                index_kernel=index_kernel,
-            )
-
-    return _masked()
 
 
 def run_native_or_oracle_chunked(
@@ -485,50 +459,22 @@ def run_native_or_oracle_chunked(
     before any chunk is read: this entry masks raw chunks, so the ops would be
     dropped silently.
     """
-    # Before `iter(chunks)`: a rejected job must not consume a chunk.
+    # Before `_run_chunked` touches `chunks`: a rejected job must not consume a
+    # chunk, and this entry keeps its own route name in the message.
     reject_per_table_transforms(config, table=table, route="native chunked execution")
-    chunk_iter = iter(chunks)
-    first = next(chunk_iter, None)
-    if first is None:
-        decision = _oracle_evidence(table, "empty_input")
-        if route_evidence_sink is not None:
-            route_evidence_sink.append(decision)
-        return run_mask_pipeline_chunked(
-            config,
-            chunk_iter,
-            table=table,
-            engine_version=engine_version,
-            key_provider=key_provider,
-        )
+    # Lazy import: `_chunked_entry` imports this module for `plan_native_route`.
+    from decoy_engine.execution.native._chunked_entry import _run_chunked
 
-    profile = first_chunk_profile(first, table=table, engine_version=engine_version)
-    preflight = plan_native_route(
+    return _run_chunked(
         config,
-        profile,
-        table=table,
-        engine_version=engine_version,
-        first_schema=first.schema,
-    )
-    decision = preflight.evidence
-
-    if route_evidence_sink is not None:
-        route_evidence_sink.append(decision)
-
-    restored = _rechain(first, chunk_iter)
-    if not decision.native_admitted:
-        return run_mask_pipeline_chunked(
-            config, restored, table=table, engine_version=engine_version, key_provider=key_provider
-        )
-    return _mask_native(
-        config,
-        restored,
+        chunks,
         table=table,
         engine_version=engine_version,
         key_provider=key_provider,
-        evidence=decision,
-        pool_cache=pool_cache,
         native_threads=native_threads,
-        index_kernel=preflight.index_kernel,
+        route_evidence_sink=route_evidence_sink,
+        pool_cache=pool_cache,
+        enforce_schema_rule=False,
     )
 
 
