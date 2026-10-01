@@ -168,6 +168,9 @@ PLANNED_BACKEND: dict[str, str] = {
     "truncate": "arrow_python",
     "passthrough": "arrow_python",
     "faker:deterministic_native": "rust_pool_select",
+    # Planned for Rust (the strategy and config qualify) but refused at admission
+    # because the provider has no native pool: planned `rust_pool_select`, executed on pandas.
+    "faker:deterministic": "rust_pool_select",
 }
 # B1's refusal reason (prefix) for the keys the native route does not run, as observed on main.
 REFUSAL: dict[str, str] = {

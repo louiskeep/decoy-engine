@@ -147,15 +147,19 @@ def test_the_all_default_small_run_stamps_nothing_chunk_specific(
 def test_routed_job_calls_run_mask_chunked_once_with_the_run_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from decoy_engine.keyprovider import SecretKeyProvider
     from decoy_engine.vault import vault_writer_for_config
 
     cfg, src = _job(
         tmp_path,
         [{**support.redact_col("r"), "vault": True, "namespace": "r_ns"}, support.hash_col("h")],
     )
-    writer = vault_writer_for_config(cfg)
+    provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
+    writer = vault_writer_for_config(cfg, key_provider=provider)
     spies = support.spy_lanes(monkeypatch)
-    result = support.run_default(cfg, src, native_threads=3, vault_writer=writer)
+    result = support.run_default(
+        cfg, src, native_threads=3, vault_writer=writer, key_provider=provider
+    )
     calls = spies["entry.run_mask_chunked"]
     assert len(calls) == 1
     args, kwargs = calls[0]
@@ -164,7 +168,7 @@ def test_routed_job_calls_run_mask_chunked_once_with_the_run_context(
     assert type(kwargs["adapter"]) is PandasExecutionAdapter
     assert kwargs["registry"] is not None
     assert kwargs["vault_writer"] is writer
-    assert kwargs["key_provider"] is not None
+    assert kwargs["key_provider"] is provider
     assert kwargs["native_threads"] == 3
     assert spies["oracle.run_mask_pipeline_chunked"] == []
     block = result.quality_metrics["auto_chunk"]
@@ -450,7 +454,9 @@ def test_vault_file_round_trip_equals_the_dispatcher_off_run(tmp_path: Path) -> 
     from decoy_engine.plan._seed import _normalize_job_seed
     from decoy_engine.vault import load_vault, vault_writer_for_config
 
-    cfg, src = _vault_job(tmp_path)
+    # Redact is lossy (every source maps to one masked value, so its entries are
+    # ambiguous by design); the file round trip is checked on the hash column.
+    cfg, src = _job(tmp_path, [{**support.hash_col("h"), "vault": True}, support.redact_col("r")])
     maps = {}
     for label, run in (("on", support.run_default), ("off", support.run_legacy)):
         writer = vault_writer_for_config(cfg)
@@ -460,6 +466,7 @@ def test_vault_file_round_trip_equals_the_dispatcher_off_run(tmp_path: Path) -> 
         maps[label], ambiguous = load_vault(path, _normalize_job_seed(cfg))
         assert ambiguous == 0
     assert maps["on"] == maps["off"]
+    assert len(maps["on"]) == support.ROWS
 
 
 def test_a_vault_writer_keyed_differently_from_the_mask_key_is_rejected_before_any_chunk(

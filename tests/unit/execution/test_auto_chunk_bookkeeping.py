@@ -107,4 +107,4 @@ def test_docstrings_no_longer_say_auto_chunk_routes_through_the_oracle(path: str
     text = re.sub(r"\s+", " ", (EXEC / path).read_text(encoding="utf-8"))
     assert "run_mask_chunked" in text
     assert "ROUTES this mode through `run_mask_pipeline_chunked`" not in text
-    assert "in `chunk_size_rows`-row slices instead of `run_mask_pipeline_chunked`" not in text
+    assert "streams it through `run_mask_pipeline_chunked`" not in text
