@@ -242,6 +242,7 @@ def _oracle_masked(
     chunk_result_sink: list[Any] | None = None,
     base_row_offset: int = 0,
     on_chunk: Callable[[Any, pa.Table], pa.Table] | None = None,
+    ingest_guarded: bool = False,
 ) -> Iterator[pa.Table]:
     """The lazy per-chunk loop over a non-empty preflight state.
 
@@ -250,9 +251,13 @@ def _oracle_masked(
     even when it is set, so a row-error chunk is reported unnormalized); fail
     closed on row errors; `on_chunk(result, source_chunk)` returns the table to
     yield and owns any enriched result for the sink; advance the row offset; add
-    vault entries; yield.
+    vault entries; yield. `ingest_guarded` says the caller already ran the ingest
+    guards on each chunk as the source produced it, so the adapter skips them.
     """
+    from contextlib import nullcontext
+
     from decoy_engine.errors import RowErrorsFailedError
+    from decoy_engine.execution._guards import ingest_guards_already_run
 
     first = state.first
     if first is None:  # pragma: no cover - callers return early for a zero-chunk state
@@ -293,18 +298,19 @@ def _oracle_masked(
                 )
             # Per-chunk DGRN domain guard (no whole-stream row count); see `_chunked_dgrn.py`.
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
-            result = state.adapter.run(
-                state.plan,
-                {table: chunk},
-                registry=state.registry,
-                pool_cache=state.pool_cache,
-                relationship_graph=state.graph,
-                namespace_registry=state.ns_registry,
-                unconfigured_column_policy=state.projection_policy,
-                key_provider=state.key_provider,
-                row_offset=row_offset,
-                code_set_records=state.code_set_records,
-            )
+            with ingest_guards_already_run() if ingest_guarded else nullcontext():
+                result = state.adapter.run(
+                    state.plan,
+                    {table: chunk},
+                    registry=state.registry,
+                    pool_cache=state.pool_cache,
+                    relationship_graph=state.graph,
+                    namespace_registry=state.ns_registry,
+                    unconfigured_column_policy=state.projection_policy,
+                    key_provider=state.key_provider,
+                    row_offset=row_offset,
+                    code_set_records=state.code_set_records,
+                )
             if chunk_result_sink is not None and (on_chunk is None or result.row_errors):
                 chunk_result_sink.append(result)
             # The chunked path has no quarantine machinery, so a per-row strategy

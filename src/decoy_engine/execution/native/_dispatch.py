@@ -284,8 +284,8 @@ class NativePreflight:
     `index_kernel` is `None` whenever the route is not native-admitted or
     admits no faker node -- there is nothing to select, so nothing was loaded.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
-    per chunk; the verified wrapper is threaded through `_mask_native` ->
-    `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
+    per chunk; the verified wrapper is threaded through `_chunked_entry._native_route`
+    -> `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
     makes exactly one real batch call.
     """
 
