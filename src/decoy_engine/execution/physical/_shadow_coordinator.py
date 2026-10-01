@@ -97,6 +97,7 @@ from decoy_engine.execution.physical._shadow_snapshot import ShadowSnapshot
 from decoy_engine.execution.physical._types import DriverId
 from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
 from decoy_engine.generation.pool._identity import PoolIdentity, resolve_faker_pool_identity
+from decoy_engine.instrumentation.timing import timed_strategy
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
@@ -310,90 +311,93 @@ class ShadowCoordinator:
                 evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
                 route_evidence[node.node_id] = evidence
 
-                pool: ValuePool | None = None
-                if binding.needs_index_kernel and index_kernel is None:
-                    try:
-                        index_kernel = load_compiled_index_kernel()
-                    except CryptoExtensionUnavailableError as exc:
-                        raise ShadowDifference(
-                            code=NATIVE_COMPANION_UNAVAILABLE,
-                            detail=(f"node={node.node_id!r}: compiled index companion unavailable"),
-                        ) from exc
-                if binding.pool_binding is not None:
-                    pool = self._resolve_pool(
-                        binding=binding,
-                        pools_by_identity=pools_by_identity,
-                        pool_cache=pool_cache,
-                    )
-
-                # group_key alone reads a DIFFERENT column than it writes: it keys
-                # on the sibling `group_by`'s original source value (admission
-                # proved the sibling unmasked, so it equals what the oracle reads)
-                # and writes to `column`; every other operator reads `column`.
-                input_column = binding.group_key_group_by or column
-                parts: list[pa.Array] = []
-                # `_batches` slices in order from 0, so the running row count is
-                # each batch's table-global start offset.
-                row_offset = 0
-                for batch in _batches(source, self.ctx.batch_size_rows):
-                    if batch.num_rows > self.ctx.batch_size_rows:  # pragma: no cover
-                        raise ShadowDifference(
-                            code=RESOURCE_LIMIT_BREACH,
-                            detail=f"node={node.node_id!r}: a batch exceeded the batch_size_rows budget",
-                        )
-                    array = batch.column(input_column)
-                    # group_key stringifies its sibling exactly as the oracle's
-                    # frame does, which turns on the source's `b"pandas"` sidecar
-                    # (StringDtype null -> "<NA>", not "None"). A bare column drops
-                    # that sidecar, so feed the single-column source SLICE, which
-                    # preserves the field name and schema metadata `table.slice`
-                    # carried through `_batches`.
-                    group_key_sibling = (
-                        batch.select([input_column])
-                        if binding.group_key_group_by is not None
-                        else None
-                    )
-                    with operator_invariants_fail_loud(binding.operator_id):
-                        out, batch_errors = run_operator(
-                            array,
+                with timed_strategy(node.strategy, ",".join(node.columns)):
+                    pool: ValuePool | None = None
+                    if binding.needs_index_kernel and index_kernel is None:
+                        try:
+                            index_kernel = load_compiled_index_kernel()
+                        except CryptoExtensionUnavailableError as exc:
+                            raise ShadowDifference(
+                                code=NATIVE_COMPANION_UNAVAILABLE,
+                                detail=(
+                                    f"node={node.node_id!r}: compiled index companion unavailable"
+                                ),
+                            ) from exc
+                    if binding.pool_binding is not None:
+                        pool = self._resolve_pool(
                             binding=binding,
-                            ctx=self.ctx,
-                            evidence=evidence,
-                            pool=pool,
-                            index_kernel=index_kernel,
-                            group_key_sibling=group_key_sibling,
-                            column=column,
+                            pools_by_identity=pools_by_identity,
+                            pool_cache=pool_cache,
                         )
-                    parts.append(out)
-                    # Rebase batch-local indices to table-global and attribute the
-                    # table: the oracle records `row_index` over the whole column.
-                    row_errors.extend(
-                        RowErrorRecord(
-                            table=table.table,
-                            column=e.column,
-                            row_index=e.row_index + row_offset,
-                            trigger=e.trigger,
-                            reason=e.reason,
+
+                    # group_key alone reads a DIFFERENT column than it writes: it keys
+                    # on the sibling `group_by`'s original source value (admission
+                    # proved the sibling unmasked, so it equals what the oracle reads)
+                    # and writes to `column`; every other operator reads `column`.
+                    input_column = binding.group_key_group_by or column
+                    parts: list[pa.Array] = []
+                    # `_batches` slices in order from 0, so the running row count is
+                    # each batch's table-global start offset.
+                    row_offset = 0
+                    for batch in _batches(source, self.ctx.batch_size_rows):
+                        if batch.num_rows > self.ctx.batch_size_rows:  # pragma: no cover
+                            raise ShadowDifference(
+                                code=RESOURCE_LIMIT_BREACH,
+                                detail=f"node={node.node_id!r}: a batch exceeded the batch_size_rows budget",
+                            )
+                        array = batch.column(input_column)
+                        # group_key stringifies its sibling exactly as the oracle's
+                        # frame does, which turns on the source's `b"pandas"` sidecar
+                        # (StringDtype null -> "<NA>", not "None"). A bare column drops
+                        # that sidecar, so feed the single-column source SLICE, which
+                        # preserves the field name and schema metadata `table.slice`
+                        # carried through `_batches`.
+                        group_key_sibling = (
+                            batch.select([input_column])
+                            if binding.group_key_group_by is not None
+                            else None
                         )
-                        for e in batch_errors
-                    )
-                    row_offset += batch.num_rows
+                        with operator_invariants_fail_loud(binding.operator_id):
+                            out, batch_errors = run_operator(
+                                array,
+                                binding=binding,
+                                ctx=self.ctx,
+                                evidence=evidence,
+                                pool=pool,
+                                index_kernel=index_kernel,
+                                group_key_sibling=group_key_sibling,
+                                column=column,
+                            )
+                        parts.append(out)
+                        # Rebase batch-local indices to table-global and attribute the
+                        # table: the oracle records `row_index` over the whole column.
+                        row_errors.extend(
+                            RowErrorRecord(
+                                table=table.table,
+                                column=e.column,
+                                row_index=e.row_index + row_offset,
+                                trigger=e.trigger,
+                                reason=e.reason,
+                            )
+                            for e in batch_errors
+                        )
+                        row_offset += batch.num_rows
 
-                if not evidence.executed:  # pragma: no cover - run_operator always sets this
-                    raise ShadowDifference(
-                        code=OPERATOR_NOT_EXECUTED,
-                        detail=f"node={node.node_id!r}: the bound operator never ran",
-                    )
-                if evidence.actual_operator != binding.operator_id:
-                    raise ShadowDifference(
-                        code=PLANNED_VS_ACTUAL_ROUTE_DIFF,
-                        detail=(
-                            f"node={node.node_id!r}: planned={binding.operator_id!r} "
-                            f"actual={evidence.actual_operator!r}"
-                        ),
-                    )
+                    if not evidence.executed:  # pragma: no cover - run_operator always sets this
+                        raise ShadowDifference(
+                            code=OPERATOR_NOT_EXECUTED,
+                            detail=f"node={node.node_id!r}: the bound operator never ran",
+                        )
+                    if evidence.actual_operator != binding.operator_id:
+                        raise ShadowDifference(
+                            code=PLANNED_VS_ACTUAL_ROUTE_DIFF,
+                            detail=(
+                                f"node={node.node_id!r}: planned={binding.operator_id!r} "
+                                f"actual={evidence.actual_operator!r}"
+                            ),
+                        )
 
-                columns[column] = assemble_column(node.strategy, parts)
+                    columns[column] = assemble_column(node.strategy, parts)
 
             if columns:
                 # Assemble in SOURCE-SCHEMA order -- the pandas full-frame

@@ -34,19 +34,15 @@ a benchmark that silently fell back to the legacy oracle (a regression in
 admission, an unavailable native companion) must FAIL LOUD here, not report
 a misleadingly-fast "unified slice" number that never actually ran one.
 
-Per-strategy timing (Codex final-gate HIGH): the 4.4 shadow coordinator
-carries no per-node elapsed-time evidence (`OperatorCallEvidence`,
-`execution/physical/_shadow_operators.py`, has no timing field), unlike the
-legacy oracle's `TimingCollector` (`result.timings`, consumed by `bench_
-worker.py`'s own per-strategy breakdown) or the native route's `kernel_
-elapsed_s` (consumed by `bench_worker_native.py`). Splitting the combined
-run's wall time by strategy would be a fabricated number, not a real one, so
-`hash_ms` / `redact_ms` / `truncate_ms` / `passthrough_ms` are each measured
-by a SEPARATE isolated unified-slice run over just that strategy's own
-columns, at the same row count -- a real, directly-measured wall-clock
-number per strategy, at the cost of running the pipeline five times per rep
-instead of once. This is bench-script-only instrumentation; it does not
-touch the lane or the shared 4.4 coordinator.
+Per-strategy timing: this worker measures `hash_ms` / `redact_ms` /
+`truncate_ms` / `passthrough_ms` as the wall time of a SEPARATE run_pipeline
+call over just that strategy's columns, on each arm. That is a whole-pipeline
+subset time (profile, compile, admission, conversion, masking, finalize), not
+a strategy-only time, and on both arms it includes the per-node clock and RSS
+sampling that `timed_strategy` does (the lane's collector since A6, the legacy
+adapter's since before). The method is kept for comparability with earlier D9
+records and because it treats the two arms symmetrically. The in-band
+per-node figure is `ExecutionResult.timings`, which the platform consumes.
 
 Sampled profiling reads Parquet, not CSV (Codex determination remediation):
 `build_config` declares its source as CSV, but `tr_phone`/`tr_card` are
@@ -140,7 +136,8 @@ def _time_strategy(
     unified-slice lane (and raises loudly, matching the D7 vacuity guard, if
     that isolated run does not itself activate the slice); with `flag_on`
     False it runs the identical shape through the legacy route, so the two arms
-    are compared over the same nine-column workload rather than different ones."""
+    are compared over the same strategy-specific column subset at the same row
+    count rather than different ones."""
     sample_path = _write_sample_parquet(src, columns, strategy)
     try:
         cfg = build_config(sample_path)
