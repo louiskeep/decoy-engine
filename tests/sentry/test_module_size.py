@@ -445,10 +445,9 @@ ALLOWLIST: dict[str, int] = {
     # mapping, `_chunked_code_set.py`'s corpus-pinning contract) and seeding
     # it into `StrategyContext` construction. Same FK-resolution-helper
     # decomposition target stands.
-    # Engine-owned transforms: +1 LOC, the prepared-input contract docstring on
-    # `PandasExecutionAdapter.run`. No logic added. B1 adds the private
-    # `ingest_guards_run` argument and its comment.
-    "src/decoy_engine/execution/_pandas_adapter.py": 682,
+    # Engine-owned transforms: +1 LOC (675 -> 676), the prepared-input contract
+    # docstring on `PandasExecutionAdapter.run`. No logic added.
+    "src/decoy_engine/execution/_pandas_adapter.py": 676,
     # gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
     # allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
     # decomposition target, +15 more at gen-5a-faker for `_provider_

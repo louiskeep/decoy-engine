@@ -233,26 +233,6 @@ def _oracle_preflight(
     )
 
 
-def _accepts_ingest_guards_run(adapter: Any) -> bool:
-    """True when `adapter.run` is known to take the private `ingest_guards_run`
-    argument: it names the parameter, or it is a `PandasExecutionAdapter` whose
-    `run` forwards keywords. A custom adapter that merely accepts `**kwargs` is
-    not assumed to forward them to a pandas adapter."""
-    import inspect
-
-    from ._pandas_adapter import PandasExecutionAdapter
-
-    try:
-        params = inspect.signature(adapter.run).parameters
-    except (TypeError, ValueError):  # pragma: no cover - a non-introspectable run
-        return False
-    if "ingest_guards_run" in params:
-        return True
-    return isinstance(adapter, PandasExecutionAdapter) and any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
-    )
-
-
 def _oracle_masked(
     state: OraclePreflightState,
     *,
@@ -262,7 +242,6 @@ def _oracle_masked(
     chunk_result_sink: list[Any] | None = None,
     base_row_offset: int = 0,
     on_chunk: Callable[[Any, pa.Table], pa.Table] | None = None,
-    ingest_guarded: bool = False,
 ) -> Iterator[pa.Table]:
     """The lazy per-chunk loop over a non-empty preflight state.
 
@@ -271,19 +250,9 @@ def _oracle_masked(
     even when it is set, so a row-error chunk is reported unnormalized); fail
     closed on row errors; `on_chunk(result, source_chunk)` returns the table to
     yield and owns any enriched result for the sink; advance the row offset; add
-    vault entries; yield. `ingest_guarded` says the caller already ran the ingest
-    guards on each chunk as the source produced it, so the adapter skips them.
+    vault entries; yield.
     """
     from decoy_engine.errors import RowErrorsFailedError
-
-    # Only an adapter whose `run` takes the private signal can skip its own guards.
-    # Any other adapter (a custom one) is called as before: the caller's guards ran
-    # once on the chunk, and nothing inside that adapter is suppressed.
-    run_extra: dict[str, Any] = (
-        {"ingest_guards_run": True}
-        if ingest_guarded and _accepts_ingest_guards_run(state.adapter)
-        else {}
-    )
 
     first = state.first
     if first is None:  # pragma: no cover - callers return early for a zero-chunk state
@@ -335,7 +304,6 @@ def _oracle_masked(
                 key_provider=state.key_provider,
                 row_offset=row_offset,
                 code_set_records=state.code_set_records,
-                **run_extra,
             )
             if chunk_result_sink is not None and (on_chunk is None or result.row_errors):
                 chunk_result_sink.append(result)

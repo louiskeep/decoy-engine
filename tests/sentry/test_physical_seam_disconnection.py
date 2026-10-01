@@ -351,7 +351,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Round-1 gate fixes: admission from real Arrow types and provider
         # output type (`_real_type_admission.py`, imported only by `_dispatch.py`),
         # one per-chunk ingest-guard helper in `_guards.py` that both chunked
-        # routes call, and `_chunked_oracle.py` taking an `ingest_guarded` flag.
+        # routes call.
         # None imports `execution.physical`.
         "src/decoy_engine/execution/native/_real_type_admission.py",
     }

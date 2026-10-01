@@ -36,7 +36,7 @@ from decoy_engine.execution.native._chunk_masking import (
     _resolve_faker_pools,
     pool_values_are_strings,
 )
-from decoy_engine.execution.native._chunk_schema import conformed_rest
+from decoy_engine.execution.native._chunk_schema import cast_null_columns, validated_rest
 from decoy_engine.execution.native._chunked_evidence import (
     ColumnPlan,
     aggregate_chunked_route_evidence,
@@ -101,7 +101,6 @@ def _oracle_route(
             vault_writer=vault_writer,
             chunk_result_sink=chunk_result_sink,
             base_row_offset=base_row_offset,
-            ingest_guarded=True,
         )
     produced = 0
 
@@ -137,7 +136,6 @@ def _oracle_route(
         chunk_result_sink=chunk_result_sink,
         base_row_offset=base_row_offset,
         on_chunk=on_chunk,
-        ingest_guarded=True,
     )
 
 
@@ -158,8 +156,8 @@ def _native_route(
 ) -> Iterator[pa.Table]:
     """The one native chunk loop. Per chunk: row-offset domain check, mask, schema rule (when `rule` is given), result for the sink
     (when one is given), offset advance, vault entries, yield. Source drift was
-    already conformed or refused, and the shared ingest guards already run on the
-    chunk as the source produced it, by `_run_chunked`."""
+    already refused by `_run_chunked`; the ingest guards run here on the chunk as
+    the source produced it, and only then are null-typed columns cast."""
     from decoy_engine.keyprovider import require_mask_key
 
     first = state.first
@@ -172,9 +170,17 @@ def _native_route(
         )
     col_seed_by_name = dict(table_seed.per_column)
 
+    def _guard(raw: pa.Table) -> pa.Table:
+        run_chunk_ingest_guards(plan, {table: raw}, state.registry, state.graph)
+        return cast_null_columns(first.schema, raw)
+
+    # The first chunk is guarded eagerly with the other call-time validation.
+    first_cast = _guard(first)
+
     def _masked() -> Iterator[pa.Table]:
         row_offset = base_row_offset
-        for i, chunk in enumerate(_chain_first(first, state.chunk_iter)):
+        rest = (_guard(c) for c in state.chunk_iter)
+        for i, chunk in enumerate(_chain_first(first_cast, rest)):
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             elapsed_s: dict[str, float] = {}
             masked = _mask_chunk_native(
@@ -304,18 +310,12 @@ def _run_chunked(
             route_evidence_sink.append(_oracle_evidence(table, "empty_input"))
         return iter(())
 
-    # One drift contract and one ingest-guard pass for both routes, applied before
-    # either loop sees a chunk. The guards see each chunk as the source produced it
-    # (before the null-type cast), so the cast cannot create a refusal the oracle
-    # would not make. The first chunk is guarded eagerly with the other
-    # call-time validation; later chunks are guarded as they are pulled.
-    def _ingest_guard(chunk: pa.Table) -> None:
-        run_chunk_ingest_guards(state.plan, {table: chunk}, state.registry, state.graph)
-
-    _ingest_guard(state.first)
-    state.chunk_iter = conformed_rest(
-        state.first, state.chunk_iter, table=table, ingest_guard=_ingest_guard
-    )
+    # One drift contract for both routes: each chunk is validated against the
+    # first chunk's schema and passed on unchanged. Validation never casts, so the
+    # oracle route's adapter runs its own ingest guards on the chunk exactly as the
+    # source produced it (and so does the public oracle); the native route runs
+    # the same guards itself, then casts null-typed columns for its kernels.
+    state.chunk_iter = validated_rest(state.first, state.chunk_iter, table=table)
     preflight = plan_native_route(
         config,
         state.profile,
@@ -405,8 +405,8 @@ def run_mask_chunked(
     losing data raises `ExecutionError(code="chunked_schema_mismatch")`. On both
     routes, a source column whose Arrow type changes after the first chunk
     raises `NativeChunkSchemaDriftError` (an `ExecutionError`), except an
-    all-null `null`-typed chunk, which is cast to the first chunk's type (the
-    ingest guards run before that cast). A column that is `null`-typed in the first
+    all-null `null`-typed chunk, which the ingest guards see as the source
+    produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
     """
     _validate_native_threads(native_threads)

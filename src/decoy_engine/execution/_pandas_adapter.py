@@ -182,20 +182,14 @@ class PandasExecutionAdapter:
         key_provider: KeyProvider | None = None,
         row_offset: int = 0,
         code_set_records: Mapping[tuple[str, str], object] | None = None,
-        ingest_guards_run: bool = False,
     ) -> ExecutionResult:
         """Mask every table in `sources`; inputs must already be transformed (a Plan has none)."""
-        # `ingest_guards_run` is private to the chunked oracle loop: it says the
-        # caller already ran the ingest guards on this exact call's sources, as the
-        # source produced them. It is a plain argument, not ambient state, so a
-        # nested or task-spawned run never inherits it.
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
         # float. Backstops the plan-compile check for the no_profile path; both
         # adapters reject identically (no silent cross-substrate divergence). FK
         # children are exempt (resolved via the edge, not masked).
-        if not ingest_guards_run:
-            run_chunk_ingest_guards(plan, sources, registry, relationship_graph)
+        run_chunk_ingest_guards(plan, sources, registry, relationship_graph)
         t0 = time.perf_counter()
         # DE-10: FK parent/child key columns route through the lossless-typing
         # contract (execution/_fk_keys.py) instead of a bare `to_pandas()`, so a
