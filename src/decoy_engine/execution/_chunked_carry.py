@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import tokenize
+import unicodedata
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -56,14 +57,19 @@ def is_stock_adapter(adapter: Any) -> bool:
     return adapter is None or type(adapter) is PandasExecutionAdapter
 
 
+def _nfkc(value: str) -> str:
+    return unicodedata.normalize("NFKC", value)
+
+
 def _predicate_names(expr: str) -> set[str] | None:
     """Every name `DataFrame.eval` could resolve in `expr`, or None when the predicate
     cannot be tokenized (the caller then treats every passthrough column as read).
 
-    Uses pandas' own tokenizer, so a Unicode identifier comes out as a NAME token
-    exactly as pandas reads it. Names, backtick-quoted spans and the value of every
-    string literal are collected: over-approximating only restores the oracle's
-    behavior for that one column."""
+    Uses pandas' own tokenizer. Python's `ast` NFKC-normalizes identifiers, so `ｘ`
+    (fullwidth) and `ﬁle` (ligature) read the columns `x` and `file`: every collected
+    name is NFKC-normalized, and `read_set` compares normalized forms. Names,
+    backtick-quoted spans and the value of every string literal are collected:
+    over-approximating only restores the oracle's behavior for that one column."""
     try:
         from pandas.core.computation.parsing import BACKTICK_QUOTED_STRING, tokenize_string
     except ImportError:  # pragma: no cover - a pandas without the tokenizer
@@ -72,11 +78,11 @@ def _predicate_names(expr: str) -> set[str] | None:
     try:
         for kind, value in tokenize_string(expr):
             if kind == tokenize.NAME or kind == BACKTICK_QUOTED_STRING:
-                names.add(value)
+                names.add(_nfkc(value))
             elif kind == tokenize.STRING:
                 literal = ast.literal_eval(value)
                 if isinstance(literal, str):
-                    names.add(literal)
+                    names.add(_nfkc(literal))
     except Exception:
         return None
     return names
@@ -106,16 +112,17 @@ def read_set(columns: Iterable[Mapping[str, Any]], passthrough: Iterable[str]) -
     if not candidates:
         return frozenset()
     mentioned: set[str] = set()
+    normalized: set[str] = set()
     for col in columns:
         if has_when(col):
             names = _predicate_names(col["when"])
             if names is None:
                 return candidates
-            mentioned |= names
+            normalized |= names
         for key, value in col.items():
             if key != "name":
                 _string_values(value, mentioned)
-    return candidates & mentioned
+    return frozenset(c for c in candidates if c in mentioned or _nfkc(c) in normalized)
 
 
 @dataclass(frozen=True)
