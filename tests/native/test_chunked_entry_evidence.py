@@ -495,6 +495,6 @@ def test_release_bookkeeping_names_the_new_entry_point() -> None:
         contract, "## 9. Pre-flight checklist", "## Pre-GA corpus"
     )
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "run_mask_chunked" in _section(changelog, "## [Unreleased]", "\n## [0")
+    assert "run_mask_chunked" in _section(changelog, "## [0.7.0]", "\n## [0.")
     assert re.search(r"`run_mask_chunked\(", (REPO / "README.md").read_text(encoding="utf-8"))
     assert "_chunked_entry.py" in (REPO / "CODEMAP.md").read_text(encoding="utf-8")
