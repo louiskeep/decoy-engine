@@ -162,6 +162,18 @@ def test_join_with_fields_that_differ_only_in_metadata_keeps_the_first_chunks_fi
     assert joined.column("a").to_pylist() == ["x", "y"]
 
 
+def test_join_of_null_typed_fields_that_differ_only_in_metadata_keeps_the_first_field() -> None:
+    first = pa.field("a", pa.null(), metadata={b"owner": b"one"})
+    second = pa.field("a", pa.null(), metadata={b"owner": b"two"})
+    chunks = [
+        pa.Table.from_arrays([pa.nulls(1)], schema=pa.schema([first])),
+        pa.Table.from_arrays([pa.nulls(2)], schema=pa.schema([second])),
+    ]
+    joined = ac.join_dispatcher_chunks(chunks, table="t")
+    assert joined.schema.field("a").equals(first, check_metadata=True)
+    assert joined.num_rows == 3
+
+
 def test_join_returns_one_contiguous_chunk_per_column() -> None:
     chunks = [pa.table({"a": ["x"], "b": [1]}) for _ in range(3)]
     joined = ac.join_dispatcher_chunks(chunks, table="t")
