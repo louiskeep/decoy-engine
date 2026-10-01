@@ -1,4 +1,4 @@
-"""Later-chunk schema-drift guard for the native route.
+"""Later-chunk schema-drift contract shared by both chunked routes.
 
 Split out of `_dispatch.py` (module-size ratchet, native-throughput program). The
 native route admits a table on its FIRST chunk's schema at preflight; nothing else
@@ -8,6 +8,8 @@ orchestrator, so it lives in its own module and `_dispatch` imports it back.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
 
 import pyarrow as pa
 
@@ -41,32 +43,64 @@ class NativeChunkSchemaDriftError(ExecutionError, DecoyError):
         return self.message
 
 
-def _check_chunk_schema_drift(
+def _drift(table: str, chunk_index: int, message: str, detail: str) -> NativeChunkSchemaDriftError:
+    return NativeChunkSchemaDriftError(
+        f"{table!r} chunk {chunk_index}: {message}",
+        table=table,
+        chunk_index=chunk_index,
+        detail=detail,
+    )
+
+
+def conform_chunk_schema(
     expected: pa.Schema, chunk: pa.Table, *, table: str, chunk_index: int
-) -> None:
-    """Raise `NativeChunkSchemaDriftError` if `chunk` no longer matches
-    `expected` (the admitted first chunk's schema): a missing/extra column
-    name, or a changed Arrow type on a column present in both."""
+) -> pa.Table:
+    """Return `chunk` under the first chunk's schema, or raise on drift.
+
+    The one source-drift contract both routes share: a missing or extra column,
+    or a column whose Arrow type differs from the first chunk's, raises
+    `NativeChunkSchemaDriftError`. The single exception is a `null`-typed column
+    (an all-null chunk whose reader had no type to infer), which is cast to the
+    first chunk's type; every value is null, so nothing changes.
+    """
     expected_names = set(expected.names)
     actual_names = set(chunk.schema.names)
     if actual_names != expected_names:
         missing = sorted(expected_names - actual_names)
         extra = sorted(actual_names - expected_names)
-        raise NativeChunkSchemaDriftError(
-            f"{table!r} chunk {chunk_index}: schema drift vs the admitted first "
-            f"chunk (missing={missing}, extra={extra})",
-            table=table,
-            chunk_index=chunk_index,
-            detail=f"missing:{missing};extra:{extra}",
+        raise _drift(
+            table,
+            chunk_index,
+            f"schema drift vs the first chunk (missing={missing}, extra={extra})",
+            f"missing:{missing};extra:{extra}",
         )
-    for name in expected.names:
+    columns = list(chunk.columns)
+    changed = False
+    for i, name in enumerate(chunk.schema.names):
         expected_type = expected.field(name).type
         actual_type = chunk.schema.field(name).type
-        if actual_type != expected_type:
-            raise NativeChunkSchemaDriftError(
-                f"{table!r} chunk {chunk_index}: column {name!r} type changed "
-                f"{expected_type} -> {actual_type}",
-                table=table,
-                chunk_index=chunk_index,
-                detail=f"type_changed:{name}:{expected_type}->{actual_type}",
-            )
+        if actual_type == expected_type:
+            continue
+        if pa.types.is_null(actual_type):
+            columns[i] = columns[i].cast(expected_type)
+            changed = True
+            continue
+        raise _drift(
+            table,
+            chunk_index,
+            f"column {name!r} type changed {expected_type} -> {actual_type}",
+            f"type_changed:{name}:{expected_type}->{actual_type}",
+        )
+    if not changed:
+        return chunk
+    return pa.Table.from_arrays(
+        columns, schema=pa.schema([expected.field(n) for n in chunk.schema.names])
+    )
+
+
+def conformed_rest(first: pa.Table, rest: Iterator[pa.Table], *, table: str) -> Iterator[pa.Table]:
+    """The chunks after `first`, each conformed to `first`'s schema (see
+    `conform_chunk_schema`), lazily, so drift raises before the drifting chunk
+    reaches either route's masking loop."""
+    for i, chunk in enumerate(rest, start=1):
+        yield conform_chunk_schema(first.schema, chunk, table=table, chunk_index=i)

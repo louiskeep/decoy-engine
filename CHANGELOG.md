@@ -43,8 +43,19 @@ keeps its behavior and signature.
   data. `aggregate_chunked_route_evidence(results)` (in
   `execution/native/_chunked_entry.py`) sums it across chunks. The existing
   `NativeRouteEvidence` is unchanged.
-- `native_threads` must be an `int >= 1`; otherwise `ExecutionError(code="invalid_native_threads")`.
+- `native_threads` must be an `int` in `1..=1024` (the compiled kernels' ceiling);
+  otherwise `ExecutionError(code="invalid_native_threads")`, raised at call time.
   Output bytes do not depend on it.
+- Admission uses the first chunk's real Arrow types and each Faker provider's
+  output type: a hash column the compiled kernel does not take (dictionary,
+  date32, decimal128) or a Faker provider outside the C1 allowlist sends the
+  table to the oracle with a coded reason. Both routes run the same per-chunk
+  ingest guards (`run_chunk_ingest_guards`, including the null-bearing-integer
+  check), so truncate or hash over an integer column that gains a null in a later
+  chunk raises `null_bearing_int_unsupported` on both.
+- One source-drift contract: a column whose Arrow type changes after the first
+  chunk raises `native_chunk_schema_drift` on both routes, except an all-null
+  `null`-typed chunk, which is cast to the first chunk's type.
 
 ### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
 
@@ -52,7 +63,12 @@ keeps its behavior and signature.
   `DecoyError`, with `code="native_chunk_schema_drift"`, a `.message` that names
   the table, chunk index and detail, and `str()` equal to that message.
   `run_native_or_oracle_chunked` keeps its other behavior, apart from the new
-  `when:` veto in `plan_native_route`.
+  `when:` veto and real-type admission in `plan_native_route`. It now shares the
+  one native chunk loop with `run_mask_chunked`, so it also runs the oracle's
+  eager preflight and the per-chunk ingest guards. `plan_native_route` detects the
+  pandas adapter by exact type, so a subclass that overrides `run` takes the
+  oracle route. `aggregate_chunked_route_evidence` raises
+  `chunked_route_evidence_mixed_tables` for results from more than one table.
 - `NativeOrOracleChunkedAdapter` (physical seam, still unconnected to production)
   now forwards to `run_mask_chunked` and passes the new parameters through unchanged.
 

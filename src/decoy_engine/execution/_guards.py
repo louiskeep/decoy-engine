@@ -70,4 +70,20 @@ def reject_null_bearing_int(
             )
 
 
-__all__ = ["reject_null_bearing_int"]
+def run_chunk_ingest_guards(
+    plan: Plan,
+    sources: Mapping[str, pa.Table],
+    registry: ProviderRegistry,
+    relationship_graph: RelationshipGraph,
+) -> None:
+    """Every per-chunk ingest guard that runs on the Arrow sources before masking.
+
+    The one place both chunked routes call: the pandas adapter at the top of
+    `run`, and the native chunk loop before it masks, so an input one route
+    refuses is refused by the other with the same error. A new ingest guard is
+    added here and reaches both.
+    """
+    reject_null_bearing_int(plan, sources, registry, relationship_graph)
+
+
+__all__ = ["reject_null_bearing_int", "run_chunk_ingest_guards"]

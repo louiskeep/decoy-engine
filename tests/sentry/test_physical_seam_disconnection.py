@@ -348,6 +348,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_chunked_entry.py",
         "src/decoy_engine/execution/native/_chunked_evidence.py",
         "src/decoy_engine/execution/native/_chunked_schema_rule.py",
+        # Round-1 gate fixes: admission from real Arrow types and provider
+        # output type (`_real_type_admission.py`, imported only by `_dispatch.py`),
+        # one per-chunk ingest-guard helper in `_guards.py` that both chunked
+        # routes call, and `_chunked.py` returning the warmed faker pools. None
+        # imports `execution.physical`.
+        "src/decoy_engine/execution/native/_real_type_admission.py",
     }
     unexpected = [
         name

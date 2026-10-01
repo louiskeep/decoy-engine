@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._requirements import (
     CHUNKED_ROUTE_VETOED_STRATEGIES,
@@ -107,6 +108,14 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             continue
         if head is None:
             head = evidence
+        elif evidence["table"] != head["table"]:
+            raise ExecutionError(
+                code="chunked_route_evidence_mixed_tables",
+                message=(
+                    "aggregate_chunked_route_evidence takes the results of one table; got "
+                    f"{head['table']!r} and {evidence['table']!r}."
+                ),
+            )
         for col in evidence["columns"]:
             acc = sums.get(col["column"])
             if acc is None:

@@ -80,8 +80,13 @@ def _oracle_preflight(
     key_provider: Any = None,
     base_row_offset: int = 0,
     pool_cache: Any = None,
+    warm_pools: bool = True,
 ) -> OraclePreflightState:
-    """The eager half of the oracle: every check that runs before a chunk masks."""
+    """The eager half of the oracle: every check that runs before a chunk masks.
+
+    `warm_pools=False` leaves faker pool warming to the caller: the native route
+    builds its pools itself, and warming here too would look the cache up twice.
+    """
     dgrn.validate_base_row_offset(base_row_offset)
     from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
@@ -202,9 +207,10 @@ def _oracle_preflight(
     # shared across calls and across routes.
     if pool_cache is None:
         pool_cache = PoolCache()
-    _chunked_mod._warm_faker_pools(
-        plan, table=table, registry=resolved_registry, pool_cache=pool_cache
-    )
+    if warm_pools:
+        _chunked_mod._warm_faker_pools(
+            plan, table=table, registry=resolved_registry, pool_cache=pool_cache
+        )
     return OraclePreflightState(
         first=first,
         chunk_iter=chunk_iter,
