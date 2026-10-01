@@ -175,6 +175,25 @@ def _table_in_declared_relationship(config: dict[str, Any], table: str) -> bool:
     return False
 
 
+def _first_when_column(config: dict[str, Any], table: str) -> str | None:
+    """The first column of `table` carrying a nonblank `when:` predicate.
+
+    A conditional column masks only the rows its predicate selects, and leaves the
+    rest with their original value and type, so the native kernels (which mask
+    every row) must not run it. A blank predicate has no effect and does not veto;
+    this is the same normalization the plan compiler applies.
+    """
+    for table_cfg in config.get("tables") or ():
+        if not isinstance(table_cfg, dict) or table_cfg.get("name") != table:
+            continue
+        for col in table_cfg.get("columns") or ():
+            if isinstance(col, dict):
+                when = col.get("when")
+                if isinstance(when, str) and when.strip():
+                    return str(col.get("name", "?"))
+    return None
+
+
 def _static_route_decision(
     config: dict[str, Any], profile: Any, *, table: str, engine_version: str
 ) -> NativeRouteEvidence:
@@ -285,6 +304,7 @@ def plan_native_route(
     table: str,
     engine_version: str,
     first_schema: pa.Schema | None = None,
+    adapter: Any = None,
 ) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
@@ -304,8 +324,28 @@ def plan_native_route(
     the static/config-level decision alone): they get static admission plus
     the companion probes, with no schema-based guard applied -- exactly what
     those callers assert.
+
+    A nonblank `when:` predicate on any column, or an `adapter` that is neither
+    `None` nor the pandas adapter, reroutes the whole table to the oracle right
+    after static admission (reasons `when_predicate_not_native:<column>` and
+    `adapter_requested`; the adapter reason applies only to a table that would
+    otherwise admit).
     """
     decision = _static_route_decision(config, profile, table=table, engine_version=engine_version)
+    # A `when:` predicate names the reroute reason even when another column would
+    # have vetoed the table anyway: its meaning (leave unselected rows untouched)
+    # is the one a caller can act on.
+    when_column = _first_when_column(config, table)
+    if when_column is not None:
+        decision = _downgrade_to_oracle(decision, f"when_predicate_not_native:{when_column}")
+    elif decision.native_admitted and adapter is not None:
+        from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+
+        # The native route masks through Arrow kernels and never calls an
+        # adapter, so a caller that asked for a specific non-pandas one gets the
+        # oracle route, which does.
+        if not isinstance(adapter, PandasExecutionAdapter):
+            decision = _downgrade_to_oracle(decision, "adapter_requested")
     if not decision.native_admitted:
         return NativePreflight(decision, None)
 

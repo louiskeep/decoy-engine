@@ -9,6 +9,53 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (`run_mask_chunked`: the chunked dispatcher as a public entry point, 2026-10-01)
+
+`decoy_engine.run_mask_chunked(config, chunks, *, table, engine_version, registry=None, adapter=None, vault_writer=None, chunk_result_sink=None, key_provider=None, base_row_offset=0, native_threads=1, route_evidence_sink=None, pool_cache=None)`
+masks one table chunk by chunk, on the compiled native kernels when the whole
+table admits and on the pandas oracle otherwise. It accepts everything
+`run_mask_pipeline_chunked` accepts plus `native_threads`, an evidence sink and
+a shared `PoolCache`. Nothing in production calls it yet; `run_mask_pipeline_chunked`
+keeps its behavior and signature.
+
+- Validation runs first on every call, for both routes: `check_chunked_compatibility`
+  and the oracle's eager checks (now one shared `_oracle_preflight`, in the new
+  `execution/_chunked_oracle.py`), so a config is rejected with the same code
+  before any chunk is yielded, including for a zero-chunk call.
+- A column with a nonblank `when:` predicate, or an `adapter` other than `None`
+  or the pandas adapter, sends the whole table to the oracle (reasons
+  `when_predicate_not_native:<column>` and `adapter_requested`). The native
+  kernels mask every row, so they cannot honor a predicate.
+- Output types are stable per call. Hash, truncate and redact (string
+  `redact_with`, no `when:`) columns are always `string`, converted with Arrow's
+  checked cast; a value that cannot convert without loss raises
+  `ExecutionError(code="chunked_schema_mismatch")`. Passthrough columns, configured
+  or unconfigured, are the source column itself, which also keeps nullable
+  integers above 2^53 exact. Yielded chunks carry no pandas schema metadata.
+  Columns of strategies that only run on the oracle keep the oracle's per-chunk types.
+- `vault_writer`, `chunk_result_sink` and `base_row_offset` behave the same on
+  both routes. The sink gets one `ExecutionResult` per chunk with per-column
+  `timings`; the native route takes them from the kernel timer it already runs
+  (no RSS sampling).
+- `ExecutionResult.quality_metrics["chunked_route"]` records, per column, the
+  planned and executed backend (`rust_companion`, `rust_pool_select`,
+  `arrow_python`, `pandas_oracle`), call count and elapsed time, as JSON-safe
+  data. `aggregate_chunked_route_evidence(results)` (in
+  `execution/native/_chunked_entry.py`) sums it across chunks. The existing
+  `NativeRouteEvidence` is unchanged.
+- `native_threads` must be an `int >= 1`; otherwise `ExecutionError(code="invalid_native_threads")`.
+  Output bytes do not depend on it.
+
+### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
+
+- `NativeChunkSchemaDriftError` is now an `ExecutionError` as well as a
+  `DecoyError`, with `code="native_chunk_schema_drift"`, a `.message` that names
+  the table, chunk index and detail, and `str()` equal to that message.
+  `run_native_or_oracle_chunked` keeps its other behavior, apart from the new
+  `when:` veto in `plan_native_route`.
+- `NativeOrOracleChunkedAdapter` (physical seam, still unconnected to production)
+  now forwards to `run_mask_chunked` and passes the new parameters through unchanged.
+
 ### Changed (D9/GP1 bench harnesses: absolute peak-RSS ceiling replaces the ratio gate, 2026-09-30)
 
 Dev/bench tooling only (`scripts/`), not the PyPI distribution; no package
@@ -2805,7 +2852,7 @@ F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
   parent error gracefully handled (F7), and the security invariant that findings
   carry no raw key material.
 
-### Changed
+### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
 
 - **Repository visibility flipped to public** (2026-06-02). Aligns
   with the OSS launch plan (memory: `OSS CLI launch` PO lock

@@ -75,6 +75,7 @@ pieces most callers need:
 |-----------------------------------------------------------------------------------|------------------------------------------------------------------------------|
 | `PipelineConfig`                                                                  | Strict pipeline-config schema. Validate once: `PipelineConfig.model_validate(yaml).model_dump()`. |
 | `run_pipeline(config, sources, engine_version=...)`                               | Run the whole pipeline in one call (validate, profile, compile, execute). The recommended entrypoint; returns an `ExecutionResult` with `.outputs[table]`. |
+| `run_mask_chunked(config, chunks, table=..., engine_version=...)`                 | Mask one table chunk by chunk: compiled native kernels when the whole table admits, the pandas oracle otherwise. Stable output types, vault and per-chunk `ExecutionResult` support, per-column route evidence. |
 | `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan` (the lower-level path).                   |
 | `select_execution_adapter()` / `PandasExecutionAdapter`                           | Plan-to-data execution. Pandas is the only masking substrate. |
 | `generate_tables(...)`                                                            | Table-from-schema synthesis for `mode: generate` configs.                    |

@@ -155,8 +155,13 @@ def _mask_chunk_native(
     pool_by_column: dict[str, ValuePool],
     native_threads: int | None = None,
     index_kernel: IndexDerivationKernel | None = None,
+    column_elapsed_s: dict[str, float] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
+
+    `column_elapsed_s`, when given, receives each column's kernel time for this
+    chunk, from the same timer that feeds the per-strategy aggregate (one clock
+    read pair per column, nothing sampled beyond it).
 
     Every column name in `chunk` is guaranteed present in `col_seed_by_name` by
     the caller's admission precondition (`run_native_or_oracle_chunked` rejects a
@@ -224,15 +229,20 @@ def _mask_chunk_native(
                 "which is outside NATIVE_KERNEL_STRATEGIES and NATIVE_POOL_STRATEGIES; "
                 "the preflight admission check should have excluded this table."
             )
+        elapsed = time.perf_counter() - t0
         evidence.kernel_calls[strategy] = evidence.kernel_calls.get(strategy, 0) + 1
-        evidence.kernel_elapsed_s[strategy] = evidence.kernel_elapsed_s.get(strategy, 0.0) + (
-            time.perf_counter() - t0
-        )
+        evidence.kernel_elapsed_s[strategy] = evidence.kernel_elapsed_s.get(strategy, 0.0) + elapsed
+        if column_elapsed_s is not None:
+            column_elapsed_s[name] = elapsed
     return pa.table(arrays)
 
 
 def _resolve_faker_pools(
-    col_seed_by_name: dict[str, Any], *, job_seed: bytes, pool_cache: PoolCache
+    col_seed_by_name: dict[str, Any],
+    *,
+    job_seed: bytes,
+    pool_cache: PoolCache,
+    registry: Any = None,
 ) -> dict[str, ValuePool]:
     """Build/fetch every admitted faker column's pool ONCE, before the chunk
     loop (Task 3.1 Step 2). Keyed by unique `PoolIdentity`, not by column: two
@@ -241,10 +251,10 @@ def _resolve_faker_pools(
     cache consult on the oracle side. Uses the SAME
     `resolve_faker_pool_identity` the oracle handler uses (HIGH 1), so the
     two routes can never build different pools for what should be one
-    identity.
+    identity. `registry` is the caller's provider registry; omitted, the default
+    registry is used.
     """
-    registry = get_default_registry()
-    builder = PoolBuilder(registry)
+    builder = PoolBuilder(registry if registry is not None else get_default_registry())
     pools_by_column: dict[str, ValuePool] = {}
     for name, col_seed in col_seed_by_name.items():
         if col_seed.strategy != "faker":

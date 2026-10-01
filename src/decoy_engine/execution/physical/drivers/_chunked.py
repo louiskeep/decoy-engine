@@ -7,9 +7,9 @@ separately so it never re-implements the resident aggregation itself:
   * `MaskPipelineChunkedAdapter` wraps `execution._chunked.
     run_mask_pipeline_chunked` -- the lazy `Iterator[pa.Table]` pandas-oracle
     chunk masker.
-  * `NativeOrOracleChunkedAdapter` wraps `execution.native._dispatch.
-    run_native_or_oracle_chunked` -- also a lazy `Iterator[pa.Table]`, plus
-    eager whole-table route admission and mutable route evidence
+  * `NativeOrOracleChunkedAdapter` wraps `execution.native._chunked_entry.
+    run_mask_chunked` -- also a lazy `Iterator[pa.Table]`, plus eager
+    whole-table route admission and mutable route evidence
     (`NativeRouteEvidence`) that fills in as the iterator is consumed.
   * `ResidentChunkedAggregatorAdapter` wraps `execution._pipeline_route_exec.
     run_mask_chunked` -- the RESIDENT aggregator `run_pipeline` actually calls,
@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution._pipeline_route_exec import run_mask_chunked
-from decoy_engine.execution.native._dispatch import run_native_or_oracle_chunked
+from decoy_engine.execution.native._chunked_entry import run_mask_chunked as run_chunked_masking
 from decoy_engine.execution.physical._capabilities import CAPABILITIES
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._types import DriverId, ExecutionScope
@@ -89,9 +89,9 @@ class MaskPipelineChunkedAdapter:
 
 
 class NativeOrOracleChunkedAdapter:
-    """Pure delegation to `run_native_or_oracle_chunked`: lazy
+    """Pure delegation to the public `run_mask_chunked`: lazy
     `Iterator[pa.Table]`, eager whole-table route admission, mutable route
-    evidence via `route_evidence_sink`."""
+    evidence via `route_evidence_sink`. Every parameter is forwarded unchanged."""
 
     capabilities = CAPABILITIES[DriverId.CHUNKED]
 
@@ -105,23 +105,33 @@ class NativeOrOracleChunkedAdapter:
         *,
         table: str,
         engine_version: str,
+        registry: Any = None,
+        adapter: Any = None,
+        vault_writer: Any = None,
+        chunk_result_sink: list[Any] | None = None,
         key_provider: Any = None,
+        base_row_offset: int = 0,
+        native_threads: int = 1,
         route_evidence_sink: list[NativeRouteEvidence] | None = None,
         pool_cache: PoolCache | None = None,
-        native_threads: int | None = None,
     ) -> Iterator[pa.Table]:
         self.last_invocation = SeamContext(
             driver_id=DriverId.CHUNKED, scope=ExecutionScope.TABLE, tables=(table,)
         )
-        return run_native_or_oracle_chunked(
+        return run_chunked_masking(
             config,
             chunks,
             table=table,
             engine_version=engine_version,
+            registry=registry,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
             key_provider=key_provider,
+            base_row_offset=base_row_offset,
+            native_threads=native_threads,
             route_evidence_sink=route_evidence_sink,
             pool_cache=pool_cache,
-            native_threads=native_threads,
         )
 
 

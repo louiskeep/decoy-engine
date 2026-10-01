@@ -165,17 +165,9 @@ from . import _chunked_code_set as code_set_gate
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
 from . import _chunked_text_mask as text_mask_gate
-from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
-    fk_hash_strategy_columns_for_table,
-    fk_passthrough_columns_for_table,
     gate_fk_child_edges,
-    reject_lossy_chunked_fk_passthrough,
-)
-from ._chunked_fk_dtype import (
-    fk_declared_dtypes_for_table,
-    reject_mismatched_chunked_fk_declared_dtype,
 )
 from ._transforms_gate import reject_per_table_transforms
 
@@ -409,226 +401,33 @@ def run_mask_pipeline_chunked(
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
-    dgrn.validate_base_row_offset(base_row_offset)
-    from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
-    from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
-    from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-    from decoy_engine.generation.pool import PoolCache
-    from decoy_engine.plan import compile_plan
-    from decoy_engine.providers_v2 import get_default_registry
-    from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
+    from . import _chunked_oracle
 
-    check_chunked_compatibility(config, table=table)
-    chunk_iter = iter(chunks)
-    first = next(chunk_iter, None)
-    # Codex-found: the gate below used to run AFTER this point returned early
-    # for a zero-chunk source, so a keyed job with zero rows/batches and a
-    # missing/invalid mask secret slipped through the GA fail-closed gate
-    # (empty output, no error). The profile/plan/gate sequence now always
-    # runs -- from a real first-chunk profile, or from `empty_input_profile`
-    # when there is none -- and the empty-input return moves to AFTER the
-    # gate so it only ever short-circuits a job the gate has already cleared.
-    if first is None:
-        profile = empty_input_profile(config, table=table, engine_version=engine_version)
-    else:
-        profile = first_chunk_profile(first, table=table, engine_version=engine_version)
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
-    # DE-02 (Codex BLOCKER 4): this is a PUBLIC entry point. Resolve the config's
-    # `mask_secret_ref` when no programmatic provider was passed, then run the
-    # fail-closed gate up front (fail fast) -- the per-chunk adapter.run() re-gates
-    # via require_mask_key, so a keyed chunked job cannot run off job_seed at GA.
-    if key_provider is None:
-        _ref = (config.get("global_settings") or {}).get("mask_secret_ref")
-        if _ref:
-            from decoy_engine.keyprovider import key_provider_from_ref
-
-            key_provider = key_provider_from_ref(_ref)
-    from decoy_engine.keyprovider import require_mask_key
-
-    _resolved_mask_key = require_mask_key(plan, key_provider)
-    # DE-02 (Codex item 6a): this public entry point also collects vault entries,
-    # so it must run the SAME vault-key guard as run_pipeline -- the vault holds
-    # reversible plaintext PII and cannot be written under a key that differs from
-    # the resolved mask key.
-    if vault_writer is not None:
-        from decoy_engine.vault import assert_vault_writer_keyed
-
-        assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
-    resolved_registry = registry if registry is not None else get_default_registry()
-    graph = RelationshipGraph(edges=(), ordering=())
-    # Corpus pinning (Phase 4 slice 4): resolved BEFORE the empty-input return
-    # below, so a zero-row job with an invalid/version-mismatched corpus fails
-    # closed like the oracle instead of "succeeding" with no code_set column
-    # ever dispatched. See _chunked_code_set.py.
-    code_set_records = code_set_gate.resolve_pinned_code_set_records(
-        plan, resolved_registry, graph, table=table
-    )
-    # bucket_perturb's namespace requirement is data-independent (the handler
-    # raises before touching data), so validate it BEFORE the empty-input return
-    # -- a namespace-less config with a zero-chunk input must fail closed like
-    # the oracle, not return empty.
-    bucket_perturb_gate.reject_bucket_perturb_missing_namespace(
-        plan, resolved_registry, graph, table=table
-    )
-    if first is None:
-        # Gate cleared (or the plan is unkeyed / pre-GA); there is genuinely
-        # nothing to mask, so skip pool warming and adapter setup below --
-        # unchanged from the original empty-input short-circuit, just moved
-        # to run after the gate instead of before it.
-        return iter(())
-    # DE-03: resolve the projection policy once; each per-chunk adapter.run()
-    # enforces it (a chunk carries the same column set as the whole table, so
-    # per-chunk enforcement IS whole-table enforcement). Single mask table, no
-    # generate echo on this route, so no table is exempted.
-    projection_policy = resolve_unconfigured_column_policy(config)
-    ns_registry = build_namespace_registry(config, profile)
-    # Trap E group_by effective-type guard: needs the plan + source schema
-    # (absent at the config-only check_chunked_compatibility above); once, pre-stream.
-    group_key.reject_unsafe_group_key_group_by_dtype(
-        plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
-    )
-    # text_mask requires a chunk-stable string source (Trap: a non-string int+null
-    # source widens by chunk boundary under the handler's str()-conversion). This
-    # entry takes an arbitrary chunk iterable whose dtype could DRIFT across
-    # chunks, so resolve the text_mask columns once and validate the first chunk
-    # here + EVERY chunk in the masking loop below. The config-only compat gate
-    # cannot see the data.
-    text_mask_cols = text_mask_gate.text_mask_source_columns(
-        plan, resolved_registry, graph, table=table
-    )
-    text_mask_gate.reject_unsafe_text_mask_chunk_schema(first.schema, text_mask_cols, table=table)
-    # code_set has the identical chunk-stable-string-source requirement (same
-    # str()-conversion hazard); same once-resolved / per-chunk validation split.
-    code_set_cols = code_set_gate.code_set_source_columns(
-        plan, resolved_registry, graph, table=table
-    )
-    code_set_gate.reject_unsafe_code_set_chunk_schema(first.schema, code_set_cols, table=table)
-    # bucket_perturb has the identical chunk-stable-string-source requirement
-    # (same date-parsing hazard on a non-string source); same once-resolved /
-    # per-chunk validation split.
-    bucket_perturb_cols = bucket_perturb_gate.bucket_perturb_source_columns(
-        plan, resolved_registry, graph, table=table
-    )
-    bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
-        first.schema, bucket_perturb_cols, table=table
-    )
-    passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
-    # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK
-    # key dtype (it never sees the data). Read those declarations so the per-chunk
-    # guard validates them against the real Arrow dtype and fails closed on a
-    # misdeclaration (which would else silently void RI). Substrate-independent,
-    # so unlike the passthrough magnitude guard it is not adapter-gated.
-    declared_fk_dtypes = fk_declared_dtypes_for_table(config, table)
-    # Predicate 12's REAL stage (cascade-safety fix) is scoped to hash-
-    # strategy FK columns specifically, not every chunk-safe strategy the
-    # family guard above covers -- see `reject_mismatched_chunked_fk_declared_
-    # dtype`'s docstring.
-    hash_fk_key_columns = fk_hash_strategy_columns_for_table(config, table)
-    if adapter is None:
-        adapter = PandasExecutionAdapter()
-    # MEDIUM (DE-10 reland): the guard only applies when the adapter ingests
-    # `table` through the pandas round trip it protects against. Pandas is the
-    # only substrate now, so `chunked_adapter_touches_pandas_ingestion` is
-    # always True; the seam is kept for a future non-pandas substrate that
-    # would not touch pandas (see that function's docstring).
-    guard_passthrough_fk_columns = (
-        passthrough_fk_columns
-        if chunked_adapter_touches_pandas_ingestion(adapter, config, table)
-        else set()
-    )
-    # One cache for the whole run: faker pools build ONCE (eagerly, so a
-    # provider failure surfaces before any output streams) and every
-    # chunk samples from the same pool via the handler's cache consult.
-    pool_cache = PoolCache()
-    _warm_faker_pools(
-        plan,
+    state = _chunked_oracle._oracle_preflight(
+        config,
+        chunks,
         table=table,
-        registry=resolved_registry,
-        pool_cache=pool_cache,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+        pool_cache=None,
     )
-
-    def _masked() -> Iterator[pa.Table]:
-        row_offset = base_row_offset  # DGRN counter; inert for value-keyed strategies.
-        for chunk in _chain_first(first, chunk_iter):
-            if guard_passthrough_fk_columns:
-                reject_lossy_chunked_fk_passthrough(
-                    chunk, table=table, passthrough_fk_columns=guard_passthrough_fk_columns
-                )
-            # `hash_fk_key_columns` triggers the guard INDEPENDENTLY of
-            # `declared_fk_dtypes`: `dtype` is optional in config, so a hash FK
-            # key with no declared dtype leaves `declared_fk_dtypes` empty yet
-            # still needs predicate 12's real-type check (else an unsafe real
-            # date64/decimal256 reaches the kernel unchecked).
-            if declared_fk_dtypes or hash_fk_key_columns:
-                reject_mismatched_chunked_fk_declared_dtype(
-                    chunk,
-                    table=table,
-                    declared_fk_dtypes=declared_fk_dtypes,
-                    hash_fk_key_columns=hash_fk_key_columns,
-                )
-            # text_mask source must stay a chunk-stable string on EVERY chunk, not
-            # just the first (the iterable's dtype can drift); see `_chunked_text_mask.py`.
-            if text_mask_cols:
-                text_mask_gate.reject_unsafe_text_mask_chunk_schema(
-                    chunk.schema, text_mask_cols, table=table
-                )
-            # Same per-chunk check for code_set (see `_chunked_code_set.py`).
-            if code_set_cols:
-                code_set_gate.reject_unsafe_code_set_chunk_schema(
-                    chunk.schema, code_set_cols, table=table
-                )
-            # Same per-chunk check for bucket_perturb (see `_chunked_bucket_perturb.py`).
-            if bucket_perturb_cols:
-                bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
-                    chunk.schema, bucket_perturb_cols, table=table
-                )
-            # Per-chunk DGRN domain guard (no whole-stream row count); see `_chunked_dgrn.py`.
-            dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
-            result = adapter.run(
-                plan,
-                {table: chunk},
-                registry=resolved_registry,
-                pool_cache=pool_cache,
-                relationship_graph=graph,
-                namespace_registry=ns_registry,
-                unconfigured_column_policy=projection_policy,
-                key_provider=key_provider,
-                row_offset=row_offset,
-                code_set_records=code_set_records,
-            )
-            if chunk_result_sink is not None:
-                chunk_result_sink.append(result)
-            # Sprint 2 honesty pack H1 (dennis review 2026-07-04): the
-            # chunked/streaming path has no quarantine machinery, so a
-            # per-row strategy error (bucketize/date_shift format_error,
-            # code_set mask_error -- unreachable for an admitted code_set
-            # column here, since its per-value errors are chapter_preserve-
-            # only and chapter_preserve is excluded from admission)
-            # cannot be routed anywhere. Discarding it would silently keep
-            # the raw source value in the streamed output (the exact leak the
-            # full-frame path closes). Fail CLOSED: raise the moment any chunk
-            # reports a row error. This is correct and cheap here; opt-in
-            # quarantine is a full-frame-only feature. Applies identically to
-            # BOTH callers of this generator (the manual streaming entrypoint
-            # and the S3 auto-chunk route in run_pipeline via
-            # chunk_result_sink): a routed job is never eligible for
-            # row-error quarantine, matching the pre-existing manual-path
-            # policy -- `run_pipeline`'s `mask_row_errors` therefore treats
-            # any auto-chunked job that reaches that point as error-free by
-            # construction (this raise already fired otherwise).
-            if result.row_errors:
-                from decoy_engine.errors import RowErrorsFailedError
-
-                raise RowErrorsFailedError(result.row_errors)
-            row_offset = dgrn.advance_row_offset(row_offset, chunk)
-            masked = result.outputs[table]
-            if vault_writer is not None:
-                from decoy_engine.vault import collect_vault_entries
-
-                vault_writer.add(collect_vault_entries(config, {table: chunk}, {table: masked}))
-            yield masked
-
-    return _masked()
+    if state.first is None:
+        # Gate cleared (or the plan is unkeyed / pre-GA); there is genuinely
+        # nothing to mask.
+        return iter(())
+    return _chunked_oracle._oracle_masked(
+        state,
+        config=config,
+        table=table,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
+        base_row_offset=base_row_offset,
+        on_chunk=None,
+    )
 
 
 def _warm_faker_pools(

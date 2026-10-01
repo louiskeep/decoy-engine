@@ -332,6 +332,22 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the dispatcher already enforces, so it cannot admit a full-frame-only
         # strategy. It imports only execution.native modules, never physical.
         "src/decoy_engine/execution/native/_phase3_eligibility.py",
+        # Chunked dispatcher production contract: the public
+        # `run_mask_chunked` entry point and the pieces it is built from. The
+        # oracle's eager preflight and per-chunk loop move out of `_chunked.py`
+        # into `_chunked_oracle.py` so both routes share one validation path;
+        # `_chunked_entry.py` / `_chunked_schema_rule.py` / `_chunked_evidence.py`
+        # are the new entry, its output-schema rule, and its per-column route
+        # evidence; `_chunk_schema.py` makes the drift error an `ExecutionError`;
+        # `_dispatch.py` and `_chunk_masking.py` gain the `when:`/adapter vetoes,
+        # the per-column timing sample and the registry parameter. None imports
+        # `execution.physical`, and nothing in production calls the entry yet, so
+        # the import-direction sweeps and the fresh-import probe stay green.
+        "src/decoy_engine/execution/_chunked_oracle.py",
+        "src/decoy_engine/execution/native/_chunk_schema.py",
+        "src/decoy_engine/execution/native/_chunked_entry.py",
+        "src/decoy_engine/execution/native/_chunked_evidence.py",
+        "src/decoy_engine/execution/native/_chunked_schema_rule.py",
     }
     unexpected = [
         name
