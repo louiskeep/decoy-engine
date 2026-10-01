@@ -9,6 +9,8 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-01
+
 ### Added (`run_mask_chunked`: the chunked dispatcher as a public entry point, 2026-10-01)
 
 `decoy_engine.run_mask_chunked(config, chunks, *, table, engine_version, registry=None, adapter=None, vault_writer=None, chunk_result_sink=None, key_provider=None, base_row_offset=0, native_threads=1, route_evidence_sink=None, pool_cache=None)`
