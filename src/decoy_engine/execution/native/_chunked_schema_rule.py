@@ -47,6 +47,9 @@ def _string_output_is_fixed(col: dict[str, Any]) -> bool:
 class SchemaRule:
     string_columns: frozenset[str]
     passthrough_types: dict[str, pa.DataType]
+    # The first chunk's field (metadata and nullability included), reused for a
+    # later null-typed chunk so both routes yield the same field on every chunk.
+    passthrough_fields: dict[str, pa.Field]
 
 
 def build_schema_rule(config: dict[str, Any], *, table: str, first: pa.Table) -> SchemaRule:
@@ -62,11 +65,15 @@ def build_schema_rule(config: dict[str, Any], *, table: str, first: pa.Table) ->
     }
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     passthrough: dict[str, pa.DataType] = {}
+    passthrough_fields: dict[str, pa.Field] = {}
     for field in first.schema:
         col = configured.get(field.name)
         if col is None or (col.get("strategy") == "passthrough" and not _has_when(col)):
             passthrough[field.name] = field.type
-    return SchemaRule(string_columns=strings, passthrough_types=passthrough)
+            passthrough_fields[field.name] = field
+    return SchemaRule(
+        string_columns=strings, passthrough_types=passthrough, passthrough_fields=passthrough_fields
+    )
 
 
 def _safe_cast(column: Any, target: pa.DataType, *, table: str, name: str, chunk_index: int) -> Any:
@@ -100,7 +107,7 @@ def normalize_chunk(
             declared = rule.passthrough_types[name]
             if column.type != declared:
                 column = column.cast(declared)
-            field = source.schema.field(name).with_type(declared)
+            field = rule.passthrough_fields[name]
         elif name in rule.string_columns and column.type != pa.string():
             column = _safe_cast(
                 column, pa.string(), table=table, name=name, chunk_index=chunk_index

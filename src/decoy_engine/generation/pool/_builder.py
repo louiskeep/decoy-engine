@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 import weakref
 from typing import Any
@@ -45,6 +46,7 @@ def _config_hash(config: dict[str, Any] | None) -> str:
 _ADAPTER_SERIAL: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
 _ADAPTER_SERIAL_PINNED: dict[int, tuple[Any, int]] = {}
 _next_serial = 0
+_SERIAL_LOCK = threading.Lock()
 
 
 def _adapter_serial(adapter: Any) -> int:
@@ -56,20 +58,21 @@ def _adapter_serial(adapter: Any) -> int:
     is pinned instead (rare, and a registry holds its adapters for its life).
     """
     global _next_serial
-    try:
-        serial = _ADAPTER_SERIAL.get(adapter)
-        if serial is None:
-            _next_serial += 1
-            serial = _next_serial
-            _ADAPTER_SERIAL[adapter] = serial
-        return serial
-    except TypeError:
-        pinned = _ADAPTER_SERIAL_PINNED.get(id(adapter))
-        if pinned is None or pinned[0] is not adapter:
-            _next_serial += 1
-            pinned = (adapter, _next_serial)
-            _ADAPTER_SERIAL_PINNED[id(adapter)] = pinned
-        return pinned[1]
+    with _SERIAL_LOCK:
+        try:
+            serial = _ADAPTER_SERIAL.get(adapter)
+            if serial is None:
+                _next_serial += 1
+                serial = _next_serial
+                _ADAPTER_SERIAL[adapter] = serial
+            return serial
+        except TypeError:
+            pinned = _ADAPTER_SERIAL_PINNED.get(id(adapter))
+            if pinned is None or pinned[0] is not adapter:
+                _next_serial += 1
+                pinned = (adapter, _next_serial)
+                _ADAPTER_SERIAL_PINNED[id(adapter)] = pinned
+            return pinned[1]
 
 
 def _binding_token(registry: ProviderRegistry, provider: str) -> str:
