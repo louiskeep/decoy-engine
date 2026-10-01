@@ -1,18 +1,30 @@
-# Unified-slice benchmark (Task 4.5 D9): CERTIFIED 2026-09-20 (route activated)
+# Unified-slice benchmark (Task 4.5 D9): v1 CERTIFIED 2026-09-20 (historical), v2 recert pending
 
 Status: the statistical comparison harness (`bench_compare.py`) is **built**,
 covered by its own fast test suite
-(`tests/physical/test_bench_compare_harness.py`), and **D9-certified** as of
-2026-09-20 on the reference host (GCE n2-standard-8), re-run on the route-
-activation commit: `d9_certified: true`, all tiers pass — 10k RSS 1.023x, 100k
-1.048x, 1M 1.094x (under the per-tier band), wall ~4.3x faster at 1M. Cert
-artifact: `decoy-platform` `docs/product/release-1-validation-runs/2026-09-20-
-d9-recert/`. (The 2026-09-18 cert under `.../2026-09-18-tb6-50m/` remains the
-per-tier RSS-budget baseline; this recert confirms the activation commit is
-unchanged on the measured lane.) `d9_certified` only flips true after the
-harness's real 10k/100k/1M sweep runs on a bench node and every gate passes
-there; that sweep is a deliberate offline invocation (multi-minute per arm),
-never a CI step.
+(`tests/physical/test_bench_compare_harness.py`), and was **D9-certified**
+(schema v1, the retired ratio gate) as of 2026-09-20 on the reference host
+(GCE n2-standard-8), re-run on the route-activation commit: `d9_certified:
+true`, all tiers pass -- 10k RSS 1.023x, 100k 1.048x, 1M 1.094x (under the
+per-tier band), wall ~4.3x faster at 1M. Cert artifact: `decoy-platform`
+`docs/product/release-1-validation-runs/2026-09-20-d9-recert/`. (The
+2026-09-18 cert under `.../2026-09-18-tb6-50m/` remains the per-tier
+RSS-budget baseline; this recert confirms the activation commit is unchanged
+on the measured lane.) `d9_certified` only flips true after the harness's
+real 10k/100k/1M sweep runs on a bench node and every gate passes there;
+that sweep is a deliberate offline invocation (multi-minute per arm), never
+a CI step.
+
+**2026-09-30: the RSS ratio gate is retired; the 2026-09-20 v1 certification
+above is historical and no longer current.** The gate itself is now the
+absolute `--max-peak-rss-mb` ceiling below, and `d9_certified` additionally
+requires that ceiling to be declared and met (not just cert-shape sample
+sizes), so schema v2 (`harness_version: "2.0.0"`) needs its own
+recertification run on the reference host under `--max-peak-rss-mb 6656`
+before it can be cited as current. That v2 recert is PENDING -- the
+1.023x/1.048x/1.094x figures above are the measured record of the v1 run
+under the old per-tier ratio band; they describe what actually ran then, not
+a live v2 result. See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 
 ## What is here now
 
@@ -26,27 +38,32 @@ never a CI step.
 - `bench_compare.py` -- the statistical comparison driver. Runs the worker as a
   fresh subprocess per arm per rep, alternating off/on order by rep parity, and
   reports a paired per-rep ratio (median + inclusive p95), a seeded bootstrap
-  CI, and a peak-RSS ratio (`ru_maxrss` from `os.wait4`, the authoritative
-  terminal source) per tier. Every tier is gated by size (the 100k/1M ratio
-  rule, or the 10k point-difference-plus-50ms-floor rule), and RSS is gated at
-  every tier. A `run_ok`/`d9_certified` two-state model keeps a tiny smoke
-  invocation (`--tiers 200 --reps 2 --warmup 1`) honestly labelled
-  `SMOKE COMPLETE (d9_certified=false)` -- it can never print `D9 PASSED`.
-  `--require-cert` makes a non-certifying run exit non-zero, for the offline
-  cert invocation to use.
+  CI, and the peak-RSS evidence (`ru_maxrss` from `os.wait4`, the authoritative
+  terminal source, plus the ratio as information) per tier. Every tier is
+  gated by size (the 100k/1M ratio rule, or the 10k point-difference-plus-
+  50ms-floor rule) on wall time; RSS is gated against a declared absolute
+  `--max-peak-rss-mb` ceiling, at every tier. A `run_ok`/`d9_certified`
+  two-state model keeps a tiny smoke invocation (`--tiers 200 --reps 2
+  --warmup 1`) honestly labelled `SMOKE COMPLETE (d9_certified=false)` -- it
+  can never print `D9 PASSED`. `--require-cert` makes a non-certifying run
+  exit non-zero (and refuses to run at all without a declared ceiling), for
+  the offline cert invocation to use.
 
-## Owed: the offline D9 certification run
+## Owed: the v2 offline D9 certification run
 
-Before Task 4.6 caller activation, run the harness for real:
+The lane is already the production default (activated 2026-09-20 on the v1
+certification). The schema 2.0.0 harness has not yet certified a revision, so do
+not cite a v2 certification as current until this run passes:
 
 ```
 python scripts/bench-unified-slice/bench_compare.py --require-cert \
-    --out d9_cert_results.json
+    --max-peak-rss-mb 6656 --out d9_cert_results.json
 ```
 
 on a quiet bench node (the default tiers/reps/warmup/bootstrap already match
 the cert minima: 10k/100k/1M rows, 20 reps, 3 warmups, 10000 bootstrap
-resamples). `d9_certified: true` in the output plus the `D9 PASSED` banner is
+resamples; `6656` MiB is the documented 6.5 GiB-at-100M reference-host
+ceiling). `d9_certified: true` in the output plus the `D9 PASSED` banner is
 the certification; anything else (including a clean exit without
 `--require-cert`) is not.
 
@@ -82,8 +99,9 @@ does not attempt.
 - **Activation, enforced:** the `on` arm must actually activate the unified slice
   (`unified_slice_activated is True`); a silent legacy fallback fails closed.
 - **Thresholds:** 100k & 1M median new/old wall <= 1.10 and p95 <= 1.15; 10k median
-  regression <= max(10%, 50 ms); peak RSS <= `rss_budget_ratio(n_rows)` (1.10x below
-  1M, 1.25x at 1M and above).
+  regression <= max(10%, 50 ms); peak RSS <= a declared `--max-peak-rss-mb`
+  absolute ceiling (no ratio against the pandas arm's peak; retired 2026-09-30,
+  docs/plans/2026-09-30-retire-d9-rss-ratio.md).
 - **Fail-closed RSS:** a missing peak-RSS sample (per rep OR aggregate) is a
   FAILURE -- the RSS bound cannot be certified without the evidence, so the harness
   never silently drops it and reports PASS.
@@ -101,18 +119,14 @@ does not attempt.
   proven separately by `tests/physical/test_unified_slice_inertness.py`, so this
   is a known residual, not a false claim in shipped output. Making the harness
   observe (rather than trust) the off-arm route is a worker + harness change.
-- **RSS gate compares max-of-max (MEDIUM-3).** The peak-RSS gate is
-  `max_on_ru_maxrss <= rss_budget_ratio(n_rows) * max_off_ru_maxrss`, a per-tier
-  regression band: 1.10x for tiers below 1M, 1.25x at 1M and above. The wider 1M
-  band reflects the unified lane's larger transient reconstruction buffer, a
-  space-for-time trade against its ~4x wall-time win; absolute peak there (~1.8GB)
-  stays far under the 6.5GiB reference-host ceiling, so this is a regression band,
-  not a safety limit.
-  Under non-physical per-rep variance (one off rep spiking to match on's peak) a
-  paired memory regression could be masked. Peak RSS of this fixed deterministic
-  workload is near-constant across reps, so a real consistent regression still
-  trips the gate; paired per-rep RSS deltas would be strictly more sensitive and
-  are a possible spec follow-up, not a defect in the current implementation.
+- **RSS gate compares max-of-max (MEDIUM-3, historical).** This applied to the
+  since-retired ratio gate: `max_on_ru_maxrss <= rss_budget_ratio(n_rows) *
+  max_off_ru_maxrss`. As of 2026-09-30 the gate is `max_on_ru_maxrss <=
+  max_peak_rss_mb * 1024`, an absolute ceiling with no dependency on the
+  pandas arm's peak, so a masked paired regression on the off arm no longer
+  matters to this gate -- only the on arm's own peak does. Kept for history:
+  under the old gate, non-physical per-rep variance (one off rep spiking to
+  match on's peak) could mask a paired memory regression.
 
 ## Separate follow-up: FOLLOWUP-BENCH-DRIVER-HARDEN
 
@@ -122,15 +136,9 @@ shared tooling unilaterally. Harden it with its own consumers in scope: None-saf
 tier-summary formatting (a `None` `hash_tput` must not crash the summary line) and
 fail-closed per-rep RSS aggregation.
 
-## Separate follow-up: FOLLOWUP-UNIFIED-EXCEPTION-BOUNDARY (before Task 4.6)
+## Done: the lane's exception boundary
 
-The lane's fail-closed boundary in `src/decoy_engine/execution/_unified_slice.py`
-catches only `ShadowDifference`. For an ALREADY-ADMITTED job, an unexpected raise
-from `compile_physical_plan`, a `build_live_physical_plan_inputs` helper, or the
-native kernel mid-batch would propagate to the caller (flag-on) rather than reroute
-to the legacy route. No known trigger exists given how narrow admission is, and the
-lane is default-off with caller activation deferred, so this does not block the 4.5
-merge. Before Task 4.6 flips any caller default on, widen the boundary so any
-unexpected exception on an admitted job also fails closed (reroute to the legacy
-route, or raise `UnifiedSliceInvariantError`), never a raw compiler/kernel type.
-(dennis final-review LOW-1, 2026-09-15.)
+An unexpected exception on an admitted job no longer propagates as a raw
+compiler or kernel type: `src/decoy_engine/execution/_unified_slice.py` re-raises
+`UnifiedSliceInvariantError` and reroutes any other exception to the legacy route
+with a warning log.

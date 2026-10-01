@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from decoy_engine.execution.native._companion_status import native_companion_status
@@ -146,6 +147,10 @@ def _base_large_tier_gate_kwargs() -> dict[str, Any]:
         "ci_high": 1.05,
         "off_rss_max_kb": 100_000,
         "on_rss_max_kb": 105_000,
+        # A generous declared ceiling so the wall/CI-focused tests below stay
+        # green on the rss gate without caring about its boundary -- the
+        # boundary itself gets its own dedicated tests.
+        "max_peak_rss_mb": 200.0,
     }
 
 
@@ -189,6 +194,7 @@ def test_small_tier_point_pass_but_ci_fail() -> None:
         ci_high=1.15,  # > 1 + max(0.10, 0.050/1.0) = 1.10 -> CI FAILS
         off_rss_max_kb=1000,
         on_rss_max_kb=1000,
+        max_peak_rss_mb=None,
     )
     assert gates["point"] is True
     assert gates["ci"] is False
@@ -207,6 +213,7 @@ def test_small_tier_50ms_floor_pass() -> None:
         ci_high=1.0 + max(0.10, 0.050 / 0.100),  # exactly at the CI floor
         off_rss_max_kb=1000,
         on_rss_max_kb=1000,
+        max_peak_rss_mb=None,
     )
     assert gates["point"] is True
 
@@ -221,41 +228,186 @@ def test_small_tier_50ms_floor_fail() -> None:
         ci_high=1.0,
         off_rss_max_kb=1000,
         on_rss_max_kb=1000,
+        max_peak_rss_mb=None,
     )
     assert gates["point"] is False
 
 
-def test_rss_gate_pass_and_fail() -> None:
-    passing = bc.apply_gates(50_000, **{**_base_large_tier_gate_kwargs(), "on_rss_max_kb": 110_000})
-    assert passing["rss"] is True
-    failing = bc.apply_gates(50_000, **{**_base_large_tier_gate_kwargs(), "on_rss_max_kb": 110_001})
-    assert failing["rss"] is False
+# ---------------------------------------------------------------------------
+# Absolute peak-RSS ceiling gate; the ratio gate is retired
+# (docs/plans/2026-09-30-retire-d9-rss-ratio.md). `max_peak_rss_mb` is None
+# when no ceiling was declared; a declared ceiling is compared inclusively
+# against `on_rss_max_kb` in KiB.
+# ---------------------------------------------------------------------------
 
 
-def test_rss_gate_fails_closed_on_missing_evidence() -> None:
-    gates = bc.apply_gates(50_000, **{**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 0})
-    assert gates["rss"] is False
+def test_rss_gate_not_declared_is_null_not_false() -> None:
+    """No ceiling means no verdict -- `None`, not a silent pass or fail."""
+    kwargs = {**_base_large_tier_gate_kwargs(), "max_peak_rss_mb": None}
+    assert bc.apply_gates(50_000, **kwargs)["rss"] is None
 
 
-def test_rss_budget_ratio_is_per_tier() -> None:
-    assert bc.rss_budget_ratio(10_000) == 1.10
-    assert bc.rss_budget_ratio(100_000) == 1.10
-    assert bc.rss_budget_ratio(999_999) == 1.10
-    assert bc.rss_budget_ratio(1_000_000) == 1.25
-    assert bc.rss_budget_ratio(5_000_000) == 1.25
+def test_rss_gate_boundary_equal_to_ceiling_passes() -> None:
+    ceiling_mib = 100.0
+    kwargs = {
+        **_base_large_tier_gate_kwargs(),
+        "on_rss_max_kb": int(ceiling_mib * 1024),
+        "max_peak_rss_mb": ceiling_mib,
+    }
+    assert bc.apply_gates(50_000, **kwargs)["rss"] is True
 
 
-def test_rss_gate_1m_tier_uses_relaxed_budget() -> None:
-    # A 1.20x overshoot: rejected at the tight-budget tiers, accepted at 1M.
-    kwargs = {**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 100_000, "on_rss_max_kb": 120_000}
-    assert bc.apply_gates(100_000, **kwargs)["rss"] is False
-    assert bc.apply_gates(1_000_000, **kwargs)["rss"] is True
+def test_rss_gate_boundary_one_kib_over_ceiling_fails() -> None:
+    ceiling_mib = 100.0
+    kwargs = {
+        **_base_large_tier_gate_kwargs(),
+        "on_rss_max_kb": int(ceiling_mib * 1024) + 1,
+        "max_peak_rss_mb": ceiling_mib,
+    }
+    assert bc.apply_gates(50_000, **kwargs)["rss"] is False
 
 
-def test_rss_gate_1m_tier_boundary() -> None:
-    base = {**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 100_000}
-    assert bc.apply_gates(1_000_000, **{**base, "on_rss_max_kb": 125_000})["rss"] is True
-    assert bc.apply_gates(1_000_000, **{**base, "on_rss_max_kb": 125_001})["rss"] is False
+def test_rss_gate_passes_at_1_5x_pandas_peak_when_under_ceiling() -> None:
+    """A Rust arm using 1.5x the pandas peak is fine as long as it fits an
+    absolute ceiling -- the retired ratio gate would have failed this at
+    any tier."""
+    kwargs = {
+        **_base_large_tier_gate_kwargs(),
+        "off_rss_max_kb": 100_000,
+        "on_rss_max_kb": 150_000,
+        "max_peak_rss_mb": 200.0,
+    }
+    assert bc.apply_gates(50_000, **kwargs)["rss"] is True
+
+
+def test_rss_gate_fails_closed_on_missing_evidence_even_with_ceiling() -> None:
+    kwargs = {**_base_large_tier_gate_kwargs(), "off_rss_max_kb": 0, "max_peak_rss_mb": 200.0}
+    assert bc.apply_gates(50_000, **kwargs)["rss"] is False
+
+
+# ---------------------------------------------------------------------------
+# `_check_gates`: the prior `any(v is False for v in gates.values())` check
+# fails OPEN on a `None` wall gate, a dropped key, and a falsy-but-not-
+# identical value such as `numpy.bool_(False)` (an `is False` identity check
+# never matches across types). Each of these must now raise
+# `FailClosedError`.
+# ---------------------------------------------------------------------------
+
+
+def _small_tier_gates(**overrides: Any) -> dict[str, Any]:
+    gates: dict[str, Any] = {"point": True, "ci": True, "rss": None}
+    gates.update(overrides)
+    return gates
+
+
+def test_check_gates_accepts_the_real_all_pass_shape() -> None:
+    bc._check_gates(_small_tier_gates(), 500, None)  # must not raise
+    bc._check_gates({"median": True, "p95": True, "ci": True, "rss": True}, 50_000, 10.0)
+
+
+def test_check_gates_rejects_none_wall_gate() -> None:
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=None), 500, None)
+
+
+def test_check_gates_rejects_missing_key() -> None:
+    gates = _small_tier_gates()
+    del gates["point"]
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(gates, 500, None)
+
+
+def test_check_gates_rejects_extra_key() -> None:
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(unexpected=True), 500, None)
+
+
+def test_check_gates_rejects_numpy_bool_false() -> None:
+    """`numpy.bool_(False) is False` is `False` (different objects, same
+    truthiness) -- exactly the identity-check blind spot the old `any(v is
+    False ...)` check missed."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=np.bool_(False)), 500, None)
+
+
+def test_check_gates_rejects_rss_true_when_ceiling_undeclared() -> None:
+    """`rss` may be `None` only when no ceiling was declared; `True` (or
+    anything else) in that state is itself a defect worth catching, not a
+    lucky pass."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(rss=True), 500, None)
+
+
+def test_check_gates_rejects_rss_none_when_ceiling_declared() -> None:
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(rss=None), 500, 200.0)
+
+
+def test_check_gates_rejects_int_one_for_a_wall_gate() -> None:
+    """`1 == True` but `1 is not True`. An equality-based check (`value !=
+    expected`) would accept this; the docstring's identity promise requires
+    the EXACT `True` singleton, so this must still raise."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=1), 500, None)
+
+
+def test_check_gates_rejects_numpy_bool_true_for_a_wall_gate() -> None:
+    """Same identity-vs-equality distinction as the int-1 case above:
+    `numpy.bool_(True) == True` but `numpy.bool_(True) is not True`."""
+    with pytest.raises(bc.FailClosedError):
+        bc._check_gates(_small_tier_gates(point=np.bool_(True)), 500, None)
+
+
+# ---------------------------------------------------------------------------
+# Integration-level proof that `_run_tier` is actually WIRED to
+# `_check_gates`: the unit tests above call `_check_gates` directly, so they
+# would keep passing even if the `_run_tier` call site silently reverted to
+# the old fail-open `any(v is False for v in gates.values())` check. These
+# monkeypatch `apply_gates` itself to return a malformed dict and drive the
+# real `_run_tier` path.
+# ---------------------------------------------------------------------------
+
+
+def test_run_tier_integration_rejects_none_wall_gate_from_apply_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bc, "apply_gates", lambda *a, **k: {"point": None, "ci": True, "rss": None})
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    with pytest.raises(bc.FailClosedError):
+        bc._run_tier(
+            500,
+            warmup=0,
+            reps=2,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=None,
+        )
+
+
+def test_run_tier_integration_rejects_numpy_bool_false_from_apply_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bc, "apply_gates", lambda *a, **k: {"point": np.bool_(False), "ci": True, "rss": None}
+    )
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    with pytest.raises(bc.FailClosedError):
+        bc._run_tier(
+            500,
+            warmup=0,
+            reps=2,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=None,
+        )
 
 
 def test_bootstrap_ci_is_seeded_and_reproducible() -> None:
@@ -313,7 +465,9 @@ def test_tiny_run_prints_smoke_never_d9_passed(monkeypatch: pytest.MonkeyPatch) 
     off1, on1 = _valid_pair(200)
     off2, on2 = _valid_pair(200)
     runner = _make_runner([off1, off2], [on1, on2])
-    config = bc.RunConfig(tiers=[200], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0)
+    config = bc.RunConfig(
+        tiers=[200], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=None
+    )
     result = bc.run_bench_compare(config, arm_runner=runner)
 
     assert result["run_ok"] is True
@@ -336,7 +490,14 @@ def _assert_fails_closed(
     runner = _make_runner(off_results, on_results)
     with pytest.raises(bc.FailClosedError):
         bc._run_tier(
-            n_rows, warmup=0, reps=1, bootstrap=10, seed=1, timeout_s=5.0, arm_runner=runner
+            n_rows,
+            warmup=0,
+            reps=1,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=None,
         )
 
 
@@ -487,12 +648,292 @@ def test_fail_closed_gate_breach_on_custom_tier() -> None:
     off = _raw_ok(_record_json(500, False, wall_s=1.0))
     on = _raw_ok(_record_json(500, True, wall_s=5.0))  # 5x regression
     runner = _make_runner([off, off], [on, on])
-    config = bc.RunConfig(tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0)
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=None
+    )
     result = bc.run_bench_compare(config, arm_runner=runner)
     assert result["run_ok"] is False
     assert result["d9_certified"] is False
     assert bc.banner_for(result) == "D9 FAILED"
     assert bc.exit_code_for(result, require_cert=False) != 0
+
+
+# ---------------------------------------------------------------------------
+# Memory-gate state-transition table (docs/plans/2026-09-30-retire-d9-rss-
+# ratio.md's Design section): not-declared, declared-and-exceeded, declared-
+# and-met, and the cert-shape combination with `memory_gate_declared`.
+# ---------------------------------------------------------------------------
+
+
+def test_memory_gate_not_declared_run_ok_true_but_uncertified() -> None:
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=None
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+    assert result["run_ok"] is True
+    assert result["d9_certified"] is False
+    assert result["memory_gate_declared"] is False
+    assert result["tiers"]["500"]["gates"]["rss"] is None
+
+
+def test_memory_gate_declared_and_exceeded_fails_run() -> None:
+    off = _raw_ok(_record_json(500, False, wall_s=1.0), ru_maxrss_kb=100_000)
+    on = _raw_ok(_record_json(500, True, wall_s=1.0), ru_maxrss_kb=300_000)  # well past the ceiling
+    runner = _make_runner([off, off], [on, on])
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=100.0
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+    assert result["run_ok"] is False
+    assert result["d9_certified"] is False
+    assert result["memory_gate_declared"] is True
+    # The breach must be attributable to the rss gate specifically, not just
+    # "some gate failed" -- the other gates (point/ci) pass at these walls.
+    assert "'rss': False" in result["error"]
+
+
+def test_fail_closed_missing_ru_maxrss_even_with_ceiling_declared() -> None:
+    """Missing RSS evidence is fatal regardless of whether a ceiling was
+    declared -- a declared ceiling cannot certify a peak it never measured."""
+    off = _raw_ok(_record_json(500, False), ru_maxrss_kb=None)
+    on = _raw_ok(_record_json(500, True))
+    runner = _make_runner([off], [on])
+    with pytest.raises(bc.FailClosedError):
+        bc._run_tier(
+            500,
+            warmup=0,
+            reps=1,
+            bootstrap=10,
+            seed=1,
+            timeout_s=5.0,
+            arm_runner=runner,
+            max_peak_rss_mb=100.0,
+        )
+
+
+def test_memory_gate_declared_and_met_passes_but_needs_cert_shape_too() -> None:
+    off = _raw_ok(_record_json(500, False, wall_s=1.0), ru_maxrss_kb=100_000)
+    on = _raw_ok(_record_json(500, True, wall_s=1.0), ru_maxrss_kb=100_000)
+    runner = _make_runner([off, off], [on, on])
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=200.0
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+    assert result["run_ok"] is True
+    assert result["tiers"]["500"]["gates"]["rss"] is True
+    assert result["memory_gate_declared"] is True
+    # A custom tiny tier is never cert-shape, so a met memory gate alone does
+    # not certify -- cert_shape and run_ok are still both required.
+    assert result["d9_certified"] is False
+
+
+def test_full_cert_shape_with_declared_ceiling_certifies() -> None:
+    """The only combination that yields `d9_certified=True`: the exact cert
+    tiers/reps/warmup/bootstrap AND a declared, met peak-RSS ceiling. Uses a
+    stub `ArmRunner` (no real subprocess) so the full 3-tier cert shape stays
+    a fast, CI-safe test."""
+    tiers = [10_000, 100_000, 1_000_000]
+    off_queue: list[bc.RawArmResult] = []
+    on_queue: list[bc.RawArmResult] = []
+    for n_rows in tiers:
+        for _ in range(3 + 20):  # cert-minimum warmup + reps
+            off, on = _valid_pair(n_rows, off_wall=1.0, on_wall=1.0)
+            off_queue.append(off)
+            on_queue.append(on)
+    runner = _make_runner(off_queue, on_queue)
+    config = bc.RunConfig(
+        tiers=tiers,
+        reps=20,
+        warmup=3,
+        bootstrap=2000,
+        seed=1,
+        timeout_s=5.0,
+        max_peak_rss_mb=10.0,  # `_valid_pair`'s default ru_maxrss_kb=1000 is well under 10 MiB
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+    assert result["run_ok"] is True
+    assert result["memory_gate_declared"] is True
+    assert result["d9_certified"] is True
+
+
+def test_full_cert_shape_without_declared_ceiling_is_never_certified() -> None:
+    """The exact cert tiers/reps/warmup/bootstrap alone must NOT certify --
+    a real, declared, met ceiling is required too. This is the direct
+    mutation-kill
+    test for `and memory_gate_declared` in `run_bench_compare`'s
+    `d9_certified` expression: deleting that clause leaves `run_ok and
+    cert_shape` both `True` here, which would flip every assertion below."""
+    tiers = [10_000, 100_000, 1_000_000]
+    off_queue: list[bc.RawArmResult] = []
+    on_queue: list[bc.RawArmResult] = []
+    for n_rows in tiers:
+        for _ in range(3 + 20):  # cert-minimum warmup + reps
+            off, on = _valid_pair(n_rows, off_wall=1.0, on_wall=1.0)
+            off_queue.append(off)
+            on_queue.append(on)
+    runner = _make_runner(off_queue, on_queue)
+    config = bc.RunConfig(
+        tiers=tiers,
+        reps=20,
+        warmup=3,
+        bootstrap=2000,
+        seed=1,
+        timeout_s=5.0,
+        max_peak_rss_mb=None,  # no ceiling declared
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+    assert result["run_ok"] is True
+    for tier in result["tiers"].values():
+        assert tier["gates"]["rss"] is None
+    assert result["memory_gate_declared"] is False
+    assert result["d9_certified"] is False
+    assert bc.banner_for(result) != "D9 PASSED"
+    assert bc.exit_code_for(result, require_cert=True) != 0
+
+
+def _unreachable_arm_runner(*_args: Any, **_kwargs: Any) -> bc.RawArmResult:
+    raise AssertionError("must not measure before --require-cert validation")
+
+
+def test_require_cert_without_ceiling_fails_before_any_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--require-cert` with no declared ceiling can never certify (D9 gains
+    no d9_certified without `memory_gate_declared`), so it must be refused
+    up front -- before the stale-artifact placeholder is even written,
+    unlike an ordinary run-time gate breach."""
+    out_path = tmp_path / "out.json"
+    monkeypatch.setattr(bc, "_spawn_worker_arm", _unreachable_arm_runner)
+    with pytest.raises(SystemExit) as exc_info:
+        bc.main(["--require-cert", "--out", str(out_path)])
+    assert exc_info.value.code == 2
+    assert not out_path.exists()
+
+
+def test_require_cert_rejected_without_ceiling_at_arg_parse() -> None:
+    _expect_exit_2(["--require-cert"])
+
+
+def test_require_cert_accepted_with_ceiling_declared() -> None:
+    args = bc.parse_and_validate_args(["--require-cert", "--max-peak-rss-mb", "6656"])
+    assert args.require_cert is True
+    assert args.max_peak_rss_mb == 6656.0
+
+
+# ---------------------------------------------------------------------------
+# --max-peak-rss-mb CLI validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
+def test_cli_rejects_bad_max_peak_rss_mb(value: str) -> None:
+    _expect_exit_2(["--max-peak-rss-mb", value])
+
+
+def test_cli_accepts_valid_max_peak_rss_mb() -> None:
+    args = bc.parse_and_validate_args(["--max-peak-rss-mb", "6656"])
+    assert args.max_peak_rss_mb == 6656.0
+
+
+def test_cli_max_peak_rss_mb_defaults_to_none() -> None:
+    args = bc.parse_and_validate_args([])
+    assert args.max_peak_rss_mb is None
+
+
+def test_cli_rejects_non_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RSS evidence (`os.wait4`'s `ru_maxrss`) is Linux-only; a non-Linux
+    run must be refused rather than silently mis-scaled (macOS reports
+    `ru_maxrss` in bytes, not KiB)."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _expect_exit_2([])
+
+
+# ---------------------------------------------------------------------------
+# 2.0.0 result schema
+# ---------------------------------------------------------------------------
+
+
+def test_harness_version_is_2_0_0() -> None:
+    assert bc.HARNESS_VERSION == "2.0.0"
+
+
+def test_result_schema_v2_keys_present_and_ratio_gate_gone() -> None:
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=None
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+
+    assert result["harness_version"] == "2.0.0"
+    assert result["memory_gate_declared"] is False
+    assert result["max_peak_rss_mb"] is None
+    assert "d9_certified" in result  # kept
+
+    tier = result["tiers"]["500"]
+    assert tier["gates"]["rss"] is None
+    # Information fields kept: the arms' peaks and the ratio, for a human
+    # reading the report even when no ceiling was declared.
+    assert "off_rss_max_kb" in tier
+    assert "on_rss_max_kb" in tier
+    assert "rss_ratio" in tier
+    assert not hasattr(bc, "rss_budget_ratio")
+
+
+_D9_TOP_LEVEL_KEYS = frozenset(
+    {
+        "run_ok",
+        "d9_certified",
+        "harness_version",
+        "seed",
+        "descoped",
+        "memory_gate_declared",
+        "max_peak_rss_mb",
+        "tiers",
+    }
+)
+_D9_TIER_KEYS = frozenset(
+    {
+        "n_rows",
+        "warmups",
+        "reps",
+        "off_wall_median",
+        "on_wall_median",
+        "off_wall_p95",
+        "on_wall_p95",
+        "ratio_median",
+        "ratio_p95",
+        "ci_low",
+        "ci_high",
+        "off_rss_max_kb",
+        "on_rss_max_kb",
+        "rss_ratio",
+        "gates",
+        "raw_reps",
+    }
+)
+
+
+def test_result_exact_key_sets_top_level_tier_and_gates() -> None:
+    """The schema test above checks presence/absence of specific keys; this
+    one pins the EXACT set at every level (a stray or accidentally-dropped
+    key elsewhere would slip past a presence-only check)."""
+    off1, on1 = _valid_pair(500)
+    off2, on2 = _valid_pair(500)
+    runner = _make_runner([off1, off2], [on1, on2])
+    config = bc.RunConfig(
+        tiers=[500], reps=2, warmup=0, bootstrap=10, seed=1, timeout_s=5.0, max_peak_rss_mb=200.0
+    )
+    result = bc.run_bench_compare(config, arm_runner=runner)
+
+    assert set(result) == _D9_TOP_LEVEL_KEYS  # no "error" key on a clean run
+    tier = result["tiers"]["500"]
+    assert set(tier) == _D9_TIER_KEYS
+    assert set(tier["gates"]) == bc._SMALL_TIER_GATE_KEYS  # n_rows=500 is the small-tier shape
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +989,14 @@ def test_reps_two_computes_p95_and_ci_without_quantiles_error() -> None:
     off2, on2 = _valid_pair(500, off_wall=1.0, on_wall=0.99)
     runner = _make_runner([off1, off2], [on1, on2])
     tier = bc._run_tier(
-        500, warmup=0, reps=2, bootstrap=50, seed=1, timeout_s=5.0, arm_runner=runner
+        500,
+        warmup=0,
+        reps=2,
+        bootstrap=50,
+        seed=1,
+        timeout_s=5.0,
+        arm_runner=runner,
+        max_peak_rss_mb=None,
     )
     assert math.isfinite(tier["ratio_p95"])
     assert math.isfinite(tier["ci_high"])
@@ -590,6 +1038,8 @@ def test_require_cert_flag_changes_exit_status_for_noncert_run(
             "--out",
             str(out_with),
             "--require-cert",
+            "--max-peak-rss-mb",
+            "1000",  # generous: well above _valid_pair's default 1000kb ru_maxrss
         ]
     )
     assert rc_with != 0
@@ -651,7 +1101,14 @@ def test_warmups_excluded_from_stats_and_pairing_preserved() -> None:
     on_queue = [on for _off, on in pairs]
     runner = _make_runner(off_queue, on_queue)
     tier = bc._run_tier(
-        n_rows, warmup=1, reps=4, bootstrap=50, seed=1, timeout_s=5.0, arm_runner=runner
+        n_rows,
+        warmup=1,
+        reps=4,
+        bootstrap=50,
+        seed=1,
+        timeout_s=5.0,
+        arm_runner=runner,
+        max_peak_rss_mb=None,
     )
     assert tier["reps"] == 4
     assert tier["off_wall_median"] < 2.0  # the 9.0s warmup never leaked into stats
@@ -783,16 +1240,26 @@ def test_child_lifecycle_exit_between_poll_and_kill_race_is_swallowed(
     not native_companion_status().ok,
     reason="compiled decoy-engine-native companion unavailable",
 )
-def test_real_worker_tiny_tier_smoke(tmp_path: Path) -> None:
-    """The plan's own acceptance smoke: `--tiers 200 --reps 2 --warmup 1`
-    against the REAL frozen worker. Guarded on the compiled companion (the
+def test_real_worker_tier_smoke(tmp_path: Path) -> None:
+    """Acceptance smoke against the REAL frozen worker: `--tiers 20000 --reps 2
+    --warmup 1`. The tier is large enough that the unified lane's wall-time
+    lead (about 3x at 10k rows on the reference host) dominates timing noise on
+    a shared machine; at 200 rows fixed overhead decides the wall gates and the
+    test flaked. Guarded on the compiled companion (the
     hash columns in the fixed nine-column workload need it to activate the
-    unified slice); companion-absent legs skip this test entirely."""
+    unified slice); companion-absent legs skip this test entirely.
+
+    A generous 4096 MiB ceiling exercises the real (declared, met) memory
+    gate end to end against real `ru_maxrss` evidence, not just a stub; the
+    magnitude bounds (10 MiB-4 GiB) catch a badly wrong unit (e.g. bytes
+    instead of KiB) without pinning an exact figure this tiny pandas/pyarrow
+    process could drift on.
+    """
     out_path = tmp_path / "smoke.json"
     rc = bc.main(
         [
             "--tiers",
-            "200",
+            "20000",
             "--reps",
             "2",
             "--warmup",
@@ -801,13 +1268,17 @@ def test_real_worker_tiny_tier_smoke(tmp_path: Path) -> None:
             str(out_path),
             "--timeout",
             "120",
+            "--max-peak-rss-mb",
+            "4096",
         ]
     )
     assert rc == 0
     result = json.loads(out_path.read_text())
     assert result["run_ok"] is True
     assert result["d9_certified"] is False
-    tier = result["tiers"]["200"]
+    tier = result["tiers"]["20000"]
     assert tier["off_rss_max_kb"] > 0
     assert tier["on_rss_max_kb"] > 0
     assert tier["ratio_median"] > 0
+    assert tier["gates"]["rss"] is True
+    assert 10 * 1024 <= tier["on_rss_max_kb"] <= 4 * 1024 * 1024

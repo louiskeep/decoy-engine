@@ -56,7 +56,7 @@ WORKER_PATH = HERE / "bench_worker_gen.py"
 VENV_PY = Path(sys.executable)
 _WORKER_ENV_BASE = {**os.environ, "PYTHONPATH": str(ENGINE / "src")}
 
-HARNESS_VERSION = "1.0.0"
+HARNESS_VERSION = "2.0.0"
 # Fixed default seed: the bootstrap CI must be reproducible run-to-run,
 # never drawn from unseeded randomness.
 _DEFAULT_SEED = 20260917
@@ -84,8 +84,10 @@ _SWEEP_THRESHOLD_OVERRIDE = 1
 _CERT_MIN_REPS = 20
 _CERT_MIN_WARMUP = 3
 _CERT_MIN_BOOTSTRAP = 10_000
-_DEFAULT_MAX_RSS_RATIO = 1.25
-_DEFAULT_MAX_RSS_DELTA_KB = 51_200  # 50 MB
+# The RSS gate is an ABSOLUTE ceiling (retired 2026-09-30, the old
+# ratio+delta gate is gone -- docs/plans/2026-09-30-retire-d9-rss-ratio.md).
+# There is no default: no declared `--max-peak-rss-mb` means a
+# recommendation can never be emitted.
 
 
 def is_full_sweep_shape(
@@ -213,28 +215,29 @@ def apply_rss_gate(
     cells: Sequence[dict[str, Any]],
     *,
     recommended_tier: int,
-    max_rss_ratio: float,
-    max_rss_delta_kb: int,
+    max_peak_rss_mb: float | None,
 ) -> RssGateResult:
     """A recommendation is only safe to emit if, at and above the
-    recommended tier, pooling's peak-RSS cost stays within budget on
-    EVERY measured (type, n) cell in that range -- not just the type that
-    produced the max crossover. `cells` are per-(type, n_rows) records
-    carrying `n_rows`, `rss_ratio`, and `rss_delta_kb` (as `_run_cell`
-    produces below)."""
+    recommended tier, the pooled arm's peak RSS stays under a declared
+    absolute ceiling on EVERY measured (type, n) cell in that range -- not
+    just the type that produced the max crossover. `cells` are per-(type,
+    n_rows) records carrying `n_rows` and `on_rss_max_kb` (as `_run_cell`
+    produces below). No declared ceiling means no recommendation, ever --
+    there is nothing to gate against."""
+    if max_peak_rss_mb is None:
+        return RssGateResult(
+            ok=False,
+            reasons=["--max-peak-rss-mb not declared; a recommendation requires a ceiling"],
+        )
+    ceiling_kb = max_peak_rss_mb * 1024
     reasons: list[str] = []
     for cell in cells:
         if cell["n_rows"] < recommended_tier:
             continue
-        if cell["rss_ratio"] > max_rss_ratio:
+        if cell["on_rss_max_kb"] > ceiling_kb:
             reasons.append(
-                f"{cell['faker_type']}@{cell['n_rows']}: rss_ratio {cell['rss_ratio']:.3f} "
-                f"> max_rss_ratio {max_rss_ratio}"
-            )
-        if cell["rss_delta_kb"] > max_rss_delta_kb:
-            reasons.append(
-                f"{cell['faker_type']}@{cell['n_rows']}: rss_delta_kb {cell['rss_delta_kb']} "
-                f"> max_rss_delta_kb {max_rss_delta_kb}"
+                f"{cell['faker_type']}@{cell['n_rows']}: on_rss_max_kb {cell['on_rss_max_kb']} "
+                f"> ceiling {ceiling_kb:.0f}kb ({max_peak_rss_mb} MiB)"
             )
     return RssGateResult(ok=not reasons, reasons=reasons)
 
@@ -243,8 +246,7 @@ def build_recommendation(
     per_type_crossover: dict[str, CrossoverResult],
     cells: Sequence[dict[str, Any]],
     *,
-    max_rss_ratio: float,
-    max_rss_delta_kb: int,
+    max_peak_rss_mb: float | None,
 ) -> dict[str, Any]:
     """Aggregate recommendation = MAX of every type's CONFIRMED crossover
     tier. Withheld (with a reason) if any measured type never confirmed a
@@ -259,12 +261,16 @@ def build_recommendation(
             "withheld_reason": f"no confirmed crossover for type(s): {', '.join(unconfirmed)}",
         }
     raw_max = max(c.tier for c in per_type_crossover.values() if c.tier is not None)
-    rss = apply_rss_gate(
-        cells,
-        recommended_tier=raw_max,
-        max_rss_ratio=max_rss_ratio,
-        max_rss_delta_kb=max_rss_delta_kb,
-    )
+    if max_peak_rss_mb is None:
+        # Distinct from a MEASURED gate failure below: there is nothing to
+        # measure against without a declared ceiling, so this is withheld
+        # for a different reason and must read differently.
+        return {
+            "recommended_threshold_raw": raw_max,
+            "recommended_threshold_rounded": None,
+            "withheld_reason": "--max-peak-rss-mb not declared; a recommendation requires a ceiling",
+        }
+    rss = apply_rss_gate(cells, recommended_tier=raw_max, max_peak_rss_mb=max_peak_rss_mb)
     if not rss.ok:
         return {
             "recommended_threshold_raw": raw_max,
@@ -685,8 +691,7 @@ class RunConfig:
     bootstrap: int
     seed: int
     timeout_s: float
-    max_rss_ratio: float
-    max_rss_delta_kb: int
+    max_peak_rss_mb: float | None
 
 
 def run_bench_compare(config: RunConfig, arm_runner: ArmRunner) -> dict[str, Any]:
@@ -737,8 +742,7 @@ def run_bench_compare(config: RunConfig, arm_runner: ArmRunner) -> dict[str, Any
         recommendation = build_recommendation(
             per_type_crossover,
             list(cells.values()),
-            max_rss_ratio=config.max_rss_ratio,
-            max_rss_delta_kb=config.max_rss_delta_kb,
+            max_peak_rss_mb=config.max_peak_rss_mb,
         )
         recommendation["per_type_crossover"] = {
             t: {"tier": c.tier, "boundary_fallback": c.boundary_fallback}
@@ -750,8 +754,8 @@ def run_bench_compare(config: RunConfig, arm_runner: ArmRunner) -> dict[str, Any
         "full_sweep": full_sweep,
         "harness_version": HARNESS_VERSION,
         "seed": config.seed,
-        "max_rss_ratio": config.max_rss_ratio,
-        "max_rss_delta_kb": config.max_rss_delta_kb,
+        "memory_gate_declared": config.max_peak_rss_mb is not None,
+        "max_peak_rss_mb": config.max_peak_rss_mb,
         "cells": cells,
         "recommendation": recommendation,
     }
@@ -789,8 +793,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--bootstrap", type=int, default=10_000)
     p.add_argument("--seed", type=int, default=_DEFAULT_SEED)
     p.add_argument("--timeout", type=float, default=600.0, help="per arm-run, seconds")
-    p.add_argument("--max-rss-ratio", type=float, default=_DEFAULT_MAX_RSS_RATIO)
-    p.add_argument("--max-rss-delta-kb", type=int, default=_DEFAULT_MAX_RSS_DELTA_KB)
+    p.add_argument(
+        "--max-peak-rss-mb",
+        type=float,
+        default=None,
+        help=(
+            "absolute ceiling in MiB for the pooled arm's peak RSS (Linux ru_maxrss) "
+            "at/above the recommended tier; omit and a recommendation is always withheld"
+        ),
+    )
     return p
 
 
@@ -802,6 +813,15 @@ def parse_and_validate_args(
     bad invocation never reaches measurement or writes a stale artifact."""
     parser = parser or build_arg_parser()
     args = parser.parse_args(argv)
+
+    if sys.platform != "linux":
+        # `ru_maxrss` units are platform-dependent (KiB on Linux, bytes on
+        # macOS); this harness's math assumes KiB throughout, so a non-Linux
+        # run is refused rather than silently mis-scaling every RSS figure.
+        parser.error(
+            f"this harness's RSS evidence (os.wait4 ru_maxrss) is Linux-only; "
+            f"refusing on sys.platform={sys.platform!r}"
+        )
 
     try:
         tiers = [int(x) for x in args.tiers.split(",")]
@@ -836,10 +856,10 @@ def parse_and_validate_args(
         parser.error("--bootstrap must be >= 1")
     if not (math.isfinite(args.timeout) and args.timeout > 0):
         parser.error("--timeout must be a finite number > 0")
-    if not (math.isfinite(args.max_rss_ratio) and args.max_rss_ratio > 0):
-        parser.error("--max-rss-ratio must be a finite number > 0")
-    if args.max_rss_delta_kb < 0:
-        parser.error("--max-rss-delta-kb must be >= 0")
+    if args.max_peak_rss_mb is not None and not (
+        math.isfinite(args.max_peak_rss_mb) and args.max_peak_rss_mb > 0
+    ):
+        parser.error("--max-peak-rss-mb must be a finite number > 0")
 
     return args
 
@@ -860,8 +880,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         bootstrap=args.bootstrap,
         seed=args.seed,
         timeout_s=args.timeout,
-        max_rss_ratio=args.max_rss_ratio,
-        max_rss_delta_kb=args.max_rss_delta_kb,
+        max_peak_rss_mb=args.max_peak_rss_mb,
     )
     result = run_bench_compare(config, arm_runner=_spawn_worker_arm)
     result["status"] = "complete"

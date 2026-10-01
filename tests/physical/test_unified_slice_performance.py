@@ -3,23 +3,25 @@
 This is a fast, in-process, small-row-count paired comparison -- a
 functional sanity check (the unified slice actually runs, its output
 matches the legacy oracle, timing is in the right ballpark) at ~2,000 rows,
-never the statistical claim D9 requires at 10k/100k/1M rows (>=20 alternating
-trials, bootstrap CI, peak-RSS ratio via external process measurement).
-That statistical claim is DEFERRED to a separate, not-yet-built follow-up
-task, specified in:
+never the full statistical claim D9 requires at 10k/100k/1M rows (>=20
+alternating trials, bootstrap CI, peak-RSS evidence against a declared
+absolute `--max-peak-rss-mb` ceiling). That statistical claim is a separate,
+already-built offline harness, specified in:
 
     scripts/bench-unified-slice/README.md
 
-The frozen workload substrate for that future harness
-(`bench_worker_unified.py`) is committed and smoke-tested
-(`test_bench_unified_slice_harness_smoke.py`), but the statistical
-comparison driver itself is not built here: a >=20-rep 1M-row sweep is a
-multi-minute-per-arm cost, inappropriate for every CI run, and the README
-records the exact D9 requirements (tiers, warmups, per-rep pairing,
-fail-closed RSS, thresholds) it must meet. That run is owed BEFORE Task 4.6
-caller activation, not before merging this default-off engine lane. This
-module's job is only to catch a gross correctness/perf regression fast, on
-every test run.
+The frozen workload substrate for that harness (`bench_worker_unified.py`)
+is committed and smoke-tested (`test_bench_unified_slice_harness_smoke.py`).
+The statistical comparison driver (`bench_compare.py`, schema `2.0.0`, the
+absolute peak-RSS ceiling gate in place of the retired ratio gate) is built
+and covered by `test_bench_compare_harness.py`; running its real
+10k/100k/1M sweep on a bench node is a deliberate offline invocation
+(multi-minute-per-arm cost), never a CI step, and the README records the
+exact D9 requirements (tiers, warmups, per-rep pairing, fail-closed RSS,
+thresholds) that sweep must meet. The unified-slice route is already the
+production default; a v2 recertification run under the new ceiling is owed
+but does not block that default. This module's job is only to catch a
+gross correctness/perf regression fast, on every test run.
 """
 
 from __future__ import annotations

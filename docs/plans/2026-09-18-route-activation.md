@@ -4,6 +4,10 @@ Status: superseded (2026-09-20) by `docs/plans/2026-09-20-unified-slice-activati
 carries the same release rigor (D9 recert, AST omitted-flag sweep, quality_metrics consumer
 inventory) plus the tightened sink-inertness safety analysis. Kept for history.
 
+**Superseded again, 2026-09-30:** every "1.25x 1M budget" reference below (the D9 peak-RSS
+ratio gate) is retired. `d9_certified` now requires a declared, met `--max-peak-rss-mb`
+absolute ceiling instead -- see `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
+
 The performance figures below (~4x faster, ~1.18x RAM) were forward estimates when written;
 they were since measured and confirmed by the D9 benchmark cert on the reference host
 (2026-09-20 recert: 1M wall ~4.3x faster, RSS 1.094x).
