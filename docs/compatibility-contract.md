@@ -182,11 +182,20 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   names instead of importing the private `decoy_engine.profile._fixed_width_reader`
   module, which the additive-only rule in §4.1 does not cover.
   It also includes `run_mask_chunked` (2026-10-01): the chunked
-  dispatcher as a public entry point. Its parameters are keyword-only and
-  additive; its pinned guarantees are value equality with
-  `run_mask_pipeline_chunked`, one output type per column per call (`string` for
-  hash, truncate and string-redact columns, the source type for passthrough), no
-  pandas metadata on yielded chunks, and identical validation on both routes.
+  dispatcher as a public entry point. Its signature is
+  `run_mask_chunked(config, chunks, *, table, engine_version, registry=None,
+  adapter=None, vault_writer=None, chunk_result_sink=None, key_provider=None,
+  base_row_offset=0, native_threads=1, route_evidence_sink=None,
+  pool_cache=None)`: `config` and `chunks` are positional-or-keyword, everything
+  after the `*` is keyword-only, and new parameters are additive. Its pinned
+  guarantees are value equality with `run_mask_pipeline_chunked` (one stated
+  exception: a passthrough column is the source column itself, so a nullable
+  integer above 2^53 comes back exact where the oracle's pandas round trip
+  rounds it), one output type per column per call (`string` for hash, truncate
+  and string-redact columns, the source type for passthrough), no pandas
+  metadata on yielded chunks, and identical validation on both routes. A column
+  that is `null`-typed in the first chunk and typed in a later one raises
+  `chunked_leading_null_type` on both routes.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

@@ -16,9 +16,7 @@ silent downgrade.
 
 from __future__ import annotations
 
-import contextlib
-import contextvars
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
@@ -31,27 +29,6 @@ if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
-
-
-_INGEST_GUARDS_DONE: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "decoy_ingest_guards_done", default=False
-)
-
-
-@contextlib.contextmanager
-def ingest_guards_already_run() -> Iterator[None]:
-    """Scope in which `run_chunk_ingest_guards` is a no-op.
-
-    The chunked entry runs the guards on each chunk as the source produced it,
-    before the null-type conform cast; the oracle adapter it then calls sees the
-    cast chunk, and re-running there would refuse an all-null chunk the oracle
-    itself masks.
-    """
-    token = _INGEST_GUARDS_DONE.set(True)
-    try:
-        yield
-    finally:
-        _INGEST_GUARDS_DONE.reset(token)
 
 
 def reject_null_bearing_int(
@@ -106,13 +83,10 @@ def run_chunk_ingest_guards(
     refuses is refused by the other with the same error. A new ingest guard is
     added here and reaches both.
     """
-    if _INGEST_GUARDS_DONE.get():
-        return
     reject_null_bearing_int(plan, sources, registry, relationship_graph)
 
 
 __all__ = [
-    "ingest_guards_already_run",
     "reject_null_bearing_int",
     "run_chunk_ingest_guards",
 ]
