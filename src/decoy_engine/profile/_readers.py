@@ -146,6 +146,33 @@ class LazySource:
         """The file's total row count, read from the Parquet footer only."""
         return pq.read_metadata(self.path).num_rows
 
+    def column_null_counts(self) -> dict[str, int | None]:
+        """Exact null count per flat top-level column, from footer statistics only.
+
+        `None` when any row group lacks a null count for the column (statistics
+        written off), so the caller must not read it as "no nulls". A file with no
+        rows (no row groups, or only empty ones) has none. Nested columns have no single leaf and are omitted.
+        """
+        metadata = pq.read_metadata(self.path)
+        leaf_index = {metadata.schema.column(j).path: j for j in range(metadata.num_columns)}
+        counts: dict[str, int | None] = {}
+        for name in metadata.schema.to_arrow_schema().names:
+            leaf = leaf_index.get(name)
+            if leaf is None:
+                continue
+            total = 0
+            complete = True
+            for group in range(metadata.num_row_groups):
+                if metadata.row_group(group).num_rows == 0:
+                    continue
+                stats = metadata.row_group(group).column(leaf).statistics
+                if stats is None or not stats.has_null_count:
+                    complete = False
+                    break
+                total += stats.null_count
+            counts[name] = total if complete else None
+        return counts
+
     def to_table(self) -> pa.Table:
         """Read the whole file into memory. Fallback for small jobs only."""
         return pq.read_table(self.path)

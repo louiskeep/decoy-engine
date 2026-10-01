@@ -590,6 +590,13 @@ def test_lazy_column_null_counts_are_none_without_statistics(tmp_path: Path) -> 
 
 def test_lazy_column_null_counts_zero_row_groups_means_no_nulls(tmp_path: Path) -> None:
     path = tmp_path / "t.parquet"
+    pq.ParquetWriter(path, pa.schema([pa.field("x", pa.int8())])).close()
+    assert pq.read_metadata(path).num_row_groups == 0
+    assert LazySource(path).column_null_counts() == {"x": 0}
+
+
+def test_lazy_column_null_counts_empty_row_group_means_no_nulls(tmp_path: Path) -> None:
+    path = tmp_path / "t.parquet"
     pq.write_table(pa.table({"x": pa.array([], pa.int8())}), path)
     assert LazySource(path).column_null_counts() == {"x": 0}
 

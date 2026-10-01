@@ -21,16 +21,12 @@ from __future__ import annotations
 # dtype table -- so a schema with more/fewer/different fixed-width columns
 # is priced correctly without touching this module. The capitalized `Int64` /
 # `boolean` / `Float64` spellings are pandas' NULLABLE extension dtypes, which a
-# pandas-origin (e.g. Parquet) source restores via its `b"pandas"` sidecar and
-# `canonical_dtype_label` passes through unchanged. They price at their base
-# storage width, on the same Arrow-storage basis as the arrow-native labels
-# above (an arrow `bool` is priced at 1 with its validity buffer omitted, so the
-# nullable `boolean` is too). A column genuinely resident as a pandas extension
-# array carries a full 1-byte-per-cell null mask on top, so this slightly
-# under-counts that resident form (boolean ~2x, Int64 ~1/9); the gap is small
-# against the module's GB-scale route thresholds and conservative K-constants.
-# Omitting these labels mis-routed a nullable bool/int/float column to the
-# string-width sampler, which crashed on a non-string cell.
+# pandas-origin (e.g. Parquet) source restores via its `b"pandas"` sidecar. They
+# stay in the table at their base storage width for callers that price a
+# fully-populated column, but the profile adapter without an Arrow type widens the
+# sub-64-bit ones (`Int8`..`UInt32`, `boolean`) to 8 bytes, because a resident
+# extension array carries a per-cell null mask on top (measured: Int8 2, UInt16 3,
+# boolean 2 bytes a row).
 _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "int64": 8,
     "uint64": 8,
@@ -59,6 +55,18 @@ _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "UInt16": 2,
     "Int8": 1,
     "UInt8": 1,
+    # Labels the Arrow classifier (`_mem_estimate_arrow`) emits. Each is the resident
+    # pandas cost per cell, not the Arrow storage width. float16 is numpy itemsize.
+    # The `pyobject[...]` labels are an 8-byte pointer plus the CPython object size,
+    # measured on 3.10 x86-64 (`8 + sys.getsizeof(value)`): date 40, time 48, Decimal
+    # 112 (104 at 7, 18, 38 and 76 digits). A bool column with nulls is an object
+    # array of the True/False/None singletons, so pointer only. A test recomputes
+    # these on the running interpreter and fails if an object grows past the table.
+    "float16": 2,
+    "pyobject[bool]": 8,
+    "pyobject[date]": 40,
+    "pyobject[time]": 48,
+    "pyobject[decimal]": 112,
 }
 
 # dtype labels that are variable-width and therefore need a per-cell string

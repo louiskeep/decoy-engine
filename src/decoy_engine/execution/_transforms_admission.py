@@ -139,6 +139,7 @@ def routing_profile(
 def _specs(
     mask_tables: list[Any], sources: Mapping[str, pa.Table | LazySource], prepared: frozenset[str]
 ) -> tuple[Any, ...]:
+    from decoy_engine.execution._mem_estimate_arrow import column_arrow_types
     from decoy_engine.execution._mem_estimate_schema import (
         table_size_spec_from_profile,
         table_size_spec_from_table,
@@ -148,7 +149,11 @@ def _specs(
     return tuple(
         table_size_spec_from_table(t.name, sources[t.name])
         if t.name in prepared
-        else table_size_spec_from_profile(t, sample=_resident_column_arrays(sources.get(t.name), t))
+        else table_size_spec_from_profile(
+            t,
+            sample=_resident_column_arrays(sources.get(t.name), t),
+            arrow_types=column_arrow_types(sources.get(t.name), t),
+        )
         for t in mask_tables
     )
 
