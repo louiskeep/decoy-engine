@@ -51,9 +51,7 @@ def test_type_catalogue_profile_matches_or_pandas_refuses(name: str, null: bool)
 def _exact(a: Any, b: Any) -> bool:
     """Same type and the same values, null positions and float signs; works for the
     view, run-end-encoded and union types the IPC helper in `_rev9_support` cannot read."""
-    return bool(
-        a.type == b.type and a.equals(b) and repr(a.to_pylist()) == repr(b.to_pylist())
-    )
+    return bool(a.type == b.type and a.equals(b) and repr(a.to_pylist()) == repr(b.to_pylist()))
 
 
 def _py(column: Any) -> list[Any]:
@@ -93,9 +91,7 @@ def test_type_catalogue_carried_passthrough_is_yielded_exactly(
         return
     assert len(out) == 2
     assert all(_exact(o.column("x"), chunks[0].column("x")) for o in out)
-    assert all(
-        r.quality_metrics["chunked_route"]["pandas_read_passthrough"] == [] for r in sink
-    )
+    assert all(r.quality_metrics["chunked_route"]["pandas_read_passthrough"] == [] for r in sink)
     if refusal is None:
         expected = run_public(make_config(cols), chunks)
         for got, want in zip(out, expected, strict=True):

@@ -22,7 +22,9 @@ def _simple(t: Callable[[], pa.DataType], values: list) -> Callable[[bool], pa.A
     return lambda null: pa.array(_vals(values, null), t())
 
 
-def _ext(make_type: Callable[[], pa.DataType], storage_type: Callable[[], pa.DataType], values: list):
+def _ext(
+    make_type: Callable[[], pa.DataType], storage_type: Callable[[], pa.DataType], values: list
+):
     def build(null: bool) -> pa.Array:
         return pa.ExtensionArray.from_storage(
             make_type(), pa.array(_vals(values, null), storage_type())
@@ -53,7 +55,9 @@ def _union(dense: bool) -> Callable[[bool], pa.Array]:
         ints = pa.array([1, None if null else 2, 3], pa.int64())
         strs = pa.array(["a", "b"], pa.string())
         if dense:
-            return pa.UnionArray.from_dense(types, pa.array([0, 0, 1, 1, 2], pa.int32()), [ints, strs])
+            return pa.UnionArray.from_dense(
+                types, pa.array([0, 0, 1, 1, 2], pa.int32()), [ints, strs]
+            )
         return pa.UnionArray.from_sparse(
             types,
             [pa.array([1, None if null else 2, 3, 4, 5], pa.int64()), pa.array(list("abcde"))],

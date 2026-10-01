@@ -1,5 +1,5 @@
 """B1 rev9 gate round 1, finding B1: `DataFrame.eval` parses through Python's `ast`,
-which NFKC-normalizes identifiers, so `ｘ > 4` reads the column `x`. The carried-column
+which NFKC-normalizes identifiers, so a fullwidth x reads the column `x`. The carried-column
 decision must see the same name, or the predicate reads a null placeholder and the masked
 column silently comes back unmasked."""
 
@@ -15,12 +15,12 @@ from tests.native._rev9_support import run_entry, run_public, same_column
 
 # (predicate, the real column name it reads after NFKC)
 _CASES = {
-    "fullwidth": ("ｘ > 4", "x"),
-    "ligature": ("ﬁle > 4", "file"),
-    "fullwidth_backtick": ("`ｘ` > 4", "x"),
-    "ligature_backtick": ("`ﬁle` > 4", "file"),
-    "fullwidth_in_literal": ("(x > 4) | (x == 99) | (\"ｘ\" == 'q')", "x"),
-    "ligature_notnull": ("ﬁle.notnull()", "file"),
+    "fullwidth": ("\uff58 > 4", "x"),
+    "ligature": ("\ufb01le > 4", "file"),
+    "fullwidth_backtick": ("`\uff58` > 4", "x"),
+    "ligature_backtick": ("`\ufb01le` > 4", "file"),
+    "fullwidth_in_literal": ("(x > 4) | (x == 99) | (\"\uff58\" == 'q')", "x"),
+    "ligature_notnull": ("\ufb01le.notnull()", "file"),
 }
 
 
@@ -49,7 +49,7 @@ def test_nfkc_spelled_predicate_reads_the_column_like_the_oracle(
 def test_string_literal_values_are_normalized_too() -> None:
     from decoy_engine.execution._chunked_carry import read_set
 
-    cols = [{**redact("s"), "when": "s == 'ﬁle'"}]
+    cols = [{**redact("s"), "when": "s == '\ufb01le'"}]
     assert read_set(cols, ["file", "other"]) == frozenset({"file"})
 
 

@@ -65,8 +65,8 @@ def _predicate_names(expr: str) -> set[str] | None:
     """Every name `DataFrame.eval` could resolve in `expr`, or None when the predicate
     cannot be tokenized (the caller then treats every passthrough column as read).
 
-    Uses pandas' own tokenizer. Python's `ast` NFKC-normalizes identifiers, so `ｘ`
-    (fullwidth) and `ﬁle` (ligature) read the columns `x` and `file`: every collected
+    Uses pandas' own tokenizer. Python's `ast` NFKC-normalizes identifiers, so a
+    fullwidth `x` and a `file` spelled with the U+FB01 ligature read the columns `x` and `file`: every collected
     name is NFKC-normalized, and `read_set` compares normalized forms. Names,
     backtick-quoted spans and the value of every string literal are collected:
     over-approximating only restores the oracle's behavior for that one column."""
