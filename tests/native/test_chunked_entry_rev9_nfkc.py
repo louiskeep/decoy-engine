@@ -19,7 +19,9 @@ _CASES = {
     "ligature": ("\ufb01le > 4", "file"),
     "fullwidth_backtick": ("`\uff58` > 4", "x"),
     "ligature_backtick": ("`\ufb01le` > 4", "file"),
-    "fullwidth_in_literal": ("(x > 4) | (x == 99) | (\"\uff58\" == 'q')", "x"),
+    # The fullwidth literal is the only mention of `x`; literals are over-approximated, so the
+    # column still counts as read.
+    "fullwidth_in_literal": ('s == "\uff58"', "x"),
     "ligature_notnull": ("\ufb01le.notnull()", "file"),
 }
 
