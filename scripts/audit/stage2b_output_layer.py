@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -66,14 +65,24 @@ def main() -> None:
         "version": 1,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(src_path)}},
-        "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "output_layer_mix.out.parquet")}},
+        "targets": {
+            "t": {
+                "type": "file",
+                "format": "parquet",
+                "path": str(SCRATCH / "output_layer_mix.out.parquet"),
+            }
+        },
         "tables": [{"name": "t", "columns": _mix_columns()}],
     }
     config = PipelineConfig.model_validate(raw_config).model_dump()
     key_provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
 
     rust_result = run_pipeline(
-        config, {"t": reloaded}, engine_version="stage2b-probe", key_provider=key_provider, explain_plan=True
+        config,
+        {"t": reloaded},
+        engine_version="stage2b-probe",
+        key_provider=key_provider,
+        explain_plan=True,
     )
     pandas_result = run_pipeline(
         config,
@@ -95,7 +104,9 @@ def main() -> None:
         rust_path = SCRATCH / f"output_layer_rust{suffix}"
         pandas_path = SCRATCH / f"output_layer_pandas{suffix}"
         _materialize_file_output(rust_result.outputs["t"], {"type": "file", "path": str(rust_path)})
-        _materialize_file_output(pandas_result.outputs["t"], {"type": "file", "path": str(pandas_path)})
+        _materialize_file_output(
+            pandas_result.outputs["t"], {"type": "file", "path": str(pandas_path)}
+        )
 
         rust_bytes = rust_path.read_bytes()
         pandas_bytes = pandas_path.read_bytes()
@@ -143,17 +154,22 @@ def main() -> None:
                 "rust_output_size_bytes": len(rust_bytes),
                 "pandas_output_size_bytes": len(pandas_bytes),
                 "row_count_in": n,
-                "row_counts_out": {"rust": rust_readback.num_rows, "pandas": pandas_readback.num_rows},
+                "row_counts_out": {
+                    "rust": rust_readback.num_rows,
+                    "pandas": pandas_readback.num_rows,
+                },
             }
         )
 
     # Fixed-width output: schema-rejected. Show the exact validation error.
     fw_config = dict(raw_config)
-    fw_config["targets"] = {"t": {"type": "file", "format": "fixed_width", "path": str(SCRATCH / "should_not_exist.fw")}}
+    fw_config["targets"] = {
+        "t": {"type": "file", "format": "fixed_width", "path": str(SCRATCH / "should_not_exist.fw")}
+    }
     try:
         PipelineConfig.model_validate(fw_config)
         fw_result = {"rejected": False, "error": None}
-    except Exception as exc:  # noqa: BLE001 - the error text is the evidence
+    except Exception as exc:
         fw_result = {"rejected": True, "error_type": type(exc).__name__, "error": str(exc)}
 
     records.append(
@@ -178,7 +194,9 @@ def main() -> None:
                 file=sys.stderr,
             )
         else:
-            print(f"{rec['cell_id']}: rejected={rec['route_evidence']['rejected']}", file=sys.stderr)
+            print(
+                f"{rec['cell_id']}: rejected={rec['route_evidence']['rejected']}", file=sys.stderr
+            )
 
 
 if __name__ == "__main__":

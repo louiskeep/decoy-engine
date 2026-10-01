@@ -91,7 +91,7 @@ themselves, so parity is marked "n/a" there, not "failed".
 3. **The auto-chunk route is also slower, not just less native.** R021 (1M
    rows, forced full-frame, Rust) ran in 3.35s; R022 (same data, default
    routing, which auto-chunks at the 100k threshold) ran in 10.79s -- about
-   3x slower, on top of losing Rust coverage entirely. Auto-chunk exists to
+   3x slower (measured), on top of losing Rust coverage entirely. Auto-chunk exists to
    bound memory on large jobs, and R022's peak RSS (457 MB) is indeed lower
    than R021's (838 MB), so the trade is real, but today's engine-direct
    default silently pays both the memory-safety cost's intended price AND an

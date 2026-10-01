@@ -71,13 +71,16 @@ def _run_one(cell_id: str, description: str, config: dict, ledger_ids: list[str]
         "description": description,
         "kind": "stage2b_platform_wrapper_timings",
         "ledger_ids": ledger_ids,
-        "params": {"entry_point": "platform_full_frame_wrapper (api.jobs.v2_runner.run_v2_pipeline)"},
+        "params": {
+            "entry_point": "platform_full_frame_wrapper (api.jobs.v2_runner.run_v2_pipeline)"
+        },
         "route_evidence": {
             "execution": qm.get("execution"),
             "unified_slice_activated": unified_activated,
             "engine_result_timings_count": len(result.timings),
             "engine_result_timings_raw": [
-                {"node_id": getattr(t, "node_id", None), "elapsed_ms": t.elapsed_ms} for t in result.timings
+                {"node_id": getattr(t, "node_id", None), "elapsed_ms": t.elapsed_ms}
+                for t in result.timings
             ],
         },
         "platform_phase_timings_read_ms": read_ms,
@@ -100,8 +103,16 @@ def main() -> None:
         "version": 1,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": rust_path}},
-        "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "wrapper_timings_rust.out.parquet")}},
-        "tables": [{"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}],
+        "targets": {
+            "t": {
+                "type": "file",
+                "format": "parquet",
+                "path": str(SCRATCH / "wrapper_timings_rust.out.parquet"),
+            }
+        },
+        "tables": [
+            {"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}
+        ],
     }
     # Force the pandas oracle for contrast via the same platform-recognized
     # settings.unified_slice_enabled knob run_v2_pipeline reads -- simplest
@@ -112,8 +123,21 @@ def main() -> None:
         "version": 1,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": pandas_path}},
-        "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "wrapper_timings_pandas.out.parquet")}},
-        "tables": [{"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h", "when": "h == h"}]}],
+        "targets": {
+            "t": {
+                "type": "file",
+                "format": "parquet",
+                "path": str(SCRATCH / "wrapper_timings_pandas.out.parquet"),
+            }
+        },
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "h", "strategy": "hash", "namespace": "ns_h", "when": "h == h"}
+                ],
+            }
+        ],
     }
 
     records = [

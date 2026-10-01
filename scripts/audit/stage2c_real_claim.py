@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import base64
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -57,7 +56,6 @@ def main() -> None:
     os.environ.setdefault("DECOY_MASTER_KEY", base64.b64encode(b"\x11" * 32).decode())
 
     import api.models  # noqa: F401 -- register every ORM table
-
     from api.config import settings
     from api.database import SessionLocal
     from api.jobs import queue_worker
@@ -110,7 +108,7 @@ def main() -> None:
     try:
         user = db.query(User).filter(User.email == "audit2c-claim@x.local").one_or_none()
         if user is None:
-            user = User(email="audit2c-claim@x.local", hashed_password="x", is_active=True)
+            user = User(email="audit2c-claim@x.local", hashed_password="x", is_active=True)  # noqa: S106 - fake fixture credential
             db.add(user)
             db.commit()
             db.refresh(user)

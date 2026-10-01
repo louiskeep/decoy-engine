@@ -59,14 +59,19 @@ def main() -> None:
         ),
         "kind": "stage2b_cloud_e2e",
         "ledger_ids": [],
-        "params": {"entry_point": "platform_stage_s3_source_then_engine_run_pipeline", "moto_endpoint": endpoint_url},
+        "params": {
+            "entry_point": "platform_stage_s3_source_then_engine_run_pipeline",
+            "moto_endpoint": endpoint_url,
+        },
     }
 
     try:
         import boto3
 
         n = 5_000
-        src_table = pa.table({"h": pa.array([f"user{i}@example.com" for i in range(n)], type=pa.string())})
+        src_table = pa.table(
+            {"h": pa.array([f"user{i}@example.com" for i in range(n)], type=pa.string())}
+        )
         upload_path = SCRATCH / "s3_e2e_source.parquet"
         pq.write_table(src_table, upload_path)
 
@@ -96,8 +101,19 @@ def main() -> None:
                 "version": 1,
                 "global_settings": {"seed": 1},
                 "sources": {"t": descriptor},
-                "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "s3_e2e_out.parquet")}},
-                "tables": [{"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}],
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(SCRATCH / "s3_e2e_out.parquet"),
+                    }
+                },
+                "tables": [
+                    {
+                        "name": "t",
+                        "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}],
+                    }
+                ],
             }
         )
         result["schema_validation"] = "passed (engine-valid subset)"
@@ -123,8 +139,16 @@ def main() -> None:
             "version": 1,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(staged_path)}},
-            "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "s3_e2e_out.parquet")}},
-            "tables": [{"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}],
+            "targets": {
+                "t": {
+                    "type": "file",
+                    "format": "parquet",
+                    "path": str(SCRATCH / "s3_e2e_out.parquet"),
+                }
+            },
+            "tables": [
+                {"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}
+            ],
         }
         config = PipelineConfig.model_validate(raw_config).model_dump()
         key_provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
@@ -154,7 +178,7 @@ def main() -> None:
         result["wall_seconds"] = round(wall, 4)
         result["end_to_end_success"] = out_table.num_rows == n
         result["outcome"] = "success"
-    except Exception as exc:  # noqa: BLE001 - the failure itself is the recorded evidence
+    except Exception as exc:
         result["outcome"] = "failure"
         result["error_type"] = type(exc).__name__
         result["error"] = str(exc)

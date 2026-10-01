@@ -62,7 +62,13 @@ def main() -> None:
         "version": 1,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(src_path)}},
-        "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "phase1_parquet_out.parquet")}},
+        "targets": {
+            "t": {
+                "type": "file",
+                "format": "parquet",
+                "path": str(SCRATCH / "phase1_parquet_out.parquet"),
+            }
+        },
         "tables": [
             {
                 "name": "t",
@@ -86,7 +92,12 @@ def main() -> None:
         orig_chunked = engine_execution.run_mask_pipeline_chunked
 
         def _tracing_chunked(*args, **kwargs):
-            engine_calls.append({"function": "decoy_engine.execution.run_mask_pipeline_chunked", "kwargs_keys": sorted(kwargs.keys())})
+            engine_calls.append(
+                {
+                    "function": "decoy_engine.execution.run_mask_pipeline_chunked",
+                    "kwargs_keys": sorted(kwargs.keys()),
+                }
+            )
             return orig_chunked(*args, **kwargs)
 
         # Patch the SAME module attribute v2_runner re-imports at call time
@@ -104,7 +115,7 @@ def main() -> None:
             )
             wall = time.time() - t0
             outcome = {"success": True, "written": written, "wall_seconds": round(wall, 4)}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             outcome = {"success": False, "error_type": type(exc).__name__, "error": str(exc)}
         finally:
             engine_execution.run_mask_pipeline_chunked = orig_chunked
@@ -133,14 +144,15 @@ def main() -> None:
                     list(plan_or_reasons.tables) if admitted else plan_or_reasons
                 ),
                 "engine_function_calls_per_chunk": engine_calls,
-                "backend": "pandas (PandasExecutionAdapter, per decoy_engine/execution/_chunked.py)" if admitted else None,
+                "backend": "pandas (PandasExecutionAdapter, per decoy_engine/execution/_chunked.py)"
+                if admitted
+                else None,
             },
             "outcome": outcome,
         }
     )
 
     # -- sub-cell 2: fixed_width source, same allowlisted strategies --
-    from decoy_engine.profile._fixed_width_reader import read_fixed_width
 
     fw_path = SCRATCH / "phase1_fixed_width_source.txt"
     layout_columns = [
@@ -165,7 +177,13 @@ def main() -> None:
                 "layout": {"columns": layout_columns},
             }
         },
-        "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "phase1_fw_out.parquet")}},
+        "targets": {
+            "t": {
+                "type": "file",
+                "format": "parquet",
+                "path": str(SCRATCH / "phase1_fw_out.parquet"),
+            }
+        },
         "tables": [
             {
                 "name": "t",
@@ -177,7 +195,9 @@ def main() -> None:
         ],
     }
 
-    fw_plan_or_reasons = phase1_eligibility(fw_config, profile_metadata={"input_size_bytes": fw_input_bytes})
+    fw_plan_or_reasons = phase1_eligibility(
+        fw_config, profile_metadata={"input_size_bytes": fw_input_bytes}
+    )
     fw_admitted = isinstance(fw_plan_or_reasons, StreamingPlan)
 
     fw_outcome: dict
@@ -186,9 +206,11 @@ def main() -> None:
             from api.jobs.v2_runner import _run_v2_pipeline_streaming
 
             job = SimpleNamespace(id=2)
-            _run_v2_pipeline_streaming(job, None, fw_config, table="t", engine_version="stage2b-probe")
+            _run_v2_pipeline_streaming(
+                job, None, fw_config, table="t", engine_version="stage2b-probe"
+            )
             fw_outcome = {"success": True}
-        except Exception as exc:  # noqa: BLE001 - the rejection itself is check A5's second half
+        except Exception as exc:
             fw_outcome = {"success": False, "error_type": type(exc).__name__, "error": str(exc)}
     else:
         fw_outcome = {"success": False, "reason": "not admitted by phase1_eligibility (unexpected)"}

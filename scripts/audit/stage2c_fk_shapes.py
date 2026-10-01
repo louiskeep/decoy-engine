@@ -120,13 +120,28 @@ def _key_column(name: str, namespace: str) -> dict:
 
 
 def _base_relational_config(
-    tables: list[dict], sources: dict[str, str], relationships: list[dict], *, extra: dict | None = None
+    tables: list[dict],
+    sources: dict[str, str],
+    relationships: list[dict],
+    *,
+    extra: dict | None = None,
 ) -> dict:
     cfg: dict[str, Any] = {
         "version": 1,
         "global_settings": {"seed": 20260930},
-        "sources": {t["name"]: {"type": "file", "format": "parquet", "path": sources[t["name"]]} for t in tables if t["name"] in sources},
-        "targets": {t["name"]: {"type": "file", "format": "parquet", "path": f"{sources.get(t['name'], t['name'])}.out.parquet"} for t in tables},
+        "sources": {
+            t["name"]: {"type": "file", "format": "parquet", "path": sources[t["name"]]}
+            for t in tables
+            if t["name"] in sources
+        },
+        "targets": {
+            t["name"]: {
+                "type": "file",
+                "format": "parquet",
+                "path": f"{sources.get(t['name'], t['name'])}.out.parquet",
+            }
+            for t in tables
+        },
         "tables": tables,
         "relationships": relationships,
     }
@@ -144,12 +159,12 @@ def build_fk_tree(n_parent: int, n_child: int) -> tuple[dict, dict]:
     import pyarrow as pa
 
     parent_id = pa.array([f"p{i}" for i in range(n_parent)], type=pa.string())
-    parent_cols = [_key_column("id", "ns_key")] + _payload_mix_columns("par")
+    parent_cols = [_key_column("id", "ns_key"), *_payload_mix_columns("par")]
     parent_src = {"id": parent_id, **_payload_source("par", n_parent)}
     parent_table = pa.table(parent_src)
 
     child_parent_id = pa.array([f"p{i % n_parent}" for i in range(n_child)], type=pa.string())
-    child_cols = [_key_column("parent_id", "ns_key")] + _payload_mix_columns("chi")
+    child_cols = [_key_column("parent_id", "ns_key"), *_payload_mix_columns("chi")]
     child_src = {"parent_id": child_parent_id, **_payload_source("chi", n_child)}
     child_table = pa.table(child_src)
 
@@ -179,16 +194,21 @@ def build_fk_tree_ooc_compatible(n_parent: int, n_child: int) -> tuple[dict, dic
     import pyarrow as pa
 
     parent_id = pa.array([f"p{i}" for i in range(n_parent)], type=pa.string())
-    parent_cols = [_key_column("id", "ns_key")] + _payload_mix_columns(
-        "par", include_ooc_incompatible=False
-    )
-    parent_src = {"id": parent_id, **_payload_source("par", n_parent, include_ooc_incompatible=False)}
+    parent_cols = [
+        _key_column("id", "ns_key"),
+        *_payload_mix_columns("par", include_ooc_incompatible=False),
+    ]
+    parent_src = {
+        "id": parent_id,
+        **_payload_source("par", n_parent, include_ooc_incompatible=False),
+    }
     parent_table = pa.table(parent_src)
 
     child_parent_id = pa.array([f"p{i % n_parent}" for i in range(n_child)], type=pa.string())
-    child_cols = [_key_column("parent_id", "ns_key")] + _payload_mix_columns(
-        "chi", include_ooc_incompatible=False
-    )
+    child_cols = [
+        _key_column("parent_id", "ns_key"),
+        *_payload_mix_columns("chi", include_ooc_incompatible=False),
+    ]
     child_src = {
         "parent_id": child_parent_id,
         **_payload_source("chi", n_child, include_ooc_incompatible=False),
@@ -222,15 +242,16 @@ def build_fk_diamond(n_parent: int, n_child: int) -> tuple[dict, dict]:
 
     a_id = pa.array([f"a{i}" for i in range(n_parent)], type=pa.string())
     b_id = pa.array([f"a{i}" for i in range(n_parent)], type=pa.string())  # same key space
-    a_cols = [_key_column("id", "ns_a")] + _payload_mix_columns("pa")
-    b_cols = [_key_column("id", "ns_b")] + _payload_mix_columns("pb")
+    a_cols = [_key_column("id", "ns_a"), *_payload_mix_columns("pa")]
+    b_cols = [_key_column("id", "ns_b"), *_payload_mix_columns("pb")]
     a_src = {"id": a_id, **_payload_source("pa", n_parent)}
     b_src = {"id": b_id, **_payload_source("pb", n_parent)}
 
     child_ref = pa.array([f"a{i % n_parent}" for i in range(n_child)], type=pa.string())
     child_cols = [
         {"name": "ref", "strategy": "hash", "namespace": "ns_a"},
-    ] + _payload_mix_columns("chi")
+        *_payload_mix_columns("chi"),
+    ]
     child_src = {"ref": child_ref, **_payload_source("chi", n_child)}
 
     a_path = _write_parquet("fk_diamond_a", pa.table(a_src))
@@ -276,7 +297,8 @@ def build_fk_self_ref(n: int) -> tuple[dict, dict]:
     cols = [
         _key_column("id", "ns_key"),
         {"name": "manager_id", "strategy": "hash", "namespace": "ns_key"},
-    ] + _payload_mix_columns("emp")
+        *_payload_mix_columns("emp"),
+    ]
     src = {"id": id_arr, "manager_id": mgr_arr, **_payload_source("emp", n)}
     path = _write_parquet("fk_selfref", pa.table(src))
     tables = [{"name": "employees", "columns": cols}]
@@ -303,11 +325,13 @@ def build_fk_cross_cycle(n: int) -> tuple[dict, dict]:
     a_cols = [
         _key_column("id", "ns_a"),
         {"name": "ref_b", "strategy": "hash", "namespace": "ns_b"},
-    ] + _payload_mix_columns("a")
+        *_payload_mix_columns("a"),
+    ]
     b_cols = [
         _key_column("id", "ns_b"),
         {"name": "ref_a", "strategy": "hash", "namespace": "ns_a"},
-    ] + _payload_mix_columns("b")
+        *_payload_mix_columns("b"),
+    ]
 
     a_src = {"id": a_id, "ref_b": a_ref_b, **_payload_source("a", n)}
     b_src = {"id": b_id, "ref_a": b_ref_a, **_payload_source("b", n)}
@@ -347,7 +371,7 @@ def build_fk_generate_mixed(n_parent: int, n_child: int) -> tuple[dict, dict]:
     import pyarrow as pa
 
     child_parent_id = pa.array([f"row{i % n_parent}" for i in range(n_child)], type=pa.string())
-    child_cols = [_key_column("parent_id", "ns_key")] + _payload_mix_columns("chi")
+    child_cols = [_key_column("parent_id", "ns_key"), *_payload_mix_columns("chi")]
     child_src = {"parent_id": child_parent_id, **_payload_source("chi", n_child)}
     c_path = _write_parquet("fk_gen_child", pa.table(child_src))
 
@@ -405,8 +429,8 @@ def _read_route_evidence(result) -> dict:
 
 
 def run_cell(spec: dict) -> dict:
-    from decoy_engine.execution import run_pipeline
     from decoy_engine.errors import ConfigError
+    from decoy_engine.execution import run_pipeline
     from decoy_engine.execution._errors import ExecutionError
 
     shape = spec["shape"]

@@ -111,7 +111,9 @@ def _minimal_config(table: str, source: dict, target: dict) -> dict:
         "global_settings": {"seed": 1},
         "sources": {table: source},
         "targets": {table: target},
-        "tables": [{"name": table, "columns": [{"name": "h", "strategy": "hash", "namespace": "ns"}]}],
+        "tables": [
+            {"name": table, "columns": [{"name": "h", "strategy": "hash", "namespace": "ns"}]}
+        ],
     }
 
 
@@ -161,7 +163,7 @@ def _validate_no_cloud_call(config: dict) -> dict:
         try:
             validate_v2_config(config)
             return {"rejected": False, "error": None, "no_cloud_call_proven": True}
-        except Exception as exc:  # noqa: BLE001 - recording the exact error is the point
+        except Exception as exc:
             return {
                 "rejected": True,
                 "error_type": type(exc).__name__,
@@ -197,7 +199,11 @@ def main() -> None:
     for provider in ("s3", "gcs"):
         for direction in ("source", "target"):
             descriptor = _build_descriptor(provider, direction)
-            other_side = {"type": "file", "format": "parquet", "path": "/dev/shm/audit-2026-09-30/scratch/placeholder.parquet"}
+            other_side = {
+                "type": "file",
+                "format": "parquet",
+                "path": "/dev/shm/audit-2026-09-30/scratch/placeholder.parquet",  # noqa: S108 - placeholder path, never opened
+            }
             table = "t"
             if direction == "source":
                 config = _minimal_config(table, descriptor, other_side)
@@ -208,7 +214,10 @@ def main() -> None:
                 cell_id,
                 f"resolve_binding-shaped {provider} {direction} descriptor (with platform-only "
                 f"keys) validated through validate_v2_config",
-                ["B211-B235 (admission proxy, not exercised here)", "Codex check 2 cross-reference"],
+                [
+                    "B211-B235 (admission proxy, not exercised here)",
+                    "Codex check 2 cross-reference",
+                ],
                 config,
             )
             rec["params"]["resolve_binding_direction"] = direction

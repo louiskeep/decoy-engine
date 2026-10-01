@@ -50,8 +50,8 @@ _FIXED_HOST_PORT = 14443  # fixed, not random: fake-gcs-server bakes its own
 def _start_fake_gcs() -> str:
     subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)  # noqa: S603,S607
     external_url = f"http://127.0.0.1:{_FIXED_HOST_PORT}"
-    subprocess.run(  # noqa: S603,S607
-        [
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
             "docker",
             "run",
             "-d",
@@ -104,7 +104,9 @@ def main() -> None:
         os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
 
         n = 5_000
-        src_table = pa.table({"h": pa.array([f"user{i}@example.com" for i in range(n)], type=pa.string())})
+        src_table = pa.table(
+            {"h": pa.array([f"user{i}@example.com" for i in range(n)], type=pa.string())}
+        )
         upload_path = SCRATCH / "gcs_e2e_source.parquet"
         pq.write_table(src_table, upload_path)
 
@@ -132,8 +134,19 @@ def main() -> None:
                 "version": 1,
                 "global_settings": {"seed": 1},
                 "sources": {"t": descriptor},
-                "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "gcs_e2e_out.parquet")}},
-                "tables": [{"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}],
+                "targets": {
+                    "t": {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(SCRATCH / "gcs_e2e_out.parquet"),
+                    }
+                },
+                "tables": [
+                    {
+                        "name": "t",
+                        "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}],
+                    }
+                ],
             }
         )
         result["schema_validation"] = "passed (engine-valid subset)"
@@ -157,8 +170,16 @@ def main() -> None:
             "version": 1,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(staged_path)}},
-            "targets": {"t": {"type": "file", "format": "parquet", "path": str(SCRATCH / "gcs_e2e_out.parquet")}},
-            "tables": [{"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}],
+            "targets": {
+                "t": {
+                    "type": "file",
+                    "format": "parquet",
+                    "path": str(SCRATCH / "gcs_e2e_out.parquet"),
+                }
+            },
+            "tables": [
+                {"name": "t", "columns": [{"name": "h", "strategy": "hash", "namespace": "ns_h"}]}
+            ],
         }
         config = PipelineConfig.model_validate(raw_config).model_dump()
         key_provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
@@ -188,7 +209,7 @@ def main() -> None:
         result["wall_seconds"] = round(wall, 4)
         result["end_to_end_success"] = out_table.num_rows == n
         result["outcome"] = "success"
-    except Exception as exc:  # noqa: BLE001 - the failure itself is the recorded evidence
+    except Exception as exc:
         result["outcome"] = "failure"
         result["error_type"] = type(exc).__name__
         result["error"] = str(exc)

@@ -65,7 +65,7 @@ def _ensure_user(db) -> int:
     existing = db.query(User).filter(User.email == "audit2c@x.local").one_or_none()
     if existing:
         return existing.id
-    u = User(email="audit2c@x.local", hashed_password="x", is_active=True)
+    u = User(email="audit2c@x.local", hashed_password="x", is_active=True)  # noqa: S106 - fake fixture credential
     db.add(u)
     db.commit()
     db.refresh(u)
@@ -78,7 +78,6 @@ def run_cell(spec: dict) -> dict:
     os.environ.setdefault("DECOY_MASTER_KEY", base64.b64encode(b"\x24" * 32).decode())
 
     import api.models  # noqa: F401 -- register every ORM table before first query
-
     from api.database import SessionLocal
     from api.jobs.v2_runner import run_v2_pipeline_job  # re-exported from v2_orchestrator
     from api.models import Job, JobStatus
@@ -105,9 +104,7 @@ def run_cell(spec: dict) -> dict:
             "admission_fk.OUT_OF_CORE_ADMISSION_THRESHOLD_ROWS": (
                 admission_fk_mod.OUT_OF_CORE_ADMISSION_THRESHOLD_ROWS
             ),
-            "v2_out_of_core._OUT_OF_CORE_THRESHOLD_ROWS": (
-                v2_ooc_mod._OUT_OF_CORE_THRESHOLD_ROWS
-            ),
+            "v2_out_of_core._OUT_OF_CORE_THRESHOLD_ROWS": (v2_ooc_mod._OUT_OF_CORE_THRESHOLD_ROWS),
         }
         admission_fk_mod.OUT_OF_CORE_ADMISSION_THRESHOLD_ROWS = force_ooc_threshold
         v2_ooc_mod._OUT_OF_CORE_THRESHOLD_ROWS = force_ooc_threshold
@@ -141,7 +138,6 @@ def run_cell(spec: dict) -> dict:
         db.refresh(job)
         job_status_after = job.status.value if hasattr(job.status, "value") else str(job.status)
         job_row_count = job.row_count
-        job_error_field = getattr(job, "error", None) or getattr(job, "error_message", None)
         try:
             from api.models import JobNodeRun
 

@@ -82,7 +82,7 @@ categorical column, at `native_threads=1` and `4`?
 
 (a) admits and runs natively at both thread counts (`compiled_kernel_executed=True`,
 `kernel_calls={"hash": 5, "redact": 5, "truncate": 5, "passthrough": 5}` for the 5-chunk,
-200k-chunk-size run), 5.9x-8.4x faster than the same chunks run through the pandas oracle
+200k-chunk-size run), measured 5.9x-8.4x faster than the same chunks run through the pandas oracle
 in the same process. (b) reroutes the WHOLE table to the oracle on the categorical column
 specifically (`CHUNKED_ROUTE_VETOED_STRATEGIES`, B161) -- confirmed by a real run, not a
 code read: `native_admitted=False`, every node's route downgraded to `oracle`,
