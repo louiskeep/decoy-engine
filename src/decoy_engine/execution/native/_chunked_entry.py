@@ -174,13 +174,12 @@ def _native_route(
         run_chunk_ingest_guards(plan, {table: raw}, state.registry, state.graph)
         return cast_null_columns(first.schema, raw)
 
-    # The first chunk is guarded eagerly with the other call-time validation.
-    first_cast = _guard(first)
-
     def _masked() -> Iterator[pa.Table]:
+        # Every chunk, the first included, is guarded here so a refusal surfaces at
+        # the first `next()` exactly as it does on the oracle route.
         row_offset = base_row_offset
-        rest = (_guard(c) for c in state.chunk_iter)
-        for i, chunk in enumerate(_chain_first(first_cast, rest)):
+        guarded = (_guard(c) for c in _chain_first(first, state.chunk_iter))
+        for i, chunk in enumerate(guarded):
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             elapsed_s: dict[str, float] = {}
             masked = _mask_chunk_native(

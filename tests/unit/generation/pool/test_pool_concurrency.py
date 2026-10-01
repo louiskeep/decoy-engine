@@ -200,3 +200,22 @@ class TestPoolCacheThreadSafety:
         assert stats.bytes_used == sum(estimate_pool_bytes(p) for p in pools)
         for pool in pools:
             assert cache.get(pool.identity) is pool
+
+
+def test_adapter_serials_are_unique_under_concurrent_registration() -> None:
+    from decoy_engine.generation.pool import _builder
+
+    class _Same:
+        pass
+
+    adapters = [_Same() for _ in range(64)]
+    barrier = threading.Barrier(8)
+
+    def _register(chunk: list[Any]) -> list[int]:
+        barrier.wait()
+        return [_builder._adapter_serial(a) for a in chunk]
+
+    chunks = [adapters[i::8] for i in range(8)]
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        serials = [s for part in ex.map(_register, chunks) for s in part]
+    assert len(set(serials)) == len(adapters)

@@ -97,6 +97,17 @@ keeps its behavior and signature.
   pandas adapter by exact type, so a subclass that overrides `run` takes the
   oracle route. `aggregate_chunked_route_evidence` raises
   `chunked_route_evidence_mixed_tables` for results from more than one table.
+- `run_native_or_oracle_chunked` now accepts a later null-typed chunk, which it
+  refused before this slice. With `enforce_schema_rule=False` its native route
+  yields the cast type for that chunk and its oracle route yields `null`. Its
+  callers are tests only.
+- The Faker pool cache identity now includes the provider binding. A caller that
+  builds a fresh adapter instance per job while sharing a process-wide `PoolCache`
+  rebuilds that pool per job: correct, with a lower hit rate.
+- On `run_mask_chunked`, a first-chunk ingest-guard refusal now raises at the
+  first `next()` on both routes (the native route used to raise at call time), and
+  a later null-typed passthrough chunk keeps the first chunk's field metadata and
+  nullability on both routes.
 - `NativeOrOracleChunkedAdapter` (physical seam, still unconnected to production)
   now forwards to `run_mask_chunked` and passes the new parameters through unchanged.
 
