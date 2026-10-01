@@ -296,6 +296,9 @@ _REFUSED_WITH_ESTIMATE_OFF = frozenset(
         "fixed_shape_tensor",
         "dictionary_float16",
         "ree_string_view",
+        # pyarrow 25 with pandas 2.3: the profile walk's `nunique` cannot hash them.
+        "list_view",
+        "large_list_view",
     }
 )
 
