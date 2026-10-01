@@ -330,7 +330,7 @@ def test_the_legacy_evidence_is_planned_from_this_tables_config_and_engine_versi
     from decoy_engine.execution.native import _chunked_evidence
 
     seen: dict[str, Any] = {}
-    real_profile = _chunked_profile.empty_input_profile
+    real_profile = _chunked_profile.first_chunk_profile
     real_plan = _chunked_evidence.plan_column_backends
 
     def spy_profile(config: Any, **kw: Any) -> Any:
@@ -341,11 +341,17 @@ def test_the_legacy_evidence_is_planned_from_this_tables_config_and_engine_versi
         seen["plan"] = kw
         return real_plan(config, profile, **kw)
 
-    monkeypatch.setattr(_chunked_profile, "empty_input_profile", spy_profile)
+    monkeypatch.setattr(_chunked_profile, "first_chunk_profile", spy_profile)
     monkeypatch.setattr(_chunked_evidence, "plan_column_backends", spy_plan)
     cfg, src = _native_table()
     ac._legacy_route_evidence(
-        cfg, src, table="t", engine_version="ev-1", chunk_count=3, lane_reason="dispatcher_disabled"
+        cfg,
+        src,
+        table="t",
+        engine_version="ev-1",
+        chunk_size_rows=16,
+        chunk_count=3,
+        lane_reason="dispatcher_disabled",
     )
     assert seen["profile"] == {"table": "t", "engine_version": "ev-1"}
     assert seen["plan"] == {"table": "t", "engine_version": "ev-1"}

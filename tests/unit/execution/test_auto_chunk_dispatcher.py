@@ -243,6 +243,61 @@ def _backends(evidence: dict[str, Any]) -> dict[str, tuple[str, str]]:
     return {c["column"]: (c["planned_backend"], c["executed_backend"]) for c in evidence["columns"]}
 
 
+_TYPED_SOURCES: dict[str, pa.Array] = {
+    "float_whole": pa.array([float(i) for i in range(support.ROWS)], pa.float64()),
+    "float32_whole": pa.array([float(i) for i in range(support.ROWS)], pa.float32()),
+    "int8": pa.array([i % 100 for i in range(support.ROWS)], pa.int8()),
+    "large_string": pa.array([f"k{i}" for i in range(support.ROWS)], pa.large_string()),
+    "time32": pa.array(list(range(support.ROWS)), pa.time32("s")),
+    "duration": pa.array(list(range(support.ROWS)), pa.duration("s")),
+    "date64": pa.array([i * 86_400_000 for i in range(support.ROWS)], pa.date64()),
+}
+
+
+@pytest.mark.parametrize("strategy", ["hash", "truncate", "redact"])
+@pytest.mark.parametrize("typ", sorted(_TYPED_SOURCES))
+def test_planned_backend_is_the_same_on_both_lanes(typ: str, strategy: str, tmp_path: Path) -> None:
+    # The kill-switch lane profiles the real first chunk, as the dispatcher lane does,
+    # so a type-dependent admission decision reports the same planned backend.
+    col = {
+        "hash": support.hash_col,
+        "truncate": support.truncate_col,
+        "redact": support.redact_col,
+    }[strategy]("x")
+    data = {**support.string_source(), "x": _TYPED_SOURCES[typ]}
+    cfg, src = _job(tmp_path, [support.hash_col("h"), support.redact_col("r"), col], data)
+    planned: dict[str, Any] = {}
+    for lane, run in (("dispatcher", support.run_default), ("legacy", support.run_legacy)):
+        try:
+            columns = run(cfg, src).quality_metrics["chunked_route"]["columns"]
+        except Exception as exc:  # a type both lanes refuse must be refused identically
+            planned[lane] = type(exc).__name__
+            continue
+        planned[lane] = {c["column"]: c["planned_backend"] for c in columns}
+    assert planned["legacy"] == planned["dispatcher"]
+
+
+@pytest.mark.parametrize("spec_name", sorted(_STRATEGY_MATRIX))
+def test_planned_backend_matches_across_lanes_for_the_strategy_matrix(
+    spec_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+    cfg, sources = _single_column_job(tmp_path, spec_name)
+    planned = {}
+    for lane, extra in (("dispatcher", {}), ("legacy", {"chunked_dispatcher_enabled": False})):
+        result = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=ROUTING_VERSION,
+            auto_chunk_threshold_rows=_LOW_THRESHOLD,
+            chunk_size_rows=_CHUNK,
+            **extra,
+        )
+        columns = result.quality_metrics["chunked_route"]["columns"]
+        planned[lane] = {c["column"]: c["planned_backend"] for c in columns}
+    assert planned["legacy"] == planned["dispatcher"]
+
+
 def test_mixed_table_with_a_categorical_column_runs_wholly_on_the_oracle_route(
     tmp_path: Path,
 ) -> None:

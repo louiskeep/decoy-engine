@@ -86,7 +86,17 @@ def test_cell_matches_record_and_differences_are_guarantee_3(
     src, lanes = matrix.run_cell(cell, monkeypatch, str(tmp_path / "src.parquet"))
     recorded = _fixture()[cell]
     for lane, (rec, _table) in lanes.items():
+        if lane.startswith(matrix.LIVE_PREFIX):
+            continue
         assert rec == recorded[lane], f"{cell}: live {lane} record differs from the fixture"
+    # The shipped lane (no patch) equals the fixture lane: record and table.
+    if f"disp_{route}" in lanes:
+        live_rec, live = lanes[f"{matrix.LIVE_PREFIX}{route}"]
+        fix_rec, fix = lanes[f"disp_{route}"]
+        assert live_rec == fix_rec, f"{cell}: shipped lane record differs from disp_{route}"
+        assert (live is None) == (fix is None)
+        if live is not None and fix is not None:
+            assert live.equals(fix, check_metadata=True), f"{cell}: shipped table differs"
 
     typ, role, nulls = cell.split("|")
     (l_rec, legacy), (d_rec, disp) = lanes["legacy"], lanes[f"disp_{route}"]

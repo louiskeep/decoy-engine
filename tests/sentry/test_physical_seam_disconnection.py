@@ -371,7 +371,6 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_auto_chunk.py",
         "src/decoy_engine/execution/_pipeline_generate_mask.py",
         "src/decoy_engine/execution/_pipeline_finalize.py",
-        "src/decoy_engine/execution/_pipeline_chunk_route.py",
     }
     unexpected = [
         name

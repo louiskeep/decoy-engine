@@ -142,6 +142,9 @@ def describe(table: pa.Table) -> dict[str, Any]:
     }
 
 
+LIVE_PREFIX = "disp_live_"
+
+
 def run_lane(fn: Any) -> tuple[dict[str, Any], pa.Table | None]:
     """(record, output table). A failure is recorded as its exception type and code."""
     try:
@@ -172,9 +175,12 @@ def run_cell(
                 support.remove_companion(mp)
             with support.b1_as_the_lane(mp):
                 lanes[f"disp_{route}"] = run_lane(lambda: support.run_default(cfg, src))
+            # The shipped lane, no patch: test 0's fixture lane must not hide a
+            # difference between B1's entry as the plan calls it and what ships.
+            lanes[f"{LIVE_PREFIX}{route}"] = run_lane(lambda: support.run_default(cfg, src))
     return src, lanes
 
 
 def record_cell(cell: str, monkeypatch: pytest.MonkeyPatch, path: str) -> dict[str, Any]:
     _, lanes = run_cell(cell, monkeypatch, path)
-    return {lane: rec for lane, (rec, _table) in lanes.items()}
+    return {lane: rec for lane, (rec, _table) in lanes.items() if not lane.startswith(LIVE_PREFIX)}

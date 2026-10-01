@@ -159,6 +159,7 @@ def _legacy_route_evidence(
     *,
     table: str,
     engine_version: str,
+    chunk_size_rows: int,
     chunk_count: int,
     lane_reason: str | None,
 ) -> dict[str, Any]:
@@ -168,13 +169,17 @@ def _legacy_route_evidence(
     each configured column is reported as executed on `pandas_oracle` next to its
     planned backend, and `pandas_read_passthrough` lists every passthrough column."""
     from decoy_engine.execution._chunked_carry import passthrough_columns
-    from decoy_engine.execution._chunked_profile import empty_input_profile
+    from decoy_engine.execution._chunked_profile import first_chunk_profile
     from decoy_engine.execution.native._chunked_evidence import (
         chunk_route_evidence,
         plan_column_backends,
     )
 
-    profile = empty_input_profile(config, table=table, engine_version=engine_version)
+    # Profile the real first slice, as the dispatcher lane's preflight does, so a
+    # type-dependent admission decision plans the same backend on both lanes.
+    profile = first_chunk_profile(
+        source.slice(0, chunk_size_rows), table=table, engine_version=engine_version
+    )
     columns = plan_column_backends(config, profile, table=table, engine_version=engine_version)
     evidence = chunk_route_evidence(
         table=table,
@@ -308,6 +313,7 @@ def run_auto_chunk(
             source,
             table=table,
             engine_version=engine_version,
+            chunk_size_rows=chunk_size_rows,
             chunk_count=len(chunk_results),
             lane_reason=lane_reason,
         )
