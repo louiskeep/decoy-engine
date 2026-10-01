@@ -621,16 +621,7 @@ def test_parquet_direct_caller_resident_mismatch_admits_and_matches(tmp_path: Pa
     # route re-reads the file), so this is safe to admit.
     resident = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())})
 
-    # `use_byte_estimate_routing` reads the resident sample as the PROFILE's own
-    # declared type (`_mem_estimate_schema.sample_average_string_bytes` expects
-    # a string column whenever the profile calls the column variable-width);
-    # this is a separate, pre-existing byte-estimate-routing limitation,
-    # unrelated to unified-slice admission, that a deliberately-mismatched
-    # direct-caller resident type trips regardless of which route runs. Not
-    # this plan's scope (it is not part of `_unified_slice_admission.py` or the
-    # physical compiler); disabled here so the test isolates what this plan DID
-    # change.
-    off, on = _run_both(config, {"t": resident}, use_byte_estimate_routing=False)
+    off, on = _run_both(config, {"t": resident})
     _assert_full_parity(off, on)
     assert on.outputs["t"].column("c").to_pylist() == [1, 2, 3]
 
