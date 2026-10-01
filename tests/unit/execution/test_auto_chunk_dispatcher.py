@@ -570,6 +570,14 @@ def test_the_upper_bound_is_b1s_constant_and_1024_is_accepted(tmp_path: Path) ->
     assert raised.value.code == "invalid_execution_knob"
 
 
+def test_native_threads_defaults_to_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg, src = _native_job(tmp_path)
+    spies = support.spy_lanes(monkeypatch)
+    result = support.run_default(cfg, src)
+    assert [kw["native_threads"] for _a, kw in spies["entry.run_mask_chunked"]] == [1]
+    assert result.quality_metrics["auto_chunk"]["native_threads"] == 1
+
+
 def test_native_threads_reaches_the_dispatcher_lane_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
