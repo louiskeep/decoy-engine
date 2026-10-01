@@ -245,6 +245,11 @@ def run_shadow_and_oracle(
         substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=auto_chunk,
+        # The oracle is the pinned pandas lane. B2 made the dispatcher the default
+        # auto-chunk lane, whose output follows its own contract (guarantee 3 of
+        # docs/plans/2026-10-01-dispatcher-auto-chunk.md); the kill switch keeps the
+        # reference this harness compares the shadow against.
+        chunked_dispatcher_enabled=False,
         chunk_size_rows=resolved_chunk_size,
         auto_chunk_threshold_rows=resolved_threshold,
         key_provider=key_provider,
