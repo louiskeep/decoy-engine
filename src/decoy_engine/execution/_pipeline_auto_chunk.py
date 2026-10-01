@@ -20,7 +20,7 @@ which backend masked each column (`quality_metrics["chunked_route"]`).
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -38,6 +38,7 @@ __all__ = [
     "LANE_LEGACY",
     "REASON_DISPATCHER_DISABLED",
     "join_dispatcher_chunks",
+    "merge_lane_stamp",
     "require_lane_knobs",
     "run_auto_chunk",
     "select_lane",
@@ -77,6 +78,14 @@ def select_lane(dispatcher_enabled: bool) -> tuple[str, str | None]:
     if dispatcher_enabled:
         return LANE_DISPATCHER, None
     return LANE_LEGACY, REASON_DISPATCHER_DISABLED
+
+
+def merge_lane_stamp(
+    reproducibility_stamp: dict[str, Any], routed_quality_metrics: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The six reproducibility keys of `quality_metrics["auto_chunk"]`, then the lane's own
+    keys (`lane`, `lane_reason`, `native_threads`) from the routed result, which win a tie."""
+    return {**reproducibility_stamp, **routed_quality_metrics.get("auto_chunk", {})}
 
 
 def join_dispatcher_chunks(chunks: list[pa.Table], *, table: str) -> pa.Table:

@@ -138,8 +138,10 @@ def stamp_execution_metrics(
 
         # The routed lane's own keys (`lane`, `lane_reason`, `native_threads`) ride in
         # `mask_quality_metrics["auto_chunk"]`; they join the six reproducibility keys.
-        mask_quality_metrics["auto_chunk"] = {
-            **_pipeline_routing.auto_chunk_stamp(
+        from decoy_engine.execution._pipeline_auto_chunk import merge_lane_stamp
+
+        mask_quality_metrics["auto_chunk"] = merge_lane_stamp(
+            _pipeline_routing.auto_chunk_stamp(
                 route_chunked=route_chunked,
                 auto_chunk=auto_chunk,
                 chunk_size_rows=chunk_size_rows,
@@ -148,8 +150,8 @@ def stamp_execution_metrics(
                 caller_sources=caller_sources,
                 decision=execution_plan_decision,
             ),
-            **mask_quality_metrics.get("auto_chunk", {}),
-        }
+            mask_quality_metrics,
+        )
 
 
 def compute_fidelity_reports(
