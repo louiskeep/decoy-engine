@@ -60,17 +60,19 @@ SUBSTRATE_DEFAULT = "pandas"
 FPE_CHUNK_COUNT_DEFAULT = 4
 MAX_WORKERS_DEFAULT = 4
 FALLBACK_TO_PANDAS_DEFAULT = True
-# Auto-chunk defaults. Default-ON is safe because identity is enforced
-# twice: the planner's fail-closed gates admit only jobs whose every
-# per-column output is a pure function of (value, config, seed) with all
-# whole-column inputs pinned (date_shift needs an explicit date_format,
-# bucketize a null-free numeric source, `when` predicates never route),
-# and the strict chunk concat refuses to merge chunks whose schemas
-# disagree (a gate miss raises rather than silently promoting); the
-# fixture matrix in tests/unit/execution/test_auto_chunk_routing.py is
-# regression evidence for that contract, not its proof. 50k-row chunks
-# bound the per-chunk pandas working set at negligible per-chunk
-# plan/adapter overhead (P0 showed wall-clock parity at 10k rows).
+# Auto-chunk defaults. Default-ON is safe because masked values are chunk-invariant
+# and the lane's join never guesses: the planner's fail-closed gates admit only jobs
+# whose every per-column output is a pure function of (value, config, seed) with all
+# whole-column inputs pinned (date_shift needs an explicit date_format, bucketize a
+# null-free numeric source, `when` predicates never route), and the dispatcher lane's
+# `join_dispatcher_chunks` keeps a field every chunk agrees on and refuses to merge
+# chunks whose types disagree (a gate miss raises rather than silently promoting). The
+# routed output follows guarantee 3 of docs/plans/2026-10-01-dispatcher-auto-chunk.md:
+# masked values equal full frame, while schema, passthrough types, nullability and
+# metadata may differ from the full-frame route. The fixture matrix in
+# tests/unit/execution/test_auto_chunk_routing.py is regression evidence for the value
+# contract, not its proof. 50k-row chunks bound the per-chunk working set at negligible
+# per-chunk plan/adapter overhead (P0 showed wall-clock parity at 10k rows).
 AUTO_CHUNK_DEFAULT = True
 CHUNK_SIZE_ROWS_DEFAULT = 50_000
 AUTO_CHUNK_THRESHOLD_DEFAULT = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
@@ -134,15 +136,20 @@ def stamp_execution_metrics(
     if route_chunked or auto_chunk_non_default:
         from decoy_engine.execution import _pipeline_routing
 
-        mask_quality_metrics["auto_chunk"] = _pipeline_routing.auto_chunk_stamp(
-            route_chunked=route_chunked,
-            auto_chunk=auto_chunk,
-            chunk_size_rows=chunk_size_rows,
-            auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-            table_kinds=table_kinds,
-            caller_sources=caller_sources,
-            decision=execution_plan_decision,
-        )
+        # The routed lane's own keys (`lane`, `lane_reason`, `native_threads`) ride in
+        # `mask_quality_metrics["auto_chunk"]`; they join the six reproducibility keys.
+        mask_quality_metrics["auto_chunk"] = {
+            **_pipeline_routing.auto_chunk_stamp(
+                route_chunked=route_chunked,
+                auto_chunk=auto_chunk,
+                chunk_size_rows=chunk_size_rows,
+                auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+                table_kinds=table_kinds,
+                caller_sources=caller_sources,
+                decision=execution_plan_decision,
+            ),
+            **mask_quality_metrics.get("auto_chunk", {}),
+        }
 
 
 def compute_fidelity_reports(

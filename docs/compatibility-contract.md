@@ -203,6 +203,16 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   `chunked_leading_null_type`, `chunked_passthrough_value_unrepresentable` and
   `chunked_route_evidence_inconsistent`; each chunk's
   `quality_metrics["chunked_route"]` carries `pandas_read_passthrough`.
+  `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
+  (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
+  byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that
+  restores the previous auto-chunk lane). This is an owner-approved pre-GA
+  output-contract cutover: on the auto-chunk route masked values are route-neutral
+  (equal to the full-frame route's), while schema, passthrough types, field nullability,
+  field metadata, the native Faker all-null type and schema metadata follow the
+  dispatcher's contract (passthrough columns are the source column exactly, string-output
+  columns are `string`, no schema metadata) and may differ from the full-frame and
+  unified-slice routes. Converging those routes is roadmap item ROUTE-OUTPUT-CONTRACT.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

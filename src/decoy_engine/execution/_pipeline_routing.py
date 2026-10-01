@@ -3,7 +3,7 @@
 
 This module decides which route a job takes; it never executes one --
 `_pipeline_route_exec` owns dispatching to the underlying runner
-(`run_sequential`, `run_fk_out_of_core`, `run_mask_pipeline_chunked`) and
+(`run_sequential`, `run_fk_out_of_core`, the chunked lane) and
 packaging the result into an `ExecutionResult`. `run_pipeline` calls both
 modules directly in the fixed order this docstring describes.
 
@@ -73,18 +73,18 @@ Two independent routing layers compose here, in a fixed decision order
    two layers compose without overlap: (1) owns relationship routing
    (sequential vs. full_frame); (2) owns single-table non-relationship
    routing (chunked vs. full_frame). When the job classifies `chunked`,
-   `_pipeline_route_exec.run_mask_chunked` streams it through
-   `run_mask_pipeline_chunked` in `chunk_size_rows`-row slices instead of
-   one full-frame adapter call; this is a peak-memory win only, never a
-   semantic change, and every eligibility miss fails CLOSED to the exact
-   full-frame path.
+   `_pipeline_route_exec.run_mask_chunked` runs it in `chunk_size_rows`-row
+   slices through the chunked lane (`_pipeline_auto_chunk`: B1's
+   `run_mask_chunked`, or the oracle under the kill switch) instead of one
+   full-frame adapter call; masked values are unchanged (the output shape
+   follows guarantee 3 of docs/plans/2026-10-01-dispatcher-auto-chunk.md)
+   and every eligibility miss fails CLOSED to the exact full-frame path.
 
 Row-error honesty (D7/D8, S1): the chunked route is never eligible for
-row-error quarantine -- `run_mask_pipeline_chunked`'s H1 fail-closed
-check (`_chunked.py`) raises `RowErrorsFailedError` the moment ANY chunk
-reports a row error, so `run_pipeline` never sees row errors to
-quarantine on that route (same policy the pre-existing manual chunked
-entrypoint already enforced).
+row-error quarantine -- both lanes fail closed with `RowErrorsFailedError`
+(the oracle's H1 check in `_chunked.py`) the moment ANY chunk reports a row
+error, so `run_pipeline` never sees row errors to quarantine on that route
+(same policy the pre-existing manual chunked entrypoint already enforced).
 
 Sprint B1b (OOM-avoidance routing redesign, docs/plans/2026-07-10-oom-
 avoidance-routing-redesign.md §13): `decide_execution_route`'s

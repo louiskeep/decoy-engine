@@ -56,8 +56,9 @@ cannot price). The reject CODE is unchanged (`fk_full_frame_oom_risk_rejected`,
 byte-based reason). Platform admission (`api/jobs/admission.py`,
 `worker_budget.py`) must match: size its own admission decision off the same
 byte estimate + budget and enable `isolated_execution_enabled` so the engine's
-default per-job isolation holds. Output is unaffected -- every route is
-byte-output-equivalent by design.
+default per-job isolation holds. Masked values are unaffected -- they are
+route-neutral; on the auto-chunk route schema, types, nullability and metadata
+follow guarantee 3 of docs/plans/2026-10-01-dispatcher-auto-chunk.md.
 
 Spec: docs/v2/sprints/engine-v2/sprint-09-execution-adapter-pandas.md in decoy-platform.
 """
