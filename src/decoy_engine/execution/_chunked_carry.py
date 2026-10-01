@@ -239,7 +239,9 @@ def plan_carry(
     """Decide the carried and read sets once, right after the first-chunk pull."""
     stock = is_stock_adapter(adapter)
     passthrough = passthrough_columns(config, table=table, names=first_schema.names)
-    if not stock:
+    if not stock or len(set(first_schema.names)) != len(first_schema.names):
+        # Carrying addresses columns by name. With duplicate names it carries nothing,
+        # so the profile walk raises its own duplicate-name refusal, as on the oracle.
         return CarryPlan(stock=False, carried=frozenset(), read=tuple(sorted(passthrough)))
     read = read_set(_table_columns(config, table), passthrough)
     return CarryPlan(stock=True, carried=frozenset(passthrough) - read, read=tuple(sorted(read)))
