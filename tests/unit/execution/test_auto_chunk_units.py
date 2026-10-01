@@ -146,7 +146,7 @@ def test_join_error_messages_name_the_table_the_column_and_the_disagreement() ->
     assert "['a']" in message and "['b']" in message
     with pytest.raises(ExecutionError) as raised:
         ac.join_dispatcher_chunks([], table="people")
-    assert "people" in str(raised.value) and "no chunks to join" in str(raised.value)
+    assert str(raised.value).endswith("table 'people': no chunks to join.")
 
 
 def test_join_takes_the_non_null_type_from_any_position_and_casts_the_rest() -> None:
@@ -349,6 +349,24 @@ def test_the_legacy_evidence_is_planned_from_this_tables_config_and_engine_versi
     )
     assert seen["profile"] == {"table": "t", "engine_version": "ev-1"}
     assert seen["plan"] == {"table": "t", "engine_version": "ev-1"}
+
+
+def test_the_legacy_lane_plans_its_evidence_with_the_run_engine_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.execution.native import _chunked_evidence
+
+    seen: list[dict[str, Any]] = []
+    real = _chunked_evidence.plan_column_backends
+
+    def spy(config: Any, profile: Any, **kw: Any) -> Any:
+        seen.append(kw)
+        return real(config, profile, **kw)
+
+    monkeypatch.setattr(_chunked_evidence, "plan_column_backends", spy)
+    cfg, src = _native_table()
+    _call(cfg, src, dispatcher_enabled=False, engine_version="ev-2")
+    assert seen == [{"table": "t", "engine_version": "ev-2"}]
 
 
 def _schema_disagreement(monkeypatch: pytest.MonkeyPatch, target: Any, name: str) -> None:
