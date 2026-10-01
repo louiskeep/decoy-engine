@@ -17,6 +17,7 @@ duration 8, decimal32/64/128/256 4/8/16/32.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -110,14 +111,17 @@ def _is_string_family(t: pa.DataType) -> bool:
 def _classify_string_family(
     arrow_type: pa.DataType, base: pa.DataType, wrappers: list[str]
 ) -> ArrowSizeClass:
-    """Sampled only when the sampler needs at most one normalization step."""
+    """Sampled only when the sampler needs at most one normalization step.
+
+    A dictionary never reaches here: `classify_column` rejects every dictionary first.
+    """
     is_view = pa.types.is_string_view(base) or pa.types.is_binary_view(base)
     if not wrappers:
         if is_view:
             decoded = pa.large_string() if pa.types.is_string_view(base) else pa.large_binary()
             return Sampled(decoded)
         return Sampled(base)
-    if wrappers in (["extension"], ["dictionary"]) and not is_view:
+    if wrappers == ["extension"] and not is_view:
         return Sampled(base)
     return Unpriceable(f"{arrow_type}: wrapped string representation, not sampled")
 
@@ -148,9 +152,14 @@ def classify_column(arrow_type: pa.DataType, *, has_nulls: bool) -> ArrowSizeCla
     `has_nulls` decides the nullable form of int/uint below 64 bits and bool (pandas
     widens an int with nulls to float64 and holds a bool with nulls as objects). The
     caller supplies it from the column or the file footer, never from a profile
-    sample. A wrapper is classified through its value type.
+    sample. An extension or run-end-encoded wrapper is classified through its value
+    type. Every dictionary is UNPRICEABLE: pandas decodes it to a Categorical whose
+    cost depends on cardinality, and this module bounds memory rather than
+    predicting pandas.
     """
     base, wrappers = _unwrap(arrow_type)
+    if "dictionary" in wrappers:
+        return Unpriceable(f"{arrow_type}: dictionary columns are not priced")
     if _is_string_family(base):
         return _classify_string_family(arrow_type, base, wrappers)
     if pa.types.is_null(base):
@@ -170,8 +179,8 @@ def _is_plain(t: pa.DataType) -> bool:
 def normalize_for_sampling(column: pa.Array | pa.ChunkedArray) -> pa.Array | pa.ChunkedArray:
     """`column` as a plain string or binary array, applying exactly one step.
 
-    One step is a view cast, an extension unwrap or a dictionary decode. Anything
-    else raises `TypeError` naming the Arrow type before any Arrow kernel runs; the
+    One step is a view cast or an extension unwrap. Anything else, dictionaries
+    included, raises `TypeError` naming the Arrow type before any Arrow kernel runs; the
     classifier never routes such a column here.
     """
     t = column.type
@@ -183,14 +192,42 @@ def normalize_for_sampling(column: pa.Array | pa.ChunkedArray) -> pa.Array | pa.
         if isinstance(column, pa.ChunkedArray):
             return pa.chunked_array([c.storage for c in column.chunks], type=t.storage_type)
         return column.storage
-    if pa.types.is_dictionary(t) and _is_plain(t.value_type):
-        if isinstance(column, pa.ChunkedArray):
-            return column.cast(t.value_type)
-        return column.dictionary_decode()
     raise TypeError(
         f"sample_average_string_bytes needs a plain string or binary column "
-        f"(or one view cast, extension unwrap or dictionary decode away), got {t}"
+        f"(or one view cast or extension unwrap away), got {t}"
     )
+
+
+_PANDAS_NULLABLE_DTYPES = frozenset(
+    (
+        *(f"Int{w}" for w in (8, 16, 32, 64)),
+        *(f"UInt{w}" for w in (8, 16, 32, 64)),
+        *(f"Float{w}" for w in (32, 64)),
+        "boolean",
+        "string",
+    )
+)
+
+
+def pandas_nullable_columns(schema: pa.Schema) -> frozenset[str]:
+    """Field names the schema's `b"pandas"` metadata marks as pandas nullable dtypes.
+
+    A frame written from `Int8`, `boolean` and the like carries a validity mask even
+    when no value is null, and pandas reads it back as the nullable extension dtype.
+    Malformed metadata marks nothing.
+    """
+    raw = (schema.metadata or {}).get(b"pandas")
+    if raw is None:
+        return frozenset()
+    try:
+        columns = json.loads(raw)["columns"]
+        return frozenset(
+            str(c.get("field_name") or c["name"])
+            for c in columns
+            if c.get("numpy_type") in _PANDAS_NULLABLE_DTYPES
+        )
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return frozenset()
 
 
 def column_arrow_types(
@@ -202,14 +239,17 @@ def column_arrow_types(
     sample misses nulls past its window. A resident column reports its exact
     `null_count` (True for a wrapped type). A lazy column reads the Parquet footer:
     complete statistics give an exact count, otherwise the field's `nullable` flag
-    stands, and a positive profile count can only widen. No source gives `{}`.
+    stands, and a positive profile count can only widen. On both, a column the
+    schema's pandas metadata marks as a nullable extension dtype is nullable. No
+    source gives `{}`.
     """
     if isinstance(resident, pa.Table):
         present = set(resident.column_names)
+        nullable = pandas_nullable_columns(resident.schema)
         return {
             c.name: (
                 resident.schema.field(c.name).type,
-                resident_has_nulls(resident.column(c.name)),
+                c.name in nullable or resident_has_nulls(resident.column(c.name)),
             )
             for c in profile_table.columns
             if c.name in present
@@ -217,6 +257,7 @@ def column_arrow_types(
     if isinstance(resident, LazySource):
         schema = resident.schema
         counts = resident.column_null_counts()
+        nullable = pandas_nullable_columns(schema)
         types: dict[str, tuple[pa.DataType, bool]] = {}
         for c in profile_table.columns:
             if c.name not in schema.names:
@@ -224,7 +265,10 @@ def column_arrow_types(
             field = schema.field(c.name)
             exact = counts.get(c.name)
             has_nulls = field.nullable if exact is None else exact > 0
-            types[c.name] = (field.type, has_nulls or getattr(c, "null_count", 0) > 0)
+            types[c.name] = (
+                field.type,
+                has_nulls or c.name in nullable or getattr(c, "null_count", 0) > 0,
+            )
         return types
     return {}
 

@@ -1,5 +1,5 @@
 """Byte-estimate pricing keyed on the Arrow type (plan
-docs/plans/2026-10-01-byte-estimate-temporal-columns.md, revision 3.1).
+docs/plans/2026-10-01-byte-estimate-temporal-columns.md, revision 3.2).
 
 Acceptance tests 3, 5, 6, 7, 8, 11, 12 and 12b. The end-to-end tests (1, 1b, 2, 4
 and the run_pipeline halves of 11 and 12) live in
@@ -108,11 +108,13 @@ _SAMPLED = (
     "large_binary",
     "binary_view",
     "json",
+)
+_UNPRICEABLE = (
+    "dictionary_int",
+    "dictionary_float16",
     "dictionary_string",
     "dictionary_large_string",
     "dictionary_binary",
-)
-_UNPRICEABLE = (
     "month_day_nano_interval",
     "list",
     "large_list",
@@ -131,8 +133,6 @@ _UNPRICEABLE = (
 # Wrapped numeric forms: a resident wrapper is priced as nullable whatever the
 # outer null count says, so only the nullable price is pinned for them.
 _WRAPPED_NUMERIC_PRICE = {
-    "dictionary_int": 8.0,
-    "dictionary_float16": 2.0,
     "ree_int": 8.0,
     "ree_float": 8.0,
     "bool8": 8.0,
@@ -279,15 +279,6 @@ def test_sampler_catalogue_pins() -> None:
         assert sample_average_string_bytes(CATALOGUE[name](False)) == pytest.approx(2.2), name
 
 
-@pytest.mark.parametrize("name", ["dictionary_string", "dictionary_large_string"])
-@pytest.mark.parametrize("has_null", [False, True])
-def test_sampler_dictionary_of_plain_string_array_and_chunked(name: str, has_null: bool) -> None:
-    arr = CATALOGUE[name](has_null)
-    expected = _mean_utf8(arr.to_pylist())
-    assert sample_average_string_bytes(arr) == pytest.approx(expected)
-    assert sample_average_string_bytes(_two_chunks(arr)) == pytest.approx(expected)
-
-
 def test_sampler_matches_python_reference_on_non_ascii_text() -> None:
     values = ["é", "日本語テキスト", "😀", None, "plain"]
     assert sample_average_string_bytes(pa.array(values)) == pytest.approx(_mean_utf8(values))
@@ -299,7 +290,10 @@ def test_sampler_matches_python_reference_on_non_ascii_text() -> None:
 def _unsampleable_arrays() -> dict[str, pa.Array | pa.ChunkedArray]:
     dict_view = CATALOGUE["dictionary_string_view"](False)
     ree_string = CATALOGUE["ree_string"](False)
+    dict_string = CATALOGUE["dictionary_string"](False)
     return {
+        "dictionary_string_array": dict_string,
+        "dictionary_string_chunked": _two_chunks(dict_string),
         "dictionary_string_view_array": dict_view,
         "dictionary_string_view_chunked": _two_chunks(dict_view),
         "ree_string": ree_string,
@@ -391,7 +385,7 @@ def test_pin_table_profile_adapter_prices_29190_with_the_main_labels() -> None:
     spec = table_size_spec_from_profile(
         profile_table,
         sample={n: table.column(n) for n in table.column_names},
-        arrow_types=arrow_types,  # type: ignore[call-arg]
+        arrow_types=arrow_types,
     )
     assert [c.dtype for c in spec.columns] == [
         "object",
@@ -460,8 +454,7 @@ def test_lazy_table_with_tz_duration_and_dictionary_columns_does_not_raise(tmp_p
         table_kinds={"t": "mask"},
         budget_bytes=_GB,
     )
-    # The dictionary-of-string column is sampled-or-nothing, and a lazy table has
-    # nothing to sample, so the table stays UNPRICEABLE (route bounded).
+    # Every dictionary column is UNPRICEABLE, so the table routes bounded.
     assert result is None
 
 
@@ -611,7 +604,7 @@ def test_lazy_nullable_columns_price_wide_and_the_required_control_stays_narrow(
     assert types["i8"] == (pa.int8(), True)
     assert types["b"] == (pa.bool_(), True)
     assert types["ctrl"] == (pa.int8(), False)
-    spec = table_size_spec_from_profile(profile_table, arrow_types=types)  # type: ignore[call-arg]
+    spec = table_size_spec_from_profile(profile_table, arrow_types=types)
     assert _labels(spec) == {"i8": "float64", "b": "pyobject[bool]", "ctrl": "int8"}
 
 
@@ -656,7 +649,7 @@ def test_resident_nullability_comes_from_the_column_not_the_profile_sample(
     spec = table_size_spec_from_profile(
         profile_table,
         sample={n: table.column(n) for n in table.column_names},
-        arrow_types=types,  # type: ignore[call-arg]
+        arrow_types=types,
     )
     assert _labels(spec) == {"i8": "float64", "b": "pyobject[bool]", "ctrl": "int8"}
     prepared = table_size_spec_from_table("t", table)
@@ -696,10 +689,6 @@ class _BoolExt(pa.ExtensionType):
         return cls()
 
 
-def _hidden_null_dictionary(values: pa.Array) -> pa.Array:
-    return pa.DictionaryArray.from_arrays(pa.array([0, 1, 0, 0, 0, 0], pa.int32()), values)
-
-
 def _ree(values: pa.Array, run_ends: list[int]) -> pa.Array:
     return pa.RunEndEncodedArray.from_arrays(pa.array(run_ends, pa.int32()), values)
 
@@ -709,11 +698,6 @@ def _wrapped_columns() -> dict[str, tuple[pa.Array, str]]:
     reports null_count == 0 (asserted by the test) while its logical content may
     hold a null, or, for the no-null cases, holds none."""
     return {
-        "dict_i8": (_hidden_null_dictionary(pa.array([5, None], pa.int8())), "float64"),
-        "dict_bool": (
-            _hidden_null_dictionary(pa.array([True, None], pa.bool_())),
-            "pyobject[bool]",
-        ),
         "ext_i8": (
             pa.ExtensionArray.from_storage(_Int8Ext(), pa.array([1, 2, 3, 4, 5, 6], pa.int8())),
             "float64",
@@ -748,7 +732,7 @@ def test_resident_top_level_wrappers_price_as_nullable_at_both_call_sites(name: 
     adapted = table_size_spec_from_profile(
         profile_table,
         sample={"c": table.column("c")},
-        arrow_types=types,  # type: ignore[call-arg]
+        arrow_types=types,
     )
     assert adapted.columns[0].dtype == label
 
@@ -799,7 +783,7 @@ def test_no_arrow_type_widens_labels_that_can_carry_a_null_mask(label: str, expe
         row_count=10,
         columns=(_col_profile("x", dtype=label, row_count=10, null_count=0),),
     )
-    spec = table_size_spec_from_profile(profile_table, arrow_types=None)  # type: ignore[call-arg]
+    spec = table_size_spec_from_profile(profile_table, arrow_types=None)
     assert spec.columns[0].dtype == expected
     assert _FIXED_WIDTH_DTYPE_BYTES[spec.columns[0].dtype] == 8
     assert raw_data_bytes([spec]).priceable_bytes == 80  # not the revision-2 1, 2 or 1 bytes/row
@@ -831,7 +815,7 @@ def test_the_adapter_still_honors_declared_widths_over_arrow_types() -> None:
     spec = table_size_spec_from_profile(
         profile_table,
         declared_widths={"s": 20.0},
-        arrow_types={"s": (pa.string(), False)},  # type: ignore[call-arg]
+        arrow_types={"s": (pa.string(), False)},
     )
     assert spec.columns[0].string_width_bytes == 20.0
 
@@ -845,7 +829,7 @@ def test_resident_arrow_type_wins_over_a_disagreeing_profile_label() -> None:
     spec = table_size_spec_from_profile(
         profile_table,
         sample={"c": resident.column("c")},
-        arrow_types=types,  # type: ignore[call-arg]
+        arrow_types=types,
     )
     assert spec.columns[0].dtype == "int64"
     assert (
@@ -864,3 +848,143 @@ def test_arrow_type_mapping_tolerates_a_namespace_profile_table() -> None:
     profile_table = SimpleNamespace(name="m", columns=[SimpleNamespace(name="x")])
     types = _column_arrow_types(pa.table({"x": [1, 2, 3]}), profile_table)
     assert types == {"x": (pa.int64(), False)}
+
+
+# ---------------------------------------------------------------------------
+# Revision 3.2: dictionaries are UNPRICEABLE; pandas nullable metadata widens
+# ---------------------------------------------------------------------------
+
+_HIGH_CARD = 50_000
+
+
+def _high_cardinality_dictionaries() -> dict[str, pa.Array]:
+    indices = pa.array(range(_HIGH_CARD), pa.int32())
+    return {
+        "dict_int64": pa.DictionaryArray.from_arrays(
+            indices, pa.array(range(_HIGH_CARD), pa.int64())
+        ),
+        "dict_string": pa.DictionaryArray.from_arrays(
+            indices, pa.array([f"value-{i}" for i in range(_HIGH_CARD)])
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_high_cardinality_dictionaries()))
+def test_high_cardinality_dictionary_is_unpriceable_on_resident_and_prepared_paths(
+    name: str,
+) -> None:
+    array = _high_cardinality_dictionaries()[name]
+    table = pa.table({"c": array})
+    assert _kind(_arrow().classify_column(array.type, has_nulls=False)) == "unpriceable"
+
+    prepared = table_size_spec_from_table("t", table)
+    assert prepared.columns[0].unpriceable
+    assert fits([prepared], "full_frame", _GB) is None
+
+    profile_table = TableProfile(
+        name="t",
+        row_count=_HIGH_CARD,
+        columns=(_col_profile("c", dtype="object", row_count=_HIGH_CARD),),
+    )
+    assert (
+        byte_estimate_full_frame_fits(
+            _FakeProfile((profile_table,)),
+            caller_sources={"t": table},
+            table_kinds={"t": "mask"},
+            budget_bytes=_GB,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("value_type", [pa.int8(), pa.float64(), pa.string(), pa.binary()])
+@pytest.mark.parametrize("has_null", [False, True])
+def test_every_dictionary_classifies_unpriceable(value_type: pa.DataType, has_null: bool) -> None:
+    arrow_type = pa.dictionary(pa.int32(), value_type)
+    assert _kind(_arrow().classify_column(arrow_type, has_nulls=has_null)) == "unpriceable"
+
+
+def test_lazy_dictionary_column_is_unpriceable_and_fits_is_none(tmp_path: Path) -> None:
+    # Parquet restores a dictionary only for byte-array values, so the lazy case is
+    # dictionary<string>.
+    array = _high_cardinality_dictionaries()["dict_string"]
+    path = tmp_path / "t.parquet"
+    pq.write_table(pa.table({"c": array}), path)
+    assert LazySource(path).schema.field("c").type == pa.dictionary(pa.int32(), pa.string())
+    assert (
+        byte_estimate_full_frame_fits(
+            _profile_of(path),
+            caller_sources={"t": LazySource(path)},
+            table_kinds={"t": "mask"},
+            budget_bytes=_GB,
+        )
+        is None
+    )
+
+
+def _pandas_nullable_frame() -> Any:
+    pd = pytest.importorskip("pandas")
+    return pd.DataFrame(
+        {
+            "i8": pd.array([1, 2, 3, 4], "Int8"),
+            "flag": pd.array([True, False, True, True], "boolean"),
+            "i64": pd.array([1, 2, 3, 4], "Int64"),
+            "plain8": pd.Series([1, 2, 3, 4], dtype="int8"),
+        }
+    )
+
+
+_PANDAS_WIDENED = {"i8": "float64", "flag": "pyobject[bool]", "i64": "float64", "plain8": "int8"}
+
+
+def _pandas_profile_table(rows: int) -> TableProfile:
+    return TableProfile(
+        name="t",
+        row_count=rows,
+        columns=tuple(_col_profile(name, dtype="int8", row_count=rows) for name in _PANDAS_WIDENED),
+    )
+
+
+def test_pandas_nullable_metadata_widens_a_no_null_resident_column() -> None:
+    table = pa.Table.from_pandas(_pandas_nullable_frame(), preserve_index=False)
+    assert all(table.column(n).null_count == 0 for n in table.column_names)
+    profile_table = _pandas_profile_table(table.num_rows)
+    types = _column_arrow_types(table, profile_table)
+    spec = table_size_spec_from_profile(
+        profile_table,
+        sample={n: table.column(n) for n in table.column_names},
+        arrow_types=types,
+    )
+    assert _labels(spec) == _PANDAS_WIDENED
+
+
+def test_pandas_nullable_metadata_widens_a_no_null_lazy_column(tmp_path: Path) -> None:
+    path = tmp_path / "t.parquet"
+    _pandas_nullable_frame().to_parquet(path, index=False)
+    source = LazySource(path)
+    profile_table = _pandas_profile_table(4)
+    types = _column_arrow_types(source, profile_table)
+    spec = table_size_spec_from_profile(profile_table, arrow_types=types)
+    assert _labels(spec) == _PANDAS_WIDENED
+
+
+def test_pandas_nullable_metadata_flips_a_tight_resident_verdict() -> None:
+    rows = _N
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"i8": pd.array(list(range(100)) * (rows // 100), "Int8")})
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    narrow = _spec({"i8": "int8"}, rows)
+    wide = _spec({"i8": "float64"}, rows)
+    budget = _straddling_budget(narrow, wide)
+    profile_table = TableProfile(
+        name="t", row_count=rows, columns=(_col_profile("i8", dtype="int8", row_count=rows),)
+    )
+    assert (
+        byte_estimate_full_frame_fits(
+            _FakeProfile((profile_table,)),
+            caller_sources={"t": table},
+            table_kinds={"t": "mask"},
+            budget_bytes=budget,
+        )
+        is False
+    )

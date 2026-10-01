@@ -64,10 +64,15 @@ reached the string sampler or the "unrecognized dtype" error.
   `null_count`, and a Parquet-backed table uses footer statistics
   (`LazySource.column_null_counts()`) or the field's `nullable` flag. An int8,
   int16, int32, unsigned or bool column with a null now prices at 8 bytes, as pandas
-  holds it. A resident dictionary, run-end-encoded or extension column prices as
-  nullable. A dictionary of a view type and any run-end-encoded string or binary
-  column are UNPRICEABLE. With no Arrow type, the pandas labels `Int8`..`UInt32`,
-  `int8`..`uint32`, `bool` and `boolean` price at 8 bytes.
+  holds it. A resident run-end-encoded or extension column prices as nullable.
+  Every dictionary column is UNPRICEABLE on the resident, prepared and lazy paths
+  (pandas decodes it to a Categorical that can cost more than its values, so it is
+  bounded rather than priced), as is any run-end-encoded string or binary column. A
+  column that a pandas-written schema's `pandas` metadata marks as a nullable
+  extension dtype (`Int*`, `UInt*`, `Float*`, `boolean`, `string`) prices as nullable
+  on the resident and lazy paths even when it holds no null. With no Arrow type, the
+  pandas labels `Int8`..`UInt32`, `int8`..`uint32`, `bool` and `boolean` price at 8
+  bytes.
 - A job that fit full_frame only because a sample missed late nulls, or because a
   date was priced at its storage width, can now route bounded. Output is unchanged.
 - `sample_average_string_bytes` is vectorized (no per-value Python loop over a
