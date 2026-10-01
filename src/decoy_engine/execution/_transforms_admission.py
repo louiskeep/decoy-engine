@@ -38,6 +38,10 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
+# The pyarrow stubs differ across versions on whether compute kernels are typed;
+# an untyped alias keeps mypy quiet on every supported stub version.
+_pc_any: Any = pc
+
 __all__ = [
     "admission_signals",
     "check_rejections_before_preparation",
@@ -209,7 +213,7 @@ def _distinct_counts(
                     out[(t.name, col)] = raw[col]
                 continue
             try:
-                out[(t.name, col)] = int(pc.count_distinct(table.column(col)).as_py())  # type: ignore[attr-defined]
+                out[(t.name, col)] = int(_pc_any.count_distinct(table.column(col)).as_py())
             except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
                 return None
     return out
