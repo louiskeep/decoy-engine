@@ -34,6 +34,7 @@ lane's ~30-keyword argument block. See `run_from_pipeline_locals`'s docstring.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Final
 
 from decoy_engine.errors import DecoyError
@@ -177,6 +178,7 @@ def _execute_admitted(
     from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
     from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
     from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
+    from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 
     try:
         inputs = build_live_physical_plan_inputs(
@@ -234,8 +236,10 @@ def _execute_admitted(
         ctx = ShadowContext.from_key_provider(plan=plan, key_provider=key_provider)
         snapshot = capture_shadow_snapshot({candidate.table: candidate.source})
 
+        collector = TimingCollector()
         try:
-            shadow_result = ShadowCoordinator(ctx=ctx).run(physical_plan, snapshot)
+            with use_collector(collector):
+                shadow_result = ShadowCoordinator(ctx=ctx).run(physical_plan, snapshot)
         except ShadowDifference as exc:
             # D8: an admitted job's execution boundary. Admission already
             # preflighted companion availability, node binding, coverage, and
@@ -302,6 +306,11 @@ def _execute_admitted(
         # not by hand-copying bytes. `candidate.source_frame` is single-use
         # (admission built it once for this call only), so mutating it in place
         # costs no extra conversion beyond the one admission already paid for.
+        # The output bridge (Arrow column extraction and overlay through the
+        # final `Table.from_pandas`) is added to the admission crossings, so
+        # `boundary_conversion_ms` covers all lane boundary work outside the
+        # per-node scopes and never overlaps `timings`.
+        bridge_t0 = time.perf_counter()
         frame = candidate.source_frame
         masked_table = shadow_result.outputs[candidate.table]
         # A ZERO-ROW overlay via to_pylist() assigns [], which pandas infers as
@@ -319,6 +328,9 @@ def _execute_admitted(
             masked_col = masked_table.column(column)
             frame[column] = masked_col.to_pandas() if empty else masked_col.to_pylist()
         outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
+        boundary_conversion_ms = (
+            candidate.boundary_conversion_ms + (time.perf_counter() - bridge_t0) * 1000.0
+        )
         quality_metrics: dict[str, Any] = {}
         _pipeline_finalize.stamp_execution_metrics(
             quality_metrics,
@@ -368,8 +380,8 @@ def _execute_admitted(
 
         return ExecutionResult(
             outputs=outputs,
-            timings=(),
-            boundary_conversion_ms=0.0,
+            timings=tuple(collector.records),
+            boundary_conversion_ms=boundary_conversion_ms,
             warnings=_typed_warnings(shadow_result.warnings),
             quality_metrics=quality_metrics,
             table_kinds=dict(table_kinds),
