@@ -59,6 +59,7 @@ Scope: large single-table and independent multi-table mask jobs on the compiled 
 | B1 | **Dispatcher production contract** (engine): accept what production callers pass (`registry`, `adapter`, `vault_writer`, `chunk_result_sink`, `base_row_offset`); reconcile output schema with the oracle route in the degenerate cases the parity gate currently allowlists; emit `ExecutionResult` timings and the per-column evidence above; map `NativeChunkSchemaDriftError` to a typed engine error; thread budget as a parameter (library default 1; production callers pass the admitted reservation). One public engine entry point. | M |
 | B2 | **Engine auto-chunk on the dispatcher**, with the per-table oracle fallback. | S-M |
 | B7 | **Engine `run_pipeline` independent multi-table dispatch**: each independent table goes to the dispatcher (today only platform Phase 1 handles several tables). | M |
+| B8 | **Native admission for unconfigured passthrough columns** (engine): B1's dispatcher admits a table whose unconfigured columns are kept under the passthrough policy, carrying them as Arrow passthrough, instead of vetoing it to the oracle route (`uncovered_columns`). Partial-mask configs are common, and without this they run wholly on pandas. Before B3 and B4 activation, so platform and CLI jobs get the native route. | S-M |
 | B5 | **Platform admission pricing and reservation** for native chunk cost and the thread budget. | S-M |
 | B3 | **Platform Phase 1 on the dispatcher**, against an exact engine and companion artifact; the platform maps the new error and surfaces backend, reason, timing and threads on the job. | S-M |
 | B4 | **CLI**: dependency and native-extra update to the released engine and companion; `--chunked` uses B1; `--native` stops rejecting chunked jobs (record R10) and reads per-column evidence; CLI release and clean-install smoke test. | S-M |
@@ -130,7 +131,7 @@ Not part of this program's end state; each becomes its own planned and sized ite
 ## Order
 
 1. Phase A: A1, then A2; A3, A4, A5, A6, A7 in parallel worktrees (one writer each). A8 with A8p-0 first and A8p after the release; A9 after the A5a release; A10 any time before GA. A11 once every Phase A branch has merged.
-2. B1, then B2 and B7; merge and identify the exact engine and companion artifact; B5; B3 against that artifact; a paired engine and companion release; B4 (CLI dependency and release, clean-install smoke). B6a after B2, then B6b; B6c after A4, B3, B5.
+2. B1, then B2 and B7, then B8 (before B3 and B4 activation); merge and identify the exact engine and companion artifact; B5; B3 against that artifact; a paired engine and companion release; B4 (CLI dependency and release, clean-install smoke). B6a after B2, then B6b; B6c after A4, B3, B5.
 3. C slices start as soon as B1's contract is frozen, in parallel; each C9 platform step after B3, B5 and its C slice.
 4. D1 then D1b, and D4a then D4b then D4c, in parallel with C; D2 after D1's operator work; D5 after D1 and D4b; E after the dependencies listed there.
 5. F after E: F1 then F2; F3 alongside; F4 after F1, F2, F3 and their released artifacts. The breadth backlog after F.
