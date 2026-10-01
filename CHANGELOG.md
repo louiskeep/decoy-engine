@@ -35,6 +35,35 @@ withholds any recommendation, same as an exceeded one. `rss_ratio` and
 Both harnesses now refuse to run on a non-Linux platform (`ru_maxrss`'s units
 are not portable). See `docs/plans/2026-09-30-retire-d9-rss-ratio.md`.
 
+### Added (public fixed-width reader, 2026-09-30)
+
+`read_fixed_width` (plus its `FixedWidthParseError`) is now exported from
+`decoy_engine.__all__` (the same objects as the private
+`profile._fixed_width_reader` module). Callers reading a `format: fixed_width`
+`FileSource` can now depend on this versioned public surface instead of the
+private module (A5a, engine program Phase A).
+
+The reader was hardened before becoming public, which changes behavior:
+- Errors about bad data carry no file content: a bad cast, a short record, an
+  undecodable line and a malformed layout dict are raised without chaining the
+  reader's own internal exception (a caller that calls the reader while handling
+  another exception will still see that one as context, as Python always does),
+  the first three from a frame that holds no file data, with the path escaped
+  onto one line.
+  Failures that are not about the data (a disk error mid-read, running out of
+  memory) are out of scope; see `docs/security/error-reporting-and-data-exposure.md`,
+  which also tells operators to keep local-variable capture off in error trackers.
+- A malformed layout dict raises `ConfigError` instead of pydantic's
+  `ValidationError`; an undecodable line raises `FixedWidthParseError` naming
+  its exact line instead of `UnicodeDecodeError`.
+- The file is read in binary one line at a time, so `max_records` decodes
+  or examines no byte past the capped record. Records end at `\n` (a trailing `\r` is
+  stripped); a file that uses a bare `\r` as its line ending is no longer
+  split on it.
+- `max_records` rejects `bool`, non-int and negative values; `0` reads nothing.
+- `path` accepts `os.PathLike[str]`; a non-`str` path raises `TypeError` and a
+  path containing NUL raises `ValueError`.
+
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 
 **Breaking (pre-GA API):** `boto3` and `google-cloud-storage` moved from base
