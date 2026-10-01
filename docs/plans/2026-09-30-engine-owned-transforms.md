@@ -86,6 +86,7 @@ Compatibility delta against today's platform, for transform-bearing tables only:
 | new | new | engine applies, correct | |
 
 - **A8p-0 (ships first, before A8 releases):** cap `decoy-engine<0.7.0`. V = 0.7.0, the engine release containing A8 (engine main is 0.6.0); if the release number changes, A8p-0 is amended before it merges. No behavior change.
+- The A8 change itself bumps the engine to 0.7.0.dev0, so no build carrying engine-owned transforms reports a pre-0.7 version.
 - **A8p (ships with 0.7.0):** raise the minimum to `>=0.7.0` (the platform plan `decoy-platform/docs/plans/2026-09-30-platform-engine-owned-transforms.md` supersedes this subsection: it keeps an upper bound `<0.8.0`, adds a runtime startup gate, CI pins and image checks), and change the call sites:
   - Main run (`v2_runner.py` ~283-300): stop preprocessing; pass raw sources to `run_pipeline`.
   - Sequential (`v2_sequential.py`), which calls `run_sequential` directly: keep calling a transform on load, now the public `apply_table_transforms`, in both the execution loader and the vault-reload loader, so vault rows stay aligned with filtered, sorted, deduped or limited output.

@@ -39,6 +39,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution._transforms_table import transform_resolved_source
 from decoy_engine.profile._readers import LazySource
@@ -70,6 +71,7 @@ def resolve_resident_sources(
     source_loader: Callable[[str], pa.Table] | None = None,
     required_tables: Iterable[str] = (),
     config: Mapping[str, Any] | None = None,
+    prepared: frozenset[str] = frozenset(),
 ) -> dict[str, pa.Table]:
     """Materialize every source, for routes that need them all resident at once.
 
@@ -92,12 +94,15 @@ def resolve_resident_sources(
     table (the resident / LazySource path, where `source_loader` is None),
     that entry wins and the loader is never called for it.
 
-    `config`, when given, is the validated config dump: each mask table that
-    declares transforms is transformed exactly once here, as it is resolved, so
-    every later stage (adapter, validators, post-validation) sees the transformed
-    table. A `LazySource` is schema-checked before it is read.
+    `config`, when given, is the validated config dump: a mask table that
+    declares transforms and is not in `prepared` (a lazy source, or one supplied
+    through the loader) is transformed exactly once here, as it is resolved. A
+    `LazySource` is schema-checked before it is read. Tables in `prepared` were
+    transformed before routing and are used as they are.
     """
-    bearing = transform_bearing_mask_tables(config) if config is not None else frozenset()
+    bearing = (
+        transform_bearing_mask_tables(config) - prepared if config is not None else frozenset()
+    )
     resident: dict[str, pa.Table] = {}
     for name, src in caller_sources.items():
         if name in bearing and config is not None:
@@ -119,6 +124,7 @@ def resolve_sequential_loader(
     caller_sources: Mapping[str, pa.Table | LazySource],
     *,
     config: Mapping[str, Any] | None = None,
+    prepared: frozenset[str] = frozenset(),
 ) -> Callable[[str], pa.Table]:
     """Build the per-table loader `run_sequential_route` calls.
 
@@ -130,8 +136,11 @@ def resolve_sequential_loader(
     residents by its own contract); otherwise fall back to resolving from
     `caller_sources`.
 
-    With `config`, a mask table that declares transforms is transformed once, as
-    the sequential runner loads it (and schema-checked before any value is read).
+    A mask table that declares transforms follows its own rule. A resident
+    table in `caller_sources` wins over the loader (it is what routing priced) and,
+    when it is in `prepared`, is served as it is. A lazy or loader-supplied table is
+    schema-checked and transformed once as it loads. With neither a source nor a
+    loader there is nothing to load, which is a coded error rather than a `KeyError`.
     """
     bearing = transform_bearing_mask_tables(config) if config is not None else frozenset()
     if source_loader is not None:
@@ -148,14 +157,24 @@ def resolve_sequential_loader(
     def load(t: str) -> pa.Table:
         if t not in bearing:
             return raw_loader(t)
-        # A caller-resident LazySource is checked on its footer schema before it
-        # is read; a loader already returns a resident table.
-        source: pa.Table | LazySource = (
-            caller_sources[t] if source_loader is None else source_loader(t)
-        )
-        return transform_resolved_source(resolved_config, t, source)
+        if t in prepared:
+            prepared_table = caller_sources[t]
+            if not isinstance(prepared_table, pa.Table):  # pragma: no cover - by construction
+                raise ExecutionError(code="transform_source_missing", message=_MISSING % t)
+            return prepared_table
+        if t in caller_sources:
+            return transform_resolved_source(resolved_config, t, caller_sources[t])
+        if source_loader is None:
+            raise ExecutionError(code="transform_source_missing", message=_MISSING % t)
+        return transform_resolved_source(resolved_config, t, source_loader(t))
 
     return load
+
+
+_MISSING = (
+    "table %r declares transforms but has no resident source and no source_loader, "
+    "so there is nothing to transform."
+)
 
 
 def lazy_source_rejection(src: pa.Table | LazySource, *, table: str) -> str | None:

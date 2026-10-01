@@ -168,6 +168,25 @@ def cleared(config: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def reference_run(
+    tmp_path: Path, config: dict[str, Any], tables: dict[str, pa.Table], **kwargs: Any
+) -> Any:
+    """Run `config` with no transforms on the reference tables R.
+
+    Each R is written to its own Parquet file and the config's source descriptor
+    is repointed at it, so profiling and compile-time checks see R, not the raw
+    source T (a transform can change what the profile sees).
+    """
+    from decoy_engine import run_pipeline
+
+    cfg = cleared(config)
+    for name, table in tables.items():
+        cfg["sources"][name] = dict(
+            cfg["sources"][name], path=write_parquet(tmp_path, table, f"{name}_reference")
+        )
+    return run_pipeline(cfg, tables, engine_version=ENGINE_VERSION, **kwargs)
+
+
 def base_table(n: int = 12) -> pa.Table:
     """Mixed-type table: unique int key, raw nullable int, duplicate string key,
     float column with NaN and null, payload string, extra column to drop."""

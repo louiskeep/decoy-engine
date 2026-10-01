@@ -50,6 +50,7 @@ import warnings
 from collections.abc import Mapping
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
@@ -218,6 +219,25 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     return df[mask]
 
 
+_NESTED = (list, tuple, dict, set, np.ndarray)
+
+
+def _reject_nested_keys(df: pd.DataFrame, columns: Any, *, code: str, op: str) -> None:
+    """Nested values (Arrow list/struct/map columns) have no pandas sort order or hash,
+    and pandas does not always fail on them: it can compare them by identity. Refuse
+    them as keys up front."""
+    for col in columns:
+        series = df[col]
+        if series.dtype != object:
+            continue
+        first = series.dropna().head(1)
+        if len(first) and isinstance(first.iloc[0], _NESTED):
+            raise TransformError(
+                code=code,
+                message=f"{op} cannot use column {col!r}: it holds nested (list/struct/map) values",
+            )
+
+
 def _apply_sort(df: pd.DataFrame, op: SortOp) -> pd.DataFrame:
     missing = [c for c in op.by if c not in df.columns]
     if missing:
@@ -233,7 +253,14 @@ def _apply_sort(df: pd.DataFrame, op: SortOp) -> pd.DataFrame:
                 f"sort.ascending length {len(ascending)} does not match by length {len(op.by)}"
             ),
         )
-    return df.sort_values(by=op.by, ascending=ascending, kind="stable")
+    _reject_nested_keys(df, op.by, code="sort_unsupported_type", op="sort")
+    try:
+        return df.sort_values(by=op.by, ascending=ascending, kind="stable")
+    except (TypeError, ValueError) as exc:
+        raise TransformError(
+            code="sort_unsupported_type",
+            message=f"sort.by columns {op.by} cannot be ordered: {type(exc).__name__}",
+        ) from exc
 
 
 def _apply_limit(df: pd.DataFrame, op: LimitOp) -> pd.DataFrame:
@@ -248,7 +275,15 @@ def _apply_dedupe(df: pd.DataFrame, op: DedupeOp) -> pd.DataFrame:
                 code="dedupe_column_missing",
                 message=f"dedupe.columns not in table: {missing}",
             )
-    return df.drop_duplicates(subset=op.columns)
+    keys = op.columns if op.columns is not None else list(df.columns)
+    _reject_nested_keys(df, keys, code="dedupe_unsupported_type", op="dedupe")
+    try:
+        return df.drop_duplicates(subset=op.columns)
+    except (TypeError, ValueError) as exc:
+        raise TransformError(
+            code="dedupe_unsupported_type",
+            message=f"dedupe columns cannot be compared: {type(exc).__name__}",
+        ) from exc
 
 
 def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:

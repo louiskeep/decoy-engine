@@ -463,18 +463,14 @@ ALLOWLIST: dict[str, int] = {
     # site. Dense reviewed exception (<= MAX). Decompose the finalize/validator
     # hand-off into `_pipeline_finalize.py`'s owner cluster when the next
     # post-validation change lands (that sibling already exists).
-    # Engine-owned transforms: +21 LOC (635 -> 656) wiring `run_pipeline` to own
-    # table transforms: the explicit out-of-core preflight, threading `config` into
-    # the resident-source and sequential-loader resolvers, and stamping the
-    # out-of-core decline telemetry. The logic lives in `_transforms_gate.py`,
-    # `_transforms_admission.py` and `_transforms_table.py`; this file only calls them.
-    "src/decoy_engine/execution/_pipeline.py": 656,
-    # Engine-owned transforms (was exactly 600, no entry): +8 LOC (600 -> 608) for the
-    # out-of-core decline on a transform-bearing job and the call into the new
-    # `_transforms_admission.admission_signals` (which replaced the inline estimate
-    # and probe calls). Dense reviewed exception (<= MAX). Decompose the probe-recovery
-    # resolver into a sibling when the next routing-signal change lands.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 608,
+    # Engine-owned transforms: +44 LOC (635 -> 679) wiring `run_pipeline` to own table
+    # transforms: the explicit out-of-core preflight, the single pre-routing call that
+    # prepares resident transform-bearing tables (and refuses explicit-mode rejections
+    # first), threading the prepared set into routing and the source resolvers, and
+    # stamping the out-of-core decline telemetry. The logic lives in `_transforms_gate.py`,
+    # `_transforms_prepare.py`, `_transforms_admission.py` and `_transforms_table.py`; this
+    # file only calls them. Dense reviewed exception (<= MAX).
+    "src/decoy_engine/execution/_pipeline.py": 679,
     # A1 post-validation wiring (2026-09-24): crossed GOAL (was under) threading
     # the resident-source resolution the post-validation scans need -- the
     # source_loader + required_tables plumbing and the admission-path source

@@ -132,7 +132,7 @@ def build_live_physical_plan_inputs(
         caller_sources=dict(caller_sources),
         table_kinds=dict(table_kinds),
         has_mask_table=has_mask_table,
-        config=config,
+        config=dict(config),
     )
     resolved_budget = resolve_budget(out_of_core_budget_bytes)
     out_of_core_facts = OutOfCoreRoutingFacts(

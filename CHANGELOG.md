@@ -66,6 +66,9 @@ The reader was hardened before becoming public, which changes behavior:
 
 ### Changed (engine-owned table transforms, 2026-09-30)
 
+The engine version is now `0.7.0.dev0` (was 0.6.0), so no build that owns transforms reports a
+pre-0.7 version and a platform fenced at `decoy-engine<0.7.0` cannot install it.
+
 **Breaking (pre-GA API):** `run_pipeline` now applies a mask table's `transforms` (filter, sort,
 limit, dedupe, derive, drop_column). Previously only the platform did, so the same config gave
 different output by caller. `decoy_engine.apply_table_transforms(config, table_name, table)` is the
@@ -82,12 +85,31 @@ dedupe beyond 2^53 keeps rows the rounding path merged. The new `duplicate_sourc
 transforms keep their current rounding, stored-index and duplicate-name behavior (tracked as roadmap
 §EXACT-INT and §INDEX-FIELDS). `to_pandas_fk_safe` is unchanged.
 
-Routing: a transform-bearing job is never auto-chunked, never routed to out-of-core, and never
-admitted to full-frame by the static byte estimate (only a measured probe can recover it). The
-direct chunked entry points, the native-or-oracle dispatcher and explicit
+Routing and memory: a transform-bearing job is never auto-chunked and never routed to
+out-of-core. Resident transform-bearing tables are transformed once, before routing, so the byte
+estimate and the probe price the transformed tables (derived columns included, dropped ones gone)
+and a small job that declares a vault writer, validators, `post_validation`, `fidelity_report` or a
+cross-table cycle runs full-frame as it did before. The probe child receives the prepared tables.
+Memory lifetime: preparing every resident transform-bearing table up front holds the prepared
+tables next to the raw tables the caller already owns; the engine drops its own reference to each
+raw table once its prepared table exists, and under sequential the prepared tables stay until the
+route consumes them (the platform already held every raw table and transformed them up front).
+
+Known limit: a transform-bearing table supplied as a `LazySource` (Parquet) or only through
+`source_loader` cannot be priced or probed without reading it. Under `auto`, a relationship job
+with such a table is never admitted to full-frame, whatever `use_byte_estimate_routing` says: it
+takes the sequential route when eligible and is otherwise rejected with
+`fk_full_frame_oom_risk_rejected`. `execution_mode="full_frame"` is the operator override. A
+resident `pa.Table` in `sources` wins over `source_loader` for transform-bearing tables on every
+route. The platform always passes resident sources, so platform jobs are unaffected.
+
+The direct chunked entry points, the native-or-oracle dispatcher and explicit
 `execution_mode="out_of_core"` raise `per_table_transforms_present` instead of dropping the ops.
 Under `auto`, telemetry gains `out_of_core_declined` when transforms are why out-of-core was
-skipped. `TableConfig.transforms` accepts at most 32 ops.
+skipped. `TableConfig.transforms` accepts at most 32 ops. Sorting or deduping on a nested
+(list, struct, map) column raises `sort_unsupported_type` or `dedupe_unsupported_type`. Compile-time
+checks that read the source profile (for example `null_bearing_int_unsupported`) still run on the
+raw source, so a filter cannot clear them (roadmap §XFORM-PROFILE).
 
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 

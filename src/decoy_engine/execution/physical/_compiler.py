@@ -104,6 +104,7 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
         full_frame_fits_estimate=facts.full_frame_fits_estimate,
         use_probe_routing=inputs.use_probe_routing,
         probe_recovers_full_frame=facts.probe_recovers_full_frame,
+        lazy_transform_bearing=facts.lazy_transform_bearing,
     )
 
 

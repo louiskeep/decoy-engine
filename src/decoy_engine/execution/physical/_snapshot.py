@@ -84,7 +84,8 @@ def capture_physical_plan_inputs(
         resolve_substrate,
         select_execution_adapter,
     )
-    from decoy_engine.execution._transforms_admission import admission_signals
+    from decoy_engine.execution._transforms_admission import admission_signals, routing_profile
+    from decoy_engine.execution._transforms_prepare import prepare_transform_sources
     from decoy_engine.execution.native._companion_status import native_companion_status
     from decoy_engine.execution.out_of_core import resolve_budget
     from decoy_engine.execution.out_of_core._route_policy import (
@@ -162,13 +163,31 @@ def capture_physical_plan_inputs(
     else:
         graph = RelationshipGraph(edges=(), ordering=())
 
+    # The same preparation `run_pipeline` does, so capture records the routing facts
+    # of the data that would run.
+    prepared = prepare_transform_sources(
+        config,
+        caller_sources,
+        profile=profile,
+        graph=graph,
+        execution_mode=execution_mode,
+        has_generate_table=any(kind == "generate" for kind in table_kinds.values()),
+        has_mask_table=has_mask_table,
+        validators=config_validators,
+        fidelity_report=fidelity_report,
+        vault_writer=vault_writer,
+        post_validation=False,
+        resolved_substrate=resolved_substrate,
+    )
+    caller_sources = prepared.sources
+
     (
         out_of_core_compatible,
         out_of_core_reject_code,
         largest_table_rows,
         largest_table_rows_exact,
     ) = out_of_core_routing_signals(
-        profile,
+        routing_profile(profile, caller_sources, prepared.prepared),
         plan=plan,
         registry=resolved_registry,
         graph=graph,
@@ -177,9 +196,9 @@ def capture_physical_plan_inputs(
         has_mask_table=has_mask_table,
         config=config,
     )
-    full_frame_fits_estimate, probe_recovers_full_frame = admission_signals(
+    full_frame_fits_estimate, probe_recovers_full_frame, lazy_transform_bearing = admission_signals(
         config,
-        profile=profile,
+        profile=routing_profile(profile, caller_sources, prepared.prepared),
         caller_sources=caller_sources,
         table_kinds=table_kinds,
         execution_mode=execution_mode,
@@ -187,6 +206,7 @@ def capture_physical_plan_inputs(
         use_probe_routing=use_probe_routing,
         out_of_core_budget_bytes=out_of_core_budget_bytes,
         engine_version=engine_version,
+        prepared_tables=prepared.prepared,
     )
     resolved_budget = resolve_budget(out_of_core_budget_bytes)
 
@@ -205,6 +225,7 @@ def capture_physical_plan_inputs(
         budget_bytes=resolved_budget.budget_bytes,
         reorder_threshold_rows=resolved_reorder_threshold,
         merge_fan_in=_MERGE_FAN_IN_DEFAULT,
+        lazy_transform_bearing=lazy_transform_bearing,
     )
 
     return PhysicalPlanInputs(

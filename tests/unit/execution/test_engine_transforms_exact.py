@@ -24,9 +24,7 @@ from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
-    cleared,
     reference_bindings,
-    reference_frame,
     reference_transform,
     single_table_config,
     tables_equal,
@@ -741,10 +739,9 @@ class TestSchemaGuard:
             apply_table_transforms(_cfg([{"op": "limit", "n": 1}]), "t", _dup_table())
         assert exc.value.code == _DUP
 
-    def test_without_transforms_behaves_as_on_main(self):
-        assert apply_table_transforms(_cfg([]), "t", _dup_table()) is not None
-        tbl = _stored_table()
-        assert apply_table_transforms(_cfg([]), "t", tbl) is tbl
+    def test_without_transforms_the_helper_returns_the_same_object(self):
+        for tbl in (_dup_table(), _stored_table()):
+            assert apply_table_transforms(_cfg([]), "t", tbl) is tbl
 
 
 class _Events:
@@ -952,10 +949,92 @@ class TestDefectsThroughRoutes:
             )
         assert exc.value.code == {"dup": _DUP, "stored": _STORED}[defect]
 
-    def test_same_tables_without_transforms_behave_as_on_main(self, tmp_path):
+    def test_stored_index_table_without_transforms_gives_the_exact_main_output(self, tmp_path):
         tbl = _stored_table()
         cfg = single_table_config(tmp_path, tbl, columns=[{"name": "s", "strategy": "redact"}])
         out = _run(cfg, tbl).outputs["t"]
-        assert "ix" not in out.column_names
-        assert cleared(cfg)["tables"][0]["transforms"] == []
-        assert reference_frame(tbl).shape[0] == 3
+        expected = pa.table(
+            {
+                "id": pa.array([1, 2, 3], pa.int64()),
+                "s": pa.array(["REDACTED", "REDACTED", "REDACTED"]),
+            }
+        )
+        tables_equal(out, expected)
+        assert out.column_names == ["id", "s"]
+
+    def test_duplicate_field_table_without_transforms_fails_as_on_main(self, tmp_path):
+        clean = pa.table({"a": [1, 2], "s": ["x", "y"]})
+        cfg = single_table_config(tmp_path, clean, columns=[{"name": "s", "strategy": "redact"}])
+        with pytest.raises(KeyError, match="exists 2 times"):
+            _run(cfg, _dup_table())
+
+    def test_stored_index_reference_without_transforms_fails_as_on_main(self, tmp_path):
+        tbl = _stored_table()
+        cfg = single_table_config(tmp_path, tbl, columns=[{"name": "ix", "strategy": "redact"}])
+        with pytest.raises(KeyError, match="ix"):
+            _run(cfg, tbl)
+
+
+class TestUnsupportedKeyTypes:
+    """Nested columns cannot be sorted or compared by pandas; that is a coded error."""
+
+    def _tbl(self):
+        return pa.table(
+            {
+                "id": pa.array([3, 1, 2], pa.int64()),
+                "tags": pa.array([["a", "z"], ["b", "y"], ["c", "x"]]),
+                "s": pa.array(["x", "y", "z"]),
+            }
+        )
+
+    def test_sort_on_a_nested_column(self):
+        with pytest.raises(TransformError) as exc:
+            apply_table_transforms(_cfg([{"op": "sort", "by": ["tags"]}]), "t", self._tbl())
+        assert exc.value.code == "sort_unsupported_type"
+
+    def test_dedupe_on_a_nested_column(self):
+        with pytest.raises(TransformError) as exc:
+            apply_table_transforms(_cfg([{"op": "dedupe", "columns": ["tags"]}]), "t", self._tbl())
+        assert exc.value.code == "dedupe_unsupported_type"
+
+    def test_dedupe_over_all_columns_with_a_nested_column(self):
+        with pytest.raises(TransformError) as exc:
+            apply_table_transforms(_cfg([{"op": "dedupe", "columns": None}]), "t", self._tbl())
+        assert exc.value.code == "dedupe_unsupported_type"
+
+    def test_supported_keys_still_work_next_to_a_nested_column(self):
+        out = apply_table_transforms(_cfg([{"op": "sort", "by": ["id"]}]), "t", self._tbl())
+        assert out.column("id").to_pylist() == [1, 2, 3]
+        assert out.column("tags").to_pylist() == [["b", "y"], ["c", "x"], ["a", "z"]]
+
+
+class TestDeriveConversionFailure:
+    def test_unconvertible_derived_column_is_a_coded_error(self, monkeypatch):
+        from decoy_engine.execution import _transforms_table
+
+        real = pa.array
+
+        def picky(obj, *args, **kwargs):
+            if kwargs.get("from_pandas"):
+                raise pa.ArrowInvalid("cannot convert")
+            return real(obj, *args, **kwargs)
+
+        monkeypatch.setattr(_transforms_table.pa, "array", picky)
+        tbl = pa.table({"id": pa.array([1, 2], pa.int64()), "s": pa.array(["a", "b"])})
+        ops = [{"op": "derive", "column": "d", "expression": "id + 1"}]
+        with pytest.raises(TransformError) as exc:
+            apply_table_transforms(_cfg(ops), "t", tbl)
+        assert exc.value.code == "derive_result_not_convertible"
+
+
+class TestFreshPandasMetadata:
+    def test_metadata_equals_the_full_conversion_for_exotic_columns(self):
+        tbl = _exact_table()
+        ops = [{"op": "limit", "n": 6}]
+        out = apply_table_transforms(
+            _cfg(ops, columns=[{"name": "str", "strategy": "redact"}]), "t", tbl
+        )
+        expected = reference_transform(tbl, ops)
+        assert json.loads(out.schema.metadata[b"pandas"]) == json.loads(
+            expected.schema.metadata[b"pandas"]
+        )

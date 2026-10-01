@@ -39,7 +39,12 @@ from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._transforms_gate import find_table_config
 from decoy_engine.profile._readers import LazySource
 
-__all__ = ["apply_table_transforms", "to_transform_frame", "transform_resolved_source"]
+__all__ = [
+    "apply_resident_table",
+    "apply_table_transforms",
+    "to_transform_frame",
+    "transform_resolved_source",
+]
 
 _SOURCE = "source"
 _DERIVED = "derived"
@@ -107,9 +112,11 @@ def _apply_ops(table: pa.Table, ops: Sequence[TransformOp]) -> pa.Table:
             arrays.append(derived)
             fields.append(pa.field(name, derived.type))
     out = pa.Table.from_arrays(arrays, schema=pa.schema(fields))
-    fresh = pa.Table.from_pandas(frame.reset_index(drop=True), preserve_index=False)
+    # Schema-only: the pandas metadata `from_pandas` would write, without
+    # materializing a second Arrow copy of the data.
+    fresh = pa.Schema.from_pandas(frame, preserve_index=False)
     meta = {k: v for k, v in (table.schema.metadata or {}).items() if k != b"pandas"}
-    meta[b"pandas"] = (fresh.schema.metadata or {})[b"pandas"]
+    meta[b"pandas"] = (fresh.metadata or {})[b"pandas"]
     return out.replace_schema_metadata(meta)
 
 
@@ -118,6 +125,12 @@ def _transform_ops(config: Mapping[str, Any], table_name: str) -> list[Transform
     if entry is None or entry.get("generate_columns") or not entry.get("transforms"):
         return []
     return list(TableConfig.model_validate(dict(entry)).transforms)
+
+
+def apply_resident_table(config: Mapping[str, Any], table_name: str, table: pa.Table) -> pa.Table:
+    """Apply the configured transforms to a resident table whose schema the caller
+    has already guarded (the preparation step checks it once)."""
+    return _apply_ops(table, _transform_ops(config, table_name))
 
 
 def apply_table_transforms(config: Mapping[str, Any], table_name: str, table: pa.Table) -> pa.Table:

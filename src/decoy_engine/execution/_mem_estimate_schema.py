@@ -19,6 +19,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+import pyarrow as pa
+
 from decoy_engine.execution._mem_estimate import (
     ColumnSizeSpec,
     TableSizeSpec,
@@ -26,8 +28,6 @@ from decoy_engine.execution._mem_estimate import (
 )
 
 if TYPE_CHECKING:
-    import pyarrow as pa
-
     from decoy_engine.config._tables import GenerateColumnConfig, TableConfig
     from decoy_engine.profile._types import TableProfile
 
@@ -87,6 +87,57 @@ def table_size_spec_from_profile(
     return TableSizeSpec(
         name=profile_table.name, row_count=profile_table.row_count, columns=tuple(columns)
     )
+
+
+def _arrow_size_label(arrow_type: pa.DataType) -> str | None:
+    """Estimator dtype label for an Arrow type, or `None` when it has no honest label.
+
+    Fixed-width Arrow types price at their storage width; strings are
+    variable-width (sampled by the caller). Decimals, dictionaries, nested and
+    binary types have no label here, so the column is left UNPRICEABLE rather
+    than guessed.
+    """
+    if pa.types.is_boolean(arrow_type):
+        return "bool"
+    if pa.types.is_integer(arrow_type):
+        return str(arrow_type)
+    if pa.types.is_float32(arrow_type):
+        return "float32"
+    if pa.types.is_float64(arrow_type):
+        return "float64"
+    if pa.types.is_timestamp(arrow_type) or pa.types.is_date64(arrow_type):
+        return "datetime64[ns]"
+    if pa.types.is_duration(arrow_type):
+        return "timedelta64[ns]"
+    if pa.types.is_date32(arrow_type) or pa.types.is_time32(arrow_type):
+        return "int32"
+    if pa.types.is_time64(arrow_type):
+        return "int64"
+    if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
+        return "object"
+    return None
+
+
+def table_size_spec_from_table(name: str, table: pa.Table) -> TableSizeSpec:
+    """Build a `TableSizeSpec` from a RESIDENT table's real row count and fields.
+
+    Used for a table that already went through its transforms: the raw profile
+    no longer describes it (derived columns exist, dropped ones are gone, the row
+    count changed), so it is priced from the table itself. Variable-width
+    columns use a genuine sample of the values; a type with no honest label is
+    unpriceable.
+    """
+    columns: list[ColumnSizeSpec] = []
+    for field in table.schema:
+        label = _arrow_size_label(field.type)
+        if label is None:
+            columns.append(ColumnSizeSpec(name=field.name, dtype="object", unpriceable=True))
+        elif is_fixed_width_dtype(label):
+            columns.append(ColumnSizeSpec(name=field.name, dtype=label))
+        else:
+            width = sample_average_string_bytes(table.column(field.name))
+            columns.append(ColumnSizeSpec(name=field.name, dtype=label, string_width_bytes=width))
+    return TableSizeSpec(name=name, row_count=table.num_rows, columns=tuple(columns))
 
 
 # Typical/declared output byte-widths for closed-set `faker` generation types
@@ -194,4 +245,5 @@ __all__ = [
     "sample_average_string_bytes",
     "table_size_spec_from_generate_table",
     "table_size_spec_from_profile",
+    "table_size_spec_from_table",
 ]

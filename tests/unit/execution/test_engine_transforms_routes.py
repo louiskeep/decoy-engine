@@ -26,6 +26,7 @@ from tests.unit.execution._transform_testkit import (
     cleared,
     fk_config,
     fk_tables,
+    reference_run,
     reference_transform,
     single_table_config,
     tables_equal,
@@ -82,7 +83,7 @@ def _route_full_frame(tmp_path, ops, calls):
     cfg = single_table_config(tmp_path, tbl, transforms=ops)
     actual = _run(cfg, {"t": tbl}).outputs
     seen = len(calls)
-    expected = _run(cleared(cfg), {"t": reference_transform(tbl, ops)}).outputs
+    expected = reference_run(tmp_path, cfg, {"t": reference_transform(tbl, ops)}).outputs
     return actual, expected, 1, seen
 
 
@@ -100,7 +101,7 @@ def _route_generate_mask(tmp_path, ops, calls):
     cfg = validated(cfg)
     actual = _run(cfg, {"t": tbl}).outputs
     seen = len(calls)
-    expected = _run(cleared(cfg), {"t": reference_transform(tbl, ops)}).outputs
+    expected = reference_run(tmp_path, cfg, {"t": reference_transform(tbl, ops)}).outputs
     return actual, expected, 1, seen
 
 
@@ -121,7 +122,7 @@ def _route_sequential(tmp_path, ops, calls):
         "parent": reference_transform(parent, p_ops),
         "child": reference_transform(child, c_ops),
     }
-    expected = _run(cleared(cfg), exp_sources, execution_mode="sequential").outputs
+    expected = reference_run(tmp_path, cfg, exp_sources, execution_mode="sequential").outputs
     return actual, expected, 2, seen
 
 
@@ -134,7 +135,7 @@ def _route_isolated(tmp_path, ops, calls):
     # `run_pipeline` entry (covered separately by test_isolated_child below).
     res = run_pipeline_isolated(cfg, {"t": tbl}, engine_version=ENGINE_VERSION, isolate=False)
     seen = len(calls)
-    expected = _run(cleared(cfg), {"t": reference_transform(tbl, ops)}).outputs
+    expected = reference_run(tmp_path, cfg, {"t": reference_transform(tbl, ops)}).outputs
     return res.outputs, expected, 1, seen
 
 
@@ -172,7 +173,7 @@ class TestAppliedOnceCorrectOutput:
         cfg = single_table_config(tmp_path, tbl, transforms=ops)
         res = run_pipeline_isolated(cfg, {"t": tbl}, engine_version=ENGINE_VERSION)
         assert res.outcome == "completed", res.error
-        expected = _run(cleared(cfg), {"t": reference_transform(tbl, ops)}).outputs["t"]
+        expected = reference_run(tmp_path, cfg, {"t": reference_transform(tbl, ops)}).outputs["t"]
         assert res.outputs is not None
         tables_equal(res.outputs["t"], expected)
 
@@ -254,8 +255,15 @@ class TestOutOfCore:
 
     def test_byte_estimate_bounded_route_also_declines(self, tmp_path):
         cfg, sources = self._job(tmp_path)
-        res = _run(cfg, sources, out_of_core_budget_bytes=64 * 1024 * 1024, use_probe_routing=False)
-        assert res.quality_metrics["execution"]["execution_mode"] != "out_of_core"
+        kw = {"out_of_core_budget_bytes": 64 * 1024 * 1024, "use_probe_routing": False}
+        baseline = _run(cleared(cfg), sources, **kw)
+        assert baseline.quality_metrics["execution"]["route_reason"] == (
+            "byte_estimate_bounded_out_of_core"
+        )
+        res = _run(cfg, sources, **kw)
+        execution = res.quality_metrics["execution"]
+        assert execution["execution_mode"] == "sequential"
+        assert execution["out_of_core_declined"] == _NEEDS_TRANSFORMS
 
     def test_explicit_raises_before_any_read(self, tmp_path, monkeypatch):
         cfg, _ = self._job(tmp_path)
@@ -487,47 +495,6 @@ class TestAdmission:
         cfg = fk_config(tmp_path, parent, child, parent_transforms=_WIDEN)
         return cfg, {"parent": parent, "child": child}
 
-    @staticmethod
-    def _probe_spy(monkeypatch, *, conclusive):
-        from decoy_engine.execution import _probe
-
-        seen: list[dict[str, Any]] = []
-
-        def fake(config, caller_sources, **kw):
-            seen.append(config)
-            if conclusive:
-                return _probe.ProbeResult(conclusive=True, reason="ok", estimated_peak_bytes=1)
-            return _probe.ProbeResult(conclusive=False, reason="inconclusive")
-
-        monkeypatch.setattr(_probe, "probe_peak_bytes", fake)
-        return seen
-
-    def test_never_admitted_by_static_fit_and_probe_measures_transformed_job(
-        self, tmp_path, monkeypatch
-    ):
-        cfg, sources = self._job(tmp_path)
-        big = 1 << 30
-        baseline = _run(cleared(cfg), sources, out_of_core_budget_bytes=big)
-        assert (
-            baseline.quality_metrics["execution"]["route_reason"] == "byte_estimate_full_frame_fits"
-        )
-
-        seen = self._probe_spy(monkeypatch, conclusive=False)
-        res = _run(cfg, sources, out_of_core_budget_bytes=big)
-        execution = res.quality_metrics["execution"]
-        assert execution["route_reason"] != "byte_estimate_full_frame_fits"
-        assert execution["execution_mode"] in ("sequential", "out_of_core")
-        assert len(seen) == 1
-        parent_cfg = next(t for t in seen[0]["tables"] if t["name"] == "parent")
-        assert parent_cfg["transforms"], "the probe must run the transformed config"
-
-    def test_confirmed_probe_fit_admits_full_frame(self, tmp_path, monkeypatch):
-        cfg, sources = self._job(tmp_path)
-        self._probe_spy(monkeypatch, conclusive=True)
-        res = _run(cfg, sources, out_of_core_budget_bytes=1 << 30)
-        assert res.quality_metrics["execution"]["route_reason"] == "probe_recovered_full_frame"
-        assert "wide" in res.outputs["parent"].column_names
-
     @pytest.mark.parametrize("skip", ["flag_off", "lazy", "over_budget"])
     def test_probe_skipped_stays_bounded(self, tmp_path, monkeypatch, skip):
         from decoy_engine.execution import _probe
@@ -609,14 +576,23 @@ class TestInvalidTransforms:
         ],
     )
     def test_full_frame_raises_and_writes_nothing(self, tmp_path, ops, code):
+        from decoy_engine.vault import VaultWriter
+
         tbl = base_table()
         cfg = single_table_config(tmp_path, tbl, transforms=ops)
+        cfg["quarantine"] = {
+            "enabled": True,
+            "output_path": str(tmp_path / "quarantine.jsonl"),
+            "triggers": ["validation_fail"],
+        }
+        cfg["validators"] = [{"name": "regex_match", "columns": {"t": ["s"]}, "params": {}}]
+        vault = VaultWriter((11).to_bytes(8, "big"))
+        before = sorted(p.name for p in tmp_path.iterdir())
         with pytest.raises(TransformError) as exc:
-            _run(cfg, {"t": tbl})
+            _run(cfg, {"t": tbl}, vault_writer=vault)
         assert exc.value.code == code
-        assert not (tmp_path / "t_out.parquet").exists()
-        assert not list(tmp_path.glob("*quarantine*")) and not list(tmp_path.glob("*vault*"))
-        assert not list(tmp_path.glob("*manifest*"))
+        assert sorted(p.name for p in tmp_path.iterdir()) == before
+        assert not vault._entries
 
     def test_sequential_commits_and_publishes_nothing(self, tmp_path):
         parent, child = fk_tables()
@@ -631,9 +607,10 @@ class TestInvalidTransforms:
             _run(cfg, {"parent": parent, "child": child}, execution_mode="sequential", sink=sink)
         assert exc.value.code == "drop_column_missing"
         assert "commit" not in sink.events
-        assert sink.events == ["abort"]
+        # Resident tables are transformed before the route starts, so the sink is never touched.
+        assert sink.events == []
 
-    def test_plain_callable_sink_may_hold_earlier_tables(self, tmp_path):
+    def test_resident_tables_are_prepared_before_any_write(self, tmp_path):
         parent, child = fk_tables()
         cfg = fk_config(
             tmp_path,
@@ -649,7 +626,7 @@ class TestInvalidTransforms:
                 execution_mode="sequential",
                 sink=lambda name, data: held.append(name),
             )
-        assert held == ["parent"]
+        assert held == []
 
 
 class TestPublicSurface:
@@ -724,8 +701,9 @@ class TestLazySources:
             execution_mode="sequential",
         )
         assert res.outcome == "completed", res.error
-        expected = _run(
-            cleared(cfg),
+        expected = reference_run(
+            tmp_path,
+            cfg,
             {"parent": reference_transform(parent, p_ops), "child": child},
             execution_mode="sequential",
         ).outputs
