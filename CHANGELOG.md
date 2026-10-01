@@ -55,7 +55,25 @@ keeps its behavior and signature.
   chunk raises `null_bearing_int_unsupported` on both.
 - One source-drift contract: a column whose Arrow type changes after the first
   chunk raises `native_chunk_schema_drift` on both routes, except an all-null
-  `null`-typed chunk, which is cast to the first chunk's type.
+  `null`-typed chunk, which is cast to the first chunk's type. A column that is
+  `null`-typed in the first chunk and typed in a later one raises
+  `ExecutionError(code="chunked_leading_null_type")` on both routes (a stream's
+  type is fixed by its first chunk).
+- Values equal the oracle's except for one stated exception: a passthrough column
+  is the source column itself, so a nullable integer above 2^53 is returned
+  exactly where the oracle's pandas round trip rounds it.
+- Faker admission resolves each pool once from the caller's registry before the
+  route is committed. A provider whose non-null output is not string-compatible
+  (for example a caller registry that rebinds `person_first_name` to a
+  date-returning adapter) sends the table to the oracle with reason
+  `faker_provider_output_not_string:<column>:<provider>`.
+- Ingest-guard suppression on the oracle route is an explicit
+  `ingest_guards_run` argument to `PandasExecutionAdapter.run`, passed only to the
+  one call the loop makes. It replaces an ambient context variable that leaked into
+  re-entrant calls and tasks created inside an adapter. A custom adapter is called
+  as before, with the entry's guards run once per chunk.
+- `run_mask_chunked(config, chunks, *, table, engine_version, ...)`: `config` and
+  `chunks` are positional-or-keyword, the rest keyword-only.
 
 ### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
 
@@ -2868,7 +2886,7 @@ F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
   parent error gracefully handled (F7), and the security invariant that findings
   carry no raw key material.
 
-### Changed (chunked dispatcher: drift error and physical adapter, 2026-10-01)
+### Changed
 
 - **Repository visibility flipped to public** (2026-06-02). Aligns
   with the OSS launch plan (memory: `OSS CLI launch` PO lock

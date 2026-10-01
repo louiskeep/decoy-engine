@@ -31,7 +31,11 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import run_chunk_ingest_guards
-from decoy_engine.execution.native._chunk_masking import _mask_chunk_native, _resolve_faker_pools
+from decoy_engine.execution.native._chunk_masking import (
+    _mask_chunk_native,
+    _resolve_faker_pools,
+    pool_values_are_strings,
+)
 from decoy_engine.execution.native._chunk_schema import conformed_rest
 from decoy_engine.execution.native._chunked_evidence import (
     ColumnPlan,
@@ -46,10 +50,11 @@ from decoy_engine.execution.native._chunked_schema_rule import (
 )
 from decoy_engine.execution.native._dispatch import (
     NativeRouteEvidence,
+    _downgrade_to_oracle,
     _oracle_evidence,
     plan_native_route,
 )
-from decoy_engine.generation.pool import PoolCache
+from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
@@ -143,6 +148,7 @@ def _native_route(
     table: str,
     decision: NativeRouteEvidence,
     index_kernel: Any,
+    pool_by_column: dict[str, ValuePool],
     vault_writer: Any,
     chunk_result_sink: list[Any] | None,
     base_row_offset: int,
@@ -165,12 +171,6 @@ def _native_route(
             f"native route admitted {table!r} but the compiled plan has no seed envelope for it."
         )
     col_seed_by_name = dict(table_seed.per_column)
-    pool_by_column = _resolve_faker_pools(
-        col_seed_by_name,
-        job_seed=plan.seed_envelope.job_seed,
-        pool_cache=state.pool_cache,
-        registry=state.registry,
-    )
 
     def _masked() -> Iterator[pa.Table]:
         row_offset = base_row_offset
@@ -228,6 +228,42 @@ def _native_route(
             yield out
 
     return _masked()
+
+
+def _resolve_admitted_pools(
+    state: Any, *, table: str, decision: NativeRouteEvidence
+) -> tuple[NativeRouteEvidence, dict[str, ValuePool]]:
+    """Resolve every faker column's pool once, from the caller's registry, before
+    the route is committed; the native loop then uses these same pools.
+
+    A provider whose non-null output is not string-compatible cannot go through
+    the string pool the native sampler gathers from, so the table reroutes to the
+    oracle with a coded reason instead of failing after admission. The pools stay
+    in `state.pool_cache`, so the oracle route's own warm-up is a cache hit.
+    """
+    plan = state.plan
+    table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
+    if table_seed is None:  # pragma: no cover - admission implies a seed envelope
+        raise AssertionError(
+            f"native route admitted {table!r} but the compiled plan has no seed envelope for it."
+        )
+    col_seed_by_name = dict(table_seed.per_column)
+    pools = _resolve_faker_pools(
+        col_seed_by_name,
+        job_seed=plan.seed_envelope.job_seed,
+        pool_cache=state.pool_cache,
+        registry=state.registry,
+    )
+    for column, pool in pools.items():
+        if not pool_values_are_strings(pool):
+            provider = col_seed_by_name[column].provider
+            return (
+                _downgrade_to_oracle(
+                    decision, f"faker_provider_output_not_string:{column}:{provider}"
+                ),
+                {},
+            )
+    return decision, pools
 
 
 def _run_chunked(
@@ -289,6 +325,9 @@ def _run_chunked(
         adapter=adapter,
     )
     decision = preflight.evidence
+    pools: dict[str, ValuePool] = {}
+    if decision.native_admitted and any(n.strategy == "faker" for n in decision.node_routes):
+        decision, pools = _resolve_admitted_pools(state, table=table, decision=decision)
     if route_evidence_sink is not None:
         route_evidence_sink.append(decision)
     columns = (
@@ -317,6 +356,7 @@ def _run_chunked(
         table=table,
         decision=decision,
         index_kernel=preflight.index_kernel,
+        pool_by_column=pools,
         vault_writer=vault_writer,
         chunk_result_sink=chunk_result_sink,
         base_row_offset=base_row_offset,

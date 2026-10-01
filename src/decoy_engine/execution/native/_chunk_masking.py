@@ -237,6 +237,21 @@ def _mask_chunk_native(
     return pa.table(arrays)
 
 
+def pool_values_are_strings(pool: ValuePool) -> bool:
+    """True when every non-null pool value is a string, the one output type the
+    native sampler's string gather reproduces. The pool is fixed once built, so
+    this runs once per pool at admission, never per chunk."""
+    try:
+        values = pa.array(pool.values)
+    except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+        return False
+    return (
+        pa.types.is_string(values.type)
+        or pa.types.is_large_string(values.type)
+        or pa.types.is_null(values.type)
+    )
+
+
 def _resolve_faker_pools(
     col_seed_by_name: dict[str, Any],
     *,
