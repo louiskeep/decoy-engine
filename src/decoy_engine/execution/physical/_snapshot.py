@@ -85,6 +85,7 @@ def capture_physical_plan_inputs(
         select_execution_adapter,
     )
     from decoy_engine.execution._transforms_admission import admission_signals, routing_profile
+    from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
     from decoy_engine.execution._transforms_prepare import prepare_transform_sources
     from decoy_engine.execution.native._companion_status import native_companion_status
     from decoy_engine.execution.out_of_core import resolve_budget
@@ -129,6 +130,9 @@ def capture_physical_plan_inputs(
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     resolved_reorder_threshold = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
+    if execution_mode == "out_of_core":
+        # The same config-only refusal `run_pipeline` makes, before anything is profiled.
+        reject_any_per_table_transforms(config, route="execution_mode='out_of_core'")
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}

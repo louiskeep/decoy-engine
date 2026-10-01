@@ -66,9 +66,6 @@ The reader was hardened before becoming public, which changes behavior:
 
 ### Changed (engine-owned table transforms, 2026-09-30)
 
-The engine version is now `0.7.0.dev0` (was 0.6.0), so no build that owns transforms reports a
-pre-0.7 version and a platform fenced at `decoy-engine<0.7.0` cannot install it.
-
 **Breaking (pre-GA API):** `run_pipeline` now applies a mask table's `transforms` (filter, sort,
 limit, dedupe, derive, drop_column). Previously only the platform did, so the same config gave
 different output by caller. `decoy_engine.apply_table_transforms(config, table_name, table)` is the
@@ -97,9 +94,12 @@ route consumes them (the platform already held every raw table and transformed t
 
 Known limit: a transform-bearing table supplied as a `LazySource` (Parquet) or only through
 `source_loader` cannot be priced or probed without reading it. Under `auto`, a relationship job
-with such a table is never admitted to full-frame, whatever `use_byte_estimate_routing` says: it
-takes the sequential route when eligible and is otherwise rejected with
-`fk_full_frame_oom_risk_rejected`. `execution_mode="full_frame"` is the operator override. A
+(including a generate+mask one) with such a mask table is never admitted to full-frame, whatever
+`use_byte_estimate_routing` says: it takes the sequential route when eligible and is otherwise
+rejected with `fk_full_frame_oom_risk_rejected`, before any resident table is transformed. A
+generate+mask job is never sequential-eligible, so it needs `execution_mode="full_frame"`, which
+is the operator override (use it or `isolate=False` when the isolated worker, which reads
+relationship sources lazily, is the cause). A
 resident `pa.Table` in `sources` wins over `source_loader` for transform-bearing tables on every
 route. The platform always passes resident sources, so platform jobs are unaffected.
 

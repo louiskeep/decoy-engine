@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "admission_signals",
-    "check_explicit_sequential",
+    "check_rejections_before_preparation",
     "decline_out_of_core",
     "out_of_core_declined",
     "routing_profile",
@@ -55,8 +55,9 @@ def _estimate_in_scope(profile: Any, table_kinds: dict[str, str]) -> bool:
     return bool(getattr(profile, "relationships", None)) and kinds == {"mask"}
 
 
-def check_explicit_sequential(
+def check_rejections_before_preparation(
     config: Mapping[str, Any],
+    caller_sources: Mapping[str, pa.Table | LazySource],
     profile: Any,
     graph: RelationshipGraph,
     *,
@@ -69,13 +70,18 @@ def check_explicit_sequential(
     post_validation: bool,
     resolved_substrate: str,
 ) -> None:
-    """Raise what an explicit `sequential` request would raise, from the profile and
-    graph alone, so a rejected explicit run never prepares (transforms) any table."""
-    if execution_mode != "sequential" or not transform_bearing_mask_tables(config):
+    """Raise what routing would raise for this job, from the profile, graph and the
+    residency of the sources alone, so a job that is going to be rejected never
+    prepares (transforms) a table: an explicit `sequential` request that cannot run,
+    or an `auto` relationship job with a lazy transform-bearing mask table that has
+    no bounded route."""
+    bearing = transform_bearing_mask_tables(config)
+    if not bearing or execution_mode not in ("sequential", "auto"):
         return
     from decoy_engine.execution._pipeline_routing import (
         _has_cross_table_fk_cycle,
         _sequential_eligible,
+        lazy_transform_route,
         reject_explicit_sequential,
     )
 
@@ -88,9 +94,13 @@ def check_explicit_sequential(
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
     )
-    reject_explicit_sequential(
-        eligible, route_reason, _has_cross_table_fk_cycle(graph), has_mask_table
-    )
+    cyclic = _has_cross_table_fk_cycle(graph)
+    if execution_mode == "sequential":
+        reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
+        return
+    lazy = any(not isinstance(caller_sources.get(name), pa.Table) for name in bearing)
+    if lazy and profile.relationships and has_mask_table:
+        lazy_transform_route(eligible, route_reason, cyclic)
 
 
 def decline_out_of_core(
@@ -159,6 +169,18 @@ def _row_changing(config: Mapping[str, Any], name: str) -> bool:
     return any(op.get("op") in _ROW_CHANGING_OPS for op in entry.get("transforms") or [])
 
 
+def _derived_names(config: Mapping[str, Any], name: str) -> set[str]:
+    """Columns bound to a derived value after the table's ops (a dropped-then-derived
+    name is derived; a derived-then-dropped name is gone)."""
+    derived: set[str] = set()
+    for op in (find_table_config(config, name) or {}).get("transforms") or []:
+        if op.get("op") == "derive":
+            derived.add(op["column"])
+        elif op.get("op") == "drop_column":
+            derived -= set(op.get("columns") or [])
+    return derived
+
+
 def _distinct_counts(
     config: Mapping[str, Any],
     mask_tables: list[Any],
@@ -166,22 +188,30 @@ def _distinct_counts(
     prepared: frozenset[str],
 ) -> dict[tuple[str, str], int] | None:
     """Per-column distinct counts for the uniqueness-saturation guard, or `None` when
-    a prepared table's row-changing transforms make the raw profile counts unusable
-    and the prepared column cannot be measured."""
+    a measurement fails (the probe is then inconclusive).
+
+    A prepared table is read from its own fields: derived columns are always measured
+    (the raw profile never saw them), dropped columns are absent, and every column is
+    measured when a row-changing op made the raw counts unusable. Only an untouched
+    source column of a row-preserving table reuses its raw profile count."""
     out: dict[tuple[str, str], int] = {}
     for t in mask_tables:
-        remeasure = t.name in prepared and _row_changing(config, t.name)
         table = sources[t.name]
-        for col in t.columns:
-            if col.distinct_count is None:
+        raw = {c.name: c.distinct_count for c in t.columns if c.distinct_count is not None}
+        if t.name not in prepared or not isinstance(table, pa.Table):
+            out.update({(t.name, col): n for col, n in raw.items()})
+            continue
+        measure_all = _row_changing(config, t.name)
+        derived = _derived_names(config, t.name)
+        for col in table.column_names:
+            if col not in derived and not measure_all:
+                if col in raw:
+                    out[(t.name, col)] = raw[col]
                 continue
-            if not remeasure:
-                out[(t.name, col.name)] = col.distinct_count
-            elif isinstance(table, pa.Table) and col.name in table.column_names:
-                try:
-                    out[(t.name, col.name)] = int(pc.count_distinct(table.column(col.name)).as_py())  # type: ignore[attr-defined]
-                except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
-                    return None
+            try:
+                out[(t.name, col)] = int(pc.count_distinct(table.column(col)).as_py())  # type: ignore[attr-defined]
+            except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError):
+                return None
     return out
 
 

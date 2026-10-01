@@ -253,6 +253,25 @@ def reject_explicit_sequential(
         )
 
 
+def lazy_transform_route(eligible: bool, route_reason: str, cyclic: bool) -> tuple[str, str]:
+    """Sequential when the job is eligible, else the base reject: the one outcome set
+    for a relationship job with a lazy transform-bearing mask table under `auto`."""
+    if eligible and not cyclic:
+        return "sequential", route_reason
+    raise ExecutionError(
+        code="fk_full_frame_oom_risk_rejected",
+        message=(
+            "FK job rejected before read: a table that declares transforms is not "
+            "resident when routing runs (a LazySource or loader-supplied source; the "
+            "isolated worker reads relationship sources lazily), so its transformed "
+            "size cannot be priced or probed and full-frame is not admitted, and no "
+            f"bounded route applies ({'cross_table_cycle' if cyclic else route_reason}). "
+            "Make the job sequential-eligible, or force execution_mode='full_frame' "
+            "(or isolate=False when running isolated) to override at your own memory risk."
+        ),
+    )
+
+
 def decide_execution_route(
     profile: Any,
     *,
@@ -437,23 +456,12 @@ def decide_execution_route(
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
 
-    if lazy_transform_bearing and has_relationships and has_mask_table and not has_generate_table:
-        # A transform-bearing table that is not resident cannot be priced or probed
-        # before it is read, so full-frame is never admitted for it under `auto`,
-        # whatever the byte-estimate flag says. Out-of-core declines transforms.
-        if eligible and not cyclic:
-            return "sequential", route_reason
-        raise ExecutionError(
-            code="fk_full_frame_oom_risk_rejected",
-            message=(
-                "FK job rejected before read: a table that declares transforms is not "
-                "resident, so its transformed size cannot be priced or probed and "
-                "full-frame is not admitted, and no bounded route applies "
-                f"({'cross_table_cycle' if cyclic else route_reason}). Pass resident "
-                "sources, make the job sequential-eligible, or force "
-                "execution_mode='full_frame' to override at your own memory risk."
-            ),
-        )
+    if lazy_transform_bearing and has_relationships and has_mask_table:
+        # A transform-bearing mask table that is not resident cannot be priced or
+        # probed before it is read, so full-frame is never admitted for it under
+        # `auto`, whatever the byte-estimate flag says (generate+mask included).
+        # Out-of-core declines transforms.
+        return lazy_transform_route(eligible, route_reason, cyclic)
 
     # "auto"
     # B1b (§13): flag-gated byte-estimate admission, scoped to

@@ -54,13 +54,14 @@ def prepare_transform_sources(
     post_validation: bool,
     resolved_substrate: str,
 ) -> PreparedSources:
-    """`run_pipeline`'s one call before routing: refuse what an explicit mode would
-    refuse from the profile and graph alone (so a rejected run never transforms
+    """`run_pipeline`'s one call before routing: refuse what routing would refuse from
+    the profile, graph and source residency alone (so a rejected run never transforms
     anything), then prepare the resident transform-bearing tables."""
-    from decoy_engine.execution._transforms_admission import check_explicit_sequential
+    from decoy_engine.execution._transforms_admission import check_rejections_before_preparation
 
-    check_explicit_sequential(
+    check_rejections_before_preparation(
         config,
+        caller_sources,
         profile,
         graph,
         execution_mode=execution_mode,

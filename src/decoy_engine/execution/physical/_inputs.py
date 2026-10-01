@@ -195,6 +195,8 @@ class PhysicalPlanInputs:
     registry: ProviderRegistry
     graph: RelationshipGraph
     table_kinds: Mapping[str, str]
+    # Holds the PREPARED tables of a transform-bearing job while `config` keeps its
+    # transforms, so passing both on to `run_pipeline` would apply the transforms twice.
     caller_sources: Mapping[str, pa.Table | LazySource]
     source_loader_present: bool
     resolved_substrate: str

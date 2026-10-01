@@ -534,9 +534,11 @@ class TestExplainAndCaptureAgree:
         lazy = _lazy_sources(cfg, "lazy_source", sources)
         with pytest.raises(ExecutionError) as run_exc:
             _run(cfg, lazy)
-        inputs = capture_physical_plan_inputs(cfg, lazy, engine_version=ENGINE_VERSION)
+        # Capture runs the same pre-preparation refusal as the real run.
         with pytest.raises(ExecutionError) as plan_exc:
-            compile_physical_plan(inputs)
+            compile_physical_plan(
+                capture_physical_plan_inputs(cfg, lazy, engine_version=ENGINE_VERSION)
+            )
         assert run_exc.value.code == plan_exc.value.code == _REJECT
 
 
@@ -639,3 +641,177 @@ class TestCompileChecksOnRawSource:
         with pytest.raises(PlanCompileError) as exc:
             _run(cfg, {"t": tbl})
         assert exc.value.code == "null_bearing_int_unsupported"
+
+
+# --------------------------------------------------------------------------
+# Generate+mask relationship jobs follow the lazy rule too
+# --------------------------------------------------------------------------
+
+
+def _generate_mask_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
+    cfg, sources = _job(tmp_path)
+    cfg["tables"].append(
+        {
+            "name": "extra",
+            "row_count": 3,
+            "generate_columns": [{"name": "seq", "type": "sequence", "start": 1, "step": 1}],
+        }
+    )
+    cfg["targets"]["extra"] = dict(
+        cfg["targets"]["parent"], path=str(tmp_path / "extra_out.parquet")
+    )
+    return validated(cfg), sources
+
+
+class TestGenerateMaskLazyRule:
+    @pytest.mark.parametrize("flag", [True, False])
+    def test_lazy_transform_bearing_table_is_rejected_under_auto(self, tmp_path, flag):
+        cfg, sources = _generate_mask_job(tmp_path)
+        with pytest.raises(ExecutionError) as exc:
+            _run(
+                cfg,
+                _lazy_sources(cfg, "lazy_source", sources),
+                use_byte_estimate_routing=flag,
+            )
+        assert exc.value.code == _REJECT
+
+    def test_explicit_full_frame_still_runs(self, tmp_path):
+        cfg, sources = _generate_mask_job(tmp_path)
+        res = _run(cfg, _lazy_sources(cfg, "lazy_source", sources), execution_mode="full_frame")
+        assert _execution(res)["execution_mode"] == "full_frame"
+        assert res.outputs["extra"].num_rows == 3
+
+    def test_without_transforms_the_job_is_unchanged(self, tmp_path):
+        cfg, sources = _generate_mask_job(tmp_path)
+        res = _run(cleared(cfg), _lazy_sources(cfg, "lazy_source", sources))
+        assert _execution(res)["execution_mode"] == "full_frame"
+        assert _execution(res)["route_reason"] == "generate_plus_mask"
+
+    def test_resident_transform_bearing_tables_still_run_full_frame(self, tmp_path):
+        cfg, sources = _generate_mask_job(tmp_path)
+        res = _run(cfg, sources)
+        assert _execution(res)["execution_mode"] == "full_frame"
+        assert "wide" in res.outputs["parent"].column_names
+
+
+# --------------------------------------------------------------------------
+# The lazy rejection happens before any resident table is prepared
+# --------------------------------------------------------------------------
+
+
+class TestLazyRejectionBeforePreparation:
+    def test_no_transform_runs_when_the_lazy_rule_will_reject(
+        self, tmp_path, apply_calls, monkeypatch
+    ):
+        calls: list[str] = []
+        real = _transforms.check_transform_source_schema
+
+        def spy(*a: Any, **k: Any) -> Any:
+            calls.append("guard")
+            return real(*a, **k)
+
+        monkeypatch.setattr(_transforms, "check_transform_source_schema", spy)
+        cfg, sources = _job(tmp_path)
+        cfg["validators"] = _VALIDATORS
+        mixed = {
+            "parent": sources["parent"],
+            "child": LazySource(path=Path(cfg["sources"]["child"]["path"])),
+        }
+        with pytest.raises(ExecutionError) as exc:
+            _run(cfg, mixed)
+        assert exc.value.code == _REJECT
+        assert apply_calls == []
+        assert calls == []
+
+
+# --------------------------------------------------------------------------
+# The probe's uniqueness guard sees the prepared table's own columns
+# --------------------------------------------------------------------------
+
+
+def _risk_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[tuple[str, str], ...]]:
+    from decoy_engine.execution import _probe
+
+    seen: list[tuple[tuple[str, str], ...]] = []
+
+    def fake(config: Any, sources: Any, **kw: Any) -> Any:
+        seen.append(tuple(kw["uniqueness_risk_columns"]))
+        return _probe.ProbeResult(conclusive=True, reason="ok", estimated_peak_bytes=1)
+
+    monkeypatch.setattr(_probe, "probe_peak_bytes", fake)
+    monkeypatch.setattr(
+        "decoy_engine.execution._mem_estimate.fits", lambda *a, **k: False, raising=True
+    )
+    return seen
+
+
+class TestProbeDistinctCounts:
+    def test_derived_high_cardinality_column_is_measured(self, tmp_path, monkeypatch):
+        cfg, sources = _job(
+            tmp_path, parent=[{"op": "derive", "column": "d", "expression": "n * 2"}]
+        )
+        seen = _risk_spy(monkeypatch)
+        _run(cfg, sources, out_of_core_budget_bytes=1 << 30)
+        assert ("parent", "d") in seen[0]
+
+    def test_drop_then_derive_does_not_reuse_the_dropped_columns_raw_count(
+        self, tmp_path, monkeypatch
+    ):
+        ops = [
+            {"op": "derive", "column": "m", "expression": "n * 0"},
+            {"op": "drop_column", "columns": ["n"]},
+            {"op": "derive", "column": "n", "expression": "m + 0"},
+        ]
+        cfg, sources = _job(tmp_path, parent=ops)
+        seen = _risk_spy(monkeypatch)
+        _run(cfg, sources, out_of_core_budget_bytes=1 << 30)
+        assert ("parent", "n") not in seen[0]
+        assert ("parent", "m") not in seen[0]
+
+    def test_a_dropped_column_is_not_reported(self, tmp_path, monkeypatch):
+        cfg, sources = _job(
+            tmp_path,
+            parent=[
+                {"op": "derive", "column": "d", "expression": "n * 2"},
+                {"op": "drop_column", "columns": ["n"]},
+            ],
+        )
+        seen = _risk_spy(monkeypatch)
+        _run(cfg, sources, out_of_core_budget_bytes=1 << 30)
+        assert all(col != "n" for _, col in seen[0])
+
+
+# --------------------------------------------------------------------------
+# Capture runs the same config-only out-of-core refusal, and the lazy message
+# --------------------------------------------------------------------------
+
+
+class TestCaptureAndMessages:
+    def test_capture_refuses_explicit_out_of_core_before_profiling(self, tmp_path, monkeypatch):
+        from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+        from decoy_engine.plan._errors import PlanCompileError
+
+        cfg, _ = _job(tmp_path)
+
+        def boom(*a: Any, **k: Any) -> Any:
+            raise AssertionError("profile_source must not run")
+
+        monkeypatch.setattr("decoy_engine.profile.profile_source", boom)
+        with pytest.raises(PlanCompileError) as exc:
+            capture_physical_plan_inputs(
+                cfg, {}, engine_version=ENGINE_VERSION, execution_mode="out_of_core"
+            )
+        assert exc.value.code == "per_table_transforms_present"
+
+    def test_lazy_rejection_message_does_not_tell_resident_callers_to_pass_resident_sources(
+        self, tmp_path
+    ):
+        cfg, sources = _job(tmp_path)
+        cfg["validators"] = _VALIDATORS
+        with pytest.raises(ExecutionError) as exc:
+            _run(cfg, _lazy_sources(cfg, "lazy_source", sources))
+        text = exc.value.message
+        assert "Pass resident sources" not in text
+        assert "isolated worker" in text
+        assert "isolate=False" in text
+        assert "execution_mode='full_frame'" in text
