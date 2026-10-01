@@ -445,7 +445,7 @@ ALLOWLIST: dict[str, int] = {
     # mapping, `_chunked_code_set.py`'s corpus-pinning contract) and seeding
     # it into `StrategyContext` construction. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 681,
+    "src/decoy_engine/execution/_pandas_adapter.py": 675,
     # gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
     # allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
     # decomposition target, +15 more at gen-5a-faker for `_provider_

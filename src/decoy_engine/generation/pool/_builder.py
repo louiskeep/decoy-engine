@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import weakref
 from typing import Any
 
 import numpy as np
@@ -39,6 +40,52 @@ def _config_hash(config: dict[str, Any] | None) -> str:
         config or {}, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+_ADAPTER_SERIAL: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+_ADAPTER_SERIAL_PINNED: dict[int, tuple[Any, int]] = {}
+_next_serial = 0
+
+
+def _adapter_serial(adapter: Any) -> int:
+    """A process-unique number for this adapter object, never reused.
+
+    `id()` alone can be recycled after the adapter is collected, which would
+    alias a rebound provider onto an older cached pool. A weak map keeps the
+    number tied to the live object; an adapter that cannot be weakly referenced
+    is pinned instead (rare, and a registry holds its adapters for its life).
+    """
+    global _next_serial
+    try:
+        serial = _ADAPTER_SERIAL.get(adapter)
+        if serial is None:
+            _next_serial += 1
+            serial = _next_serial
+            _ADAPTER_SERIAL[adapter] = serial
+        return serial
+    except TypeError:
+        pinned = _ADAPTER_SERIAL_PINNED.get(id(adapter))
+        if pinned is None or pinned[0] is not adapter:
+            _next_serial += 1
+            pinned = (adapter, _next_serial)
+            _ADAPTER_SERIAL_PINNED[id(adapter)] = pinned
+        return pinned[1]
+
+
+def _binding_token(registry: ProviderRegistry, provider: str) -> str:
+    """Names the adapter the registry resolves for `provider`.
+
+    The pool cache is process-local, so the adapter object's serial is a safe
+    part of the key: a registry that rebinds the provider (a different adapter
+    class, or a different instance) never reads a pool another binding built.
+    An unresolvable provider gets a fixed token; `build` raises for it anyway.
+    """
+    try:
+        adapter = registry.get_adapter(provider)
+    except Exception:  # unknown provider: nothing was bound, nothing to alias
+        return "unbound"
+    cls = type(adapter)
+    return f"{cls.__module__}.{cls.__qualname__}#{_adapter_serial(adapter)}"
 
 
 def _derive_pool_seed(
@@ -98,7 +145,11 @@ class PoolBuilder:
         effective_locale = locale or "default"
         cfg_hash = _config_hash(config)
         pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
-        return (provider, effective_locale, cfg_hash, pool_seed, size)
+        # The binding token rides in the identity's config field only. The pool
+        # seed above stays derived from the bare config hash, so pool values do
+        # not depend on which adapter object served them.
+        keyed_hash = f"{cfg_hash}|{_binding_token(self._registry, provider)}"
+        return (provider, effective_locale, keyed_hash, pool_seed, size)
 
     def build(
         self,
@@ -174,7 +225,7 @@ class PoolBuilder:
             values=values,
             provider=provider,
             locale=effective_locale,
-            config_hash=cfg_hash,
+            config_hash=f"{cfg_hash}|{_binding_token(self._registry, provider)}",
             seed=pool_seed,
             size=size,
             build_time_ms=build_time_ms,

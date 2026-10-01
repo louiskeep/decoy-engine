@@ -55,7 +55,8 @@ keeps its behavior and signature.
   chunk raises `null_bearing_int_unsupported` on both.
 - One source-drift contract: a column whose Arrow type changes after the first
   chunk raises `native_chunk_schema_drift` on both routes, except an all-null
-  `null`-typed chunk, which is cast to the first chunk's type. A column that is
+  `null`-typed chunk, which is masked as the source produced it and then brought
+  to the first chunk's type. A column that is
   `null`-typed in the first chunk and typed in a later one raises
   `ExecutionError(code="chunked_leading_null_type")` on both routes (a stream's
   type is fixed by its first chunk).
@@ -67,11 +68,20 @@ keeps its behavior and signature.
   (for example a caller registry that rebinds `person_first_name` to a
   date-returning adapter) sends the table to the oracle with reason
   `faker_provider_output_not_string:<column>:<provider>`.
-- Ingest-guard suppression on the oracle route is an explicit
-  `ingest_guards_run` argument to `PandasExecutionAdapter.run`, passed only to the
-  one call the loop makes. It replaces an ambient context variable that leaked into
-  re-entrant calls and tasks created inside an adapter. A custom adapter is called
-  as before, with the entry's guards run once per chunk.
+- No guard suppression. Every chunk is first checked against the first chunk's
+  schema (drift or a leading `null`-typed column raises); the oracle route then
+  hands the adapter the chunk exactly as the source produced it, so the adapter
+  that runs (stock, a subclass, or a custom adapter that delegates to the stock
+  one) runs the ingest guards itself, once, on the same chunk the public oracle
+  sees. No private argument is passed to any adapter. The native route runs
+  `run_chunk_ingest_guards` on the raw chunk and only then casts `null`-typed
+  columns for its kernels. A later `null`-typed passthrough column is brought to
+  the first chunk's type by the output schema rule, after masking.
+- A Faker pool's cache identity now includes the provider binding (the adapter
+  class and object the registry resolves). A `PoolCache` reused after
+  `person_first_name` is rebound to another adapter no longer returns the old
+  binding's pool on either route; the pool seed, and so the values, do not
+  depend on the binding.
 - `run_mask_chunked(config, chunks, *, table, engine_version, ...)`: `config` and
   `chunks` are positional-or-keyword, the rest keyword-only.
 

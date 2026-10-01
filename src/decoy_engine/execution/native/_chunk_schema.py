@@ -9,7 +9,7 @@ orchestrator, so it lives in its own module and `_dispatch` imports it back.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 
 import pyarrow as pa
 
@@ -52,19 +52,19 @@ def _drift(table: str, chunk_index: int, message: str, detail: str) -> NativeChu
     )
 
 
-def conform_chunk_schema(
+def validate_chunk_schema(
     expected: pa.Schema, chunk: pa.Table, *, table: str, chunk_index: int
-) -> pa.Table:
-    """Return `chunk` under the first chunk's schema, or raise on drift.
+) -> None:
+    """Raise when `chunk` does not match the first chunk's schema; never cast.
 
     The one source-drift contract both routes share: a missing or extra column,
     or a column whose Arrow type differs from the first chunk's, raises
     `NativeChunkSchemaDriftError`. The single exception is a `null`-typed column
-    (an all-null chunk whose reader had no type to infer), which is cast to the
-    first chunk's type. The cast does not change any value, but it does change the
-    column's type, so the per-chunk ingest guards (see `conformed_rest`) must run
-    on the chunk as the source produced it, before this cast: an all-null chunk
-    cast to an integer type would otherwise look like a null-bearing int column.
+    (an all-null chunk whose reader had no type to infer), which passes here
+    unchanged. Validation and casting are separate steps (`cast_null_columns`) so
+    the chunk reaches the ingest guards, and any adapter, exactly as the source
+    produced it: a cast to an integer type would make an all-null chunk look like
+    a null-bearing int column and refuse input the oracle masks.
 
     The reverse case (the first chunk's column is `null`-typed and this chunk's is
     typed) raises `ExecutionError(code="chunked_leading_null_type")`: the stream's
@@ -82,9 +82,7 @@ def conform_chunk_schema(
             f"schema drift vs the first chunk (missing={missing}, extra={extra})",
             f"missing:{missing};extra:{extra}",
         )
-    columns = list(chunk.columns)
-    changed = False
-    for i, name in enumerate(chunk.schema.names):
+    for name in chunk.schema.names:
         expected_type = expected.field(name).type
         actual_type = chunk.schema.field(name).type
         if actual_type == expected_type:
@@ -100,8 +98,6 @@ def conform_chunk_schema(
                 ),
             )
         if pa.types.is_null(actual_type):
-            columns[i] = columns[i].cast(expected_type)
-            changed = True
             continue
         raise _drift(
             table,
@@ -109,6 +105,20 @@ def conform_chunk_schema(
             f"column {name!r} type changed {expected_type} -> {actual_type}",
             f"type_changed:{name}:{expected_type}->{actual_type}",
         )
+
+
+def cast_null_columns(expected: pa.Schema, chunk: pa.Table) -> pa.Table:
+    """`chunk` with each `null`-typed column cast to `expected`'s type.
+
+    Call only on a chunk `validate_chunk_schema` accepted, and only after the
+    ingest guards ran on the raw chunk."""
+    columns = list(chunk.columns)
+    changed = False
+    for i, name in enumerate(chunk.schema.names):
+        expected_type = expected.field(name).type
+        if chunk.schema.field(name).type != expected_type:
+            columns[i] = columns[i].cast(expected_type)
+            changed = True
     if not changed:
         return chunk
     return pa.Table.from_arrays(
@@ -116,18 +126,10 @@ def conform_chunk_schema(
     )
 
 
-def conformed_rest(
-    first: pa.Table,
-    rest: Iterator[pa.Table],
-    *,
-    table: str,
-    ingest_guard: Callable[[pa.Table], None] | None = None,
-) -> Iterator[pa.Table]:
-    """The chunks after `first`, each conformed to `first`'s schema (see
-    `conform_chunk_schema`), lazily, so drift raises before the drifting chunk
-    reaches either route's masking loop. `ingest_guard` runs on each chunk as the
-    source produced it, before the conform cast."""
+def validated_rest(first: pa.Table, rest: Iterator[pa.Table], *, table: str) -> Iterator[pa.Table]:
+    """The chunks after `first`, each validated against `first`'s schema, lazily
+    and unchanged, so drift raises before the drifting chunk reaches either
+    route's loop."""
     for i, chunk in enumerate(rest, start=1):
-        if ingest_guard is not None:
-            ingest_guard(chunk)
-        yield conform_chunk_schema(first.schema, chunk, table=table, chunk_index=i)
+        validate_chunk_schema(first.schema, chunk, table=table, chunk_index=i)
+        yield chunk
