@@ -112,6 +112,7 @@ from decoy_engine.execution import (
     select_execution_adapter,
 )
 from decoy_engine.execution._chunked import run_mask_pipeline_chunked
+from decoy_engine.execution._transforms_table import apply_table_transforms
 from decoy_engine.execution.native._companion_status import (
     NativeCompanionStatus,
     native_companion_status,
@@ -388,6 +389,7 @@ __all__ = [
     "VaultWriter",
     "WeakMaskSecret",
     "WriteResult",
+    "apply_table_transforms",
     "atomic_swap_db_providers",
     "build_namespace_registry",
     "build_relationship_graph",

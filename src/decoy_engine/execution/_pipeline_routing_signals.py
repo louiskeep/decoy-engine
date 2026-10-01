@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._transforms_admission import admission_signals, decline_out_of_core
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -208,6 +209,7 @@ def out_of_core_routing_signals(
     caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     has_mask_table: bool,
+    config: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None, int | None, bool]:
     """The `(out_of_core_compatible, reject_code, largest_table_rows,
     largest_table_rows_exact)` tuple `decide_execution_route`'s SC2 gates
@@ -227,6 +229,8 @@ def out_of_core_routing_signals(
     if not (getattr(profile, "relationships", None) and has_mask_table):
         return False, None, None, True
     compatible, reject_code = out_of_core_admission(plan, registry=registry, graph=graph)
+    if config is not None:
+        compatible, reject_code = decline_out_of_core(config, compatible, reject_code)
     rows, exact = _resolve_largest_mask_table_rows(
         profile, caller_sources=caller_sources, table_kinds=table_kinds
     )
@@ -511,6 +515,7 @@ def resolve_execution_route(
     use_probe_routing: bool,
     config: dict[str, Any],
     engine_version: str,
+    prepared_tables: frozenset[str] = frozenset(),
 ) -> tuple[str, str]:
     """`run_pipeline`'s single call site bundling every routing SIGNAL in this
     module (out-of-core admission + size, the B1b byte estimate, the B2
@@ -535,12 +540,7 @@ def resolve_execution_route(
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
 
-    (
-        out_of_core_compatible,
-        out_of_core_reject_code,
-        largest_table_rows,
-        largest_table_rows_exact,
-    ) = out_of_core_routing_signals(
+    ooc_ok, ooc_code, rows, rows_exact = out_of_core_routing_signals(
         profile,
         plan=plan,
         registry=registry,
@@ -548,20 +548,19 @@ def resolve_execution_route(
         caller_sources=caller_sources,
         table_kinds=table_kinds,
         has_mask_table=has_mask_table,
-    )
-    full_frame_fits_estimate = resolve_full_frame_fits_estimate(
-        use_byte_estimate_routing, profile, caller_sources, table_kinds, out_of_core_budget_bytes
-    )
-    probe_recovers_full_frame = resolve_probe_recovery(
-        use_probe_routing,
-        use_byte_estimate_routing,
-        profile,
-        caller_sources,
-        table_kinds,
-        out_of_core_budget_bytes,
-        full_frame_fits_estimate,
         config=config,
+    )
+    fits, probe, lazy = admission_signals(
+        config,
+        profile=profile,
+        caller_sources=caller_sources,
+        table_kinds=table_kinds,
+        execution_mode=execution_mode,
+        use_byte_estimate_routing=use_byte_estimate_routing,
+        use_probe_routing=use_probe_routing,
+        out_of_core_budget_bytes=out_of_core_budget_bytes,
         engine_version=engine_version,
+        prepared_tables=prepared_tables,
     )
     route, route_reason = decide_execution_route(
         profile,
@@ -574,16 +573,17 @@ def resolve_execution_route(
         execution_mode=execution_mode,
         graph=graph,
         resolved_substrate=resolved_substrate,
-        out_of_core_compatible=out_of_core_compatible,
-        out_of_core_reject_code=out_of_core_reject_code,
-        largest_table_rows=largest_table_rows,
-        largest_table_rows_exact=largest_table_rows_exact,
+        out_of_core_compatible=ooc_ok,
+        out_of_core_reject_code=ooc_code,
+        largest_table_rows=rows,
+        largest_table_rows_exact=rows_exact,
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
         use_byte_estimate_routing=use_byte_estimate_routing,
-        full_frame_fits_estimate=full_frame_fits_estimate,
+        full_frame_fits_estimate=fits,
         use_probe_routing=use_probe_routing,
-        probe_recovers_full_frame=probe_recovers_full_frame,
+        probe_recovers_full_frame=probe,
+        lazy_transform_bearing=lazy,
     )
     if route == "out_of_core":
         # OOC-D advisory disk preflight (warns only, never rejects/reroutes):

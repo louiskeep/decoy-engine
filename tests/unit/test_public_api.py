@@ -36,6 +36,9 @@ def test_all_lists_every_public_name():
         "CompositePerson",
         "CompositeProvider",
         "atomic_swap_db_providers",
+        # Transforms are engine-owned: callers that use the plan-level APIs (which
+        # take prepared inputs) apply a table's transforms through this helper.
+        "apply_table_transforms",
         "composite_address",
         "composite_custom",
         "composite_name_email",

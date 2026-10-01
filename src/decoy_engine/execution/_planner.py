@@ -279,9 +279,11 @@ def _chunked_rejection(
     All are fail-closed: any miss keeps the job on the full-frame path.
     """
     from decoy_engine.execution._chunked import check_chunked_compatibility
+    from decoy_engine.execution._transforms_gate import PER_TABLE_TRANSFORMS_PRESENT
     from decoy_engine.plan._errors import PlanCompileError
 
     reasons: list[str] = []
+    transforms_reject = False
     if not mask_tables:
         reasons.append("no mask-kind tables to stream")
     if generate_tables:
@@ -317,6 +319,9 @@ def _chunked_rejection(
             check_chunked_compatibility(config, table=table)
         except PlanCompileError as exc:
             reasons.append(f"{exc.code}: {exc.message}")
+            # The runtime source gates below read column values. A transform-bearing
+            # table is already rejected, and the transform guard owns its source checks.
+            transforms_reject = exc.code == PER_TABLE_TRANSFORMS_PRESENT
         # Composite bundles are recognized by provider capability, not
         # strategy name, so the per-column compat gate cannot see them;
         # their coherent-group state is whole-bundle, not value-keyed.
@@ -336,7 +341,7 @@ def _chunked_rejection(
                 "which the chunked entrypoint cannot carry"
             )
         reasons.extend(_whole_column_state_rejections(config, table=table))
-        if source_tables is not None:
+        if source_tables is not None and not transforms_reject:
             reasons.extend(
                 _runtime_source_rejections(
                     source_tables,

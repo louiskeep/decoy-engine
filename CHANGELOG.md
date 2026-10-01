@@ -64,6 +64,53 @@ The reader was hardened before becoming public, which changes behavior:
 - `path` accepts `os.PathLike[str]`; a non-`str` path raises `TypeError` and a
   path containing NUL raises `ValueError`.
 
+### Changed (engine-owned table transforms, 2026-09-30)
+
+**Breaking (pre-GA API):** `run_pipeline` now applies a mask table's `transforms` (filter, sort,
+limit, dedupe, derive, drop_column). Previously only the platform did, so the same config gave
+different output by caller. `decoy_engine.apply_table_transforms(config, table_name, table)` is the
+new public helper for callers that use the plan-level APIs (`PandasExecutionAdapter.run`,
+`run_sequential`, `run_fk_out_of_core`), which take prepared inputs and never see transforms.
+
+The behavior applies only to tables with transforms. Source columns keep their exact Arrow type,
+nullability, field metadata and values, and every nullable integer column on a transform-bearing
+table is exact instead of rounded through float64. That can change filter, stable-sort, dedupe and
+derive results relative to the old platform rounding: a `derive` at an integer-width boundary wraps
+as that integer type does (`int8` 127 + 1 is -128, where the float64 path gave 128), and a filter or
+dedupe beyond 2^53 keeps rows the rounding path merged. The new `duplicate_source_field_names` and
+`config_references_stored_index` errors apply only to transform-bearing tables. Tables without
+transforms keep their current rounding, stored-index and duplicate-name behavior (tracked as roadmap
+§EXACT-INT and §INDEX-FIELDS). `to_pandas_fk_safe` is unchanged.
+
+Routing and memory: a transform-bearing job is never auto-chunked and never routed to
+out-of-core. Resident transform-bearing tables are transformed once, before routing, so the byte
+estimate and the probe price the transformed tables (derived columns included, dropped ones gone)
+and a small job that declares a vault writer, validators, `post_validation`, `fidelity_report` or a
+cross-table cycle runs full-frame as it did before. The probe child receives the prepared tables.
+Memory lifetime: preparing every resident transform-bearing table up front holds the prepared
+tables next to the raw tables the caller already owns; the engine drops its own reference to each
+raw table once its prepared table exists, and under sequential the prepared tables stay until the
+route consumes them (the platform already held every raw table and transformed them up front).
+
+Known limit: a transform-bearing table supplied as a `LazySource` (Parquet) or only through
+`source_loader` cannot be priced or probed without reading it. Under `auto`, a relationship job
+(including a generate+mask one) with such a mask table is never admitted to full-frame, whatever
+`use_byte_estimate_routing` says: it takes the sequential route when eligible and is otherwise
+rejected with `fk_full_frame_oom_risk_rejected`, before any resident table is transformed. A
+generate+mask job is never sequential-eligible, so it needs `execution_mode="full_frame"`, which
+is the operator override (use it or `isolate=False` when the isolated worker, which reads
+relationship sources lazily, is the cause). A
+resident `pa.Table` in `sources` wins over `source_loader` for transform-bearing tables on every
+route. The platform always passes resident sources, so platform jobs are unaffected.
+
+The direct chunked entry points, the native-or-oracle dispatcher and explicit
+`execution_mode="out_of_core"` raise `per_table_transforms_present` instead of dropping the ops.
+Under `auto`, telemetry gains `out_of_core_declined` when transforms are why out-of-core was
+skipped. `TableConfig.transforms` accepts at most 32 ops. Sorting or deduping on a nested
+(list, struct, map) column raises `sort_unsupported_type` or `dedupe_unsupported_type`. Compile-time
+checks that read the source profile (for example `null_bearing_int_unsupported`) still run on the
+raw source, so a filter cannot clear them (roadmap §XFORM-PROFILE).
+
 ### Changed (cloud connectors now opt-in, 2026-09-25)
 
 **Breaking (pre-GA API):** `boto3` and `google-cloud-storage` moved from base

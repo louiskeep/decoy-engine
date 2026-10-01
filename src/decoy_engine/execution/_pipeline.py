@@ -89,6 +89,13 @@ from decoy_engine.execution._planner import (
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
+from decoy_engine.execution._transforms_admission import (
+    out_of_core_declined,
+    routing_profile,
+    stamp_out_of_core_declined,
+)
+from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
+from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.profile._readers import LazySource
 
@@ -331,6 +338,9 @@ def run_pipeline(
     require_bool("post_validation_enforce", post_validation_enforce)
     require_positive_int("post_validation_sample_size", post_validation_sample_size)
     resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
+    if execution_mode == "out_of_core":
+        # Config-only, so nothing is profiled or read before the refusal.
+        reject_any_per_table_transforms(config, route="execution_mode='out_of_core'")
 
     # None-normalize the skip list here (a mutable [] default would be shared
     # across calls); the unified-slice `locals()` forwarding reads the bound
@@ -411,8 +421,25 @@ def run_pipeline(
     # shape, so non-FK jobs keep the pre-SC2 routing. The size signal now comes
     # from the (SC7a bounded) profile metadata, so the gates fire on the lazy
     # `source_loader` path too (SC7b, closing the F2 reject-before-read hole).
+    # Resident transform-bearing tables are transformed once, here, so routing prices
+    # the data that will run; the raw tables are no longer referenced from `caller_sources`.
+    prepared = prepare_transform_sources(
+        config,
+        caller_sources,
+        profile=profile,
+        graph=graph,
+        execution_mode=execution_mode,
+        has_generate_table=has_generate_table,
+        has_mask_table=has_mask_table,
+        validators=(config.get("validators") or []),
+        fidelity_report=fidelity_report,
+        vault_writer=vault_writer,
+        post_validation=post_validation,
+        resolved_substrate=resolved_substrate,
+    )
+    caller_sources = prepared.sources
     route, route_reason = _pipeline_routing.resolve_execution_route(
-        profile,
+        routing_profile(profile, caller_sources, prepared.prepared),
         plan=plan,
         registry=resolved_registry,
         graph=graph,
@@ -433,6 +460,7 @@ def run_pipeline(
         use_probe_routing=use_probe_routing,
         config=config,
         engine_version=engine_version,
+        prepared_tables=prepared.prepared,
     )
 
     # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the
@@ -458,9 +486,20 @@ def run_pipeline(
         has_mask_table=has_mask_table,
     )
 
+    ooc_declined = out_of_core_declined(
+        config,
+        plan=plan,
+        registry=resolved_registry,
+        graph=graph,
+        profile=profile,
+        table_kinds=table_kinds,
+        execution_mode=execution_mode,
+    )
     if has_mask_table and route == "sequential":
-        loader = _psrc.resolve_sequential_loader(source_loader, caller_sources)
-        return _route_exec.run_sequential_route(
+        loader = _psrc.resolve_sequential_loader(
+            source_loader, caller_sources, config=config, prepared=prepared.prepared
+        )
+        sequential_result = _route_exec.run_sequential_route(
             plan=plan,
             loader=loader,
             registry=resolved_registry,
@@ -478,6 +517,8 @@ def run_pipeline(
             unconfigured_column_policy=projection_policy,
             key_provider=resolved_key_provider,
         )
+        stamp_out_of_core_declined(sequential_result.quality_metrics, ooc_declined)
+        return sequential_result
 
     # SC2 out-of-core route (same shape as sequential); caller_sources feeds
     # the runner directly -- TB-1: a LazySource streams natively here, no materialization.
@@ -512,6 +553,8 @@ def run_pipeline(
         caller_sources,
         source_loader=source_loader,
         required_tables=[name for name, kind in table_kinds.items() if kind == "mask"],
+        config=config,
+        prepared=prepared.prepared,
     )
 
     # Steps 1-2 (generate-kind tables, then mask-kind tables): split into
@@ -603,6 +646,7 @@ def run_pipeline(
         source_loader=None,
         sources_resident=True,
     )
+    stamp_out_of_core_declined(quality_metrics, ooc_declined)
 
     result = ExecutionResult(
         outputs=outputs,

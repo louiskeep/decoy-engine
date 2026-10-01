@@ -225,6 +225,7 @@ def run_sequential(
     exactly the tables in its `sources` mapping, this path is driven by the plan:
     a table present only in the caller's sources but absent from the plan and graph
     is neither loaded nor emitted.
+    Loaded tables must already be transformed (a Plan carries no transforms).
 
     With `sink`, each masked table is emitted then dropped (outputs not
     accumulated, so `ExecutionResult.outputs` is empty); without `sink`, outputs

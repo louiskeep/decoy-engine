@@ -225,6 +225,25 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         f"src/decoy_engine/{rel}" for rel in DELIBERATELY_CONNECTED_MODULES
     } | {
         "src/decoy_engine/execution/_pipeline.py",
+        # Engine-owned table transforms: `run_pipeline` now applies a mask table's
+        # transforms before routing, which touches the resident-source resolvers,
+        # the routing signals, the sequential and out-of-core docstring contract and
+        # the byte-estimate size adapter, and adds the `_transforms_*` modules. All
+        # live at the `execution` parent level and import NOTHING from
+        # `execution.physical` (the import-direction sweeps above stay green); the
+        # physical package only reads them (`_snapshot` calls the shared preparation
+        # so capture records the same routing facts as a real run).
+        "src/decoy_engine/execution/_mem_estimate_schema.py",
+        "src/decoy_engine/execution/_pipeline_routing.py",
+        "src/decoy_engine/execution/_pipeline_routing_signals.py",
+        "src/decoy_engine/execution/_pipeline_sources.py",
+        "src/decoy_engine/execution/_sequential.py",
+        "src/decoy_engine/execution/_transforms.py",
+        "src/decoy_engine/execution/_transforms_admission.py",
+        "src/decoy_engine/execution/_transforms_gate.py",
+        "src/decoy_engine/execution/_transforms_prepare.py",
+        "src/decoy_engine/execution/_transforms_table.py",
+        "src/decoy_engine/execution/out_of_core/_runner.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
         # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
         # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
@@ -278,7 +297,6 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Comment-only edits stripping polars-masking wording from the retained
         # non-pandas substrate guards (the guards themselves stay as fail-closed
         # defence; the pandas path is unchanged).
-        "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_unified_slice_admission.py",
         # Polars masking removal scrub (2026-09-21): comment/docstring-only edits
         # rewording stale "polars adapter/route/substrate" descriptions to the

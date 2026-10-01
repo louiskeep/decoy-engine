@@ -154,6 +154,10 @@ class OutOfCoreRoutingFacts:
     budget_bytes: int | None
     reorder_threshold_rows: int
     merge_fan_in: int
+    # A transform-bearing table that is not resident: `decide_execution_route`
+    # then never admits full-frame under `auto`. Defaulted so existing captures
+    # (and the hash of every job without transforms) are unchanged.
+    lazy_transform_bearing: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +195,8 @@ class PhysicalPlanInputs:
     registry: ProviderRegistry
     graph: RelationshipGraph
     table_kinds: Mapping[str, str]
+    # Holds the PREPARED tables of a transform-bearing job while `config` keeps its
+    # transforms, so passing both on to `run_pipeline` would apply the transforms twice.
     caller_sources: Mapping[str, pa.Table | LazySource]
     source_loader_present: bool
     resolved_substrate: str
@@ -335,6 +341,7 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         facts.reorder_threshold_rows,
         facts.merge_fan_in,
         inputs.native_companion_reason,
+        *((facts.lazy_transform_bearing,) if facts.lazy_transform_bearing else ()),
     )
     digest = hashlib.sha256()
     for part in parts:

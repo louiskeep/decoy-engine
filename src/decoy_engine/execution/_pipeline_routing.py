@@ -228,6 +228,50 @@ def _sequential_eligible(
     return True, "pure_mask_fk"
 
 
+def reject_explicit_sequential(
+    eligible: bool, route_reason: str, cyclic: bool, has_mask_table: bool
+) -> None:
+    """The fail-closed checks behind an explicit `execution_mode="sequential"`."""
+    if not eligible:
+        raise ConfigError(
+            f"execution_mode='sequential' requested but the job is not "
+            f"sequential-eligible ({route_reason})."
+        )
+    if cyclic:
+        raise ConfigError(
+            "execution_mode='sequential' requested but the FK graph has a "
+            "cross-table cycle, which the sequential path cannot order; "
+            "use execution_mode='full_frame' or 'auto'."
+        )
+    if not has_mask_table:
+        # Without a mask-kind table the sequential branch in run_pipeline would
+        # silently no-op and fall through to full-frame, ignoring the explicit
+        # request. Fail closed instead.
+        raise ConfigError(
+            "execution_mode='sequential' requested but the job has no "
+            "mask-kind table to run through the sequential path."
+        )
+
+
+def lazy_transform_route(eligible: bool, route_reason: str, cyclic: bool) -> tuple[str, str]:
+    """Sequential when the job is eligible, else the base reject: the one outcome set
+    for a relationship job with a lazy transform-bearing mask table under `auto`."""
+    if eligible and not cyclic:
+        return "sequential", route_reason
+    raise ExecutionError(
+        code="fk_full_frame_oom_risk_rejected",
+        message=(
+            "FK job rejected before read: a table that declares transforms is not "
+            "resident when routing runs (a LazySource or loader-supplied source; the "
+            "isolated worker reads relationship sources lazily), so its transformed "
+            "size cannot be priced or probed and full-frame is not admitted, and no "
+            f"bounded route applies ({'cross_table_cycle' if cyclic else route_reason}). "
+            "Make the job sequential-eligible, or force execution_mode='full_frame' "
+            "(or isolate=False when running isolated) to override at your own memory risk."
+        ),
+    )
+
+
 def decide_execution_route(
     profile: Any,
     *,
@@ -250,6 +294,7 @@ def decide_execution_route(
     full_frame_fits_estimate: bool | None = None,
     use_probe_routing: bool = True,
     probe_recovers_full_frame: bool | None = None,
+    lazy_transform_bearing: bool = False,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
@@ -408,27 +453,15 @@ def decide_execution_route(
         return "out_of_core", "override_out_of_core"
 
     if execution_mode == "sequential":
-        if not eligible:
-            raise ConfigError(
-                f"execution_mode='sequential' requested but the job is not "
-                f"sequential-eligible ({route_reason})."
-            )
-        if cyclic:
-            raise ConfigError(
-                "execution_mode='sequential' requested but the FK graph has a "
-                "cross-table cycle, which the sequential path cannot order; "
-                "use execution_mode='full_frame' or 'auto'."
-            )
-        if not has_mask_table:
-            # NIT (S2 remediation guide section 8): without a mask-kind table
-            # the sequential branch in run_pipeline would silently no-op and
-            # fall through to full-frame, ignoring the explicit request.
-            # Fail closed instead.
-            raise ConfigError(
-                "execution_mode='sequential' requested but the job has no "
-                "mask-kind table to run through the sequential path."
-            )
+        reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
+
+    if lazy_transform_bearing and has_relationships and has_mask_table:
+        # A transform-bearing mask table that is not resident cannot be priced or
+        # probed before it is read, so full-frame is never admitted for it under
+        # `auto`, whatever the byte-estimate flag says (generate+mask included).
+        # Out-of-core declines transforms.
+        return lazy_transform_route(eligible, route_reason, cyclic)
 
     # "auto"
     # B1b (§13): flag-gated byte-estimate admission, scoped to

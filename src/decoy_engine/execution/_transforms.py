@@ -1,10 +1,15 @@
 """Per-op execution for the V2 narrow transform surface.
 
-S17-TX-NARROW: each TransformOp variant maps to a single pure
-``apply_transform(df, op) -> df`` function that operates on a pandas
-DataFrame. The dispatch lives in ``apply_transforms(df, ops)`` which
-iterates in declared order. Called by the mask path's
-PandasExecutionAdapter between source-read and the strategy loop.
+Each TransformOp variant maps to a single pure ``apply_transform(df, op) -> df``
+function that operates on a pandas DataFrame. The dispatch lives in
+``apply_transforms(df, ops)`` which iterates in declared order.
+
+Nothing in the masking adapters calls these. ``run_pipeline`` applies a mask
+table's transforms once, over the whole table, before any route reads it, through
+``_transforms_table.apply_table_transforms`` (full-frame source resolution and
+the sequential loader). That wrapper carries the row ordinals in the frame index,
+so the ops here keep the index they are given: filter, sort, limit and dedupe
+must not reset it, or the source-row lineage is lost.
 
 Pandas semantics for expression evaluation: pandas ``DataFrame.eval``
 resolves ``@var``-style references BEFORE engine dispatch by walking the
@@ -42,8 +47,12 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Mapping
+from typing import Any
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 from decoy_engine.config._transforms import (
     DedupeOp,
@@ -93,6 +102,88 @@ class TransformError(Exception):
         super().__init__(message)
 
 
+def stored_index_fields(schema: pa.Schema) -> set[str]:
+    """Physical fields the `pandas` metadata marks as index columns."""
+    meta = schema.pandas_metadata or {}
+    return {c for c in meta.get("index_columns", []) if isinstance(c, str)}
+
+
+def _structured_references(table_config: Mapping[str, Any], config: Mapping[str, Any]) -> set[str]:
+    """Names a structured config reference resolves to a SOURCE binding.
+
+    Walks the ops in order: a `derive` target is a definition (it introduces a
+    derived binding), and a later structured reference to that name resolves to
+    the binding, not to a source field. Names still bound to `derived` after the
+    last op are excluded from the post-transform references (mask columns,
+    relationship keys, group_by anchors).
+    """
+    refs: set[str] = set()
+    derived: set[str] = set()
+    for op in table_config.get("transforms") or []:
+        kind = op.get("op")
+        if kind == "sort":
+            refs |= {c for c in op.get("by") or [] if c not in derived}
+        elif kind == "dedupe":
+            refs |= {c for c in op.get("columns") or [] if c not in derived}
+        elif kind == "drop_column":
+            for col in op.get("columns") or []:
+                if col in derived:
+                    derived.discard(col)
+                else:
+                    refs.add(col)
+        elif kind == "derive":
+            derived.add(op["column"])
+    final: set[str] = set()
+    for col in table_config.get("columns") or []:
+        final.add(col["name"])
+        if col.get("strategy") in ("date_shift", "group_key"):
+            group_by = (col.get("provider_config") or {}).get("group_by")
+            if isinstance(group_by, str) and group_by:
+                final.add(group_by)
+    name = table_config.get("name")
+    for rel in config.get("relationships") or []:
+        ends = [rel.get("parent") or {}, *(rel.get("children") or [])]
+        for end in ends:
+            if end.get("table") == name:
+                final.update(end.get("columns") or [])
+    return refs | (final - derived)
+
+
+def check_transform_source_schema(
+    config: Mapping[str, Any], table_name: str, schema: pa.Schema
+) -> None:
+    """Schema-only guard for a transform-bearing table; reads no values.
+
+    Rejects duplicate physical field names and any STRUCTURED config reference to
+    a stored pandas index field. Free-text filter and derive expressions are not
+    parsed: the stored index never reaches the frame, so an expression naming it
+    fails during evaluation with the existing expression error codes.
+    """
+    names = list(schema.names)
+    if len(set(names)) != len(names):
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        raise TransformError(
+            code="duplicate_source_field_names",
+            message=f"table {table_name!r} has duplicate physical field names {dupes}",
+        )
+    stored = stored_index_fields(schema)
+    if not stored:
+        return
+    table_config = next(
+        (t for t in config.get("tables") or [] if t.get("name") == table_name), {"name": table_name}
+    )
+    hit = sorted(stored & _structured_references(table_config, config))
+    if hit:
+        raise TransformError(
+            code="config_references_stored_index",
+            message=(
+                f"table {table_name!r}: config references {hit}, which the source stores as "
+                "a pandas index field. Transforms discard the stored index, so the "
+                "reference would not resolve; reference a data column instead."
+            ),
+        )
+
+
 def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     try:
         # Q16 + Dennis C1 fix: pin engine to numexpr AND clamp the eval
@@ -125,7 +216,26 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
                 f"(got {type(mask).__name__})"
             ),
         )
-    return df[mask].reset_index(drop=True)
+    return df[mask]
+
+
+_NESTED = (list, tuple, dict, set, np.ndarray)
+
+
+def _reject_nested_keys(df: pd.DataFrame, columns: Any, *, code: str, op: str) -> None:
+    """Nested values (Arrow list/struct/map columns) have no pandas sort order or hash,
+    and pandas does not always fail on them: it can compare them by identity. Refuse
+    them as keys up front."""
+    for col in columns:
+        series = df[col]
+        if series.dtype != object:
+            continue
+        first = series.dropna().head(1)
+        if len(first) and isinstance(first.iloc[0], _NESTED):
+            raise TransformError(
+                code=code,
+                message=f"{op} cannot use column {col!r}: it holds nested (list/struct/map) values",
+            )
 
 
 def _apply_sort(df: pd.DataFrame, op: SortOp) -> pd.DataFrame:
@@ -143,11 +253,18 @@ def _apply_sort(df: pd.DataFrame, op: SortOp) -> pd.DataFrame:
                 f"sort.ascending length {len(ascending)} does not match by length {len(op.by)}"
             ),
         )
-    return df.sort_values(by=op.by, ascending=ascending, kind="stable").reset_index(drop=True)
+    _reject_nested_keys(df, op.by, code="sort_unsupported_type", op="sort")
+    try:
+        return df.sort_values(by=op.by, ascending=ascending, kind="stable")
+    except (TypeError, ValueError) as exc:
+        raise TransformError(
+            code="sort_unsupported_type",
+            message=f"sort.by columns {op.by} cannot be ordered: {type(exc).__name__}",
+        ) from exc
 
 
 def _apply_limit(df: pd.DataFrame, op: LimitOp) -> pd.DataFrame:
-    return df.head(op.n).reset_index(drop=True)
+    return df.head(op.n)
 
 
 def _apply_dedupe(df: pd.DataFrame, op: DedupeOp) -> pd.DataFrame:
@@ -158,7 +275,15 @@ def _apply_dedupe(df: pd.DataFrame, op: DedupeOp) -> pd.DataFrame:
                 code="dedupe_column_missing",
                 message=f"dedupe.columns not in table: {missing}",
             )
-    return df.drop_duplicates(subset=op.columns).reset_index(drop=True)
+    keys = op.columns if op.columns is not None else list(df.columns)
+    _reject_nested_keys(df, keys, code="dedupe_unsupported_type", op="dedupe")
+    try:
+        return df.drop_duplicates(subset=op.columns)
+    except (TypeError, ValueError) as exc:
+        raise TransformError(
+            code="dedupe_unsupported_type",
+            message=f"dedupe columns cannot be compared: {type(exc).__name__}",
+        ) from exc
 
 
 def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:

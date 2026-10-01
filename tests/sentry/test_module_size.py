@@ -441,7 +441,9 @@ ALLOWLIST: dict[str, int] = {
     # mapping, `_chunked_code_set.py`'s corpus-pinning contract) and seeding
     # it into `StrategyContext` construction. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 675,
+    # Engine-owned transforms: +1 LOC (675 -> 676), the prepared-input contract
+    # docstring on `PandasExecutionAdapter.run`. No logic added.
+    "src/decoy_engine/execution/_pandas_adapter.py": 676,
     # gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
     # allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
     # decomposition target, +15 more at gen-5a-faker for `_provider_
@@ -461,7 +463,14 @@ ALLOWLIST: dict[str, int] = {
     # site. Dense reviewed exception (<= MAX). Decompose the finalize/validator
     # hand-off into `_pipeline_finalize.py`'s owner cluster when the next
     # post-validation change lands (that sibling already exists).
-    "src/decoy_engine/execution/_pipeline.py": 635,
+    # Engine-owned transforms: +44 LOC (635 -> 679) wiring `run_pipeline` to own table
+    # transforms: the explicit out-of-core preflight, the single pre-routing call that
+    # prepares resident transform-bearing tables (and refuses explicit-mode rejections
+    # first), threading the prepared set into routing and the source resolvers, and
+    # stamping the out-of-core decline telemetry. The logic lives in `_transforms_gate.py`,
+    # `_transforms_prepare.py`, `_transforms_admission.py` and `_transforms_table.py`; this
+    # file only calls them. Dense reviewed exception (<= MAX).
+    "src/decoy_engine/execution/_pipeline.py": 679,
     # A1 post-validation wiring (2026-09-24): crossed GOAL (was under) threading
     # the resident-source resolution the post-validation scans need -- the
     # source_loader + required_tables plumbing and the admission-path source
@@ -507,7 +516,9 @@ ALLOWLIST: dict[str, int] = {
     # ingest, mirroring the pandas-adapter union above (group_key is not
     # FK-key-eligible, but it can mask an ordinary column on any table in
     # an FK job, so this route needs the same lossless typing).
-    "src/decoy_engine/execution/_sequential.py": 648,
+    # Engine-owned transforms: +1 LOC (648 -> 649), the prepared-input contract line
+    # on `run_sequential`'s docstring. No logic added.
+    "src/decoy_engine/execution/_sequential.py": 649,
     # DE-08 residual (2026-07-14): crossed the 600 cap (was 569) hardening the
     # transactional quarantine publish in place -- fail-closed on a hardlink-
     # unsupported filesystem (clear message, not an opaque OSError) and best-
