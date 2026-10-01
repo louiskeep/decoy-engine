@@ -9,7 +9,7 @@ orchestrator, so it lives in its own module and `_dispatch` imports it back.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pyarrow as pa
 
@@ -61,7 +61,15 @@ def conform_chunk_schema(
     or a column whose Arrow type differs from the first chunk's, raises
     `NativeChunkSchemaDriftError`. The single exception is a `null`-typed column
     (an all-null chunk whose reader had no type to infer), which is cast to the
-    first chunk's type; every value is null, so nothing changes.
+    first chunk's type. The cast does not change any value, but it does change the
+    column's type, so the per-chunk ingest guards (see `conformed_rest`) must run
+    on the chunk as the source produced it, before this cast: an all-null chunk
+    cast to an integer type would otherwise look like a null-bearing int column.
+
+    The reverse case (the first chunk's column is `null`-typed and this chunk's is
+    typed) raises `ExecutionError(code="chunked_leading_null_type")`: the stream's
+    type is fixed by its first chunk, and a writer opened on a `null` field cannot
+    accept the later type.
     """
     expected_names = set(expected.names)
     actual_names = set(chunk.schema.names)
@@ -81,6 +89,16 @@ def conform_chunk_schema(
         actual_type = chunk.schema.field(name).type
         if actual_type == expected_type:
             continue
+        if pa.types.is_null(expected_type):
+            raise ExecutionError(
+                code="chunked_leading_null_type",
+                message=(
+                    f"{table!r} chunk {chunk_index}: column {name!r} was null-typed in the "
+                    f"first chunk and is {actual_type} here. The stream's type is fixed by "
+                    "its first chunk, so the source must supply a fixed schema (declare the "
+                    "column's type instead of inferring it per chunk)."
+                ),
+            )
         if pa.types.is_null(actual_type):
             columns[i] = columns[i].cast(expected_type)
             changed = True
@@ -98,9 +116,18 @@ def conform_chunk_schema(
     )
 
 
-def conformed_rest(first: pa.Table, rest: Iterator[pa.Table], *, table: str) -> Iterator[pa.Table]:
+def conformed_rest(
+    first: pa.Table,
+    rest: Iterator[pa.Table],
+    *,
+    table: str,
+    ingest_guard: Callable[[pa.Table], None] | None = None,
+) -> Iterator[pa.Table]:
     """The chunks after `first`, each conformed to `first`'s schema (see
     `conform_chunk_schema`), lazily, so drift raises before the drifting chunk
-    reaches either route's masking loop."""
+    reaches either route's masking loop. `ingest_guard` runs on each chunk as the
+    source produced it, before the conform cast."""
     for i, chunk in enumerate(rest, start=1):
+        if ingest_guard is not None:
+            ingest_guard(chunk)
         yield conform_chunk_schema(first.schema, chunk, table=table, chunk_index=i)

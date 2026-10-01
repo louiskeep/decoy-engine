@@ -1027,9 +1027,9 @@ def test_kernel_evidence_accumulates_across_multiple_chunks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# When no explicit `key_provider` is given, `_mask_native` must resolve one
-# from the config's declared `mask_secret_ref` transparently -- untested
-# before this batch (every existing test passes an explicit key_provider).
+# When no explicit `key_provider` is given, the native route
+# (`_chunked_entry._native_route`) must resolve one from the config's declared
+# `mask_secret_ref` transparently -- untested before this batch (every existing test passes an explicit key_provider).
 # ---------------------------------------------------------------------------
 
 
