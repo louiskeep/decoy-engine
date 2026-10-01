@@ -126,12 +126,16 @@ def _classify_string_family(
     return Unpriceable(f"{arrow_type}: wrapped string representation, not sampled")
 
 
-def _classify_numeric(base: pa.DataType, has_nulls: bool) -> ArrowSizeClass | None:
+def _classify_numeric(base: pa.DataType, has_nulls: bool, masked: bool) -> ArrowSizeClass | None:
     if pa.types.is_boolean(base):
         return Fixed("pyobject[bool]" if has_nulls else "bool")
     if pa.types.is_integer(base):
+        if masked and base.bit_width == 64:
+            return Fixed("Int64" if pa.types.is_signed_integer(base) else "UInt64")
         return Fixed("float64" if has_nulls else str(base))
     if pa.types.is_floating(base):
+        if masked and base.bit_width in (32, 64):
+            return Fixed(f"Float{base.bit_width}")
         return Fixed(f"float{base.bit_width}")
     if pa.types.is_timestamp(base):
         return Fixed("datetime64[ns]")
@@ -146,7 +150,9 @@ def _classify_numeric(base: pa.DataType, has_nulls: bool) -> ArrowSizeClass | No
     return None
 
 
-def classify_column(arrow_type: pa.DataType, *, has_nulls: bool) -> ArrowSizeClass:
+def classify_column(
+    arrow_type: pa.DataType, *, has_nulls: bool, masked: bool = False
+) -> ArrowSizeClass:
     """How to price a column of `arrow_type`.
 
     `has_nulls` decides the nullable form of int/uint below 64 bits and bool (pandas
@@ -156,6 +162,12 @@ def classify_column(arrow_type: pa.DataType, *, has_nulls: bool) -> ArrowSizeCla
     type. Every dictionary is UNPRICEABLE: pandas decodes it to a Categorical whose
     cost depends on cardinality, and this module bounds memory rather than
     predicting pandas.
+
+    `masked` says pandas holds the column as a nullable extension dtype (the
+    `b"pandas"` metadata marks it, or the engine's own int conversion made it
+    one). Such an array carries a validity byte per cell, which the 64-bit
+    integers and the floats would otherwise miss: they are priced at the
+    `Int64`/`UInt64`/`Float64`/`Float32` labels (width + 1).
     """
     base, wrappers = _unwrap(arrow_type)
     if "dictionary" in wrappers:
@@ -166,7 +178,7 @@ def classify_column(arrow_type: pa.DataType, *, has_nulls: bool) -> ArrowSizeCla
         return Declared(0.0)
     if pa.types.is_fixed_size_binary(base):
         return Declared(float(base.byte_width))
-    priced = _classify_numeric(base, has_nulls)
+    priced = _classify_numeric(base, has_nulls, masked)
     if priced is not None:
         return priced
     return Unpriceable(f"{arrow_type} has no resident-size model")
@@ -228,6 +240,15 @@ def pandas_nullable_columns(schema: pa.Schema) -> frozenset[str]:
         )
     except (ValueError, KeyError, TypeError, AttributeError):
         return frozenset()
+
+
+def source_nullable_columns(source: pa.Table | LazySource | None) -> frozenset[str]:
+    """`pandas_nullable_columns` of a resident table or lazy source; none for no source."""
+    if isinstance(source, pa.Table):
+        return pandas_nullable_columns(source.schema)
+    if isinstance(source, LazySource):
+        return pandas_nullable_columns(source.schema)
+    return frozenset()
 
 
 def column_arrow_types(

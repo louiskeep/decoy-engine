@@ -34,6 +34,7 @@ from decoy_engine.execution._mem_estimate_arrow import (
     Sampled,
     classify_column,
     normalize_for_sampling,
+    pandas_nullable_columns,
     resident_has_nulls,
     widen_label_without_arrow_type,
 )
@@ -109,6 +110,7 @@ def table_size_spec_from_profile(
     declared_widths: Mapping[str, float] | None = None,
     sample: Mapping[str, pa.Array | pa.ChunkedArray] | None = None,
     arrow_types: Mapping[str, tuple[pa.DataType, bool]] | None = None,
+    masked_columns: frozenset[str] = frozenset(),
 ) -> TableSizeSpec:
     """Build a `TableSizeSpec` for a MASK table from its `TableProfile`.
 
@@ -122,7 +124,10 @@ def table_size_spec_from_profile(
 
     With no Arrow type for a column, the profile label is used: labels that can
     carry a null mask are widened (`widen_label_without_arrow_type`), and a label
-    outside the cost table is UNPRICEABLE.
+    outside the cost table is UNPRICEABLE. `masked_columns` names the columns the
+    source's pandas metadata marks as nullable extension dtypes (see
+    `source_nullable_columns`); the 64-bit integers and floats among them are
+    priced with their validity byte.
     """
     declared_widths = declared_widths or {}
     sample = sample or {}
@@ -134,7 +139,9 @@ def table_size_spec_from_profile(
             columns.append(ColumnSizeSpec(name=col.name, dtype="object", string_width_bytes=width))
         elif col.name in arrow_types:
             arrow_type, has_nulls = arrow_types[col.name]
-            cls = classify_column(arrow_type, has_nulls=has_nulls)
+            cls = classify_column(
+                arrow_type, has_nulls=has_nulls, masked=col.name in masked_columns
+            )
             columns.append(_spec_from_class(col.name, cls, sample.get(col.name)))
         else:
             columns.append(_spec_from_label(col, sample))
@@ -151,11 +158,21 @@ def table_size_spec_from_table(name: str, table: pa.Table) -> TableSizeSpec:
     count changed), so it is priced from the table itself, by Arrow type, with the
     same classifier and nullability rule as the profile adapter. A string or
     binary column is sampled; a type with no resident-size model is unpriceable.
+
+    The pandas metadata the transform step writes counts: a column it marks as a
+    nullable extension dtype is priced as nullable even with no null left (a filter
+    can remove them), and a 64-bit integer with nulls is priced as `Int64`, which
+    is what the engine's pandas conversion makes of it.
     """
+    nullable = pandas_nullable_columns(table.schema)
     columns = []
     for field in table.schema:
         column = table.column(field.name)
-        cls = classify_column(field.type, has_nulls=resident_has_nulls(column))
+        has_nulls = field.name in nullable or resident_has_nulls(column)
+        masked = field.name in nullable or (
+            has_nulls and pa.types.is_integer(field.type) and field.type.bit_width == 64
+        )
+        cls = classify_column(field.type, has_nulls=has_nulls, masked=masked)
         columns.append(_spec_from_class(field.name, cls, column))
     return TableSizeSpec(name=name, row_count=table.num_rows, columns=tuple(columns))
 

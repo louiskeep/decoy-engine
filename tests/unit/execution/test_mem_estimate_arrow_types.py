@@ -934,7 +934,7 @@ def _pandas_nullable_frame() -> Any:
     )
 
 
-_PANDAS_WIDENED = {"i8": "float64", "flag": "pyobject[bool]", "i64": "float64", "plain8": "int8"}
+_PANDAS_WIDENED = {"i8": "float64", "flag": "pyobject[bool]", "i64": "Int64", "plain8": "int8"}
 
 
 def _pandas_profile_table(rows: int) -> TableProfile:
@@ -954,6 +954,7 @@ def test_pandas_nullable_metadata_widens_a_no_null_resident_column() -> None:
         profile_table,
         sample={n: table.column(n) for n in table.column_names},
         arrow_types=types,
+        masked_columns=_arrow().source_nullable_columns(table),
     )
     assert _labels(spec) == _PANDAS_WIDENED
 
@@ -964,7 +965,9 @@ def test_pandas_nullable_metadata_widens_a_no_null_lazy_column(tmp_path: Path) -
     source = LazySource(path)
     profile_table = _pandas_profile_table(4)
     types = _column_arrow_types(source, profile_table)
-    spec = table_size_spec_from_profile(profile_table, arrow_types=types)
+    spec = table_size_spec_from_profile(
+        profile_table, arrow_types=types, masked_columns=_arrow().source_nullable_columns(source)
+    )
     assert _labels(spec) == _PANDAS_WIDENED
 
 

@@ -22,11 +22,10 @@ from __future__ import annotations
 # is priced correctly without touching this module. The capitalized `Int64` /
 # `boolean` / `Float64` spellings are pandas' NULLABLE extension dtypes, which a
 # pandas-origin (e.g. Parquet) source restores via its `b"pandas"` sidecar. They
-# stay in the table at their base storage width for callers that price a
-# fully-populated column, but the profile adapter without an Arrow type widens the
-# sub-64-bit ones (`Int8`..`UInt32`, `boolean`) to 8 bytes, because a resident
-# extension array carries a per-cell null mask on top (measured: Int8 2, UInt16 3,
-# boolean 2 bytes a row).
+# are priced at base width plus the per-cell null mask a resident extension array
+# carries (measured: Int8 2, UInt16 3, boolean 2 bytes a row). The profile adapter
+# without an Arrow type still widens the sub-64-bit ones (`Int8`..`UInt32`,
+# `boolean`) to 8 bytes.
 _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "int64": 8,
     "uint64": 8,
@@ -43,18 +42,18 @@ _FIXED_WIDTH_DTYPE_BYTES: dict[str, int] = {
     "int8": 1,
     "uint8": 1,
     "bool": 1,
-    # pandas nullable extension dtypes (base storage width).
-    "boolean": 1,
-    "Int64": 8,
-    "UInt64": 8,
-    "Float64": 8,
-    "Int32": 4,
-    "UInt32": 4,
-    "Float32": 4,
-    "Int16": 2,
-    "UInt16": 2,
-    "Int8": 1,
-    "UInt8": 1,
+    # pandas nullable extension dtypes: base width plus the one-byte validity mask.
+    "boolean": 2,
+    "Int64": 9,
+    "UInt64": 9,
+    "Float64": 9,
+    "Int32": 5,
+    "UInt32": 5,
+    "Float32": 5,
+    "Int16": 3,
+    "UInt16": 3,
+    "Int8": 2,
+    "UInt8": 2,
     # Labels the Arrow classifier (`_mem_estimate_arrow`) emits. Each is the resident
     # pandas cost per cell, not the Arrow storage width. float16 is numpy itemsize.
     # The `pyobject[...]` labels are an 8-byte pointer plus the CPython object size,
