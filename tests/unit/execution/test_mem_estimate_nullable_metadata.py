@@ -233,6 +233,12 @@ def test_malformed_pandas_metadata_marks_nothing(raw: bytes) -> None:
     assert pandas_nullable_columns(_schema_with(raw)) == frozenset()
 
 
+def test_deeply_nested_pandas_metadata_marks_nothing() -> None:
+    depth = 5000
+    raw = b"[" * depth + b"]" * depth
+    assert pandas_nullable_columns(_schema_with(raw)) == frozenset()
+
+
 def test_no_pandas_metadata_marks_nothing() -> None:
     assert pandas_nullable_columns(_schema_with(None)) == frozenset()
 

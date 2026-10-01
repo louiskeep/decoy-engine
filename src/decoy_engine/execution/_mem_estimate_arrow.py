@@ -238,7 +238,7 @@ def pandas_nullable_columns(schema: pa.Schema) -> frozenset[str]:
             for c in columns
             if c.get("numpy_type") in _PANDAS_NULLABLE_DTYPES
         )
-    except (ValueError, KeyError, TypeError, AttributeError):
+    except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return frozenset()
 
 
