@@ -160,21 +160,27 @@ def arrow_column_profile(name: str, column: pa.Array | pa.ChunkedArray) -> Any:
     from decoy_engine.internal.pandas_compat import canonical_dtype_label
     from decoy_engine.profile._types import ColumnProfile
 
-    arr = column.combine_chunks() if isinstance(column, pa.ChunkedArray) else column
+    arr = _normalize(column.combine_chunks() if isinstance(column, pa.ChunkedArray) else column)
     t = arr.type
     missing = _missing_mask(arr)
     valid = arr.filter(pc.invert(missing))
     values = valid.dictionary_decode() if pa.types.is_dictionary(t) else valid
+    if pa.types.is_float16(values.type):
+        values = values.cast(pa.float32())  # no float16 compute kernels; the cast is exact
     null_count = int(pc.sum(missing.cast(pa.int64())).as_py() or 0)
     if pa.types.is_integer(t) and null_count > 0:
         # pandas widens an integer column with a missing value to float64 first.
         values = values.cast(pa.float64(), safe=False)
     if pa.types.is_floating(values.type):
         values = pc.if_else(pc.equal(values, 0.0), pa.scalar(0.0, values.type), values)
-    try:
-        distinct: int | None = int(pc.count_distinct(values, mode="only_valid").as_py())
-    except pa.ArrowNotImplementedError:
-        distinct = None
+    distinct: int | None
+    if pa.types.is_null(values.type):
+        distinct = 0  # no kernel for the null type; pandas counts zero values
+    else:
+        try:
+            distinct = int(pc.count_distinct(values, mode="only_valid").as_py())
+        except pa.ArrowNotImplementedError:
+            distinct = None
     avg_length = max_length = None
     if _is_pandas_string(arr, null_count) and len(valid):
         lengths = pc.utf8_length(values).cast(pa.int64())
@@ -199,6 +205,35 @@ def arrow_column_profile(name: str, column: pa.Array | pa.ChunkedArray) -> Any:
 
 
 _INT64_MIN = -(2**63)
+
+
+def _normalize(arr: pa.Array) -> pa.Array:
+    """The representation pandas sees, using only types the compute kernels handle:
+    an extension type is its storage (as `to_pandas` converts it), a run-end-encoded
+    array is decoded, a view type becomes the large type of the same kind, and a
+    dictionary keeps its indices over normalized values (float16 widened, as no kernel
+    reads it). The float16 type itself is kept for the `dtype` label of a plain column."""
+    t = arr.type
+    if isinstance(t, pa.BaseExtensionType):
+        return _normalize(arr.storage)
+    if pa.types.is_run_end_encoded(t):
+        try:
+            return _normalize(pc.run_end_decode(arr))
+        except pa.ArrowNotImplementedError:
+            # No decode kernel for view values: normalize the values, then decode.
+            values = _normalize(arr.values)
+            rebuilt = pa.RunEndEncodedArray.from_arrays(arr.run_ends, values)
+            return pc.run_end_decode(rebuilt.slice(arr.offset, len(arr)))
+    if pa.types.is_string_view(t):
+        return arr.cast(pa.large_string())
+    if pa.types.is_binary_view(t):
+        return arr.cast(pa.large_binary())
+    if pa.types.is_dictionary(t):
+        dictionary = _normalize(arr.dictionary)
+        if pa.types.is_float16(dictionary.type):
+            dictionary = dictionary.cast(pa.float32())
+        return pa.DictionaryArray.from_arrays(arr.indices, dictionary)
+    return arr
 
 
 def _missing_mask(arr: pa.Array) -> pa.Array:
