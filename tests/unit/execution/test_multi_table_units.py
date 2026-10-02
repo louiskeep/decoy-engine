@@ -137,6 +137,24 @@ class TestSplitStamp:
             "reason": "multi_table_split: 2 of 3 mask tables dispatched (a, c)",
         }
 
+    def test_the_split_is_frozen(self) -> None:
+        import dataclasses
+
+        split = pmt.MultiTableSplit(("a",), (), {"a": "x"})
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            split.dispatched = ()  # type: ignore[misc]
+
+    def test_every_name_in_all_resolves(self) -> None:
+        assert sorted(pmt.__all__) == [
+            "MultiTableSplit",
+            "UNSEEDED_RANDOM_STRATEGIES",
+            "decide_multi_table_split",
+            "run_multi_table_split",
+            "split_reproducibility_stamp",
+            "unseeded_random_nodes",
+        ]
+        assert all(hasattr(pmt, name) for name in pmt.__all__)
+
     def test_the_reasons_mapping_is_read_only_and_copied(self) -> None:
         reasons = {"a": "x"}
         split = pmt.MultiTableSplit(("a",), (), reasons)
@@ -176,6 +194,12 @@ class TestTableEntry:
             "chunk_count": None,
             "reason": "why b",
         }
+
+    def test_the_lane_keys_follow_the_lane_block_not_the_dispatched_flag(self) -> None:
+        sources = {"b": pa.table({"x": [1, 2]})}
+        entry = pmt._table_entry(self.SPLIT, "b", sources, 4, self.LANE)
+        assert entry["lane"] == "dispatcher" and entry["native_threads"] == 3
+        assert "ignored" not in entry
 
     def test_a_table_without_a_resident_source_reports_null_rows(self) -> None:
         entry = pmt._table_entry(self.SPLIT, "a", {}, 4, self.LANE)
@@ -447,3 +471,32 @@ def test_a_group_table_row_error_still_raises_with_its_own_records(tmp_path: Pat
         run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
     assert {r.table for r in split.value.records} == {"small"}
     assert split.value.records == off.value.records
+
+
+def test_the_decision_names_dispatched_group_and_reasons_per_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, sources = mt.build_job(
+        tmp_path,
+        {
+            "z": (mt.std_columns("z_ns"), mt.string_table(mt.BIG, "z")),
+            "tiny": (mt.std_columns("t_ns"), mt.string_table(mt.SMALL, "t")),
+            "a": (mt.std_columns("a_ns"), mt.string_table(mt.BIG + 3, "a")),
+            "tiny2": (mt.std_columns("t2_ns"), mt.string_table(mt.SMALL, "u")),
+        },
+    )
+    decisions: list[Any] = []
+    real = pmt.decide_multi_table_split
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        decisions.append(real(*args, **kwargs))
+        return decisions[-1]
+
+    monkeypatch.setattr(pmt, "decide_multi_table_split", spy)
+    run_pipeline(cfg, sources=sources, **mt.kw())
+    (split,) = decisions
+    assert split.dispatched == ("z", "a")
+    assert split.full_frame == ("tiny", "tiny2")
+    assert list(split.reasons) == ["z", "tiny", "a", "tiny2"]
+    assert "threshold" in split.reasons["tiny"] and "threshold" in split.reasons["tiny2"]
+    assert "chunk-safe" in split.reasons["z"]

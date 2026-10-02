@@ -209,7 +209,7 @@ def _table_entry(
         "chunk_count": -(-rows // chunk_size_rows) if dispatched and rows is not None else None,
         "reason": split.reasons[table],
     }
-    if dispatched and lane_block is not None:
+    if lane_block is not None:
         entry.update({k: lane_block[k] for k in ("lane", "lane_reason", "native_threads")})
     return entry
 
