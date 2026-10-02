@@ -636,3 +636,35 @@ def test_unconfigured_admission_does_not_change_the_yielded_columns() -> None:
     for out, src in zip(run.out, chunks, strict=True):
         assert identical(out.select(["u", "p"]), src.select(["u", "p"]))
         assert out.column_names == ["r", "u", "p"]
+
+
+def test_native_route_refuses_through_the_projection_call_if_admitted_under_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admission keeps `error` tables on the oracle route. If a later change ever admitted
+    one, the per-chunk `enforce_output_projection` call is the backstop and must raise."""
+    real = _chunked_entry.plan_native_route
+
+    def admit_anyway(*args: Any, **kwargs: Any) -> Any:
+        kwargs["unconfigured_policy"] = "warn"
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_chunked_entry, "plan_native_route", admit_anyway)
+    config = make_config([redact("r")], global_settings=policy_settings("error"))
+    chunks = [_chunk(4, 0).select(["r", "u"]), _chunk(3, 1).select(["r", "u"])]
+    sink: list[Any] = []
+    ev: list[Any] = []
+    gen = run_mask_chunked(
+        config,
+        chunks,
+        table=TABLE,
+        engine_version=ENGINE_VERSION,
+        key_provider=key_provider(),
+        chunk_result_sink=sink,
+        route_evidence_sink=ev,
+    )
+    assert ev[0].native_admitted is True
+    with pytest.raises(ExecutionError) as info:
+        next(gen)
+    assert info.value.code == "undeclared_output_columns"
+    assert sink == []

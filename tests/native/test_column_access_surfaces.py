@@ -574,3 +574,59 @@ def test_g4_frame_setup_columns_are_declared_reads_or_own_columns(case: str) -> 
     declared, everything = _declared(columns)
     own = {c["name"] for c in columns}
     assert everything or setup <= declared | own, (case, sorted(setup - declared - own))
+
+
+# ---------------------------------------------------------------------------
+# Declaration units that read_set alone cannot tell apart
+# ---------------------------------------------------------------------------
+
+
+def _custom(name: str, coherent: list[str], bundle_columns: list[str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "strategy": "<composite>",
+        "provider": "composite_custom",
+        "coherent_with": coherent,
+        "provider_config": {
+            "bundle": [{"column": c, "provider": "person_first_name"} for c in bundle_columns]
+        },
+    }
+
+
+def test_composite_reads_the_first_sorted_group_column_and_writes_the_rest() -> None:
+    access = column_access(_custom("b", ["a"], ["a", "b", "c"]))
+    assert access.reads == {"a"}
+    assert access.writes == {"a", "b", "c"}
+    lone = column_access(
+        {"name": "first_name", "strategy": "<composite>", "provider": "composite_name_email"}
+    )
+    assert lone.reads == {"first_name"}
+
+
+def test_composite_writes_include_every_coherent_with_column() -> None:
+    # `z` is in the group but not in the bundle: declared anyway, never under-declared.
+    access = column_access(_custom("a", ["b", "z"], ["a", "b"]))
+    assert access.writes == {"a", "b", "z"}
+
+
+def test_a_registry_composite_without_a_declaration_reads_everything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_column_access, "_is_composite", lambda provider: True)
+    assert column_access({"name": "x", "provider": "composite_stub"}).everything is True
+
+
+def test_a_columns_own_name_is_not_its_own_reader() -> None:
+    from decoy_engine.execution._chunked_carry import read_set
+
+    entry = {"name": "x", "strategy": "passthrough", "provider_config": {"group_by": "x"}}
+    assert read_set([entry], ["x"]) == frozenset()
+    other = {"name": "y", "strategy": "redact", "provider_config": {"group_by": "x"}}
+    assert read_set([other], ["x"]) == {"x"}
+
+
+def test_a_non_nfkc_column_name_is_matched_against_the_normalized_predicate_names() -> None:
+    from decoy_engine.execution._chunked_carry import read_set
+
+    entry = {"name": "s", "strategy": "redact", "when": "file > 1"}
+    assert read_set([entry], ["\ufb01le", "other"]) == {"\ufb01le"}

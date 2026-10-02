@@ -436,9 +436,9 @@ def run_mask_chunked(
     `error` unconfigured-column policy, the source has columns the config does not
     cover. Under `warn` (the pre-GA default) such columns are carried unchanged on the
     native route and each chunk's `ExecutionResult.warnings` holds the same
-    `undeclared_output_columns` warning the oracle route emits. `chunk_result_sink` receives one
-    `ExecutionResult` per chunk on either route, with per-column `timings` and
-    `quality_metrics["chunked_route"]` (see `aggregate_chunked_route_evidence`).
+    `undeclared_output_columns` warning the oracle route emits. `chunk_result_sink`
+    receives one `ExecutionResult` per chunk on either route, with per-column `timings`
+    and `quality_metrics["chunked_route"]` (see `aggregate_chunked_route_evidence`).
 
     Passthrough columns: with `adapter` `None` or exactly `PandasExecutionAdapter`,
     a passthrough column that no `when:` predicate and no sibling-reading strategy
