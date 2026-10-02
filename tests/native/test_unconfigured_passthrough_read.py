@@ -16,6 +16,7 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution._chunked_carry import plan_carry, read_set
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan import compile_plan
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._b8_support import assert_same_as_oracle, run_pair
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -331,10 +332,16 @@ def test_composite_outputs_are_never_carried(case: str) -> None:
     # (i) the config compiles
     compile_plan(compile_config, profile, decoy_engine_version="0.1.0")
     # (iii) the carry puts every composite-written column in the read set, not the carried set
-    carry = plan_carry(compile_config, table="t", first_schema=src.schema, adapter=None)
+    carry = plan_carry(
+        compile_config,
+        table="t",
+        first_schema=src.schema,
+        adapter=None,
+        registry=get_default_registry(),
+    )
     assert set(written) <= set(carry.read)
     assert not (set(written) & carry.carried)
-    assert read_set(columns, written) == frozenset(written)
+    assert read_set(columns, written, get_default_registry()) == frozenset(written)
     # (iv) end to end through the carry, the generated value survives reattachment
     full = _run(profile, compile_config, df, "t").outputs["t"]
     adapter_in = carry.adapter_input(src)
@@ -395,4 +402,4 @@ def test_composite_route_and_reason_on_run_mask_chunked_are_unchanged(
 def test_bytes_literal_in_a_predicate_reads_every_passthrough_column() -> None:
     """A string token that is not a plain `str` literal cannot be read safely."""
     entry = {**redact("s"), "when": "s == b'x'"}
-    assert read_set([entry], ["x", "y"]) == {"x", "y"}
+    assert read_set([entry], ["x", "y"], get_default_registry()) == {"x", "y"}

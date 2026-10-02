@@ -19,6 +19,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -38,6 +39,7 @@ from tests.native._rev9_support import (
 )
 from tests.native.test_chunked_entry_rev7 import _DelegatingAdapter
 
+REG = get_default_registry()
 CODE = "chunked_passthrough_value_unrepresentable"
 _T64 = BY_NAME["time64ns_unaligned"]
 _S = pa.array(["a", "b", "c"])
@@ -179,7 +181,7 @@ def test_predicate_the_tokenizer_rejects_reads_every_passthrough_column() -> Non
         assert type(exc) is oracle_error
     from decoy_engine.execution._chunked_carry import read_set
 
-    assert read_set([_when("s", "`unterminated")], ["x", "y"]) == frozenset({"x", "y"})
+    assert read_set([_when("s", "`unterminated")], ["x", "y"], REG) == frozenset({"x", "y"})
 
 
 def test_aggregate_rejects_differing_read_lists() -> None:
@@ -396,7 +398,7 @@ def test_string_literal_equal_to_a_column_name_keeps_that_column_carried() -> No
 def _scan(columns: list[dict[str, Any]], passthrough_names: list[str]) -> frozenset[str]:
     from decoy_engine.execution._chunked_carry import read_set
 
-    return read_set(columns, passthrough_names)
+    return read_set(columns, passthrough_names, REG)
 
 
 @pytest.mark.parametrize(
@@ -551,7 +553,7 @@ def test_composite_custom_bundle_output_is_read() -> None:
 
     cols = _custom_pair(_BUNDLE)
     assert _scan(cols, ["c"]) == {"c"}
-    assert {"a", "b", "c"} <= column_access(cols[0]).writes
+    assert {"a", "b", "c"} <= column_access(cols[0], REG).writes
     assert _scan(cols, ["c", "d"]) == {"c"}
 
 
@@ -566,7 +568,7 @@ def test_malformed_composite_bundle_reads_every_passthrough_column(bundle: Any) 
     from decoy_engine.execution._column_access import column_access
 
     cols = _custom_pair(bundle)
-    assert column_access(cols[0]).everything is True
+    assert column_access(cols[0], REG).everything is True
     assert _scan(cols, ["c", "d"]) == {"c", "d"}
 
 
@@ -579,7 +581,7 @@ def test_lone_fixed_composite_reads_its_other_canonical_columns(
 
     own, others = _FIXED[provider]
     entry = _composite_entry(own, provider, strategy)
-    assert column_access(entry).writes >= set(others)
+    assert column_access(entry, REG).writes >= set(others)
     assert _scan([entry], [*others, "unrelated"]) == frozenset(others)
 
 
@@ -589,7 +591,7 @@ def test_lone_fixed_composite_with_when_keeps_the_full_declaration(provider: str
 
     own, others = _FIXED[provider]
     entry = {**_composite_entry(own, provider), "when": f"{own} == 'never'"}
-    assert column_access(entry).writes >= set(others)
+    assert column_access(entry, REG).writes >= set(others)
     assert _scan([entry], [*others, "unrelated"]) == frozenset(others)
 
 

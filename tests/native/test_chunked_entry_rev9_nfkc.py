@@ -10,6 +10,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import make_config, passthrough, redact
 from tests.native._rev9_support import run_entry, run_public, same_column
 
@@ -67,9 +68,9 @@ def test_string_literal_values_are_not_read_normalized_or_not() -> None:
     from decoy_engine.execution._chunked_carry import read_set
 
     cols = [{**redact("s"), "when": "s == '\ufb01le'"}]
-    assert read_set(cols, ["file", "other"]) == frozenset()
+    assert read_set(cols, ["file", "other"], get_default_registry()) == frozenset()
     bare = [{**redact("s"), "when": "\ufb01le == 'x'"}]
-    assert read_set(bare, ["file", "other"]) == frozenset({"file"})
+    assert read_set(bare, ["file", "other"], get_default_registry()) == frozenset({"file"})
 
 
 @pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])

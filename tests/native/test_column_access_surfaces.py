@@ -36,7 +36,9 @@ from decoy_engine.generation.composite._city_state_zip import CompositeCityState
 from decoy_engine.generation.composite._name_email import CompositeNameEmail
 from decoy_engine.generation.composite._person import CompositePerson
 from decoy_engine.generation.composite._provider import CompositeProvider
+from decoy_engine.providers_v2 import get_default_registry
 
+REG = get_default_registry()
 _FIXED_CLASSES = {
     c.composite_name: c
     for c in (
@@ -111,7 +113,7 @@ def test_g2_fixed_provider_writes_equal_the_generator_output_columns(provider: s
     cls = _FIXED_CLASSES[provider]
     own = sorted(cls.output_columns)[0]
     entry = {"name": own, "strategy": "<composite>", "provider": provider}
-    access = column_access(entry)
+    access = column_access(entry, REG)
     assert access.writes == frozenset(sorted(cls.output_columns))
     assert access.everything is False
 
@@ -202,38 +204,77 @@ def test_g3_mixed_surface_precedence() -> None:
         "provider": "composite_name_email",
         "when": "first_name == 'x'",
     }
-    got = column_access(composite)
+    got = column_access(composite, REG)
     assert got.writes >= {"first_name", "last_name", "email"}
+    assert "first_name" in got.reads
+    when_only = {
+        **composite,
+        "name": "last_name",
+        "coherent_with": ["email", "first_name"],
+        "when": "z > 1",
+    }
+    assert "z" in column_access(when_only, REG).reads
     scalar = {
         "name": "v",
         "strategy": "derived",
         "provider_config": {"expression": "a + 1"},
         "when": "b > 1",
     }
-    got = column_access(scalar)
+    got = column_access(scalar, REG)
     assert {"a", "b"} <= got.reads and got.everything is False
     unparsable = {**scalar, "when": "`oops"}
-    assert column_access(unparsable).everything is True
+    assert column_access(unparsable, REG).everything is True
 
 
 # ---------------------------------------------------------------------------
 # G4: adapter frame setup
 # ---------------------------------------------------------------------------
 
-_PINNED_SETUP_HELPERS = frozenset(
+_PINNED_RUN_CALLS = frozenset(
     {
-        "fk_columns_for_table",
+        "ExecutionResult",
+        "PoolCache",
+        "StrategyContext",
+        "TimingCollector",
+        "build_work_list",
+        "ctx.code_set_corpora_metrics",
         "date_shift_group_columns",
-        "top_code_columns",
+        "dict",
+        "drain_row_errors",
+        "enforce_output_projection",
+        "fk_columns_for_table",
+        "frames.items",
+        "frozenset",
+        "group_anchor_cols.get",
+        "group_anchor_cols.items",
+        "group_key_cols.get",
         "group_key_group_by_columns",
+        "key_error_rows.setdefault",
+        "order_work",
+        "pa.Table.from_pandas",
+        "parent_cols.get",
+        "parent_cols.setdefault",
+        "require_mask_key",
+        "row_error_records.extend",
+        "run_chunk_ingest_guards",
+        "self._dispatch_mask_node",
+        "set",
+        "sources.items",
+        "time.perf_counter",
+        "to_pandas_fk_safe",
+        "top_code_cols.get",
+        "top_code_columns",
+        "tuple",
+        "use_collector",
+        "warnings.extend",
     }
 )
 
 
-def test_g4_frame_setup_helpers_are_the_pinned_four() -> None:
-    names = {n.split(".")[-1] for n in _call_names(PandasExecutionAdapter.run)}
-    helpers = {n for n in names if n.endswith("_columns") or n.endswith("_columns_for_table")}
-    assert helpers == _PINNED_SETUP_HELPERS
+def test_g4_adapter_run_call_inventory_is_pinned() -> None:
+    """Pins every call `PandasExecutionAdapter.run` makes, as G3 pins the dispatcher, so a new
+    frame-setup helper (whatever its name) fails here until it is declared."""
+    assert _call_names(PandasExecutionAdapter.run) == _PINNED_RUN_CALLS
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +307,7 @@ def test_non_entry_surfaces_declare_no_sibling_access() -> None:
 def test_declaration_values_are_column_access_callables() -> None:
     for key, declaration in SURFACE_DECLARATIONS.items():
         assert callable(declaration), key
-    assert isinstance(column_access({"name": "x", "strategy": "redact"}), ColumnAccess)
+    assert isinstance(column_access({"name": "x", "strategy": "redact"}, REG), ColumnAccess)
     assert _column_access.SURFACE_DECLARATIONS is SURFACE_DECLARATIONS
 
 
@@ -483,6 +524,37 @@ def _corpus() -> dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array], set[
             {c: pa.array([f"{c}-{i}" for i in range(n)]) for c in [own, *others]},
             set(others),
         )
+    for provider, cls in sorted(_FIXED_CLASSES.items()):
+        own = sorted(cls.output_columns)[0]
+        others = sorted(set(cls.output_columns) - {own})
+        for strategy in ("redact", "hash", "passthrough"):
+            cases[f"{provider}_on_{strategy}"] = (
+                [
+                    {
+                        "name": own,
+                        "strategy": strategy,
+                        "provider": provider,
+                        "deterministic": True,
+                        "namespace": "ns",
+                    }
+                ],
+                {c: pa.array([f"{c}-{i}" for i in range(n)]) for c in [own, *others]},
+                set(others),
+            )
+    cases["derived_with_when"] = (
+        [
+            {"name": "a", "strategy": "passthrough"},
+            {"name": "w", "strategy": "passthrough"},
+            {
+                "name": "val",
+                "strategy": "derived",
+                "provider_config": {"expression": "a + 1"},
+                "when": "w > 3",
+            },
+        ],
+        {"a": nums, "w": nums, "val": nums},
+        {"a", "w"},
+    )
     bundle = [
         {"column": "a", "provider": "person_first_name"},
         {"column": "b", "provider": "person_last_name"},
@@ -519,7 +591,7 @@ def _declared(columns: list[dict[str, Any]]) -> tuple[set[str], bool]:
     names: set[str] = set()
     everything = False
     for entry in columns:
-        access = column_access(entry)
+        access = column_access(entry, REG)
         names |= access.reads | access.writes
         everything = everything or access.everything
     return names, everything
@@ -594,39 +666,90 @@ def _custom(name: str, coherent: list[str], bundle_columns: list[str]) -> dict[s
 
 
 def test_composite_reads_the_first_sorted_group_column_and_writes_the_rest() -> None:
-    access = column_access(_custom("b", ["a"], ["a", "b", "c"]))
+    access = column_access(_custom("b", ["a"], ["a", "b", "c"]), REG)
     assert access.reads == {"a"}
     assert access.writes == {"a", "b", "c"}
     lone = column_access(
-        {"name": "first_name", "strategy": "<composite>", "provider": "composite_name_email"}
+        {"name": "first_name", "strategy": "<composite>", "provider": "composite_name_email"},
+        REG,
     )
     assert lone.reads == {"first_name"}
 
 
 def test_composite_writes_include_every_coherent_with_column() -> None:
     # `z` is in the group but not in the bundle: declared anyway, never under-declared.
-    access = column_access(_custom("a", ["b", "z"], ["a", "b"]))
+    access = column_access(_custom("a", ["b", "z"], ["a", "b"]), REG)
     assert access.writes == {"a", "b", "z"}
 
 
 def test_a_registry_composite_without_a_declaration_reads_everything(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_column_access, "_is_composite", lambda provider: True)
-    assert column_access({"name": "x", "provider": "composite_stub"}).everything is True
+    monkeypatch.setattr(_column_access, "_is_composite", lambda provider, registry: True)
+    assert column_access({"name": "x", "provider": "composite_stub"}, REG).everything is True
 
 
 def test_a_columns_own_name_is_not_its_own_reader() -> None:
     from decoy_engine.execution._chunked_carry import read_set
 
     entry = {"name": "x", "strategy": "passthrough", "provider_config": {"group_by": "x"}}
-    assert read_set([entry], ["x"]) == frozenset()
+    assert read_set([entry], ["x"], REG) == frozenset()
     other = {"name": "y", "strategy": "redact", "provider_config": {"group_by": "x"}}
-    assert read_set([other], ["x"]) == {"x"}
+    assert read_set([other], ["x"], REG) == {"x"}
 
 
 def test_a_non_nfkc_column_name_is_matched_against_the_normalized_predicate_names() -> None:
     from decoy_engine.execution._chunked_carry import read_set
 
     entry = {"name": "s", "strategy": "redact", "when": "file > 1"}
-    assert read_set([entry], ["\ufb01le", "other"]) == {"\ufb01le"}
+    assert read_set([entry], ["\ufb01le", "other"], REG) == {"\ufb01le"}
+
+
+# ---------------------------------------------------------------------------
+# Test 20: chunked entry versus the public oracle over the G5 corpus
+# ---------------------------------------------------------------------------
+
+
+def _outcome_of(entry_point: Any, config: dict[str, Any], chunks: list[pa.Table]) -> Any:
+    from tests.native._chunked_entry_support import ENGINE_VERSION, TABLE, key_provider
+
+    try:
+        out = list(
+            entry_point(
+                config,
+                chunks,
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+            )
+        )
+    except Exception as exc:
+        return ("error", getattr(exc, "code", type(exc).__name__))
+    return ("ok", out)
+
+
+@pytest.mark.parametrize("case", sorted(_corpus()))
+def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> None:
+    """Both entries see the same chunks. An entry that refuses must refuse with the same
+    code on both; otherwise the yielded values and column names are equal (the public
+    oracle's pandas round trip changes passthrough types and adds pandas metadata, so types
+    are compared only for columns the oracle does not round-trip, i.e. none here)."""
+    from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
+    from tests.native._chunked_entry_support import TABLE, make_config
+
+    columns, data, _required = _corpus()[case]
+    table = pa.table(data)
+    chunks = [table.slice(0, 5), table.slice(5, 4), table.slice(9)]
+    try:
+        config = make_config(columns, global_settings={"unconfigured_column_policy": "warn"})
+    except Exception:
+        pytest.skip("config rejected by PipelineConfig validation")
+    assert TABLE
+    oracle = _outcome_of(run_mask_pipeline_chunked, config, chunks)
+    ours = _outcome_of(run_mask_chunked, config, chunks)
+    assert ours[0] == oracle[0], (case, ours, oracle)
+    if oracle[0] == "error":
+        assert ours[1] == oracle[1]
+        return
+    assert [o.column_names for o in ours[1]] == [o.column_names for o in oracle[1]]
+    assert [o.to_pydict() for o in ours[1]] == [o.to_pydict() for o in oracle[1]]
