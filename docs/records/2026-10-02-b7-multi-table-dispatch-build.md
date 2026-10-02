@@ -6,7 +6,7 @@ Date: 2026-10-02. Plan: `docs/plans/2026-10-01-multi-table-dispatch.md` (revisio
 
 ## What shipped
 
-An independent multi-table `run_pipeline` job (no FK edge, no `relationships` block) now runs each mask table on the route it would take alone. A table that would auto-chunk as a single-table job masks through B2's `run_auto_chunk`, one table at a time in `tables:` config order. Every other table runs in one full-frame adapter call, as before. The new module is `src/decoy_engine/execution/_pipeline_multi_table.py` (about 290 lines). `run_pipeline` gains `multi_table_dispatch_enabled` (default `True`, the kill switch). A job stays whole when quarantine is enabled, a vault writer is passed, validators are configured, a mask column uses unseeded randomness, a generate table is present, or the dispatcher or auto-chunk is off.
+An independent multi-table `run_pipeline` job (no FK edge, no `relationships` block) now runs each mask table on the route it would take alone. A table that would auto-chunk as a single-table job masks through B2's `run_auto_chunk`, one table at a time in `tables:` config order. Every other table runs in one full-frame adapter call, as before. The new module is `src/decoy_engine/execution/_pipeline_multi_table.py` (314 lines, under the plan's 600-line cap). `run_pipeline` gains `multi_table_dispatch_enabled` (default `True`, the kill switch). A job stays whole when quarantine is enabled, a vault writer is passed, validators are configured, a mask column uses unseeded randomness, a generate table is present, or the dispatcher or auto-chunk is off.
 
 `_pipeline.py` stays at its 679-line ratchet: the four lines the knob adds are paid for by tightening the `_provider_snapshot` docstring paragraph and one routing sentence. No ratchet moved.
 
@@ -36,7 +36,7 @@ Some of those failures also hid test mistakes, which only showed once the code r
 
 ## Existing suites with the split as the default
 
-The plan asks for the existing execution, sentry and physical suites to run with the split as the default before the acceptance-test commit. The split cannot be the default before it exists, so this ran after the implementation, as a full-suite run (19,926 tests collected) at `5f1cf849`. Two failures:
+The plan asks for the existing execution, sentry and physical suites to run with the split as the default before the acceptance-test commit. The split cannot be the default before it exists, so this ran after the implementation, as a full-suite run (19,926 tests collected) at `5f1cf849` plus the unit-test commit. Two failures:
 
 - `tests/unit/test_v2_cloud_sources.py::...::test_profile_gcs_source_via_mocked_client`: `No module named 'google'`, the known pre-existing failure.
 - `tests/sentry/test_physical_seam_disconnection.py::test_production_execution_modules_are_byte_identical_to_origin_main`: my docstring edit to `_pipeline_chunk_route.py` was not on the sentry's permitted list. Fixed in `915d187c` by adding it with a docstring-only justification.
@@ -66,7 +66,7 @@ Final run, command from the worktree root, companion venv, one process under the
 
     PYTHONPATH=$PWD/src:$PWD /home/cam/bin/pytest-one /home/cam/.cache/decoy-native-venv/bin/python tests -q --no-header
 
-FINAL_COUNTS_PLACEHOLDER
+Result at `HEAD` before this record's count update: 1 failed, 19719 passed, 168 skipped, 21 deselected, 59 xfailed in 1486 s (19,926 collected, 21 of them deselected by the repo's own marker config). The one failure is the known pre-existing `tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client` (`No module named 'google'`). The B7 files alone: `test_multi_table_gates.py`, `test_multi_table_when.py`, `test_multi_table_contract.py`, `test_multi_table_run.py`, `test_multi_table_units.py` add the new tests, and the sentry and the two edited existing files pass.
 
 Targeted runs while building: the four B7 acceptance files, `test_multi_table_units.py`, `test_auto_chunk_dispatcher.py`, `test_auto_chunk_routing.py`, and `tests/sentry`, all green at every commit after the implementation.
 
