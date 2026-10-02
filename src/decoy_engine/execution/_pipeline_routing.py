@@ -71,8 +71,8 @@ Two independent routing layers compose here, in a fixed decision order
    generate+mask FK, or an FK job disqualified from sequential by
    validators) cannot be misrouted into the chunked path either -- the
    two layers compose without overlap: (1) owns relationship routing
-   (sequential vs. full_frame); (2) owns single-table non-relationship
-   routing (chunked vs. full_frame). When the job classifies `chunked`,
+   (sequential vs. full_frame); (2) owns non-relationship routing, single
+   table here and per table in `_pipeline_multi_table` (B7). When the job classifies `chunked`,
    `_pipeline_route_exec.run_mask_chunked` runs it in `chunk_size_rows`-row
    slices through the chunked lane (`_pipeline_auto_chunk`: B1's
    `run_mask_chunked`, or the oracle under the kill switch) instead of one

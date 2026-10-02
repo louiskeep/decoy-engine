@@ -427,9 +427,50 @@ class TestFailClosed:
             df.to_csv(tmp_path / f"{name}.csv", index=False)
         table = pa.Table.from_pandas(df, preserve_index=False)
         sources = {"a": table, "b": table}
-        auto, forced = _run_pair(cfg, sources, monkeypatch, explain_plan=True)
+        # B7 splits an independent multi-table job per table, so this test pins today's
+        # behavior with the split off; the split-on sibling follows.
+        auto, forced = _run_pair(
+            cfg, sources, monkeypatch, explain_plan=True, multi_table_dispatch_enabled=False
+        )
         _assert_full_frame_and_identical(auto, forced, "a", "one table per run")
         _assert_full_frame_and_identical(auto, forced, "b")
+
+    def test_multi_mask_table_splits_per_table_when_the_split_is_on(self, tmp_path, monkeypatch):
+        from tests.unit.execution import _multi_table_support as mt
+
+        df = pd.DataFrame({"val": [f"v{i}" for i in range(_ROWS)]})
+        table = pa.Table.from_pandas(df, preserve_index=False)
+        cfg, _ = mt.build_job(
+            tmp_path,
+            {
+                name: ([{"name": "val", "strategy": "hash", "namespace": f"{name}_ns"}], table)
+                for name in ("a", "b")
+            },
+        )
+        sources = {"a": table, "b": table}
+        monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+        knobs = {
+            "engine_version": _ENGINE_VERSION,
+            "auto_chunk_threshold_rows": _LOW_THRESHOLD,
+            "chunk_size_rows": _CHUNK,
+        }
+        on = run_pipeline(cfg, sources=sources, explain_plan=True, **knobs)
+        off = run_pipeline(
+            cfg, sources=sources, explain_plan=True, multi_table_dispatch_enabled=False, **knobs
+        )
+        assert mt.dispatched_tables(on) == ["a", "b"]
+        assert mt.dispatched_tables(off) == []
+        assert list(on.outputs) == list(off.outputs)
+        for name in ("a", "b"):
+            ref = run_pipeline(
+                mt.restrict(cfg, name), sources={name: sources[name]}, **knobs
+            ).outputs[name]
+            assert on.outputs[name].equals(ref, check_metadata=True)
+            assert on.outputs[name].schema.metadata is None
+            assert on.outputs[name].column("val").to_pylist() == (
+                off.outputs[name].column("val").to_pylist()
+            )
+            assert on.quality_metrics["chunked_route_by_table"][name]["columns"]
 
     def test_generate_table_stays_full_frame(self, tmp_path, monkeypatch):
         df = pd.DataFrame({"val": [f"v{i}" for i in range(_ROWS)]})

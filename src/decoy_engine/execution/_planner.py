@@ -28,7 +28,9 @@ recording):
    ROUTES this mode through the chunked lane (`_pipeline_auto_chunk`:
    B1's `run_mask_chunked`, or the oracle `run_mask_pipeline_chunked` under
    the kill switch); without loaded sources the runtime gates are
-   skipped and the classification is admissibility-only.
+   skipped and the classification is admissibility-only. A job with several
+   mask tables never classifies `chunked` here; `_pipeline_multi_table` runs
+   this classification once per table to split an independent job (B7).
 2. `sequential_relationship` / `out_of_core_relationship`: relationship
    routes for FK jobs. The FK stack (`_sequential.py`, `out_of_core/`)
    now lives on this branch, but the LIVE relationship-route decision

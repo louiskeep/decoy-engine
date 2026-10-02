@@ -9,6 +9,43 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (independent multi-table jobs dispatch qualifying tables per table, 2026-10-02)
+
+A `run_pipeline` job with several mask tables used to run as one full-frame pandas call
+whatever the tables' sizes. When the tables are independent, each table now takes the route
+it would take alone: a table that would auto-chunk as a single-table job (same planner gate,
+same `auto_chunk_threshold_rows`) masks on the chunked dispatcher, one table at a time in
+`tables:` config order, and every other table runs in one full-frame adapter call, as before.
+Independent means the job has no FK edge and no `relationships` block. Masked values are
+unchanged. A job stays whole, with output, `quality_metrics`, warnings, timings and errors
+identical to the previous behavior, when any of these holds: quarantine is enabled, a vault
+writer is passed, validators are configured, a mask column uses unseeded randomness
+(non-deterministic `categorical` or `shuffle`, or `nested` over either), the substrate is
+not pandas, a generate table is present, `auto_chunk=False`, or
+`chunked_dispatcher_enabled=False`.
+
+The output shape of a split job is per table. A dispatched table carries exactly what the
+same table gets as a single-table auto-chunk job (passthrough columns are the source column,
+string-output columns are `string`, no schema metadata). A table left in the full-frame
+group keeps today's shape, pandas schema metadata included. One result can therefore hold
+both shapes. Converging them is roadmap item ROUTE-OUTPUT-CONTRACT.
+
+Two declared differences from the full-frame call. A dispatched table that reports a row
+error raises `RowErrorsFailedError` at once with its first failing chunk's records, where the
+full-frame call raised one error carrying every table's records. When two independent tables
+would both fail, the failure reported first can name a different table (config order among
+dispatched tables, then the group).
+
+New `run_pipeline` argument `multi_table_dispatch_enabled` (bool, default `True`; a non-bool
+raises `ExecutionError(code="invalid_execution_knob")` before profiling) is the kill switch:
+`False` restores the single full-frame call. A split call stamps
+`quality_metrics["auto_chunk"]` with `mode: chunked`, the dispatcher's `lane`, `lane_reason`
+and `native_threads`, and a `tables` list (one entry per mask table: `table`, `dispatched`,
+`source_rows`, `chunk_count`, `reason`, plus the lane keys for a dispatched table). It also
+adds `quality_metrics["chunked_route_by_table"]`, the per-table backend evidence. The
+platform's route label reads `auto_chunk.mode`, so a split call labels as chunked; read
+`auto_chunk.tables` for the per-table split.
+
 ### Changed (auto-chunk runs on the chunked dispatcher: a pre-GA output-contract change, 2026-10-01)
 
 `run_pipeline`'s auto-chunk route (large single-table mask jobs; the same jobs, the same
