@@ -23,6 +23,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.execution._column_access import handler_written_columns
 from decoy_engine.execution._errors import ExecutionError
 
 _STRING_OUTPUT_STRATEGIES = frozenset({"hash", "truncate", "redact"})
@@ -52,8 +53,13 @@ class SchemaRule:
     passthrough_fields: dict[str, pa.Field]
 
 
-def build_schema_rule(config: dict[str, Any], *, table: str, first: pa.Table) -> SchemaRule:
-    """Classify `table`'s columns once, from the config and the first chunk."""
+def build_schema_rule(
+    config: dict[str, Any], *, table: str, first: pa.Table, registry: Any
+) -> SchemaRule:
+    """Classify `table`'s columns once, from the config and the first chunk.
+
+    A column some handler writes (see `handler_written_columns`) is never a passthrough
+    column here, so `normalize_chunk` cannot restore its source value."""
     table_cfg = next(
         (t for t in config.get("tables") or [] if isinstance(t, dict) and t.get("name") == table),
         {},
@@ -63,10 +69,15 @@ def build_schema_rule(config: dict[str, Any], *, table: str, first: pa.Table) ->
         for c in table_cfg.get("columns") or []
         if isinstance(c, dict) and isinstance(c.get("name"), str)
     }
+    written = handler_written_columns(
+        [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)], registry
+    )
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     passthrough: dict[str, pa.DataType] = {}
     passthrough_fields: dict[str, pa.Field] = {}
     for field in first.schema:
+        if written is None or field.name in written:
+            continue
         col = configured.get(field.name)
         if col is None or (col.get("strategy") == "passthrough" and not _has_when(col)):
             passthrough[field.name] = field.type

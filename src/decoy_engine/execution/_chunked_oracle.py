@@ -40,6 +40,7 @@ from ._chunked_fk_dtype import (
     reject_mismatched_chunked_fk_declared_dtype,
 )
 from ._chunked_profile import profile_input
+from ._transforms import reject_config_references_stored_index
 
 
 @dataclass
@@ -106,9 +107,21 @@ def _oracle_preflight(
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
 
-    _chunked_mod.check_chunked_compatibility(config, table=table)
+    # The registry decides which providers are composites, so it is resolved first and
+    # used by the admission check, the carry plan and the schema rule alike.
+    resolved_registry = registry if registry is not None else get_default_registry()
+    _chunked_mod.check_chunked_compatibility(config, table=table, registry=resolved_registry)
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
+    if first is not None:
+        # Before the carry plan, the profile and the compile: pandas would consume the
+        # stored index field, so a config naming it could not resolve (or raise a raw
+        # KeyError) after the work above had started.
+        reject_config_references_stored_index(config, table, first.schema, resolved_registry)
+        from decoy_engine.execution.native._chunk_schema import stored_index_guard
+
+        # A stored-index change after chunk 0 is schema drift on both public entries.
+        chunk_iter = stored_index_guard(first, chunk_iter, table=table)
     # A keyed job with zero rows and a missing or invalid mask secret must still
     # fail the fail-closed gate, so the profile/plan/gate sequence runs for an
     # empty source too (from `empty_input_profile`) and the empty-input return
@@ -119,7 +132,13 @@ def _oracle_preflight(
     elif not carry_passthrough:
         profile = first_chunk_profile(first, table=table, engine_version=engine_version)
     else:
-        carry = plan_carry(config, table=table, first_schema=first.schema, adapter=adapter)
+        carry = plan_carry(
+            config,
+            table=table,
+            first_schema=first.schema,
+            adapter=adapter,
+            registry=resolved_registry,
+        )
         try:
             profile = first_chunk_profile(
                 first, table=table, engine_version=engine_version, carried=carry.carried
@@ -148,7 +167,6 @@ def _oracle_preflight(
         from decoy_engine.vault import assert_vault_writer_keyed
 
         assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
-    resolved_registry = registry if registry is not None else get_default_registry()
     graph = RelationshipGraph(edges=(), ordering=())
     # Corpus pinning is resolved before the empty-input return, so a zero-row job
     # with an invalid or version-mismatched corpus fails closed like the oracle

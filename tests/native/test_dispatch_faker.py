@@ -49,6 +49,7 @@ from decoy_engine.generation.pool import GenerationError, PoolBuilder, PoolCache
 from decoy_engine.generation.pool import PoolSampler as _PoolSampler
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
+from decoy_engine.providers_v2 import get_default_registry
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _NEEDS_COMPANION = pytest.mark.skipif(
@@ -195,7 +196,11 @@ def test_non_c1_faker_variant_stays_on_oracle(columns: list[dict]) -> None:
     # test only proves the NATIVE admission decision itself stays narrow.
     config = _config(*columns)
     decision = plan_native_route(
-        config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
+        config,
+        _profile("FIRST"),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        registry=get_default_registry(),
     ).evidence
 
     assert decision.native_admitted is False
@@ -265,7 +270,13 @@ def test_missing_namespace_on_deterministic_column_never_reaches_native_admissio
 
     config = _config(_faker_column(namespace=None))
     with pytest.raises(NamespaceConfigError):
-        plan_native_route(config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION)
+        plan_native_route(
+            config,
+            _profile("FIRST"),
+            table="t",
+            engine_version=_ENGINE_VERSION,
+            registry=get_default_registry(),
+        )
 
 
 def test_faker_never_folded_into_native_kernel_strategies() -> None:
@@ -314,7 +325,11 @@ def test_one_non_c1_faker_column_reroutes_whole_table_not_just_that_column() -> 
         _faker_column("LAST", provider="person_last_name", deterministic=False, namespace="ns_l"),
     )
     decision = plan_native_route(
-        config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
+        config,
+        _profile("FIRST"),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        registry=get_default_registry(),
     ).evidence
 
     assert decision.native_admitted is False
@@ -638,7 +653,7 @@ def test_plan_native_route_agrees_with_run_native_or_oracle_chunked() -> None:
     config = _config(_faker_column())
     profile = _profile("FIRST")
     decision = plan_native_route(
-        config, profile, table="t", engine_version=_ENGINE_VERSION
+        config, profile, table="t", engine_version=_ENGINE_VERSION, registry=get_default_registry()
     ).evidence
     assert decision.native_admitted is True
 
@@ -1428,7 +1443,11 @@ def test_static_rejection_never_reaches_either_companion_probe(
         }
     ]
     decision = plan_native_route(
-        config, _profile("FIRST"), table="t", engine_version=_ENGINE_VERSION
+        config,
+        _profile("FIRST"),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        registry=get_default_registry(),
     ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "fk_relationship_not_native_route"
@@ -1490,6 +1509,7 @@ def test_coverage_mismatch_with_extra_and_missing_column_never_reaches_either_pr
         table="t",
         engine_version=_ENGINE_VERSION,
         first_schema=schema,
+        registry=get_default_registry(),
     ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason is not None

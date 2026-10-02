@@ -19,6 +19,7 @@ from decoy_engine.execution.native._dispatch import plan_native_route, run_nativ
 from decoy_engine.plan import compile_plan, plan_to_yaml
 from decoy_engine.profile import _walk
 from decoy_engine.profile._types import ColumnProfile
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
@@ -92,10 +93,16 @@ def test_r3_profile_compiles_the_same_plan_and_route(
     assert _compiled(config, r3) == _compiled(config, real)
     args = {"table": TABLE, "engine_version": ENGINE_VERSION}
     assert (
-        plan_native_route(config, r3, first_schema=first.schema, **args).evidence
-        == plan_native_route(config, real, first_schema=first.schema, **args).evidence
+        plan_native_route(
+            config, r3, first_schema=first.schema, **args, registry=get_default_registry()
+        ).evidence
+        == plan_native_route(
+            config, real, first_schema=first.schema, **args, registry=get_default_registry()
+        ).evidence
     )
-    assert plan_column_backends(config, r3, **args) == plan_column_backends(config, real, **args)
+    assert plan_column_backends(
+        config, r3, **args, registry=get_default_registry()
+    ) == plan_column_backends(config, real, **args, registry=get_default_registry())
 
 
 def test_placeholder_alone_is_not_enough() -> None:

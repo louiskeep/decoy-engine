@@ -1318,7 +1318,7 @@ class TestFkExclusion:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="orders")
+            check_chunked_compatibility(cfg, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_group_by_sibling_is_fk_key_chunked_equals_full_frame(self, tmp_path) -> None:
@@ -1490,7 +1490,7 @@ class TestWhenRejection:
         table = pa.table({"household_id": pa.array(["H-1", "H-2"], type=pa.string())})
         cfg = _when_bearing_group_key_cfg(tmp_path, table)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="people")
+            check_chunked_compatibility(cfg, table="people", registry=get_default_registry())
         assert exc.value.code == "chunked_group_key_when_not_supported"
         assert "household_key" in exc.value.message
 

@@ -219,15 +219,11 @@ def _run_job(job: Job, tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tab
     return cfg, sources
 
 
-# B1's route per case, recorded from the plan's rules: an unconfigured column reroutes the
-# table (uncovered_columns) with or without the companion; otherwise every case here hashes
-# `h`, so the companion decides between B1's native route and the oracle route.
-_UNCOVERED = "uncovered_columns:['x'];missing_configured_columns:[]"
-
-
+# B1's route per case. Every case here hashes `h`, so the companion decides between B1's
+# native route and the oracle route. Since B8 an unconfigured column no longer reroutes the
+# table (under the `warn` policy it is carried natively), so `job.uncovered` no longer
+# changes the expected route.
 def _expected_route(job: Job, companion: str) -> tuple[bool, str | None]:
-    if job.uncovered:
-        return False, _UNCOVERED
     if companion == "present":
         return True, None
     return False, "crypto_extension_unavailable"
@@ -322,16 +318,23 @@ def test_companion_absent_reroutes_the_hash_table_to_the_oracle_route(
     assert route["reroute_reason"].startswith("crypto_extension_unavailable")
 
 
-def test_an_unconfigured_column_reroutes_the_table_with_uncovered_columns(
-    tmp_path: Path,
+@pytest.mark.parametrize("companion", ["present", "absent"])
+def test_an_unconfigured_column_is_admitted_to_the_native_route(
+    companion: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _companion_state(companion, monkeypatch)
     job = CASES["unconfigured_column_warn_policy"]()
     cfg, sources = _run_job(job, tmp_path)
     got = run_pipeline(cfg, sources=sources, **mt.kw())
     route = mt.route_of(got, "big")
     assert route is not None
-    assert route["native_admitted"] is False
-    assert "uncovered_columns" in route["reroute_reason"]
+    assert "uncovered_columns" not in str(route["reroute_reason"])
+    if companion == "present":
+        assert route["native_admitted"] is True
+        assert route["reroute_reason"] is None
+    else:
+        assert route["native_admitted"] is False
+        assert route["reroute_reason"] == "crypto_extension_unavailable"
 
 
 # ---------------------------------------------------------------------------

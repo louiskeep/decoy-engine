@@ -356,7 +356,9 @@ ALLOWLIST: dict[str, int] = {
     # moved into `_chunked_oracle.py` (809 -> 608) so `run_mask_chunked` shares one
     # validation path with it. The remaining bulk is the module docstring and the
     # admission checks (`check_chunked_compatibility` and its helpers).
-    "src/decoy_engine/execution/_chunked.py": 608,
+    # 2026-10-02 (B8 revision 4.3): +4 for the composite-provider refusal (the helper
+    # `composite_provider_offenders` lives in `_column_access.py`); dense exception, below MAX.
+    "src/decoy_engine/execution/_chunked.py": 612,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all

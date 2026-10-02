@@ -50,7 +50,16 @@ def real_type_rejection(
     profile: Any,
 ) -> str | None:
     """The coded reason an admitted table must run on the oracle, or None."""
-    resident = {table: first_schema.empty_table()}
+    node_routes = tuple(node_routes)
+    # Only the hash columns are read from the resident table (`hash_config_rejection`
+    # resolves one column's type). `Schema.empty_table` raises for a union or a
+    # run-end-encoded string_view field, so building it over the whole schema would turn
+    # a carried passthrough column of that type into a crash at admission.
+    resident = {
+        table: pa.schema(
+            [first_schema.field(n.column) for n in node_routes if n.strategy == "hash"]
+        ).empty_table()
+    }
     providers = _providers(config, table)
     for node in node_routes:
         if node.strategy == "hash":

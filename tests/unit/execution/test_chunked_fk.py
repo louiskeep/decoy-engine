@@ -391,14 +391,14 @@ class TestFailClosedRejections:
         """WARN cannot be reproduced: emitting an orphan count needs the parent set."""
         config = _fk_config(orphan_policy="warn")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_orphan_policy_not_remap"
 
     def test_orphan_policy_fail_rejected(self) -> None:
         """FAIL cannot be detected: detecting orphans needs the parent set."""
         config = _fk_config(orphan_policy="fail")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_orphan_policy_not_remap"
 
     def test_orphan_policy_preserve_rejected(self) -> None:
@@ -406,49 +406,49 @@ class TestFailClosedRejections:
         the parent set; self-masking the orphan diverges from the raw-key output."""
         config = _fk_config(orphan_policy="preserve")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_orphan_policy_not_remap"
 
     def test_parent_strategy_shuffle_rejected(self) -> None:
         """shuffle is a permutation, not value-keyed; cannot be reproduced independently."""
         config = _fk_config(parent_strategy="shuffle")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_parent_strategy_faker_rejected(self) -> None:
         """faker without the deterministic path is not chunk-safe as a parent key."""
         config = _fk_config(parent_strategy="faker")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_child_strategy_mismatch_rejected(self) -> None:
         """Child strategy must equal parent strategy exactly."""
         config = _fk_config(parent_strategy="hash", child_strategy="fpe", child_ns="cust_ns")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_strategy_mismatch"
 
     def test_child_missing_strategy_rejected(self) -> None:
         """Child with no strategy (by-reference model) is rejected."""
         config = _fk_config(child_strategy=None)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_strategy_missing"
 
     def test_child_missing_namespace_rejected(self) -> None:
         """Child with no explicit namespace cannot be verified safe."""
         config = _fk_config(child_ns=None)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_namespace_missing"
 
     def test_child_namespace_mismatch_rejected(self) -> None:
         """Child namespace must match the edge namespace."""
         config = _fk_config(rel_ns="cust_ns", child_ns="other_ns")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_namespace_mismatch"
 
     def test_child_provider_config_mismatch_rejected(self) -> None:
@@ -466,7 +466,7 @@ class TestFailClosedRejections:
             child_provider_config={"truncate": 16},
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_config_mismatch"
         # No PII in the error message body beyond the config values themselves.
         assert "provider_config" in exc.value.message
@@ -480,7 +480,7 @@ class TestFailClosedRejections:
             child_provider_config={"truncate": 8},
         )
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
     def test_child_key_dtype_mismatch_rejected(self) -> None:
         """Codex round-2 Finding B: dtype-mismatched FK keys are gated out.
@@ -497,7 +497,7 @@ class TestFailClosedRejections:
         """
         config = _fk_config(parent_dtype="int64", child_dtype="float64")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
 
     def test_child_key_dtype_mismatch_rejected_before_any_chunk_pulled(self) -> None:
@@ -528,14 +528,14 @@ class TestFailClosedRejections:
         """Matching declared dtypes (same family) are admitted."""
         config = _fk_config(parent_dtype="int64", child_dtype="int64")
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
     def test_child_key_dtype_matching_family_widths_admitted(self) -> None:
         """Different widths within the same family (int32 vs int64) are fine:
         the kernel canonicalizer encodes any-width int identically."""
         config = _fk_config(parent_dtype="int32", child_dtype="int64")
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
     def test_child_key_dtype_date_timestamp_mismatch_rejected(self) -> None:
         """date and timestamp are DISTINCT families (not folded together): a
@@ -544,7 +544,7 @@ class TestFailClosedRejections:
         child FK edge cannot be proven to self-mask identically. Reject."""
         config = _fk_config(parent_dtype="date", child_dtype="timestamp")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
 
     def test_child_key_dtype_undeclared_rejected_fail_closed(self) -> None:
@@ -559,7 +559,7 @@ class TestFailClosedRejections:
         # hash is value-sensitive; neither side declares a dtype.
         config = _fk_config(parent_dtype=None, child_dtype=None)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
 
     def test_child_key_dtype_one_side_undeclared_rejected(self) -> None:
@@ -567,7 +567,7 @@ class TestFailClosedRejections:
         for parent_dtype, child_dtype in (("int64", None), (None, "int64")):
             config = _fk_config(parent_dtype=parent_dtype, child_dtype=child_dtype)
             with pytest.raises(PlanCompileError) as exc:
-                check_chunked_compatibility(config, table="orders")
+                check_chunked_compatibility(config, table="orders", registry=get_default_registry())
             assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
 
     def test_truncate_undeclared_dtype_rejected(self) -> None:
@@ -586,7 +586,7 @@ class TestFailClosedRejections:
             child_dtype=None,
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
 
     def test_redact_no_longer_reaches_dtype_invariant_carveout(self) -> None:
@@ -606,7 +606,7 @@ class TestFailClosedRejections:
             child_dtype=None,
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_child_key_dtype_decimal_scale_mismatch_rejected(self) -> None:
@@ -621,7 +621,7 @@ class TestFailClosedRejections:
         gate exactly like an int/float mismatch."""
         config = _fk_config(parent_dtype="decimal(2, 1)", child_dtype="decimal(3, 2)")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
 
     def test_child_key_dtype_decimal_matching_scale_admitted(self) -> None:
@@ -629,7 +629,7 @@ class TestFailClosedRejections:
         the SAME family and must be admitted."""
         config = _fk_config(parent_dtype="decimal(2, 1)", child_dtype="decimal(2, 1)")
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
     def test_child_key_dtype_bare_decimal_both_sides_rejected_at_compile_gate(self) -> None:
         """A bare `"decimal"` declaration on both sides (no scale -- Codex's
@@ -646,7 +646,7 @@ class TestFailClosedRejections:
         this edge, e.g. gating the table on its PARENT role)."""
         config = _fk_config(parent_dtype="decimal", child_dtype="decimal")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_key_dtype_not_cross_adapter_safe"
 
     def test_composite_fk_rejected(self) -> None:
@@ -679,7 +679,7 @@ class TestFailClosedRejections:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="children")
+            check_chunked_compatibility(config, table="children", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_composite_unsupported"
 
     def test_parent_is_unaffected_by_fk_gate(self) -> None:
@@ -687,13 +687,13 @@ class TestFailClosedRejections:
         is always allowed, even when relationships exist in the config."""
         config = _fk_config()
         # Must not raise -- the parent table has no FK child columns to gate.
-        check_chunked_compatibility(config, table="customers")
+        check_chunked_compatibility(config, table="customers", registry=get_default_registry())
 
     def test_admitted_config_passes_gate(self) -> None:
         """A clean REMAP config with matching strategy and namespace passes."""
         config = _fk_config()
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +728,7 @@ class TestParentColumnNamespaceIsAuthoritative:
         """
         config = _fk_config(parent_ns="A_parent", rel_ns="B_rel", child_ns="B_rel")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_namespace_mismatch", (
             f"Expected chunked_fk_parent_namespace_mismatch, got {exc.value.code!r}"
         )
@@ -798,7 +798,7 @@ class TestParentColumnNamespaceIsAuthoritative:
         """
         config = _fk_config(parent_ns=None, rel_ns="cust_ns", child_ns="cust_ns")
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         # Must raise a namespace-missing or parent-namespace-missing code, not admit.
         assert exc.value.code in (
             "chunked_fk_parent_namespace_missing",
@@ -813,7 +813,7 @@ class TestParentColumnNamespaceIsAuthoritative:
         """
         config = _fk_config(parent_ns="cust_ns", rel_ns=None, child_ns="cust_ns")
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
     def test_rel_ns_equals_parent_ns_is_admitted(self) -> None:
         """Happy path: edge namespace equals parent-column namespace.
@@ -824,7 +824,7 @@ class TestParentColumnNamespaceIsAuthoritative:
         """
         config = _fk_config(parent_ns="cust_ns", rel_ns="cust_ns", child_ns="cust_ns")
         # Must not raise.
-        check_chunked_compatibility(config, table="orders")
+        check_chunked_compatibility(config, table="orders", registry=get_default_registry())
 
 
 # ---------------------------------------------------------------------------
@@ -1001,7 +1001,7 @@ class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
             rel_ns=None,
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_passthrough_gate_kill_check_only(self) -> None:
@@ -1014,7 +1014,7 @@ class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
             rel_ns=None,
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config, table="orders")
+            check_chunked_compatibility(config, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_other_gates_still_apply_to_the_sole_admitted_strategy(self) -> None:
@@ -1031,7 +1031,9 @@ class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
             rel_ns="pns",
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(config_bad_child, table="orders")
+            check_chunked_compatibility(
+                config_bad_child, table="orders", registry=get_default_registry()
+            )
         assert exc.value.code == "chunked_fk_child_strategy_mismatch"
 
         # Wrong orphan_policy must still be rejected (fires before condition
@@ -1045,7 +1047,9 @@ class TestNamespaceAgnosticStrategiesNowRejectedForFkSelfMask:
             orphan_policy="preserve",
         )
         with pytest.raises(PlanCompileError) as exc2:
-            check_chunked_compatibility(config_bad_policy, table="orders")
+            check_chunked_compatibility(
+                config_bad_policy, table="orders", registry=get_default_registry()
+            )
         assert exc2.value.code == "chunked_fk_orphan_policy_not_remap"
 
 

@@ -140,7 +140,7 @@ class NativeEligibility:
 
 
 def compile_native_plan(
-    config: dict[str, Any], profile: Any, *, engine_version: str
+    config: dict[str, Any], profile: Any, *, engine_version: str, registry: Any = None
 ) -> NativeExecutionPlan:
     """Compile (config, profile) into a ``NativeExecutionPlan``.
 
@@ -149,7 +149,8 @@ def compile_native_plan(
     enriched native node.
     """
     plan = compile_plan(config, profile, decoy_engine_version=engine_version)
-    registry = get_default_registry()
+    if registry is None:
+        registry = get_default_registry()
     work = build_work_list(plan, registry)
 
     attached: list[WorkNode] = []

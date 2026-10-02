@@ -22,6 +22,7 @@ from typing import Any, Literal
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._column_access import SIBLING_REFERENCE_KEYS
 from decoy_engine.execution.native._capabilities import (
     StrategyCapabilities,
     capabilities_for,
@@ -287,8 +288,7 @@ def _required_input_columns(node: Any, cfg: dict[str, Any]) -> tuple[str, ...]:
     cols: list[str] = list(node.columns)
     slice_ = node.plan_slice
     cols.extend(getattr(slice_, "coherent_with", ()) or ())
-    # Config-referenced sibling columns a node reads besides its own value.
-    for key in ("group_by", "order_by", "anchor", "reference_column"):
+    for key in SIBLING_REFERENCE_KEYS:
         ref = cfg.get(key)
         if isinstance(ref, str) and ref:
             cols.append(ref)

@@ -32,6 +32,7 @@ from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._chunked_fk import fk_passthrough_columns_for_table
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.plan import PlanCompileError
+from decoy_engine.providers_v2 import get_default_registry
 
 _ENGINE = "test-de10-chunked-fk-passthrough"
 
@@ -404,4 +405,4 @@ def test_dtype_field_reachable_through_validated_pipeline_config() -> None:
 
     # No PlanCompileError: the dtype-family check on condition (f) is
     # satisfied through the validated dump, not just a raw dict.
-    check_chunked_compatibility(validated, table="orders")
+    check_chunked_compatibility(validated, table="orders", registry=get_default_registry())

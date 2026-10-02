@@ -17,13 +17,14 @@ from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
+    hash_col,
     key_provider,
     make_config,
     passthrough,
     redact,
     truncate,
 )
-from tests.native._rev9_support import BY_NAME, run_entry, run_public
+from tests.native._rev9_support import BY_NAME, companion_missing, run_entry, run_public
 
 _INTS = pa.array([11, 22, 33], pa.int64())
 _STAMPS = pa.array([1, None, 3], pa.timestamp("us"))
@@ -68,6 +69,13 @@ class _Recorder(PandasExecutionAdapter):
 # ---------------------------------------------------------------------------
 
 
+def _hash_chunks(n: int = 3) -> list[pa.Table]:
+    return [
+        c.append_column("h", pa.array([f"h{i}a", f"h{i}b", f"h{i}c"]))
+        for i, c in enumerate(_chunks(n))
+    ]
+
+
 def test_adapter_frame_has_the_source_column_names_and_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -79,8 +87,13 @@ def test_adapter_frame_has_the_source_column_names_and_order(
         return real(self, plan, sources, **kw)
 
     monkeypatch.setattr(PandasExecutionAdapter, "run", run)
-    chunks = _chunks()
-    run_entry(_config(configured=False), chunks)
+    chunks = _hash_chunks()
+    # A hash column with the companion missing forces the oracle route, so the adapter
+    # still runs; the unconfigured columns x, ts and z reach it as source-named columns.
+    with companion_missing(monkeypatch):
+        _out, _sink, ev = run_entry(make_config([redact("s"), hash_col("h")]), chunks)
+    assert ev[0].native_admitted is False
+    assert ev[0].reroute_reason == "crypto_extension_unavailable"
     assert seen == [chunks[0].column_names] * 3
 
 
@@ -115,17 +128,30 @@ def test_warning_details_match_the_public_oracle_per_chunk() -> None:
         assert got.warnings, "the unconfigured columns must still be reported"
 
 
-@pytest.mark.parametrize("configured", [True, False], ids=["configured", "unconfigured"])
-def test_timing_records_have_the_oracles_structure(configured: bool) -> None:
-    config = _config(configured=configured, policy="warn")
-    chunks = _chunks()
+@pytest.mark.parametrize("case", ["configured", "unconfigured", "forced_oracle"])
+def test_timing_records_have_the_oracles_structure(
+    case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if case == "forced_oracle":
+        config = make_config(
+            [redact("s"), hash_col("h")], global_settings={"unconfigured_column_policy": "warn"}
+        )
+        chunks = _hash_chunks()
+    else:
+        config = _config(configured=case == "configured", policy="warn")
+        chunks = _chunks()
     oracle_sink: list[Any] = []
     run_public(config, chunks, chunk_result_sink=oracle_sink)
-    out, sink, ev = run_entry(config, chunks)
-    assert ev[0].native_admitted is configured
-    if configured:
-        # native route: one record per configured column, no pandas timing to compare
-        assert sorted(r.column for r in sink[0].timings) == ["s", "ts", "x", "z"]
+    if case == "forced_oracle":
+        with companion_missing(monkeypatch):
+            out, sink, ev = run_entry(config, chunks)
+    else:
+        out, sink, ev = run_entry(config, chunks)
+    assert ev[0].native_admitted is (case != "forced_oracle")
+    if case != "forced_oracle":
+        # Native route: one record per configured column and none for an unconfigured one.
+        expected = ["s", "ts", "x", "z"] if case == "configured" else ["s"]
+        assert sorted(r.column for r in sink[0].timings) == expected
         return
     for got, want in zip(sink, oracle_sink, strict=True):
         assert [(r.column, r.strategy_type) for r in got.timings] == [

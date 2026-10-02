@@ -6,10 +6,11 @@ adapter see an all-null placeholder, and the output takes the source column
 itself. A value the pandas round trip refuses or alters therefore comes back
 exactly as the source held it, on either route and in any chunk.
 
-A passthrough column that pandas code does read goes to pandas as before (the
-"read set"): a `when:` predicate evaluated by `DataFrame.eval`, or a sibling
-reference such as a `group_by` or `anchor`. If pandas then refuses a value in
-such a column, `ExecutionError(code="chunked_passthrough_value_unrepresentable")`
+A passthrough column that pandas code reads or writes goes to pandas as before (the
+"read set"): a `when:` predicate evaluated by `DataFrame.eval`, a sibling reference such
+as a `group_by` or `anchor`, or a column a composite generator writes. If pandas then
+refuses a value in such a column,
+`ExecutionError(code="chunked_passthrough_value_unrepresentable")`
 names it, with the exception the public oracle raises as its cause.
 
 The public oracle `run_mask_pipeline_chunked` and the legacy
@@ -18,8 +19,6 @@ The public oracle `run_mask_pipeline_chunked` and the legacy
 
 from __future__ import annotations
 
-import ast
-import tokenize
 import unicodedata
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -27,6 +26,11 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._column_access import (
+    handler_written_columns,
+    has_when,
+    touched_columns,
+)
 from decoy_engine.execution._errors import ExecutionError
 
 PASSTHROUGH_UNREPRESENTABLE_CODE = "chunked_passthrough_value_unrepresentable"
@@ -43,12 +47,6 @@ def _conversion_errors() -> tuple[type[BaseException], ...]:
     return (*_CONVERSION_ERRORS, ValueError, OverflowError, OutOfBoundsDatetime)
 
 
-def has_when(col: Mapping[str, Any]) -> bool:
-    """Same normalization the plan compiler uses: a blank predicate has no effect."""
-    when = col.get("when")
-    return isinstance(when, str) and bool(when.strip())
-
-
 def is_stock_adapter(adapter: Any) -> bool:
     """Carrying is enabled only for the engine-owned pandas adapter, exactly: a custom
     or subclass adapter receives the whole source table and may read any column."""
@@ -61,68 +59,23 @@ def _nfkc(value: str) -> str:
     return unicodedata.normalize("NFKC", value)
 
 
-def _predicate_names(expr: str) -> set[str] | None:
-    """Every name `DataFrame.eval` could resolve in `expr`, or None when the predicate
-    cannot be tokenized (the caller then treats every passthrough column as read).
+def read_set(
+    columns: Iterable[Mapping[str, Any]], passthrough: Iterable[str], registry: Any
+) -> frozenset[str]:
+    """The passthrough columns pandas code may read or write (rule R2).
 
-    Uses pandas' own tokenizer. Python's `ast` NFKC-normalizes identifiers, so a
-    fullwidth `x` and a `file` spelled with the U+FB01 ligature read the columns `x` and `file`: every collected
-    name is NFKC-normalized, and `read_set` compares normalized forms. Names,
-    backtick-quoted spans and the value of every string literal are collected:
-    over-approximating only restores the oracle's behavior for that one column."""
-    try:
-        from pandas.core.computation.parsing import BACKTICK_QUOTED_STRING, tokenize_string
-    except ImportError:  # pragma: no cover - a pandas without the tokenizer
-        return None
-    names: set[str] = set()
-    try:
-        for kind, value in tokenize_string(expr):
-            if kind == tokenize.NAME or kind == BACKTICK_QUOTED_STRING:
-                names.add(_nfkc(value))
-            elif kind == tokenize.STRING:
-                literal = ast.literal_eval(value)
-                if isinstance(literal, str):
-                    names.add(_nfkc(literal))
-    except Exception:
-        return None
-    return names
-
-
-def _string_values(value: Any, out: set[str]) -> None:
-    if isinstance(value, str):
-        out.add(value)
-    elif isinstance(value, Mapping):
-        for item in value.values():
-            _string_values(item, out)
-    elif isinstance(value, list | tuple):
-        for item in value:
-            _string_values(item, out)
-
-
-def read_set(columns: Iterable[Mapping[str, Any]], passthrough: Iterable[str]) -> frozenset[str]:
-    """The passthrough columns pandas code may read (rule R2).
-
-    A column is read when (a) its name is collected from any nonblank `when:`
-    predicate of the table, or (b) its name equals, as a whole string, any string
-    value anywhere in another configured column's entry (the entry's own `name`
-    excluded), which covers `group_by`, `anchor`, `coherent_with` and any later key
-    that names a sibling. If any predicate cannot be tokenized, every passthrough
-    column is read."""
+    The union of every configured entry's `column_access` declaration (`when:` predicate
+    names, sibling-reference fields, composite outputs; see `_column_access`), the entry's
+    own `name` excluded. A written column counts as read: carrying it would let
+    `CarryPlan.reattach` overwrite the handler's output with the source value. If any
+    declaration cannot be computed, every passthrough column is read."""
     candidates = frozenset(passthrough)
     if not candidates:
         return frozenset()
-    mentioned: set[str] = set()
-    normalized: set[str] = set()
-    for col in columns:
-        if has_when(col):
-            names = _predicate_names(col["when"])
-            if names is None:
-                return candidates
-            normalized |= names
-        for key, value in col.items():
-            if key != "name":
-                _string_values(value, mentioned)
-    return frozenset(c for c in candidates if c in mentioned or _nfkc(c) in normalized)
+    touched = touched_columns(columns, registry)
+    if touched is None:
+        return candidates
+    return frozenset(c for c in candidates if c in touched or _nfkc(c) in touched)
 
 
 @dataclass(frozen=True)
@@ -210,18 +163,25 @@ def _same_failure(a: BaseException, b: BaseException) -> bool:
 
 
 def passthrough_columns(
-    config: Mapping[str, Any], *, table: str, names: Sequence[str]
+    config: Mapping[str, Any], *, table: str, names: Sequence[str], registry: Any
 ) -> list[str]:
     """The schema rule's passthrough columns, in source order: configured passthrough
-    without a `when:`, and unconfigured columns kept under the passthrough policy."""
-    configured = {
-        c["name"]: c for c in _table_columns(config, table) if isinstance(c.get("name"), str)
-    }
+    without a `when:`, and unconfigured columns kept under the passthrough policy. A column
+    some handler writes (a composite's bundle) is never one of them, whatever its entry
+    says: carrying it would let the source value overwrite the generated one."""
+    entries = _table_columns(config, table)
+    written = handler_written_columns(entries, registry)
+    if written is None:
+        return []
+    configured = {c["name"]: c for c in entries if isinstance(c.get("name"), str)}
     return [
         n
         for n in names
-        if n not in configured
-        or (configured[n].get("strategy") == "passthrough" and not has_when(configured[n]))
+        if n not in written
+        and (
+            n not in configured
+            or (configured[n].get("strategy") == "passthrough" and not has_when(configured[n]))
+        )
     ]
 
 
@@ -234,16 +194,18 @@ def _table_columns(config: Mapping[str, Any], table: str) -> list[dict[str, Any]
 
 
 def plan_carry(
-    config: Mapping[str, Any], *, table: str, first_schema: pa.Schema, adapter: Any
+    config: Mapping[str, Any], *, table: str, first_schema: pa.Schema, adapter: Any, registry: Any
 ) -> CarryPlan:
     """Decide the carried and read sets once, right after the first-chunk pull."""
     stock = is_stock_adapter(adapter)
-    passthrough = passthrough_columns(config, table=table, names=first_schema.names)
+    passthrough = passthrough_columns(
+        config, table=table, names=first_schema.names, registry=registry
+    )
     if not stock or len(set(first_schema.names)) != len(first_schema.names):
         # Carrying addresses columns by name. With duplicate names it carries nothing,
         # so the profile walk raises its own duplicate-name refusal, as on the oracle.
         return CarryPlan(stock=False, carried=frozenset(), read=tuple(sorted(passthrough)))
-    read = read_set(_table_columns(config, table), passthrough)
+    read = read_set(_table_columns(config, table), passthrough, registry)
     return CarryPlan(stock=True, carried=frozenset(passthrough) - read, read=tuple(sorted(read)))
 
 

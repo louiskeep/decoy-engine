@@ -162,6 +162,7 @@ def _legacy_route_evidence(
     chunk_size_rows: int,
     chunk_count: int,
     lane_reason: str | None,
+    registry: ProviderRegistry,
 ) -> dict[str, Any]:
     """The `chunked_route` payload for the legacy lane, in the dispatcher lane's shape.
 
@@ -180,14 +181,21 @@ def _legacy_route_evidence(
     profile = first_chunk_profile(
         source.slice(0, chunk_size_rows), table=table, engine_version=engine_version
     )
-    columns = plan_column_backends(config, profile, table=table, engine_version=engine_version)
+    columns = plan_column_backends(
+        config, profile, table=table, engine_version=engine_version, registry=registry
+    )
     evidence = chunk_route_evidence(
         table=table,
         native_admitted=False,
         reroute_reason=lane_reason,
         columns=columns,
         elapsed_ms={},
-        pandas_read_passthrough=passthrough_columns(config, table=table, names=source.column_names),
+        pandas_read_passthrough=passthrough_columns(
+            config,
+            table=table,
+            names=source.column_names,
+            registry=registry,
+        ),
     )
     evidence = _without_elapsed(evidence)
     for col in evidence["columns"]:
@@ -316,6 +324,7 @@ def run_auto_chunk(
             chunk_size_rows=chunk_size_rows,
             chunk_count=len(chunk_results),
             lane_reason=lane_reason,
+            registry=registry,
         )
     _LOG.info(
         "auto-chunk table=%s lane=%s native_admitted=%s reroute_reason=%s",

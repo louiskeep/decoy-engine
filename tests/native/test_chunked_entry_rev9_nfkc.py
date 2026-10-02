@@ -10,6 +10,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import make_config, passthrough, redact
 from tests.native._rev9_support import run_entry, run_public, same_column
 
@@ -19,9 +20,6 @@ _CASES = {
     "ligature": ("\ufb01le > 4", "file"),
     "fullwidth_backtick": ("`\uff58` > 4", "x"),
     "ligature_backtick": ("`\ufb01le` > 4", "file"),
-    # The fullwidth literal is the only mention of `x`; literals are over-approximated, so the
-    # column still counts as read.
-    "fullwidth_in_literal": ('s == "\uff58"', "x"),
     "ligature_notnull": ("\ufb01le.notnull()", "file"),
 }
 
@@ -48,11 +46,31 @@ def test_nfkc_spelled_predicate_reads_the_column_like_the_oracle(
     assert listed == [[name]] * 3
 
 
-def test_string_literal_values_are_normalized_too() -> None:
+@pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])
+def test_nfkc_literal_does_not_read_the_column(configured: bool) -> None:
+    cols: list[dict[str, Any]] = [{**redact("s"), "when": 's == "\uff58"'}]
+    if configured:
+        cols.append(passthrough("x"))
+    chunks = [
+        pa.table({"s": ["alice", "bob", "carol"], "x": pa.array(v, pa.int64())})
+        for v in ([1, 5, 9], [9, 1, 5], [2, 6, 3])
+    ]
+    expected = run_public(make_config(cols), chunks)
+    out, sink, _ = run_entry(make_config(cols), chunks)
+    listed = [r.quality_metrics["chunked_route"]["pandas_read_passthrough"] for r in sink]
+    assert listed == [[]] * 3
+    for got, src, want in zip(out, chunks, expected, strict=True):
+        assert same_column(got.column("x"), src.column("x"))
+        assert got.column("s").to_pylist() == want.column("s").to_pylist()
+
+
+def test_string_literal_values_are_not_read_normalized_or_not() -> None:
     from decoy_engine.execution._chunked_carry import read_set
 
     cols = [{**redact("s"), "when": "s == '\ufb01le'"}]
-    assert read_set(cols, ["file", "other"]) == frozenset({"file"})
+    assert read_set(cols, ["file", "other"], get_default_registry()) == frozenset()
+    bare = [{**redact("s"), "when": "\ufb01le == 'x'"}]
+    assert read_set(bare, ["file", "other"], get_default_registry()) == frozenset({"file"})
 
 
 @pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])

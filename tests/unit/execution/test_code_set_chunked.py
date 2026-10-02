@@ -56,6 +56,7 @@ from decoy_engine.execution._chunked_code_set import (
     unsafe_code_set_source_columns,
 )
 from decoy_engine.plan import PlanCompileError
+from decoy_engine.providers_v2 import get_default_registry
 
 _ENGINE_VERSION = "p4-slice4-code-set-test"
 _LOW_THRESHOLD = 10
@@ -772,14 +773,14 @@ class TestAdmissionBoundary:
         ]
         cfg = _config(tmp_path, columns)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
 
     def test_chapter_preserve_rejected_via_check_chunked_compatibility(self, tmp_path) -> None:
         columns = [_code_set_col("code", "icd10", provider_config_extra={"chapter_preserve": True})]
         cfg = _config(tmp_path, columns)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
 
     def test_when_rejected_manual_entry(self, tmp_path) -> None:
@@ -899,7 +900,7 @@ class TestAdmissionBoundary:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="parent")
+            check_chunked_compatibility(cfg, table="parent", registry=get_default_registry())
         assert exc.value.code == "chunked_code_set_fk_key_unsupported"
         assert "id" in exc.value.message
 
@@ -922,7 +923,7 @@ class TestAdmissionBoundary:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="child")
+            check_chunked_compatibility(cfg, table="child", registry=get_default_registry())
         assert exc.value.code in (
             "chunked_code_set_fk_key_unsupported",
             "chunked_fk_parent_strategy_not_self_mask_safe",

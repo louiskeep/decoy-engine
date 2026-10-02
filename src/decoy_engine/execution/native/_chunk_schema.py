@@ -52,6 +52,35 @@ def _drift(table: str, chunk_index: int, message: str, detail: str) -> NativeChu
     )
 
 
+def check_stored_index(
+    expected: pa.Schema, chunk: pa.Table, *, table: str, chunk_index: int
+) -> None:
+    """Raise when the chunk's stored pandas index fields differ from the first chunk's."""
+    if chunk.schema.metadata == expected.metadata:
+        return  # same metadata, so the same stored index fields
+    from decoy_engine.execution._transforms import stored_index_fields
+
+    was, now = sorted(stored_index_fields(expected)), sorted(stored_index_fields(chunk.schema))
+    if was != now:
+        raise _drift(
+            table,
+            chunk_index,
+            f"stored pandas index fields changed vs the first chunk (was={was}, now={now})",
+            f"stored_index:{was}->{now}",
+        )
+
+
+def stored_index_guard(
+    first: pa.Table, rest: Iterator[pa.Table], *, table: str
+) -> Iterator[pa.Table]:
+    """The chunks after `first`, unchanged, raising `native_chunk_schema_drift` at the first
+    one whose stored index fields differ. Both public chunked entries share the preflight
+    that installs it."""
+    for i, chunk in enumerate(rest, start=1):
+        check_stored_index(first.schema, chunk, table=table, chunk_index=i)
+        yield chunk
+
+
 def validate_chunk_schema(
     expected: pa.Schema, chunk: pa.Table, *, table: str, chunk_index: int
 ) -> None:
@@ -82,6 +111,7 @@ def validate_chunk_schema(
             f"schema drift vs the first chunk (missing={missing}, extra={extra})",
             f"missing:{missing};extra:{extra}",
         )
+    check_stored_index(expected, chunk, table=table, chunk_index=chunk_index)
     for name in chunk.schema.names:
         expected_type = expected.field(name).type
         actual_type = chunk.schema.field(name).type

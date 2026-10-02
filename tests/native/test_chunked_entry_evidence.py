@@ -230,13 +230,13 @@ def _veto_case(
             {"h": "rust_companion", "r": "arrow_python"},
         )
     if case == "schema_veto":
-        # The source carries a column the config does not cover.
+        # The config names a column the source does not carry.
         return (
-            make_config([redact("r"), truncate("t")]),
-            ["r", "t", "p"],
+            make_config([redact("r"), truncate("t"), passthrough("q")]),
+            ["r", "t"],
             {},
-            "uncovered_columns",
-            {"r": "arrow_python", "t": "arrow_python"},
+            "missing_configured_columns:['q']",
+            {"r": "arrow_python", "t": "arrow_python", "q": "arrow_python"},
         )
     if case == "when_veto":
         config = make_config([redact("r"), truncate("t"), passthrough("p")])
@@ -285,6 +285,21 @@ def test_vetoed_tables_report_planned_native_and_executed_oracle(
         assert cols[name]["planned_backend"] == backend, name
         assert cols[name]["executed_backend"] == "pandas_oracle", name
         assert cols[name]["calls"] == len(sink) == 3, name
+    _assert_json_safe(sink, agg)
+
+
+def test_unconfigured_admitted_reports_planned_and_executed_native_backends() -> None:
+    config = make_config([redact("r"), truncate("t")])
+    _, sink, evidence = _run(config, ["r", "t", "p"])
+    agg = aggregate_chunked_route_evidence(sink)
+    assert evidence.native_admitted is True and evidence.reroute_reason is None
+    assert agg["native_admitted"] is True and agg["reroute_reason"] is None
+    cols = _columns(agg)
+    assert set(cols) == {"r", "t"}
+    for name in ("r", "t"):
+        assert cols[name]["planned_backend"] == "arrow_python"
+        assert cols[name]["executed_backend"] == "arrow_python"
+        assert cols[name]["calls"] == len(sink) == 3
     _assert_json_safe(sink, agg)
 
 

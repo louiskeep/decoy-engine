@@ -154,7 +154,7 @@ class TestCheckCompatibilityVerdict:
             "tables": [{"name": "aaa", "columns": []}, {"name": "bbb", "columns": []}],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="nope")
+            check_chunked_compatibility(cfg, table="nope", registry=get_default_registry())
         assert exc.value.code == "chunked_table_unknown"
         assert exc.value.path == "tables.nope"
         assert exc.value.message is not None
@@ -176,7 +176,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="synth")
+            check_chunked_compatibility(cfg, table="synth", registry=get_default_registry())
         assert exc.value.code == "chunked_generate_unsupported"
         assert exc.value.path == "tables.synth"
         assert exc.value.message is not None
@@ -199,7 +199,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "strategy_not_chunk_safe"
 
     def test_nonsafe_after_nondict_entry_still_rejects(self) -> None:
@@ -216,7 +216,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "strategy_not_chunk_safe"
 
     def test_nonsafe_after_admitted_conditional_still_rejects(self) -> None:
@@ -243,7 +243,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "strategy_not_chunk_safe"
 
     def test_offending_columns_named_and_joined(self) -> None:
@@ -264,7 +264,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "strategy_not_chunk_safe"
         assert exc.value.path == "tables.accounts.columns"
         assert "sa (shuffle), sb (shuffle)" in exc.value.message
@@ -278,7 +278,7 @@ class TestCheckCompatibilityVerdict:
             "tables": [{"name": "accounts", "columns": [{"strategy": "shuffle"}]}],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "strategy_not_chunk_safe"
         assert "? (shuffle)" in exc.value.message
 
@@ -304,7 +304,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert exc.value.path == "tables.accounts.columns"
         assert "em" in exc.value.message
@@ -330,7 +330,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "? (faker" in exc.value.message
 
@@ -363,7 +363,7 @@ class TestCheckCompatibilityVerdict:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "ca (faker" in exc.value.message
         assert "; cb (categorical" in exc.value.message

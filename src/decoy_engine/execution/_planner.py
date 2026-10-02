@@ -227,6 +227,7 @@ def classify_job(
         substrate=substrate,
         source_tables=source_tables,
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+        registry=registry,
     )
     if chunked_rejection is None:
         reason = (
@@ -269,6 +270,7 @@ def _chunked_rejection(
     substrate: str,
     source_tables: Mapping[str, pa.Table | LazySource] | None,
     auto_chunk_threshold_rows: int,
+    registry: ProviderRegistry,
 ) -> str | None:
     """None when the job is admissible for chunked streaming; else why not.
 
@@ -319,7 +321,7 @@ def _chunked_rejection(
     elif len(mask_tables) == 1:
         table = mask_tables[0]
         try:
-            check_chunked_compatibility(config, table=table)
+            check_chunked_compatibility(config, table=table, registry=registry)
         except PlanCompileError as exc:
             reasons.append(f"{exc.code}: {exc.message}")
             # The runtime source gates below read column values. A transform-bearing

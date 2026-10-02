@@ -15,9 +15,9 @@ Configurations (each is `variant, split, native_threads`):
   a    base, off, 1     (today's single full-frame call)
   b    base, on, 1
   c    base, on, 4
-  d0   extra, off, 1    d1   extra, on, 1     (an unconfigured column on t1 and t2: B1
-                                               reroutes both to its oracle route; B8 is
-                                               not on main, so this trigger applies)
+  d0   extra, off, 1    d1   extra, on, 1     (an unconfigured column on t1 and t2: with B8
+                                               on main it no longer reroutes them, so
+                                               this no longer measures a rerouted job)
 
 Method: one discarded warmup trial per configuration, then `--rounds` (7) measured rounds;
 each round runs every configuration once in an order shuffled by a seeded RNG (seed and
@@ -148,17 +148,11 @@ def _check_trial(
     routes = evidence["chunked_route_by_table"]
     for table in ("t1", "t2"):
         route = routes[table]
-        if name == "d1":
-            if route["native_admitted"] or not str(route["reroute_reason"]).startswith(
-                "uncovered_columns"
-            ):
-                problems.append(f"{table} expected an uncovered_columns reroute, got {route}")
-        else:
-            oracle = [
-                c["column"] for c in route["columns"] if c["executed_backend"] == "pandas_oracle"
-            ]
-            if not route["native_admitted"] or oracle:
-                problems.append(f"{table} expected native_admitted with no oracle columns: {route}")
+        # Since B8 the unconfigured column of the `extra` variant no longer reroutes the
+        # table, so every configuration, d1 included, runs native.
+        oracle = [c["column"] for c in route["columns"] if c["executed_backend"] == "pandas_oracle"]
+        if not route["native_admitted"] or oracle:
+            problems.append(f"{table} expected native_admitted with no oracle columns: {route}")
     return problems
 
 

@@ -169,6 +169,7 @@ from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
     gate_fk_child_edges,
 )
+from ._column_access import composite_provider_offenders
 from ._transforms_gate import reject_per_table_transforms
 
 # Admitted only when the column's config pins the deterministic
@@ -240,7 +241,7 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
     return failures
 
 
-def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
+def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry: Any) -> None:
     """Reject configs whose chunked run could not match a full-frame run.
 
     Raises PlanCompileError with codes:
@@ -253,7 +254,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         chunked_fk_child_namespace_mismatch: child namespace != parent namespace.
         chunked_fk_child_strategy_missing: child column has no explicit strategy.
         chunked_fk_child_strategy_mismatch: child strategy != parent strategy.
-        strategy_not_chunk_safe: a non-FK column uses a non-chunk-safe strategy.
+        strategy_not_chunk_safe: a non-chunk-safe strategy, or a composite provider.
         chunked_strategy_conditions_unmet: faker/categorical conditions unmet (listed).
         chunked_windowed_date_when_not_supported: `windowed_date` + `when:`.
         chunked_text_mask_when_not_supported: `text_mask` + `when:`.
@@ -306,10 +307,13 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     code_set_gate.reject_code_set_when(table_cfg, table=table)
     # `bucket_perturb` + `when:` inadmissible here too (see `_chunked_bucket_perturb.py`).
     bucket_perturb_gate.reject_bucket_perturb_when(table_cfg, table=table)
-    offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
-    for col_entry in table_cfg.get("columns") or []:
-        if not isinstance(col_entry, dict):
+    columns = [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)]
+    # Dispatch classifies by provider, not by strategy string; chunked output would
+    # overwrite a composite's other bundle columns with source values.
+    offending = composite_provider_offenders(columns, registry)
+    for col_entry in columns:
+        if str(col_entry.get("name", "?")) in dict(offending):
             continue
         strategy = col_entry.get("strategy")
         if strategy is None or strategy in _CHUNK_ADMITTED_STRATEGIES:
