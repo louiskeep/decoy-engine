@@ -70,6 +70,9 @@ GUARDED_MODULES: tuple[str, ...] = (
     # B2 (auto-chunk on the chunked dispatcher): a routing executor, so it must
     # not import `execution.physical` either.
     "execution/_pipeline_auto_chunk.py",
+    # B7 (independent multi-table dispatch): another routing executor, it calls
+    # `run_auto_chunk` per table and must not import `execution.physical` either.
+    "execution/_pipeline_multi_table.py",
     "execution/_pipeline_sources.py",
     "execution/_pipeline_finalize.py",
     "execution/_planner.py",
@@ -376,6 +379,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_auto_chunk.py",
         "src/decoy_engine/execution/_pipeline_generate_mask.py",
         "src/decoy_engine/execution/_pipeline_finalize.py",
+        # B7 (independent multi-table dispatch): `_pipeline_multi_table.py` decides which
+        # mask tables of an independent job run on B2's dispatcher lane and runs them one
+        # at a time; `_pipeline.py` gains the `multi_table_dispatch_enabled` knob,
+        # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
+        # split's evidence stamp. None imports `execution.physical`.
+        "src/decoy_engine/execution/_pipeline_multi_table.py",
     }
     unexpected = [
         name

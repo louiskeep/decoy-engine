@@ -761,7 +761,10 @@ def test_non_routed_jobs_never_enter_the_new_module(
     spies = support.spy_lanes(monkeypatch)
     if shape == "multi_table":
         cfg, sources = _two_table_job(tmp_path)
-        kwargs = support.run_kwargs()
+        # B7 dispatches independent multi-table jobs per table; this case pins the
+        # split-off run, and `test_multi_table_split_calls_run_auto_chunk_once_per_table`
+        # is the split-on sibling.
+        kwargs = support.run_kwargs(multi_table_dispatch_enabled=False)
     elif shape == "fk":
         cfg, sources = _fk_job(tmp_path)
         kwargs = support.run_kwargs()
@@ -779,6 +782,58 @@ def test_non_routed_jobs_never_enter_the_new_module(
     assert spies["auto_chunk.run_auto_chunk"] == []
     assert spies["entry.run_mask_chunked"] == []
     assert spies["route_exec.run_mask_chunked"] == []
+
+
+def test_multi_table_split_calls_run_auto_chunk_once_per_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+    spies = support.spy_lanes(monkeypatch)
+    cfg, sources = _two_table_job(tmp_path)
+    result = run_pipeline(cfg, sources=sources, **support.run_kwargs())
+    assert result.quality_metrics["auto_chunk"]["mode"] == "chunked"
+    assert [c[1]["table"] for c in spies["auto_chunk.run_auto_chunk"]] == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        "auto_chunk_off",
+        "dispatcher_off",
+        "split_off",
+        "quarantine",
+        "validators",
+        "vault_writer",
+    ],
+)
+def test_each_job_gate_keeps_a_multi_table_job_out_of_the_new_module(
+    gate: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+    spies = support.spy_lanes(monkeypatch)
+    cfg, sources = _two_table_job(tmp_path)
+    kwargs = support.run_kwargs()
+    if gate == "auto_chunk_off":
+        kwargs["auto_chunk"] = False
+    elif gate == "dispatcher_off":
+        kwargs["chunked_dispatcher_enabled"] = False
+    elif gate == "split_off":
+        kwargs["multi_table_dispatch_enabled"] = False
+    elif gate == "quarantine":
+        cfg["quarantine"] = {"enabled": True, "output_path": str(tmp_path / "q.parquet")}
+    elif gate == "validators":
+        cfg["validators"] = [
+            {"name": "regex_match", "columns": {"a": ["val"]}, "params": {"pattern": ".+"}}
+        ]
+    else:
+        from decoy_engine.vault import vault_writer_for_config
+
+        for table in cfg["tables"]:
+            table["columns"][0]["vault"] = True
+        kwargs["vault_writer"] = vault_writer_for_config(cfg)
+    run_pipeline(cfg, sources=sources, **kwargs)
+    assert spies["auto_chunk.run_auto_chunk"] == []
+    assert spies["entry.run_mask_chunked"] == []
 
 
 # ---------------------------------------------------------------------------
