@@ -3,8 +3,8 @@
 Status: record
 Date: 2026-10-02. Branch `feat/b6a-incremental-sink`, base engine main `02dc2827`. Plan:
 `docs/plans/2026-10-02-b6a-incremental-output-sink.md` (revision 2.1, Codex GO). Builder: Sonnet.
-Nothing is pushed or merged. One acceptance item is open: the oracle 10M benchmark cell (see
-"Benchmark"). Gates (dennis, Codex final) have not run.
+Nothing is pushed or merged. One frozen bar misses: W_oracle_10M p95 (see Benchmark); it goes to
+the owner. Gates (dennis fixes applied, Codex final) are pending.
 
 ## Commits
 
@@ -116,9 +116,9 @@ that exits normally has always committed (`commit()` is the last action and sets
 flag), so the mutant is equivalent. Not killed by a test; offered as an equivalence argument for
 dennis.
 
-## Benchmark (test 13): partial, frozen bars unchanged
+## Benchmark (test 13): frozen bars unchanged, one miss
 
-Run ID `B6A-BENCH-2026-10-02-3CELLS` (partial). Raw JSON, including every trial:
+Run ID `B6A-BENCH-2026-10-02` (three cells from the first run, the oracle 10M cell from the orchestrator's rerun). Raw JSON, including every trial:
 `docs/records/b6a-bench-2026-10-02/b6a-bench-3cells.json`. Harness:
 `scripts/bench-auto-chunk/bench_sink.py` and `bench_worker_sink.py`, run from a frozen copy of
 commit `f005e358`. Method as in the plan: B2's section 11 workload, `native_threads=1`,
@@ -136,7 +136,8 @@ nearest rank. Host: Intel i5-7500, Linux 6.17.2-1-pve. Peak and increment in MiB
 | native 10M | streamed | 42.82 / 53.24 / 56.41 | 10.5 / 10.8 / 12.6 | 1369 |
 | oracle 2M (178,666,464 / 226,000,000) | resident | 47.79 / 64.57 / 67.75 | 389 / 395 / 395 | 883 |
 | oracle 2M | streamed | 47.68 / 66.52 / 66.91 | 280 / 291 / 294 | 773 |
-| oracle 10M | both | pending, see below | | |
+| oracle 10M (893,331,020 / 1,130,000,000), 1 warmup + 5 rounds | resident | 261.7 / 267.4 / 267.4 | 1823 / 1832 / 1832 | 3294 |
+| oracle 10M, 1 warmup + 5 rounds | streamed | 254.3 / 347.7 / 347.7 | 44.7 / 48.2 / 48.2 | 1512 |
 
 Correctness: all 120 measured trials of these three cells (20 per configuration per cell)
 matched the reference bytes; every streamed trial recorded `outputs_streamed` true,
@@ -154,16 +155,31 @@ Bars on the completed cells:
   1518, ratio 0.007. Pass.
 - M2 native (streamed p95 at 10M at most `max(1.25 x streamed p95 at 2M, that + 128 MiB)`): 10.8
   against a limit of 353 MiB. Pass.
-- M1 and M2 for the oracle route, W and the ceiling for oracle 10M: not evaluated. Pending.
+- Oracle 10M (rerun alone by the orchestrator in an idle window, one warmup and five measured
+  rounds per configuration because the pandas path gets few runs; the frozen method says
+  twenty, so this cell is a reduced run): M1 oracle 48.2 MiB over the resident p50 of 1823 MiB,
+  ratio 0.026, pass. M2 oracle: 48.2 MiB against a limit of 419 MiB (`max(1.25 x 291, 291 + 128)`),
+  pass. Ceiling: streamed peak max 1512 MiB against 3.0 GiB, pass. All measured trials matched
+  the reference bytes with no recorded problem.
+- **W_oracle_10M misses on p95: p50 ratio 0.972 (pass), p95 ratio 1.300 against the 1.15 bar
+  (fail).** With five rounds the nearest-rank p95 is the maximum, and the streamed maximum is one
+  trial at 347.7 s; the other four streamed trials are 243 to 256 s against resident 251 to 267 s.
+  The cause of the one slow trial is not established. This is a frozen-bar miss and goes to the
+  owner: the bar was not changed. A twenty-round rerun of the oracle 10M cell would show whether
+  it is noise.
 
-Pending: the oracle 10M cell (46 trials at about 250 s each) was interrupted when the orchestrator
-stopped the run because it held the machine-wide lock for hours. The partial trials were not
-kept. The orchestrator will rerun it alone in an idle window with `--workloads oracle --rows
-10000000` and merge the result; M1 and M2 for the oracle family need that cell plus the saved
-oracle 2M cell. No bar, ceiling or constant was changed. The first 16 oracle 10M trials seen in
-the log showed streamed increments near 46 to 50 MiB against resident near 1830 MiB and wall times
-of 244 to 282 s streamed against 249 to 255 s resident, from the console only; those are not
-evidence.
+Merge result (`docs/records/b6a-bench-2026-10-02/b6a-bench-merged.json`, produced by `bench_sink.py
+merge` over the saved three cells and the new cell): 7 of 8 bars pass; `all_pass` is false
+because of `W_oracle_10000000` alone. The raw oracle 10M trials are in `oracle-10m-results.jsonl`
+and `oracle-10m-meta.json` in the same directory.
+
+Why the first merge reported the cell as pending: not a tagging bug. The jsonl is clean (a
+reference row, one warmup per mode, rounds 0 to 4 for both modes, so the resident and streamed
+round sets are equal). `merge` hard-coded twenty measured trials per mode and refused the cell.
+It now takes the required count from `meta.json` (`--min-rounds` overrides), so a deliberately
+reduced run merges at its recorded N; without `meta.json` it still requires twenty.
+`tests/unit/scripts/test_bench_sink_merge.py` covers the one-warmup, five-round case and the
+rejection without a recorded reduced run.
 
 ## Dennis gate fixes (after `ca73b4ee`)
 

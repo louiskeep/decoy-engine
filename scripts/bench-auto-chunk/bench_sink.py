@@ -314,14 +314,20 @@ def merge(args: argparse.Namespace) -> int:
     for saved in args.saved:
         cells.update(json.loads(Path(saved).read_text())["cells"])
     entries = _load_jsonl(out_dir / "results.jsonl")
+    # The frozen method is 20 measured rounds. A cell deliberately run with fewer (`run
+    # --rounds N`, recorded in meta.json) is merged at that N and the record must say so.
+    meta_path = out_dir / "meta.json"
+    needed = args.min_rounds or (
+        json.loads(meta_path.read_text())["rounds"] if meta_path.exists() else 20
+    )
     for cell in sorted({e["cell"] for e in entries}):
         built = cell_from_entries(entries, cell)
         if built is None:
             print(f"cell {cell} is incomplete in results.jsonl; not merged", file=sys.stderr)
             continue
         counts = {m: len(built["trials"][m]) for m in MODES}
-        if min(counts.values()) < 20:
-            print(f"cell {cell} has {counts} measured trials, need 20 each", file=sys.stderr)
+        if min(counts.values()) < needed:
+            print(f"cell {cell} has {counts} measured trials, need {needed} each", file=sys.stderr)
             continue
         cells[cell] = built
     bars = evaluate_bars(cells)
@@ -348,6 +354,7 @@ def main() -> int:
     merger.add_argument("--out-dir", required=True)
     merger.add_argument("--saved", nargs="+", default=[])
     merger.add_argument("--merged-out")
+    merger.add_argument("--min-rounds", type=int, default=0)
     merger.set_defaults(func=merge)
     args = parser.parse_args()
     return int(args.func(args))

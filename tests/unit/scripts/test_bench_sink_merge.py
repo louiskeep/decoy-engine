@@ -61,9 +61,15 @@ def _entries(rounds: int = 20, streamed_scale: float = 1.0) -> list[dict[str, An
     return out
 
 
-def _merge(bench: Any, tmp_path: Path, entries: list[dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+def _merge(
+    bench: Any, tmp_path: Path, entries: list[dict[str, Any]], *, meta_rounds: int | None = None
+) -> tuple[int, dict[str, Any]]:
     (tmp_path / "results.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
-    args = argparse.Namespace(out_dir=str(tmp_path), saved=[str(SAVED)], merged_out=None)
+    if meta_rounds is not None:
+        (tmp_path / "meta.json").write_text(json.dumps({"rounds": meta_rounds}))
+    args = argparse.Namespace(
+        out_dir=str(tmp_path), saved=[str(SAVED)], merged_out=None, min_rounds=0
+    )
     code = bench.merge(args)
     return code, json.loads((tmp_path / "merged.json").read_text())
 
@@ -111,3 +117,35 @@ def test_an_incomplete_cell_is_not_merged_and_its_bars_stay_pending(
     assert "oracle_10000000" not in merged["cells"]
     assert merged["bars"]["M1_oracle"]["status"] == "pending"
     assert merged["bars"]["all_pass"] is False and code == 1
+
+
+def _with_warmup(entries: list[dict[str, Any]], rounds: int) -> list[dict[str, Any]]:
+    """A `--warmups 1 --rounds N` cell: a warmup row per mode, then rounds 0..N-1."""
+    out = [e for e in entries if e["kind"] == "reference"]
+    for mode in ("resident", "streamed"):
+        warm = next(e for e in entries if e["mode"] == mode and e["kind"] == "measured")
+        out.append({**copy.deepcopy(warm), "kind": "warmup", "round": 0})
+    out += [e for e in entries if e["kind"] == "measured" and e["round"] < rounds]
+    return out
+
+
+def test_a_one_warmup_five_round_cell_is_complete_and_evaluated(
+    bench: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entries = _with_warmup(_entries(streamed_scale=0.05), 5)
+    code, merged = _merge(bench, tmp_path, entries, meta_rounds=5)
+    capsys.readouterr()
+    cell = merged["cells"]["oracle_10000000"]
+    assert len(cell["trials"]["resident"]) == len(cell["trials"]["streamed"]) == 5
+    for key in ("W_oracle_10000000", "M1_oracle", "M2_oracle"):
+        assert merged["bars"][key]["pass"] is True, key
+    assert merged["bars"]["all_pass"] is True and code == 0
+
+
+def test_five_rounds_without_a_recorded_reduced_run_are_still_rejected(
+    bench: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entries = _with_warmup(_entries(streamed_scale=0.05), 5)
+    code, merged = _merge(bench, tmp_path, entries)
+    capsys.readouterr()
+    assert "oracle_10000000" not in merged["cells"] and code == 1

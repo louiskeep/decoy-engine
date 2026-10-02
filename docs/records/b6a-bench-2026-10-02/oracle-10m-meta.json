@@ -1,0 +1,7 @@
+{
+ "seed": 20261002,
+ "rounds": 5,
+ "warmups": 1,
+ "platform": "Linux-6.17.2-1-pve-x86_64-with-glibc2.36",
+ "cpu": "Intel(R) Core(TM) i5-7500 CPU @ 3.40GHz"
+}
