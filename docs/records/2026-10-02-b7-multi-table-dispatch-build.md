@@ -52,7 +52,7 @@ Commit `0b4e9639`. Each is a mistake in my test, not a weakening of an assertion
 - A spy on `PandasExecutionAdapter.run` counted B1's per-chunk oracle calls for a dispatched table as the group starting. The spy now looks for a call that carries the group table.
 - Quality metrics from two runs were compared with their wall-clock fields. The comparison now strips keys ending in `_ms`.
 - The contract matrix did not apply the type rule for the standard `h` and `r` columns on cases that name no string-output set, and treated an all-null native Faker column as `string` on the companion-absent route, where B2 guarantee 3 (b) says its type equals the split-off type. Both now follow B2's per-route rule.
-- Loosened: the warning test asserted exactly two `fpe_join_group_active` warnings (one per table). The adapter emits one per column, so the split-off run has four. The test now asserts at least two. The assertion that matters, that the split run's warnings are a permutation of the split-off run's with duplicates kept, is unchanged.
+- Loosened, then restored (dennis MEDIUM-1): the warning test first asserted exactly two `fpe_join_group_active` warnings, then `>= 2`. The exact count is four (one per column per table) and is asserted again, see the dennis section.
 
 The fixture builder for the contract matrix also drops `time64_ns_nonaligned`: that source cannot be converted by the full-frame run either (`ArrowInvalid: Value 7 has non-zero nanoseconds`), so no split-off reference exists for it. The aligned `time64[ns]` column is in the matrix.
 
@@ -117,7 +117,7 @@ Reading RSS: a worker that only builds the sources holds 687,562,752 bytes (`bas
 
 1. **Table gate via `classify_job`.** The plan calls `_planner._chunked_rejection` with the job's `work` and `ordered_work`. `decide_multi_table_split` calls `classify_job` once per table on the config restricted to that table, passing only that table's source (or `{}` when it has none). `classify_job` runs the same `_chunked_rejection` with the same arguments, so the gate is the planner's own, and the dispatched reason and the rejection reason are the single-table job's by construction, instead of copied from a string. The cost is one `build_work_list` per table.
 2. **Per-table evidence built in the executor.** The plan's `split_reproducibility_stamp(split, *, chunk_size_rows, auto_chunk_threshold_rows)` has no sources, so it states the six reproducibility keys, and `run_multi_table_split` puts the lane keys and the `tables` list in the partial `auto_chunk` block that `merge_lane_stamp` merges. The result has the shape section 8 describes.
-3. **One loosened assertion in my own test**, described under "Test corrections on first contact".
+3. The one loosened assertion in my own test was restored after the gate, see the dennis section.
 4. **Registry sentry coverage.** Plan test 2's registry sentry runs two calls per fixture for 23 of the 24 `SCALAR_HANDLERS` strategies (the chunk-admitted fixtures plus new fixtures for `shuffle`, `categorical` and `nested` unseeded variants, `formula`, `derived`, `derived_aggregate`, `grouped_series`, `joint_mask`). `geo_generalize` has no fixture because its `h3` dependency is not installed here. A source scan test over `execution/_strategies` (any unseeded `default_rng()`, `random.Random()`, global `random` call or `uuid4`) pins that only the `categorical` and `shuffle` modules draw from an unseeded generator, so a new unseeded path fails CI either way. The runtime sentry fails if a registry strategy has neither a fixture nor an entry in `UNFIXTURED`.
 5. **Mutation tooling.** mutmut was not run; see Mutation.
 6. **Docs outside this repo.** The roadmap and shipped log (`decoy-platform/docs/ROADMAP.md`) and the sprint and testing ledger are not updated by this build.
@@ -128,3 +128,17 @@ Reading RSS: a worker that only builds the sources holds 687,562,752 bytes (`bas
 - A split call reports `auto_chunk.mode == "chunked"` even when some tables ran full-frame, so the platform's route label reads `legacy_chunked`. This is a known issue in the plan (B3 reads `auto_chunk.tables`).
 - The group's `adapter.run` still sees plan nodes for dispatched tables and skips them because it has no frame for them. Tests 4 and 5 pin that the group output equals the split-off output.
 - `explain_plan` does not show the per-table split, as the plan says.
+
+## dennis gate and dispositions
+
+Verdict GO with fixes: 0 blocker, 0 high, 3 medium, 3 low. All six applied in this worktree.
+
+| Finding | Disposition |
+|---|---|
+| MEDIUM-1: warning assertion loosened to `>= 2` | Restored to exactly four `fpe_join_group_active` warnings. `fpe_a` and `fpe_b` now share one join group and namespace and the same column names, so two warnings share a key; a `Counter` of keys shows count 2 for each key in both the split and the split-off run. No table-agnostic warning that both a dispatched unit and the full-frame group can emit was found: a `fpe_join_group` table is always rejected by the chunked gate, so it only runs in the group, and deterministic Faker tables with a two-entry pool emit no warning on either route. There is therefore no cross-unit duplicate case to add; the duplicate-kept-twice contract is pinned across two group tables. |
+| MEDIUM-2: false "cannot disagree" comments | The comment in `_pipeline.py` and the `decide_chunk_route` docstring now say `execution_plan` is the static job-level classification and a split is reported in `auto_chunk.tables`. No behavior change; `_pipeline.py` stays at 679 lines. |
+| LOW-1: no Design 8 log line | `run_multi_table_split` logs one INFO line naming the dispatched tables and the full-frame group (names only). A caplog test pins the exact line and that no value appears. |
+| LOW-2: try/except shape in the relationships test | The test now asserts the actual outcome: the job succeeds, never enters the split, and equals the split-off run. |
+| LOW-3: pool and corpus loading contract | The module docstring states that per-unit pool and code-set loading relies on the S5 F2 deterministic pool-build contract. |
+
+Re-run after the fixes: the five B7 test files, `test_auto_chunk_dispatcher.py`, `test_auto_chunk_routing.py` and `tests/sentry`: 2652 passed, 1 skipped. `ruff check`, `ruff format --check` and `mypy src/decoy_engine testflight` are clean.
