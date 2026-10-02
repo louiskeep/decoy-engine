@@ -668,3 +668,50 @@ def test_native_route_refuses_through_the_projection_call_if_admitted_under_erro
         next(gen)
     assert info.value.code == "undeclared_output_columns"
     assert sink == []
+
+
+# ---------------------------------------------------------------------------
+# Test 13: stored pandas index fields are dropped on the native route
+# ---------------------------------------------------------------------------
+
+
+def _pandas_source(kind: str, origin: str, tmp_path: Any) -> list[pa.Table]:
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    n = 8
+    df = pd.DataFrame(
+        {
+            "r": [f"a{i}" for i in range(n)],
+            "t": [f"bcdef{i}" for i in range(n)],
+            "u": [f"extra{i}" for i in range(n)],
+        }
+    )
+    df.index = pd.Index([f"i{i}" for i in range(n)], name="rid" if kind == "named" else None)
+    table = pa.Table.from_pandas(df)
+    if origin == "parquet":
+        path = tmp_path / "w.parquet"
+        pq.write_table(table, path)
+        table = pq.read_table(path)
+    assert table.schema.pandas_metadata["index_columns"]
+    return [table.slice(0, 3), table.slice(3, 3), table.slice(6, 2)]
+
+
+@pytest.mark.parametrize("origin", ["memory", "parquet"])
+@pytest.mark.parametrize("kind", ["unnamed", "named"])
+def test_stored_pandas_index_field_is_dropped_on_the_native_route(
+    kind: str, origin: str, tmp_path: Any
+) -> None:
+    from decoy_engine.execution._transforms import stored_index_fields
+
+    chunks = _pandas_source(kind, origin, tmp_path)
+    stored = stored_index_fields(chunks[0].schema)
+    assert len(stored) == 1
+    native, forced = run_pair([redact("r"), truncate("t")], chunks)
+    assert_same_as_oracle(native, forced)
+    for out in native.out:
+        assert not (stored & set(out.column_names))
+        assert out.column_names == ["r", "t", "u"]
+    for result in native.sink:
+        (warning,) = result.warnings
+        assert warning.detail == {"table": TABLE, "undeclared_columns": ["u"]}
