@@ -154,10 +154,13 @@ def route_of(result: Any, table: str) -> dict[str, Any] | None:
     return (result.quality_metrics.get("chunked_route_by_table") or {}).get(table)
 
 
-def normalized_metrics(result: Any) -> dict[str, Any]:
-    """`quality_metrics` without the split's own evidence keys, for byte-for-byte
-    comparisons between no-split runs and the split-off run."""
-    return dict(result.quality_metrics)
+def strip_elapsed(value: Any) -> Any:
+    """`value` with every wall-clock field removed, so two runs of one job compare equal."""
+    if isinstance(value, dict):
+        return {k: strip_elapsed(v) for k, v in value.items() if not k.endswith("_ms")}
+    if isinstance(value, (list, tuple)):
+        return type(value)(strip_elapsed(v) for v in value)
+    return value
 
 
 def timing_keys(result: Any) -> list[tuple[str, str]]:

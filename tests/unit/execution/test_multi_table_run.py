@@ -293,7 +293,10 @@ def test_a_failing_dispatched_table_wins_over_a_failing_group_table(
     with pytest.raises(ExecutionError) as split:
         run_pipeline(cfg, sources=sources, **mt.kw())
     assert split.value.code == "boom_zcol"
-    assert adapter_calls == [], "the group must not start after a dispatched failure"
+    # B1's oracle route also calls the adapter, per chunk, for the dispatched table; only a
+    # call that carries the group table "a" would be the group starting.
+    group_calls = [c for c in adapter_calls if "a" in c[0][1]]
+    assert group_calls == [], "the group must not start after a dispatched failure"
 
 
 def test_row_error_aggregation_differs_as_declared(tmp_path: Path) -> None:

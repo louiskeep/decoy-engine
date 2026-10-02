@@ -62,7 +62,7 @@ def _assert_golden(
     assert calls == []
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw(), **extra))
     _assert_tables_equal(got, off)
-    assert got.quality_metrics == off.quality_metrics
+    assert mt.strip_elapsed(got.quality_metrics) == mt.strip_elapsed(off.quality_metrics)
     assert got.warnings == off.warnings
     assert mt.timing_keys(got) == mt.timing_keys(off)
     assert got.boundary_conversion_ms >= 0
@@ -221,7 +221,7 @@ def test_kill_switches_and_forced_routes_keep_the_full_frame_call(
     calls = mt.spy_split(monkeypatch)
     got = run_pipeline(cfg, sources=sources, **mt.kw(**knob))
     assert calls == []
-    off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw(), **knob))
+    off = run_pipeline(cfg, sources=sources, **mt.kw(**{**mt.off_kw(), **knob}))
     _assert_tables_equal(got, off)
 
 
