@@ -169,3 +169,34 @@ def timing_keys(result: Any) -> list[tuple[str, str]]:
 
 def same_error(a: BaseException, b: BaseException) -> bool:
     return type(a) is type(b) and getattr(a, "code", None) == getattr(b, "code", None)
+
+
+def outcome(fn: Any) -> tuple[str, Any]:
+    """`("ok", result)` or `("err", exception)`, so a golden comparison covers errors too."""
+    try:
+        return "ok", fn()
+    except Exception as exc:
+        return "err", exc
+
+
+def assert_same_outcome(got: tuple[str, Any], off: tuple[str, Any], *, expect: str = "ok") -> None:
+    """The split run and the split-off run are indistinguishable: equal outputs (with schema
+    metadata), quality metrics without wall-clock fields, warnings, timing keys and row errors,
+    or the same exception type, code and message."""
+    assert got[0] == off[0] == expect, (got, off)
+    if got[0] == "err":
+        assert mt_same_error(got[1], off[1])
+        assert str(got[1]) == str(off[1])
+        return
+    a, b = got[1], off[1]
+    assert list(a.outputs) == list(b.outputs)
+    for name in a.outputs:
+        assert a.outputs[name].equals(b.outputs[name], check_metadata=True), name
+    assert strip_elapsed(a.quality_metrics) == strip_elapsed(b.quality_metrics)
+    assert a.warnings == b.warnings
+    assert timing_keys(a) == timing_keys(b)
+    assert a.row_errors == b.row_errors
+
+
+def mt_same_error(a: BaseException, b: BaseException) -> bool:
+    return same_error(a, b)

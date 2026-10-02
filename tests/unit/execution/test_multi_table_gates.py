@@ -14,7 +14,8 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.errors import RowErrorsFailedError
+from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import RowErrorsFailedError, ValidatorFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _multi_table_support as mt
@@ -54,19 +55,19 @@ def _assert_golden(
     cfg: dict[str, Any],
     sources: dict[str, pa.Table],
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    expect: str = "ok",
     **extra: Any,
 ) -> Any:
     """No split: the executor is never entered and every observable equals the split-off run."""
     calls = mt.spy_split(monkeypatch)
-    got = run_pipeline(cfg, sources=sources, **mt.kw(**extra))
+    got = mt.outcome(lambda: run_pipeline(cfg, sources=sources, **mt.kw(**extra)))
     assert calls == []
-    off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw(), **extra))
-    _assert_tables_equal(got, off)
-    assert mt.strip_elapsed(got.quality_metrics) == mt.strip_elapsed(off.quality_metrics)
-    assert got.warnings == off.warnings
-    assert mt.timing_keys(got) == mt.timing_keys(off)
-    assert got.boundary_conversion_ms >= 0
-    return got
+    off = mt.outcome(
+        lambda: run_pipeline(cfg, sources=sources, **mt.kw(**{**mt.off_kw(), **extra}))
+    )
+    mt.assert_same_outcome(got, off, expect=expect)
+    return got[1]
 
 
 # ---------------------------------------------------------------------------
@@ -100,15 +101,11 @@ def _fk_three_tables(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table
 
 
 @pytest.mark.parametrize("mode", ["auto", "full_frame"])
-def test_fk_edge_never_enters_the_split(
+def test_fk_edge_is_a_golden_no_split(
     mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg, sources = _fk_three_tables(tmp_path)
-    calls = mt.spy_split(monkeypatch)
-    got = run_pipeline(cfg, sources=sources, **mt.kw(execution_mode=mode))
-    assert calls == []
-    off = run_pipeline(cfg, sources=sources, **mt.kw(execution_mode=mode, **mt.off_kw()))
-    _assert_tables_equal(got, off)
+    _assert_golden(cfg, sources, monkeypatch, execution_mode=mode)
 
 
 def test_relationships_block_without_a_profiled_edge_never_enters_the_split(
@@ -134,11 +131,7 @@ def test_relationships_block_without_a_profiled_edge_never_enters_the_split(
             ]
         },
     )
-    calls = mt.spy_split(monkeypatch)
-    got = run_pipeline(cfg, sources=sources, **mt.kw())
-    assert calls == []
-    off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
-    _assert_tables_equal(got, off)
+    _assert_golden(cfg, sources, monkeypatch)
 
 
 def test_shared_namespace_masks_the_same_value_the_same_in_both_units(
@@ -170,33 +163,37 @@ def test_shared_namespace_masks_the_same_value_the_same_in_both_units(
 # ---------------------------------------------------------------------------
 
 
-def test_one_mask_table_never_enters_the_split(
+def test_one_mask_table_is_a_golden_no_split(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg, sources = mt.build_job(tmp_path, {"only": (mt.std_columns("o_ns"), mt.string_table())})
-    calls = mt.spy_split(monkeypatch)
-    run_pipeline(cfg, sources=sources, **mt.kw())
-    assert calls == []
+    _assert_golden(cfg, sources, monkeypatch)
 
 
-def test_generate_table_present_never_enters_the_split(
+def test_generate_table_present_is_a_golden_no_split(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg, sources = _two_big(tmp_path)
-    cfg["tables"].append(
+    gen = PipelineConfig.model_validate(
         {
-            "name": "gen",
-            "generate_columns": [{"name": "g", "type": "faker", "provider": "person_first_name"}],
-            "rows": 5,
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "gen",
+                    "row_count": 5,
+                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1}],
+                }
+            ],
+            "targets": {"gen": {"type": "file", "format": "parquet", "path": "/dev/null"}},
         }
-    )
-    cfg["targets"]["gen"] = dict(cfg["targets"]["a"])
-    calls = mt.spy_split(monkeypatch)
-    try:
-        run_pipeline(cfg, sources=sources, **mt.kw())
-    except Exception:  # the fixture shape is not the point; the gate is
-        pass
-    assert calls == []
+    ).model_dump()
+    cfg["tables"].append(gen["tables"][0])
+    cfg["targets"]["gen"] = gen["targets"]["gen"]
+    got = _assert_golden(cfg, sources, monkeypatch)
+    assert got.outputs["gen"].num_rows == 5
+    assert mt.dispatched_tables(got) == []
 
 
 @pytest.mark.parametrize(
@@ -208,17 +205,39 @@ def test_generate_table_present_never_enters_the_split(
     ],
     ids=["auto_chunk_off", "dispatcher_off", "split_off"],
 )
-def test_kill_switches_and_forced_routes_keep_the_full_frame_call(
+def test_kill_switches_keep_the_full_frame_call(
     knob: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if "multi_table_dispatch_enabled" in knob and not mt.split_supported():
         pytest.skip("the knob does not exist before B7")
     cfg, sources = _two_big(tmp_path)
     calls = mt.spy_split(monkeypatch)
-    got = run_pipeline(cfg, sources=sources, **mt.kw(**knob))
+    got = mt.outcome(lambda: run_pipeline(cfg, sources=sources, **mt.kw(**knob)))
     assert calls == []
-    off = run_pipeline(cfg, sources=sources, **mt.kw(**{**mt.off_kw(), **knob}))
-    _assert_tables_equal(got, off)
+    off = mt.outcome(lambda: run_pipeline(cfg, sources=sources, **mt.kw(**{**mt.off_kw(), **knob})))
+    mt.assert_same_outcome(got, off)
+    assert mt.dispatched_tables(got[1]) == []
+
+
+def test_a_forced_substrate_reaches_the_same_outcome_with_the_split_on_and_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The substrate is resolved before routing, so a non-pandas substrate fails the same way
+    with the split on and off, and an env-resolved pandas substrate splits as usual."""
+    cfg, sources = _two_big(tmp_path)
+    calls = mt.spy_split(monkeypatch)
+    got = mt.outcome(lambda: run_pipeline(cfg, sources=sources, **mt.kw(substrate="polars")))
+    off = mt.outcome(
+        lambda: run_pipeline(
+            cfg, sources=sources, **mt.kw(**{**mt.off_kw(), "substrate": "polars"})
+        )
+    )
+    mt.assert_same_outcome(got, off, expect="err")
+    assert got[1].code == "invalid_substrate"
+    assert calls == []
+    monkeypatch.setenv("DECOY_SUBSTRATE", "pandas")
+    env_run = run_pipeline(cfg, sources=sources, **mt.kw(substrate=None))
+    assert mt.dispatched_tables(env_run) == ["a", "b"]
 
 
 def test_no_table_passing_the_table_gate_is_a_golden_no_split(
@@ -287,13 +306,16 @@ def test_validators_failing_with_a_row_error_raise_the_same_validator_error(
         },
     )
     calls = mt.spy_split(monkeypatch)
-    errors: list[BaseException] = []
+    errors: list[ValidatorFailedError] = []
     for extra in ({}, mt.off_kw()):
-        with pytest.raises(Exception) as raised:
+        with pytest.raises(ValidatorFailedError) as raised:
             run_pipeline(cfg, sources=sources, **mt.kw(**extra))
         errors.append(raised.value)
     assert calls == []
-    assert mt.same_error(errors[0], errors[1])
+    on_report, off_report = errors[0].report, errors[1].report
+    assert on_report.passed is False
+    assert on_report.findings == off_report.findings and on_report.findings
+    assert on_report.validators_run == off_report.validators_run
     assert str(errors[0]) == str(errors[1])
 
 
@@ -339,12 +361,13 @@ def test_vault_writer_job_stays_whole_and_ends_with_the_same_entries(
         },
     )
     calls = mt.spy_split(monkeypatch)
-    w_on = _vault_writer(cfg)
-    got = run_pipeline(cfg, sources=sources, vault_writer=w_on, **mt.kw())
-    w_off = _vault_writer(cfg)
-    off = run_pipeline(cfg, sources=sources, vault_writer=w_off, **mt.kw(**mt.off_kw()))
+    w_on, w_off = _vault_writer(cfg), _vault_writer(cfg)
+    got = mt.outcome(lambda: run_pipeline(cfg, sources=sources, vault_writer=w_on, **mt.kw()))
+    off = mt.outcome(
+        lambda: run_pipeline(cfg, sources=sources, vault_writer=w_off, **mt.kw(**mt.off_kw()))
+    )
     assert calls == []
-    _assert_tables_equal(got, off)
+    mt.assert_same_outcome(got, off)
     assert w_on._entries == w_off._entries
     assert len(w_on._entries) == mt.BIG + mt.SMALL
 
@@ -352,7 +375,6 @@ def test_vault_writer_job_stays_whole_and_ends_with_the_same_entries(
 def test_vault_file_round_trip_equals_the_split_off_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("cryptography")
     from decoy_engine.plan._seed import _normalize_job_seed
     from decoy_engine.vault import load_vault
 
@@ -500,16 +522,31 @@ def test_unseeded_randomness_keeps_the_full_frame_call(
     assert len(adapter_calls) == 1
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
     assert len(adapter_calls) == 2
-    assert adapter_calls[0][1].keys() == adapter_calls[1][1].keys()
+    _assert_same_adapter_call(adapter_calls[0], adapter_calls[1])
+    assert mt.strip_elapsed(got.quality_metrics) == mt.strip_elapsed(off.quality_metrics)
+    assert got.warnings == off.warnings
+    assert mt.timing_keys(got) == mt.timing_keys(off)
+    assert list(got.outputs) == list(off.outputs)
     assert got.outputs["big"].equals(off.outputs["big"], check_metadata=True)
-    for name in ("h",):
-        assert (
-            got.outputs["tiny"].column(name).to_pylist()
-            == off.outputs["tiny"].column(name).to_pylist()
-        )
+    assert (
+        got.outputs["tiny"].column("h").to_pylist() == off.outputs["tiny"].column("h").to_pylist()
+    )
     got_v, off_v = got.outputs["tiny"].column("v"), off.outputs["tiny"].column("v")
     assert got_v.type == off_v.type
     assert got_v.null_count == off_v.null_count
+
+
+def _assert_same_adapter_call(a: tuple[Any, Any], b: tuple[Any, Any]) -> None:
+    """Every positional and keyword argument of the two `adapter.run` calls is equal."""
+    (a_args, a_kwargs), (b_args, b_kwargs) = a, b
+    assert len(a_args) == len(b_args) == 2
+    assert a_args[0] == b_args[0]  # the compiled plan
+    assert list(a_args[1]) == list(b_args[1])
+    for name in a_args[1]:
+        assert a_args[1][name].equals(b_args[1][name], check_metadata=True), name
+    assert a_kwargs.keys() == b_kwargs.keys()
+    for key, value in a_kwargs.items():
+        assert value == b_kwargs[key], key
 
 
 def test_unseeded_random_nodes_reports_exactly_the_unseeded_columns(tmp_path: Path) -> None:
@@ -587,9 +624,10 @@ def test_two_calls_of_every_repeatable_fixture_agree_and_unseeded_ones_differ(
         **extra.EXTRA_FIXTURES,
     }
     covered = {key.split(":")[0] for key in fixtures}
-    assert covered == set(SCALAR_HANDLERS) - extra.UNFIXTURED, (
-        sorted(set(SCALAR_HANDLERS) - covered - extra.UNFIXTURED),
-        "a strategy has no fixture here; add one to _multi_table_sentry_fixtures",
+    assert covered == set(SCALAR_HANDLERS), (
+        sorted(set(SCALAR_HANDLERS) ^ covered),
+        "the fixtures and the live registry differ; add or remove one in "
+        "_multi_table_sentry_fixtures",
     )
     for key, (columns, data) in sorted(fixtures.items()):
         n = 1000

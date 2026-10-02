@@ -1,9 +1,8 @@
 """Strategy fixtures for the job-gate-9 registry sentry (B7 acceptance test 2).
 
 `_auto_chunk_strategies.STRATEGY_FIXTURES` covers the chunk-admitted strategies; these
-cover the rest of `SCALAR_HANDLERS`, including the unseeded variants. `UNFIXTURED` names
-the strategies no fixture can exercise in this environment, each with the reason, and the
-sentry asserts the two sets together cover the live registry.
+cover the rest of `SCALAR_HANDLERS`, including the unseeded variants. The sentry asserts the two
+sets together cover the live registry exactly.
 """
 
 from __future__ import annotations
@@ -69,6 +68,31 @@ EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
         ],
         {"val": pa.array([f'{{"k": "z{i}"}}' for i in range(N)])},
     ),
+    "nested:unseeded_shuffle": (
+        [
+            _col(
+                "val",
+                "nested",
+                deterministic=False,
+                provider_config={"target": "$.k", "strategy": "shuffle"},
+            )
+        ],
+        {"val": pa.array([f'{{"k": "z{i}"}}' for i in range(N)])},
+    ),
+    "geo_generalize:zip": (
+        [
+            _col(
+                "val",
+                "geo_generalize",
+                provider_config={
+                    "type": "zip",
+                    "cascade": ["zip5", "zip3", "suppress"],
+                    "k_threshold": 1,
+                },
+            )
+        ],
+        {"val": pa.array([f"{98100 + i % 17:05d}" for i in range(N)])},
+    ),
     "faker:seeded_from_job": (
         [_col("val", "faker", provider="person_first_name", deterministic=False)],
         {"val": _s("x{i}")},
@@ -126,7 +150,3 @@ EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
         },
     ),
 }
-
-# The geo extra (h3) is not installed in every environment; the unseeded scan in
-# test_multi_table_gates covers the strategy's module either way.
-UNFIXTURED: frozenset[str] = frozenset({"geo_generalize"})

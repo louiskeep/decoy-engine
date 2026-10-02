@@ -6,7 +6,7 @@ Date: 2026-10-02. Plan: `docs/plans/2026-10-01-multi-table-dispatch.md` (revisio
 
 ## What shipped
 
-An independent multi-table `run_pipeline` job (no FK edge, no `relationships` block) now runs each mask table on the route it would take alone. A table that would auto-chunk as a single-table job masks through B2's `run_auto_chunk`, one table at a time in `tables:` config order. Every other table runs in one full-frame adapter call, as before. The new module is `src/decoy_engine/execution/_pipeline_multi_table.py` (314 lines, under the plan's 600-line cap). `run_pipeline` gains `multi_table_dispatch_enabled` (default `True`, the kill switch). A job stays whole when quarantine is enabled, a vault writer is passed, validators are configured, a mask column uses unseeded randomness, a generate table is present, or the dispatcher or auto-chunk is off.
+An independent multi-table `run_pipeline` job (no FK edge, no `relationships` block) now runs each mask table on the route it would take alone. A table that would auto-chunk as a single-table job masks through B2's `run_auto_chunk`, one table at a time in `tables:` config order. Every other table runs in one full-frame adapter call, as before. The new module is `src/decoy_engine/execution/_pipeline_multi_table.py` (327 lines, under the plan's 600-line cap). `run_pipeline` gains `multi_table_dispatch_enabled` (default `True`, the kill switch). A job stays whole when quarantine is enabled, a vault writer is passed, validators are configured, a mask column uses unseeded randomness, a generate table is present, or the dispatcher or auto-chunk is off.
 
 `_pipeline.py` stays at its 679-line ratchet: the four lines the knob adds are paid for by tightening the `_provider_snapshot` docstring paragraph and one routing sentence. No ratchet moved.
 
@@ -118,7 +118,7 @@ Reading RSS: a worker that only builds the sources holds 687,562,752 bytes (`bas
 1. **Table gate via `classify_job`.** The plan calls `_planner._chunked_rejection` with the job's `work` and `ordered_work`. `decide_multi_table_split` calls `classify_job` once per table on the config restricted to that table, passing only that table's source (or `{}` when it has none). `classify_job` runs the same `_chunked_rejection` with the same arguments, so the gate is the planner's own, and the dispatched reason and the rejection reason are the single-table job's by construction, instead of copied from a string. The cost is one `build_work_list` per table.
 2. **Per-table evidence built in the executor.** The plan's `split_reproducibility_stamp(split, *, chunk_size_rows, auto_chunk_threshold_rows)` has no sources, so it states the six reproducibility keys, and `run_multi_table_split` puts the lane keys and the `tables` list in the partial `auto_chunk` block that `merge_lane_stamp` merges. The result has the shape section 8 describes.
 3. The one loosened assertion in my own test was restored after the gate, see the dennis section.
-4. **Registry sentry coverage.** Plan test 2's registry sentry runs two calls per fixture for 23 of the 24 `SCALAR_HANDLERS` strategies (the chunk-admitted fixtures plus new fixtures for `shuffle`, `categorical` and `nested` unseeded variants, `formula`, `derived`, `derived_aggregate`, `grouped_series`, `joint_mask`). `geo_generalize` has no fixture because its `h3` dependency is not installed here. A source scan test over `execution/_strategies` (any unseeded `default_rng()`, `random.Random()`, global `random` call or `uuid4`) pins that only the `categorical` and `shuffle` modules draw from an unseeded generator, so a new unseeded path fails CI either way. The runtime sentry fails if a registry strategy has neither a fixture nor an entry in `UNFIXTURED`.
+4. **Registry sentry coverage.** Withdrawn after the Codex final gate: the first build exempted `geo_generalize` on the belief that it needs `h3`, but its ZIP mode does not. The sentry now has a ZIP-mode fixture, a nested unseeded `shuffle` fixture, and requires the fixtures to cover the live `SCALAR_HANDLERS` registry exactly (see the Codex final section).
 5. **Mutation tooling.** mutmut was not run; see Mutation.
 6. **Docs outside this repo.** The roadmap and shipped log (`decoy-platform/docs/ROADMAP.md`) and the sprint and testing ledger are not updated by this build.
 7. **Thread test needs the companion.** The kernel-level thread-budget assertions (`derive_batch` receives `native_threads`) skip when the companion is not installed, as B2's do. The budget forwarding to `run_auto_chunk` and the no-overlap checks run everywhere.
@@ -131,7 +131,7 @@ Reading RSS: a worker that only builds the sources holds 687,562,752 bytes (`bas
 
 ## dennis gate and dispositions
 
-Verdict GO with fixes: 0 blocker, 0 high, 3 medium, 3 low. All six applied in this worktree.
+Verdict GO with fixes: 0 blocker, 0 high, 3 medium, 3 low (six findings, all listed below). MEDIUM-1, MEDIUM-2 and the three lows were applied in this worktree; MEDIUM-3 is a platform carry-forward.
 
 | Finding | Disposition |
 |---|---|
@@ -139,6 +139,33 @@ Verdict GO with fixes: 0 blocker, 0 high, 3 medium, 3 low. All six applied in th
 | MEDIUM-2: false "cannot disagree" comments | The comment in `_pipeline.py` and the `decide_chunk_route` docstring now say `execution_plan` is the static job-level classification and a split is reported in `auto_chunk.tables`. No behavior change; `_pipeline.py` stays at 679 lines. |
 | LOW-1: no Design 8 log line | `run_multi_table_split` logs one INFO line naming the dispatched tables and the full-frame group (names only). A caplog test pins the exact line and that no value appears. |
 | LOW-2: try/except shape in the relationships test | The test now asserts the actual outcome: the job succeeds, never enters the split, and equals the split-off run. |
+| MEDIUM-3: the platform's per-node route label reads `auto_chunk.mode`, which says `chunked` on a split call | Not an engine change. Carried to the platform roadmap as a B3 precondition (B3 reads `auto_chunk.tables`), as the plan's Known issues already say. |
 | LOW-3: pool and corpus loading contract | The module docstring states that per-unit pool and code-set loading relies on the S5 F2 deterministic pool-build contract. |
 
 Re-run after the fixes: the five B7 test files, `test_auto_chunk_dispatcher.py`, `test_auto_chunk_routing.py` and `tests/sentry`: 2652 passed, 1 skipped. `ruff check`, `ruff format --check` and `mypy src/decoy_engine testflight` are clean.
+
+## Codex final gate and dispositions
+
+Verdict at `ebf12c57`: NO-GO, 0 blocker, 3 high, 0 medium, 1 low. Codex found the runtime correct and the tests weaker than plan revision 3 in three places. The plan has Codex's plan-gate GO (revision 3). No strengthened test exposed a defect in `src`; no source file changed in this round.
+
+| Finding | Disposition |
+|---|---|
+| HIGH-1: no-split job-gate coverage weaker than the plan | Every no-split case now runs through one golden comparison (`assert_same_outcome`): equal outputs with schema metadata, quality metrics without wall-clock fields, warnings, timing keys and row errors, or the same exception type, code and message. Applied to the one-table job, the FK job (both `execution_mode` values), the relationships-block job, the three kill switches (full result, not outputs only), quarantine, passing validators, the successful vault job, and the all-below-threshold job. The generate case uses a valid generate table (a `sequence` column) and asserts success, equality and five generated rows, with no swallowed exception. A forced-substrate case asserts the same `invalid_substrate` error with the split on and off, and an env-resolved pandas substrate that still splits. The failing-validator case asserts `ValidatorFailedError` exactly, with equal findings, validators run and message. The unseeded-randomness cases compare the complete `adapter.run` call (plan, every source table with `check_metadata=True`, and every keyword value) and the full result. The `importorskip("cryptography")` is gone from the vault file test. |
+| HIGH-2: deviation 4 not legitimate | `geo_generalize` ZIP mode needs no `h3`. The sentry has a ZIP-mode fixture and a nested unseeded `shuffle` fixture, `UNFIXTURED` is removed, and the test asserts the fixture strategies equal the live `SCALAR_HANDLERS` keys exactly. 30 fixtures now cover all 24 strategies. Deviation 4 is withdrawn. |
+| HIGH-3: route pinned either-or | Each contract case records its expected B1 route per companion state and the matrix asserts `native_admitted` and `reroute_reason` exactly: native with no reason when the companion is present; `crypto_extension_unavailable` when it is absent (every case hashes `h`); `uncovered_columns:['x'];missing_configured_columns:[]` for the unconfigured-column case in both states. The values were read from the code for all 46 cases x 2 states before they were pinned, and are the plan's rules. |
+| LOW: record count, findings listing, plan status | Module line count corrected to 327, the dennis table now lists all six findings, and the plan's Status line records Codex's plan-gate GO on revision 3. |
+
+Each strengthened test was shown to fail against a deliberate mutation of the behavior it pins (the file is restored after each run):
+
+| Mutation | Test that failed |
+|---|---|
+| Remove the generate-table job gate | the generate golden test |
+| Remove the kill-switch gate (`split_enabled`) | the kill-switch test (the `split_off` case) |
+| Invert the kill-switch gate | the forced-substrate and env test |
+| Remove the validators gate | the failing-validator test (the split raised `RowErrorsFailedError`, not `ValidatorFailedError`) |
+| Remove the unseeded-randomness gate | the unseeded-randomness test (adapter call count and arguments) |
+| Remove the quarantine gate | the quarantine golden test |
+| Run dispatched tables on the legacy lane | the contract matrix route pin |
+| Skip `nested` in `unseeded_random_nodes` | the registry sentry |
+| Rename the ZIP geo fixture away | the registry sentry (exact coverage) |
+| `len(mask_tables) >= 1` and removing the FK-edge gate | survived at the end-to-end level because the single-table and FK jobs are also stopped earlier (the single-table route pre-empts the split, and an FK job always has a `relationships` block); killed by the gate unit tests in `test_multi_table_units.py` |

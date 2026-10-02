@@ -41,6 +41,7 @@ class Job:
         faker_all_null: dict[str, set[str]] | None = None,
         extra_sources: dict[str, pa.Table] | None = None,
         extra_kw: dict[str, Any] | None = None,
+        uncovered: bool = False,
     ) -> None:
         self.tables = tables
         self.dispatched = dispatched
@@ -49,6 +50,7 @@ class Job:
         self.faker_all_null = faker_all_null or {}
         self.extra_sources = extra_sources or {}
         self.extra_kw = extra_kw or {}
+        self.uncovered = uncovered
 
 
 def _std_pair(
@@ -82,6 +84,7 @@ def _x_job(
     field: pa.Field | None = None,
     string_x: bool = False,
     faker_x: bool = False,
+    uncovered: bool = False,
 ) -> Job:
     spec = _with_x(x, xcfg, field)
     small = (mt.std_columns("small_ns"), mt.string_table(mt.SMALL, "s"))
@@ -91,6 +94,7 @@ def _x_job(
         {"big"},
         string_output=string_output,
         faker_all_null={"big": {"x"}} if faker_x else {},
+        uncovered=uncovered,
     )
 
 
@@ -135,7 +139,7 @@ def _faker_all_null() -> Job:
 
 
 def _unconfigured() -> Job:
-    return _x_job(pa.array([f"k{i}" for i in range(N)]), None)
+    return _x_job(pa.array([f"k{i}" for i in range(N)]), None, uncovered=True)
 
 
 def _extra_source() -> Job:
@@ -215,6 +219,20 @@ def _run_job(job: Job, tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tab
     return cfg, sources
 
 
+# B1's route per case, recorded from the plan's rules: an unconfigured column reroutes the
+# table (uncovered_columns) with or without the companion; otherwise every case here hashes
+# `h`, so the companion decides between B1's native route and the oracle route.
+_UNCOVERED = "uncovered_columns:['x'];missing_configured_columns:[]"
+
+
+def _expected_route(job: Job, companion: str) -> tuple[bool, str | None]:
+    if job.uncovered:
+        return False, _UNCOVERED
+    if companion == "present":
+        return True, None
+    return False, "crypto_extension_unavailable"
+
+
 def _companion_state(state: str, monkeypatch: pytest.MonkeyPatch) -> None:
     if state == "absent":
         support.remove_companion(monkeypatch)
@@ -243,7 +261,10 @@ def test_split_job_output_contract(
     assert set(mt.dispatched_tables(got)) == job.dispatched, case
     for name in job.dispatched:
         route = mt.route_of(got, name)
-        assert route is not None and route["native_admitted"] in (True, False)
+        assert route is not None
+        assert (route["native_admitted"], route["reroute_reason"]) == _expected_route(
+            job, companion
+        ), (case, name)
 
     # (a)
     assert list(got.outputs) == list(off.outputs)

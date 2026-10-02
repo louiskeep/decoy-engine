@@ -1,6 +1,6 @@
 # Independent multi-table dispatch in run_pipeline (Rust engine program B7)
 
-Status: plan (revision 3: reconciled with B2 as merged on engine main `64e44dac`, PR #188. Revision 2 passed the Codex plan gate, GO, while B2 was unbuilt; revision 3 needs a new plan gate)
+Status: plan (revision 3: reconciled with B2 as merged on engine main `64e44dac`, PR #188. Revision 2 passed the Codex plan gate, GO, while B2 was unbuilt; revision 3 passed the Codex plan gate, GO, 2026-10-02)
 
 Date: 2026-10-01, revision 3 on 2026-10-02. Program: `docs/plans/2026-09-30-rust-engine-program.md` (rev3), Phase B, item B7 (gap R1 in `docs/records/2026-09-30-rust-coverage-evidence-audit.md`, which notes that engine auto-chunk is single-table only). Branch `feat/multi-table-dispatch`, rebased onto engine main `64e44dac`, which contains A8 (engine-owned transforms, PR #185), B1 (`run_mask_chunked`, PR #186, plan revision 9.4) and B2 (auto-chunk on the chunked dispatcher, PR #188, plan `docs/plans/2026-10-01-dispatcher-auto-chunk.md` revision 5, build record `docs/records/2026-10-01-b2-dispatcher-auto-chunk-build.md`). Every reference to B2 below means that merged code. B2's user-facing entry is CHANGELOG `[Unreleased]` ("auto-chunk runs on the chunked dispatcher"); `[0.7.0]` is B1's `run_mask_chunked`.
 
