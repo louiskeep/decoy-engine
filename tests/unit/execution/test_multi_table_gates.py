@@ -315,6 +315,7 @@ def test_bad_split_knob_values_fail_before_profiling(
     with pytest.raises(ExecutionError) as raised:
         run_pipeline(cfg, sources=sources, **mt.kw(multi_table_dispatch_enabled=value))
     assert raised.value.code == "invalid_execution_knob"
+    assert "multi_table_dispatch_enabled" in str(raised.value)
     assert profiled == []
 
 
