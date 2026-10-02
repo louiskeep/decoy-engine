@@ -1,6 +1,8 @@
 # Native admission for unconfigured passthrough columns (Rust engine program B8)
 
-Status: plan (revision 4.5.1)
+Status: plan (revision 4.5.2)
+
+Revision 4.5.2 note: plan amendment after dennis round 3 (GO with fixes). A provider known only to the caller's registry cannot run end to end through `run_mask_chunked(registry=reg)`, because `compile_plan`, the composite wiring check, the seed envelope and `compile_native_plan` resolve providers through the default registry and raise `PlanCompileError(unknown_provider)` before any output (same as main). Tests 15 and 24(b) therefore assert, for the caller-only custom composite, that fail-closed outcome on the normal and row-error paths (coded error, no sink append, no source value in any output), and keep the end-to-end restoration assertions for every default-registry composite and the rebound-registry case. Routing compile through the caller's registry is out of B8's scope. `plan_column_backends` takes `registry` as a required keyword (dennis round 3 MEDIUM-1).
 
 Revision 4.5.1 note: Codex narrow gate on 4.5 returned REVISE (HIGH: test 21 required equality with the public oracle, which by B1's contract has no carry or schema-rule restoration; MEDIUM: no test covered the reads_unknown/writes_unknown cross-product that protects the composite leak). Codex's exact text replaces test 21, adds test 24 and clarifies the 12.8 second bullet. Codex confirmed 12.8 fixes the HIGH at its root and the stored-index policy is safe.
 
