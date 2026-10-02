@@ -189,9 +189,9 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   pool_cache=None)`: `config` and `chunks` are positional-or-keyword, everything
   after the `*` is keyword-only, and new parameters are additive. Its pinned
   guarantees are value equality with `run_mask_pipeline_chunked` (one stated
-  exception: on the stock-adapter path, a passthrough column no `when:` predicate
-  or sibling-reading strategy reads is the source column itself and never goes
-  through pandas, so a value the oracle's round trip rounds or refuses, such as a
+  exception: on the stock-adapter path, a passthrough column no `when:` predicate,
+  sibling-reading strategy or composite generator reads or writes is the source
+  column itself and never goes through pandas, so a value the oracle's round trip rounds or refuses, such as a
   nullable integer above 2^53, comes back exact; a read passthrough column that
   pandas refuses raises `chunked_passthrough_value_unrepresentable`, and a custom
   or subclass adapter carries nothing), one output type per column per call (`string` for hash, truncate
@@ -202,7 +202,13 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   `invalid_native_threads`, `native_chunk_schema_drift`, `chunked_schema_mismatch`,
   `chunked_leading_null_type`, `chunked_passthrough_value_unrepresentable` and
   `chunked_route_evidence_inconsistent`; each chunk's
-  `quality_metrics["chunked_route"]` carries `pandas_read_passthrough`.
+  `quality_metrics["chunked_route"]` carries `pandas_read_passthrough`. Under the
+  `warn` unconfigured-column policy (the pre-GA default) source columns the config
+  does not cover run on the native route and come back as the source column, with the
+  oracle route's one `undeclared_output_columns` warning per chunk; under `error` the
+  table keeps the oracle route and raises. The reroute reason
+  `unconfigured_set_mismatch:<oracle set>:<native set>` is a defensive cross-check
+  between the two definitions of "unconfigured".
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that

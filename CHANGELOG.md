@@ -46,6 +46,43 @@ adds `quality_metrics["chunked_route_by_table"]`, the per-table backend evidence
 platform's route label reads `auto_chunk.mode`, so a split call labels as chunked; read
 `auto_chunk.tables` for the per-table split.
 
+### Changed (native admission of unconfigured passthrough columns, 2026-10-02)
+
+`run_mask_chunked` no longer sends a whole table to the oracle route because the source has
+columns the config does not cover. Under the resolved `unconfigured_column_policy` `warn`
+(explicit, or the unset pre-GA default) such a table runs on the native route when every
+configured column is natively admitted: each unconfigured column is carried as the source
+column, and each chunk's `ExecutionResult.warnings` holds the same
+`undeclared_output_columns` warning the oracle route emits (the native route calls
+`enforce_output_projection` itself). Under `error` the routing and the
+`undeclared_output_columns` refusal are unchanged, and a configured column missing from the
+source still reroutes with the same reason. `plan_native_route` gains the keyword
+`unconfigured_policy`; without it (and in `run_native_or_oracle_chunked`) the veto stays.
+A new reroute reason `unconfigured_set_mismatch:<oracle set>:<native set>` guards the case
+where the oracle's definition of "unconfigured" and the native route's ever disagree.
+
+- A configured `dense_union`, `sparse_union` or `run_end_encoded<string_view>` passthrough
+  column no longer raises `ArrowNotImplementedError` from `run_mask_chunked`: admission builds
+  its resident table from the hash columns only, so the column runs natively and comes back as
+  the source column.
+- The scan that finds passthrough columns pandas reads is now a union of per-surface
+  declarations (`execution/_column_access.py`) instead of a walk over every string in the
+  config. A passthrough column whose name equals a string literal, a strategy name, a provider
+  or a namespace is carried on both routes, so the native-completes, oracle-raises divergence
+  for such a column is gone. Predicates contribute identifiers and backtick references only;
+  `group_by`, `order_by`, `anchor`, `reference_column`, `coherent_with`, `derived`
+  expression references, `derived_aggregate` `column`, `joint_mask` `key_by` and `columns` and
+  a `nested` child's fields each name their column. Every column a composite generator writes
+  (the canonical outputs of a fixed composite, every `bundle[*].column` of `composite_custom`)
+  is in the read set, so `CarryPlan.reattach` can no longer put a source value back over a
+  generated one. This replaces the over-approximation described under "`run_mask_chunked`:
+  carried passthrough columns never enter pandas" below. Guard tests G1 to G6 in
+  `tests/native/test_column_access_surfaces.py` fail when a strategy, composite provider,
+  dispatch branch or frame-setup helper has no declaration.
+- The `run_mask_chunked` docstring sentence "or the source has columns the config does not
+  cover" now reads "or, under the `error` unconfigured-column policy, the source has columns
+  the config does not cover".
+
 ### Changed (auto-chunk runs on the chunked dispatcher: a pre-GA output-contract change, 2026-10-01)
 
 `run_pipeline`'s auto-chunk route (large single-table mask jobs; the same jobs, the same
@@ -228,9 +265,8 @@ a value pandas refuses in it raises the new
 table, column and chunk index, with the oracle's exception as `__cause__`. With a
 custom or subclass adapter nothing is carried, so every passthrough column behaves
 exactly as on the oracle, raw exceptions included. The scan that finds read columns
-over-approximates on purpose: a passthrough column whose name equals any string in
-another column's config entry (a column named `redact` next to a `redact` column)
-is read.
+used to over-approximate (a column named `redact` next to a `redact` column was read);
+it now collects only real references, see the 2026-10-02 entry above.
 
 Each chunk's `quality_metrics["chunked_route"]` gains `pandas_read_passthrough`, the
 sorted list of passthrough columns that still go through pandas.
