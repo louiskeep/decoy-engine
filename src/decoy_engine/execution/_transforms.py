@@ -193,28 +193,29 @@ def reject_config_references_stored_index(
     column of that name, or a sibling or `when:` reference to it, would not resolve.
     A configured entry named like the field, or any registry-bound `column_access`
     read or write of it (NFKC-normalized like `read_set`), raises
-    `config_references_stored_index`; an `everything` declaration refuses whenever a
-    stored index field exists. Schema only, no values are read.
+    `config_references_stored_index`. Only a positive reference refuses: a `reads_unknown`
+    declaration (an unparsable predicate) runs on the oracle route as it always did, and a
+    `writes_unknown` one is refused earlier by the composite admission check. Schema only, no
+    values are read.
     """
     stored = stored_index_fields(schema)
     if not stored:
         return
     import unicodedata
 
-    from decoy_engine.execution._column_access import touched_columns
+    from decoy_engine.execution._column_access import column_access
 
     table_config: Mapping[str, Any] = next(
         (t for t in config.get("tables") or [] if t.get("name") == table), {}
     )
     entries = [c for c in table_config.get("columns") or [] if isinstance(c, dict)]
-    touched = touched_columns(entries, registry)
-    names = {c["name"] for c in entries if isinstance(c.get("name"), str)}
-    referenced = names if touched is None else names | touched
+    referenced = {c["name"] for c in entries if isinstance(c.get("name"), str)}
+    for entry in entries:
+        access = column_access(entry, registry)
+        referenced |= access.reads | access.writes
     normalized = {unicodedata.normalize("NFKC", n) for n in referenced}
     hit = sorted(
-        f
-        for f in stored
-        if touched is None or f in referenced or unicodedata.normalize("NFKC", f) in normalized
+        f for f in stored if f in referenced or unicodedata.normalize("NFKC", f) in normalized
     )
     if hit:
         raise TransformError(

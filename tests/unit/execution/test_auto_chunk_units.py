@@ -17,6 +17,7 @@ from decoy_engine.execution import ExecutionError
 from decoy_engine.execution import _pipeline_auto_chunk as ac
 from decoy_engine.execution import _pipeline_route_exec as rx
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from decoy_engine.providers_v2 import get_default_registry
 from tests.unit.execution import _auto_chunk_support as support
 
 
@@ -352,6 +353,7 @@ def test_the_legacy_evidence_is_planned_from_this_tables_config_and_engine_versi
         chunk_size_rows=16,
         chunk_count=3,
         lane_reason="dispatcher_disabled",
+        registry=get_default_registry(),
     )
     assert seen["profile"] == {"table": "t", "engine_version": "ev-1"}
     assert seen["plan"] == {"table": "t", "engine_version": "ev-1"}

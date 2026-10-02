@@ -237,7 +237,7 @@ def test_a_registry_that_rebinds_a_composite_name_to_a_scalar_backend_is_honored
         "provider": "composite_name_email",
         "when": "x > 1",
     }
-    assert column_access(entry, reg).everything is False
+    assert column_access(entry, reg).reads_unknown is False
     assert read_set([entry], ["x", "last_name"], reg) == {"x"}
     assert {"x", "last_name"} <= read_set([entry], ["x", "last_name"], REG)
 
@@ -441,19 +441,24 @@ def test_an_undeclarable_entry_leaves_no_passthrough_column() -> None:
     reg = _custom_composite_registry()
     entries = [_entry("a", "composite_x", "redact", provider_config={"bundle": _BUNDLE})]
     config = {"tables": [{"name": TABLE, "columns": entries}]}
-    assert column_access(entries[0], reg).everything is True
+    assert column_access(entries[0], reg).writes_unknown is True
     assert handler_written_columns(entries, reg) is None
     assert passthrough_columns(config, table=TABLE, names=["a", "b", "c"], registry=reg) == []
 
 
-def test_an_undeclarable_entry_refuses_any_stored_index_field() -> None:
+def test_only_a_positive_reference_refuses_a_stored_index_field() -> None:
     from decoy_engine.execution._transforms import reject_config_references_stored_index
 
     bad = {"name": "v", "strategy": "derived", "provider_config": {"expression": "a +"}}
     config = {"tables": [{"name": TABLE, "columns": [bad]}]}
     schema = _indexed()[0].schema
+    # An unparsable expression is an unknown read, not a reference to `id`.
+    reject_config_references_stored_index(config, TABLE, schema, REG)
+    named = {"name": "v", "strategy": "derived", "provider_config": {"expression": "id + 1"}}
     with pytest.raises(TransformError) as info:
-        reject_config_references_stored_index(config, TABLE, schema, REG)
+        reject_config_references_stored_index(
+            {"tables": [{"name": TABLE, "columns": [named]}]}, TABLE, schema, REG
+        )
     assert info.value.code == "config_references_stored_index"
     reject_config_references_stored_index(
         {"tables": [{"name": TABLE, "columns": [redact("s")]}]}, TABLE, schema, REG
@@ -539,39 +544,19 @@ def test_row_error_chunk_reports_generated_values_for_written_columns(
         assert all(a != b for a, b in zip(got, src, strict=True)), name
 
 
-def _compile_with_registry(monkeypatch: pytest.MonkeyPatch, reg: Any) -> None:
-    """`compile_plan` resolves providers through the default registry; scope that lookup to
-    the compile call so the registry under test is the only one the run itself sees."""
-    import decoy_engine.plan as plan_mod
-    import decoy_engine.providers_v2 as providers_mod
-
-    real_compile = plan_mod.compile_plan
-    real_default = providers_mod.get_default_registry
-
-    def compile_plan(*args: Any, **kwargs: Any) -> Any:
-        providers_mod.get_default_registry = lambda: reg  # type: ignore[assignment]
-        try:
-            return real_compile(*args, **kwargs)
-        finally:
-            providers_mod.get_default_registry = real_default  # type: ignore[assignment]
-
-    monkeypatch.setattr(plan_mod, "compile_plan", compile_plan)
-
-
 @pytest.mark.parametrize("row_errors", [False, True], ids=["normal", "row_error"])
-def test_caller_only_composite_end_to_end_through_run_mask_chunked(
+def test_caller_only_composite_fails_closed_before_any_output(
     row_errors: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A provider only the caller's registry knows cannot compile: `compile_plan`, the
+    composite wiring check and the native plan all resolve providers through the default
+    registry, so even with 12.1 patched out the run stops with a coded error and no chunk,
+    sink append or source value reaches the caller. The registry-bound declarations for
+    such a provider are pinned at unit level (`test_a_caller_only_composite_is_refused...`)
+    because an end-to-end run that completes is not reachable."""
     reg = _custom_composite_registry()
     columns = [
-        _entry(
-            name,
-            "composite_x",
-            "redact",
-            coherent_with=[other],
-            provider_config={"bundle": _BUNDLE},
-        )
-        for name, other in (("a", "b"), ("b", "a"))
+        _entry("a", "composite_x", "redact", provider_config={"bundle": _BUNDLE}),
     ]
     data = {c: [f"SECRET-{c}-{i}" for i in range(N)] for c in ("a", "b", "c")}
     if row_errors:
@@ -579,26 +564,21 @@ def test_caller_only_composite_end_to_end_through_run_mask_chunked(
         data["age"] = ["23", "x1", "47", "50", "51", "52"]
     config = make_config(columns, global_settings=_WARN)
     _patch_out_composite_refusal(monkeypatch)
-    _compile_with_registry(monkeypatch, reg)
-    source = _source(data)
-    if row_errors:
-        sink = _row_error_run(config, [source], registry=reg)
-        produced = sink[0].outputs[TABLE]
-    else:
-        out = list(
+    sink: list[Any] = []
+    with pytest.raises(PlanCompileError) as info:
+        list(
             run_mask_chunked(
                 config,
-                [source],
+                [_source(data)],
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
                 registry=reg,
+                chunk_result_sink=sink,
             )
         )
-        produced = pa.concat_tables(out)
-    for name in ("a", "b", "c"):
-        got, src = produced.column(name).to_pylist(), source.column(name).to_pylist()
-        assert all(x != y for x, y in zip(got, src, strict=True)), name
+    assert info.value.code == "unknown_provider"
+    assert sink == []
 
 
 # ---------------------------------------------------------------------------

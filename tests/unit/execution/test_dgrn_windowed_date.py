@@ -34,6 +34,7 @@ from decoy_engine.execution._chunked_dgrn import (
 )
 from decoy_engine.execution._chunked_fk import CHUNK_SAFE_STRATEGIES
 from decoy_engine.plan import PlanCompileError
+from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.transforms.windowed_date import (
     WindowedDateConfig,
     _sample_offset,
@@ -417,7 +418,7 @@ class TestWhenRejection:
     ) -> None:
         cfg = _when_bearing_windowed_date_cfg(tmp_path)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert exc.value.code == "chunked_windowed_date_when_not_supported"
         assert exc.value.path == "tables.accounts.columns"
         assert "end_date" in exc.value.message  # the offending column, by NAME
@@ -445,7 +446,7 @@ class TestWhenRejection:
         cfg["tables"][0]["columns"][1]["when"] = "start_date != ''"
         cfg["tables"][0]["columns"][2]["when"] = "start_date != ''"
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert "end_date_a, end_date_b" in exc.value.message
 
     def test_column_missing_name_key_falls_back_to_placeholder(self, tmp_path) -> None:
@@ -464,7 +465,7 @@ class TestWhenRejection:
             }
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="accounts")
+            check_chunked_compatibility(cfg, table="accounts", registry=get_default_registry())
         assert "column(s) ? combine" in exc.value.message
 
     def test_windowed_date_with_when_rejected_by_manual_entrypoint(self, tmp_path) -> None:
@@ -548,7 +549,7 @@ class TestFkChildRIRegression:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="orders")
+            check_chunked_compatibility(cfg, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
 

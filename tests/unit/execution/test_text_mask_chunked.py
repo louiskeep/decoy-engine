@@ -65,6 +65,7 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.storm.detectors import Span
 
 _ENGINE_VERSION = "p4-slice3-text-mask-test"
@@ -554,7 +555,7 @@ class TestFkNegativeAndNamespaceIndependence:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="orders")
+            check_chunked_compatibility(cfg, table="orders", registry=get_default_registry())
         assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_namespace_absent_vs_differing_produces_identical_output(self, tmp_path) -> None:
@@ -782,7 +783,7 @@ class TestWhenRejection:
     def test_check_chunked_compatibility_raises_directly(self, tmp_path) -> None:
         cfg = _when_bearing_text_mask_cfg(tmp_path)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert exc.value.code == "chunked_text_mask_when_not_supported"
         assert exc.value.path == "tables.records.columns"
         assert "column(s) target_col combine" in exc.value.message  # the offending column, by NAME
@@ -822,7 +823,7 @@ class TestWhenRejection:
         cfg["tables"][0]["columns"][0]["when"] = "col_a != ''"
         cfg["tables"][0]["columns"][1]["when"] = "col_b != ''"
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert "col_a, col_b" in exc.value.message
 
     def test_column_missing_name_key_falls_back_to_placeholder(self, tmp_path) -> None:
@@ -841,7 +842,7 @@ class TestWhenRejection:
             }
         )
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert "column(s) ? combine" in exc.value.message
 
     def test_reject_text_mask_when_direct_unit_raises_on_when(self, tmp_path) -> None:

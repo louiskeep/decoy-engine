@@ -54,6 +54,7 @@ from decoy_engine.execution._chunked_bucket_perturb import (
 )
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.plan import PlanCompileError
+from decoy_engine.providers_v2 import get_default_registry
 
 _ENGINE_VERSION = "p4-slice5-bucket-perturb-test"
 _LOW_THRESHOLD = 10
@@ -443,7 +444,7 @@ class TestAdmissionBoundary:
         columns = [_bucket_perturb_col("d", date_format=None)]
         cfg = _config(tmp_path, columns)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
 
     def test_empty_string_date_format_rejected_via_check_chunked_compatibility(
@@ -452,7 +453,7 @@ class TestAdmissionBoundary:
         columns = [_bucket_perturb_col("d", date_format="")]
         cfg = _config(tmp_path, columns)
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="records")
+            check_chunked_compatibility(cfg, table="records", registry=get_default_registry())
         assert exc.value.code == "chunked_strategy_conditions_unmet"
 
     def test_invalid_but_truthy_date_format_raises_equivalently_on_both_routes(
@@ -594,7 +595,7 @@ class TestAdmissionBoundary:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="parent")
+            check_chunked_compatibility(cfg, table="parent", registry=get_default_registry())
         assert exc.value.code == "chunked_bucket_perturb_fk_key_unsupported"
         assert "id" in exc.value.message
 
@@ -617,7 +618,7 @@ class TestAdmissionBoundary:
             ],
         }
         with pytest.raises(PlanCompileError) as exc:
-            check_chunked_compatibility(cfg, table="child")
+            check_chunked_compatibility(cfg, table="child", registry=get_default_registry())
         assert exc.value.code in (
             "chunked_bucket_perturb_fk_key_unsupported",
             "chunked_fk_parent_strategy_not_self_mask_safe",

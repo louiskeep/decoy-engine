@@ -257,7 +257,7 @@ _REJECTIONS["fk_endpoint_not_scalar"] = _fk_case(parent_extra={"provider": "name
 def test_compatibility_rejection_is_identical_on_both_entry_points(case: str) -> None:
     config, first, table = _REJECTIONS[case]()
     with pytest.raises(Exception) as direct:
-        check_chunked_compatibility(config, table=table)
+        check_chunked_compatibility(config, table=table, registry=get_default_registry())
     want = (type(direct.value), direct.value.code)
     assert want[1] is not None
 

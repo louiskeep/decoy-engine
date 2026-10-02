@@ -115,7 +115,7 @@ def test_g2_fixed_provider_writes_equal_the_generator_output_columns(provider: s
     entry = {"name": own, "strategy": "<composite>", "provider": provider}
     access = column_access(entry, REG)
     assert access.writes == frozenset(sorted(cls.output_columns))
-    assert access.everything is False
+    assert not (access.reads_unknown or access.writes_unknown)
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +221,9 @@ def test_g3_mixed_surface_precedence() -> None:
         "when": "b > 1",
     }
     got = column_access(scalar, REG)
-    assert {"a", "b"} <= got.reads and got.everything is False
+    assert {"a", "b"} <= got.reads and got.reads_unknown is False
     unparsable = {**scalar, "when": "`oops"}
-    assert column_access(unparsable, REG).everything is True
+    assert column_access(unparsable, REG).reads_unknown is True
 
 
 # ---------------------------------------------------------------------------
@@ -593,7 +593,7 @@ def _declared(columns: list[dict[str, Any]]) -> tuple[set[str], bool]:
     for entry in columns:
         access = column_access(entry, REG)
         names |= access.reads | access.writes
-        everything = everything or access.everything
+        everything = everything or access.reads_unknown or access.writes_unknown
     return names, everything
 
 
@@ -682,11 +682,11 @@ def test_composite_writes_include_every_coherent_with_column() -> None:
     assert access.writes == {"a", "b", "z"}
 
 
-def test_a_registry_composite_without_a_declaration_reads_everything(
+def test_a_registry_composite_without_a_declaration_has_unknown_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(_column_access, "_is_composite", lambda provider, registry: True)
-    assert column_access({"name": "x", "provider": "composite_stub"}, REG).everything is True
+    assert column_access({"name": "x", "provider": "composite_stub"}, REG).writes_unknown is True
 
 
 def test_a_columns_own_name_is_not_its_own_reader() -> None:

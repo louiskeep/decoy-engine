@@ -191,7 +191,7 @@ def _first_when_column(config: dict[str, Any], table: str) -> str | None:
 
 
 def _static_route_decision(
-    config: dict[str, Any], profile: Any, *, table: str, engine_version: str
+    config: dict[str, Any], profile: Any, *, table: str, engine_version: str, registry: Any = None
 ) -> NativeRouteEvidence:
     """Config/profile-only admission: no I/O, no compiled-extension probe.
 
@@ -215,7 +215,7 @@ def _static_route_decision(
     if _table_in_declared_relationship(config, table):
         return _oracle_evidence(table, "fk_relationship_not_native_route")
 
-    plan = compile_native_plan(config, profile, engine_version=engine_version)
+    plan = compile_native_plan(config, profile, engine_version=engine_version, registry=registry)
     table_nodes = [n for n in plan.nodes if n.table == table]
     if not table_nodes:
         return _oracle_evidence(table, "no_mask_nodes")
@@ -305,6 +305,7 @@ def plan_native_route(
     first_schema: pa.Schema | None = None,
     adapter: Any = None,
     unconfigured_policy: Literal["warn", "error"] | None = None,
+    registry: Any = None,
 ) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
@@ -335,9 +336,12 @@ def plan_native_route(
     lets a source column the plan does not cover stay on the native route, where it is
     carried unchanged (`NativePreflight.unconfigured_passthrough`); `None` and `"error"`
     keep the veto, so the oracle raises `undeclared_output_columns` as before. A
-    configured column the source lacks always vetoes.
+    configured column the source lacks always vetoes. `registry` is the run's provider
+    registry (the default when None); it decides which providers are composite nodes.
     """
-    decision = _static_route_decision(config, profile, table=table, engine_version=engine_version)
+    decision = _static_route_decision(
+        config, profile, table=table, engine_version=engine_version, registry=registry
+    )
     # A `when:` predicate names the reroute reason even when another column would
     # have vetoed the table anyway: its meaning (leave unselected rows untouched)
     # is the one a caller can act on.

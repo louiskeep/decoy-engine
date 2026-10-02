@@ -241,9 +241,7 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
     return failures
 
 
-def check_chunked_compatibility(
-    config: dict[str, Any], *, table: str, registry: Any = None
-) -> None:
+def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry: Any) -> None:
     """Reject configs whose chunked run could not match a full-frame run.
 
     Raises PlanCompileError with codes:

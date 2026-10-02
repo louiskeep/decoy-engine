@@ -54,14 +54,14 @@ def _planned_backend(node: Any) -> str:
 
 
 def plan_column_backends(
-    config: dict[str, Any], profile: Any, *, table: str, engine_version: str
+    config: dict[str, Any], profile: Any, *, table: str, engine_version: str, registry: Any = None
 ) -> tuple[ColumnPlan, ...]:
     """The configured columns of `table` with their planned backends.
 
     Unconfigured columns kept under the passthrough policy are not listed: they
     veto the table to the oracle, which enforces the policy.
     """
-    plan = compile_native_plan(config, profile, engine_version=engine_version)
+    plan = compile_native_plan(config, profile, engine_version=engine_version, registry=registry)
     out: list[ColumnPlan] = []
     for node in plan.nodes:
         if node.table != table:

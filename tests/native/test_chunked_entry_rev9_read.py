@@ -564,12 +564,18 @@ def test_composite_custom_bundle_without_the_column_reads_nothing() -> None:
 @pytest.mark.parametrize(
     "bundle", ["not-a-list", [{"column": ""}], [{"column": 3}], [{"nope": "c"}], [None]]
 )
-def test_malformed_composite_bundle_reads_every_passthrough_column(bundle: Any) -> None:
-    from decoy_engine.execution._column_access import column_access
+def test_malformed_composite_bundle_leaves_no_passthrough_column(bundle: Any) -> None:
+    """Revision 4.5 (Design 12.8): an unresolvable bundle is an unknown WRITE, so no column
+    may be carried or restored (`handler_written_columns` is None), rather than an unknown
+    read that sends every passthrough column through pandas."""
+    from decoy_engine.execution._chunked_carry import passthrough_columns
+    from decoy_engine.execution._column_access import column_access, handler_written_columns
 
     cols = _custom_pair(bundle)
-    assert column_access(cols[0], REG).everything is True
-    assert _scan(cols, ["c", "d"]) == {"c", "d"}
+    assert column_access(cols[0], REG).writes_unknown is True
+    assert handler_written_columns(cols, REG) is None
+    config = {"tables": [{"name": "t", "columns": cols}]}
+    assert passthrough_columns(config, table="t", names=["c", "d"], registry=REG) == []
 
 
 @pytest.mark.parametrize("strategy", ["<composite>", "faker"])

@@ -352,6 +352,7 @@ def _run_chunked(
         first_schema=state.first.schema,
         adapter=adapter,
         unconfigured_policy=state.projection_policy if enforce_schema_rule else None,
+        registry=state.registry,
     )
     decision = preflight.evidence
     if decision.native_admitted and enforce_schema_rule:
@@ -374,7 +375,13 @@ def _run_chunked(
     if route_evidence_sink is not None:
         route_evidence_sink.append(decision)
     columns = (
-        plan_column_backends(config, state.profile, table=table, engine_version=engine_version)
+        plan_column_backends(
+            config,
+            state.profile,
+            table=table,
+            engine_version=engine_version,
+            registry=state.registry,
+        )
         if chunk_result_sink is not None
         else ()
     )

@@ -118,6 +118,10 @@ def _oracle_preflight(
         # stored index field, so a config naming it could not resolve (or raise a raw
         # KeyError) after the work above had started.
         reject_config_references_stored_index(config, table, first.schema, resolved_registry)
+        from decoy_engine.execution.native._chunk_schema import stored_index_guard
+
+        # A stored-index change after chunk 0 is schema drift on both public entries.
+        chunk_iter = stored_index_guard(first, chunk_iter, table=table)
     # A keyed job with zero rows and a missing or invalid mask secret must still
     # fail the fail-closed gate, so the profile/plan/gate sequence runs for an
     # empty source too (from `empty_input_profile`) and the empty-input return
