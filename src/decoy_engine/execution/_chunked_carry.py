@@ -26,7 +26,11 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.execution._column_access import has_when, touched_columns
+from decoy_engine.execution._column_access import (
+    handler_written_columns,
+    has_when,
+    touched_columns,
+)
 from decoy_engine.execution._errors import ExecutionError
 
 PASSTHROUGH_UNREPRESENTABLE_CODE = "chunked_passthrough_value_unrepresentable"
@@ -55,7 +59,9 @@ def _nfkc(value: str) -> str:
     return unicodedata.normalize("NFKC", value)
 
 
-def read_set(columns: Iterable[Mapping[str, Any]], passthrough: Iterable[str]) -> frozenset[str]:
+def read_set(
+    columns: Iterable[Mapping[str, Any]], passthrough: Iterable[str], registry: Any
+) -> frozenset[str]:
     """The passthrough columns pandas code may read or write (rule R2).
 
     The union of every configured entry's `column_access` declaration (`when:` predicate
@@ -66,7 +72,7 @@ def read_set(columns: Iterable[Mapping[str, Any]], passthrough: Iterable[str]) -
     candidates = frozenset(passthrough)
     if not candidates:
         return frozenset()
-    touched = touched_columns(columns)
+    touched = touched_columns(columns, registry)
     if touched is None:
         return candidates
     return frozenset(c for c in candidates if c in touched or _nfkc(c) in touched)
@@ -157,18 +163,25 @@ def _same_failure(a: BaseException, b: BaseException) -> bool:
 
 
 def passthrough_columns(
-    config: Mapping[str, Any], *, table: str, names: Sequence[str]
+    config: Mapping[str, Any], *, table: str, names: Sequence[str], registry: Any
 ) -> list[str]:
     """The schema rule's passthrough columns, in source order: configured passthrough
-    without a `when:`, and unconfigured columns kept under the passthrough policy."""
-    configured = {
-        c["name"]: c for c in _table_columns(config, table) if isinstance(c.get("name"), str)
-    }
+    without a `when:`, and unconfigured columns kept under the passthrough policy. A column
+    some handler writes (a composite's bundle) is never one of them, whatever its entry
+    says: carrying it would let the source value overwrite the generated one."""
+    entries = _table_columns(config, table)
+    written = handler_written_columns(entries, registry)
+    if written is None:
+        return []
+    configured = {c["name"]: c for c in entries if isinstance(c.get("name"), str)}
     return [
         n
         for n in names
-        if n not in configured
-        or (configured[n].get("strategy") == "passthrough" and not has_when(configured[n]))
+        if n not in written
+        and (
+            n not in configured
+            or (configured[n].get("strategy") == "passthrough" and not has_when(configured[n]))
+        )
     ]
 
 
@@ -181,16 +194,18 @@ def _table_columns(config: Mapping[str, Any], table: str) -> list[dict[str, Any]
 
 
 def plan_carry(
-    config: Mapping[str, Any], *, table: str, first_schema: pa.Schema, adapter: Any
+    config: Mapping[str, Any], *, table: str, first_schema: pa.Schema, adapter: Any, registry: Any
 ) -> CarryPlan:
     """Decide the carried and read sets once, right after the first-chunk pull."""
     stock = is_stock_adapter(adapter)
-    passthrough = passthrough_columns(config, table=table, names=first_schema.names)
+    passthrough = passthrough_columns(
+        config, table=table, names=first_schema.names, registry=registry
+    )
     if not stock or len(set(first_schema.names)) != len(first_schema.names):
         # Carrying addresses columns by name. With duplicate names it carries nothing,
         # so the profile walk raises its own duplicate-name refusal, as on the oracle.
         return CarryPlan(stock=False, carried=frozenset(), read=tuple(sorted(passthrough)))
-    read = read_set(_table_columns(config, table), passthrough)
+    read = read_set(_table_columns(config, table), passthrough, registry)
     return CarryPlan(stock=True, carried=frozenset(passthrough) - read, read=tuple(sorted(read)))
 
 

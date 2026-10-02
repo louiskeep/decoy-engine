@@ -46,6 +46,36 @@ adds `quality_metrics["chunked_route_by_table"]`, the per-table backend evidence
 platform's route label reads `auto_chunk.mode`, so a split call labels as chunked; read
 `auto_chunk.tables` for the per-table split.
 
+### Security (composite providers leaked cleartext through `run_mask_chunked`, 2026-10-02)
+
+A pre-existing silent-cleartext leak on main: `check_chunked_compatibility` classified columns by
+strategy string while dispatch classifies by provider, so a composite provider on `redact`, `hash`
+or `passthrough` was admitted by `run_mask_chunked`, which then returned the composite's other
+bundle columns (for example `last_name` and `email`) as source values. `run_mask_pipeline_chunked`
+admitted the same jobs and returned generated values with chunk-boundary variance for a
+non-deterministic `hash`.
+
+- `check_chunked_compatibility` now refuses any column whose provider is a composite under the run's
+  registry with `strategy_not_chunk_safe`, whatever its strategy string. It takes a `registry`
+  keyword (both chunked entries and the `run_pipeline` planner pass the registry they dispatch
+  with; omitted, the default registry is used). A composite-provider `run_pipeline` job routes
+  full-frame, which handles composites.
+- Defense in depth: a column some handler writes is never a carry or schema-rule passthrough
+  column (`handler_written_columns`, used by `passthrough_columns` and `build_schema_rule`).
+- `column_access`, `read_set`, `plan_carry`, `passthrough_columns` and `build_schema_rule` take the
+  resolved registry; a composite entry's `when:` predicate names count as read.
+
+### Changed (stored pandas index fields in the chunked entries, 2026-10-02)
+
+A source from `pa.Table.from_pandas` with a non-range index (or `preserve_index=True`) holds a stored
+index field that its pandas metadata lists in `index_columns`. Both routes of `run_mask_chunked` now
+drop it from every yielded chunk, as the oracle route always did; it is neither a covered nor an
+unconfigured column, so the `uncovered_columns:[...]` reroute reason no longer names it. A config that
+names it (a configured column, a sibling reference or a `when:` reference) raises
+`TransformError(code="config_references_stored_index")` before profiling, on `run_mask_chunked` and
+`run_mask_pipeline_chunked`. A stored-index change between chunks raises
+`native_chunk_schema_drift` on both routes.
+
 ### Changed (native admission of unconfigured passthrough columns, 2026-10-02)
 
 `run_mask_chunked` no longer sends a whole table to the oracle route because the source has
@@ -74,8 +104,8 @@ where the oracle's definition of "unconfigured" and the native route's ever disa
   expression references, `derived_aggregate` `column`, `joint_mask` `key_by` and `columns` and
   a `nested` child's fields each name their column. Every column a composite generator writes
   (the canonical outputs of a fixed composite, every `bundle[*].column` of `composite_custom`)
-  is in the read set, so `CarryPlan.reattach` can no longer put a source value back over a
-  generated one. This replaces the over-approximation described under "`run_mask_chunked`:
+  is in the read set and is never a carry or schema-rule passthrough column, so neither
+  `CarryPlan.reattach` nor `normalize_chunk` can put a source value back over a generated one. This replaces the over-approximation described under "`run_mask_chunked`:
   carried passthrough columns never enter pandas" below. Guard tests G1 to G6 in
   `tests/native/test_column_access_surfaces.py` fail when a strategy, composite provider,
   dispatch branch or frame-setup helper has no declaration.

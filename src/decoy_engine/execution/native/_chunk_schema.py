@@ -82,6 +82,17 @@ def validate_chunk_schema(
             f"schema drift vs the first chunk (missing={missing}, extra={extra})",
             f"missing:{missing};extra:{extra}",
         )
+    from decoy_engine.execution._transforms import stored_index_fields
+
+    if stored_index_fields(expected) != stored_index_fields(chunk.schema):
+        was = sorted(stored_index_fields(expected))
+        now = sorted(stored_index_fields(chunk.schema))
+        raise _drift(
+            table,
+            chunk_index,
+            f"stored pandas index fields changed vs the first chunk (was={was}, now={now})",
+            f"stored_index:{was}->{now}",
+        )
     for name in chunk.schema.names:
         expected_type = expected.field(name).type
         actual_type = chunk.schema.field(name).type

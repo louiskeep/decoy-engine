@@ -184,6 +184,49 @@ def check_transform_source_schema(
         )
 
 
+def reject_config_references_stored_index(
+    config: Mapping[str, Any], table: str, schema: pa.Schema, registry: Any
+) -> None:
+    """Refuse a masked table whose config names a stored pandas index field.
+
+    The chunked oracle consumes the stored index as the frame index, so a configured
+    column of that name, or a sibling or `when:` reference to it, would not resolve.
+    A configured entry named like the field, or any registry-bound `column_access`
+    read or write of it (NFKC-normalized like `read_set`), raises
+    `config_references_stored_index`; an `everything` declaration refuses whenever a
+    stored index field exists. Schema only, no values are read.
+    """
+    stored = stored_index_fields(schema)
+    if not stored:
+        return
+    import unicodedata
+
+    from decoy_engine.execution._column_access import touched_columns
+
+    table_config: Mapping[str, Any] = next(
+        (t for t in config.get("tables") or [] if t.get("name") == table), {}
+    )
+    entries = [c for c in table_config.get("columns") or [] if isinstance(c, dict)]
+    touched = touched_columns(entries, registry)
+    names = {c["name"] for c in entries if isinstance(c.get("name"), str)}
+    referenced = names if touched is None else names | touched
+    normalized = {unicodedata.normalize("NFKC", n) for n in referenced}
+    hit = sorted(
+        f
+        for f in stored
+        if touched is None or f in referenced or unicodedata.normalize("NFKC", f) in normalized
+    )
+    if hit:
+        raise TransformError(
+            code="config_references_stored_index",
+            message=(
+                f"table {table!r}: config references {hit}, which the source stores as a "
+                "pandas index field. The chunked masker consumes the stored index, so the "
+                "reference would not resolve; reference a data column instead."
+            ),
+        )
+
+
 def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     try:
         # Q16 + Dennis C1 fix: pin engine to numexpr AND clamp the eval

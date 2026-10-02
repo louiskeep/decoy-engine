@@ -379,7 +379,9 @@ def _run_chunked(
         else ()
     )
     rule = (
-        build_schema_rule(config, table=table, first=state.first) if enforce_schema_rule else None
+        build_schema_rule(config, table=table, first=state.first, registry=state.registry)
+        if enforce_schema_rule
+        else None
     )
     read_passthrough = state.carry.read if state.carry is not None else ()
     if not decision.native_admitted:

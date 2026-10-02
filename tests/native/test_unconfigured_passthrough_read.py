@@ -339,7 +339,9 @@ def test_composite_outputs_are_never_carried(case: str) -> None:
         adapter=None,
         registry=get_default_registry(),
     )
-    assert set(written) <= set(carry.read)
+    # Revision 4.3 (Design 12.2): a handler-written column is not a passthrough candidate
+    # at all, so it is neither carried nor listed as read.
+    assert not (set(written) & set(carry.read))
     assert not (set(written) & carry.carried)
     assert read_set(columns, written, get_default_registry()) == frozenset(written)
     # (iv) end to end through the carry, the generated value survives reattachment
@@ -390,12 +392,9 @@ def test_composite_route_and_reason_on_run_mask_chunked_are_unchanged(
                         chunk_result_sink=sink,
                     )
                 )
-        expected = (
-            "strategy_not_chunk_safe"
-            if strategy == "<composite>"
-            else "composite_requires_bundle_path"
-        )
-        assert getattr(info.value, "code", None) == expected
+        # Revision 4.3 (Design 12.1): the composite provider is refused by provider, whatever
+        # the strategy string, so the faker form no longer reaches the pool warm-up.
+        assert getattr(info.value, "code", None) == "strategy_not_chunk_safe"
         assert sink == []
 
 

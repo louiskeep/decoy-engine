@@ -11,7 +11,6 @@ implementation; do not delete a test or loosen a comparison without a new plan g
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 import pandas as pd
@@ -217,15 +216,15 @@ def test_handler_written_columns_are_never_carried_or_schema_passthrough(
 
 def _scalar_rebound_registry() -> Any:
     base = get_default_registry()
-    faker_caps = dataclasses.replace(
-        base.get_capabilities("person_first_name"), provider="composite_name_email"
+    faker_caps = base.get_capabilities("person_first_name").model_copy(
+        update={"provider": "composite_name_email"}
     )
     return base.override("composite_name_email", base.get_adapter("person_first_name"), faker_caps)
 
 
 def _custom_composite_registry() -> Any:
     base = get_default_registry()
-    caps = dataclasses.replace(composite_capability("composite_custom"), provider="composite_x")
+    caps = composite_capability("composite_custom").model_copy(update={"provider": "composite_x"})
     return base.override("composite_x", CompositeAdapter("composite_custom"), caps)
 
 

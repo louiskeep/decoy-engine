@@ -273,35 +273,61 @@ SURFACE_DECLARATIONS: dict[str, Declaration] = {
 }
 
 
-def _is_composite(provider: Any) -> bool:
-    """Whether `build_work_list` makes this entry a composite node."""
+def _is_composite(provider: Any, registry: Any) -> bool:
+    """Whether `build_work_list` makes this entry a composite node under `registry`."""
     if not isinstance(provider, str) or not provider:
         return False
     from decoy_engine.execution._runner import provider_is_composite
-    from decoy_engine.providers_v2 import get_default_registry
 
-    return provider_is_composite(provider, get_default_registry())
+    return provider_is_composite(provider, registry)
 
 
-def column_access(entry: Mapping[str, Any]) -> ColumnAccess:
-    """What the pandas route reads and writes for `entry`, besides the entry's own column."""
+def column_access(entry: Mapping[str, Any], registry: Any) -> ColumnAccess:
+    """What the pandas route reads and writes for `entry`, besides the entry's own column.
+
+    `registry` is the one `build_work_list` receives: it decides whether the entry is a
+    composite node, so a caller registry that rebinds or adds a composite is honored.
+    """
     provider = entry.get("provider")
-    if _is_composite(provider):
+    if _is_composite(provider, registry):
         declare = SURFACE_DECLARATIONS.get(f"composite:{provider}")
-        return _EVERYTHING if declare is None else declare(entry)
+        access = _EVERYTHING if declare is None else declare(entry)
+        # The when gate is not applied to composite nodes, but the declaration stays
+        # conservative: the predicate's names count as read too.
+        if has_when(entry):
+            access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
+        return access
     access = SURFACE_DECLARATIONS.get(f"scalar:{entry.get('strategy')}", _generic)(entry)
     if has_when(entry):
         access = _union(access, SURFACE_DECLARATIONS["surface:when"](entry))
     return access
 
 
-def touched_columns(entries: Iterable[Mapping[str, Any]]) -> frozenset[str] | None:
-    """Every column some entry reads or writes besides its own, or None for "everything"."""
+def touched_columns(entries: Iterable[Mapping[str, Any]], registry: Any) -> frozenset[str] | None:
+    """Every column some entry reads or writes besides its own, or None for "everything".
+
+    An entry's own name stays in the set when its declaration writes other columns too
+    (a composite writes its own field as part of a bundle)."""
     touched: set[str] = set()
     for entry in entries:
-        access = column_access(entry)
+        access = column_access(entry, registry)
         if access.everything:
             return None
         own = entry.get("name")
-        touched |= {c for c in (access.reads | access.writes) if c != own}
+        beyond_own = bool(access.writes - {own})
+        touched |= {c for c in (access.reads | access.writes) if beyond_own or c != own}
     return frozenset(touched)
+
+
+def handler_written_columns(
+    entries: Iterable[Mapping[str, Any]], registry: Any
+) -> frozenset[str] | None:
+    """Columns some handler writes (own columns of composites included), or None when a
+    declaration cannot be computed, meaning every source field is potentially written."""
+    written: set[str] = set()
+    for entry in entries:
+        access = column_access(entry, registry)
+        if access.everything:
+            return None
+        written |= access.writes
+    return frozenset(written)
