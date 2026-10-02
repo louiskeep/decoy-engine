@@ -173,6 +173,7 @@ class ChunkSpy:
 
         self.refs: dict[str, list[weakref.ref[pa.Table]]] = {}
         self.result_lists: dict[str, list[Any]] = {}
+        self.nbytes: list[int] = []
         self.fail_at = fail_at
         self.exc = exc if exc is not None else RuntimeError("injected kernel failure")
         self.before_pull = before_pull
@@ -197,6 +198,7 @@ class ChunkSpy:
             except StopIteration:
                 return
             self.refs.setdefault(table, []).append(weakref.ref(chunk))
+            self.nbytes.append(chunk.nbytes)
             index += 1
             yield chunk
             del chunk

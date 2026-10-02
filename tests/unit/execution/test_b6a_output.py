@@ -436,3 +436,90 @@ def test_output_free_evidence_equals_the_resident_runs_evidence(
         assert streamed.boundary_conversion_ms == resident.boundary_conversion_ms == 0.0
     else:
         assert streamed.boundary_conversion_ms >= 0.0 and resident.boundary_conversion_ms >= 0.0
+
+
+def test_a_full_row_group_is_emitted_before_the_next_chunk_is_pulled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mod = b6a.sink_module()
+    monkeypatch.setattr(mod, "ROW_GROUP_ROWS", 32)
+    cfg, src = _native_job(tmp_path, 160)
+    sink = b6a.RecordingSink()
+    received: dict[int, int] = {}
+    b6a.ChunkSpy(
+        monkeypatch,
+        before_pull=lambda table, index: received.update({index: len(sink.batches.get(table, []))}),
+    )
+    b6a.run_streamed(cfg, src, sink)
+    # Chunks are 16 rows: the batch holding rows 0..31 is out before chunk 2 is pulled.
+    assert received[2] == 1 and received[4] == 2 and received[6] == 3
+
+
+def test_a_byte_cap_equal_to_one_chunk_cuts_every_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mod = b6a.sink_module()
+    cfg, src = _wide_job(tmp_path, 160)
+    probe = b6a.ChunkSpy(monkeypatch)
+    expected = b6a.reference(cfg, src)[support.TABLE]
+    assert len(set(probe.nbytes)) == 1
+    monkeypatch.setattr(mod, "ROW_GROUP_BYTES", probe.nbytes[0])
+    sink, _target = b6a.real_sink(tmp_path)
+    result = b6a.run_streamed(cfg, src, sink)
+    b6a.assert_streamed_equals(sink, expected)
+    block = result.quality_metrics["auto_chunk"]["output"]
+    assert block["byte_cut_row_groups"] == block["row_groups"] == 160 // support.CHUNK
+
+
+@pytest.mark.parametrize("companion", COMPANION_PARAMS)
+def test_a_passthrough_column_typed_null_never_holds_the_stream_back(
+    companion: str, tmp_path: Path
+) -> None:
+    src = pa.table(
+        {
+            "r": pa.array([f"s{i}" for i in range(support.ROWS)]),
+            "n": pa.nulls(support.ROWS),
+        }
+    )
+    cfg = support.make_cfg(
+        [support.redact_col("r"), support.pass_col("n")],
+        path=support.write_source(src, tmp_path / "s.parquet"),
+    )
+    expected = b6a.reference(cfg, src)[support.TABLE]
+    sink, _target = b6a.real_sink(tmp_path)
+    result = b6a.run_streamed(cfg, src, sink)
+    b6a.assert_streamed_equals(sink, expected)
+    block = result.quality_metrics["auto_chunk"]["output"]
+    assert block["held_back_chunks"] == 0 and block["spilled_chunks"] == 0
+
+
+def test_a_later_chunk_with_different_column_names_is_a_schema_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution.native import _chunked_entry
+
+    cfg, src = _native_job(tmp_path, 160)
+    real = _chunked_entry.run_mask_chunked
+
+    def renaming(config: Any, chunks: Any, **kwargs: Any) -> Any:
+        for index, chunk in enumerate(real(config, chunks, **kwargs)):
+            if index == 3:
+                chunk = chunk.rename_columns(["r", "z", "other"])
+            yield chunk
+
+    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", renaming)
+    sink, target = b6a.real_sink(tmp_path)
+    with pytest.raises(ExecutionError) as err:
+        b6a.run_streamed(cfg, src, sink)
+    assert err.value.code == "chunked_schema_mismatch"
+    assert sink.count("abort") == 1 and sink.count("commit") == 0
+    assert not target.exists()
+
+
+def test_an_empty_chunk_stream_is_a_schema_mismatch_not_an_index_error() -> None:
+    mod = b6a.sink_module()
+    sink = b6a.RecordingSink()
+    with pytest.raises(ExecutionError) as err:
+        mod.stream_table(sink, "t", iter(()), fixed_columns=frozenset())
+    assert err.value.code == "chunked_schema_mismatch"
+    assert sink.calls == []

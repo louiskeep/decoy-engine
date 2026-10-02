@@ -68,6 +68,17 @@ def test_two_dispatched_tables_stream_in_config_order_with_per_table_evidence(
     assert result.quality_metrics["execution"]["outputs_streamed"] is True
 
 
+def test_a_streamed_split_never_runs_the_full_frame_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg, sources = _two_dispatched(tmp_path)
+    adapter_calls = mt.spy_adapter_run(monkeypatch)
+    sink = b6a.RecordingSink()
+    _run(cfg, sources, sink)
+    assert sink.count("commit") == 1
+    assert adapter_calls == []
+
+
 def test_a_failure_in_the_second_table_aborts_once_and_publishes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
