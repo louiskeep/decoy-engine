@@ -375,11 +375,17 @@ def test_sibling_reference_puts_the_passthrough_column_in_the_read_set(
 # ---------------------------------------------------------------------------
 
 
-def test_string_literal_equal_to_a_column_name_reads_that_column() -> None:
+def test_string_literal_equal_to_a_column_name_keeps_that_column_carried() -> None:
     config = make_config([_when("s", "s == 'x'")])
     chunks = [_chunk(x=pa.array([1, 2, 3])) for _ in range(2)]
-    _out, sink, _ev = run_entry(config, chunks)
-    assert _read_lists(sink) == [["x"]] * 2
+    out, sink, ev = run_entry(config, chunks)
+    assert _read_lists(sink) == [[]] * 2
+    assert ev[0].native_admitted is False
+    assert ev[0].reroute_reason == "when_predicate_not_native:s"
+    expected = run_public(config, chunks)
+    for got, src, want in zip(out, chunks, expected, strict=True):
+        assert same_column(got.column("x"), src.column("x"))
+        assert got.column("s").to_pylist() == want.column("s").to_pylist()
 
 
 # ---------------------------------------------------------------------------
@@ -403,8 +409,10 @@ def _scan(columns: list[dict[str, Any]], passthrough_names: list[str]) -> frozen
         ("名字 == 'b'", ["名字", "名"], {"名字"}),
         ("`my col` > 4", ["my col", "my", "col"], {"my col"}),
         ("`my col` > 4 and x > 1", ["my col", "x"], {"my col", "x"}),
-        ("s == 'x'", ["x", "y"], {"x"}),
-        ('s == "café"', ["café"], {"café"}),
+        ("s == 'x'", ["x", "y"], set()),
+        ('s == "café"', ["café"], set()),
+        ("x == 'y'", ["x", "y"], {"x"}),
+        ("`x` == 'y'", ["x", "y"], {"x"}),
         ("x.notnull()", ["x"], {"x"}),
         ("   ", ["x"], set()),
     ],
@@ -425,15 +433,164 @@ def test_read_set_undecodable_string_literal_reads_every_passthrough_column() ->
     assert _scan([{**redact("s"), "when": "s == f'{x}'"}], ["x", "y"]) == {"x", "y"}
 
 
-def test_read_set_matches_string_values_in_other_columns_entries() -> None:
+def test_read_set_matches_sibling_reference_fields_only() -> None:
     cols = [
         {"name": "k", "strategy": "group_key", "provider_config": {"group_by": "g"}},
-        {"name": "d", "strategy": "date_shift", "provider_config": {"anchor": "a"}},
+        {"name": "d", "strategy": "windowed_date", "provider_config": {"anchor": "a"}},
         {"name": "n", "strategy": "x", "provider_config": {"a": {"b": ["deep", 3]}, "c": ["lst"]}},
     ]
-    assert _scan(cols, ["g", "a", "deep", "lst", "other"]) == {"g", "a", "deep", "lst"}
+    assert _scan(cols, ["g", "a", "deep", "lst", "other"]) == {"g", "a"}
     # whole-string match only
     assert _scan(cols, ["gg", "g "]) == frozenset()
+
+
+def test_read_set_ignores_names_that_are_not_column_references() -> None:
+    cols = [
+        {
+            "name": "r",
+            "strategy": "redact",
+            "provider": "person_first_name",
+            "namespace": "the_ns",
+            "provider_config": {"label": "note", "nested": {"deep": ["lst"]}},
+        },
+    ]
+    names = ["redact", "person_first_name", "the_ns", "note", "deep", "lst"]
+    assert _scan(cols, names) == frozenset()
+
+
+_READERS = {
+    "date_shift_group_by": (
+        {"name": "d", "strategy": "date_shift", "provider_config": {"group_by": "g"}},
+        {"g"},
+    ),
+    "grouped_series_group_and_order": (
+        {
+            "name": "gs",
+            "strategy": "grouped_series",
+            "provider_config": {"group_by": "g", "order_by": "o"},
+        },
+        {"g", "o"},
+    ),
+    "coherent_with": (
+        {"name": "c", "strategy": "redact", "coherent_with": ["g", "o"]},
+        {"g", "o"},
+    ),
+    "derived_expression": (
+        {"name": "v", "strategy": "derived", "provider_config": {"expression": "g + o * 2"}},
+        {"g", "o"},
+    ),
+    "derived_aggregate_column": (
+        {"name": "v", "strategy": "derived_aggregate", "provider_config": {"column": "g"}},
+        {"g"},
+    ),
+    "joint_mask_key_and_columns": (
+        {
+            "name": "j",
+            "strategy": "joint_mask",
+            "provider_config": {"key_by": "g", "columns": ["o", "j"], "reference": "ref"},
+        },
+        {"g", "o"},
+    ),
+    "nested_child_group_by": (
+        {
+            "name": "n",
+            "strategy": "nested",
+            "provider_config": {"strategy": "group_key", "strategy_config": {"group_by": "g"}},
+        },
+        {"g"},
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_READERS))
+def test_declared_sibling_fields_read_their_column(case: str) -> None:
+    entry, expected = _READERS[case]
+    assert _scan([entry], ["g", "o", "other"]) == frozenset(expected)
+
+
+def test_unparsable_derived_expression_reads_every_passthrough_column() -> None:
+    entry = {"name": "v", "strategy": "derived", "provider_config": {"expression": "g +"}}
+    assert _scan([entry], ["g", "other"]) == {"g", "other"}
+
+
+def _composite_entry(name: str, provider: str, strategy: str = "<composite>", **extra: Any) -> Any:
+    return {
+        "name": name,
+        "strategy": strategy,
+        "provider": provider,
+        "deterministic": True,
+        "namespace": "ns",
+        **extra,
+    }
+
+
+_BUNDLE = [
+    {"column": "a", "provider": "person_first_name"},
+    {"column": "b", "provider": "person_last_name"},
+    {"column": "c", "provider": "person_phone"},
+]
+_FIXED = {
+    "composite_name_email": ("first_name", ["last_name", "email"]),
+    "composite_city_state_zip": ("city", ["state", "zip"]),
+    "composite_person": ("first_name", ["dob", "email", "last_name"]),
+    "composite_address": ("city", ["state", "street_address", "zip"]),
+    "composite_provider": ("provider_name", ["npi", "practice_address"]),
+}
+
+
+def _custom_pair(bundle: Any) -> list[dict[str, Any]]:
+    cfg = {"provider_config": {"bundle": bundle}}
+    return [
+        _composite_entry("a", "composite_custom", coherent_with=["b"], **cfg),
+        _composite_entry("b", "composite_custom", coherent_with=["a"], **cfg),
+    ]
+
+
+def test_composite_custom_bundle_output_is_read() -> None:
+    from decoy_engine.execution._column_access import column_access
+
+    cols = _custom_pair(_BUNDLE)
+    assert _scan(cols, ["c"]) == {"c"}
+    assert {"a", "b", "c"} <= column_access(cols[0]).writes
+    assert _scan(cols, ["c", "d"]) == {"c"}
+
+
+def test_composite_custom_bundle_without_the_column_reads_nothing() -> None:
+    assert _scan(_custom_pair(_BUNDLE[:2]), ["c"]) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "bundle", ["not-a-list", [{"column": ""}], [{"column": 3}], [{"nope": "c"}], [None]]
+)
+def test_malformed_composite_bundle_reads_every_passthrough_column(bundle: Any) -> None:
+    from decoy_engine.execution._column_access import column_access
+
+    cols = _custom_pair(bundle)
+    assert column_access(cols[0]).everything is True
+    assert _scan(cols, ["c", "d"]) == {"c", "d"}
+
+
+@pytest.mark.parametrize("strategy", ["<composite>", "faker"])
+@pytest.mark.parametrize("provider", sorted(_FIXED))
+def test_lone_fixed_composite_reads_its_other_canonical_columns(
+    provider: str, strategy: str
+) -> None:
+    from decoy_engine.execution._column_access import column_access
+
+    own, others = _FIXED[provider]
+    entry = _composite_entry(own, provider, strategy)
+    assert column_access(entry).writes >= set(others)
+    assert _scan([entry], [*others, "unrelated"]) == frozenset(others)
+
+
+@pytest.mark.parametrize("provider", sorted(_FIXED))
+def test_lone_fixed_composite_with_when_keeps_the_full_declaration(provider: str) -> None:
+    from decoy_engine.execution._column_access import column_access
+
+    own, others = _FIXED[provider]
+    entry = {**_composite_entry(own, provider), "when": f"{own} == 'never'"}
+    assert column_access(entry).writes >= set(others)
+    assert _scan([entry], [*others, "unrelated"]) == frozenset(others)
 
 
 def test_read_set_ignores_a_columns_own_name() -> None:

@@ -45,9 +45,9 @@ _ROUTES = ["native", "oracle"]
 
 
 def _expect_route(route: str, configured: bool) -> bool:
-    # Only a configured passthrough column keeps the table native; an unconfigured
-    # column vetoes it to the oracle (uncovered column), and a forced route is the oracle.
-    return route == "native" and configured
+    # Unconfigured columns under the pre-GA `warn` default no longer veto the native
+    # route; only a forced route is the oracle.
+    return route == "native"
 
 
 def _entry(

@@ -403,19 +403,37 @@ def test_nullable_integer_passthrough_above_2_pow_53_is_exact(
     assert all(c.schema.field("p").type == dtype for c in out)
 
 
-def test_unconfigured_passthrough_column_is_the_source_column() -> None:
-    """Unconfigured columns kept under the passthrough policy veto the table to the
-    oracle (which owns that policy), and still come back as the source column."""
+@pytest.mark.parametrize("policy", ["warn", "error"])
+def test_unconfigured_passthrough_column_is_the_source_column(policy: str) -> None:
+    """Under `warn` an unconfigured column no longer vetoes the table: it runs natively
+    and comes back as the source column. Under `error` the table keeps the oracle route
+    and raises `undeclared_output_columns` at the first `next()`."""
     src = pa.table(
         {
             "s": pa.array(["a", None, "c", "d"], pa.string()),
             "extra": pa.array([2**53 + 1, None, 5, 6], pa.int64()),
         }
     )
+    config = make_config([redact("s")], global_settings={"unconfigured_column_policy": policy})
     evidence: list[NativeRouteEvidence] = []
-    out = _entry(make_config([redact("s")]), split(src, 2), evidence)
-    assert evidence[0].native_admitted is False
-    assert "uncovered_columns" in (evidence[0].reroute_reason or "")
+    if policy == "error":
+        gen = run_mask_chunked(
+            config,
+            split(src, 2),
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
+            route_evidence_sink=evidence,
+        )
+        with pytest.raises(ExecutionError) as info:
+            next(gen)
+        assert info.value.code == "undeclared_output_columns"
+        assert evidence[0].native_admitted is False
+        assert "uncovered_columns" in (evidence[0].reroute_reason or "")
+        return
+    out = _entry(config, split(src, 2), evidence)
+    assert evidence[0].native_admitted is True
+    assert evidence[0].reroute_reason is None
     assert column_values(out, "extra") == [2**53 + 1, None, 5, 6]
     assert {c.schema.field("extra").type for c in out} == {pa.int64()}
 

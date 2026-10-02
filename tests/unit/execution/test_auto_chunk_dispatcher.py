@@ -331,14 +331,31 @@ def test_mixed_table_with_a_categorical_column_runs_wholly_on_the_oracle_route(
     )
 
 
-def test_unconfigured_column_reroutes_with_uncovered_columns(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "companion", [pytest.param("present", marks=support.NEEDS_COMPANION), "absent"]
+)
+def test_unconfigured_column_is_admitted_to_the_native_route(
+    companion: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B8: an unconfigured column no longer vetoes the table under the `warn` policy
+    (pre-GA default). The hash column still needs the companion to run natively."""
+    if companion == "absent":
+        support.remove_companion(monkeypatch)
     data = {**support.string_source(), "extra": pa.array([f"e{i}" for i in range(support.ROWS)])}
     cfg, src = _job(tmp_path, [support.hash_col("h"), support.redact_col("r")], data)
     result = support.run_default(cfg, src)
     evidence = result.quality_metrics["chunked_route"]
-    assert evidence["native_admitted"] is False
-    assert evidence["reroute_reason"].startswith("uncovered_columns")
-    assert all(executed == "pandas_oracle" for _planned, executed in _backends(evidence).values())
+    backends = _backends(evidence)
+    assert "extra" not in backends
+    if companion == "present":
+        assert evidence["native_admitted"] is True
+        assert evidence["reroute_reason"] is None
+        assert backends["h"] == ("rust_companion", "rust_companion")
+        assert backends["r"] == ("arrow_python", "arrow_python")
+    else:
+        assert evidence["native_admitted"] is False
+        assert evidence["reroute_reason"] == "crypto_extension_unavailable"
+        assert all(executed == "pandas_oracle" for _planned, executed in backends.values())
     legacy = support.run_legacy(cfg, src)
     support.check_contract(
         result.outputs[support.TABLE],
@@ -431,8 +448,7 @@ def test_chunked_route_evidence_is_json_safe_deterministic_and_complete(
     _no_elapsed(evidence)
     chunk_count = first.quality_metrics["auto_chunk"]["chunk_count"]
     assert all(c["calls"] == chunk_count for c in evidence["columns"])
-    # `extra` is an unconfigured passthrough column: read by pandas on both lanes here
-    # (the table reroutes to B1's oracle route), listed sorted.
+    # `extra` is an unconfigured passthrough column; the list is sorted on both lanes.
     assert evidence["pandas_read_passthrough"] == sorted(evidence["pandas_read_passthrough"])
     assert first.quality_metrics == second.quality_metrics
     if lane == "legacy":

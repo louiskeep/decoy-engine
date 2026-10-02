@@ -252,11 +252,9 @@ def test_passthrough_field_shapes(variant: str, companion: str, tmp_path: Path) 
     )
     cfg = support.make_cfg(cols, path=support.write_source(src, tmp_path / "s.parquet"))
     dispatcher, legacy, full = _trio(cfg, src)
-    if configured:
-        _assert_lane(dispatcher, native=companion == "present")
-    else:
-        # An unconfigured column under the passthrough policy: B1 vetoes to its oracle route.
-        _assert_lane(dispatcher, native=False, reason_prefix="uncovered_columns")
+    # An unconfigured column under the `warn` policy (B8) takes the same route as a
+    # configured passthrough column: native with the companion, the oracle without.
+    _assert_lane(dispatcher, native=companion == "present")
     support.check_contract(
         dispatcher.outputs[support.TABLE],
         legacy.outputs[support.TABLE],
