@@ -32,6 +32,7 @@ import pyarrow as pa
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _pipeline_auto_chunk
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
@@ -258,6 +259,15 @@ def run_multi_table_split(
     With a `sink` (B6a; the caller verified every output is dispatched) each dispatched
     table streams into it and the returned outputs are `{}`; `output_reason` names why a
     run without a sink stays resident, recorded per dispatched table."""
+    if sink is not None and (
+        split.full_frame or any(name not in split.dispatched for name in resident_sources)
+    ):
+        # B6a: never run the full-frame adapter, or mask a table, while a publish session
+        # may be open; `decide_output_mode` declines these splits, this refuses them too.
+        raise ExecutionError(
+            code="split_sink_needs_all_dispatched",
+            message="a streamed multi-table split needs every output table dispatched.",
+        )
     _LOG.info(
         "multi-table split dispatched=%s full_frame=%s",
         ", ".join(split.dispatched),

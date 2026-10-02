@@ -20,6 +20,10 @@ hash, truncate, string redact and passthrough columns only), so chunks that arri
 before every column has a non-null type are held back, and held-back chunks beyond one
 row group spill to disk as Arrow IPC. Plan:
 docs/plans/2026-10-02-b6a-incremental-output-sink.md.
+
+Memory bound: the caps (`ROW_GROUP_ROWS`, `ROW_GROUP_BYTES`) are checked after a chunk is
+added, so the buffered output is at most one row group's cap plus one chunk, plus the
+combined copy of the group being written, not a hard cap.
 """
 
 from __future__ import annotations
@@ -109,10 +113,12 @@ class OutputPublish:
     """The publish session: inert until the run decides to stream, then commit-or-abort.
 
     Used as a context manager around everything from the mask step to the return. An
-    exception leaving the block aborts an open, uncommitted session once (best effort,
-    an abort error is suppressed) and propagates unchanged; `commit()` is the run's last
-    action. The sink's `commit()` failing leaves the session uncommitted, so the same
-    exit aborts it."""
+    exception leaving the block aborts an open, uncommitted session once and propagates
+    unchanged. Abort is best effort exactly as on the sequential route (`_sequential.py`):
+    an `Exception` raised by `abort()` is suppressed, a `BaseException` such as
+    `KeyboardInterrupt` is not. `commit()` is the run's last action; the sink's `commit()`
+    failing leaves the session uncommitted, so the same exit aborts it. An open session
+    that leaves the block normally without having committed is a wiring bug and raises."""
 
     def __init__(self, sink: Any, stream: bool, post_validation: bool) -> None:
         require_bool("stream_chunked_output", stream)
@@ -140,12 +146,19 @@ class OutputPublish:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if exc_type is not None and self.is_open and not self._finished:
+        if self.is_open and not self._finished:
             self._finished = True
             try:
                 self.sink.abort()
             except Exception:
                 pass
+            if exc_type is None:
+                # `commit()` is the run's last action, so an open session leaving the block
+                # normally without committing is a wiring bug; never return unpublished.
+                raise ExecutionError(
+                    code="internal_publish_not_committed",
+                    message="a streamed run ended without committing its output.",
+                )
 
 
 class OutputFreeResults(list):
@@ -317,9 +330,8 @@ def _hold_back(
         rows += chunk.num_rows
         nbytes += chunk.nbytes
         if rows >= ROW_GROUP_ROWS or nbytes >= ROW_GROUP_BYTES:
-            for held in pending:
-                spill.add(held)
-            pending.clear()
+            while pending:
+                spill.add(pending.pop(0))
             rows = nbytes = 0
     return pending
 

@@ -460,3 +460,45 @@ def test_a_vault_writer_keyed_differently_is_rejected_before_anything_is_staged(
         )
     assert sink.calls == []
     _assert_clean(tmp_path, target)
+
+
+def test_an_open_session_left_uncommitted_on_a_normal_exit_aborts_and_raises() -> None:
+    mod = b6a.sink_module()
+    sink = b6a.RecordingSink()
+    session = mod.OutputPublish(sink, True, False)
+    with pytest.raises(ExecutionError) as err, session:
+        session.open()
+    assert err.value.code == "internal_publish_not_committed"
+    assert sink.calls == [("abort",)]
+
+
+def test_a_committed_or_unopened_session_exits_quietly() -> None:
+    mod = b6a.sink_module()
+    sink = b6a.RecordingSink()
+    with mod.OutputPublish(sink, True, False):
+        pass
+    committed = mod.OutputPublish(sink, True, False)
+    with committed:
+        committed.open()
+        committed.commit()
+    assert sink.calls == [("commit",)]
+
+
+def test_an_abort_error_that_is_not_an_exception_still_propagates_like_the_sequential_route() -> (
+    None
+):
+    """`abort()` raising a `BaseException` (for example `KeyboardInterrupt`) is not
+    suppressed, exactly as `_sequential.py` behaves; only `Exception` is swallowed."""
+    mod = b6a.sink_module()
+
+    class Interrupting(b6a.RecordingSink):
+        def abort(self) -> None:
+            super().abort()
+            raise KeyboardInterrupt
+
+    sink = Interrupting()
+    session = mod.OutputPublish(sink, True, False)
+    with pytest.raises(KeyboardInterrupt), session:
+        session.open()
+        raise RuntimeError("original")
+    assert sink.count("abort") == 1

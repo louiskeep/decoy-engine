@@ -16,7 +16,12 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.errors import RowErrorsFailedError
-from decoy_engine.execution import _isolated_worker, run_pipeline, run_pipeline_isolated
+from decoy_engine.execution import (
+    ExecutionError,
+    _isolated_worker,
+    run_pipeline,
+    run_pipeline_isolated,
+)
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _b6a_support as b6a
 from tests.unit.execution import _multi_table_support as mt
@@ -266,3 +271,30 @@ def test_run_pipeline_isolated_returns_equal_outputs_and_publishes_the_same_byte
         tmp_path / "pub_resident" / "t.parquet"
     ).read_bytes()
     assert pq.read_table(tmp_path / "pub_streamed" / "t.parquet").num_rows == _WORKER_ROWS
+
+
+@pytest.mark.parametrize("kind", ["full_frame_small", "extra_resident_frame"])
+def test_the_split_executor_refuses_a_sink_it_cannot_honor_before_masking(
+    kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defence in depth: even if the upstream decision were wrong, the executor never
+    runs the full-frame adapter, or masks a table, while a publish session could be open."""
+    from decoy_engine.execution import _pipeline_auto_chunk
+
+    sink_mod = b6a.sink_module()
+    monkeypatch.setattr(sink_mod, "decide_output_mode", lambda *a, **k: ("streamed", "eligible"))
+    cfg, sources, _reason = _sibling_job(kind, tmp_path)
+    adapter_calls = mt.spy_adapter_run(monkeypatch)
+    lane_calls: list[Any] = []
+    real = _pipeline_auto_chunk.run_auto_chunk
+    monkeypatch.setattr(
+        _pipeline_auto_chunk,
+        "run_auto_chunk",
+        lambda *a, **k: (lane_calls.append(1), real(*a, **k))[1],
+    )
+    sink = b6a.RecordingSink()
+    with pytest.raises(ExecutionError) as err:
+        _run(cfg, sources, sink)
+    assert err.value.code == "split_sink_needs_all_dispatched"
+    assert adapter_calls == [] and lane_calls == []
+    assert sink.calls in ([], [("abort",)])

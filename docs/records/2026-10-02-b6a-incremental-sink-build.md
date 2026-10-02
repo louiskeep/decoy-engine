@@ -12,7 +12,8 @@ Nothing is pushed or merged. One acceptance item is open: the oracle 10M benchma
 - `8097cbfb` implementation: `_chunked_output_sink.py`, the wiring, docs and sentries.
 - `f005e358` the one authorized change to an existing test (below) and the benchmark harness.
 - `d7b56c88` extra tests that kill surviving hand mutants and cover the empty-stream guard.
-- the commit holding this record, the CHANGELOG entry and the benchmark artifact.
+- `ca73b4ee` the build record, the CHANGELOG entry and the partial benchmark artifact.
+- the dennis-gate fix commit (below).
 
 ## Red before
 
@@ -163,6 +164,44 @@ oracle 2M cell. No bar, ceiling or constant was changed. The first 16 oracle 10M
 the log showed streamed increments near 46 to 50 MiB against resident near 1830 MiB and wall times
 of 244 to 282 s streamed against 249 to 255 s resident, from the console only; those are not
 evidence.
+
+## Dennis gate fixes (after `ca73b4ee`)
+
+Tests were written first and run red (3 failed, 2 passed by parity) before the code changed.
+
+- MEDIUM-2: `run_multi_table_split` now raises `ExecutionError(code="split_sink_needs_all_dispatched")`
+  before masking anything when it is given a sink and the split has a full-frame table or a
+  resident source that is not dispatched. `decide_output_mode` still declines these splits
+  upstream; the executor no longer relies on it. Test:
+  `test_the_split_executor_refuses_a_sink_it_cannot_honor_before_masking` (forces the decision to
+  "streamed" and checks that neither the adapter nor the lane runs).
+- LOW-1: the module docstring states the bound as one row group's cap plus one chunk, plus the
+  combined copy of the group being written; behavior unchanged.
+- LOW-2: the hold-back spill drains `pending` with `while pending: spill.add(pending.pop(0))`, so
+  no loop variable keeps the last chunk alive.
+- LOW-3: `OutputPublish` documents that an `Exception` from `abort()` is suppressed and a
+  `BaseException` is not, the same as `_sequential.py`; a test pins it.
+- LOW-4: `OutputPublish.__exit__` now aborts and raises
+  `ExecutionError(code="internal_publish_not_committed")` when an open session leaves the block
+  normally without having committed. This makes the "abort even without error" hand mutant
+  killable: it is no longer an equivalent mutant. Tests: an open uncommitted session raises and
+  aborts once; a committed or unopened session exits quietly.
+- MEDIUM-3 (spill directory follows `TMPDIR`) is the plan's accepted known issue, left as is and
+  carried into B6b.
+
+Verification after these changes: `tests/unit/execution`, `tests/unit/scripts` and `tests/sentry`
+together, 7634 passed, 5 skipped; ruff and mypy clean; `_pipeline.py` still 679 lines.
+
+## Rerunning the oracle 10M cell
+
+`bench_sink.py` now takes the machine-wide lock per trial (so other test runs interleave between
+trials, never during one), appends every trial to `<out-dir>/results.jsonl` and resumes from it,
+runs one cell with `--workloads oracle --rows 10000000`, and has a `merge` subcommand that
+combines saved cells with the new cell and evaluates all eight frozen bars (W for four cells, M1
+and M2 for two route families) plus the per-trial ceiling and byte checks. The per-cell round
+order is now seeded from `20261002` and the cell name so a resumed run repeats the same order;
+the three saved cells used one sequential generator with the same seed. The merge step and its
+exit code are covered by `tests/unit/scripts/test_bench_sink_merge.py`.
 
 ## Notes for the gates
 
