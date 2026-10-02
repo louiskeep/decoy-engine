@@ -1,0 +1,170 @@
+[
+ {
+  "mutant": "row cut > instead of >=",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.43s"
+ },
+ {
+  "mutant": "byte cut > instead of >=",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.28s"
+ },
+ {
+  "mutant": "byte cut counter dropped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 164 passed, 1 deselected in 5.04s"
+ },
+ {
+  "mutant": "held-back counter dropped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 166 passed, 1 deselected in 5.11s"
+ },
+ {
+  "mutant": "spill cap or->and",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 166 passed, 1 deselected in 5.10s"
+ },
+ {
+  "mutant": "spill counter dropped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 166 passed, 1 deselected in 5.09s"
+ },
+ {
+  "mutant": "fixed columns ignored",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.26s"
+ },
+ {
+  "mutant": "type mismatch check inverted",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 1 deselected in 0.49s"
+ },
+ {
+  "mutant": "name mismatch check dropped",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.38s"
+ },
+ {
+  "mutant": "abort on error dropped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 167 passed, 1 deselected in 5.27s"
+ },
+ {
+  "mutant": "abort even without error",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.28s"
+ },
+ {
+  "mutant": "finished set before sink.commit",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 180 passed, 1 deselected in 5.77s"
+ },
+ {
+  "mutant": "commit skipped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 1 deselected in 0.45s"
+ },
+ {
+  "mutant": "spill replay reversed",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 166 passed, 1 deselected in 5.20s"
+ },
+ {
+  "mutant": "spill dir never removed",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 166 passed, 1 deselected in 5.86s"
+ },
+ {
+  "mutant": "evidence keeps outputs",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 171 passed, 1 deselected in 5.81s"
+ },
+ {
+  "mutant": "take_rows keeps rows",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 163 passed, 1 deselected in 5.35s"
+ },
+ {
+  "mutant": "cast always skipped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 166 passed, 1 deselected in 5.76s"
+ },
+ {
+  "mutant": "decide: post_validation ignored",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 191 passed, 1 deselected in 6.02s"
+ },
+ {
+  "mutant": "decide: no_sink check dropped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 185 passed, 1 deselected in 5.91s"
+ },
+ {
+  "mutant": "decide: full-frame split ignored",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 208 passed, 1 deselected in 6.31s"
+ },
+ {
+  "mutant": "decide: knob ignored",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 184 passed, 1 deselected in 5.84s"
+ },
+ {
+  "mutant": "session never opens",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 1 deselected in 0.44s"
+ },
+ {
+  "mutant": "telemetry flag always false",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 201 passed, 1 deselected in 6.05s"
+ },
+ {
+  "mutant": "commit not called",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 1 deselected in 0.44s"
+ },
+ {
+  "mutant": "split returns outputs when streamed",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 206 passed, 1 deselected in 6.14s"
+ },
+ {
+  "mutant": "split group computed from dispatched_out",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.20s"
+ },
+ {
+  "mutant": "streamed: fixed columns empty",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "232 passed, 1 deselected in 9.19s"
+ }
+]
