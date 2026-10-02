@@ -381,13 +381,13 @@ def _key(item: Any) -> str:
     )
 
 
-def _fpe_join_table(tag: str, n: int) -> mt.TableSpec:
+def _fpe_join_table(tag: str, n: int, group: str | None = None) -> mt.TableSpec:
     cols = [
         {
             "name": name,
             "strategy": "fpe",
-            "namespace": f"{tag}_ns",
-            "provider_config": {"charset": "digits", "fpe_join_group": f"grp_{tag}"},
+            "namespace": f"{group}_ns" if group else f"{tag}_ns",
+            "provider_config": {"charset": "digits", "fpe_join_group": group or f"grp_{tag}"},
         }
         for name in ("phone", "mobile")
     ]
@@ -411,15 +411,22 @@ def test_warnings_timings_and_corpora_are_permutations_of_the_split_off_run(
         {
             "codes": (code_cols, pa.table(data)),
             "anchor": (mt.std_columns("anchor_ns"), mt.string_table(N, "a")),
-            "fpe_a": _fpe_join_table("a", mt.SMALL),
-            "fpe_b": _fpe_join_table("b", mt.SMALL),
+            "fpe_a": _fpe_join_table("a", mt.SMALL, group="shared"),
+            "fpe_b": _fpe_join_table("b", mt.SMALL, group="shared"),
         },
     )
     got = run_pipeline(cfg, sources=sources, **mt.kw())
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
     assert set(mt.dispatched_tables(got)) == {"codes", "anchor"}
-    # One warning emitted by two tables is kept twice, as the adapter keeps it today.
-    assert sum(w.code == "fpe_join_group_active" for w in off.warnings) >= 2
+    # Two tables with the same join group and column names emit identical warnings; the
+    # adapter keeps both today, one per column per table, and so does the split.
+    from collections import Counter
+
+    fpe = [w for w in off.warnings if w.code == "fpe_join_group_active"]
+    assert len(fpe) == 4
+    for result in (got, off):
+        counts = Counter(_key(w) for w in result.warnings if w.code == "fpe_join_group_active")
+        assert sorted(counts.values()) == [2, 2]
     assert sorted(map(_key, got.warnings)) == sorted(map(_key, off.warnings))
     assert mt.timing_keys(got) == mt.timing_keys(off)
     assert got.quality_metrics["code_set_corpora"] == off.quality_metrics["code_set_corpora"]

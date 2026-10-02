@@ -514,3 +514,27 @@ def test_a_lazy_source_is_never_read_by_the_split_module(
     assert "lazy" in entries["lazy"]["reason"].lower()
     assert got.outputs["lazy"].num_rows == N
     assert reads == []
+
+
+def test_the_split_logs_the_dispatched_tables_and_the_group_without_values(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    cfg, sources = mt.build_job(
+        tmp_path,
+        {
+            "z": _redact_only("zsecret", N),
+            "tiny": _redact_only("tinysecret", mt.SMALL),
+            "a": _redact_only("asecret", N),
+        },
+    )
+    with caplog.at_level(logging.INFO, logger="decoy_engine.execution._pipeline_multi_table"):
+        run_pipeline(cfg, sources=sources, **mt.kw())
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "decoy_engine.execution._pipeline_multi_table"
+    ]
+    assert lines == ["multi-table split dispatched=z, a full_frame=tiny"]
+    assert not any("secret" in r.getMessage() for r in caplog.records)

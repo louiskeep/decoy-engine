@@ -135,14 +135,10 @@ def test_relationships_block_without_a_profiled_edge_never_enters_the_split(
         },
     )
     calls = mt.spy_split(monkeypatch)
-    try:
-        got = run_pipeline(cfg, sources=sources, **mt.kw())
-    except ExecutionError:
-        got = None
+    got = run_pipeline(cfg, sources=sources, **mt.kw())
     assert calls == []
-    if got is not None:
-        off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
-        _assert_tables_equal(got, off)
+    off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
+    _assert_tables_equal(got, off)
 
 
 def test_shared_namespace_masks_the_same_value_the_same_in_both_units(
