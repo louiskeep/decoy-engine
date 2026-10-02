@@ -360,7 +360,12 @@ def plan_native_route(
     if first_schema is not None:
         if decision.native_admitted:
             covered = {n.column for n in decision.node_routes}
-            uncovered = [n for n in first_schema.names if n not in covered]
+            from decoy_engine.execution._transforms import stored_index_fields
+
+            # A stored pandas index field is consumed as the index on the oracle route and
+            # never yielded, so it is neither covered nor unconfigured.
+            stored = stored_index_fields(first_schema)
+            uncovered = [n for n in first_schema.names if n not in covered and n not in stored]
             missing = covered - set(first_schema.names)
             if missing or (uncovered and unconfigured_policy != "warn"):
                 # Report BOTH sides of the symmetric difference: a column this chunk has

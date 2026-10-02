@@ -41,6 +41,7 @@ from decoy_engine.execution._output_projection import (
     enforce_output_projection,
     known_output_columns,
 )
+from decoy_engine.execution._transforms import stored_index_fields
 from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
@@ -167,6 +168,7 @@ def _native_route(
     columns: tuple[ColumnPlan, ...],
     read_passthrough: tuple[str, ...],
     unconfigured: tuple[str, ...] = (),
+    stored_index: frozenset[str] = frozenset(),
 ) -> Iterator[pa.Table]:
     """The one native chunk loop. Per chunk: row-offset domain check, mask, schema rule
     (when `rule` is given), the unconfigured-column warning, result for the sink (when
@@ -209,6 +211,7 @@ def _native_route(
                 index_kernel=index_kernel,
                 column_elapsed_s=elapsed_s,
                 unconfigured=unconfigured_set,
+                stored_index=stored_index,
             )
             out = (
                 masked
@@ -355,7 +358,10 @@ def _run_chunked(
         # The native masker passes through the columns it has no plan node for, while the
         # warning (and, under `error`, the refusal) comes from `known_output_columns`. If
         # the two ever disagree, a column could pass through unmasked with no warning.
-        oracle_set = set(state.first.schema.names) - known_output_columns(state.plan, table)
+        stored_index = frozenset(stored_index_fields(state.first.schema))
+        oracle_set = (
+            set(state.first.schema.names) - known_output_columns(state.plan, table) - stored_index
+        )
         if oracle_set != set(preflight.unconfigured_passthrough):
             decision = _downgrade_to_oracle(
                 decision,
@@ -404,6 +410,7 @@ def _run_chunked(
         columns=columns,
         read_passthrough=read_passthrough,
         unconfigured=preflight.unconfigured_passthrough,
+        stored_index=frozenset(stored_index_fields(state.first.schema)),
     )
 
 

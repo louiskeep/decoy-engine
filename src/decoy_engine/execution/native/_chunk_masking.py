@@ -157,12 +157,16 @@ def _mask_chunk_native(
     index_kernel: IndexDerivationKernel | None = None,
     column_elapsed_s: dict[str, float] | None = None,
     unconfigured: frozenset[str] = frozenset(),
+    stored_index: frozenset[str] = frozenset(),
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
     A column named in `unconfigured` has no plan node: it is passed through as the source
     column, with no kernel, no timing and no seed lookup (the caller applies the
     unconfigured-column policy and its warning).
+
+    A column named in `stored_index` (a pandas index field the oracle route consumes as the
+    index) is left out of the result, as the oracle route leaves it out.
 
     `column_elapsed_s`, when given, receives each column's kernel time for this
     chunk, from the same timer that feeds the per-strategy aggregate (one clock
@@ -180,6 +184,8 @@ def _mask_chunk_native(
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
+        if name in stored_index:
+            continue
         if name in unconfigured:
             arrays[name] = chunk.column(name)
             continue
