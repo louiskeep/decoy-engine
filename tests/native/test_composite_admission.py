@@ -491,3 +491,491 @@ def test_the_run_registry_reaches_the_compatibility_check(monkeypatch: pytest.Mo
         )
     )
     assert seen == [reg]
+
+
+# ---------------------------------------------------------------------------
+# Test 15 (revision 4.5): the row-error path and a caller-only composite end to end
+# ---------------------------------------------------------------------------
+
+
+def _row_error_run(config: dict[str, Any], chunks: list[pa.Table], **kw: Any) -> list[Any]:
+    from decoy_engine.errors import RowErrorsFailedError
+
+    sink: list[Any] = []
+    with pytest.raises(RowErrorsFailedError):
+        list(
+            run_mask_chunked(
+                config,
+                chunks,
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+                chunk_result_sink=sink,
+                **kw,
+            )
+        )
+    return sink
+
+
+@pytest.mark.parametrize("case", ["composite_name_email-redact", "composite_custom-passthrough"])
+def test_row_error_chunk_reports_generated_values_for_written_columns(
+    case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _provider, columns, data, written = CASES[case]
+    bad = {
+        "name": "age",
+        "strategy": "bucketize",
+        "provider_config": {"width": 10},
+    }
+    data = {**data, "age": ["23", "x1", "47", "50", "51", "52"]}
+    config = make_config([*columns, bad], global_settings=_WARN)
+    _patch_out_composite_refusal(monkeypatch)
+    sink = _row_error_run(config, [_source(data)])
+    assert sink, "the failing chunk is reported to the sink"
+    out = sink[0].outputs[TABLE]
+    source = _source(data)
+    for name in written:
+        got, src = out.column(name).to_pylist(), source.column(name).to_pylist()
+        assert all(a != b for a, b in zip(got, src, strict=True)), name
+
+
+def _compile_with_registry(monkeypatch: pytest.MonkeyPatch, reg: Any) -> None:
+    """`compile_plan` resolves providers through the default registry; scope that lookup to
+    the compile call so the registry under test is the only one the run itself sees."""
+    import decoy_engine.plan as plan_mod
+    import decoy_engine.providers_v2 as providers_mod
+
+    real_compile = plan_mod.compile_plan
+    real_default = providers_mod.get_default_registry
+
+    def compile_plan(*args: Any, **kwargs: Any) -> Any:
+        providers_mod.get_default_registry = lambda: reg  # type: ignore[assignment]
+        try:
+            return real_compile(*args, **kwargs)
+        finally:
+            providers_mod.get_default_registry = real_default  # type: ignore[assignment]
+
+    monkeypatch.setattr(plan_mod, "compile_plan", compile_plan)
+
+
+@pytest.mark.parametrize("row_errors", [False, True], ids=["normal", "row_error"])
+def test_caller_only_composite_end_to_end_through_run_mask_chunked(
+    row_errors: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reg = _custom_composite_registry()
+    columns = [
+        _entry(
+            name,
+            "composite_x",
+            "redact",
+            coherent_with=[other],
+            provider_config={"bundle": _BUNDLE},
+        )
+        for name, other in (("a", "b"), ("b", "a"))
+    ]
+    data = {c: [f"SECRET-{c}-{i}" for i in range(N)] for c in ("a", "b", "c")}
+    if row_errors:
+        columns.append({"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}})
+        data["age"] = ["23", "x1", "47", "50", "51", "52"]
+    config = make_config(columns, global_settings=_WARN)
+    _patch_out_composite_refusal(monkeypatch)
+    _compile_with_registry(monkeypatch, reg)
+    source = _source(data)
+    if row_errors:
+        sink = _row_error_run(config, [source], registry=reg)
+        produced = sink[0].outputs[TABLE]
+    else:
+        out = list(
+            run_mask_chunked(
+                config,
+                [source],
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+                registry=reg,
+            )
+        )
+        produced = pa.concat_tables(out)
+    for name in ("a", "b", "c"):
+        got, src = produced.column(name).to_pylist(), source.column(name).to_pylist()
+        assert all(x != y for x, y in zip(got, src, strict=True)), name
+
+
+# ---------------------------------------------------------------------------
+# Test 16 (revision 4.5): output equal to the public oracle under the rebound registry
+# ---------------------------------------------------------------------------
+
+
+def test_rebound_registry_output_equals_the_public_oracle(monkeypatch: pytest.MonkeyPatch) -> None:
+    reg = _scalar_rebound_registry()
+    columns = [
+        {**redact("s"), "provider": "composite_name_email", "when": "x > 1"},
+        passthrough("x"),
+    ]
+    config = make_config(columns, global_settings=_WARN)
+    chunks = [
+        pa.table({"s": ["a", "b", "c"], "x": pa.array([1, 5, 9], pa.int64())}),
+        pa.table({"s": ["d", "e", "f"], "x": pa.array([9, 1, 5], pa.int64())}),
+    ]
+    kwargs: dict[str, Any] = {
+        "table": TABLE,
+        "engine_version": ENGINE_VERSION,
+        "key_provider": key_provider(),
+        "registry": reg,
+    }
+    ours = list(run_mask_chunked(config, chunks, **kwargs))
+    oracle = list(run_mask_pipeline_chunked(config, chunks, **kwargs))
+    assert [o.to_pydict() for o in ours] == [o.to_pydict() for o in oracle]
+    assert [o.schema.types for o in ours] == [o.schema.types for o in oracle]
+
+
+# ---------------------------------------------------------------------------
+# Test 21: an unparsable `when:` keeps passthrough exact
+# ---------------------------------------------------------------------------
+
+_UNPARSABLE = "r != b'zz'"
+
+
+def _when_config(extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return make_config(
+        [{**redact("r"), "when": _UNPARSABLE}, *(extra or [])], global_settings=_WARN
+    )
+
+
+def test_unparsable_when_keeps_a_big_int_passthrough_exact() -> None:
+    from tests.native._rev9_support import run_entry, run_public
+
+    big = 2**53 + 1
+    chunks = [
+        pa.table(
+            {
+                "r": pa.array(["a", "b", "c"]),
+                "big": pa.array([big, None, 3], pa.int64()),
+            }
+        )
+        for _ in range(2)
+    ]
+    out, sink, _ev = run_entry(_when_config(), chunks)
+    for got, src in zip(out, chunks, strict=True):
+        assert got.schema.field("big").equals(src.schema.field("big"), check_metadata=True)
+        assert got.column("big").to_pylist() == [big, None, 3]
+    assert [r.quality_metrics["chunked_route"]["pandas_read_passthrough"] for r in sink] == [
+        ["big"]
+    ] * 2
+    # The unchanged public oracle rounds it through float64; only characterized here.
+    public = run_public(_when_config(), chunks)
+    assert public[0].schema.field("big").type == pa.float64()
+    assert public[0].column("big").to_pylist()[0] == float(2**53)
+
+
+def test_unparsable_when_still_raises_for_an_unrepresentable_value() -> None:
+    from tests.native._rev9_support import BY_NAME, run_public
+
+    t64 = BY_NAME["time64ns_unaligned"]
+    chunks = [
+        pa.table({"r": pa.array(["a", "b", "c"]), "t": t64.good}),
+        pa.table({"r": pa.array(["a", "b", "c"]), "t": t64.bad}),
+    ]
+    gen = run_mask_chunked(
+        _when_config(),
+        chunks,
+        table=TABLE,
+        engine_version=ENGINE_VERSION,
+        key_provider=key_provider(),
+    )
+    next(gen)
+    with pytest.raises(Exception) as ours:
+        next(gen)
+    assert getattr(ours.value, "code", None) == "chunked_passthrough_value_unrepresentable"
+    with pytest.raises(pa.ArrowInvalid):
+        run_public(_when_config(), chunks)
+
+
+def test_unparsable_when_does_not_refuse_an_unrelated_stored_index() -> None:
+    config = make_config(
+        [{**redact("s"), "when": "s != b'zz'"}, truncate("t")], global_settings=_WARN
+    )
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
+        list(
+            entry_point(
+                config,
+                _indexed(),
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+            )
+        )
+
+
+def test_unparsable_when_naming_a_named_stored_index_runs_on_the_reconstructed_index() -> None:
+    config = make_config(
+        [{**redact("s"), "when": "id != b'zz'"}, truncate("t")], global_settings=_WARN
+    )
+    kwargs: dict[str, Any] = {
+        "table": TABLE,
+        "engine_version": ENGINE_VERSION,
+        "key_provider": key_provider(),
+    }
+    ours = list(run_mask_chunked(config, _indexed(), **kwargs))
+    oracle = list(run_mask_pipeline_chunked(config, _indexed(), **kwargs))
+    assert all("id" not in o.column_names for o in ours)
+    assert [o.column("s").to_pylist() for o in ours] == [o.column("s").to_pylist() for o in oracle]
+
+
+def test_unparsable_when_naming_an_unnamed_stored_index_keeps_the_typed_error() -> None:
+    df = pd.DataFrame({"s": ["a", "b"], "t": ["abcdef", "ghijkl"]})
+    df.index = pd.Index(["i1", "i2"])
+    table = pa.Table.from_pandas(df)
+    assert "__index_level_0__" in table.column_names
+    config = make_config(
+        [{**redact("s"), "when": "__index_level_0__ != b'zz'"}, truncate("t")],
+        global_settings=_WARN,
+    )
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
+        with pytest.raises(Exception) as info:
+            list(
+                entry_point(
+                    config,
+                    [table],
+                    table=TABLE,
+                    engine_version=ENGINE_VERSION,
+                    key_provider=key_provider(),
+                )
+            )
+        assert getattr(info.value, "code", None) == "when_expression_error"
+
+
+# ---------------------------------------------------------------------------
+# Test 22: required registry
+# ---------------------------------------------------------------------------
+
+
+def test_registry_is_a_required_keyword() -> None:
+    from decoy_engine.execution import _pipeline_auto_chunk
+    from decoy_engine.execution._column_access import composite_provider_offenders
+
+    config = {"tables": [{"name": TABLE, "columns": [redact("s")]}]}
+    with pytest.raises(TypeError):
+        check_chunked_compatibility(config, table=TABLE)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        composite_provider_offenders([redact("s")])  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        _pipeline_auto_chunk._legacy_route_evidence(  # type: ignore[call-arg]
+            config,
+            pa.table({"s": ["a"]}),
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            chunk_size_rows=1,
+            chunk_count=1,
+            lane_reason=None,
+        )
+
+
+def test_no_internal_module_feeds_the_registry_from_the_default() -> None:
+    """Only the public entry points and the existing registry-owning modules resolve the
+    default registry; the declaration and admission helpers never do."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(_chunked.__file__).parent
+    offenders = {
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if "physical" not in path.parts and re.search(r"get_default_registry\(\)", path.read_text())
+    }
+    helpers = {
+        "_column_access.py",
+        "_chunked.py",
+        "_chunked_carry.py",
+        "native/_chunked_schema_rule.py",
+        "_pipeline_auto_chunk.py",
+        "_planner.py",
+        "_transforms.py",
+    }
+    assert not (offenders & helpers), sorted(offenders & helpers)
+
+
+# ---------------------------------------------------------------------------
+# Test 23: public-entry drift and the evidence registry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("direction", ["index_then_plain", "plain_then_index"])
+@pytest.mark.parametrize("entry_name", ["run_mask_chunked", "run_mask_pipeline_chunked"])
+def test_stored_index_drift_is_raised_by_both_public_entries(
+    entry_name: str, direction: str
+) -> None:
+    entry_point = (
+        run_mask_chunked if entry_name == "run_mask_chunked" else run_mask_pipeline_chunked
+    )
+    indexed = _indexed()
+    plain = [c.replace_schema_metadata(None) for c in indexed]
+    chunks = [indexed[0], plain[1]] if direction == "index_then_plain" else [plain[0], indexed[1]]
+    sink: list[Any] = []
+    gen = entry_point(
+        make_config([redact("s"), truncate("t")], global_settings=_WARN),
+        chunks,
+        table=TABLE,
+        engine_version=ENGINE_VERSION,
+        key_provider=key_provider(),
+        chunk_result_sink=sink,
+    )
+    next(gen)
+    with pytest.raises(Exception) as info:
+        next(gen)
+    assert getattr(info.value, "code", None) == "native_chunk_schema_drift"
+    assert len(sink) == 1
+
+
+def test_a_rebound_composite_name_is_reported_with_the_scalar_route() -> None:
+    reg = _scalar_rebound_registry()
+    config = make_config(
+        [{**redact("s"), "provider": "composite_name_email"}], global_settings=_WARN
+    )
+    chunk = pa.table({"s": ["a", "b"]})
+    sink: list[Any] = []
+    ev: list[Any] = []
+    list(
+        run_mask_chunked(
+            config,
+            [chunk],
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
+            registry=reg,
+            chunk_result_sink=sink,
+            route_evidence_sink=ev,
+        )
+    )
+    assert ev[0].native_admitted is True and ev[0].reroute_reason is None
+    columns = sink[0].quality_metrics["chunked_route"]["columns"]
+    assert [(c["column"], c["planned_backend"], c["executed_backend"]) for c in columns] == [
+        ("s", "arrow_python", "arrow_python")
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Test 24: access-flag cross-product and fail-closed restoration
+# ---------------------------------------------------------------------------
+
+_BAD_WHEN = "first_name != b'zz'"
+
+
+def _flags(entry: dict[str, Any]) -> tuple[bool, bool]:
+    access = column_access(entry, REG)
+    return access.reads_unknown, access.writes_unknown
+
+
+def _bad_bundle_pair() -> list[dict[str, Any]]:
+    return [
+        _entry(
+            name,
+            "composite_custom",
+            "redact",
+            coherent_with=[other],
+            provider_config={"bundle": "not-a-list"},
+        )
+        for name, other in (("a", "b"), ("b", "a"))
+    ]
+
+
+def test_access_flags_for_each_reads_and_writes_combination() -> None:
+    scalar = {**redact("s"), "when": "s != b'zz'"}
+    assert _flags(scalar) == (True, False)
+    fixed = {**_entry("first_name", "composite_name_email", "redact"), "when": _BAD_WHEN}
+    assert _flags(fixed) == (True, False)
+    assert column_access(fixed, REG).writes == {"first_name", "last_name", "email"}
+    custom_ok = {
+        **_entry(
+            "a",
+            "composite_custom",
+            "redact",
+            coherent_with=["b"],
+            provider_config={"bundle": _BUNDLE},
+        ),
+        "when": "a != b'zz'",
+    }
+    assert _flags(custom_ok) == (True, False)
+    assert column_access(custom_ok, REG).writes >= {"a", "b", "c"}
+    assert _flags(_bad_bundle_pair()[0]) == (False, True)
+    assert _flags({"name": "x", "strategy": "bogus_strategy"}) == (False, True)
+    both = {**_bad_bundle_pair()[0], "when": "a != b'zz'"}
+    assert _flags(both) == (True, True)
+
+
+def test_reads_unknown_keeps_candidates_and_writes_unknown_empties_them() -> None:
+    from decoy_engine.execution._chunked_carry import read_set
+
+    first = _source({"s": ["a"] * N, "big": ["x"] * N})
+    scalar = {**redact("s"), "when": "s != b'zz'"}
+    config = {"tables": [{"name": TABLE, "columns": [scalar]}]}
+    assert handler_written_columns([scalar], REG) == frozenset()
+    assert passthrough_columns(config, table=TABLE, names=first.column_names, registry=REG) == [
+        "big"
+    ]
+    rule = build_schema_rule(config, table=TABLE, first=first, registry=REG)
+    assert set(rule.passthrough_types) == {"big"}
+    assert read_set([scalar], ["big"], REG) == {"big"}
+    carry = plan_carry(config, table=TABLE, first_schema=first.schema, adapter=None, registry=REG)
+    assert carry.carried == frozenset() and carry.read == ("big",)
+    for entries in (_bad_bundle_pair(), [{"name": "x", "strategy": "bogus_strategy"}]):
+        config = {"tables": [{"name": TABLE, "columns": entries}]}
+        assert handler_written_columns(entries, REG) is None
+        assert passthrough_columns(config, table=TABLE, names=["a", "b", "c"], registry=REG) == []
+        wide = _source({"a": ["x"] * N, "b": ["y"] * N, "c": ["z"] * N})
+        assert (
+            build_schema_rule(config, table=TABLE, first=wide, registry=REG).passthrough_types == {}
+        )
+
+
+@pytest.mark.parametrize("row_errors", [False, True], ids=["normal", "row_error"])
+def test_a_composite_with_an_unparsable_when_still_generates_every_output(
+    row_errors: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = {**_entry("first_name", "composite_name_email", "redact"), "when": _BAD_WHEN}
+    columns: list[dict[str, Any]] = [entry]
+    data = {c: [f"SECRET-{c}-{i}" for i in range(N)] for c in ("first_name", "last_name", "email")}
+    if row_errors:
+        columns.append({"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}})
+        data["age"] = ["23", "x1", "47", "50", "51", "52"]
+    config = make_config(columns, global_settings=_WARN)
+    _patch_out_composite_refusal(monkeypatch)
+    source = _source(data)
+    if row_errors:
+        produced = _row_error_run(config, [source])[0].outputs[TABLE]
+    else:
+        produced = pa.concat_tables(
+            list(
+                run_mask_chunked(
+                    config,
+                    [source],
+                    table=TABLE,
+                    engine_version=ENGINE_VERSION,
+                    key_provider=key_provider(),
+                )
+            )
+        )
+    for name in ("first_name", "last_name", "email"):
+        got, src = produced.column(name).to_pylist(), source.column(name).to_pylist()
+        assert all(a != b for a, b in zip(got, src, strict=True)), name
+
+
+def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
+    bad_bundle = make_config(_bad_bundle_pair(), global_settings=_WARN)
+    source = _source({"a": ["x"] * N, "b": ["y"] * N, "c": ["z"] * N})
+    unknown = {"tables": [{"name": TABLE, "columns": [{"name": "a", "strategy": "bogus"}]}]}
+    for config in (bad_bundle, unknown):
+        for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
+            sink: list[Any] = []
+            with pytest.raises(Exception):
+                list(
+                    entry_point(
+                        config,
+                        [source],
+                        table=TABLE,
+                        engine_version=ENGINE_VERSION,
+                        key_provider=key_provider(),
+                        chunk_result_sink=sink,
+                    )
+                )
+            assert sink == []

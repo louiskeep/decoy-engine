@@ -731,19 +731,16 @@ def _outcome_of(entry_point: Any, config: dict[str, Any], chunks: list[pa.Table]
 @pytest.mark.parametrize("case", sorted(_corpus()))
 def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> None:
     """Both entries see the same chunks. An entry that refuses must refuse with the same
-    code on both; otherwise the yielded values and column names are equal (the public
-    oracle's pandas round trip changes passthrough types and adds pandas metadata, so types
-    are compared only for columns the oracle does not round-trip, i.e. none here)."""
+    code on both; otherwise column names, Arrow types and values are equal (the public
+    oracle adds pandas metadata, so metadata is not compared; none of the corpus columns
+    changes type in the pandas round trip)."""
     from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
     from tests.native._chunked_entry_support import TABLE, make_config
 
     columns, data, _required = _corpus()[case]
     table = pa.table(data)
     chunks = [table.slice(0, 5), table.slice(5, 4), table.slice(9)]
-    try:
-        config = make_config(columns, global_settings={"unconfigured_column_policy": "warn"})
-    except Exception:
-        pytest.skip("config rejected by PipelineConfig validation")
+    config = make_config(columns, global_settings={"unconfigured_column_policy": "warn"})
     assert TABLE
     oracle = _outcome_of(run_mask_pipeline_chunked, config, chunks)
     ours = _outcome_of(run_mask_chunked, config, chunks)
@@ -752,4 +749,5 @@ def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> 
         assert ours[1] == oracle[1]
         return
     assert [o.column_names for o in ours[1]] == [o.column_names for o in oracle[1]]
+    assert [o.schema.types for o in ours[1]] == [o.schema.types for o in oracle[1]]
     assert [o.to_pydict() for o in ours[1]] == [o.to_pydict() for o in oracle[1]]
