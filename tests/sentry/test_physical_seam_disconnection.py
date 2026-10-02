@@ -385,6 +385,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
         # split's evidence stamp. None imports `execution.physical`.
         "src/decoy_engine/execution/_pipeline_multi_table.py",
+        # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
+        # auto-chunk routing was single-table only (a docstring-only edit).
+        "src/decoy_engine/execution/_pipeline_chunk_route.py",
     }
     unexpected = [
         name
