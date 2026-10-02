@@ -94,6 +94,7 @@ def stamp_execution_metrics(
     table_kinds: dict[str, str],
     caller_sources: dict[str, pa.Table],
     execution_plan_decision: Any,
+    multi_table_split: Any = None,
 ) -> None:
     """Mutate `mask_quality_metrics` in place with the two performance-mode
     reproducibility stamps.
@@ -133,7 +134,21 @@ def stamp_execution_metrics(
             "fallback_to_pandas": fallback_to_pandas,
         }
 
-    if route_chunked or auto_chunk_non_default:
+    if multi_table_split is not None:
+        # A split call is never `route_chunked`, which `auto_chunk_stamp` would report as
+        # `full_frame`; the split states its own six keys and merges the lane keys the same way.
+        from decoy_engine.execution._pipeline_auto_chunk import merge_lane_stamp
+        from decoy_engine.execution._pipeline_multi_table import split_reproducibility_stamp
+
+        mask_quality_metrics["auto_chunk"] = merge_lane_stamp(
+            split_reproducibility_stamp(
+                multi_table_split,
+                chunk_size_rows=chunk_size_rows,
+                auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+            ),
+            mask_quality_metrics,
+        )
+    elif route_chunked or auto_chunk_non_default:
         from decoy_engine.execution import _pipeline_routing
 
         # The routed lane's own keys (`lane`, `lane_reason`, `native_threads`) ride in

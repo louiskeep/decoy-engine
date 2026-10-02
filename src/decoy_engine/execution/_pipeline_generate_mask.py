@@ -5,7 +5,7 @@ the 645-LOC orchestration cap (CLAUDE.md "Engineering best practices",
 This is Steps 1 and 2 of the module docstring's nine-step sequencing
 contract on `_pipeline.py`: run generate-kind tables (Plan-only), merge
 their outputs into the mask adapter's sources, then run the mask-kind
-tables through the selected route (chunked or full-frame) and stamp the
+tables through the selected route (chunked, per-table split or full-frame) and stamp the
 BF1 fidelity report + reproducibility metrics. `run_pipeline` calls this
 once, on the branch that did NOT take one of the routed early returns
 (sequential / out_of_core / native / unified-slice, which own their own
@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution import _pipeline_finalize
+from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 
 __all__ = ["GenerateMaskStepResult", "run_generate_and_mask_steps"]
@@ -65,6 +66,7 @@ def run_generate_and_mask_steps(
     instance_default_locale: str | None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
     resident_sources: dict[str, pa.Table],
+    caller_sources: Mapping[str, Any],
     route_chunked: bool,
     table_kinds: dict[str, str],
     config: dict[str, Any],
@@ -75,6 +77,7 @@ def run_generate_and_mask_steps(
     chunk_size_rows: int,
     native_threads: int,
     chunked_dispatcher_enabled: bool,
+    multi_table_dispatch_enabled: bool,
     key_provider: KeyProvider | None,
     graph: RelationshipGraph,
     namespace_registry: NamespaceRegistry,
@@ -130,7 +133,51 @@ def run_generate_and_mask_steps(
         merged_sources.update(resident_sources)
         merged_sources.update(generate_outputs)
 
-        if route_chunked:
+        # B7: an independent multi-table job runs each table on the route it would take
+        # alone. `None` leaves the branches below exactly as they were.
+        split = (
+            None
+            if route_chunked
+            else _multi_table.decide_multi_table_split(
+                config,
+                plan=plan,
+                registry=registry,
+                graph=graph,
+                substrate=resolved_substrate,
+                caller_sources=caller_sources,
+                table_kinds=table_kinds,
+                auto_chunk=auto_chunk,
+                auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+                dispatcher_enabled=chunked_dispatcher_enabled,
+                split_enabled=multi_table_dispatch_enabled,
+                vault_writer_present=vault_writer is not None,
+            )
+        )
+        if split is not None:
+            (
+                mask_outputs,
+                mask_timings,
+                mask_conversion_ms,
+                mask_warnings,
+                mask_quality_metrics,
+                mask_row_errors,
+            ) = _multi_table.run_multi_table_split(
+                split,
+                config,
+                resident_sources=merged_sources,
+                engine_version=engine_version,
+                registry=registry,
+                adapter=adapter,
+                chunk_size_rows=chunk_size_rows,
+                key_provider=key_provider,
+                native_threads=native_threads,
+                plan=plan,
+                graph=graph,
+                namespace_registry=namespace_registry,
+                unconfigured_column_policy=unconfigured_column_policy,
+                generate_output_tables=generate_output_tables,
+            )
+        elif route_chunked:
             # The eligible shape is exactly one mask table with no generate
             # tables, so merged_sources holds only that table's frame; the
             # planner's runtime gates already rejected anything else.
@@ -198,6 +245,7 @@ def run_generate_and_mask_steps(
             table_kinds=table_kinds,
             caller_sources=resident_sources,
             execution_plan_decision=execution_plan_decision,
+            multi_table_split=split,
         )
 
         if fidelity_report:

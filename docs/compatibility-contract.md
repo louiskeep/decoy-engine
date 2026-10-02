@@ -213,6 +213,12 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   dispatcher's contract (passthrough columns are the source column exactly, string-output
   columns are `string`, no schema metadata) and may differ from the full-frame and
   unified-slice routes. Converging those routes is roadmap item ROUTE-OUTPUT-CONTRACT.
+  `run_pipeline` gains one more keyword-only argument (2026-10-02),
+  `multi_table_dispatch_enabled: bool = True`: with no FK edge in the job, each mask table
+  that would auto-chunk alone dispatches on the same lane, so the auto-chunk shape above now
+  applies per table inside an independent multi-table job, and one result can mix that shape
+  with the full-frame shape for the tables left in the full-frame group. `False` restores
+  the single full-frame call.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

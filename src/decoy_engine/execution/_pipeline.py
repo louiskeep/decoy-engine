@@ -173,6 +173,7 @@ def run_pipeline(
     auto_chunk_threshold_rows: int = _pipeline_finalize.AUTO_CHUNK_THRESHOLD_DEFAULT,
     native_threads: int = 1,
     chunked_dispatcher_enabled: bool = True,
+    multi_table_dispatch_enabled: bool = True,
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
@@ -231,13 +232,13 @@ def run_pipeline(
 
     Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
     `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
-    `chunked_dispatcher_enabled`, `out_of_core_threshold_rows`,
+    `chunked_dispatcher_enabled`, `multi_table_dispatch_enabled`, `out_of_core_threshold_rows`,
     `full_frame_reject_rows`, `out_of_core_budget_bytes`, `explain_plan`) is
     documented in full on `_pipeline_routing` (the decisions, in a fixed order:
     relationship routing with SC2's fail-closed reject-before-read, then
-    single-table auto-chunk routing) and `_pipeline_auto_chunk` (the chunked
-    lane: `native_threads` is its kernel thread budget,
-    `chunked_dispatcher_enabled=False` its kill switch). They are runtime kwargs,
+    auto-chunk routing) and `_pipeline_auto_chunk` (the chunked lane: `native_threads`
+    is its kernel thread budget, `chunked_dispatcher_enabled=False` its kill switch;
+    `multi_table_dispatch_enabled=False` keeps multi-table jobs whole). They are runtime kwargs,
     never `config` fields: resource policies stay out of the profile-hashed,
     frozen-surface data contract. Masked values are route-neutral; on the
     auto-chunk route schema, types, nullability and metadata follow guarantee 3
@@ -279,16 +280,12 @@ def run_pipeline(
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
-    `_provider_snapshot` (5a-faker) is a private, keyword-only, test/harness-
-    only hook: an already-captured immutable custom-faker-provider view
-    (`internal.faker_setup.snapshot_custom_faker_providers`) forwarded
-    straight to the `generate_tables` call below. It exists so the shadow-
-    parity harness can pin this oracle call to the SAME registry snapshot
-    its own coordinator-side `generate_tables` call reads, instead of two
-    live reads a concurrent register/unregister could straddle. `None`
-    (the default, every real caller) resolves against the live registry
-    exactly as before this parameter existed -- ordinary callers never pass
-    it.
+    `_provider_snapshot` (5a-faker) is a private, test/harness-only hook: an
+    already-captured immutable custom-faker-provider view
+    (`internal.faker_setup.snapshot_custom_faker_providers`) forwarded straight to
+    the `generate_tables` call below, so the shadow-parity harness can pin this
+    oracle call to the SAME registry snapshot as its own coordinator-side call.
+    `None` (every real caller) resolves against the live registry.
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
@@ -325,6 +322,7 @@ def run_pipeline(
     require_positive_int("chunk_size_rows", chunk_size_rows)
     require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
     _pipeline_auto_chunk.require_lane_knobs(native_threads, chunked_dispatcher_enabled)
+    require_bool("multi_table_dispatch_enabled", multi_table_dispatch_enabled)
     # SC2 out-of-core routing thresholds share the same fail-early contract.
     require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
     require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
@@ -567,6 +565,7 @@ def run_pipeline(
         instance_default_locale=instance_default_locale,
         provider_snapshot=_provider_snapshot,
         resident_sources=resident_sources,
+        caller_sources=caller_sources,
         route_chunked=route_chunked,
         table_kinds=table_kinds,
         config=config,
@@ -577,6 +576,7 @@ def run_pipeline(
         chunk_size_rows=chunk_size_rows,
         native_threads=native_threads,
         chunked_dispatcher_enabled=chunked_dispatcher_enabled,
+        multi_table_dispatch_enabled=multi_table_dispatch_enabled,
         key_provider=resolved_key_provider,
         graph=graph,
         namespace_registry=ns_registry,
