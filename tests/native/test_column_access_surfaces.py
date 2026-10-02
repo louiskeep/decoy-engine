@@ -16,15 +16,16 @@ from collections.abc import Callable
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pytest
+
+from decoy_engine.execution import _column_access
 from decoy_engine.execution._column_access import (
     SIBLING_REFERENCE_KEYS,
     SURFACE_DECLARATIONS,
     ColumnAccess,
     column_access,
 )
-
-from decoy_engine.execution import _column_access
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
@@ -270,6 +271,18 @@ _SEED = 7
 _VERSION = "b8-g5"
 
 
+def _compile(columns: list[dict[str, Any]], data: dict[str, pa.Array]) -> Any:
+    from decoy_engine.execution._chunked_profile import first_chunk_profile
+    from decoy_engine.plan import compile_plan
+
+    config = {
+        "global_settings": {"seed": _SEED, "unconfigured_column_policy": "warn"},
+        "tables": [{"name": "t", "columns": columns}],
+    }
+    profile = first_chunk_profile(pa.table(data), table="t", engine_version=_VERSION)
+    return compile_plan(config, profile, decoy_engine_version=_VERSION, no_profile=True)
+
+
 def _run_adapter(columns: list[dict[str, Any]], data: dict[str, pa.Array]) -> pa.Table:
     from decoy_engine.execution._chunked_profile import first_chunk_profile
     from decoy_engine.plan import compile_plan
@@ -295,9 +308,13 @@ def _run_adapter(columns: list[dict[str, Any]], data: dict[str, pa.Array]) -> pa
     return result.outputs["t"]
 
 
-def _rotated(arr: pa.Array) -> pa.Array:
-    """Different values of the same type: every row takes its neighbour's value."""
-    return pa.concat_arrays([arr.slice(1), arr.slice(0, 1)])
+def _variants(arr: pa.Array) -> list[pa.Array]:
+    """Different values of the same type: a rotation (changes groupings and orderings) and,
+    for numbers, a shift by one (changes a sum a rotation would leave alone)."""
+    out = [pa.concat_arrays([arr.slice(1), arr.slice(0, 1)])]
+    if pa.types.is_integer(arr.type) or pa.types.is_floating(arr.type):
+        out.append(pc.add(arr, pa.scalar(1, arr.type)))
+    return out
 
 
 def _corpus() -> dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array], set[str]]]:
@@ -341,6 +358,21 @@ def _corpus() -> dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array], set[
         {"val": strs},
         set(),
     )
+    cases["geo_generalize"] = (
+        [
+            {
+                "name": "val",
+                "strategy": "geo_generalize",
+                "provider_config": {
+                    "type": "zip",
+                    "cascade": ["zip5", "zip3", "state", "suppress"],
+                    "k_threshold": 20000,
+                },
+            }
+        ],
+        {"val": pa.array([f"{10000 + i * 137:05d}" for i in range(n)])},
+        set(),
+    )
     cases["derived"] = (
         [
             {"name": "a", "strategy": "passthrough"},
@@ -356,7 +388,7 @@ def _corpus() -> dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array], set[
             {
                 "name": "val",
                 "strategy": "derived_aggregate",
-                "provider_config": {"op": "count", "column": "g"},
+                "provider_config": {"op": "sum", "column": "g"},
             },
         ],
         {"g": nums, "val": nums},
@@ -372,7 +404,11 @@ def _corpus() -> dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array], set[
                 "provider_config": {"group_by": "g", "order_by": "o", "generator": "cumcount"},
             },
         ],
-        {"g": nums, "o": nums, "val": nums},
+        {
+            "g": pa.array([0, 0, 1, 0, 2, 2, 1, 0, 1, 2, 2, 0], pa.int64()),
+            "o": pa.array([(i * 7) % 5 for i in range(n)], pa.int64()),
+            "val": nums,
+        },
         {"g", "o"},
     )
     cases["nested_redact"] = (
@@ -491,11 +527,13 @@ def _observe(columns: list[dict[str, Any]], data: dict[str, pa.Array], own: set[
     for probe in probes:
         if not base.column(probe).equals(pa.chunked_array([data[probe]])):
             touched.add(probe)
-        changed = dict(data)
-        changed[probe] = _rotated(data[probe])
-        again = _run_adapter(columns, changed)
-        for name in base.column_names:
-            if name != probe and not base.column(name).equals(again.column(name)):
+        for variant in _variants(data[probe]):
+            again = _run_adapter(columns, {**data, probe: variant})
+            if any(
+                not base.column(name).equals(again.column(name))
+                for name in base.column_names
+                if name != probe
+            ):
                 touched.add(probe)
     return touched
 
@@ -509,3 +547,23 @@ def test_g5_every_observed_access_is_declared(case: str) -> None:
     if not everything:
         assert touched <= declared, (case, sorted(touched - declared))
     assert required <= touched, (case, sorted(required - touched))
+
+
+@pytest.mark.parametrize("case", sorted(_corpus()))
+def test_g4_frame_setup_columns_are_declared_reads_or_own_columns(case: str) -> None:
+    from decoy_engine.execution._runner import (
+        date_shift_group_columns,
+        group_key_group_by_columns,
+        top_code_columns,
+    )
+    from decoy_engine.providers_v2 import get_default_registry
+
+    columns, data, _required = _corpus()[case]
+    plan = _compile(columns, data)
+    registry = get_default_registry()
+    setup: set[str] = set()
+    for helper in (date_shift_group_columns, top_code_columns, group_key_group_by_columns):
+        setup |= helper(plan, registry).get("t", set())
+    declared, everything = _declared(columns)
+    own = {c["name"] for c in columns}
+    assert everything or setup <= declared | own, (case, sorted(setup - declared - own))

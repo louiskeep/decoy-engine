@@ -359,6 +359,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `run_mask_chunked` carries past pandas; `_chunked_profile.py` gains the
         # Arrow-native column profile. Neither imports `execution.physical`.
         "src/decoy_engine/execution/_chunked_carry.py",
+        # B8: the carry plan's per-surface column declarations, shared by `read_set` and
+        # `_required_input_columns`. Config-level helpers only; no `execution.physical`.
+        "src/decoy_engine/execution/_column_access.py",
         "src/decoy_engine/execution/_chunked_profile.py",
         "src/decoy_engine/execution/native/_chunk_schema.py",
         "src/decoy_engine/execution/native/_chunked_entry.py",

@@ -37,6 +37,10 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import run_chunk_ingest_guards
+from decoy_engine.execution._output_projection import (
+    enforce_output_projection,
+    known_output_columns,
+)
 from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
@@ -162,11 +166,14 @@ def _native_route(
     rule: SchemaRule | None,
     columns: tuple[ColumnPlan, ...],
     read_passthrough: tuple[str, ...],
+    unconfigured: tuple[str, ...] = (),
 ) -> Iterator[pa.Table]:
-    """The one native chunk loop. Per chunk: row-offset domain check, mask, schema rule (when `rule` is given), result for the sink
-    (when one is given), offset advance, vault entries, yield. Source drift was
-    already refused by `_run_chunked`; the ingest guards run here on the chunk as
-    the source produced it, and only then are null-typed columns cast."""
+    """The one native chunk loop. Per chunk: row-offset domain check, mask, schema rule
+    (when `rule` is given), the unconfigured-column warning, result for the sink (when
+    one is given), offset advance, vault entries, yield. Source drift was already refused
+    by `_run_chunked`; the ingest guards run here on the chunk as the source produced it,
+    and only then are null-typed columns cast. `unconfigured` names the source columns
+    the plan does not cover; they are carried unchanged."""
     from decoy_engine.keyprovider import require_mask_key
 
     first = state.first
@@ -178,6 +185,7 @@ def _native_route(
             f"native route admitted {table!r} but the compiled plan has no seed envelope for it."
         )
     col_seed_by_name = dict(table_seed.per_column)
+    unconfigured_set = frozenset(unconfigured)
 
     def _guard(raw: pa.Table) -> pa.Table:
         run_chunk_ingest_guards(plan, {table: raw}, state.registry, state.graph)
@@ -200,11 +208,18 @@ def _native_route(
                 native_threads=native_threads,
                 index_kernel=index_kernel,
                 column_elapsed_s=elapsed_s,
+                unconfigured=unconfigured_set,
             )
             out = (
                 masked
                 if rule is None
                 else normalize_chunk(rule, masked, chunk, table=table, chunk_index=i)
+            )
+            # The one enforcement point: the same call the stock adapter makes, so the
+            # warning (and, if a table were ever admitted under `error`, the refusal)
+            # cannot drift from the oracle route's.
+            warnings = tuple(
+                enforce_output_projection(table, out.column_names, plan, state.projection_policy)
             )
             if chunk_result_sink is not None:
                 elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
@@ -221,7 +236,7 @@ def _native_route(
                             for col, ms in elapsed_ms.items()
                         ),
                         boundary_conversion_ms=0.0,
-                        warnings=(),
+                        warnings=warnings,
                         quality_metrics={
                             "chunked_route": chunk_route_evidence(
                                 table=table,
@@ -333,8 +348,20 @@ def _run_chunked(
         engine_version=engine_version,
         first_schema=state.first.schema,
         adapter=adapter,
+        unconfigured_policy=state.projection_policy if enforce_schema_rule else None,
     )
     decision = preflight.evidence
+    if decision.native_admitted and enforce_schema_rule:
+        # The native masker passes through the columns it has no plan node for, while the
+        # warning (and, under `error`, the refusal) comes from `known_output_columns`. If
+        # the two ever disagree, a column could pass through unmasked with no warning.
+        oracle_set = set(state.first.schema.names) - known_output_columns(state.plan, table)
+        if oracle_set != set(preflight.unconfigured_passthrough):
+            decision = _downgrade_to_oracle(
+                decision,
+                f"unconfigured_set_mismatch:{sorted(oracle_set)}:"
+                f"{sorted(preflight.unconfigured_passthrough)}",
+            )
     pools: dict[str, ValuePool] = {}
     if decision.native_admitted and any(n.strategy == "faker" for n in decision.node_routes):
         decision, pools = _resolve_admitted_pools(state, table=table, decision=decision)
@@ -376,6 +403,7 @@ def _run_chunked(
         rule=rule,
         columns=columns,
         read_passthrough=read_passthrough,
+        unconfigured=preflight.unconfigured_passthrough,
     )
 
 
@@ -404,8 +432,11 @@ def run_mask_chunked(
 
     The whole table runs on the oracle when any masked column is not natively
     capable, any column carries a nonblank `when:` predicate, `adapter` is
-    neither `None` nor the pandas adapter, a companion is missing, or the source
-    has columns the config does not cover. `chunk_result_sink` receives one
+    neither `None` nor the pandas adapter, a companion is missing, or, under the
+    `error` unconfigured-column policy, the source has columns the config does not
+    cover. Under `warn` (the pre-GA default) such columns are carried unchanged on the
+    native route and each chunk's `ExecutionResult.warnings` holds the same
+    `undeclared_output_columns` warning the oracle route emits. `chunk_result_sink` receives one
     `ExecutionResult` per chunk on either route, with per-column `timings` and
     `quality_metrics["chunked_route"]` (see `aggregate_chunked_route_evidence`).
 

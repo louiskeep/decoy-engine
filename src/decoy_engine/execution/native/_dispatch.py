@@ -291,6 +291,9 @@ class NativePreflight:
 
     evidence: NativeRouteEvidence
     index_kernel: IndexDerivationKernel | None
+    # Source columns the plan does not cover that the native route carries unchanged
+    # (admitted only under the `warn` policy, see `plan_native_route`).
+    unconfigured_passthrough: tuple[str, ...] = ()
 
 
 def plan_native_route(
@@ -301,6 +304,7 @@ def plan_native_route(
     engine_version: str,
     first_schema: pa.Schema | None = None,
     adapter: Any = None,
+    unconfigured_policy: Literal["warn", "error"] | None = None,
 ) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
@@ -326,6 +330,12 @@ def plan_native_route(
     after static admission (reasons `when_predicate_not_native:<column>` and
     `adapter_requested`; the adapter reason applies only to a table that would
     otherwise admit).
+
+    `unconfigured_policy` is the resolved `unconfigured_column_policy`. Only `"warn"`
+    lets a source column the plan does not cover stay on the native route, where it is
+    carried unchanged (`NativePreflight.unconfigured_passthrough`); `None` and `"error"`
+    keep the veto, so the oracle raises `undeclared_output_columns` as before. A
+    configured column the source lacks always vetoes.
     """
     decision = _static_route_decision(config, profile, table=table, engine_version=engine_version)
     # A `when:` predicate names the reroute reason even when another column would
@@ -346,26 +356,23 @@ def plan_native_route(
     if not decision.native_admitted:
         return NativePreflight(decision, None)
 
+    unconfigured: tuple[str, ...] = ()
     if first_schema is not None:
         if decision.native_admitted:
             covered = {n.column for n in decision.node_routes}
-            actual = set(first_schema.names)
-            if actual != covered:
-                # Narrower, never wider: a column the compiled plan does not cover
-                # (e.g. an unconfigured-column policy) is not something this phase's
-                # native path has reasoned about, so the whole table reroutes. Report
-                # BOTH sides of the symmetric difference: `actual - covered` (a column
-                # this chunk has that the plan does not cover) alone would silently
-                # read as "nothing extra" when the real drift is the OTHER direction --
-                # a configured column the compiled plan expects that this chunk is
-                # missing entirely (`covered - actual`). The `!=` check above already
-                # reroutes correctly on either side; only the diagnostic was one-sided.
+            uncovered = [n for n in first_schema.names if n not in covered]
+            missing = covered - set(first_schema.names)
+            if missing or (uncovered and unconfigured_policy != "warn"):
+                # Report BOTH sides of the symmetric difference: a column this chunk has
+                # that the plan does not cover alone would read as "nothing extra" when
+                # the real drift is a configured column this chunk is missing entirely.
                 decision = _downgrade_to_oracle(
                     decision,
-                    "uncovered_columns:"
-                    f"{sorted(actual - covered)};missing_configured_columns:"
-                    f"{sorted(covered - actual)}",
+                    f"uncovered_columns:{sorted(uncovered)};"
+                    f"missing_configured_columns:{sorted(missing)}",
                 )
+            else:
+                unconfigured = tuple(uncovered)
 
         if decision.native_admitted:
             # A non-string faker source's per-chunk Arrow type can drift across
@@ -411,7 +418,7 @@ def plan_native_route(
             decision = _downgrade_to_oracle(decision, "index_extension_unavailable")
             index_kernel = None
 
-    return NativePreflight(decision, index_kernel)
+    return NativePreflight(decision, index_kernel, unconfigured)
 
 
 def run_native_or_oracle_chunked(

@@ -156,25 +156,33 @@ def _mask_chunk_native(
     native_threads: int | None = None,
     index_kernel: IndexDerivationKernel | None = None,
     column_elapsed_s: dict[str, float] | None = None,
+    unconfigured: frozenset[str] = frozenset(),
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
+
+    A column named in `unconfigured` has no plan node: it is passed through as the source
+    column, with no kernel, no timing and no seed lookup (the caller applies the
+    unconfigured-column policy and its warning).
 
     `column_elapsed_s`, when given, receives each column's kernel time for this
     chunk, from the same timer that feeds the per-strategy aggregate (one clock
     read pair per column, nothing sampled beyond it).
 
-    Every column name in `chunk` is guaranteed present in `col_seed_by_name` by
-    the caller's admission precondition (`run_native_or_oracle_chunked` rejects a
-    table with any uncovered column at preflight), so a missing lookup here is a
-    precondition violation, not a data-shape surprise. `pool_by_column` is
-    populated once, before the chunk loop, for every admitted faker column
-    (Task 3.1 Step 2); a faker column always has an entry by the same
+    Every column name in `chunk` is guaranteed present in `col_seed_by_name` or
+    `unconfigured` by the caller's admission precondition (preflight rejects a table
+    with an uncovered column unless it is admitted as unconfigured passthrough), so a
+    missing lookup here is a precondition violation, not a data-shape surprise.
+    `pool_by_column` is populated once, before the chunk loop, for every admitted faker
+    column (Task 3.1 Step 2); a faker column always has an entry by the same
     precondition. `index_kernel` is the preflight-verified compiled index
     kernel (Task 2.3): non-`None` whenever the admitted table has a faker
     column, since preflight's index probe already ran before this ever executes.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
+        if name in unconfigured:
+            arrays[name] = chunk.column(name)
+            continue
         col_seed = col_seed_by_name[name]
         strategy = col_seed.strategy
         cfg = provider_config_to_dict(col_seed.provider_config)
