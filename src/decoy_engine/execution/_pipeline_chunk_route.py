@@ -43,9 +43,11 @@ def decide_chunk_route(
 ) -> tuple[ExecutionPlan | None, bool]:
     """Auto-chunk go/no-go + explain surfacing.
 
-    ONE `classify_job` call serves both the routing decision and the
-    `execution_plan` explain stamp so the explain surface can never
-    disagree with what actually ran. The kill switch (`auto_chunk=False`)
+    ONE `classify_job` call serves both the single-table routing decision and
+    the `execution_plan` explain stamp. The stamp is the static job-level
+    classification: a multi-table job never classifies `chunked` here, and the
+    per-table split `_pipeline_multi_table` applies afterwards is reported in
+    `quality_metrics["auto_chunk"]["tables"]`, not in `execution_plan`. The kill switch (`auto_chunk=False`)
     skips classification entirely unless explain asks: a forced
     full-frame run must not depend on planner behavior.
 

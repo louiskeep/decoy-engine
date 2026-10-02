@@ -615,9 +615,9 @@ def run_pipeline(
     if fidelity_reports:
         quality_metrics["fidelity_reports"] = fidelity_reports
 
-    # Explain surfacing: stamp the SAME classification the routing decision
-    # used (computed once above), so the explain block and the executed
-    # route cannot drift apart. Behind the default-off flag; default runs stamp nothing here.
+    # Explain surfacing: stamp the static job-level classification (computed once
+    # above); a multi-table split is in auto_chunk.tables, not here. Default-off
+    # flag; default runs stamp nothing here.
     if explain_plan and execution_plan_decision is not None:
         quality_metrics["execution_plan"] = {
             "mode": execution_plan_decision.mode,

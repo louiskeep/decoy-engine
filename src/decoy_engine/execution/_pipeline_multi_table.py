@@ -12,11 +12,17 @@ Jobs the split cannot reproduce faithfully stay whole (quarantine, a vault write
 validators, unseeded randomness). The plan is
 docs/plans/2026-10-01-multi-table-dispatch.md; the per-unit fallback with a recorded reason
 follows the pattern Apache Gluten and Spark RAPIDS use for a partly accelerated plan.
+
+Each unit builds its own pools and loads its own code-set corpora. That is safe because
+pool and corpus identities are deterministic functions of config and seed (the S5 F2
+deterministic pool-build contract), so the same entry built in two units, or in a
+different order than the full-frame call used, is the same entry.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -42,6 +48,8 @@ __all__ = [
     "split_reproducibility_stamp",
     "unseeded_random_nodes",
 ]
+
+_LOG = logging.getLogger(__name__)
 
 # Strategies with a mode that draws from a fresh `default_rng()` per call, so two
 # invocations differ. `nested` is checked through its child strategy.
@@ -240,6 +248,11 @@ def run_multi_table_split(
     call; its output is kept as `run_auto_chunk` returned it, and the chunk list stays
     local to that call. Returns `(outputs, timings, boundary_conversion_ms, warnings,
     quality_metrics, row_errors)`."""
+    _LOG.info(
+        "multi-table split dispatched=%s full_frame=%s",
+        ", ".join(split.dispatched),
+        ", ".join(split.full_frame) or "none",
+    )
     dispatched_out: dict[str, pa.Table] = {}
     timings: list[Any] = []
     warnings: list[Any] = []
