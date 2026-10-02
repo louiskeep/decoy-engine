@@ -331,3 +331,19 @@ def handler_written_columns(
             return None
         written |= access.writes
     return frozenset(written)
+
+
+def composite_provider_offenders(
+    columns: Iterable[Mapping[str, Any]], registry: Any = None
+) -> list[tuple[str, str]]:
+    """`(column, "composite provider <name>")` for every entry whose provider is a composite
+    under `registry` (the default registry when None), whatever its strategy string."""
+    if registry is None:
+        from decoy_engine.providers_v2 import get_default_registry
+
+        registry = get_default_registry()
+    return [
+        (str(c.get("name", "?")), f"composite provider {c['provider']}")
+        for c in columns
+        if isinstance(c, Mapping) and _is_composite(c.get("provider"), registry)
+    ]
