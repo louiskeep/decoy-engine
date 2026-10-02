@@ -430,3 +430,64 @@ def test_a_stored_index_change_between_chunks_is_schema_drift_on_both_routes(
     native = _outcome(config, chunks)
     oracle = _outcome(forced, [with_force(c) for c in chunks])
     assert native == oracle == ("native_chunk_schema_drift", 1, 1)
+
+
+# ---------------------------------------------------------------------------
+# Units that pin the registry plumbing and the "everything" fallbacks
+# ---------------------------------------------------------------------------
+
+
+def test_an_undeclarable_entry_leaves_no_passthrough_column() -> None:
+    reg = _custom_composite_registry()
+    entries = [_entry("a", "composite_x", "redact", provider_config={"bundle": _BUNDLE})]
+    config = {"tables": [{"name": TABLE, "columns": entries}]}
+    assert column_access(entries[0], reg).everything is True
+    assert handler_written_columns(entries, reg) is None
+    assert passthrough_columns(config, table=TABLE, names=["a", "b", "c"], registry=reg) == []
+
+
+def test_an_undeclarable_entry_refuses_any_stored_index_field() -> None:
+    from decoy_engine.execution._transforms import reject_config_references_stored_index
+
+    bad = {"name": "v", "strategy": "derived", "provider_config": {"expression": "a +"}}
+    config = {"tables": [{"name": TABLE, "columns": [bad]}]}
+    schema = _indexed()[0].schema
+    with pytest.raises(TransformError) as info:
+        reject_config_references_stored_index(config, TABLE, schema, REG)
+    assert info.value.code == "config_references_stored_index"
+    reject_config_references_stored_index(
+        {"tables": [{"name": TABLE, "columns": [redact("s")]}]}, TABLE, schema, REG
+    )
+
+
+def test_a_composite_entry_keeps_its_own_name_in_the_touched_set() -> None:
+    from decoy_engine.execution._column_access import touched_columns
+
+    lone = _entry("first_name", "composite_name_email", "redact")
+    assert touched_columns([lone], REG) == {"first_name", "last_name", "email"}
+    plain = {"name": "x", "strategy": "redact", "provider_config": {"group_by": "x"}}
+    assert touched_columns([plain], REG) == frozenset()
+
+
+def test_the_run_registry_reaches_the_compatibility_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+    real = _chunked.check_chunked_compatibility
+
+    def spy(config: Any, **kwargs: Any) -> None:
+        seen.append(kwargs.get("registry"))
+        real(config, **kwargs)
+
+    monkeypatch.setattr(_chunked, "check_chunked_compatibility", spy)
+    reg = _scalar_rebound_registry()
+    chunk = pa.table({"s": ["a", "b"]})
+    list(
+        run_mask_chunked(
+            make_config([redact("s")]),
+            [chunk],
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
+            registry=reg,
+        )
+    )
+    assert seen == [reg]
