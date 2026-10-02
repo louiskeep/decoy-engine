@@ -29,8 +29,8 @@ Under the resolved `unconfigured_column_policy` `warn`, `run_mask_chunked` runs 
 | `67d91920` | Design 12 implementation. |
 | `913616c9` | `composite_provider_offenders` helper, optional-registry compatibility for two existing callers, `_chunked.py` census bump. |
 | `8a14dbf5` | Four mutant-survivor tests. |
-| `47985a4c` | Tests first for revision 4.5.1: acceptance tests 21 to 24, strengthened 15, 16, 20 (red before). |
-| `fa1c52c5` | Design 12.8 implementation (access-flag split, required registry, public-entry drift, registry in route evidence). |
+| `c0a28bcf` | Tests first for revision 4.5.1: acceptance tests 21 to 24, strengthened 15, 16, 20 (red before). |
+| `9629098a` | Design 12.8 implementation (access-flag split, required registry, public-entry drift, registry in route evidence). |
 | `4f68a3e5` | Nested-child writes unit pin, CHANGELOG. |
 | `1d9075e6` | B7 rebase fixes: multi-table contract tests, B7 benchmark script, `_chunked.py` census ratchet. |
 | the commit holding this update | Record update for 4.5.1 and the B7 rebase. |
@@ -140,7 +140,7 @@ Hot path: the benchmark was not re-run for 4.3/4.4. The only per-chunk additions
 
 dennis round 2 closed B1, H1, H2, M1, M3 and L1 and returned NO-GO on one HIGH that revision 4.4's own wording caused: `ColumnAccess.everything` meant both "reads unknown" and "writes unknown", so an unparsable `when:` emptied the carry and schema-rule passthrough sets and refused unreferenced stored-index fields.
 
-Red before, at `47985a4c` (code of `4031bce4`): test 21(a) returned the unconfigured int64 `2^53+1` as `float64` (`big: double [9.007199254740992e+15, null, 3]`) behind `when: "r != b'zz'"`; 21(b) raised raw `ArrowInvalid` instead of `chunked_passthrough_value_unrepresentable`; 21(c) and 21(d) raised `config_references_stored_index` for fields the config never names; test 22 did not raise `TypeError`; test 23 showed `run_mask_pipeline_chunked` not detecting stored-index drift and a rebound composite name reported as `non_scalar_node:composite:s`; test 24 failed on the missing flags. 14 of the new or strengthened tests failed.
+Red before, at `c0a28bcf` (code of the 4.4 build): test 21(a) returned the unconfigured int64 `2^53+1` as `float64` (`big: double [9.007199254740992e+15, null, 3]`) behind `when: "r != b'zz'"`; 21(b) raised raw `ArrowInvalid` instead of `chunked_passthrough_value_unrepresentable`; 21(c) and 21(d) raised `config_references_stored_index` for fields the config never names; test 22 did not raise `TypeError`; test 23 showed `run_mask_pipeline_chunked` not detecting stored-index drift and a rebound composite name reported as `non_scalar_node:composite:s`; test 24 failed on the missing flags. 14 of the new or strengthened tests failed.
 
 Implemented: `ColumnAccess` carries `reads_unknown` and `writes_unknown` (no `everything`); an unparsable `when:` or `derived` expression is an unknown read, an undeclared strategy (scalar, or the child of a `nested`) or a malformed bundle is an unknown write; `handler_written_columns` returns `None` only on an unknown write, `touched_columns` returns `None` only on an unknown read, so an unparsable predicate leaves every passthrough candidate in the carry and schema rule while `read_set` sends it through pandas and the schema rule restores the exact source field and value; `reject_config_references_stored_index` refuses only on a positive reference (a configured name or a declared read or write); `registry` is a required keyword on `check_chunked_compatibility`, `composite_provider_offenders` and `_legacy_route_evidence` (64 direct test call sites got `registry=get_default_registry()`); `stored_index_guard` in `_oracle_preflight` makes `run_mask_pipeline_chunked` raise `native_chunk_schema_drift` at the changed chunk; `plan_native_route`, `compile_native_plan` and `plan_column_backends` take the run registry and `_run_chunked` passes `state.registry`; CHANGELOG sentences corrected.
 
