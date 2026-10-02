@@ -390,3 +390,9 @@ def test_composite_route_and_reason_on_run_mask_chunked_are_unchanged(
         )
         assert getattr(info.value, "code", None) == expected
         assert sink == []
+
+
+def test_bytes_literal_in_a_predicate_reads_every_passthrough_column() -> None:
+    """A string token that is not a plain `str` literal cannot be read safely."""
+    entry = {**redact("s"), "when": "s == b'x'"}
+    assert read_set([entry], ["x", "y"]) == {"x", "y"}

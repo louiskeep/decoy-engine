@@ -256,6 +256,13 @@ def test_g6_sibling_reference_keys_is_the_tuple_requirements_consumes(
     assert got == ("c", "z")
 
 
+def test_non_entry_surfaces_declare_no_sibling_access() -> None:
+    entry = {"name": "x", "strategy": "redact"}
+    for key, declaration in SURFACE_DECLARATIONS.items():
+        if key.startswith("surface:") and key != "surface:when":
+            assert declaration(entry) == ColumnAccess(), key
+
+
 def test_declaration_values_are_column_access_callables() -> None:
     for key, declaration in SURFACE_DECLARATIONS.items():
         assert callable(declaration), key
