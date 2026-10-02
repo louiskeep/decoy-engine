@@ -8,7 +8,8 @@ per trial, one trial at a time, each trial under `/home/cam/.cache/pytest-one.lo
 machine-wide test lock, taken per trial so other test runs interleave between trials, never
 during one); `native_threads=1`, `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`. Percentiles
 are nearest-rank (index `ceil(q * n)` of the sorted values). Bars and ceilings are computed
-here from the plan's text; this script never edits them.
+here from the plan's text (revision 2.2: the oracle-route wall p95 is directional, reported but
+not a gate); this script never edits them.
 
 Every trial is appended to `<out-dir>/results.jsonl` as it finishes, so a stopped run resumes
 where it left off (a trial already in the file is skipped; the per-cell round order is
@@ -207,7 +208,15 @@ def evaluate_bars(cells: dict[str, Any]) -> dict[str, Any]:
                 "p50_ratio": s["streamed"]["wall_s"]["p50"] / s["resident"]["wall_s"]["p50"],
                 "p95_ratio": s["streamed"]["wall_s"]["p95"] / s["resident"]["wall_s"]["p95"],
             }
-            wall["pass"] = wall["p50_ratio"] <= 1.10 and wall["p95_ratio"] <= 1.15
+            p95_ok = wall["p95_ratio"] <= 1.15
+            if workload == "oracle":
+                # Plan revision 2.2 (owner decision): the oracle-route p95 is directional. It
+                # is reported with a sanity flag and does not set `pass`.
+                wall["p95_directional_ok"] = p95_ok
+                wall["p95_sanity_under_2x"] = wall["p95_ratio"] <= 2.0
+                wall["pass"] = wall["p50_ratio"] <= 1.10
+            else:
+                wall["pass"] = wall["p50_ratio"] <= 1.10 and p95_ok
             bars[f"W_{workload}_{rows}"] = wall
         big, small = cells.get(f"{workload}_10000000"), cells.get(f"{workload}_2000000")
         if big is None or small is None:

@@ -5983,12 +5983,16 @@
   "W_oracle_2000000": {
    "p50_ratio": 0.9976261504521713,
    "p95_ratio": 1.0302350741662274,
+   "p95_directional_ok": true,
+   "p95_sanity_under_2x": true,
    "pass": true
   },
   "W_oracle_10000000": {
    "p50_ratio": 0.9718978254834684,
    "p95_ratio": 1.3001404758179507,
-   "pass": false
+   "p95_directional_ok": false,
+   "p95_sanity_under_2x": true,
+   "pass": true
   },
   "M1_oracle": {
    "streamed_p95_10M": 50548736,
@@ -6003,6 +6007,6 @@
    "pass": true
   },
   "trial_problems": [],
-  "all_pass": false
+  "all_pass": true
  }
 }

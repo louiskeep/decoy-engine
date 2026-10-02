@@ -1,6 +1,8 @@
 # Engine auto-chunk incremental output sink (Rust engine program B6a)
 
-Status: plan (revision 2.1: Codex plan-gate round 2 GO; its two LOW wording gaps applied by the orchestrator)
+Status: plan (revision 2.2: owner decision on the oracle-path wall p95 bar, applied after measurement; revision 2.1 was Codex plan-gate round 2 GO with its two LOW wording gaps applied by the orchestrator)
+
+Revision 2.2 note (owner decision, Cam, 2026-10-02, after the oracle 10M cell was measured): on the oracle (pandas-fallback) route only, the wall-time p95 bar is directional, not a pass/fail gate. It is still computed and recorded, and a reader checks it for a pathological regression, but it does not set the benchmark verdict. The oracle p50 wall bar, every memory bar (M1, M2 and the ceilings) on both routes, and every native-route bar (p50 1.10 times and p95 1.15 times, unchanged) stay hard gates. Cause: the oracle 10M cell has one warmup and five measured rounds (the pandas path gets few runs), nearest-rank p95 equals the maximum at five rounds, and its streamed maximum was one contended trial (347.7 s against 243 to 256 s for the other four) on the shared devbox; p50 was 0.972 times resident. This revision is made after that measurement, at the owner's direction, and the build record says so.
 
 Revision 2 note (Codex plan gate round 1 on revision 1, `d1002831`: REVISE, 0 BLOCKER, 3 HIGH, 2 LOW; Codex's plan-text patches applied as given, no redesign):
 
@@ -152,7 +154,7 @@ Bounded local benchmark, merge evidence under the standing Rust rule, not the Ph
 - **Bars.**
   - M1: for each route family, streamed p95 run increment at 10M is at most 0.25 times resident p50 run increment at 10M.
   - M2: for each route family, streamed p95 run increment at 10M is at most `max(1.25 x streamed p95 at 2M, streamed p95 at 2M + 128 MiB)`.
-  - W: for every workload and size, streamed p50 wall time is at most 1.10 times resident p50, and streamed p95 is at most 1.15 times resident p95.
+  - W: for every workload and size, streamed p50 wall time is at most 1.10 times resident p50. On the native route streamed p95 is also at most 1.15 times resident p95 (hard). On the oracle route the p95 ratio is directional (revision 2.2): recorded and checked for a pathological regression, not a pass/fail gate.
   - Every (b) trial under its ceiling.
 - **Frozen.** `ROW_GROUP_BYTES`, both absolute ceilings, M1, M2, W, workloads, trial count, and percentile method are frozen by this reviewed revision. Any change before measurement requires a revised plan and a new plan gate; a miss stops for Cam.
 - **Recording.** Next benchmark run ID, JSON artifact under `docs/records/b6a-bench-2026-10-xx/`, a row in the sprint and testing ledger. Docs quote B6a memory or speed only as "measured" with that run ID; this plan states no B6a figure as a result.

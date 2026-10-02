@@ -3,8 +3,8 @@
 Status: record
 Date: 2026-10-02. Branch `feat/b6a-incremental-sink`, base engine main `02dc2827`. Plan:
 `docs/plans/2026-10-02-b6a-incremental-output-sink.md` (revision 2.1, Codex GO). Builder: Sonnet.
-Nothing is pushed or merged. One frozen bar misses: W_oracle_10M p95 (see Benchmark); it goes to
-the owner. Gates (dennis fixes applied, Codex final) are pending.
+Nothing is pushed or merged. The benchmark passes all 8 bars under plan revision 2.2 (oracle wall p95 directional by owner
+decision, see Benchmark). Gates (dennis fixes applied, Codex final) are pending.
 
 ## Commits
 
@@ -116,7 +116,7 @@ that exits normally has always committed (`commit()` is the last action and sets
 flag), so the mutant is equivalent. Not killed by a test; offered as an equivalence argument for
 dennis.
 
-## Benchmark (test 13): frozen bars unchanged, one miss
+## Benchmark (test 13)
 
 Run ID `B6A-BENCH-2026-10-02` (three cells from the first run, the oracle 10M cell from the orchestrator's rerun). Raw JSON, including every trial:
 `docs/records/b6a-bench-2026-10-02/b6a-bench-3cells.json`. Harness:
@@ -161,17 +161,22 @@ Bars on the completed cells:
   ratio 0.026, pass. M2 oracle: 48.2 MiB against a limit of 419 MiB (`max(1.25 x 291, 291 + 128)`),
   pass. Ceiling: streamed peak max 1512 MiB against 3.0 GiB, pass. All measured trials matched
   the reference bytes with no recorded problem.
-- **W_oracle_10M misses on p95: p50 ratio 0.972 (pass), p95 ratio 1.300 against the 1.15 bar
-  (fail).** With five rounds the nearest-rank p95 is the maximum, and the streamed maximum is one
-  trial at 347.7 s; the other four streamed trials are 243 to 256 s against resident 251 to 267 s.
-  The cause of the one slow trial is not established. This is a frozen-bar miss and goes to the
-  owner: the bar was not changed. A twenty-round rerun of the oracle 10M cell would show whether
-  it is noise.
+- **W_oracle_10M p95: ratio 1.300 against the 1.15 figure, p50 ratio 0.972 (pass).** With five
+  rounds the nearest-rank p95 is the maximum, and the streamed maximum is one trial at 347.7 s;
+  the other four streamed trials are 243 to 256 s against resident 251 to 267 s. The cause of the
+  one slow trial is not established beyond a contended run on the shared devbox. The owner
+  (Cam, 2026-10-02) then decided that on the oracle (pandas-fallback) route only, the wall p95 bar
+  is directional, not a gate: it is recorded and sanity-checked (the merge tool flags a ratio
+  above 2.0, here 1.30, so no pathological regression) but does not set the verdict. The oracle
+  p50 wall bar, all memory bars on both routes and every native-route bar stay hard. Plan
+  revision 2.2 records this; the decision was made after the measurement, at the owner's
+  direction, and the bar's 1.15 figure for the native route was not changed.
 
 Merge result (`docs/records/b6a-bench-2026-10-02/b6a-bench-merged.json`, produced by `bench_sink.py
-merge` over the saved three cells and the new cell): 7 of 8 bars pass; `all_pass` is false
-because of `W_oracle_10000000` alone. The raw oracle 10M trials are in `oracle-10m-results.jsonl`
-and `oracle-10m-meta.json` in the same directory.
+merge` over the saved three cells and the new cell, re-run after the merge tool applied the
+directional rule, no new measurement): all 8 bars pass, `all_pass` true. `W_oracle_10000000`
+reports `p95_directional_ok` false and `p95_sanity_under_2x` true. The raw oracle 10M trials are
+in `oracle-10m-results.jsonl` and `oracle-10m-meta.json` in the same directory.
 
 Why the first merge reported the cell as pending: not a tagging bug. The jsonl is clean (a
 reference row, one warmup per mode, rounds 0 to 4 for both modes, so the resident and streamed

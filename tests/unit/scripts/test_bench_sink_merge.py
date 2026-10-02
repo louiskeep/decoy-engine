@@ -149,3 +149,71 @@ def test_five_rounds_without_a_recorded_reduced_run_are_still_rejected(
     code, merged = _merge(bench, tmp_path, entries)
     capsys.readouterr()
     assert "oracle_10000000" not in merged["cells"] and code == 1
+
+
+def _slow_streamed_tail(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Two streamed trials far slower than their peers: p50 unchanged, p95 blown."""
+    entries = copy.deepcopy(entries)
+    streamed = [e for e in entries if e["kind"] == "measured" and e["mode"] == "streamed"]
+    for e in streamed[-2:]:  # nearest-rank p95 of 20 is the 19th value
+        e["trial"]["wall_s"] *= 1.5
+    return entries
+
+
+def test_an_oracle_wall_p95_over_ratio_is_directional_and_does_not_fail(
+    bench: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = _entries(streamed_scale=0.05)
+    for e in base:
+        e["trial"]["wall_s"] = 100.0
+    entries = _slow_streamed_tail(base)
+    code, merged = _merge(bench, tmp_path, entries)
+    capsys.readouterr()
+    wall = merged["bars"]["W_oracle_10000000"]
+    assert wall["p95_ratio"] > 1.15 and wall["p50_ratio"] <= 1.10
+    assert wall["p95_directional_ok"] is False and wall["p95_sanity_under_2x"] is True
+    assert wall["pass"] is True
+    assert merged["bars"]["all_pass"] is True and code == 0
+
+
+def test_an_oracle_wall_p50_miss_still_fails(
+    bench: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entries = copy.deepcopy(_entries(streamed_scale=0.05))
+    for e in entries:
+        if e["kind"] == "measured" and e["mode"] == "streamed":
+            e["trial"]["wall_s"] *= 3
+    code, merged = _merge(bench, tmp_path, entries)
+    capsys.readouterr()
+    assert merged["bars"]["W_oracle_10000000"]["pass"] is False
+    assert merged["bars"]["all_pass"] is False and code == 1
+
+
+def test_a_native_wall_p95_miss_or_a_memory_miss_still_fails(
+    bench: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cells = json.loads(SAVED.read_text())["cells"]
+    for c in cells.values():
+        for t in c["trials"]["streamed"] + c["trials"]["resident"]:
+            t["problems"] = []
+    native = copy.deepcopy(cells)
+    native["native_10000000"]["summary"]["streamed"]["wall_s"]["p95"] *= 2
+    native["oracle_10000000"] = json.loads(
+        json.dumps(_oracle_10m_cell(bench, tmp_path / "a", capsys))
+    )
+    assert bench.evaluate_bars(native)["W_native_10000000"]["pass"] is False
+    assert bench.evaluate_bars(native)["all_pass"] is False
+    memory = copy.deepcopy(cells)
+    memory["oracle_10000000"] = _oracle_10m_cell(bench, tmp_path / "b", capsys)
+    memory["native_10000000"]["summary"]["streamed"]["increment_bytes"]["p95"] = memory[
+        "native_10000000"
+    ]["summary"]["resident"]["increment_bytes"]["p50"]
+    bars = bench.evaluate_bars(memory)
+    assert bars["M1_native"]["pass"] is False and bars["all_pass"] is False
+
+
+def _oracle_10m_cell(bench: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Any:
+    tmp_path.mkdir()
+    _code, merged = _merge(bench, tmp_path, _entries(streamed_scale=0.05))
+    capsys.readouterr()
+    return merged["cells"]["oracle_10000000"]
