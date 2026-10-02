@@ -76,11 +76,25 @@ def test_two_dispatched_tables_stream_in_config_order_with_per_table_evidence(
 def test_a_streamed_split_never_runs_the_full_frame_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg, sources = _two_dispatched(tmp_path)
+    # Redact and passthrough only, so both tables dispatch on the native route with or
+    # without the compiled companion. A hash column would reroute to B1's oracle route when
+    # the companion is absent, and that route masks through the adapter on purpose.
+    native = [support.redact_col("h"), support.redact_col("r")]
+    cfg, sources = mt.build_job(
+        tmp_path,
+        {
+            "a": (native, mt.string_table(mt.BIG, "a")),
+            "b": (native, mt.string_table(mt.BIG, "b")),
+        },
+    )
     adapter_calls = mt.spy_adapter_run(monkeypatch)
     sink = b6a.RecordingSink()
-    _run(cfg, sources, sink)
+    result = _run(cfg, sources, sink)
     assert sink.count("commit") == 1
+    assert [t["output"]["mode"] for t in result.quality_metrics["auto_chunk"]["tables"]] == [
+        "streamed",
+        "streamed",
+    ]
     assert adapter_calls == []
 
 
