@@ -739,6 +739,10 @@ def test_registry_is_a_required_keyword() -> None:
         check_chunked_compatibility(config, table=TABLE)  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         composite_provider_offenders([redact("s")])  # type: ignore[call-arg]
+    from decoy_engine.execution.native._chunked_evidence import plan_column_backends
+
+    with pytest.raises(TypeError):
+        plan_column_backends({}, None, table=TABLE, engine_version="v")  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         _pipeline_auto_chunk._legacy_route_evidence(  # type: ignore[call-arg]
             config,
@@ -768,6 +772,7 @@ def test_no_internal_module_feeds_the_registry_from_the_default() -> None:
         "_chunked.py",
         "_chunked_carry.py",
         "native/_chunked_schema_rule.py",
+        "native/_chunked_evidence.py",
         "_pipeline_auto_chunk.py",
         "_planner.py",
         "_transforms.py",
@@ -947,7 +952,7 @@ def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
     for config in (bad_bundle, unknown):
         for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
             sink: list[Any] = []
-            with pytest.raises(Exception):
+            with pytest.raises(PlanCompileError) as info:
                 list(
                     entry_point(
                         config,
@@ -958,6 +963,7 @@ def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
                         chunk_result_sink=sink,
                     )
                 )
+            assert info.value.code == "strategy_not_chunk_safe"
             assert sink == []
 
 
@@ -967,3 +973,22 @@ def test_unrelated_schema_metadata_changes_are_not_stored_index_drift() -> None:
     first, second = _indexed()
     other = second.replace_schema_metadata({**second.schema.metadata, b"other": b"key"})
     check_stored_index(first.schema, other, table=TABLE, chunk_index=1)
+
+
+def test_legacy_lane_evidence_uses_the_caller_registry(tmp_path: Any) -> None:
+    """The legacy auto-chunk lane plans its backends with the run's registry, so a rebound
+    composite name reports the same planned backend on both lanes."""
+    import pyarrow.parquet as pq
+
+    n = support.ROWS
+    src = pa.table({"s": [f"S{i}" for i in range(n)]})
+    path = tmp_path / "s.parquet"
+    pq.write_table(src, path)
+    reg = _scalar_rebound_registry()
+    col = {"name": "s", "strategy": "redact", "provider": "composite_name_email"}
+    cfg = support.make_cfg([col], path=str(path))
+    planned = {}
+    for lane, run in (("dispatcher", support.run_default), ("legacy", support.run_legacy)):
+        evidence = run(cfg, src, registry=reg).quality_metrics["chunked_route"]
+        planned[lane] = [(c["column"], c["planned_backend"]) for c in evidence["columns"]]
+    assert planned["legacy"] == planned["dispatcher"] == [("s", "arrow_python")]
