@@ -44,6 +44,41 @@ routed results gain `quality_metrics["chunked_route"]` (`native_admitted`,
 `reroute_reason`, `pandas_read_passthrough` and, per configured column, the planned and
 executed backend and the chunk count). A non-routed call is unchanged.
 
+### Fixed (byte-estimate routing priced columns by pandas label, crashing on non-string object types, 2026-10-01)
+
+With the default `use_byte_estimate_routing=True`, `run_pipeline` raised
+`AttributeError: 'datetime.date' object has no attribute 'encode'` for any mask
+table with a date column, at any row count. The same job ran with the flag off.
+The full-frame byte estimate decided a column's width class from the pandas dtype
+label and treated every label outside the numpy fixed-width set as a string,
+sampling it. Dates, times, tz timestamps, non-ns durations, decimals, binary,
+`float16`, `uuid`, dictionaries of string or binary, and a bool with nulls all
+reached the string sampler or the "unrecognized dtype" error.
+
+- New `execution/_mem_estimate_arrow.py` classifies a column by its Arrow type.
+  Each column is a fixed per-cell cost, a sampled string or binary width, or
+  UNPRICEABLE, which routes bounded. Costs are the resident pandas form, so a
+  `date32` is 40 bytes a row (not its 4-byte storage width), a time 48, a decimal 112.
+- Estimates only rise. Nullability no longer comes from the profile sample, which
+  missed nulls past its 10,000-row window: a resident column uses its own
+  `null_count`, and a Parquet-backed table uses footer statistics
+  (`LazySource.column_null_counts()`) or the field's `nullable` flag. An int8,
+  int16, int32, unsigned or bool column with a null now prices at 8 bytes, as pandas
+  holds it. A resident run-end-encoded or extension column prices as nullable.
+  Every dictionary column is UNPRICEABLE on the resident, prepared and lazy paths
+  (pandas decodes it to a Categorical that can cost more than its values, so it is
+  bounded rather than priced), as is any run-end-encoded string or binary column. A
+  column that a pandas-written schema's `pandas` metadata marks as a nullable
+  extension dtype (`Int*`, `UInt*`, `Float*`, `boolean`, `string`) prices as nullable
+  on the resident and lazy paths even when it holds no null. With no Arrow type, the
+  pandas labels `Int8`..`UInt32`, `int8`..`uint32`, `bool` and `boolean` price at 8
+  bytes.
+- A job that fit full_frame only because a sample missed late nulls, or because a
+  date was priced at its storage width, can now route bounded. Output is unchanged.
+- `sample_average_string_bytes` is vectorized (no per-value Python loop over a
+  resident column) and raises `TypeError` naming the type for a column that is not
+  a string or binary; string estimates are unchanged.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added (`run_mask_chunked`: the chunked dispatcher as a public entry point, 2026-10-01)

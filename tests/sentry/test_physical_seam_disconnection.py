@@ -237,6 +237,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # physical package only reads them (`_snapshot` calls the shared preparation
         # so capture records the same routing facts as a real run).
         "src/decoy_engine/execution/_mem_estimate_schema.py",
+        # Byte-estimate Arrow-type pricing: the classifier module and the cost-label
+        # additions it reads. Both sit beside `_mem_estimate_schema.py`, import only
+        # pyarrow and `profile._readers`, and nothing under `execution.physical`.
+        "src/decoy_engine/execution/_mem_estimate_arrow.py",
+        "src/decoy_engine/execution/_mem_estimate_dtypes.py",
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",

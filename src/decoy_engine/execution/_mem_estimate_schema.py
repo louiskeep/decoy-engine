@@ -16,8 +16,9 @@ marked UNPRICEABLE when no such metadata exists rather than guessed (§3.5).
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -26,10 +27,24 @@ from decoy_engine.execution._mem_estimate import (
     TableSizeSpec,
     is_fixed_width_dtype,
 )
+from decoy_engine.execution._mem_estimate_arrow import (
+    ArrowSizeClass,
+    Declared,
+    Fixed,
+    Sampled,
+    classify_column,
+    normalize_for_sampling,
+    pandas_nullable_columns,
+    resident_has_nulls,
+    widen_label_without_arrow_type,
+)
+
+# Untyped on purpose: the pyarrow.compute stubs differ across mypy/pyarrow versions.
+pc: Any = importlib.import_module("pyarrow.compute")
 
 if TYPE_CHECKING:
     from decoy_engine.config._tables import GenerateColumnConfig, TableConfig
-    from decoy_engine.profile._types import TableProfile
+    from decoy_engine.profile._types import ColumnProfile, TableProfile
 
 
 def sample_average_string_bytes(column: pa.Array | pa.ChunkedArray) -> float:
@@ -44,12 +59,49 @@ def sample_average_string_bytes(column: pa.Array | pa.ChunkedArray) -> float:
     correct proxy either way for non-ASCII text. Returns 0.0 for an
     empty/all-null column -- its cost then comes entirely from the fixed
     per-object overhead `_mem_estimate` adds on top.
+
+    Only a string or binary column is measurable: any other Arrow type raises
+    `TypeError` naming it (the classifier never routes one here). Measured with an
+    Arrow kernel, not a per-value Python loop.
     """
-    non_null = column.drop_null()
-    if len(non_null) == 0:
+    if pa.types.is_null(column.type):
         return 0.0
-    total_bytes = sum(len(v.as_py().encode("utf-8")) for v in non_null)
-    return total_bytes / len(non_null)
+    plain = normalize_for_sampling(column)
+    present: int = len(plain) - plain.null_count
+    if present == 0:
+        return 0.0
+    total_bytes: int = pc.sum(pc.binary_length(plain)).as_py()
+    return float(total_bytes / present)
+
+
+def _spec_from_class(
+    name: str, cls: ArrowSizeClass, column: pa.Array | pa.ChunkedArray | None
+) -> ColumnSizeSpec:
+    if isinstance(cls, Fixed):
+        return ColumnSizeSpec(name=name, dtype=cls.label)
+    if isinstance(cls, Declared):
+        return ColumnSizeSpec(name=name, dtype="object", string_width_bytes=cls.width_bytes)
+    if isinstance(cls, Sampled) and column is not None:
+        width = sample_average_string_bytes(column)
+        return ColumnSizeSpec(name=name, dtype="object", string_width_bytes=width)
+    return ColumnSizeSpec(name=name, dtype="object", unpriceable=True)
+
+
+def _spec_from_label(
+    col: ColumnProfile, sample: Mapping[str, pa.Array | pa.ChunkedArray]
+) -> ColumnSizeSpec:
+    """Price from the profile's pandas label when no Arrow type is available."""
+    if col.name in sample:
+        # A caller that hands over sampled data without Arrow types keeps the label
+        # as given; the engine's own callers always pass the types alongside.
+        if is_fixed_width_dtype(col.dtype):
+            return ColumnSizeSpec(name=col.name, dtype=col.dtype)
+        width = sample_average_string_bytes(sample[col.name])
+        return ColumnSizeSpec(name=col.name, dtype="object", string_width_bytes=width)
+    label = widen_label_without_arrow_type(col.dtype)
+    if is_fixed_width_dtype(label):
+        return ColumnSizeSpec(name=col.name, dtype=label)
+    return ColumnSizeSpec(name=col.name, dtype="object", unpriceable=True)
 
 
 def table_size_spec_from_profile(
@@ -57,65 +109,45 @@ def table_size_spec_from_profile(
     *,
     declared_widths: Mapping[str, float] | None = None,
     sample: Mapping[str, pa.Array | pa.ChunkedArray] | None = None,
+    arrow_types: Mapping[str, tuple[pa.DataType, bool]] | None = None,
+    masked_columns: frozenset[str] = frozenset(),
 ) -> TableSizeSpec:
     """Build a `TableSizeSpec` for a MASK table from its `TableProfile`.
 
-    Fixed-width columns price directly off `ColumnProfile.dtype`. A
-    variable-width column's width comes from `declared_widths` (a caller-
-    supplied override) if present, else a genuine sample
-    (`sample_average_string_bytes` over `sample[column]`) if the caller
-    supplied resident/sampled data for it, else the column is UNPRICEABLE --
-    `ColumnProfile` does not yet carry a string-length statistic itself
-    (open work for a later profiling sprint), so guessing one here would be
-    exactly the silent-invention this redesign forbids.
+    A column's width class comes from its Arrow type (`arrow_types`: type and
+    `has_nulls`, resident or from the file footer), classified by
+    `classify_column`, not from `ColumnProfile.dtype`. A string or binary column's
+    width comes from `declared_widths` (a caller-supplied override, which wins over
+    everything) or a genuine sample of `sample[column]`; with neither it is
+    UNPRICEABLE -- `ColumnProfile` carries no string-length statistic, and
+    guessing one is exactly the silent invention this redesign forbids.
+
+    With no Arrow type for a column, the profile label is used: labels that can
+    carry a null mask are widened (`widen_label_without_arrow_type`), and a label
+    outside the cost table is UNPRICEABLE. `masked_columns` names the columns the
+    source's pandas metadata marks as nullable extension dtypes (see
+    `source_nullable_columns`); the 64-bit integers and floats among them are
+    priced with their validity byte.
     """
     declared_widths = declared_widths or {}
     sample = sample or {}
+    arrow_types = arrow_types or {}
     columns: list[ColumnSizeSpec] = []
     for col in profile_table.columns:
-        if is_fixed_width_dtype(col.dtype):
-            columns.append(ColumnSizeSpec(name=col.name, dtype=col.dtype))
-            continue
         if col.name in declared_widths:
             width = float(declared_widths[col.name])
-            columns.append(ColumnSizeSpec(name=col.name, dtype=col.dtype, string_width_bytes=width))
-        elif col.name in sample:
-            width = sample_average_string_bytes(sample[col.name])
-            columns.append(ColumnSizeSpec(name=col.name, dtype=col.dtype, string_width_bytes=width))
+            columns.append(ColumnSizeSpec(name=col.name, dtype="object", string_width_bytes=width))
+        elif col.name in arrow_types:
+            arrow_type, has_nulls = arrow_types[col.name]
+            cls = classify_column(
+                arrow_type, has_nulls=has_nulls, masked=col.name in masked_columns
+            )
+            columns.append(_spec_from_class(col.name, cls, sample.get(col.name)))
         else:
-            columns.append(ColumnSizeSpec(name=col.name, dtype=col.dtype, unpriceable=True))
+            columns.append(_spec_from_label(col, sample))
     return TableSizeSpec(
         name=profile_table.name, row_count=profile_table.row_count, columns=tuple(columns)
     )
-
-
-def _arrow_size_label(arrow_type: pa.DataType) -> str | None:
-    """Estimator dtype label for an Arrow type, or `None` when it has no honest label.
-
-    Fixed-width Arrow types price at their storage width; strings are
-    variable-width (sampled by the caller). Decimals, dictionaries, nested and
-    binary types have no label here, so the column is left UNPRICEABLE rather
-    than guessed.
-    """
-    if pa.types.is_boolean(arrow_type):
-        return "bool"
-    if pa.types.is_integer(arrow_type):
-        return str(arrow_type)
-    if pa.types.is_float32(arrow_type):
-        return "float32"
-    if pa.types.is_float64(arrow_type):
-        return "float64"
-    if pa.types.is_timestamp(arrow_type) or pa.types.is_date64(arrow_type):
-        return "datetime64[ns]"
-    if pa.types.is_duration(arrow_type):
-        return "timedelta64[ns]"
-    if pa.types.is_date32(arrow_type) or pa.types.is_time32(arrow_type):
-        return "int32"
-    if pa.types.is_time64(arrow_type):
-        return "int64"
-    if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
-        return "object"
-    return None
 
 
 def table_size_spec_from_table(name: str, table: pa.Table) -> TableSizeSpec:
@@ -123,20 +155,25 @@ def table_size_spec_from_table(name: str, table: pa.Table) -> TableSizeSpec:
 
     Used for a table that already went through its transforms: the raw profile
     no longer describes it (derived columns exist, dropped ones are gone, the row
-    count changed), so it is priced from the table itself. Variable-width
-    columns use a genuine sample of the values; a type with no honest label is
-    unpriceable.
+    count changed), so it is priced from the table itself, by Arrow type, with the
+    same classifier and nullability rule as the profile adapter. A string or
+    binary column is sampled; a type with no resident-size model is unpriceable.
+
+    The pandas metadata the transform step writes counts: a column it marks as a
+    nullable extension dtype is priced as nullable even with no null left (a filter
+    can remove them), and a 64-bit integer with nulls is priced as `Int64`, which
+    is what the engine's pandas conversion makes of it.
     """
-    columns: list[ColumnSizeSpec] = []
+    nullable = pandas_nullable_columns(table.schema)
+    columns = []
     for field in table.schema:
-        label = _arrow_size_label(field.type)
-        if label is None:
-            columns.append(ColumnSizeSpec(name=field.name, dtype="object", unpriceable=True))
-        elif is_fixed_width_dtype(label):
-            columns.append(ColumnSizeSpec(name=field.name, dtype=label))
-        else:
-            width = sample_average_string_bytes(table.column(field.name))
-            columns.append(ColumnSizeSpec(name=field.name, dtype=label, string_width_bytes=width))
+        column = table.column(field.name)
+        has_nulls = field.name in nullable or resident_has_nulls(column)
+        masked = field.name in nullable or (
+            has_nulls and pa.types.is_integer(field.type) and field.type.bit_width == 64
+        )
+        cls = classify_column(field.type, has_nulls=has_nulls, masked=masked)
+        columns.append(_spec_from_class(field.name, cls, column))
     return TableSizeSpec(name=name, row_count=table.num_rows, columns=tuple(columns))
 
 

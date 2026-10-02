@@ -81,14 +81,14 @@ class TestFixedWidthDtypeCosts:
             ("uint16", 2),
             ("int8", 1),
             ("bool", 1),
-            # pandas nullable extension dtypes (base storage width).
-            ("boolean", 1),
-            ("Int64", 8),
-            ("UInt64", 8),
-            ("Float64", 8),
-            ("Int32", 4),
-            ("Int16", 2),
-            ("Int8", 1),
+            # pandas nullable extension dtypes (base width plus validity byte).
+            ("boolean", 2),
+            ("Int64", 9),
+            ("UInt64", 9),
+            ("Float64", 9),
+            ("Int32", 5),
+            ("Int16", 3),
+            ("Int8", 2),
         ],
     )
     def test_each_fixed_width_dtype_prices_its_known_itemsize(

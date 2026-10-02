@@ -19,10 +19,13 @@ exactly the bounded input shape that most needs it.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._mem_estimate_arrow import column_arrow_types as _column_arrow_types
+from decoy_engine.execution._mem_estimate_arrow import source_nullable_columns
 from decoy_engine.execution._transforms_admission import admission_signals, decline_out_of_core
 from decoy_engine.profile._readers import LazySource
 
@@ -237,6 +240,21 @@ def out_of_core_routing_signals(
     return compatible, reject_code, rows, exact
 
 
+def _mask_specs(mask_tables: Sequence[Any], caller_sources: Mapping[str, Any]) -> tuple[Any, ...]:
+    """The `TableSizeSpec` of each mask table, typed from its caller source if any."""
+    from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
+
+    return tuple(
+        table_size_spec_from_profile(
+            table,
+            sample=_resident_column_arrays(caller_sources.get(table.name), table),
+            arrow_types=_column_arrow_types(caller_sources.get(table.name), table),
+            masked_columns=source_nullable_columns(caller_sources.get(table.name)),
+        )
+        for table in mask_tables
+    )
+
+
 def _resident_column_arrays(
     resident: pa.Table | LazySource | None, profile_table: TableProfile
 ) -> dict[str, pa.Array | pa.ChunkedArray]:
@@ -244,18 +262,12 @@ def _resident_column_arrays(
     RESIDENT source, or `{}` for a lazy (not-yet-loaded) table.
 
     Zero-copy: `pa.Table.column` returns a view into the existing Arrow
-    buffer, not a copy, so building this mapping costs nothing per row.
+    buffer, not a copy.
 
-    TB-1: a `LazySource` (`_isolated_worker._load_sources`) is treated
-    exactly like `None` here -- it has no resident column buffers to
-    sample without a full read, and this signal (the byte-estimate /
-    probe-recovery admission path, both TB-5 default-ON, forceable OFF for
-    rollback) must never force one just to sample. An unsampleable/lazy
-    variable-width column is UNPRICEABLE, which the byte-estimate router
-    treats as "does not fit" and routes bounded -- so default-ON is still safe
-    on this path. `None`/unsampleable is already the documented
-    safe direction (see this function's callers): an unpriceable column
-    routes bounded, it never silently admits full_frame.
+    TB-1: a `LazySource` is treated like `None` -- sampling it would force a
+    full read, which the byte-estimate / probe-recovery admission path must
+    never do. An unsampleable variable-width column is UNPRICEABLE, which the
+    byte-estimate router treats as "does not fit" and routes bounded.
     """
     if resident is None or isinstance(resident, LazySource):
         return {}
@@ -302,17 +314,11 @@ def byte_estimate_full_frame_fits(
     bounded until B2's probe recovers the fast path.
     """
     from decoy_engine.execution._mem_estimate import fits
-    from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
 
     mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]
     if not mask_tables:
         return None
-    specs = tuple(
-        table_size_spec_from_profile(
-            table, sample=_resident_column_arrays(caller_sources.get(table.name), table)
-        )
-        for table in mask_tables
-    )
+    specs = _mask_specs(mask_tables, caller_sources)
     return fits(specs, "full_frame", budget_bytes, error_band=error_band)
 
 
@@ -427,7 +433,6 @@ def resolve_probe_recovery(
         return None
 
     from decoy_engine.execution._mem_estimate import raw_data_bytes
-    from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
     from decoy_engine.execution._probe import (
         DEFAULT_PROBE_TIMEOUT_S,
         MIN_PLAUSIBLE_K_FULL_FRAME,
@@ -438,12 +443,7 @@ def resolve_probe_recovery(
     from decoy_engine.execution.out_of_core import resolve_budget
 
     budget = resolve_budget(out_of_core_budget_bytes)
-    specs = tuple(
-        table_size_spec_from_profile(
-            table, sample=_resident_column_arrays(caller_sources.get(table.name), table)
-        )
-        for table in mask_tables
-    )
+    specs = _mask_specs(mask_tables, caller_sources)
     raw = raw_data_bytes(specs)
     if raw.priceable_bytes * MIN_PLAUSIBLE_K_FULL_FRAME > budget.budget_bytes:
         # Clearly busts even under the most favorable real full_frame k this
