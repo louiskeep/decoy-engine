@@ -751,3 +751,18 @@ def test_run_mask_chunked_matches_the_public_oracle_on_the_corpus(case: str) -> 
     assert [o.column_names for o in ours[1]] == [o.column_names for o in oracle[1]]
     assert [o.schema.types for o in ours[1]] == [o.schema.types for o in oracle[1]]
     assert [o.to_pydict() for o in ours[1]] == [o.to_pydict() for o in oracle[1]]
+
+
+def test_a_nested_child_keeps_the_writes_of_its_declaration() -> None:
+    entry = {
+        "name": "n",
+        "strategy": "nested",
+        "provider_config": {
+            "strategy": "joint_mask",
+            "strategy_config": {"key_by": "k", "columns": ["c1", "c2"]},
+        },
+    }
+    access = column_access(entry, REG)
+    assert access.writes == {"c1", "c2"} and access.reads == {"k"}
+    unknown_child = {**entry, "provider_config": {"strategy": "bogus", "strategy_config": {}}}
+    assert column_access(unknown_child, REG).writes_unknown is True

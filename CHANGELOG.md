@@ -56,14 +56,19 @@ admitted the same jobs and returned generated values with chunk-boundary varianc
 non-deterministic `hash`.
 
 - `check_chunked_compatibility` now refuses any column whose provider is a composite under the run's
-  registry with `strategy_not_chunk_safe`, whatever its strategy string. It takes a `registry`
-  keyword (both chunked entries and the `run_pipeline` planner pass the registry they dispatch
-  with; omitted, the default registry is used). A composite-provider `run_pipeline` job routes
+  registry with `strategy_not_chunk_safe`, whatever its strategy string. It takes a required
+  `registry` keyword (both chunked entries and the `run_pipeline` planner pass the registry they
+  dispatch with; only the public `run_*` entry points default to the default registry). A composite-provider `run_pipeline` job routes
   full-frame, which handles composites.
 - Defense in depth: a column some handler writes is never a carry or schema-rule passthrough
   column (`handler_written_columns`, used by `passthrough_columns` and `build_schema_rule`).
 - `column_access`, `read_set`, `plan_carry`, `passthrough_columns` and `build_schema_rule` take the
-  resolved registry; a composite entry's `when:` predicate names count as read.
+  resolved registry; a composite entry's `when:` predicate names count as read. `ColumnAccess`
+  separates `reads_unknown` (an unparsable `when:` or expression: every passthrough column goes
+  through pandas as a read but is still returned exactly as the source holds it) from
+  `writes_unknown` (an undeclared strategy or malformed bundle: nothing is carried or restored).
+  A stored-index field is refused only on a positive reference, and a stored-index change between
+  chunks is `native_chunk_schema_drift` on `run_mask_pipeline_chunked` as well.
 
 ### Changed (stored pandas index fields in the chunked entries, 2026-10-02)
 
@@ -104,7 +109,8 @@ where the oracle's definition of "unconfigured" and the native route's ever disa
   expression references, `derived_aggregate` `column`, `joint_mask` `key_by` and `columns` and
   a `nested` child's fields each name their column. Every column a composite generator writes
   (the canonical outputs of a fixed composite, every `bundle[*].column` of `composite_custom`)
-  is in the read set and is never a carry or schema-rule passthrough column, so neither
+  is excluded from the passthrough candidates altogether, so it is never a carry or
+  schema-rule passthrough column and never reported as read, and neither
   `CarryPlan.reattach` nor `normalize_chunk` can put a source value back over a generated one. This replaces the over-approximation described under "`run_mask_chunked`:
   carried passthrough columns never enter pandas" below. Guard tests G1 to G6 in
   `tests/native/test_column_access_surfaces.py` fail when a strategy, composite provider,
