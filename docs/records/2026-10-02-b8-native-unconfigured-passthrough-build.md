@@ -6,7 +6,7 @@ Date: 2026-10-02. Plan: `docs/plans/2026-10-01-native-unconfigured-passthrough.m
 
 ## Status in one paragraph
 
-The slice is built and every acceptance test, guard test and benchmark bar passes. It is not merge-ready: six existing B2 tests fail, and the cause is a real divergence between the plan and the code. A source table that carries a stored pandas index column (a `__index_level_0__` column plus pandas schema metadata, which is what `pa.Table.from_pandas` writes for a non-range index) is now admitted to the native route, which yields that column as an output column. The oracle route drops it, because pandas consumes it as the index. The plan's guarantee 2 (output identical to the oracle route) does not hold for those sources, and B2's pinned guarantee 3(a) (a stored index column is absent from every lane's output) is broken. The plan did not foresee this because the B2 tests relied on the unconfigured-column veto to keep such sources on the oracle route. Details and options are under "Divergence".
+The slice is built and every acceptance test, guard test and benchmark bar passes. A build-time divergence (stored pandas index fields, below) was resolved by plan revision 4.2 (owner direction: option (b), keep such tables native and drop the field as the oracle does). After the fix the six B2 tests that exposed it pass unedited, and the only failing test in the full suite is an environmental one that also fails on the base. dennis and the Codex final gate have not run.
 
 ## What shipped
 
@@ -21,7 +21,11 @@ Under the resolved `unconfigured_column_policy` `warn`, `run_mask_chunked` runs 
 | `e97ffba4` | CHANGELOG, compatibility note, the merge benchmark scripts. |
 | `9d8182a4` | Two coverage tests (bytes-literal predicate, non-entry surfaces). |
 | `11d913f4` | Six tests that kill the hand-mutant survivors, a docstring rewrap. |
-| the commit holding this record | This record and the benchmark artifact. |
+| `cf606446` | First version of this record and the benchmark artifact. |
+| `ab03cdf7`, `adbb34d0` | Plan revision 4.2 (coordinator). |
+| tests commit after `adbb34d0` | Acceptance test 13 (red before the fix). |
+| `feat(b8): drop stored pandas index fields` | Revision 4.2 implementation. |
+| the commit holding this update | Record update. |
 
 ## Red before
 
@@ -33,12 +37,7 @@ Command, from the worktree, with the companion venv and the worktree `src` first
 
 `PYTHONPATH=$PWD/src:$PWD /home/cam/bin/pytest-one /home/cam/.cache/decoy-native-venv/bin/python tests -q --tb=short -p no:randomly`
 
-Result at `11d913f4`: 7 failed, 19245 passed, 142 skipped, 21 deselected, 59 xfailed, 61 warnings in 1551.77s (25:51). The seven failures:
-
-- six B2 tests in `tests/unit/execution/test_auto_chunk_output_contract.py`, all caused by B8 (divergence 1). They pass on the base: `test_auto_chunk_output_contract.py -k index` gives 9 passed on the pre-B8 `src`.
-- `tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client`: `ModuleNotFoundError: No module named 'google'` in the companion venv. It fails the same way on the pre-B8 `src`, so it is environmental and unrelated.
-
-Targeted subsets run during the build: `tests/native tests/sentry` 5896 passed, 2 skipped (before the last six tests were added); `tests/unit/execution tests/parity` 4811 passed, 6 failed, 10 skipped, 59 xfailed (the six B2 failures below).
+Final run, after the revision 4.2 implementation: 1 failed, 19256 passed, 142 skipped, 21 deselected, 59 xfailed, 60 warnings in 1549.49s (25:49). The one failure is `tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client` (`No module named 'google'` in the companion venv); it fails the same way on the pre-B8 `src`. The six B2 index tests in `test_auto_chunk_output_contract.py` pass unedited. The run before the 4.2 fix (at `11d913f4`) was 7 failed, 19245 passed: those six plus the same `google` test.
 
 ## Lint and types
 
@@ -46,17 +45,17 @@ Targeted subsets run during the build: `tests/native tests/sentry` 5896 passed, 
 
 ## Coverage
 
-Command: the eight B8-relevant test files under `coverage run --branch` (coverage 7.16.2 from a scratch `--target` directory outside the repo, so no project dependency changed), reported for the seven changed units:
+Command: the eight B8-relevant test files (472 passed) under `coverage run --branch` (coverage 7.16.2 from a scratch `--target` directory outside the repo), re-measured after revision 4.2:
 
-| Unit | Line / branch | Uncovered lines that B8 touched |
-|---|---|---|
-| `_column_access.py` (new) | 98% line | 89 and 173 at measurement time; both covered by the two tests added in `9d8182a4` |
-| `_chunked_carry.py` | 91% | none (misses at 92-94, 107-111, 137-139 are unchanged code) |
-| `native/_dispatch.py` | 90% | none (misses are the unchanged faker-source and probe branches) |
-| `native/_chunked_entry.py` | 97% | none (289-290 and 334 are unchanged) |
-| `native/_chunk_masking.py` | 88% | none |
-| `native/_real_type_admission.py` | 86% | none |
-| `native/_requirements.py` | 85% | none |
+| Unit | Line / branch |
+|---|---|
+| `_column_access.py` (new) | 100% line, 100% branch (0 missed; lines 89 and 173 are now covered) |
+| `_chunked_carry.py` | 91%; misses at 92-94, 107-111, 137-139 are unchanged code |
+| `native/_dispatch.py` | 90%; every B8 and 4.2 line covered, misses are unchanged faker and probe branches |
+| `native/_chunked_entry.py` | 97%; misses 292-293 and 337 are unchanged |
+| `native/_chunk_masking.py` | 89%; B8 and 4.2 lines covered |
+| `native/_real_type_admission.py` | 86%; unchanged misses |
+| `native/_requirements.py` | 85%; unchanged misses |
 
 ## Mutation
 
@@ -76,6 +75,8 @@ Pass 1: 37 killed, 6 survived. Pass 2, after `11d913f4`: all 43 killed.
 An earlier harness attempt was discarded: pytest's `pythonpath = ["src"]` put the unmutated worktree `src` ahead of the mutated copy, so mutant M01 survived. The harness was fixed to run from a scratch tree that holds the mutated `src` and symlinks to `tests` and `scripts`, and the sanity mutant (module cannot import) was added and is killed.
 
 ## Benchmark
+
+Revision 4.2 adds one `frozenset` membership check per column per chunk to `_mask_chunk_native` and one `stored_index_fields` call at admission and cross-check. The hot path did not change materially, so the benchmark below was not re-run. The numbers are from the revision 4.1 build.
 
 Run ID `B8-BENCH-2026-10-02-1M` (the ledger row in the sprint and testing ledger lives outside this repository and has not been added). Raw JSON: `docs/records/b8-bench-2026-10-02/b8-bench-1m.json`. Driver `scripts/bench-unconfigured-passthrough/bench_unconfigured_passthrough.py`, worker `bench_worker_unconfigured_passthrough.py`.
 
@@ -111,7 +112,7 @@ B2 rewrites (Design 8), exact names:
 
 ## Divergence
 
-1. **Stored pandas index columns (blocks merge).** Six existing B2 tests fail, none edited: `test_auto_chunk_output_contract.py::test_pandas_origin_sources_take_the_dispatcher_lane[RangeIndex_start_and_step|named_RangeIndex-parquet_read_back|from_pandas]` (four) and `test_stored_non_range_index_column_is_absent_on_every_lane[parquet_read_back|from_pandas]` (two). A source from `pa.Table.from_pandas(df)` with a non-range index, or with `preserve_index=True`, holds an extra column (`__index_level_0__`, or the index name) and pandas schema metadata that names it. Before B8 that column counted as uncovered, so the table took the oracle route, where the stock adapter's `to_pandas` consumed the column as the index and `from_pandas(preserve_index=False)` dropped it. After B8 the column is "unconfigured", so the native route yields it as an output column. A direct run confirms it: for `df` with a string index, the native route yields `['r', 't', '__index_level_0__']` and the forced oracle route yields `['r', 't']`. This breaks plan guarantee 2 and B2's guarantee 3(a). Options for a plan patch: (a) keep the veto, with a coded reason such as `pandas_index_column:<name>`, when the first chunk's schema metadata (`b"pandas"`, key `index_columns`) names a stored index column; (b) make the native route drop those columns the way the oracle route does. Option (a) is smaller and leaves the stored-index handling to roadmap item PARQUET-INDEX. I did not implement either, because the plan and the B2 contract both need a decision.
+1. **Stored pandas index columns (resolved by plan revision 4.2).** Resolution: option (b). `plan_native_route` excludes `stored_index_fields(first_schema)` from the uncovered set, `_mask_chunk_native` skips those names (`stored_index=`), and the cross-check subtracts them. Acceptance test 13 was written first and was red on the 4.1 code (the native chunk carried the index field); four hand mutants on the new lines (M43 to M46) are killed. Original finding: Six existing B2 tests fail, none edited: `test_auto_chunk_output_contract.py::test_pandas_origin_sources_take_the_dispatcher_lane[RangeIndex_start_and_step|named_RangeIndex-parquet_read_back|from_pandas]` (four) and `test_stored_non_range_index_column_is_absent_on_every_lane[parquet_read_back|from_pandas]` (two). A source from `pa.Table.from_pandas(df)` with a non-range index, or with `preserve_index=True`, holds an extra column (`__index_level_0__`, or the index name) and pandas schema metadata that names it. Before B8 that column counted as uncovered, so the table took the oracle route, where the stock adapter's `to_pandas` consumed the column as the index and `from_pandas(preserve_index=False)` dropped it. After B8 the column is "unconfigured", so the native route yields it as an output column. A direct run confirms it: for `df` with a string index, the native route yields `['r', 't', '__index_level_0__']` and the forced oracle route yields `['r', 't']`. This breaks plan guarantee 2 and B2's guarantee 3(a). Options for a plan patch: (a) keep the veto, with a coded reason such as `pandas_index_column:<name>`, when the first chunk's schema metadata (`b"pandas"`, key `index_columns`) names a stored index column; (b) make the native route drop those columns the way the oracle route does. Option (a) is smaller and leaves the stored-index handling to roadmap item PARQUET-INDEX. Option (b) was chosen and implemented.
 2. The plan's acceptance 6(a) names a column after a provider as `first_name` beside a first-name Faker column. The Faker column's provider string is `person_first_name`, so a column named `first_name` never collided with the old scan. The test uses `person_first_name`, the real provider value.
 3. Acceptance 6(b) lists the sibling strategies "unconfigured and configured". A `group_by`, `anchor` or similar reference must name a configured column (the plan compiler rejects it otherwise), so the sibling cases are configured-only. The `when:` cases cover both. The sibling cases use shapes valid for the strategy (a dictionary with a null for `group_by`, a far `date32` for `anchor`) rather than the `time64[ns]` shape, which the strategies reject on valid values.
 4. The "before" benchmark side is `49a8a5a7` (equal to main `64e44dac`), not `0bb196fa`; see Benchmark.
@@ -122,4 +123,4 @@ B2 rewrites (Design 8), exact names:
 
 ## Left for the gates and the merge
 
-dennis and the Codex final gate; the decision on divergence 1; the ledger row for `B8-BENCH-2026-10-02-1M`; the ROADMAP and shipped-log entries, which the plan ties to the merge; a rebase onto B7 if it lands first (its `uncovered_columns` test rewrites and section 11 configuration (d) note).
+dennis and the Codex final gate; the ledger row for `B8-BENCH-2026-10-02-1M`; the ROADMAP and shipped-log entries, which the plan ties to the merge; a rebase onto B7 if it lands first (its `uncovered_columns` test rewrites and section 11 configuration (d) note).
