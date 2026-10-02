@@ -2,7 +2,7 @@
 
 Status: record
 
-Date: 2026-10-02. Plan: `docs/plans/2026-10-01-native-unconfigured-passthrough.md` (revision 4.1, Codex plan-gated; not edited by this record). Branch `feat/native-unconfigured-passthrough`, rebased onto engine main `64e44dac`, which already includes B2 (the dispatcher auto-chunk lane, PR #188). B7 has not landed, so the plan's B7 items are not applied. Builder: Sonnet. dennis and the Codex final gate have not run.
+Date: 2026-10-02. Plan: `docs/plans/2026-10-01-native-unconfigured-passthrough.md` revision 4.5.2 (4.1 Codex plan-gated; 4.2 and 4.3 Opus patches after build-time findings; 4.4 and 4.5.1 Codex patches; 4.5 and 4.5.2 Opus patches). Branch `feat/native-unconfigured-passthrough`, rebased onto engine main `d2c56780` (B2 #188, byte-estimate #189, B7 #190). Gates: dennis round 1 NO-GO (pre-existing composite cleartext leak on `run_mask_chunked`), round 2 NO-GO (reads/writes-unknown conflation), round 3 GO with fixes (applied in `a01d64ed`, `87ebdf0f`); Codex final GO at `87ebdf0f`.
 
 ## Status in one paragraph
 
