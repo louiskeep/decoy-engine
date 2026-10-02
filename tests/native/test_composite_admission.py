@@ -959,3 +959,11 @@ def test_writes_unknown_entries_are_refused_by_the_public_entries() -> None:
                     )
                 )
             assert sink == []
+
+
+def test_unrelated_schema_metadata_changes_are_not_stored_index_drift() -> None:
+    from decoy_engine.execution.native._chunk_schema import check_stored_index
+
+    first, second = _indexed()
+    other = second.replace_schema_metadata({**second.schema.metadata, b"other": b"key"})
+    check_stored_index(first.schema, other, table=TABLE, chunk_index=1)
