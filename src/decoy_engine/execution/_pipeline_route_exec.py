@@ -81,7 +81,9 @@ def execution_telemetry(
             "execution_mode": "full_frame",
             "route_reason": route_reason,
             "eviction": "none",
-            "outputs_streamed": False,
+            # B6a: the full-frame continuation passes a sink only when the auto-chunk lane
+            # or the B7 split streamed into it; every other run passes `None`.
+            "outputs_streamed": sink is not None,
             "loaded_fully_in_memory": True,
         }
     # The bounded-memory streaming routes (`sequential`, `out_of_core`) share

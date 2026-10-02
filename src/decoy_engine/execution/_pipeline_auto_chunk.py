@@ -25,11 +25,13 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._substrate import require_bool, require_positive_int
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
 
@@ -269,6 +271,52 @@ def _run_dispatcher(
     return join_dispatcher_chunks(chunks, table=table)
 
 
+def _run_streamed(
+    config: dict[str, Any],
+    source: pa.Table,
+    *,
+    sink: TransactionalSink,
+    table: str,
+    engine_version: str,
+    registry: ProviderRegistry,
+    adapter: Any,
+    vault_writer: Any,
+    chunk_size_rows: int,
+    key_provider: KeyProvider | None,
+    native_threads: int,
+    chunk_results: list[ExecutionResult],
+) -> dict[str, Any]:
+    """The dispatcher lane with the chunks streamed into `sink`; returns the `output` block."""
+    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
+
+    # The columns B1's schema rule pins resolve from chunk 0, so only the rest can hold the
+    # stream back (`_chunked_output_sink` module docstring).
+    rule = build_schema_rule(
+        config, table=table, first=source.slice(0, chunk_size_rows), registry=registry
+    )
+    chunks = _chunked_entry.run_mask_chunked(
+        config,
+        _slices(source, chunk_size_rows),
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_result_sink=chunk_results,
+        key_provider=key_provider,
+        base_row_offset=0,
+        native_threads=native_threads,
+    )
+    stats = _output_sink.stream_table(
+        sink,
+        table,
+        chunks,
+        fixed_columns=rule.string_columns | frozenset(rule.passthrough_types),
+    )
+    return stats.block()
+
+
 def run_auto_chunk(
     config: dict[str, Any],
     source: pa.Table,
@@ -282,6 +330,7 @@ def run_auto_chunk(
     key_provider: KeyProvider | None,
     native_threads: int,
     dispatcher_enabled: bool,
+    sink: TransactionalSink | None = None,
 ) -> tuple[dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any]]:
     """Mask one eligible table in `chunk_size_rows`-row slices on the selected lane.
 
@@ -300,7 +349,9 @@ def run_auto_chunk(
     from decoy_engine.execution.native._chunked_evidence import aggregate_chunked_route_evidence
 
     lane, lane_reason = select_lane(dispatcher_enabled)
-    chunk_results: list[ExecutionResult] = []
+    chunk_results: list[ExecutionResult] = (
+        _output_sink.OutputFreeResults() if sink is not None else []
+    )
     common: dict[str, Any] = {
         "table": table,
         "engine_version": engine_version,
@@ -311,7 +362,14 @@ def run_auto_chunk(
         "key_provider": key_provider,
         "chunk_results": chunk_results,
     }
-    if lane == LANE_DISPATCHER:
+    output_block: dict[str, Any] | None = None
+    masked: pa.Table | None = None
+    if sink is not None:
+        output_block = _run_streamed(
+            config, source, sink=sink, native_threads=native_threads, **common
+        )
+        evidence = _without_elapsed(aggregate_chunked_route_evidence(chunk_results))
+    elif lane == LANE_DISPATCHER:
         masked = _run_dispatcher(config, source, native_threads=native_threads, **common)
         evidence = _without_elapsed(aggregate_chunked_route_evidence(chunk_results))
     else:
@@ -327,11 +385,12 @@ def run_auto_chunk(
             registry=registry,
         )
     _LOG.info(
-        "auto-chunk table=%s lane=%s native_admitted=%s reroute_reason=%s",
+        "auto-chunk table=%s lane=%s native_admitted=%s reroute_reason=%s%s",
         table,
         lane,
         evidence["native_admitted"],
         evidence["reroute_reason"],
+        " output=streamed" if output_block is not None else "",
     )
     quality_metrics: dict[str, Any] = dict(aggregate_chunk_code_set_corpora(chunk_results))
     quality_metrics["chunked_route"] = evidence
@@ -340,8 +399,10 @@ def run_auto_chunk(
         "lane_reason": lane_reason,
         "native_threads": native_threads,
     }
+    if output_block is not None:
+        quality_metrics["auto_chunk"]["output"] = output_block
     return (
-        {table: masked},
+        {} if masked is None else {table: masked},
         aggregate_chunk_timings(chunk_results),
         sum(r.boundary_conversion_ms for r in chunk_results),
         aggregate_chunk_warnings(chunk_results),

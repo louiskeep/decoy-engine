@@ -251,7 +251,7 @@ def cheap_admission(
         return None
     # `sink` is intentionally NOT a decline (route activation, 2026-09-20). The
     # first check above already established route == "full_frame" (not chunked,
-    # not native). On the full-frame route the sink is never consumed: the legacy
+    # not native). The full-frame route never consumes it (auto-chunk is B6a's exception): the legacy
     # full-frame route ignores it (`_isolated_worker.py`'s own comment;
     # `_finalize_outputs` reads `result.outputs`), and the admitted path returns
     # outputs in-memory identically (execution goes through `_execute_admitted`,

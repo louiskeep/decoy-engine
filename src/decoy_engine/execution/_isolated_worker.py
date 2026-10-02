@@ -147,7 +147,8 @@ def _finalize_outputs(result: ExecutionResult, staging_output_dir: str) -> list[
     Two shapes, distinguished by `execution_telemetry`'s `outputs_streamed`
     stamp (`_pipeline_route_exec.py`):
 
-    - STREAMED (sequential/out_of_core, now that `_run` always hands
+    - STREAMED (sequential/out_of_core, and since B6a the auto-chunk lane and a fully
+      dispatched multi-table split, now that `_run` always hands
       `run_pipeline` a `ParquetTransactionalSink` pointed at
       `staging_output_dir`): `result.outputs` is `{}` by construction (see
       `run_out_of_core_route`/`run_sequential_route`'s docstrings) -- the

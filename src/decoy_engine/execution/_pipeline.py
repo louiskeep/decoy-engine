@@ -84,6 +84,7 @@ from decoy_engine.execution import (
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._chunked_output_sink import OutputPublish
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
@@ -173,6 +174,7 @@ def run_pipeline(
     auto_chunk_threshold_rows: int = _pipeline_finalize.AUTO_CHUNK_THRESHOLD_DEFAULT,
     native_threads: int = 1,
     chunked_dispatcher_enabled: bool = True,
+    stream_chunked_output: bool = True,
     multi_table_dispatch_enabled: bool = True,
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
@@ -238,9 +240,10 @@ def run_pipeline(
     relationship routing with SC2's fail-closed reject-before-read, then
     auto-chunk routing) and `_pipeline_auto_chunk` (the chunked lane: `native_threads`
     is its kernel thread budget, `chunked_dispatcher_enabled=False` its kill switch;
-    `multi_table_dispatch_enabled=False` keeps multi-table jobs whole). They are runtime kwargs,
-    never `config` fields: resource policies stay out of the profile-hashed,
-    frozen-surface data contract. Masked values are route-neutral; on the
+    `multi_table_dispatch_enabled=False` keeps multi-table jobs whole; with a `sink` the lane
+    and a fully dispatched split stream into it, `stream_chunked_output=False` opts out, see
+    `_chunked_output_sink`). They are runtime kwargs, never `config` fields: resource policies
+    stay out of the profile-hashed, frozen-surface data contract. Masked values are route-neutral; on the
     auto-chunk route schema, types, nullability and metadata follow guarantee 3
     of docs/plans/2026-10-01-dispatcher-auto-chunk.md. The SC2 size thresholds
     default to 32 GB-box-calibrated constants (see `_planner`) and are kwargs the
@@ -322,6 +325,7 @@ def run_pipeline(
     require_positive_int("chunk_size_rows", chunk_size_rows)
     require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
     _pipeline_auto_chunk.require_lane_knobs(native_threads, chunked_dispatcher_enabled)
+    publish = OutputPublish(sink, stream_chunked_output, post_validation)  # B6a; validates the knob
     require_bool("multi_table_dispatch_enabled", multi_table_dispatch_enabled)
     # SC2 out-of-core routing thresholds share the same fail-early contract.
     require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
@@ -555,125 +559,121 @@ def run_pipeline(
         prepared=prepared.prepared,
     )
 
-    # Steps 1-2 (generate-kind tables, then mask-kind tables) live in
-    # `_pipeline_generate_mask.run_generate_and_mask_steps` (LOC ceiling).
-    step_result = _pipeline_generate_mask.run_generate_and_mask_steps(
-        has_generate_table=has_generate_table,
-        has_mask_table=has_mask_table,
-        plan=plan,
-        derive_key=derive_key,
-        instance_default_locale=instance_default_locale,
-        provider_snapshot=_provider_snapshot,
-        resident_sources=resident_sources,
-        caller_sources=caller_sources,
-        route_chunked=route_chunked,
-        table_kinds=table_kinds,
-        config=config,
-        engine_version=engine_version,
-        registry=resolved_registry,
-        adapter=adapter,
-        vault_writer=vault_writer,
-        chunk_size_rows=chunk_size_rows,
-        native_threads=native_threads,
-        chunked_dispatcher_enabled=chunked_dispatcher_enabled,
-        multi_table_dispatch_enabled=multi_table_dispatch_enabled,
-        key_provider=resolved_key_provider,
-        graph=graph,
-        namespace_registry=ns_registry,
-        unconfigured_column_policy=projection_policy,
-        generate_output_tables=generate_output_tables,
-        substrate=substrate,
-        resolved_substrate=resolved_substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-        auto_chunk=auto_chunk,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        execution_plan_decision=execution_plan_decision,
-        fidelity_report=fidelity_report,
-        now_iso=now_iso,
-    )
-    generate_outputs = step_result.generate_outputs
-    mask_outputs = step_result.mask_outputs
-    mask_timings = step_result.mask_timings
-    mask_conversion_ms = step_result.mask_conversion_ms
-    mask_warnings = step_result.mask_warnings
-    mask_quality_metrics = step_result.mask_quality_metrics
-    mask_row_errors = step_result.mask_row_errors
-    fidelity_reports = step_result.fidelity_reports
+    with publish:
+        # Steps 1-2 (generate-kind tables, then mask-kind tables) live in
+        # `_pipeline_generate_mask.run_generate_and_mask_steps` (LOC ceiling).
+        step = _pipeline_generate_mask.run_generate_and_mask_steps(
+            has_generate_table=has_generate_table,
+            has_mask_table=has_mask_table,
+            plan=plan,
+            derive_key=derive_key,
+            instance_default_locale=instance_default_locale,
+            provider_snapshot=_provider_snapshot,
+            resident_sources=resident_sources,
+            caller_sources=caller_sources,
+            route_chunked=route_chunked,
+            table_kinds=table_kinds,
+            config=config,
+            engine_version=engine_version,
+            registry=resolved_registry,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            chunk_size_rows=chunk_size_rows,
+            native_threads=native_threads,
+            chunked_dispatcher_enabled=chunked_dispatcher_enabled,
+            multi_table_dispatch_enabled=multi_table_dispatch_enabled,
+            key_provider=resolved_key_provider,
+            graph=graph,
+            namespace_registry=ns_registry,
+            unconfigured_column_policy=projection_policy,
+            generate_output_tables=generate_output_tables,
+            substrate=substrate,
+            resolved_substrate=resolved_substrate,
+            fpe_chunk_count=fpe_chunk_count,
+            max_workers=max_workers,
+            fallback_to_pandas=fallback_to_pandas,
+            auto_chunk=auto_chunk,
+            auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+            execution_plan_decision=execution_plan_decision,
+            fidelity_report=fidelity_report,
+            now_iso=now_iso,
+            publish=publish,
+        )
+        # Step 3: stitch the outputs together via the shared helper both this
+        # oracle and the shadow coordinator's mixed dispatch call, so "mask wins
+        # ties" cannot drift between the two (Task 4.6 slice 5b-i).
+        outputs: dict[str, pa.Table] = stitch_generate_mask_outputs(
+            step.generate_outputs, step.mask_outputs
+        )
 
-    # Step 3: stitch the outputs together via the shared helper both this
-    # oracle and the shadow coordinator's mixed dispatch call, so "mask wins
-    # ties" cannot drift between the two (Task 4.6 slice 5b-i).
-    outputs: dict[str, pa.Table] = stitch_generate_mask_outputs(generate_outputs, mask_outputs)
+        # BF1: namespace the fidelity reports under the existing free-form
+        # quality_metrics dict (already plumbed to the platform manifest).
+        # Additive + default-OFF: when the flag is off, fidelity_reports is
+        # empty and quality_metrics is untouched.
+        quality_metrics: dict[str, Any] = dict(step.mask_quality_metrics)
+        if step.fidelity_reports:
+            quality_metrics["fidelity_reports"] = step.fidelity_reports
 
-    # BF1: namespace the fidelity reports under the existing free-form
-    # quality_metrics dict (already plumbed to the platform manifest).
-    # Additive + default-OFF: when the flag is off, fidelity_reports is
-    # empty and quality_metrics is untouched.
-    quality_metrics: dict[str, Any] = dict(mask_quality_metrics)
-    if fidelity_reports:
-        quality_metrics["fidelity_reports"] = fidelity_reports
+        # Explain surfacing: stamp the static job-level classification (computed once
+        # above); a multi-table split is in auto_chunk.tables, not here. Default-off
+        # flag; default runs stamp nothing here.
+        if explain_plan and execution_plan_decision is not None:
+            quality_metrics["execution_plan"] = {
+                "mode": execution_plan_decision.mode,
+                "reason": execution_plan_decision.reason,
+                "rejections": dict(execution_plan_decision.rejections),
+            }
 
-    # Explain surfacing: stamp the static job-level classification (computed once
-    # above); a multi-table split is in auto_chunk.tables, not here. Default-off
-    # flag; default runs stamp nothing here.
-    if explain_plan and execution_plan_decision is not None:
-        quality_metrics["execution_plan"] = {
-            "mode": execution_plan_decision.mode,
-            "reason": execution_plan_decision.reason,
-            "rejections": dict(execution_plan_decision.rejections),
-        }
+        # SP-05 job-level validators (P5.INFRA.4) + D8 combined quarantine pass;
+        # see `_pipeline_finalize.finalize_validators_and_quarantine` for the
+        # full "why" (trap T5, LOW-1 raise-before-write ordering, etc). Mutates
+        # `quality_metrics` in place and returns the (possibly quarantine-filtered) outputs.
+        outputs, quarantine_removed = _pipeline_finalize.finalize_validators_and_quarantine(
+            outputs,
+            config=config,
+            caller_sources=resident_sources,
+            mask_row_errors=step.mask_row_errors,
+            quality_metrics=quality_metrics,
+        )
 
-    # SP-05 job-level validators (P5.INFRA.4) + D8 combined quarantine pass;
-    # see `_pipeline_finalize.finalize_validators_and_quarantine` for the
-    # full "why" (trap T5, LOW-1 raise-before-write ordering, etc). Mutates
-    # `quality_metrics` in place and returns the (possibly quarantine-filtered) outputs.
-    outputs, quarantine_removed = _pipeline_finalize.finalize_validators_and_quarantine(
-        outputs,
-        config=config,
-        caller_sources=resident_sources,
-        mask_row_errors=mask_row_errors,
-        quality_metrics=quality_metrics,
-    )
+        # S2: full-frame execution telemetry (the sequential route returned
+        # early above with its own telemetry).
+        quality_metrics["execution"] = _route_exec.execution_telemetry(
+            route="full_frame",
+            route_reason=route_reason,
+            sink=publish.active_sink,
+            source_loader=None,
+            sources_resident=True,
+        )
+        stamp_out_of_core_declined(quality_metrics, ooc_declined)
 
-    # S2: full-frame execution telemetry (the sequential route returned
-    # early above with its own telemetry).
-    quality_metrics["execution"] = _route_exec.execution_telemetry(
-        route="full_frame",
-        route_reason=route_reason,
-        sink=None,
-        source_loader=None,
-        sources_resident=True,
-    )
-    stamp_out_of_core_declined(quality_metrics, ooc_declined)
+        result = ExecutionResult(
+            outputs=outputs,
+            timings=step.mask_timings,
+            boundary_conversion_ms=step.mask_conversion_ms,
+            warnings=step.mask_warnings,
+            quality_metrics=quality_metrics,
+            table_kinds=table_kinds,
+            row_errors=step.mask_row_errors,
+        )
 
-    result = ExecutionResult(
-        outputs=outputs,
-        timings=mask_timings,
-        boundary_conversion_ms=mask_conversion_ms,
-        warnings=mask_warnings,
-        quality_metrics=quality_metrics,
-        table_kinds=table_kinds,
-        row_errors=mask_row_errors,
-    )
-
-    # A1: opt-in post-execution scan suite. Runs only on this full-frame finalize
-    # branch -- routing declined the sequential / out-of-core / unified-slice
-    # early returns for an opted-in job, so this is the one seam it reaches.
-    # Default-OFF returns before touching the result (byte-identical).
-    _pipeline_finalize.compute_post_validation(
-        result,
-        plan=plan,
-        sources=resident_sources,
-        quarantine_row_mask=quarantine_removed,
-        profile=profile,
-        registry=resolved_registry,
-        relationship_graph=graph,
-        namespace_registry=ns_registry,
-        post_validation=post_validation,
-        post_validation_skip=post_validation_skip,
-        post_validation_sample_size=post_validation_sample_size,
-        post_validation_enforce=post_validation_enforce,
-    )
-    return result
+        # A1: opt-in post-execution scan suite. Runs only on this full-frame finalize
+        # branch -- routing declined the sequential / out-of-core / unified-slice
+        # early returns for an opted-in job, so this is the one seam it reaches.
+        # Default-OFF returns before touching the result (byte-identical).
+        _pipeline_finalize.compute_post_validation(
+            result,
+            plan=plan,
+            sources=resident_sources,
+            quarantine_row_mask=quarantine_removed,
+            profile=profile,
+            registry=resolved_registry,
+            relationship_graph=graph,
+            namespace_registry=ns_registry,
+            post_validation=post_validation,
+            post_validation_skip=post_validation_skip,
+            post_validation_sample_size=post_validation_sample_size,
+            post_validation_enforce=post_validation_enforce,
+        )
+        publish.commit()  # B6a: the run's last action; inert unless this run streamed
+        return result

@@ -329,15 +329,18 @@ def test_non_routed_runs_never_enter_the_new_code(
     )
     results = {}
     sinks = {}
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared_job = _job(shared)
     for label, extra in (("new", {}), ("off", b6a.resident_kw())):
         sink = b6a.RecordingSink()
         sinks[label] = sink
-        run_dir = tmp_path / label
-        run_dir.mkdir()
         if case in ("sequential", "out_of_core"):
+            run_dir = tmp_path / label
+            run_dir.mkdir()
             results[label] = _fk_run(run_dir, case, sink, **extra)
             continue
-        cfg, src = _job(run_dir)
+        cfg, src = shared_job
         kwargs: dict[str, Any] = {"auto_chunk_threshold_rows": 10_000}
         if case == "plain_full_frame":
             kwargs["unified_slice_enabled"] = False

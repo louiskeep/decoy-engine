@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (the auto-chunk lane streams its output into a `TransactionalSink`, 2026-10-02)
+
+`run_pipeline` gains the keyword-only knob `stream_chunked_output: bool = True`. When the
+caller passes a `TransactionalSink` as `sink`, a routed auto-chunk job (and a B7 split in
+which every table is dispatched) no longer gathers and joins its whole output. The masked
+chunks stream into `sink.write_batches` one Parquet row group at a time (at most 1,048,576
+rows or 256 MiB), `sink.commit()` runs once as the last action and any failure calls
+`sink.abort()` once, so nothing is visible until the single commit. The result then has
+`outputs == {}` and `quality_metrics["execution"]["outputs_streamed"]` true, the same shape
+the sequential and out-of-core routes already return with a sink. With
+`ParquetTransactionalSink` the published file is byte-identical to `pq.write_table` of the
+resident table. Callers that pass no sink, pass `stream_chunked_output=False`, or run with
+validators, quarantine, `fidelity_report` or `post_validation` keep the resident outputs.
+Every routed run records `quality_metrics["auto_chunk"]["output"]` with the mode and, when
+resident, the reason. Input stays resident; bounding it is a later slice.
+
 ### Changed (independent multi-table jobs dispatch qualifying tables per table, 2026-10-02)
 
 A `run_pipeline` job with several mask tables used to run as one full-frame pandas call

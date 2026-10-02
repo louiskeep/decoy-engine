@@ -171,7 +171,7 @@ def _row_groups(path: Path) -> list[int]:
 
 def test_row_group_rows_is_the_pyarrow_default(tmp_path: Path) -> None:
     mod = b6a.sink_module()
-    table = pa.table({"a": pa.array(range(mod.ROW_GROUP_ROWS + 5), pa.int8())})
+    table = pa.table({"a": pa.array(range(mod.ROW_GROUP_ROWS + 5), pa.int64())})
     path = tmp_path / "default.parquet"
     pq.write_table(table, path)
     assert _row_groups(path)[0] == mod.ROW_GROUP_ROWS == 1024 * 1024

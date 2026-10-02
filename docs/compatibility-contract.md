@@ -225,6 +225,18 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   applies per table inside an independent multi-table job, and one result can mix that shape
   with the full-frame shape for the tables left in the full-frame group. `False` restores
   the single full-frame call.
+  `run_pipeline` gains one more keyword-only argument (2026-10-02), `stream_chunked_output:
+  bool = True`, next to `chunked_dispatcher_enabled`. The existing `sink` argument is now
+  also consumed by the auto-chunk dispatcher lane and by a B7 split in which every table is
+  dispatched: the masked chunks go to `sink.write_batches` one Parquet row group at a time,
+  `sink.commit()` runs once as the last action, any failure calls `sink.abort()` once, and
+  the result carries `outputs == {}` with `quality_metrics["execution"]["outputs_streamed"]`
+  true and a per-table `quality_metrics["auto_chunk"]["output"]` evidence block. A caller
+  that passes a sink must accept that shape; a caller that passes none, or sets
+  `stream_chunked_output=False`, gets the resident outputs as before. Validators,
+  quarantine, `fidelity_report` and `post_validation` keep the run resident, each with a
+  recorded reason. With `ParquetTransactionalSink` the published file is byte-identical to
+  `pq.write_table` of the resident table whenever no row group was cut by the byte cap.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
