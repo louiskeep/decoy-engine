@@ -24,7 +24,8 @@ null-free `string` columns built element-wise from `k`: `email` (hash, namespace
 `bench_ns_<k>`), `secret` (redact), `zip` (truncate, length 3), `ref` (passthrough).
 `t1` and `t2` hold 1,000,000 rows and `t3` 50,000 (below the threshold, so it stays in
 the full-frame group). Variant `extra` adds the unconfigured column `extra` to `t1` and
-`t2`, so B1 reroutes both to its oracle route (`uncovered_columns`).
+`t2`. Before B8 that rerouted both tables to B1's oracle route (`uncovered_columns`); with
+B8 they run natively and the variant no longer measures a rerouted job.
 """
 
 from __future__ import annotations
