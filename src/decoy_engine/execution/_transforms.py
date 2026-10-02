@@ -195,7 +195,8 @@ def reject_config_references_stored_index(
     read or write of it (NFKC-normalized like `read_set`), raises
     `config_references_stored_index`. Only a positive reference refuses: a `reads_unknown`
     declaration (an unparsable predicate) runs on the oracle route as it always did, and a
-    `writes_unknown` one is refused earlier by the composite admission check. Schema only, no
+    `writes_unknown` one (an undeclared strategy or a malformed bundle) is refused earlier by
+    `check_chunked_compatibility` with `strategy_not_chunk_safe`. Schema only, no
     values are read.
     """
     stored = stored_index_fields(schema)

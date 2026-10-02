@@ -29,6 +29,7 @@ from decoy_engine.execution.native._dispatch import (
 )
 from decoy_engine.execution.native._real_type_admission import real_type_rejection
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter
 from tests.native._b8_support import (
     FORCE,
@@ -223,7 +224,13 @@ def test_plan_native_route_takes_the_policy_keyword_and_defaults_to_the_veto() -
 
     def plan(**kw: Any) -> Any:
         return plan_native_route(
-            config, profile, table=TABLE, engine_version=ENGINE_VERSION, first_schema=schema, **kw
+            config,
+            profile,
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            first_schema=schema,
+            **kw,
+            registry=get_default_registry(),
         )
 
     assert plan().evidence.native_admitted is False
@@ -246,6 +253,7 @@ def test_plan_native_route_warn_still_vetoes_a_missing_configured_column() -> No
         engine_version=ENGINE_VERSION,
         first_schema=schema,
         unconfigured_policy="warn",
+        registry=get_default_registry(),
     )
     assert got.evidence.native_admitted is False
     assert got.evidence.reroute_reason == "uncovered_columns:['u'];missing_configured_columns:['q']"

@@ -73,6 +73,7 @@ from decoy_engine.generation.pool import GenerationError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.providers_v2 import get_default_registry
 from tests.physical import _shadow_helpers
 from tests.physical._shadow_helpers import (
     ENGINE_VERSION,
@@ -884,7 +885,12 @@ def test_chunked_route_declines_date_shift(tmp_path: Path) -> None:
     config = build_config(tmp_path, "t", tmp_path / "ds.parquet", [_ds_column()])
     profile = first_chunk_profile(source, table="t", engine_version=ENGINE_VERSION)
     preflight = plan_native_route(
-        config, profile, table="t", engine_version=ENGINE_VERSION, first_schema=source.schema
+        config,
+        profile,
+        table="t",
+        engine_version=ENGINE_VERSION,
+        first_schema=source.schema,
+        registry=get_default_registry(),
     )
     assert preflight.evidence.native_admitted is False
     assert "date_shift_not_native_chunked_route:c" in (preflight.evidence.reroute_reason or "")

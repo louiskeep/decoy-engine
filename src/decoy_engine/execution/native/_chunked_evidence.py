@@ -54,7 +54,7 @@ def _planned_backend(node: Any) -> str:
 
 
 def plan_column_backends(
-    config: dict[str, Any], profile: Any, *, table: str, engine_version: str, registry: Any = None
+    config: dict[str, Any], profile: Any, *, table: str, engine_version: str, registry: Any
 ) -> tuple[ColumnPlan, ...]:
     """The configured columns of `table` with their planned backends.
 

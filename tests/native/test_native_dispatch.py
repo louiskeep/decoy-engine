@@ -25,6 +25,7 @@ from decoy_engine.execution.native._dispatch import (
 )
 from decoy_engine.keyprovider import SecretKeyProvider, key_provider_from_ref
 from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile
+from decoy_engine.providers_v2 import get_default_registry
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _NEEDS_COMPANION = pytest.mark.skipif(
@@ -247,7 +248,9 @@ def test_hash_over_unsupported_input_type_reroutes_whole_table() -> None:
         profiled_at=datetime(2026, 8, 29, 0, 0, 0),
         decoy_engine_version="0.1.0",
     )
-    decision = plan_native_route(config, profile, table="w", engine_version="test").evidence
+    decision = plan_native_route(
+        config, profile, table="w", engine_version="test", registry=get_default_registry()
+    ).evidence
     assert decision.native_admitted is False
     assert "fallback_policy_not_native:h" in decision.reroute_reason
     # Cross-check the underlying Task 2.6 rejection is the specific type reason
@@ -364,7 +367,11 @@ def test_fk_composite_group_node_capabilities_read_native_ready_today() -> None:
 
 def test_table_with_fk_composite_group_node_reroutes_to_oracle() -> None:
     decision = plan_native_route(
-        _composite_fk_config(), _composite_fk_profile(), table="claims", engine_version="0.1.0"
+        _composite_fk_config(),
+        _composite_fk_profile(),
+        table="claims",
+        engine_version="0.1.0",
+        registry=get_default_registry(),
     ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "fk_relationship_not_native_route"
@@ -379,7 +386,11 @@ def test_fk_child_reroutes_under_production_empty_relationship_profile() -> None
     # where the oracle fails closed with orphan_fk_violation.
     empty_rel_profile = replace(_composite_fk_profile(), relationships=())
     decision = plan_native_route(
-        _composite_fk_config(), empty_rel_profile, table="claims", engine_version="0.1.0"
+        _composite_fk_config(),
+        empty_rel_profile,
+        table="claims",
+        engine_version="0.1.0",
+        registry=get_default_registry(),
     ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "fk_relationship_not_native_route"
@@ -416,7 +427,11 @@ def test_single_column_fk_child_reroutes_under_production_profile() -> None:
     # profile shape (no relationships populated).
     empty_rel_profile = replace(_composite_fk_profile(), relationships=())
     decision = plan_native_route(
-        _single_column_fk_config(), empty_rel_profile, table="claims", engine_version="0.1.0"
+        _single_column_fk_config(),
+        empty_rel_profile,
+        table="claims",
+        engine_version="0.1.0",
+        registry=get_default_registry(),
     ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "fk_relationship_not_native_route"
@@ -428,7 +443,11 @@ def test_fk_parent_table_also_reroutes_under_production_profile() -> None:
     # while the child runs on the oracle could break joinability.
     empty_rel_profile = replace(_composite_fk_profile(), relationships=())
     decision = plan_native_route(
-        _single_column_fk_config(), empty_rel_profile, table="members", engine_version="0.1.0"
+        _single_column_fk_config(),
+        empty_rel_profile,
+        table="members",
+        engine_version="0.1.0",
+        registry=get_default_registry(),
     ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "fk_relationship_not_native_route"
@@ -484,7 +503,9 @@ def test_extension_absent_but_no_hash_node_stays_native() -> None:
     }
     profile = _profile_for("w", "p")
     # Deliberately do NOT monkeypatch the loader; it is simply never called.
-    decision = plan_native_route(config, profile, table="w", engine_version="test").evidence
+    decision = plan_native_route(
+        config, profile, table="w", engine_version="test", registry=get_default_registry()
+    ).evidence
     assert decision.native_admitted is True
 
 
@@ -582,7 +603,11 @@ def test_evidence_table_field_is_pinned_on_every_producing_path() -> None:
 
     # FK-reroute path.
     fk_decision = plan_native_route(
-        _composite_fk_config(), _composite_fk_profile(), table="claims", engine_version="0.1.0"
+        _composite_fk_config(),
+        _composite_fk_profile(),
+        table="claims",
+        engine_version="0.1.0",
+        registry=get_default_registry(),
     ).evidence
     assert fk_decision.table == "claims"
 
@@ -592,6 +617,7 @@ def test_evidence_table_field_is_pinned_on_every_producing_path() -> None:
         _profile_for("ghost", "p"),
         table="ghost",
         engine_version="test",
+        registry=get_default_registry(),
     ).evidence
     assert decision.table == "ghost"
 
@@ -655,7 +681,9 @@ def test_downgrade_to_oracle_preserves_column_and_strategy_identity(
 def test_table_with_zero_mask_nodes_reroutes_with_exact_reason() -> None:
     config: dict = {"global_settings": {"seed": 42}, "tables": []}
     profile = _profile_for("ghost", "p")
-    decision = plan_native_route(config, profile, table="ghost", engine_version="test").evidence
+    decision = plan_native_route(
+        config, profile, table="ghost", engine_version="test", registry=get_default_registry()
+    ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "no_mask_nodes"
     assert decision.table == "ghost"
@@ -727,7 +755,9 @@ def test_composite_non_fk_node_is_skipped_without_stopping_the_scan() -> None:
         ],
     }
     profile = _profile_for("w", "first_name", "last_name", "email", "city", "state", "zip", "p")
-    decision = plan_native_route(config, profile, table="w", engine_version="test").evidence
+    decision = plan_native_route(
+        config, profile, table="w", engine_version="test", registry=get_default_registry()
+    ).evidence
     assert decision.native_admitted is False
     # Both composite groups' reasons are present: if the scan stopped at the
     # first one (a `break` bug), the second would never be recorded.
@@ -764,7 +794,9 @@ def test_extension_probe_runs_for_an_all_hash_table(monkeypatch: pytest.MonkeyPa
         ],
     }
     profile = _profile_for("w", "h1", "h2")
-    decision = plan_native_route(config, profile, table="w", engine_version="test").evidence
+    decision = plan_native_route(
+        config, profile, table="w", engine_version="test", registry=get_default_registry()
+    ).evidence
     assert decision.native_admitted is False
     assert decision.reroute_reason == "crypto_extension_unavailable"
 

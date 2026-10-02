@@ -305,6 +305,8 @@ Tests 15, 16 and 20 are brought to the plan text (dennis round 2 MEDIUM-3): test
 - The legacy `run_native_or_oracle_chunked` keeps the veto for unconfigured columns (tests only). Since revision 4.2 a stored pandas index field is not an unconfigured column on either entry, so a legacy-entry table whose only extra field is a stored index field is admitted natively and drops the field, as the oracle does (acceptance test 18 pins it).
 - The B8 benchmark measures the dispatcher directly; the `run_pipeline` effect arrives through B2 and B7 and is measured there.
 
+- Round 3 known issues: the row-error sink returns read passthrough columns lossy (B1's row-error contract); `native_route_eligibility` uses the default registry, as on main; `check_stored_index` returns early on equal schema metadata, so a chunk that physically drops the stored index column with unchanged metadata ends in a coded `when_expression_error` rather than a drift error, and nothing passes through.
+
 ## Gates
 
 Codex plan gate (Fable substitutes only if Codex is unavailable), Sonnet build, dennis, Codex final, under the review-rounds rules. Engine slice: merges under the standing Rust rule (dennis GO, Codex final GO, CI green, the parity contract above, faster, within the declared ceiling) after the merge hold lifts and after the rebase in Design 8.

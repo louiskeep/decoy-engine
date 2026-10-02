@@ -181,7 +181,9 @@ def _legacy_route_evidence(
     profile = first_chunk_profile(
         source.slice(0, chunk_size_rows), table=table, engine_version=engine_version
     )
-    columns = plan_column_backends(config, profile, table=table, engine_version=engine_version)
+    columns = plan_column_backends(
+        config, profile, table=table, engine_version=engine_version, registry=registry
+    )
     evidence = chunk_route_evidence(
         table=table,
         native_admitted=False,

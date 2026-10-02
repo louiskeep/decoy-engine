@@ -305,7 +305,7 @@ def plan_native_route(
     first_schema: pa.Schema | None = None,
     adapter: Any = None,
     unconfigured_policy: Literal["warn", "error"] | None = None,
-    registry: Any = None,
+    registry: Any,
 ) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
@@ -337,7 +337,7 @@ def plan_native_route(
     carried unchanged (`NativePreflight.unconfigured_passthrough`); `None` and `"error"`
     keep the veto, so the oracle raises `undeclared_output_columns` as before. A
     configured column the source lacks always vetoes. `registry` is the run's provider
-    registry (the default when None); it decides which providers are composite nodes.
+    registry; it decides which providers are composite nodes.
     """
     decision = _static_route_decision(
         config, profile, table=table, engine_version=engine_version, registry=registry

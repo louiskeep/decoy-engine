@@ -55,6 +55,7 @@ from decoy_engine.execution.physical._shadow_operators import OperatorCallEviden
 from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.keyprovider import SecretKeyProvider
+from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.transforms.bucket_perturb import apply_bucket_perturb
 from tests.physical._shadow_helpers import (
     ENGINE_VERSION,
@@ -344,7 +345,12 @@ def test_chunked_route_declines_bucket_perturb(tmp_path: Path) -> None:
     config = build_config(tmp_path, "t", tmp_path / "bp.parquet", [_bp_column()])
     profile = first_chunk_profile(source, table="t", engine_version=ENGINE_VERSION)
     preflight = plan_native_route(
-        config, profile, table="t", engine_version=ENGINE_VERSION, first_schema=source.schema
+        config,
+        profile,
+        table="t",
+        engine_version=ENGINE_VERSION,
+        first_schema=source.schema,
+        registry=get_default_registry(),
     )
     assert preflight.evidence.native_admitted is False
     assert "bucket_perturb_not_native_chunked_route:c" in (preflight.evidence.reroute_reason or "")
