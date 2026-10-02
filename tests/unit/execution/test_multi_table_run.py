@@ -489,20 +489,28 @@ def test_a_lazy_source_is_never_read_by_the_split_module(
         "lazy": LazySource(Path(cfg["sources"]["lazy"]["path"])),
     }
     reads: list[str] = []
-    real = LazySource.read_all if hasattr(LazySource, "read_all") else None
-    if real is not None:
+
+    def poison(name: str) -> Any:
+        real = getattr(LazySource, name)
 
         def spy(self: Any, *args: Any, **kwargs: Any) -> Any:
-            import inspect
+            import sys
 
-            frames = [f.filename for f in inspect.stack()]
-            reads.append("multi_table" if any("_pipeline_multi_table" in f for f in frames) else "")
+            frame: Any = sys._getframe(1)
+            while frame is not None:
+                if frame.f_code.co_filename.endswith("_pipeline_multi_table.py"):
+                    reads.append(name)
+                frame = frame.f_back
             return real(self, *args, **kwargs)
 
-        monkeypatch.setattr(LazySource, "read_all", spy)
+        return spy
+
+    for name in ("iter_batches", "open_batches"):
+        monkeypatch.setattr(LazySource, name, poison(name))
     got = run_pipeline(cfg, sources=handed, **mt.kw())
-    entries = {t["table"]: t for t in got.quality_metrics.get("auto_chunk", {}).get("tables", [])}
-    if entries:
-        assert entries["lazy"]["dispatched"] is False
-        assert "lazy" in entries["lazy"]["reason"].lower()
-    assert "multi_table" not in reads
+    entries = {t["table"]: t for t in got.quality_metrics["auto_chunk"]["tables"]}
+    assert entries["anchor"]["dispatched"] is True
+    assert entries["lazy"]["dispatched"] is False
+    assert "lazy" in entries["lazy"]["reason"].lower()
+    assert got.outputs["lazy"].num_rows == N
+    assert reads == []
