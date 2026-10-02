@@ -157,6 +157,8 @@ class ResidentChunkedAggregatorAdapter:
         vault_writer: Any,
         chunk_size_rows: int,
         key_provider: Any = None,
+        native_threads: int = 1,
+        dispatcher_enabled: bool = True,
     ) -> tuple[dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any]]:
         self.last_invocation = SeamContext(
             driver_id=DriverId.CHUNKED, scope=ExecutionScope.TABLE, tables=(table,)
@@ -171,4 +173,6 @@ class ResidentChunkedAggregatorAdapter:
             vault_writer=vault_writer,
             chunk_size_rows=chunk_size_rows,
             key_provider=key_provider,
+            native_threads=native_threads,
+            dispatcher_enabled=dispatcher_enabled,
         )

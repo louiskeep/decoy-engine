@@ -9,6 +9,41 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (auto-chunk runs on the chunked dispatcher: a pre-GA output-contract change, 2026-10-01)
+
+`run_pipeline`'s auto-chunk route (large single-table mask jobs; the same jobs, the same
+threshold and chunk size as before) now masks through `run_mask_chunked`, the chunked
+dispatcher, instead of the pandas oracle. B1 picks the native or the oracle route once per
+table before the first chunk and records why. Masked values are unchanged. The output
+shape changes, as an owner-approved pre-GA cutover (the compatibility contract is not yet
+binding; `RELEASE_PHASE` is pre-GA):
+
+- Passthrough columns, configured or unconfigured, are the source column exactly: type,
+  values, field nullability and field metadata. The pandas round trip no longer applies
+  (`large_string` stays `large_string`, `time32` and `time64[ns]` stay as they are, `date64`
+  keeps sub-day milliseconds, a non-nullable field stays non-nullable).
+- Hash, truncate and string-redact columns are always `string`, also when every chunk is
+  all-null (they came back as `null` before).
+- A native Faker column with a string-valued provider over an all-null source is `string`
+  when the compiled companion runs it and may be `null` otherwise. This is the one output
+  type that depends on companion availability.
+- The output carries no schema metadata (no `b"pandas"` key).
+- A stored pandas index column stays absent from the output, as before.
+- The full-frame and unified-slice routes still return the pandas shape, so crossing
+  `auto_chunk_threshold_rows` can change those types. Converging the routes is roadmap
+  item ROUTE-OUTPUT-CONTRACT.
+
+`run_pipeline(..., chunked_dispatcher_enabled=False)` restores the previous lane and its
+output shape. New `run_pipeline` arguments: `native_threads` (int, 1 to 1024, default 1;
+the kernel thread budget of the dispatcher lane, changes no output byte) and
+`chunked_dispatcher_enabled` (bool, default `True`). An invalid `native_threads` raises
+`ExecutionError(code="invalid_execution_knob")` before profiling.
+`quality_metrics["auto_chunk"]` gains `lane` (`dispatcher` or `legacy_oracle`),
+`lane_reason` (`null`, or `dispatcher_disabled`) and `native_threads` on routed runs, and
+routed results gain `quality_metrics["chunked_route"]` (`native_admitted`,
+`reroute_reason`, `pandas_read_passthrough` and, per configured column, the planned and
+executed backend and the chunk count). A non-routed call is unchanged.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added (`run_mask_chunked`: the chunked dispatcher as a public entry point, 2026-10-01)

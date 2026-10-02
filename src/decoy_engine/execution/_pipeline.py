@@ -33,10 +33,9 @@ Sequencing contract (PO directive 2026-06-01 + FC-1 spec):
      IS the FK pool for the mask side.
   8. Call the selected execution adapter (`select_execution_adapter`;
      default `substrate="pandas"`) to mask the mask-kind tables, unless
-     the job auto-routes to the chunked entrypoint
-     (`_pipeline_routing.decide_chunk_route` /
-     `_pipeline_route_exec.run_mask_chunked`). The plan only carries
-     mask-table seeds; generate tables are not re-traversed.
+     the job auto-routes to the chunked lane (`decide_chunk_route`, then
+     `_pipeline_auto_chunk`). The plan only carries mask-table seeds;
+     generate tables are not re-traversed.
   9. Build one `ExecutionResult` whose `outputs` covers every output
      table (generate + mask) and whose `table_kinds` dict carries the
      per-table kind for the manifest stamping at F3 / platform side.
@@ -77,6 +76,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from decoy_engine.execution import (
+    _pipeline_auto_chunk,
     _pipeline_finalize,
     _pipeline_generate_mask,
     _pipeline_routing,
@@ -171,6 +171,8 @@ def run_pipeline(
     auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
     chunk_size_rows: int = _pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT,
     auto_chunk_threshold_rows: int = _pipeline_finalize.AUTO_CHUNK_THRESHOLD_DEFAULT,
+    native_threads: int = 1,
+    chunked_dispatcher_enabled: bool = True,
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
@@ -227,31 +229,28 @@ def run_pipeline(
     promote hard-fails to a job failure. SECURITY: only synthetic masked values
     reach the summary (R18); no source PII is emitted.
 
-    Execution routing (`execution_mode`, `sink`, `source_loader`,
-    `auto_chunk`, `chunk_size_rows`, `auto_chunk_threshold_rows`,
-    `out_of_core_threshold_rows`, `full_frame_reject_rows`,
-    `out_of_core_budget_bytes`, `explain_plan`) is documented in full on
-    `_pipeline_routing`, which owns the decisions this function calls in a
-    fixed order: relationship routing (out-of-core vs. sequential vs.
-    full_frame, with a fail-closed reject-before-read for a too-big FK job
-    no bounded route can take -- SC2) first, then single-table auto-chunk
-    routing (chunked vs. full_frame). `execution_mode` / `auto_chunk` are
-    resource policies of the invocation, not properties of the data
-    transformation, so they are runtime kwargs (matching `vault_writer` /
-    `fidelity_report` / `now_iso`), never `config` fields -- they must
-    stay out of the profile-hashed, frozen-surface data contract. Every
-    route is byte-output-neutral versus full_frame (only peak memory /
-    adapter identity differs). The SC2 size thresholds default to
-    32 GB-box-calibrated constants (see `_planner`) and are kwargs so the
-    platform admission estimator can override them; `execution_mode` gains
+    Execution routing (`execution_mode`, `sink`, `source_loader`, `auto_chunk`,
+    `chunk_size_rows`, `auto_chunk_threshold_rows`, `native_threads`,
+    `chunked_dispatcher_enabled`, `out_of_core_threshold_rows`,
+    `full_frame_reject_rows`, `out_of_core_budget_bytes`, `explain_plan`) is
+    documented in full on `_pipeline_routing` (the decisions, in a fixed order:
+    relationship routing with SC2's fail-closed reject-before-read, then
+    single-table auto-chunk routing) and `_pipeline_auto_chunk` (the chunked
+    lane: `native_threads` is its kernel thread budget,
+    `chunked_dispatcher_enabled=False` its kill switch). They are runtime kwargs,
+    never `config` fields: resource policies stay out of the profile-hashed,
+    frozen-surface data contract. Masked values are route-neutral; on the
+    auto-chunk route schema, types, nullability and metadata follow guarantee 3
+    of docs/plans/2026-10-01-dispatcher-auto-chunk.md. The SC2 size thresholds
+    default to 32 GB-box-calibrated constants (see `_planner`) and are kwargs the
+    platform admission estimator can override; `execution_mode` gains
     `"out_of_core"` as an explicit fail-closed force.
 
     Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
-    §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`, composes with --
-    has NO effect without -- `use_byte_estimate_routing=True`, also default
-    `True` since TB-5; force either `False` to roll back) is the two-point
-    micro-probe's fast-path RECOVERY for a job the static estimate
-    over-downgrades. See `_pipeline_routing.decide_execution_route` and
+    §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`; no effect without
+    `use_byte_estimate_routing=True`, also default `True`; force either `False`
+    to roll back) is the two-point micro-probe's fast-path RECOVERY for a job
+    the static estimate over-downgrades. See `decide_execution_route` and
     `_pipeline_routing_signals.resolve_probe_recovery`.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
@@ -325,6 +324,7 @@ def run_pipeline(
     require_bool("auto_chunk", auto_chunk)
     require_positive_int("chunk_size_rows", chunk_size_rows)
     require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
+    _pipeline_auto_chunk.require_lane_knobs(native_threads, chunked_dispatcher_enabled)
     # SC2 out-of-core routing thresholds share the same fail-early contract.
     require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
     require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
@@ -557,10 +557,8 @@ def run_pipeline(
         prepared=prepared.prepared,
     )
 
-    # Steps 1-2 (generate-kind tables, then mask-kind tables): split into
-    # `_pipeline_generate_mask.run_generate_and_mask_steps` to hold this
-    # module's own LOC ceiling (see that module's docstring). Pure call
-    # extraction; the sequencing/merge/stamp logic is unchanged.
+    # Steps 1-2 (generate-kind tables, then mask-kind tables) live in
+    # `_pipeline_generate_mask.run_generate_and_mask_steps` (LOC ceiling).
     step_result = _pipeline_generate_mask.run_generate_and_mask_steps(
         has_generate_table=has_generate_table,
         has_mask_table=has_mask_table,
@@ -577,6 +575,8 @@ def run_pipeline(
         adapter=adapter,
         vault_writer=vault_writer,
         chunk_size_rows=chunk_size_rows,
+        native_threads=native_threads,
+        chunked_dispatcher_enabled=chunked_dispatcher_enabled,
         key_provider=resolved_key_provider,
         graph=graph,
         namespace_registry=ns_registry,

@@ -192,10 +192,15 @@ def test_resident_chunked_aggregator_forwards_result_unchanged(
         adapter=object(),
         vault_writer=None,
         chunk_size_rows=10,
+        native_threads=3,
+        dispatcher_enabled=False,
     )
 
     assert result is sentinel
     assert calls[0]["source"] is source_marker
+    # B2: the two new lane parameters are forwarded unchanged.
+    assert calls[0]["native_threads"] == 3
+    assert calls[0]["dispatcher_enabled"] is False
 
 
 def test_out_of_core_adapter_forwards_result_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:

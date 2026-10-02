@@ -10,9 +10,13 @@ the `auto_chunk` kill switch on `run_pipeline`.
 
 The load-bearing contract pinned here, in order of importance:
 
-1. BYTE IDENTITY: for every strategy admitted to auto-routing, the
+1. VALUE IDENTITY: for every strategy admitted to auto-routing, the
    auto-chunked output equals the same job forced full-frame
-   (`auto_chunk=False`) exactly -- values AND schema.
+   (`auto_chunk=False`) in every masked column's values; schema, passthrough
+   types, field nullability and metadata follow guarantee 3 of
+   docs/plans/2026-10-01-dispatcher-auto-chunk.md on the dispatcher lane
+   (`test_auto_chunk_output_contract.py`). These tests that compare whole tables
+   run all-string jobs, where the two coincide.
 2. FAIL-CLOSED: every non-eligible shape (non-chunk-safe strategy,
    multi-table, generation, relationships, below threshold, unstable
    dtypes, join-group fpe) takes the unchanged full-frame path with a
@@ -319,7 +323,9 @@ class TestRoutingMechanics:
             return real(config, chunk_list, **kwargs)
 
         monkeypatch.setattr(_chunked, "run_mask_pipeline_chunked", spy)
-        auto, _forced = _run_pair(cfg, sources, monkeypatch)
+        # Today's lane: the dispatcher lane (B2) runs `run_mask_chunked` instead, which
+        # acceptance test 2 covers.
+        auto, _forced = _run_pair(cfg, sources, monkeypatch, chunked_dispatcher_enabled=False)
         assert len(calls) == 1
         assert calls[0]["table"] == "accounts"
         assert calls[0]["n_chunks"] == 4  # 60 rows / 16-row chunks
@@ -958,6 +964,73 @@ class TestRoutedResultSurface:
 
         monkeypatch.setattr(PandasExecutionAdapter, "run", injecting_run)
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+        # Today's lane: a native hash column never calls the pandas adapter, so the
+        # injection only reaches the legacy lane (the dispatcher-lane sibling below
+        # covers a table B1 sends to its oracle route).
+        auto = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            auto_chunk_threshold_rows=_LOW_THRESHOLD,
+            chunk_size_rows=_CHUNK,
+            chunked_dispatcher_enabled=False,
+        )
+        assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
+        codes = [(w.code, w.detail.get("chunk")) for w in auto.warnings]
+        assert codes == [
+            ("test_constant", None),
+            ("test_unique", 0),
+            ("test_unique", 1),
+            ("test_unique", 2),
+            ("test_unique", 3),
+        ]
+
+    def test_dispatcher_lane_surfaces_chunk_warnings_union_order_stable(
+        self, tmp_path, monkeypatch
+    ):
+        """The same union on the dispatcher lane, on a table B1 sends to its oracle
+        route (a categorical column beside the hash column), where the pandas adapter
+        runs once per chunk."""
+        import dataclasses
+
+        from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+        from decoy_engine.generation.pool._events import QualityWarning
+
+        df = pd.DataFrame(
+            {
+                "val": [f"user{i}@example.com" for i in range(_ROWS)],
+                "tier": [["a", "b", "c"][i % 3] for i in range(_ROWS)],
+            }
+        )
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _config(
+            tmp_path,
+            [
+                {"name": "val", "strategy": "hash", "namespace": "hash_ns"},
+                {
+                    "name": "tier",
+                    "strategy": "categorical",
+                    "deterministic": True,
+                    "namespace": "tier_ns",
+                    "provider_config": {"categories": ["a", "b", "c"]},
+                },
+            ],
+        )
+        sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+        constant = QualityWarning(code="test_constant", provider="test", column="val")
+        counter = {"n": 0}
+        real = PandasExecutionAdapter.run
+
+        def injecting_run(self, plan, run_sources, **kwargs):
+            result = real(self, plan, run_sources, **kwargs)
+            unique = QualityWarning(
+                code="test_unique", provider="test", column="val", detail={"chunk": counter["n"]}
+            )
+            counter["n"] += 1
+            return dataclasses.replace(result, warnings=(*result.warnings, constant, unique))
+
+        monkeypatch.setattr(PandasExecutionAdapter, "run", injecting_run)
+        monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         auto = run_pipeline(
             cfg,
             sources=sources,
@@ -965,7 +1038,8 @@ class TestRoutedResultSurface:
             auto_chunk_threshold_rows=_LOW_THRESHOLD,
             chunk_size_rows=_CHUNK,
         )
-        assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
+        assert auto.quality_metrics["auto_chunk"]["lane"] == "dispatcher"
+        assert auto.quality_metrics["chunked_route"]["native_admitted"] is False
         codes = [(w.code, w.detail.get("chunk")) for w in auto.warnings]
         assert codes == [
             ("test_constant", None),
@@ -984,13 +1058,35 @@ class TestRoutedResultSurface:
         # surface against the full-frame pandas route that records the same timings.
         # The unified lane records none yet (tracked by the strict xfail
         # test_admitted_job_reports_per_column_timings).
-        auto, forced = _run_pair(cfg, sources, monkeypatch, unified_slice_enabled=False)
+        # Today's lane (the dispatcher lane's native route never converts through pandas;
+        # the sibling below covers it).
+        auto, forced = _run_pair(
+            cfg,
+            sources,
+            monkeypatch,
+            unified_slice_enabled=False,
+            chunked_dispatcher_enabled=False,
+        )
         assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
         assert auto.boundary_conversion_ms > 0.0
         auto_keys = {(t.strategy_type, t.column) for t in auto.timings}
         forced_keys = {(t.strategy_type, t.column) for t in forced.timings}
         assert auto_keys == forced_keys
         assert auto_keys == {("hash", "val")}
+
+    def test_dispatcher_lane_stamps_timings_and_zero_conversion_on_the_native_route(
+        self, tmp_path, monkeypatch
+    ):
+        """On B1's native route the timing keys equal the forced full-frame run's and
+        `boundary_conversion_ms` is exactly 0.0 (nothing goes through pandas)."""
+        cfg, sources = _single_column_job(tmp_path, "redact")
+        auto, forced = _run_pair(cfg, sources, monkeypatch, unified_slice_enabled=False)
+        assert auto.quality_metrics["auto_chunk"]["lane"] == "dispatcher"
+        assert auto.quality_metrics["chunked_route"]["native_admitted"] is True
+        assert auto.boundary_conversion_ms == 0.0
+        auto_keys = {(t.strategy_type, t.column) for t in auto.timings}
+        forced_keys = {(t.strategy_type, t.column) for t in forced.timings}
+        assert auto_keys == forced_keys == {("redact", "val")}
 
 
 # --------------------------------------------------------------------------

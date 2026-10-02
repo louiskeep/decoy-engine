@@ -5,8 +5,8 @@
 `_pipeline_routing` owns the DECISION of which route a job takes
 (`decide_execution_route` / `decide_chunk_route`); this module owns the
 EXECUTION of a route once chosen -- dispatching to the underlying runner
-(`run_sequential`, `run_fk_out_of_core`, `run_mask_pipeline_chunked`) and
-packaging its result into the caller-facing `ExecutionResult` shape,
+(`run_sequential`, `run_fk_out_of_core`, and the chunked lane in
+`_pipeline_auto_chunk`) and packaging its result into the caller-facing `ExecutionResult` shape,
 including the shared execution-telemetry block every routed result
 stamps. `run_pipeline` calls into both modules directly; the decision
 module never calls the executor module (decisions do not execute), and
@@ -538,60 +538,33 @@ def run_mask_chunked(
     vault_writer: Any,
     chunk_size_rows: int,
     key_provider: KeyProvider | None = None,
+    native_threads: int = 1,
+    dispatcher_enabled: bool = True,
 ) -> tuple[dict[str, pa.Table], tuple, float, tuple, dict[str, Any]]:
-    """Mask one eligible table via the chunked entrypoint.
+    """Mask one eligible table via the chunked lane; a delegate to
+    `_pipeline_auto_chunk.run_auto_chunk`, which owns the lane logic.
 
     Returns `(outputs, timings, boundary_conversion_ms, warnings,
     quality_metrics)` so the routed ExecutionResult keeps the same surface as
-    the full-frame one: warnings are the order-stable union of per-chunk
-    warnings, timings a per-(strategy, column) rollup, conversion the
-    per-chunk sum, quality_metrics the `code_set_corpora` evidence aggregated
-    once per (table, column) across chunks (`masked_any` semantics, matching
-    the full-frame handler's own once-per-column stamp; `{}` when no chunk
-    masked a code_set column). Row errors are NOT part of the return:
-    `run_mask_pipeline_chunked`'s H1 fail-closed check raises
-    `RowErrorsFailedError` the moment any chunk reports one, so a normal
-    return here is row-error-free by construction (see `_pipeline_routing`'s
-    module docstring).
-
-    Slicing is zero-copy (`pa.Table.slice` shares buffers), so the only
-    per-chunk materialization is the adapter's pandas working set --
-    that bound is the whole point of the route. `concat_masked_chunks`
-    concatenates WITHOUT type promotion: the eligibility gates guarantee
-    chunk-stable schemas, so any disagreement is a gate miss and raises
-    a coded error instead of silently widening (the sole exception, an
-    all-null chunk's null-typed column, is cast to the type the other
-    chunks agree on -- the same place whole-frame inference lands).
-    `combine_chunks` returns one contiguous table so downstream writers
-    see the same batch layout as the full-frame path.
+    the full-frame one. The dispatcher lane (default) masks through
+    `run_mask_chunked` of `execution.native` (B1); `dispatcher_enabled=False`
+    runs the pandas oracle `run_mask_pipeline_chunked` as before. Row errors are
+    NOT part of the return: both lanes fail closed with `RowErrorsFailedError`
+    the moment any chunk reports one, so a normal return is row-error-free (see
+    `_pipeline_routing`'s module docstring).
     """
-    from decoy_engine.execution import _chunked
+    from decoy_engine.execution import _pipeline_auto_chunk
 
-    def _slices() -> Any:
-        for start in range(0, source.num_rows, chunk_size_rows):
-            yield source.slice(start, chunk_size_rows)
-
-    chunk_results: list[ExecutionResult] = []
-    masked_chunks = list(
-        _chunked.run_mask_pipeline_chunked(
-            config,
-            _slices(),
-            table=table,
-            engine_version=engine_version,
-            registry=registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_results,
-            key_provider=key_provider,
-        )
-    )
-    masked = _chunked.concat_masked_chunks(masked_chunks, table=table)
-    from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
-
-    return (
-        {table: masked},
-        _chunked.aggregate_chunk_timings(chunk_results),
-        sum(r.boundary_conversion_ms for r in chunk_results),
-        _chunked.aggregate_chunk_warnings(chunk_results),
-        aggregate_chunk_code_set_corpora(chunk_results),
+    return _pipeline_auto_chunk.run_auto_chunk(
+        config,
+        source,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        chunk_size_rows=chunk_size_rows,
+        key_provider=key_provider,
+        native_threads=native_threads,
+        dispatcher_enabled=dispatcher_enabled,
     )

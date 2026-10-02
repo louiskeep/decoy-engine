@@ -25,8 +25,9 @@ recording):
    a source at or above the size threshold with chunk-stable dtypes and
    bucketize sources that are null-free numeric (bucketize output dtype
    is chunk-content-dependent otherwise). `run_pipeline(auto_chunk=True)`
-   ROUTES this mode through `run_mask_pipeline_chunked` since the
-   auto-chunk sprint; without loaded sources the runtime gates are
+   ROUTES this mode through the chunked lane (`_pipeline_auto_chunk`:
+   B1's `run_mask_chunked`, or the oracle `run_mask_pipeline_chunked` under
+   the kill switch); without loaded sources the runtime gates are
    skipped and the classification is admissibility-only.
 2. `sequential_relationship` / `out_of_core_relationship`: relationship
    routes for FK jobs. The FK stack (`_sequential.py`, `out_of_core/`)

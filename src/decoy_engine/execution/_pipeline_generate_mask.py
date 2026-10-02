@@ -73,6 +73,8 @@ def run_generate_and_mask_steps(
     adapter: ExecutionAdapter,
     vault_writer: Any,
     chunk_size_rows: int,
+    native_threads: int,
+    chunked_dispatcher_enabled: bool,
     key_provider: KeyProvider | None,
     graph: RelationshipGraph,
     namespace_registry: NamespaceRegistry,
@@ -144,6 +146,8 @@ def run_generate_and_mask_steps(
                     vault_writer=vault_writer,
                     chunk_size_rows=chunk_size_rows,
                     key_provider=key_provider,
+                    native_threads=native_threads,
+                    dispatcher_enabled=chunked_dispatcher_enabled,
                 )
             )
         else:
@@ -170,7 +174,7 @@ def run_generate_and_mask_steps(
             # Token vault (deferred follow-up 1): collect source->masked pairs
             # for vault: true columns. Opt-in via the kwarg; the caller writes
             # the artifact. The chunked route accumulates the same entries
-            # per chunk inside run_mask_pipeline_chunked instead.
+            # per chunk inside its lane (`_pipeline_auto_chunk`) instead.
             if vault_writer is not None:
                 from decoy_engine.vault import collect_vault_entries
 
