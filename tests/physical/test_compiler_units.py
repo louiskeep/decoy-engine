@@ -268,7 +268,12 @@ def test_resident_source_fact_lazy_source_marker_is_exact(tmp_path: Path) -> Non
 
     path = tmp_path / "t.parquet"
     pq.write_table(pa.table({"note": pa.array(["s1"], type=pa.string())}), path)
-    assert _resident_source_fact("t", LazySource(path=path)) == ("t", "lazy_source")
+    assert _resident_source_fact("t", LazySource(path=path)) == (
+        "t",
+        "lazy_source",
+        1,
+        (("note", "string", 0),),
+    )
 
 
 def test_resident_source_fact_resident_table_is_exact() -> None:

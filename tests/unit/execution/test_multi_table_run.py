@@ -476,19 +476,22 @@ def test_a_transform_bearing_table_stays_in_the_group_and_its_transforms_apply_o
     assert got.outputs["tx"].equals(off.outputs["tx"], check_metadata=True)
 
 
-def test_a_lazy_source_is_never_read_by_the_split_module(
+def test_a_lazy_source_dispatches_like_its_twin_and_is_never_read_by_the_split_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import pyarrow.parquet as pq
+
     from decoy_engine.profile._readers import LazySource
 
     cfg, sources = mt.build_job(
         tmp_path,
         {"anchor": _redact_only("a", N), "lazy": _redact_only("l", N)},
     )
-    handed: dict[str, Any] = {
-        "anchor": sources["anchor"],
-        "lazy": LazySource(Path(cfg["sources"]["lazy"]["path"])),
-    }
+    lazy_path = Path(cfg["sources"]["lazy"]["path"])
+    handed: dict[str, Any] = {"anchor": sources["anchor"], "lazy": LazySource(lazy_path)}
+    twin = run_pipeline(
+        cfg, sources={"anchor": sources["anchor"], "lazy": pq.read_table(lazy_path)}, **mt.kw()
+    )
     reads: list[str] = []
 
     def poison(name: str) -> Any:
@@ -510,10 +513,12 @@ def test_a_lazy_source_is_never_read_by_the_split_module(
         monkeypatch.setattr(LazySource, name, poison(name))
     got = run_pipeline(cfg, sources=handed, **mt.kw())
     entries = {t["table"]: t for t in got.quality_metrics["auto_chunk"]["tables"]}
+    twin_entries = {t["table"]: t for t in twin.quality_metrics["auto_chunk"]["tables"]}
     assert entries["anchor"]["dispatched"] is True
-    assert entries["lazy"]["dispatched"] is False
-    assert "lazy" in entries["lazy"]["reason"].lower()
-    assert got.outputs["lazy"].num_rows == N
+    assert entries["lazy"]["dispatched"] is True
+    assert entries["lazy"]["reason"] == twin_entries["lazy"]["reason"]
+    for name in twin.outputs:
+        assert got.outputs[name].equals(twin.outputs[name], check_metadata=True), name
     assert reads == []
 
 

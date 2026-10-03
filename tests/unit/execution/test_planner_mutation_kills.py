@@ -224,15 +224,28 @@ class TestRuntimeSourcePresenceAndSize:
         joined = "; ".join(_runtime_source_rejections({}, table="t", auto_chunk_threshold_rows=0))
         assert "no loaded source frame for table 't'" in joined
 
-    def test_lazy_source_is_declined_for_the_named_table(self, tmp_path):
+    def test_lazy_source_is_judged_from_footer_facts_like_its_table(self, tmp_path):
         p = Path(tmp_path) / "t.parquet"
         pq.write_table(pa.table({"x": pa.array(["a", "b"])}), p)
+        assert (
+            _runtime_source_rejections(
+                {"t": LazySource(path=p)}, table="t", auto_chunk_threshold_rows=0
+            )
+            == []
+        )
+
+    def test_lazy_integer_column_without_footer_null_count_is_declined_and_named(self, tmp_path):
+        p = Path(tmp_path) / "t.parquet"
+        pq.write_table(
+            pa.table({"n": pa.array([1, 2], type=pa.int64())}), p, write_statistics=False
+        )
         joined = "; ".join(
             _runtime_source_rejections(
                 {"t": LazySource(path=p)}, table="t", auto_chunk_threshold_rows=0
             )
         )
-        assert "source for table 't' is a lazy (LazySource) handle" in joined
+        assert "lazy_source_null_count_unavailable" in joined
+        assert "n" in joined and "table 't'" in joined
 
     def test_below_threshold_rejected_at_boundary_not_at_equal(self):
         s = pa.table({"x": pa.array(["a", "b"])})  # 2 rows

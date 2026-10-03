@@ -857,23 +857,28 @@ def test_each_job_gate_keeps_a_multi_table_job_out_of_the_new_module(
 # ---------------------------------------------------------------------------
 
 
-def test_a_large_lazy_source_is_not_routed_chunked_and_never_read_by_the_new_module(
+def test_a_large_lazy_source_routes_chunked_like_its_resident_twin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import pyarrow.parquet as pq
+
     from decoy_engine.profile._readers import LazySource
 
-    cfg, src = _hash_redact_job(tmp_path)
+    cfg, _src = _hash_redact_job(tmp_path)
     path = Path(cfg["sources"][support.TABLE]["path"])
+    twin = run_pipeline(cfg, sources={support.TABLE: pq.read_table(path)}, **support.run_kwargs())
     spies = support.spy_lanes(monkeypatch)
     result = run_pipeline(
         cfg,
         sources={support.TABLE: LazySource(path)},
         **support.run_kwargs(explain_plan=True),
     )
-    assert result.quality_metrics.get("auto_chunk", {}).get("mode") != "chunked"
-    assert "lazy" in json.dumps(result.quality_metrics["execution_plan"]["rejections"]).lower()
-    assert spies["auto_chunk.run_auto_chunk"] == []
-    assert spies["entry.run_mask_chunked"] == []
+    assert result.quality_metrics["auto_chunk"]["mode"] == "chunked"
+    assert len(spies["auto_chunk.run_auto_chunk"]) == 1
+    handed = spies["auto_chunk.run_auto_chunk"][0][0][1]
+    assert isinstance(handed, pa.Table)
+    assert len(spies["entry.run_mask_chunked"]) == 1
+    assert result.outputs[support.TABLE].equals(twin.outputs[support.TABLE], check_metadata=True)
 
 
 def test_a_large_resident_transform_bearing_job_is_prepared_once_and_not_routed_chunked(
