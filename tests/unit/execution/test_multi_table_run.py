@@ -106,6 +106,7 @@ def _check_evidence(result: Any, *, chunk: int, threshold: int, threads: int, ro
             "lane_reason",
             "native_threads",
             "output",
+            "input",
         }
         assert entry["dispatched"] is True and entry["source_rows"] == size
         assert entry["chunk_count"] == -(-size // chunk)

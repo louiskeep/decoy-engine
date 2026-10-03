@@ -293,6 +293,32 @@ class TestMemCapOom:
         # catchable ArrowMemoryError the worker self-reports. That is the real
         # guarantee under test: a running job that exhausts its cap is named
         # oom_killed, never an opaque crashed.
+        #
+        # `auto_chunk=False` keeps the job resident: since B6b the worker loads lazily and
+        # an auto-chunk job streams, so the default job below no longer exhausts the cap.
+        cfg = _mask_config(tmp_path, n_cols=8)
+        sources = _mask_sources(tmp_path, n_rows=2_000_000, n_cols=8)
+
+        result = run_pipeline_isolated(
+            cfg,
+            sources,
+            engine_version=_ENGINE_VERSION,
+            mem_cap_bytes=768 * 1024 * 1024,
+            rlimit_kind="data",
+            auto_chunk=False,
+        )
+
+        assert result.outcome == "oom_killed"
+        assert result.outputs is None
+        # A clean diagnostic: short, names the failure, not a raw multi-KB
+        # traceback dump.
+        assert result.error is not None
+        assert len(result.error) < 600
+        assert result.isolated is True
+
+    def test_the_same_job_streams_and_completes_under_the_same_cap(self, tmp_path):
+        # B6b: the job above, left on auto-chunk, is read lazily and masked in chunks, so the
+        # cap that kills its resident twin leaves it room to finish.
         cfg = _mask_config(tmp_path, n_cols=8)
         sources = _mask_sources(tmp_path, n_rows=2_000_000, n_cols=8)
 
@@ -304,13 +330,7 @@ class TestMemCapOom:
             rlimit_kind="data",
         )
 
-        assert result.outcome == "oom_killed"
-        assert result.outputs is None
-        # A clean diagnostic: short, names the failure, not a raw multi-KB
-        # traceback dump.
-        assert result.error is not None
-        assert len(result.error) < 600
-        assert result.isolated is True
+        assert result.outcome == "completed", result.error
 
 
 # --------------------------------------------------------------------------
