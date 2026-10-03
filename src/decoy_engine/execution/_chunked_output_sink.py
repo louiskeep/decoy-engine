@@ -33,6 +33,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Iterable, Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -48,7 +49,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ROW_GROUP_BYTES",
     "ROW_GROUP_ROWS",
-    "OutputFreeResults",
+    "OutputEvidenceAccumulator",
     "OutputPublish",
     "StreamStats",
     "decide_output_mode",
@@ -161,11 +162,147 @@ class OutputPublish:
                 )
 
 
-class OutputFreeResults(list):
-    """B1's `chunk_result_sink`: keeps each chunk's evidence, never its output table."""
+def fold_timings(
+    elapsed: dict[tuple[str, str], float], peak: dict[tuple[str, str], int], result: Any
+) -> None:
+    """One chunk's timing records into the running rollup, as `aggregate_chunk_timings`
+    folds them: elapsed times sum, memory deltas take the max, first-seen order is kept
+    (dict insertion order)."""
+    for record in result.timings:
+        key = (record.strategy_type, record.column)
+        elapsed[key] = elapsed.get(key, 0.0) + record.elapsed_ms
+        peak[key] = max(peak.get(key, 0), record.peak_memory_delta_kb)
+
+
+def fold_warnings(seen: list[Any], result: Any) -> None:
+    """Order-stable union by equality (a warning carries an unhashable dict detail)."""
+    for warning in result.warnings:
+        if warning not in seen:
+            seen.append(warning)
+
+
+def fold_corpora(seen: dict[tuple[Any, Any], dict[str, Any]], result: Any) -> None:
+    """`masked_any` semantics: the first record per (table, column) is kept."""
+    for entry in result.quality_metrics.get("code_set_corpora") or ():
+        seen.setdefault((entry.get("table"), entry.get("column")), entry)
+
+
+@dataclasses.dataclass
+class _RouteFold:
+    head: dict[str, Any] | None = None
+    read_head: list[str] | None = None
+    sums: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+
+
+def fold_route_evidence(state: _RouteFold, result: Any) -> None:
+    """One chunk's `chunked_route` evidence into the per-column sums, with the same
+    consistency checks `aggregate_chunked_route_evidence` applies across a call."""
+    evidence = result.quality_metrics.get("chunked_route")
+    if evidence is None:
+        return
+    if state.head is None:
+        state.head = evidence
+        state.read_head = evidence.get("pandas_read_passthrough")
+    else:
+        if evidence["table"] != state.head["table"]:
+            raise ExecutionError(
+                code="chunked_route_evidence_mixed_tables",
+                message=(
+                    "chunk evidence takes the results of one table; got "
+                    f"{state.head['table']!r} and {evidence['table']!r}."
+                ),
+            )
+        listed = evidence.get("pandas_read_passthrough")
+        if listed != state.read_head:
+            raise ExecutionError(
+                code="chunked_route_evidence_inconsistent",
+                message=(
+                    "chunk evidence takes the results of one call; it disagrees on "
+                    f"pandas_read_passthrough ({state.read_head!r} then {listed!r})."
+                ),
+            )
+    for col in evidence["columns"]:
+        acc = state.sums.get(col["column"])
+        if acc is None:
+            state.sums[col["column"]] = dict(col)
+        else:
+            acc["calls"] += col["calls"]
+            acc["elapsed_ms"] += col["elapsed_ms"]
+
+
+class OutputEvidenceAccumulator:
+    """B1's `chunk_result_sink` for a streamed run: folds each chunk's evidence into running
+    totals and keeps nothing per chunk.
+
+    The state is O(columns + distinct warnings and corpora), not O(chunks): a streaming
+    `GROUP BY` partial state. `append` updates the timing rollup, the conversion total, the
+    stable warning union, the code-set corpora and the per-column route evidence, then drops
+    the `ExecutionResult`. The accessors return exactly what B2's list aggregators return
+    for the same results (`aggregate_chunk_timings`, `aggregate_chunk_warnings`,
+    `aggregate_chunk_code_set_corpora`, `aggregate_chunked_route_evidence`)."""
+
+    def __init__(self) -> None:
+        self.chunks = 0
+        self.boundary_conversion_ms = 0.0
+        self._elapsed: dict[tuple[str, str], float] = {}
+        self._peak: dict[tuple[str, str], int] = {}
+        self._warnings: list[Any] = []
+        self._corpora: dict[tuple[Any, Any], dict[str, Any]] = {}
+        self._route = _RouteFold()
+
+    def __len__(self) -> int:
+        return self.chunks
 
     def append(self, result: ExecutionResult) -> None:
-        super().append(dataclasses.replace(result, outputs={}))
+        self.chunks += 1
+        self.boundary_conversion_ms += result.boundary_conversion_ms
+        fold_timings(self._elapsed, self._peak, result)
+        fold_warnings(self._warnings, result)
+        fold_corpora(self._corpora, result)
+        fold_route_evidence(self._route, result)
+
+    def retained(self) -> tuple[int, int, int, int]:
+        """Entry counts of the four folded structures: timing keys, warnings, corpora and
+        route-evidence columns."""
+        return len(self._elapsed), len(self._warnings), len(self._corpora), len(self._route.sums)
+
+    def timings(self) -> tuple[Any, ...]:
+        from decoy_engine.instrumentation.timing import StrategyTimingRecord
+
+        return tuple(
+            StrategyTimingRecord(
+                strategy_type=strategy,
+                column=column,
+                elapsed_ms=elapsed,
+                peak_memory_delta_kb=self._peak[(strategy, column)],
+            )
+            for (strategy, column), elapsed in self._elapsed.items()
+        )
+
+    def warnings(self) -> tuple[Any, ...]:
+        return tuple(self._warnings)
+
+    def code_set_corpora(self) -> dict[str, Any]:
+        return {"code_set_corpora": list(self._corpora.values())} if self._corpora else {}
+
+    def route_evidence(self) -> dict[str, Any]:
+        head = self._route.head
+        if head is None:
+            return {
+                "table": None,
+                "native_admitted": False,
+                "reroute_reason": None,
+                "pandas_read_passthrough": [],
+                "columns": [],
+            }
+        read_head = self._route.read_head
+        return {
+            "table": head["table"],
+            "native_admitted": head["native_admitted"],
+            "reroute_reason": head["reroute_reason"],
+            "pandas_read_passthrough": [] if read_head is None else list(read_head),
+            "columns": list(self._route.sums.values()),
+        }
 
 
 @dataclasses.dataclass
@@ -276,8 +413,10 @@ class _Spill:
     """Held-back chunks beyond one row group, one Arrow IPC file each in a private
     directory. Read back with `OSFile`, not a memory map, so pages do not stay resident."""
 
-    def __init__(self, stats: StreamStats) -> None:
+    def __init__(self, stats: StreamStats, sink: Any, table: str) -> None:
         self.stats = stats
+        self.sink = sink
+        self.table = table
         self.directory: str | None = None
         self.paths: list[str] = []
 
@@ -287,12 +426,27 @@ class _Spill:
 
     def add(self, chunk: pa.Table) -> None:
         if self.directory is None:
-            self.directory = tempfile.mkdtemp(prefix="_decoy_hold_")
+            self.directory = self._make_directory()
         path = os.path.join(self.directory, f"{len(self.paths):08d}.arrow")
         with pa.OSFile(path, "wb") as sink, pa.ipc.new_file(sink, chunk.schema) as writer:
             writer.write_table(chunk)
         self.paths.append(path)
         self.stats.spilled_chunks += 1
+
+    def _make_directory(self) -> str:
+        """Create the private spill directory beside the sink's own staging directory, on the
+        output's filesystem; `TMPDIR` is never consulted."""
+        parent = getattr(self.sink, "spill_parent", None)
+        if parent is None:
+            raise ExecutionError(
+                code="hold_back_spill_unavailable",
+                message=(
+                    f"table {self.table!r} holds back more chunks than fit in one row group, "
+                    "so they must spill to disk, but the sink names no `spill_parent`."
+                ),
+            )
+        Path(parent).mkdir(parents=True, exist_ok=True)
+        return tempfile.mkdtemp(prefix="_decoy_hold_", dir=str(parent))
 
     def replay(self) -> Iterator[pa.Table]:
         for path in self.paths:
@@ -368,7 +522,7 @@ def stream_table(
     but at the offending chunk."""
     stats = StreamStats()
     resolver = _Resolver(table, fixed_columns)
-    spill = _Spill(stats)
+    spill = _Spill(stats, sink, table)
     live = iter(chunks)
     try:
         pending = _hold_back(live, resolver, spill, stats)

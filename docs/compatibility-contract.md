@@ -237,6 +237,26 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   quarantine, `fidelity_report` and `post_validation` keep the run resident, each with a
   recorded reason. With `ParquetTransactionalSink` the published file is byte-identical to
   `pq.write_table` of the resident table whenever no row group was cut by the byte cap.
+  `run_pipeline` now admits a `LazySource` in `sources` to auto-chunk and to the B7 split
+  (2026-10-03, B6b). Routing reads each lazy table's Parquet footer once (row count, schema,
+  per-column null counts, row-group layout) and judges it with the same gates as a resident
+  table. When the output streams, the table is read as record batches re-cut to the resident
+  chunk boundaries and never materialized; otherwise it is materialized once before the lane.
+  A gated column (an integer column, or a bucketize source column) with no footer null count
+  declines auto-chunk with `lazy_source_null_count_unavailable`. New error codes:
+  `lazy_source_changed` (the opened file's footer facts differ from the routing snapshot, raised
+  before the first chunk), `lazy_source_row_count_mismatch` (the stream's row total differs from
+  the footer's, raised before commit) and `hold_back_spill_unavailable` (a streamed run's schema
+  hold-back must spill and the sink has no `spill_parent`). `LazySource` gains `footer_facts()`
+  (one open handle) and `open_batches(batch_rows, *, pre_buffer=None, buffer_size=0,
+  use_threads=True)`, which now returns an `OpenedLazyBatches` owner (`schema`, `num_rows`,
+  row-group facts, `batches`, an idempotent `close()`) instead of a `(schema, iterator)` pair.
+  `ParquetTransactionalSink.spill_parent` is a read-only property (the target's parent, where the
+  hold-back spills); it is not part of the `TransactionalSink` protocol. Every routed table's
+  input block (`quality_metrics["auto_chunk"]["input"]`, written `auto_chunk.input`) records `mode`, `reason` and, for a lazy table,
+  `source_row_groups` and `source_max_row_group_rows`; `execution.loaded_fully_in_memory` is
+  `False` when every source of a streamed run was read lazily. A caller that passes resident
+  tables sees no change except the added `input` block.
 - **CLI:** verb names, flag names, and the exit-code contract (0 ok, 1
   validation/usage, 2 deprecated-shim, 3 runtime).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and

@@ -208,6 +208,9 @@ CODE_CHUNKED_SOURCE_FRAME_MISSING: Final = "chunked_source_frame_missing"
 CODE_CHUNKED_SOURCE_BELOW_THRESHOLD: Final = "chunked_source_below_threshold"
 CODE_CHUNKED_SOURCE_DTYPE_UNSTABLE: Final = "chunked_source_dtype_unstable"
 CODE_CHUNKED_LAZY_SOURCE_UNSUPPORTED: Final = "chunked_lazy_source_unsupported"
+# B6b: the planner writes this code itself as a `code: ` prefix, which `_CODE_PREFIX_RE`
+# already extracts, so no pattern below matches it (a pattern would emit the code twice).
+CODE_CHUNKED_LAZY_SOURCE_NULL_COUNT_UNAVAILABLE: Final = "lazy_source_null_count_unavailable"
 
 _CHUNKED_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (re.compile(r"no mask-kind tables to stream"), CODE_NO_MASK_TABLES),
@@ -284,6 +287,7 @@ def translate_relationship_mode_reason(prose: str) -> str:
 
 __all__ = [
     "CODE_CHUNKED_EXTRA_SOURCE_FRAME",
+    "CODE_CHUNKED_LAZY_SOURCE_NULL_COUNT_UNAVAILABLE",
     "CODE_CHUNKED_SOURCE_BELOW_THRESHOLD",
     "CODE_CHUNKED_SOURCE_DTYPE_UNSTABLE",
     "CODE_CHUNKED_SOURCE_FRAME_MISSING",

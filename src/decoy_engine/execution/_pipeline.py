@@ -192,7 +192,9 @@ def run_pipeline(
     no re-validation here. `sources` is the caller-loaded
     `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind tables;
     pure-generate configs may pass `None` (or an empty dict). A `LazySource`
-    entry (TB-1) is resolved per-route -- see `_pipeline_sources`.
+    entry is admitted to auto-chunk and the B7 split from its Parquet footer facts and
+    streams when the output streams (a `TransactionalSink`, `_chunked_input`); otherwise
+    it is resolved per-route -- see `_pipeline_sources`.
     `engine_version` flows into `compile_plan`'s audit-evidence stamping.
 
     Returns one `ExecutionResult` whose `outputs` covers every output
@@ -465,17 +467,10 @@ def run_pipeline(
         prepared_tables=prepared.prepared,
     )
 
-    # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the
-    # layer-1 early return (not just on the full_frame side) so
-    # `explain_plan=True` surfaces a classification for EVERY route,
-    # including relationship-route-deferred FK jobs that go sequential --
-    # `classify_job` is a static plan/config read (no per-row execution
-    # work), so computing it here costs nothing beyond that read even when
-    # `route_chunked` ends up unused (the sequential branch below ignores
-    # it; only the full_frame continuation further down actually consults
-    # it for real routing). See `_pipeline_routing` module docstring for
-    # the full two-layer composition.
-    execution_plan_decision, route_chunked = _pipeline_routing.decide_chunk_route(
+    # Routing layer 2 (S3 auto-chunk) classification, computed before the layer-1 early
+    # return so `explain_plan` surfaces it on every route, relationship jobs included.
+    # `keep_lazy` is the B6b footer snapshot of lazy candidates; see `_pipeline_routing`.
+    execution_plan_decision, route_chunked, keep_lazy = _pipeline_routing.decide_chunk_route(
         config,
         plan=plan,
         registry=resolved_registry,
@@ -486,6 +481,8 @@ def run_pipeline(
         explain_plan=explain_plan,
         auto_chunk=auto_chunk,
         has_mask_table=has_mask_table,
+        table_kinds=table_kinds,
+        prepared_tables=prepared.prepared,
     )
 
     ooc_declined = out_of_core_declined(
@@ -543,21 +540,22 @@ def run_pipeline(
             out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         )
 
-    unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
-    if unified_slice_result is not None:
-        return unified_slice_result
-
-    # TB-1: only full_frame / auto-chunk below needs every source resident. A
-    # loader-backed job (empty `caller_sources` + a `source_loader`) diverted here
-    # -- e.g. `post_validation` declined its bounded route -- must still get its
-    # real mask-table sources through the loader, never silently empty outputs.
-    resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(
+    # TB-1: only full_frame / auto-chunk below needs every source resident, and a loader-backed
+    # job diverted here must still get its mask tables through the loader. A lazy route or
+    # split candidate stays lazy (`keep_lazy`); the unified slice sees the rest as tables.
+    resident_sources = _psrc.resolve_resident_sources(
         caller_sources,
         source_loader=source_loader,
         required_tables=[name for name, kind in table_kinds.items() if kind == "mask"],
         config=config,
         prepared=prepared.prepared,
+        keep_lazy=keep_lazy,
     )
+    caller_sources = {k: v for k, v in resident_sources.items() if k in caller_sources}
+
+    unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
+    if unified_slice_result is not None:
+        return unified_slice_result
 
     with publish:
         # Steps 1-2 (generate-kind tables, then mask-kind tables) live in
@@ -571,6 +569,7 @@ def run_pipeline(
             provider_snapshot=_provider_snapshot,
             resident_sources=resident_sources,
             caller_sources=caller_sources,
+            keep_lazy=keep_lazy,
             route_chunked=route_chunked,
             table_kinds=table_kinds,
             config=config,
@@ -631,7 +630,7 @@ def run_pipeline(
         outputs, quarantine_removed = _pipeline_finalize.finalize_validators_and_quarantine(
             outputs,
             config=config,
-            caller_sources=resident_sources,
+            caller_sources=step.sources,
             mask_row_errors=step.mask_row_errors,
             quality_metrics=quality_metrics,
         )
@@ -644,6 +643,7 @@ def run_pipeline(
             sink=publish.active_sink,
             source_loader=None,
             sources_resident=True,
+            inputs_streamed=step.inputs_streamed,
         )
         stamp_out_of_core_declined(quality_metrics, ooc_declined)
 
@@ -664,7 +664,7 @@ def run_pipeline(
         _pipeline_finalize.compute_post_validation(
             result,
             plan=plan,
-            sources=resident_sources,
+            sources=step.sources,
             quarantine_row_mask=quarantine_removed,
             profile=profile,
             registry=resolved_registry,

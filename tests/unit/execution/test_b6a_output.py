@@ -273,13 +273,13 @@ def test_chunks_before_the_schema_resolves_are_held_back_and_spilled(
 ) -> None:
     mod = b6a.sink_module()
     monkeypatch.setattr(mod, "ROW_GROUP_ROWS", 20)
-    spill = tmp_path / "tmp"
+    spill = tmp_path / "spill"
+    spill.mkdir()
     cfg, src = _late_typed_job(tmp_path)
     expected = b6a.reference(cfg, src)[support.TABLE]
-    with b6a.patched_tempdir(monkeypatch, spill):
-        sink, target = b6a.real_sink(tmp_path)
-        result = b6a.run_streamed(cfg, src, sink)
-        assert b6a.leftovers(spill) == []
+    sink, target = b6a.real_sink(spill)
+    result = b6a.run_streamed(cfg, src, sink)
+    assert b6a.leftovers(spill) == []
     b6a.assert_streamed_equals(sink, expected)
     block = result.quality_metrics["auto_chunk"]["output"]
     assert block["held_back_chunks"] == _LATE_NULL_CHUNKS
@@ -294,14 +294,14 @@ def test_a_failure_after_the_schema_resolves_leaves_no_spill_directory(
 ) -> None:
     mod = b6a.sink_module()
     monkeypatch.setattr(mod, "ROW_GROUP_ROWS", 20)
-    spill = tmp_path / "tmp"
+    spill = tmp_path / "spill"
+    spill.mkdir()
     cfg, src = _late_typed_job(tmp_path)
     b6a.ChunkSpy(monkeypatch, fail_at=_LATE_NULL_CHUNKS + 1)
-    with b6a.patched_tempdir(monkeypatch, spill):
-        sink, target = b6a.real_sink(tmp_path)
-        with pytest.raises(RuntimeError, match="injected kernel failure"):
-            b6a.run_streamed(cfg, src, sink)
-        assert b6a.leftovers(spill) == []
+    sink, target = b6a.real_sink(spill)
+    with pytest.raises(RuntimeError, match="injected kernel failure"):
+        b6a.run_streamed(cfg, src, sink)
+    assert b6a.leftovers(spill) == []
     assert sink.count("abort") == 1 and sink.count("commit") == 0
     assert not target.exists()
     assert b6a.leftovers(tmp_path) == []
@@ -312,14 +312,14 @@ def test_a_failure_while_chunks_are_still_spilling_leaves_no_spill_directory(
 ) -> None:
     mod = b6a.sink_module()
     monkeypatch.setattr(mod, "ROW_GROUP_ROWS", 20)
-    spill = tmp_path / "tmp"
+    spill = tmp_path / "spill"
+    spill.mkdir()
     cfg, src = _late_typed_job(tmp_path)
     b6a.ChunkSpy(monkeypatch, fail_at=3)
-    with b6a.patched_tempdir(monkeypatch, spill):
-        sink, target = b6a.real_sink(tmp_path)
-        with pytest.raises(RuntimeError, match="injected kernel failure"):
-            b6a.run_streamed(cfg, src, sink)
-        assert b6a.leftovers(spill) == []
+    sink, target = b6a.real_sink(spill)
+    with pytest.raises(RuntimeError, match="injected kernel failure"):
+        b6a.run_streamed(cfg, src, sink)
+    assert b6a.leftovers(spill) == []
     assert sink.calls == [("abort",)]
     assert not target.exists()
 
@@ -329,14 +329,14 @@ def test_a_column_null_in_every_chunk_stays_null_typed_as_in_the_reference(
 ) -> None:
     mod = b6a.sink_module()
     monkeypatch.setattr(mod, "ROW_GROUP_ROWS", 20)
-    spill = tmp_path / "tmp"
+    spill = tmp_path / "spill"
+    spill.mkdir()
     cfg, src = _late_typed_job(tmp_path, typed=False)
     expected = b6a.reference(cfg, src)[support.TABLE]
     assert expected.schema.field("val").type == pa.null()
-    with b6a.patched_tempdir(monkeypatch, spill):
-        sink, _target = b6a.real_sink(tmp_path)
-        result = b6a.run_streamed(cfg, src, sink)
-        assert b6a.leftovers(spill) == []
+    sink, _target = b6a.real_sink(spill)
+    result = b6a.run_streamed(cfg, src, sink)
+    assert b6a.leftovers(spill) == []
     b6a.assert_streamed_equals(sink, expected)
     assert result.quality_metrics["auto_chunk"]["output"]["spilled_chunks"] > 0
 
@@ -402,9 +402,11 @@ def test_live_chunks_stay_within_one_row_group_plus_one(
     bound = math.ceil(32 / support.CHUNK) + 1
     assert len(seen) == math.ceil(rows / 32)
     assert max(seen) <= bound, (seen, bound)
+    # B6b: the evidence sink folds results into running totals and keeps none, so it can
+    # only report how many chunks it saw. "No output table retained" is proven by
+    # test_b6b_sink.py (weakref and live-object checks), not by iterating results here.
     results = spy.result_lists[support.TABLE]
     assert len(results) == math.ceil(rows / support.CHUNK)
-    assert all(r.outputs == {} for r in results)
 
 
 @pytest.mark.parametrize("route", ["native", "oracle"])

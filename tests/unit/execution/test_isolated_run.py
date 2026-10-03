@@ -293,15 +293,19 @@ class TestMemCapOom:
         # catchable ArrowMemoryError the worker self-reports. That is the real
         # guarantee under test: a running job that exhausts its cap is named
         # oom_killed, never an opaque crashed.
+        #
+        # `auto_chunk=False` keeps the job resident: since B6b the worker loads lazily and
+        # an auto-chunk job streams, so the default job below no longer exhausts the cap.
         cfg = _mask_config(tmp_path, n_cols=8)
-        sources = _mask_sources(tmp_path, n_rows=2_000_000, n_cols=8)
+        sources = _mask_sources(tmp_path, n_rows=4_000_000, n_cols=8)
 
         result = run_pipeline_isolated(
             cfg,
             sources,
             engine_version=_ENGINE_VERSION,
-            mem_cap_bytes=768 * 1024 * 1024,
+            mem_cap_bytes=1536 * 1024 * 1024,
             rlimit_kind="data",
+            auto_chunk=False,
         )
 
         assert result.outcome == "oom_killed"
@@ -311,6 +315,30 @@ class TestMemCapOom:
         assert result.error is not None
         assert len(result.error) < 600
         assert result.isolated is True
+
+    def test_the_same_job_streams_and_completes_under_the_same_cap(self, tmp_path):
+        # B6b: the job above, left on auto-chunk, is read lazily and masked in chunks, so the
+        # cap that kills its resident twin leaves it room to finish.
+        #
+        # The pair runs at 4,000,000 rows under a 1,536 MiB RLIMIT_DATA cap so it discriminates
+        # on BOTH execution substrates. The streamed path's footprint is flat in rows (~630 MiB
+        # RSS native, ~680 MiB companion-absent oracle) and sits well under the cap on both; the
+        # resident twin's 4M full-table load exhausts the cap on both. A 768 MiB cap only worked
+        # for the lower-footprint native lane: the companion-absent oracle streamed path needs
+        # more than that, so it OOMed there. Verified oom_killed resident / completed streamed
+        # across repeated runs on pyarrow 24.0.0 (companion absent) and 25.0.1 (companion present).
+        cfg = _mask_config(tmp_path, n_cols=8)
+        sources = _mask_sources(tmp_path, n_rows=4_000_000, n_cols=8)
+
+        result = run_pipeline_isolated(
+            cfg,
+            sources,
+            engine_version=_ENGINE_VERSION,
+            mem_cap_bytes=1536 * 1024 * 1024,
+            rlimit_kind="data",
+        )
+
+        assert result.outcome == "completed", result.error
 
 
 # --------------------------------------------------------------------------

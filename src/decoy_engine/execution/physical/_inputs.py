@@ -262,23 +262,21 @@ class PhysicalPlanInputs:
 
 def _resident_source_fact(name: str, source: pa.Table | LazySource) -> tuple[object, ...]:
     """One source's route-affecting measured content (Task 4.3 remediation
-    H1; design doc section 12's "resident-source measured facts"): for a
-    resident `pa.Table`, its row count plus ordered `(column, type,
-    null_count)` triples -- exactly what `_planner.py`'s runtime-source
-    gates read (`_runtime_source_rejections`: row count against the
-    auto-chunk threshold, schema + per-column null state against the
-    chunk-dtype-stability gate) and what `classify_job`/`layer2_chunk_
-    decision` therefore branches on. A `LazySource` carries no resident rows
-    to measure, so it contributes a stable marker instead -- its own route-
-    affecting content (path, schema) is out of scope for THIS fact family.
+    H1; design doc section 12's "resident-source measured facts"): its row count
+    plus ordered `(column, type, null_count)` triples -- exactly what `_planner.py`'s
+    runtime-source gates read (`_runtime_source_rejections`: row count against the
+    auto-chunk threshold, schema + per-column null state against the chunk-dtype-stability
+    gate) and what `classify_job`/`layer2_chunk_decision` therefore branches on.
+
+    A `LazySource` is measured the same way from its Parquet footer (B6b; a null count is
+    `None` when the footer has no statistic) and carries a `"lazy_source"` marker after
+    its name, because those footer facts now decide whether it routes chunked and must
+    change the plan hash. The facts come from `_chunked_input.plan_fact`, the same
+    representation routing uses.
     """
-    if isinstance(source, LazySource):
-        return (name, "lazy_source")
-    columns = tuple(
-        (field.name, str(field.type), source.column(field.name).null_count)
-        for field in source.schema
-    )
-    return (name, source.num_rows, columns)
+    from decoy_engine.execution import _chunked_input
+
+    return _chunked_input.plan_fact(name, source)
 
 
 def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:

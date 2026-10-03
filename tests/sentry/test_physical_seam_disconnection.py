@@ -76,6 +76,9 @@ GUARDED_MODULES: tuple[str, ...] = (
     # B6a (incremental output sink): the streamed lane's row-group assembly and publish
     # session sit between the dispatcher lane and the caller's sink; no physical import.
     "execution/_chunked_output_sink.py",
+    # B6b (LazySource batch input): footer-fact capture, the batch re-cut and the handle
+    # lifecycle for a lazy routed table; no physical import.
+    "execution/_chunked_input.py",
     "execution/_pipeline_sources.py",
     "execution/_pipeline_finalize.py",
     "execution/_planner.py",
@@ -402,6 +405,18 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # gain docstring/comment edits only. None imports `execution.physical`.
         "src/decoy_engine/execution/_chunked_output_sink.py",
         "src/decoy_engine/execution/_isolated_worker.py",
+        # B6b (LazySource batch input): `_chunked_input.py` captures a lazy source's footer
+        # facts once, re-cuts reader batches to the resident chunk boundaries and owns the
+        # handle's close; `_planner.py` judges a `LazySource` from those facts (the old
+        # refusal helper in `_pipeline_sources.py` is gone); `_pipeline_chunk_route.py`
+        # captures the snapshot; `_pipeline.py`, `_pipeline_generate_mask.py`,
+        # `_pipeline_auto_chunk.py`, `_pipeline_multi_table.py` and `_pipeline_route_exec.py`
+        # thread it to the lane and the telemetry; `_transactional_sink.py` gains the
+        # read-only `spill_parent`; `_isolated_worker.py` always loads lazily;
+        # `_unified_slice_admission.py` gains a comment edit only. None imports
+        # `execution.physical`; `physical/_inputs.py` reads the same facts.
+        "src/decoy_engine/execution/_chunked_input.py",
+        "src/decoy_engine/execution/_transactional_sink.py",
     }
     unexpected = [
         name

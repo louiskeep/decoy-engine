@@ -145,7 +145,7 @@ def _bucketize_nulls_case() -> Case:
 
 def _lazy_case() -> Case:
     return Case(
-        mt.std_columns("t_ns"), mt.string_table(N, "t"), kind="lazy", expect_dispatched=False
+        mt.std_columns("t_ns"), mt.string_table(N, "t"), kind="lazy", expect_dispatched=True
     )
 
 

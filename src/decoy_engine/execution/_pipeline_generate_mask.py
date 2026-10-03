@@ -20,10 +20,16 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution import (
+    _chunked_input,
+    _pipeline_auto_chunk,
+    _pipeline_finalize,
+    _pipeline_sources,
+)
 from decoy_engine.execution import _chunked_output_sink as _output_sink
-from decoy_engine.execution import _pipeline_auto_chunk, _pipeline_finalize
 from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
+from decoy_engine.profile._readers import LazySource
 
 __all__ = ["GenerateMaskStepResult", "run_generate_and_mask_steps"]
 
@@ -56,6 +62,11 @@ class GenerateMaskStepResult:
     mask_quality_metrics: dict[str, Any]
     mask_row_errors: tuple[Any, ...]
     fidelity_reports: dict[str, Any]
+    # The caller's sources as the finalize stage reads them: every table resident, except on
+    # a run that streamed its lazy inputs, where `LazySource` values stay and no consumer of
+    # the whole sources exists (`decide_output_mode`).
+    sources: dict[str, pa.Table]
+    inputs_streamed: bool
 
 
 def run_generate_and_mask_steps(
@@ -66,8 +77,9 @@ def run_generate_and_mask_steps(
     derive_key: Any,
     instance_default_locale: str | None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
-    resident_sources: dict[str, pa.Table],
+    resident_sources: dict[str, Any],
     caller_sources: Mapping[str, Any],
+    keep_lazy: Mapping[str, _chunked_input.SourceFacts],
     route_chunked: bool,
     table_kinds: dict[str, str],
     config: dict[str, Any],
@@ -114,6 +126,7 @@ def run_generate_and_mask_steps(
         )
 
     # Step 2: mask-kind tables.
+    sources = dict(resident_sources)
     mask_outputs: dict[str, pa.Table] = {}
     mask_timings: tuple[Any, ...] = ()
     mask_conversion_ms: float = 0.0
@@ -149,6 +162,7 @@ def run_generate_and_mask_steps(
                 caller_sources=caller_sources,
                 table_kinds=table_kinds,
                 auto_chunk=auto_chunk,
+                source_facts=keep_lazy,
                 auto_chunk_threshold_rows=auto_chunk_threshold_rows,
                 dispatcher_enabled=chunked_dispatcher_enabled,
                 split_enabled=multi_table_dispatch_enabled,
@@ -170,6 +184,22 @@ def run_generate_and_mask_steps(
             )
             if out_mode == "streamed":
                 publish.open()
+        # B6b: a lazy table streams only when the output does and a lane takes it; every other
+        # one is materialized exactly once, here, before any lane runs.
+        modes = _chunked_input.input_modes(
+            keep_lazy,
+            out_mode=out_mode,
+            out_reason=out_reason,
+            routed=next(n for n, k in table_kinds.items() if k == "mask")
+            if route_chunked
+            else None,
+            split=split,
+        )
+        for name, (mode, _why) in modes.items():
+            if mode == "resident":
+                sources[name] = merged_sources[name] = _pipeline_sources.materialize_source(
+                    sources[name]
+                )
         if split is not None:
             (
                 mask_outputs,
@@ -182,6 +212,8 @@ def run_generate_and_mask_steps(
                 split,
                 config,
                 resident_sources=merged_sources,
+                input_facts=keep_lazy,
+                input_reasons={n: why for n, (mode, why) in modes.items() if mode == "resident"},
                 engine_version=engine_version,
                 registry=registry,
                 adapter=adapter,
@@ -221,12 +253,18 @@ def run_generate_and_mask_steps(
                     key_provider=key_provider,
                     native_threads=native_threads,
                     dispatcher_enabled=chunked_dispatcher_enabled,
-                    **({"sink": publish.active_sink} if out_mode == "streamed" else {}),
+                    **(
+                        {"sink": publish.active_sink, "expected": keep_lazy.get(mask_table_name)}
+                        if out_mode == "streamed"
+                        else {}
+                    ),
                 )
             )
             if out_mode == "resident":
-                mask_quality_metrics.setdefault("auto_chunk", {})["output"] = (
-                    _output_sink.resident_block(out_reason)
+                lane_block = mask_quality_metrics.setdefault("auto_chunk", {})
+                lane_block["output"] = _output_sink.resident_block(out_reason)
+                lane_block["input"] = _chunked_input.resident_block(
+                    modes.get(mask_table_name, ("", _chunked_input.REASON_RESIDENT_SOURCE))[1]
                 )
         else:
             mask_result = adapter.run(
@@ -274,7 +312,7 @@ def run_generate_and_mask_steps(
             chunk_size_rows=chunk_size_rows,
             auto_chunk_threshold_rows=auto_chunk_threshold_rows,
             table_kinds=table_kinds,
-            caller_sources=resident_sources,
+            caller_sources=sources,
             execution_plan_decision=execution_plan_decision,
             multi_table_split=split,
         )
@@ -296,4 +334,6 @@ def run_generate_and_mask_steps(
         mask_quality_metrics=mask_quality_metrics,
         mask_row_errors=mask_row_errors,
         fidelity_reports=fidelity_reports,
+        sources=sources,
+        inputs_streamed=bool(sources) and all(isinstance(v, LazySource) for v in sources.values()),
     )

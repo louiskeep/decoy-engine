@@ -1,0 +1,6 @@
+{"cell": "native_2M", "path": "/tmp/b6bw/native_2M.parquet", "rows": 2000000, "file_bytes": 75730972, "table_nbytes": 160000000, "row_groups": 2, "prep_peak_rss_bytes": 689979392}
+{"cell": "oracle_2M", "path": "/tmp/b6bw/oracle_2M.parquet", "rows": 2000000, "file_bytes": 76241156, "table_nbytes": 178666464, "row_groups": 2, "prep_peak_rss_bytes": 705871872}
+{"cell": "native_10M", "path": "/tmp/b6bw/native_10M.parquet", "rows": 10000000, "file_bytes": 378665048, "table_nbytes": 800000000, "row_groups": 10, "prep_peak_rss_bytes": 734339072}
+{"cell": "oracle_10M", "path": "/tmp/b6bw/oracle_10M.parquet", "rows": 10000000, "file_bytes": 381215727, "table_nbytes": 893331020, "row_groups": 10, "prep_peak_rss_bytes": 748699648}
+{"cell": "native_50M", "path": "/tmp/b6bw/native_50M.parquet", "rows": 50000000, "file_bytes": 1892401564, "table_nbytes": 4000000000, "row_groups": 48, "prep_peak_rss_bytes": 742330368}
+{"cell": "oracle_50M", "path": "/tmp/b6bw/oracle_50M.parquet", "rows": 50000000, "file_bytes": 1905154308, "table_nbytes": 4466660432, "row_groups": 48, "prep_peak_rss_bytes": 760901632}

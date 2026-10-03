@@ -9,7 +9,6 @@ implementation under test.
 
 from __future__ import annotations
 
-import contextlib
 import gc
 import importlib
 import inspect
@@ -104,6 +103,13 @@ class RecordingSink:
     def table(self, name: str) -> pa.Table:
         return pa.Table.from_batches(self.batches[name], schema=self.schemas[name])
 
+    def __getattr__(self, name: str) -> Any:
+        """Offer `spill_parent` only when the wrapped sink has it, so a bare recording sink
+        stays a streaming sink with no place to spill."""
+        if name == "spill_parent" and self.__dict__.get("inner") is not None:
+            return self.__dict__["inner"].spill_parent
+        raise AttributeError(name)
+
     def count(self, call: str) -> int:
         return sum(1 for c in self.calls if c[0] == call)
 
@@ -143,15 +149,6 @@ def leftovers(parent: Path) -> list[str]:
     return sorted(
         p.name for p in parent.iterdir() if p.name.startswith(("_decoy_stage_", "_decoy_hold_"))
     )
-
-
-@contextlib.contextmanager
-def patched_tempdir(monkeypatch: pytest.MonkeyPatch, path: Path) -> Iterator[Path]:
-    import tempfile
-
-    path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(tempfile, "tempdir", str(path))
-    yield path
 
 
 class ChunkSpy:
