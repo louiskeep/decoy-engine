@@ -7,6 +7,10 @@ Date: 2026-10-03. Branch `feat/b6b-lazy-input`. Plan: `docs/plans/2026-10-02-b6b
 
 Newest first.
 
+- (this commit) test(b6b): recalibrate the mem-cap OOM pair to 4,000,000 rows under a 1,536 MiB cap so it discriminates on both substrates (remediates the Codex final-gate BLOCKER). Made by the orchestrator.
+- `67f68b64` test(b6b): close the 5 hand-mutation coverage gaps with direct unit tests in `test_b6b_unit.py`. Made by the orchestrator.
+- `0e5f1e4e` chore(b6b): drop scratch `.bak` backups from the benchmark record dir. Made by the orchestrator.
+- `da919c62` docs(b6b): complete build record, final benchmark, hand-mutation results.
 - `03890055` bench(b6b): pin the routing probe off in both configs and halt a cell on any trial problem. Made by the orchestrator.
 - `aec0510c` docs(b6b): partial build record and benchmark artifacts.
 - `8e8c3c30` test(b6b): gate the two `unified_slice_activation` tests with `@NEEDS_COMPANION`. Made by the orchestrator.
@@ -27,7 +31,7 @@ Authorized in session (`c39fb74f` and the earlier implementation commit):
 - `test_b6a_output.py::test_live_chunks_stay_within_one_row_group_plus_one`: iterated per-chunk results, which the online accumulator no longer keeps. It now checks only the chunk count. The no-output-retained guarantee moved to the weakref and live-object checks in `test_b6b_sink.py`; it is not weakened.
 - `test_multi_table_run.py` evidence tests: `"input"` added to the exact key set (guarantee 5).
 - `test_multi_table_when.py[lazy_source]`: `expect_dispatched=True` (guarantee 1 reverses the old refusal).
-- `test_isolated_run.py::TestMemCapOom`: the OOM test now runs with `auto_chunk=False` so the job stays resident and still classifies `oom_killed`; a sibling pins that the same job on auto-chunk streams and completes under the same 768 MiB cap.
+- `test_isolated_run.py` mem-cap pair: the OOM test now runs with `auto_chunk=False` so the job stays resident and still classifies `oom_killed`; a sibling pins that the same job on auto-chunk streams and completes under the same cap. The Codex final gate found the sibling's original 768 MiB cap only worked for the lower-footprint native lane and OOMed on the companion-absent oracle streamed path, so the pair was recalibrated to 4,000,000 rows under a 1,536 MiB cap, verified `oom_killed` resident / `completed` streamed across repeated runs on both pyarrow 24.0.0 (companion absent) and 25.0.1 (companion present). The streamed footprint is flat in rows (~630 to 680 MiB RSS); the resident 4M load exhausts the cap on both substrates.
 
 ## Deviations from the plan
 
