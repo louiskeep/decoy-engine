@@ -107,6 +107,14 @@ D1 and D2 engine work does not depend on A3; only platform sequential activation
 | D4b | Implement it in separately reviewed sorter, join, budgeting and route-wiring slices. | L |
 | D4c | 100M and 200M parent-growth and child-growth proof with spill and peak-memory evidence. | M |
 
+### Phase D planning input (Cam, 2026-10-03): FK shape matrix + no-legacy transition
+
+Read this before writing D's detailed plan. Two requirements D's slicing must satisfy:
+
+1. **Every supported FK shape is an explicit acceptance case, not an umbrella.** The D table names diamond, self-FK and out-of-core-incompatible strategies; the engine also supports junction / many-to-many (left_parent + right_parent + junction columns), composite / multi-parent FKs (a child column referencing multiple parents, multi-column parent keys), and plain multi-column FKs. Each shape has its own key-propagation and join/reorder behavior (composite keys change how you hash and carry keys across chunks; junction tables keep two parents consistent), so each is a distinct risk, not a free variation of a single path. D's plan must enumerate the full matrix and, per shape, pin: does it go out-of-core (D1/D4) or sequential (D2), is it Rust-admitted with a parity test against the pandas oracle, and what is its exact acceptance test. Shapes to cover: self-reference, diamond, chain, junction/M2M, composite/multi-parent, multi-column. Source of truth for what exists: `validation_result.py` FK codes, `walks/hazards.py`, `execution/_chunked_fk*.py`, `execution/_fk_keys.py`, `execution/_fk_resolve.py`, `config/_relationships.py`, `plan/_seed_envelope.py`.
+
+2. **No legacy solution left reachable on an admitted production route; clean transition to the fast path.** The program's rule (no pandas on admitted production routes) must be *verified* for FK, not assumed. For every FK shape x operator x size tier, the route is exactly one of: Rust-admitted (with parity evidence), or explicitly and safely rerouted to the pandas oracle with a recorded reason a caller can see. Nothing silently falls back, and no legacy FK code path stays reachable once its Rust replacement lands (pre-GA = hard delete, not dead-but-present). D's plan should include an audit slice that proves, by test, that no admitted FK route touches the legacy path, and that each legacy path removed has no remaining caller. Trace with graphify before deleting (do not assume the old path is unreferenced). This also guards against re-introducing the OOC-B failure mode (a path that looked bounded on paper but was O(rows) in one component).
+
 ## Phase E: mask and FK 100M milestone
 
 A GCP run at 1M, 10M and 100M rows through the platform worker (real claim, streaming plan), asserting per-column Rust evidence, byte parity at 1M, p50/p95 wall and the declared absolute peak. Uses the existing 50-run GCP budget; Slack before running.
