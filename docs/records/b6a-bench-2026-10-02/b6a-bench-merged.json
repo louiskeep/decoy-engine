@@ -1,0 +1,6012 @@
+{
+ "cells": {
+  "native_2000000": {
+   "workload": "native",
+   "rows": 2000000,
+   "reference_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+   "source_nbytes": 160000000,
+   "output_nbytes": 210000000,
+   "summary": {
+    "resident": {
+     "wall_s": {
+      "p50": 3.5391891156323254,
+      "p95": 3.7782722958363593,
+      "max": 3.8686223491095006
+     },
+     "increment_bytes": {
+      "p50": 307654656,
+      "p95": 315609088,
+      "max": 316514304
+     },
+     "lifetime_peak_bytes": {
+      "p50": 796250112,
+      "p95": 805736448,
+      "max": 805916672
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 408006528,
+      "p95": 408006528,
+      "max": 408006528
+     }
+    },
+    "streamed": {
+     "wall_s": {
+      "p50": 3.4939550971612334,
+      "p95": 3.915401080157608,
+      "max": 4.01642346708104
+     },
+     "increment_bytes": {
+      "p50": 232845312,
+      "p95": 236171264,
+      "max": 236269568
+     },
+     "lifetime_peak_bytes": {
+      "p50": 722235392,
+      "p95": 723734528,
+      "max": 725311488
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 391952128,
+      "p95": 391952128,
+      "max": 391952128
+     }
+    }
+   },
+   "trials": {
+    "resident": [
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.683423236012459,
+      "floor_bytes": 487198720,
+      "hwm_bytes": 792948736,
+      "increment_bytes": 305750016,
+      "lifetime_peak_bytes": 792948736,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 0,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.637998735997826,
+      "floor_bytes": 497405952,
+      "hwm_bytes": 800157696,
+      "increment_bytes": 302751744,
+      "lifetime_peak_bytes": 800157696,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 1,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5588203449733555,
+      "floor_bytes": 485191680,
+      "hwm_bytes": 798007296,
+      "increment_bytes": 312815616,
+      "lifetime_peak_bytes": 798007296,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 2,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5276543078944087,
+      "floor_bytes": 486936576,
+      "hwm_bytes": 794136576,
+      "increment_bytes": 307200000,
+      "lifetime_peak_bytes": 794136576,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 3,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5391891156323254,
+      "floor_bytes": 487292928,
+      "hwm_bytes": 794456064,
+      "increment_bytes": 307163136,
+      "lifetime_peak_bytes": 794456064,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.504453456029296,
+      "floor_bytes": 497647616,
+      "hwm_bytes": 800337920,
+      "increment_bytes": 302690304,
+      "lifetime_peak_bytes": 800337920,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 5,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.6047884761355817,
+      "floor_bytes": 487063552,
+      "hwm_bytes": 792576000,
+      "increment_bytes": 305512448,
+      "lifetime_peak_bytes": 792576000,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 6,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5670611918903887,
+      "floor_bytes": 487608320,
+      "hwm_bytes": 792891392,
+      "increment_bytes": 305283072,
+      "lifetime_peak_bytes": 792891392,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 7,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.466685774270445,
+      "floor_bytes": 486993920,
+      "hwm_bytes": 794648576,
+      "increment_bytes": 307654656,
+      "lifetime_peak_bytes": 794648576,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 8,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.596714812796563,
+      "floor_bytes": 487006208,
+      "hwm_bytes": 794591232,
+      "increment_bytes": 307585024,
+      "lifetime_peak_bytes": 794591232,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 9,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.7782722958363593,
+      "floor_bytes": 497651712,
+      "hwm_bytes": 804614144,
+      "increment_bytes": 306962432,
+      "lifetime_peak_bytes": 804614144,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 10,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4027995383366942,
+      "floor_bytes": 487116800,
+      "hwm_bytes": 795467776,
+      "increment_bytes": 308350976,
+      "lifetime_peak_bytes": 795467776,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 11,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4377350569702685,
+      "floor_bytes": 487256064,
+      "hwm_bytes": 796254208,
+      "increment_bytes": 308998144,
+      "lifetime_peak_bytes": 796254208,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 12,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5297521189786494,
+      "floor_bytes": 498016256,
+      "hwm_bytes": 805736448,
+      "increment_bytes": 307720192,
+      "lifetime_peak_bytes": 805736448,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 13,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.8686223491095006,
+      "floor_bytes": 485023744,
+      "hwm_bytes": 800632832,
+      "increment_bytes": 315609088,
+      "lifetime_peak_bytes": 800632832,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 14,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.516840642783791,
+      "floor_bytes": 484769792,
+      "hwm_bytes": 801284096,
+      "increment_bytes": 316514304,
+      "lifetime_peak_bytes": 801284096,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 15,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4831420523114502,
+      "floor_bytes": 487305216,
+      "hwm_bytes": 796250112,
+      "increment_bytes": 308944896,
+      "lifetime_peak_bytes": 796250112,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 16,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.544427868910134,
+      "floor_bytes": 486998016,
+      "hwm_bytes": 796241920,
+      "increment_bytes": 309243904,
+      "lifetime_peak_bytes": 796241920,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 17,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5326725197955966,
+      "floor_bytes": 486912000,
+      "hwm_bytes": 796377088,
+      "increment_bytes": 309465088,
+      "lifetime_peak_bytes": 796377088,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 18,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.557703174185008,
+      "floor_bytes": 497967104,
+      "hwm_bytes": 805916672,
+      "increment_bytes": 307949568,
+      "lifetime_peak_bytes": 805916672,
+      "arrow_pool_max_bytes": 408006528,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": 210000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 19,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     }
+    ],
+    "streamed": [
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5884121879935265,
+      "floor_bytes": 487161856,
+      "hwm_bytes": 719941632,
+      "increment_bytes": 232779776,
+      "lifetime_peak_bytes": 719941632,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 0,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5387171083129942,
+      "floor_bytes": 497496064,
+      "hwm_bytes": 722440192,
+      "increment_bytes": 224944128,
+      "lifetime_peak_bytes": 722440192,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 1,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.915401080157608,
+      "floor_bytes": 486916096,
+      "hwm_bytes": 718823424,
+      "increment_bytes": 231907328,
+      "lifetime_peak_bytes": 718823424,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 2,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.572255962062627,
+      "floor_bytes": 487047168,
+      "hwm_bytes": 719732736,
+      "increment_bytes": 232685568,
+      "lifetime_peak_bytes": 719732736,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 3,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.46446070400998,
+      "floor_bytes": 487002112,
+      "hwm_bytes": 719671296,
+      "increment_bytes": 232669184,
+      "lifetime_peak_bytes": 719671296,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.7221444551832974,
+      "floor_bytes": 487182336,
+      "hwm_bytes": 720027648,
+      "increment_bytes": 232845312,
+      "lifetime_peak_bytes": 720027648,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 5,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5961163202300668,
+      "floor_bytes": 487129088,
+      "hwm_bytes": 720166912,
+      "increment_bytes": 233037824,
+      "lifetime_peak_bytes": 720166912,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 6,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4176223971880972,
+      "floor_bytes": 486907904,
+      "hwm_bytes": 719663104,
+      "increment_bytes": 232755200,
+      "lifetime_peak_bytes": 719663104,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 7,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4698260091245174,
+      "floor_bytes": 487211008,
+      "hwm_bytes": 722235392,
+      "increment_bytes": 235024384,
+      "lifetime_peak_bytes": 722235392,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 8,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 4.01642346708104,
+      "floor_bytes": 487391232,
+      "hwm_bytes": 715378688,
+      "increment_bytes": 227987456,
+      "lifetime_peak_bytes": 715378688,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 9,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4627979188226163,
+      "floor_bytes": 497586176,
+      "hwm_bytes": 722456576,
+      "increment_bytes": 224870400,
+      "lifetime_peak_bytes": 722456576,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 10,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4629275547340512,
+      "floor_bytes": 487243776,
+      "hwm_bytes": 723513344,
+      "increment_bytes": 236269568,
+      "lifetime_peak_bytes": 723513344,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 11,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.393315189052373,
+      "floor_bytes": 487563264,
+      "hwm_bytes": 723734528,
+      "increment_bytes": 236171264,
+      "lifetime_peak_bytes": 723734528,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 12,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.3953898306936026,
+      "floor_bytes": 497573888,
+      "hwm_bytes": 725311488,
+      "increment_bytes": 227737600,
+      "lifetime_peak_bytes": 725311488,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 13,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5956797627732158,
+      "floor_bytes": 487055360,
+      "hwm_bytes": 722272256,
+      "increment_bytes": 235216896,
+      "lifetime_peak_bytes": 722272256,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 14,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.5802848930470645,
+      "floor_bytes": 487104512,
+      "hwm_bytes": 721825792,
+      "increment_bytes": 234721280,
+      "lifetime_peak_bytes": 721825792,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 15,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.474843414966017,
+      "floor_bytes": 486866944,
+      "hwm_bytes": 722489344,
+      "increment_bytes": 235622400,
+      "lifetime_peak_bytes": 722489344,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 16,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4939550971612334,
+      "floor_bytes": 486899712,
+      "hwm_bytes": 722575360,
+      "increment_bytes": 235675648,
+      "lifetime_peak_bytes": 722575360,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 17,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.512426014058292,
+      "floor_bytes": 487317504,
+      "hwm_bytes": 722792448,
+      "increment_bytes": 235474944,
+      "lifetime_peak_bytes": 722792448,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 18,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 2000000,
+      "wall_s": 3.4854921703226864,
+      "floor_bytes": 487362560,
+      "hwm_bytes": 723156992,
+      "increment_bytes": 235794432,
+      "lifetime_peak_bytes": 723156992,
+      "arrow_pool_max_bytes": 391952128,
+      "source_nbytes": 160000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "5a1bd7c7792cfe0003192a1c9a40b097ad89bd65735f15bcfdf8e4f059971da6",
+      "staged_bytes": 152437975,
+      "round": 19,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     }
+    ]
+   }
+  },
+  "native_10000000": {
+   "workload": "native",
+   "rows": 10000000,
+   "reference_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+   "source_nbytes": 800000000,
+   "output_nbytes": 1050000000,
+   "summary": {
+    "resident": {
+     "wall_s": {
+      "p50": 45.376334520988166,
+      "p95": 52.91572698298842,
+      "max": 83.70817104307935
+     },
+     "increment_bytes": {
+      "p50": 1591443456,
+      "p95": 1597210624,
+      "max": 1598652416
+     },
+     "lifetime_peak_bytes": {
+      "p50": 3012304896,
+      "p95": 3015856128,
+      "max": 3016564736
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 2040031616,
+      "p95": 2040031616,
+      "max": 2040031616
+     }
+    },
+    "streamed": {
+     "wall_s": {
+      "p50": 42.81627479381859,
+      "p95": 53.23556993063539,
+      "max": 56.40964187216014
+     },
+     "increment_bytes": {
+      "p50": 11059200,
+      "p95": 11268096,
+      "max": 13217792
+     },
+     "lifetime_peak_bytes": {
+      "p50": 1429037056,
+      "p95": 1434750976,
+      "max": 1435009024
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 1184508352,
+      "p95": 1184508352,
+      "max": 1184508352
+     }
+    }
+   },
+   "trials": {
+    "resident": [
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 39.653285685926676,
+      "floor_bytes": 1422123008,
+      "hwm_bytes": 3012022272,
+      "increment_bytes": 1589899264,
+      "lifetime_peak_bytes": 3012022272,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 0,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 38.14245164627209,
+      "floor_bytes": 1421942784,
+      "hwm_bytes": 3015856128,
+      "increment_bytes": 1593913344,
+      "lifetime_peak_bytes": 3015856128,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 1,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 39.233964510727674,
+      "floor_bytes": 1421660160,
+      "hwm_bytes": 3012304896,
+      "increment_bytes": 1590644736,
+      "lifetime_peak_bytes": 3012304896,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 2,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 40.870906634256244,
+      "floor_bytes": 1417912320,
+      "hwm_bytes": 3016564736,
+      "increment_bytes": 1598652416,
+      "lifetime_peak_bytes": 3016564736,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 3,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 45.376334520988166,
+      "floor_bytes": 1421529088,
+      "hwm_bytes": 3012202496,
+      "increment_bytes": 1590673408,
+      "lifetime_peak_bytes": 3012202496,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 45.790232248138636,
+      "floor_bytes": 1416278016,
+      "hwm_bytes": 3012321280,
+      "increment_bytes": 1596043264,
+      "lifetime_peak_bytes": 3012321280,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 5,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 51.117532580159605,
+      "floor_bytes": 1422311424,
+      "hwm_bytes": 3005607936,
+      "increment_bytes": 1583296512,
+      "lifetime_peak_bytes": 3005607936,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 6,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 51.76774721732363,
+      "floor_bytes": 1420271616,
+      "hwm_bytes": 3011715072,
+      "increment_bytes": 1591443456,
+      "lifetime_peak_bytes": 3011715072,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 7,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 52.91572698298842,
+      "floor_bytes": 1424605184,
+      "hwm_bytes": 3014590464,
+      "increment_bytes": 1589985280,
+      "lifetime_peak_bytes": 3014590464,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 8,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 52.189758917316794,
+      "floor_bytes": 1417515008,
+      "hwm_bytes": 3012595712,
+      "increment_bytes": 1595080704,
+      "lifetime_peak_bytes": 3012595712,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 9,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 47.686716615222394,
+      "floor_bytes": 1419268096,
+      "hwm_bytes": 3013742592,
+      "increment_bytes": 1594474496,
+      "lifetime_peak_bytes": 3013742592,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 10,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 47.760683219879866,
+      "floor_bytes": 1419669504,
+      "hwm_bytes": 3014651904,
+      "increment_bytes": 1594982400,
+      "lifetime_peak_bytes": 3014651904,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 11,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 83.70817104307935,
+      "floor_bytes": 1410580480,
+      "hwm_bytes": 2994155520,
+      "increment_bytes": 1583575040,
+      "lifetime_peak_bytes": 2994155520,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 12,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 45.861151348333806,
+      "floor_bytes": 1418227712,
+      "hwm_bytes": 3009478656,
+      "increment_bytes": 1591250944,
+      "lifetime_peak_bytes": 3009478656,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 13,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 45.00313105713576,
+      "floor_bytes": 1413009408,
+      "hwm_bytes": 3009802240,
+      "increment_bytes": 1596792832,
+      "lifetime_peak_bytes": 3009802240,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 14,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 44.77013920433819,
+      "floor_bytes": 1410170880,
+      "hwm_bytes": 3005173760,
+      "increment_bytes": 1595002880,
+      "lifetime_peak_bytes": 3005173760,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 15,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 44.43584204791114,
+      "floor_bytes": 1417904128,
+      "hwm_bytes": 3008229376,
+      "increment_bytes": 1590325248,
+      "lifetime_peak_bytes": 3008229376,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 16,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 45.480903673917055,
+      "floor_bytes": 1418317824,
+      "hwm_bytes": 3015528448,
+      "increment_bytes": 1597210624,
+      "lifetime_peak_bytes": 3015528448,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 17,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 44.07756581529975,
+      "floor_bytes": 1424695296,
+      "hwm_bytes": 3013885952,
+      "increment_bytes": 1589190656,
+      "lifetime_peak_bytes": 3013885952,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 18,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 43.085239263717085,
+      "floor_bytes": 1421062144,
+      "hwm_bytes": 3012927488,
+      "increment_bytes": 1591865344,
+      "lifetime_peak_bytes": 3012927488,
+      "arrow_pool_max_bytes": 2040031616,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": 1050000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 19,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     }
+    ],
+    "streamed": [
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 36.50141437025741,
+      "floor_bytes": 1421778944,
+      "hwm_bytes": 1432854528,
+      "increment_bytes": 11075584,
+      "lifetime_peak_bytes": 1432854528,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 0,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 36.40897102607414,
+      "floor_bytes": 1421500416,
+      "hwm_bytes": 1431810048,
+      "increment_bytes": 10309632,
+      "lifetime_peak_bytes": 1431810048,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 1,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 37.894964350853115,
+      "floor_bytes": 1417773056,
+      "hwm_bytes": 1428955136,
+      "increment_bytes": 11182080,
+      "lifetime_peak_bytes": 1428955136,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 2,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 38.76812062878162,
+      "floor_bytes": 1421180928,
+      "hwm_bytes": 1432219648,
+      "increment_bytes": 11038720,
+      "lifetime_peak_bytes": 1432219648,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 3,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 40.34802073100582,
+      "floor_bytes": 1418731520,
+      "hwm_bytes": 1429954560,
+      "increment_bytes": 11223040,
+      "lifetime_peak_bytes": 1429954560,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 46.17698744405061,
+      "floor_bytes": 1415397376,
+      "hwm_bytes": 1426665472,
+      "increment_bytes": 11268096,
+      "lifetime_peak_bytes": 1426665472,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 5,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 43.66666782414541,
+      "floor_bytes": 1414230016,
+      "hwm_bytes": 1425375232,
+      "increment_bytes": 11145216,
+      "lifetime_peak_bytes": 1425375232,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 6,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 50.35641994699836,
+      "floor_bytes": 1416777728,
+      "hwm_bytes": 1416777728,
+      "increment_bytes": 0,
+      "lifetime_peak_bytes": 1416777728,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 7,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 48.724475065246224,
+      "floor_bytes": 1422389248,
+      "hwm_bytes": 1432625152,
+      "increment_bytes": 10235904,
+      "lifetime_peak_bytes": 1432625152,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 8,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 50.24474176811054,
+      "floor_bytes": 1421791232,
+      "hwm_bytes": 1435009024,
+      "increment_bytes": 13217792,
+      "lifetime_peak_bytes": 1435009024,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 9,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 45.98996620019898,
+      "floor_bytes": 1417977856,
+      "hwm_bytes": 1429037056,
+      "increment_bytes": 11059200,
+      "lifetime_peak_bytes": 1429037056,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 10,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 47.97464492730796,
+      "floor_bytes": 1423876096,
+      "hwm_bytes": 1434750976,
+      "increment_bytes": 10874880,
+      "lifetime_peak_bytes": 1434750976,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 11,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 56.40964187216014,
+      "floor_bytes": 1423532032,
+      "hwm_bytes": 1430097920,
+      "increment_bytes": 6565888,
+      "lifetime_peak_bytes": 1430097920,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 12,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 53.23556993063539,
+      "floor_bytes": 1418567680,
+      "hwm_bytes": 1418743808,
+      "increment_bytes": 176128,
+      "lifetime_peak_bytes": 1418743808,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 13,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 42.48698233393952,
+      "floor_bytes": 1419259904,
+      "hwm_bytes": 1429897216,
+      "increment_bytes": 10637312,
+      "lifetime_peak_bytes": 1429897216,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 14,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 43.989683093037456,
+      "floor_bytes": 1410506752,
+      "hwm_bytes": 1421729792,
+      "increment_bytes": 11223040,
+      "lifetime_peak_bytes": 1421729792,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 15,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 42.81627479381859,
+      "floor_bytes": 1413992448,
+      "hwm_bytes": 1425203200,
+      "increment_bytes": 11210752,
+      "lifetime_peak_bytes": 1425203200,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 16,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 42.76784345880151,
+      "floor_bytes": 1417519104,
+      "hwm_bytes": 1428619264,
+      "increment_bytes": 11100160,
+      "lifetime_peak_bytes": 1428619264,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 17,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 41.67088147206232,
+      "floor_bytes": 1421168640,
+      "hwm_bytes": 1432297472,
+      "increment_bytes": 11128832,
+      "lifetime_peak_bytes": 1432297472,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 18,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "native",
+      "rows": 10000000,
+      "wall_s": 39.89056450501084,
+      "floor_bytes": 1417310208,
+      "hwm_bytes": 1427492864,
+      "increment_bytes": 10182656,
+      "lifetime_peak_bytes": 1427492864,
+      "arrow_pool_max_bytes": 1184508352,
+      "source_nbytes": 800000000,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": true,
+      "reroute_reason": null,
+      "staged_sha256": "0fc70db0a33b698089c7ac6fb90d93810e0bca3aa2a4b7e29b7a459ba8f0f220",
+      "staged_bytes": 761809755,
+      "round": 19,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     }
+    ]
+   }
+  },
+  "oracle_2000000": {
+   "workload": "oracle",
+   "rows": 2000000,
+   "reference_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+   "source_nbytes": 178666464,
+   "output_nbytes": 226000000,
+   "summary": {
+    "resident": {
+     "wall_s": {
+      "p50": 47.7944092489779,
+      "p95": 64.56508824182674,
+      "max": 67.75265285698697
+     },
+     "increment_bytes": {
+      "p50": 407965696,
+      "p95": 414330880,
+      "max": 414371840
+     },
+     "lifetime_peak_bytes": {
+      "p50": 915800064,
+      "p95": 924631040,
+      "max": 925376512
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 594678336,
+      "p95": 594678336,
+      "max": 594678336
+     }
+    },
+    "streamed": {
+     "wall_s": {
+      "p50": 47.68095251219347,
+      "p95": 66.5172184733674,
+      "max": 66.91235975781456
+     },
+     "increment_bytes": {
+      "p50": 293482496,
+      "p95": 305479680,
+      "max": 308006912
+     },
+     "lifetime_peak_bytes": {
+      "p50": 805859328,
+      "p95": 809562112,
+      "max": 810262528
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 501997248,
+      "p95": 501997248,
+      "max": 501997248
+     }
+    }
+   },
+   "trials": {
+    "resident": [
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.83934863936156,
+      "floor_bytes": 501956608,
+      "hwm_bytes": 913788928,
+      "increment_bytes": 411832320,
+      "lifetime_peak_bytes": 913371136,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 0,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 46.93214827077463,
+      "floor_bytes": 501915648,
+      "hwm_bytes": 913993728,
+      "increment_bytes": 412078080,
+      "lifetime_peak_bytes": 913555456,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 1,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 48.60069911321625,
+      "floor_bytes": 510619648,
+      "hwm_bytes": 924991488,
+      "increment_bytes": 414371840,
+      "lifetime_peak_bytes": 924631040,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 2,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.78331435425207,
+      "floor_bytes": 514695168,
+      "hwm_bytes": 924053504,
+      "increment_bytes": 409358336,
+      "lifetime_peak_bytes": 923512832,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 3,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 44.54609281336889,
+      "floor_bytes": 514588672,
+      "hwm_bytes": 925945856,
+      "increment_bytes": 411357184,
+      "lifetime_peak_bytes": 925376512,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 45.55604763003066,
+      "floor_bytes": 501870592,
+      "hwm_bytes": 916201472,
+      "increment_bytes": 414330880,
+      "lifetime_peak_bytes": 915800064,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 5,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 45.913373237941414,
+      "floor_bytes": 514306048,
+      "hwm_bytes": 922271744,
+      "increment_bytes": 407965696,
+      "lifetime_peak_bytes": 921690112,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 6,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 48.718269469216466,
+      "floor_bytes": 501952512,
+      "hwm_bytes": 916131840,
+      "increment_bytes": 414179328,
+      "lifetime_peak_bytes": 915808256,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 7,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.7944092489779,
+      "floor_bytes": 514441216,
+      "hwm_bytes": 922329088,
+      "increment_bytes": 407887872,
+      "lifetime_peak_bytes": 921870336,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 8,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.749689540825784,
+      "floor_bytes": 508354560,
+      "hwm_bytes": 910426112,
+      "increment_bytes": 402071552,
+      "lifetime_peak_bytes": 910106624,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 9,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 46.96875036880374,
+      "floor_bytes": 501727232,
+      "hwm_bytes": 911122432,
+      "increment_bytes": 409395200,
+      "lifetime_peak_bytes": 910770176,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 10,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 46.918426499702036,
+      "floor_bytes": 514342912,
+      "hwm_bytes": 918896640,
+      "increment_bytes": 404553728,
+      "lifetime_peak_bytes": 918466560,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 11,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.49100498016924,
+      "floor_bytes": 502456320,
+      "hwm_bytes": 913641472,
+      "increment_bytes": 411185152,
+      "lifetime_peak_bytes": 913072128,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 12,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 62.8534029731527,
+      "floor_bytes": 502099968,
+      "hwm_bytes": 907251712,
+      "increment_bytes": 405151744,
+      "lifetime_peak_bytes": 907251712,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 13,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 64.56508824182674,
+      "floor_bytes": 514445312,
+      "hwm_bytes": 918867968,
+      "increment_bytes": 404422656,
+      "lifetime_peak_bytes": 918544384,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 14,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 67.75265285698697,
+      "floor_bytes": 506351616,
+      "hwm_bytes": 906723328,
+      "increment_bytes": 400371712,
+      "lifetime_peak_bytes": 906723328,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 15,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 52.96892409725115,
+      "floor_bytes": 502087680,
+      "hwm_bytes": 915742720,
+      "increment_bytes": 413655040,
+      "lifetime_peak_bytes": 915742720,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 16,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 55.11351004708558,
+      "floor_bytes": 514510848,
+      "hwm_bytes": 917909504,
+      "increment_bytes": 403398656,
+      "lifetime_peak_bytes": 917909504,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 17,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 54.995268314145505,
+      "floor_bytes": 514879488,
+      "hwm_bytes": 912101376,
+      "increment_bytes": 397221888,
+      "lifetime_peak_bytes": 912101376,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 18,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 54.95075963996351,
+      "floor_bytes": 514396160,
+      "hwm_bytes": 917037056,
+      "increment_bytes": 402640896,
+      "lifetime_peak_bytes": 916721664,
+      "arrow_pool_max_bytes": 594678336,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": 226000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 19,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     }
+    ],
+    "streamed": [
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 48.144419251941144,
+      "floor_bytes": 508293120,
+      "hwm_bytes": 800829440,
+      "increment_bytes": 292536320,
+      "lifetime_peak_bytes": 800829440,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 0,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.10852915607393,
+      "floor_bytes": 514572288,
+      "hwm_bytes": 808054784,
+      "increment_bytes": 293482496,
+      "lifetime_peak_bytes": 807587840,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 1,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 48.584634135011584,
+      "floor_bytes": 514723840,
+      "hwm_bytes": 807305216,
+      "increment_bytes": 292581376,
+      "lifetime_peak_bytes": 806825984,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 2,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 44.23364415112883,
+      "floor_bytes": 502153216,
+      "hwm_bytes": 807632896,
+      "increment_bytes": 305479680,
+      "lifetime_peak_bytes": 807391232,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 3,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 44.82696518115699,
+      "floor_bytes": 501915648,
+      "hwm_bytes": 809922560,
+      "increment_bytes": 308006912,
+      "lifetime_peak_bytes": 809562112,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 45.85415138490498,
+      "floor_bytes": 508338176,
+      "hwm_bytes": 804925440,
+      "increment_bytes": 296587264,
+      "lifetime_peak_bytes": 804925440,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 5,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 44.792013629339635,
+      "floor_bytes": 514867200,
+      "hwm_bytes": 808103936,
+      "increment_bytes": 293236736,
+      "lifetime_peak_bytes": 807780352,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 6,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 49.30843022093177,
+      "floor_bytes": 508239872,
+      "hwm_bytes": 806506496,
+      "increment_bytes": 298266624,
+      "lifetime_peak_bytes": 806506496,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 7,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 46.632708587218076,
+      "floor_bytes": 514539520,
+      "hwm_bytes": 804831232,
+      "increment_bytes": 290291712,
+      "lifetime_peak_bytes": 804327424,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 8,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.68095251219347,
+      "floor_bytes": 514551808,
+      "hwm_bytes": 806207488,
+      "increment_bytes": 291655680,
+      "lifetime_peak_bytes": 805859328,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 9,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 46.442435916978866,
+      "floor_bytes": 501788672,
+      "hwm_bytes": 802398208,
+      "increment_bytes": 300609536,
+      "lifetime_peak_bytes": 802254848,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 10,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 47.29084663186222,
+      "floor_bytes": 514428928,
+      "hwm_bytes": 803639296,
+      "increment_bytes": 289210368,
+      "lifetime_peak_bytes": 803639296,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 11,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 46.8650085371919,
+      "floor_bytes": 508194816,
+      "hwm_bytes": 800768000,
+      "increment_bytes": 292573184,
+      "lifetime_peak_bytes": 800464896,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 12,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 66.5172184733674,
+      "floor_bytes": 514494464,
+      "hwm_bytes": 807497728,
+      "increment_bytes": 293003264,
+      "lifetime_peak_bytes": 807088128,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 13,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 66.91235975781456,
+      "floor_bytes": 506273792,
+      "hwm_bytes": 803934208,
+      "increment_bytes": 297660416,
+      "lifetime_peak_bytes": 803557376,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 14,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 52.23156543215737,
+      "floor_bytes": 501706752,
+      "hwm_bytes": 807182336,
+      "increment_bytes": 305475584,
+      "lifetime_peak_bytes": 806871040,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 15,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 54.60564850689843,
+      "floor_bytes": 506175488,
+      "hwm_bytes": 810262528,
+      "increment_bytes": 304087040,
+      "lifetime_peak_bytes": 810262528,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 16,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 51.98985047219321,
+      "floor_bytes": 508620800,
+      "hwm_bytes": 809676800,
+      "increment_bytes": 301056000,
+      "lifetime_peak_bytes": 809324544,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 17,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 51.691052589099854,
+      "floor_bytes": 514600960,
+      "hwm_bytes": 803917824,
+      "increment_bytes": 289316864,
+      "lifetime_peak_bytes": 803917824,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 18,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 2000000,
+      "wall_s": 53.432851057033986,
+      "floor_bytes": 502284288,
+      "hwm_bytes": 805081088,
+      "increment_bytes": 302796800,
+      "lifetime_peak_bytes": 804724736,
+      "arrow_pool_max_bytes": 501997248,
+      "source_nbytes": 178666464,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 2000000,
+       "chunk_count": 40,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 2000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 2,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "92487eeefd2f0b0d848c60db7e47214e456d977d5288f0b016ad7cdb462632ae",
+      "staged_bytes": 152443531,
+      "round": 19,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     }
+    ]
+   }
+  },
+  "oracle_10000000": {
+   "workload": "oracle",
+   "rows": 10000000,
+   "reference_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+   "source_nbytes": 893331020,
+   "output_nbytes": 1130000000,
+   "summary": {
+    "resident": {
+     "wall_s": {
+      "p50": 261.6888038208708,
+      "p95": 267.4266089866869,
+      "max": 267.4266089866869
+     },
+     "increment_bytes": {
+      "p50": 1911373824,
+      "p95": 1920614400,
+      "max": 1920614400
+     },
+     "lifetime_peak_bytes": {
+      "p50": 3445489664,
+      "p95": 3454455808,
+      "max": 3454455808
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 2973389248,
+      "p95": 2973389248,
+      "max": 2973389248
+     }
+    },
+    "streamed": {
+     "wall_s": {
+      "p50": 254.3347793868743,
+      "p95": 347.69215865433216,
+      "max": 347.69215865433216
+     },
+     "increment_bytes": {
+      "p50": 46829568,
+      "p95": 50548736,
+      "max": 50548736
+     },
+     "lifetime_peak_bytes": {
+      "p50": 1579016192,
+      "p95": 1585147904,
+      "max": 1585147904
+     },
+     "arrow_pool_max_bytes": {
+      "p50": 1278040768,
+      "p95": 1278040768,
+      "max": 1278040768
+     }
+    }
+   },
+   "trials": {
+    "resident": [
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 253.2328169606626,
+      "floor_bytes": 1534115840,
+      "hwm_bytes": 3453304832,
+      "increment_bytes": 1919188992,
+      "lifetime_peak_bytes": 3453304832,
+      "arrow_pool_max_bytes": 2973389248,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": 1130000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 0,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 261.6888038208708,
+      "floor_bytes": 1534517248,
+      "hwm_bytes": 3439034368,
+      "increment_bytes": 1904517120,
+      "lifetime_peak_bytes": 3439034368,
+      "arrow_pool_max_bytes": 2973389248,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": 1130000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 1,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 265.094525272958,
+      "floor_bytes": 1534816256,
+      "hwm_bytes": 3430338560,
+      "increment_bytes": 1895522304,
+      "lifetime_peak_bytes": 3430338560,
+      "arrow_pool_max_bytes": 2973389248,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": 1130000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 2,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 251.37650801893324,
+      "floor_bytes": 1534115840,
+      "hwm_bytes": 3445489664,
+      "increment_bytes": 1911373824,
+      "lifetime_peak_bytes": 3445489664,
+      "arrow_pool_max_bytes": 2973389248,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": 1130000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 3,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "resident",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 267.4266089866869,
+      "floor_bytes": 1533841408,
+      "hwm_bytes": 3454455808,
+      "increment_bytes": 1920614400,
+      "lifetime_peak_bytes": 3454455808,
+      "arrow_pool_max_bytes": 2973389248,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": 1130000000,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": false,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "streaming_disabled"
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     }
+    ],
+    "streamed": [
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 256.0688612041995,
+      "floor_bytes": 1531125760,
+      "hwm_bytes": 1577955328,
+      "increment_bytes": 46829568,
+      "lifetime_peak_bytes": 1577955328,
+      "arrow_pool_max_bytes": 1278040768,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 0,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 254.3347793868743,
+      "floor_bytes": 1533865984,
+      "hwm_bytes": 1577181184,
+      "increment_bytes": 43315200,
+      "lifetime_peak_bytes": 1577181184,
+      "arrow_pool_max_bytes": 1278040768,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 1,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 244.10119878593832,
+      "floor_bytes": 1533054976,
+      "hwm_bytes": 1583603712,
+      "increment_bytes": 50548736,
+      "lifetime_peak_bytes": 1583603712,
+      "arrow_pool_max_bytes": 1278040768,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 2,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 243.3026610328816,
+      "floor_bytes": 1534525440,
+      "hwm_bytes": 1579016192,
+      "increment_bytes": 44490752,
+      "lifetime_peak_bytes": 1579016192,
+      "arrow_pool_max_bytes": 1278040768,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 3,
+      "order": [
+       "streamed",
+       "resident"
+      ],
+      "problems": []
+     },
+     {
+      "mode": "streamed",
+      "workload": "oracle",
+      "rows": 10000000,
+      "wall_s": 347.69215865433216,
+      "floor_bytes": 1535340544,
+      "hwm_bytes": 1585147904,
+      "increment_bytes": 49807360,
+      "lifetime_peak_bytes": 1585147904,
+      "arrow_pool_max_bytes": 1278040768,
+      "source_nbytes": 893331020,
+      "output_nbytes_resident": null,
+      "staged_tables": [
+       "t"
+      ],
+      "outputs_streamed": true,
+      "auto_chunk": {
+       "mode": "chunked",
+       "chunk_size_rows": 50000,
+       "threshold_rows": 100000,
+       "source_rows": 10000000,
+       "chunk_count": 200,
+       "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 10000000 rows, at or above the auto-chunk threshold (100000), with chunk-stable dtypes.",
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "streamed",
+        "reason": "eligible",
+        "row_groups": 10,
+        "byte_cut_row_groups": 0,
+        "held_back_chunks": 0,
+        "spilled_chunks": 0
+       }
+      },
+      "native_admitted": false,
+      "reroute_reason": "categorical_not_native_chunked_route:tier",
+      "staged_sha256": "d96e69c864ec5453078f4db6de3c601493e6a114769b1586882368cfba73ae8b",
+      "staged_bytes": 761837312,
+      "round": 4,
+      "order": [
+       "resident",
+       "streamed"
+      ],
+      "problems": []
+     }
+    ]
+   }
+  }
+ },
+ "bars": {
+  "W_native_2000000": {
+   "p50_ratio": 0.9872191010445593,
+   "p95_ratio": 1.0362940448925198,
+   "pass": true
+  },
+  "W_native_10000000": {
+   "p50_ratio": 0.9435816102337342,
+   "p95_ratio": 1.0060443835109703,
+   "pass": true
+  },
+  "M1_native": {
+   "streamed_p95_10M": 11268096,
+   "resident_p50_10M": 1591443456,
+   "ratio": 0.00708042497992464,
+   "pass": true
+  },
+  "M2_native": {
+   "streamed_p95_10M": 11268096,
+   "streamed_p95_2M": 236171264,
+   "limit": 370388992,
+   "pass": true
+  },
+  "W_oracle_2000000": {
+   "p50_ratio": 0.9976261504521713,
+   "p95_ratio": 1.0302350741662274,
+   "p95_directional_ok": true,
+   "p95_sanity_under_2x": true,
+   "pass": true
+  },
+  "W_oracle_10000000": {
+   "p50_ratio": 0.9718978254834684,
+   "p95_ratio": 1.3001404758179507,
+   "p95_directional_ok": false,
+   "p95_sanity_under_2x": true,
+   "pass": true
+  },
+  "M1_oracle": {
+   "streamed_p95_10M": 50548736,
+   "resident_p50_10M": 1911373824,
+   "ratio": 0.026446284533820214,
+   "pass": true
+  },
+  "M2_oracle": {
+   "streamed_p95_10M": 50548736,
+   "streamed_p95_2M": 305479680,
+   "limit": 439697408,
+   "pass": true
+  },
+  "trial_problems": [],
+  "all_pass": true
+ }
+}

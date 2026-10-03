@@ -29,12 +29,15 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _pipeline_auto_chunk
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
+    from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -219,6 +222,8 @@ def _table_entry(
     }
     if lane_block is not None:
         entry.update({k: lane_block[k] for k in ("lane", "lane_reason", "native_threads")})
+        if "output" in lane_block:
+            entry["output"] = lane_block["output"]
     return entry
 
 
@@ -238,6 +243,8 @@ def run_multi_table_split(
     namespace_registry: NamespaceRegistry,
     unconfigured_column_policy: UnconfiguredColumnPolicy,
     generate_output_tables: frozenset[str],
+    sink: TransactionalSink | None = None,
+    output_reason: str | None = None,
 ) -> tuple[
     dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any], tuple[Any, ...]
 ]:
@@ -247,13 +254,27 @@ def run_multi_table_split(
     table is masked by `run_auto_chunk`, looked up through its module so a spy sees every
     call; its output is kept as `run_auto_chunk` returned it, and the chunk list stays
     local to that call. Returns `(outputs, timings, boundary_conversion_ms, warnings,
-    quality_metrics, row_errors)`."""
+    quality_metrics, row_errors)`.
+
+    With a `sink` (B6a; the caller verified every output is dispatched) each dispatched
+    table streams into it and the returned outputs are `{}`; `output_reason` names why a
+    run without a sink stays resident, recorded per dispatched table."""
+    if sink is not None and (
+        split.full_frame or any(name not in split.dispatched for name in resident_sources)
+    ):
+        # B6a: never run the full-frame adapter, or mask a table, while a publish session
+        # may be open; `decide_output_mode` declines these splits, this refuses them too.
+        raise ExecutionError(
+            code="split_sink_needs_all_dispatched",
+            message="a streamed multi-table split needs every output table dispatched.",
+        )
     _LOG.info(
         "multi-table split dispatched=%s full_frame=%s",
         ", ".join(split.dispatched),
         ", ".join(split.full_frame) or "none",
     )
     dispatched_out: dict[str, pa.Table] = {}
+    dispatched_names: list[str] = []
     timings: list[Any] = []
     warnings: list[Any] = []
     conversion_ms = 0.0
@@ -274,17 +295,25 @@ def run_multi_table_split(
                 key_provider=key_provider,
                 native_threads=native_threads,
                 dispatcher_enabled=True,
+                **({} if sink is None else {"sink": sink}),
             )
         )
-        dispatched_out[table] = out[table]
+        dispatched_names.append(table)
+        if sink is None:
+            dispatched_out[table] = out[table]
         timings.extend(unit_timings)
         warnings.extend(unit_warnings)
         conversion_ms += unit_ms
         corpora.extend(unit_metrics.get("code_set_corpora", ()))
         route_by_table[table] = unit_metrics["chunked_route"]
         lane_blocks[table] = unit_metrics["auto_chunk"]
+        if sink is None and output_reason is not None:
+            lane_blocks[table] = {
+                **lane_blocks[table],
+                "output": _output_sink.resident_block(output_reason),
+            }
 
-    group_sources = {k: v for k, v in resident_sources.items() if k not in dispatched_out}
+    group_sources = {k: v for k, v in resident_sources.items() if k not in dispatched_names}
     group_outputs: dict[str, pa.Table] = {}
     group_metrics: dict[str, Any] = {}
     row_errors: tuple[Any, ...] = ()
@@ -307,10 +336,14 @@ def run_multi_table_split(
         corpora.extend(group_metrics.pop("code_set_corpora", ()))
         row_errors = group.row_errors
 
-    outputs = {
-        name: dispatched_out[name] if name in dispatched_out else group_outputs[name]
-        for name in resident_sources
-    }
+    outputs = (
+        {}
+        if sink is not None
+        else {
+            name: dispatched_out[name] if name in dispatched_out else group_outputs[name]
+            for name in resident_sources
+        }
+    )
     quality_metrics = group_metrics
     if corpora:
         quality_metrics["code_set_corpora"] = corpora

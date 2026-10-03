@@ -73,6 +73,9 @@ GUARDED_MODULES: tuple[str, ...] = (
     # B7 (independent multi-table dispatch): another routing executor, it calls
     # `run_auto_chunk` per table and must not import `execution.physical` either.
     "execution/_pipeline_multi_table.py",
+    # B6a (incremental output sink): the streamed lane's row-group assembly and publish
+    # session sit between the dispatcher lane and the caller's sink; no physical import.
+    "execution/_chunked_output_sink.py",
     "execution/_pipeline_sources.py",
     "execution/_pipeline_finalize.py",
     "execution/_planner.py",
@@ -391,6 +394,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
         # auto-chunk routing was single-table only (a docstring-only edit).
         "src/decoy_engine/execution/_pipeline_chunk_route.py",
+        # B6a (incremental output sink): `_chunked_output_sink.py` streams a routed table's
+        # chunks into the caller's `TransactionalSink` and owns the commit/abort session;
+        # `_pipeline.py`, `_pipeline_generate_mask.py`, `_pipeline_auto_chunk.py`,
+        # `_pipeline_multi_table.py` and `_pipeline_route_exec.py` thread the sink and the
+        # `stream_chunked_output` knob; `_isolated_worker.py` and `_unified_slice_admission.py`
+        # gain docstring/comment edits only. None imports `execution.physical`.
+        "src/decoy_engine/execution/_chunked_output_sink.py",
+        "src/decoy_engine/execution/_isolated_worker.py",
     }
     unexpected = [
         name

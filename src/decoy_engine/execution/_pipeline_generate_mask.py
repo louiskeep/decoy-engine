@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_finalize
+from decoy_engine.execution import _chunked_output_sink as _output_sink
+from decoy_engine.execution import _pipeline_auto_chunk, _pipeline_finalize
 from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 
@@ -93,6 +94,7 @@ def run_generate_and_mask_steps(
     execution_plan_decision: ExecutionPlan | None,
     fidelity_report: bool,
     now_iso: str | None,
+    publish: _output_sink.OutputPublish,
 ) -> GenerateMaskStepResult:
     """Run generate-kind tables then mask-kind tables (`_pipeline.py`
     Steps 1-2), returning everything the stitch + finalize stages need.
@@ -153,6 +155,21 @@ def run_generate_and_mask_steps(
                 vault_writer_present=vault_writer is not None,
             )
         )
+        # B6a: decided once, before the first chunk; a streaming run opens the publish session.
+        out_mode, out_reason = ("resident", "")
+        if split is not None or route_chunked:
+            out_mode, out_reason = _output_sink.decide_output_mode(
+                stream_chunked_output=publish.stream,
+                sink=publish.sink,
+                dispatcher_enabled=chunked_dispatcher_enabled,
+                config=config,
+                fidelity_report=fidelity_report,
+                post_validation=publish.post_validation,
+                split=split,
+                resident_names=tuple(merged_sources),
+            )
+            if out_mode == "streamed":
+                publish.open()
         if split is not None:
             (
                 mask_outputs,
@@ -176,14 +193,23 @@ def run_generate_and_mask_steps(
                 namespace_registry=namespace_registry,
                 unconfigured_column_policy=unconfigured_column_policy,
                 generate_output_tables=generate_output_tables,
+                sink=publish.active_sink,
+                output_reason=out_reason if out_mode == "resident" else None,
             )
         elif route_chunked:
             # The eligible shape is exactly one mask table with no generate
             # tables, so merged_sources holds only that table's frame; the
             # planner's runtime gates already rejected anything else.
             mask_table_name = next(name for name, kind in table_kinds.items() if kind == "mask")
+            # A streaming run calls the lane directly with the sink; the resident delegate
+            # `_route_exec.run_mask_chunked` stays as it was.
+            lane = (
+                _pipeline_auto_chunk.run_auto_chunk
+                if out_mode == "streamed"
+                else _route_exec.run_mask_chunked
+            )
             mask_outputs, mask_timings, mask_conversion_ms, mask_warnings, mask_quality_metrics = (
-                _route_exec.run_mask_chunked(
+                lane(
                     config,
                     merged_sources[mask_table_name],
                     table=mask_table_name,
@@ -195,8 +221,13 @@ def run_generate_and_mask_steps(
                     key_provider=key_provider,
                     native_threads=native_threads,
                     dispatcher_enabled=chunked_dispatcher_enabled,
+                    **({"sink": publish.active_sink} if out_mode == "streamed" else {}),
                 )
             )
+            if out_mode == "resident":
+                mask_quality_metrics.setdefault("auto_chunk", {})["output"] = (
+                    _output_sink.resident_block(out_reason)
+                )
         else:
             mask_result = adapter.run(
                 plan,

@@ -1,0 +1,44 @@
+[
+ {
+  "mutant": "row cut > instead of >=",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 174 passed, 1 deselected in 7.35s"
+ },
+ {
+  "mutant": "byte cut > instead of >=",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 175 passed, 1 deselected in 6.57s"
+ },
+ {
+  "mutant": "fixed columns ignored",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 176 passed, 1 deselected in 6.90s"
+ },
+ {
+  "mutant": "name mismatch check dropped",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 178 passed, 1 deselected in 6.67s"
+ },
+ {
+  "mutant": "abort even without error",
+  "killed": false,
+  "imported_mutated_tree": true,
+  "tail": "238 passed, 1 deselected in 10.58s"
+ },
+ {
+  "mutant": "split group computed from dispatched_out",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 212 passed, 1 deselected in 7.13s"
+ },
+ {
+  "mutant": "streamed: fixed columns empty",
+  "killed": true,
+  "imported_mutated_tree": true,
+  "tail": "1 failed, 176 passed, 1 deselected in 6.48s"
+ }
+]
