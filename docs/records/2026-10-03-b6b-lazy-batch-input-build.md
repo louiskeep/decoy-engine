@@ -3,6 +3,10 @@
 Status: record
 Date: 2026-10-03. Branch `feat/b6b-lazy-input`. Plan: `docs/plans/2026-10-02-b6b-lazy-batch-input.md` (revision 2.1). Builder: Sonnet. Nothing is pushed or merged. The build and benchmark are complete. All hand mutants are killed: 14 by the acceptance suite, and the 5 that initially survived are now closed by direct unit tests in `test_b6b_unit.py` (see "Mutation").
 
+## Gates
+
+Both GO. dennis (in-house adversarial, fresh context): GO, 0 blocker/high/medium, 3 non-blocking LOW (NEEDS_COMPANION scoping, a cosmetic message-string diff, a `cast("Any")` type-smell). Codex (cross-model final): initially NO-GO on one BLOCKER (the mem-cap sibling was red on the companion-absent substrate), remediated (the 4M/1536 recalibration above), then GO with 0 findings at every severity. Merge is pending only the GitHub Actions billing block (the merge needs a green engine CI run). Nothing is pushed or merged.
+
 ## Commits
 
 Newest first.
