@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.8.0rc1]
+
+Release candidate for the platform B3 pickup: engine main `02dc2827` (B1, B2, B7, B8) with the version label changed and nothing else. B6a is not included.
+
 ### Changed (independent multi-table jobs dispatch qualifying tables per table, 2026-10-02)
 
 A `run_pipeline` job with several mask tables used to run as one full-frame pandas call
