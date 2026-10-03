@@ -1,7 +1,7 @@
 # B6b LazySource batch input: build record
 
 Status: record
-Date: 2026-10-03. Branch `feat/b6b-lazy-input`. Plan: `docs/plans/2026-10-02-b6b-lazy-batch-input.md` (revision 2.1). Builder: Sonnet. Nothing is pushed or merged. The build and benchmark are complete; five hand mutants survived (see "Mutation"), which is a test coverage gap for the owner to decide on.
+Date: 2026-10-03. Branch `feat/b6b-lazy-input`. Plan: `docs/plans/2026-10-02-b6b-lazy-batch-input.md` (revision 2.1). Builder: Sonnet. Nothing is pushed or merged. The build and benchmark are complete. All hand mutants are killed: 14 by the acceptance suite, and the 5 that initially survived are now closed by direct unit tests in `test_b6b_unit.py` (see "Mutation").
 
 ## Commits
 
@@ -60,15 +60,15 @@ mutmut cannot grade these execution modules (see `[tool.mutmut]` in `pyproject.t
 | `rechunk` | `rows >= chunk_size_rows` to `>` | killed by `test_b6b_input.py::test_rechunk_cuts_exact_chunks_and_retains_fewer_than_two_chunks` |
 | `capture_source_facts` | `kind == "mask"` to `!=` | killed by `test_b6b_input.py::test_the_lane_reads_with_the_frozen_reader_options` |
 | `source_facts` | table `num_rows + 1` | killed by `test_b6b_routing.py::test_a_lazy_source_is_judged_against_the_threshold_like_a_table` |
-| `lazy_stream_candidates` | `num_rows > 0` to `>= 0` | NOT KILLED (1113 passed) |
+| `lazy_stream_candidates` | `num_rows > 0` to `>= 0` | killed by `test_b6b_unit.py::test_a_zero_row_lazy_table_is_not_a_stream_candidate` (gap closed) |
 | `input_modes` | `out_mode == "streamed"` inverted | killed by `test_b6b_input.py::test_the_lane_reads_with_the_frozen_reader_options` |
-| `facts_match` | `row_groups` comparison dropped | NOT KILLED (1113 passed) |
-| owner close (`InputChunks.close`) | `self._owner.close()` replaced by `pass` | NOT KILLED (1113 passed) |
+| `facts_match` | `row_groups` comparison dropped | killed by `test_b6b_unit.py::test_facts_match_is_sensitive_to_row_group_layout` (gap closed) |
+| owner close (`InputChunks.close`) | `self._owner.close()` replaced by `pass` | killed by `test_b6b_unit.py::test_input_chunks_close_releases_the_owner_without_iterating` (gap closed) |
 | `OpenedLazyBatches.close` | idempotence guard removed | killed by `test_b6b_input.py::test_open_batches_returns_an_owner_with_footer_facts_and_an_idempotent_close` |
 | `fold_timings` | elapsed sum replaced by assignment | killed by `test_b6b_sink.py::test_the_accumulator_equals_b2s_list_aggregators[native]` |
-| `fold_timings` | memory `max` replaced by last value | NOT KILLED (1133 passed) |
+| `fold_timings` | memory `max` replaced by last value | killed by `test_b6b_unit.py::test_fold_timings_keeps_the_peak_memory_max_not_the_last` (gap closed) |
 | `fold_warnings` | de-duplication removed | killed by `test_b6b_sink.py::test_the_accumulator_dedups_equal_warnings_and_keeps_first_emission_order` |
-| `fold_corpora` | first-wins `setdefault` replaced by last-wins | NOT KILLED (1133 passed) |
+| `fold_corpora` | first-wins `setdefault` replaced by last-wins | killed by `test_b6b_unit.py::test_fold_corpora_is_first_wins_per_table_column` (gap closed) |
 | `fold_route_evidence` | `calls +=` replaced by `=` | killed by `test_b6b_sink.py::test_the_accumulator_equals_b2s_list_aggregators[native]` |
 | `OutputEvidenceAccumulator.append` | conversion ms `+=` replaced by `=` | killed by `test_b6b_sink.py::test_the_accumulator_equals_b2s_list_aggregators[oracle]` |
 | spill directory resolution | missing `spill_parent` check disabled | killed by `test_b6b_sink.py::test_a_sink_without_a_spill_parent_fails_clearly_when_the_hold_back_must_spill` |
@@ -77,7 +77,7 @@ mutmut cannot grade these execution modules (see `[tool.mutmut]` in `pyproject.t
 | planner null-count branch | bucketize-with-nulls threshold `> 0` to `> 1` | killed by `test_auto_chunk_routing.py::TestChunkStateGates::test_bucketize_null_in_one_chunk_stays_full_frame` |
 | planner null-count gap | lazy-source gap rejection disabled | killed by `test_b6b_routing.py::test_an_integer_column_without_footer_statistics_declines_and_runs_full_frame` |
 
-19 mutants, 14 killed, 5 not killed. Surviving mutants are coverage gaps, not known product defects:
+19 mutants, all killed. 14 were caught by the acceptance suite. The other 5 initially survived as coverage gaps (the code was correct, the branch was untested) and are now each closed by a direct unit test added in `test_b6b_unit.py` after the substitute run. What each gap was:
 
 - Owner close: `_guarded` closes the handle on exhaustion, error or generator close, so only a close of `InputChunks` before the stream is first iterated (the primed generator is suspended, the chain generator never started) depends on `self._owner.close()`. No test closes an `InputChunks` before iterating it.
 - `facts_match` `row_groups`: no test changes the row-group count between routing and open while keeping the same maximum row-group size and row count.
@@ -87,7 +87,7 @@ mutmut cannot grade these execution modules (see `[tool.mutmut]` in `pyproject.t
 
 ## Benchmark
 
-Run ID B6B-BENCH-2026-10-03. Harness: `scripts/bench-auto-chunk/bench_lazy.py` and `bench_worker_lazy.py`. Raw trials: `docs/records/b6b-bench-2026-10-03/results.jsonl`; summary: `docs/records/b6b-bench-2026-10-03/summary-final.json` (all_pass true, problems empty). The routing probe was pinned off in both configurations (`03890055`), so the wall comparison is fair; no trial probed. An earlier run in which the baseline probed is kept as `results.jsonl.probe-tainted.bak` and is not used.
+Run ID B6B-BENCH-2026-10-03. Harness: `scripts/bench-auto-chunk/bench_lazy.py` and `bench_worker_lazy.py`. Raw trials: `docs/records/b6b-bench-2026-10-03/results.jsonl`; summary: `docs/records/b6b-bench-2026-10-03/summary-final.json` (all_pass true, problems empty). The routing probe was pinned off in both configurations (`03890055`), so the wall comparison is fair; no trial probed. An earlier run in which the baseline probed was discarded before this run; those probe-tainted trials are not used.
 
 Baseline is the resident path on main; candidate is the lazy lane. Increment is peak RSS above the pre-run level. Sizes are MiB.
 
