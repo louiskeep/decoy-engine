@@ -67,7 +67,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from decoy_engine.execution._pipeline_sources import lazy_source_rejection
+from decoy_engine.execution import _chunked_input as _ci
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -180,6 +180,7 @@ def classify_job(
     substrate: str,
     source_tables: Mapping[str, pa.Table | LazySource] | None = None,
     auto_chunk_threshold_rows: int = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
+    source_facts: Mapping[str, _ci.SourceFacts] | None = None,
 ) -> ExecutionPlan:
     """Classify a job into exactly one execution mode, without executing.
 
@@ -200,7 +201,8 @@ def classify_job(
     Pure and deterministic: every admissibility check is a static read
     of the compiled plan / config (the chunked gate reuses
     `check_chunked_compatibility`); `source_tables`
-    contributes only Arrow metadata (row/null counts, schema types).
+    contributes only Arrow metadata (row/null counts, schema types); a `LazySource`
+    contributes its footer facts (the `source_facts` snapshot, else one footer read).
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._runner import build_work_list, order_work
@@ -217,6 +219,7 @@ def classify_job(
     has_fk = bool(relationship_graph.edges)
 
     rejections: dict[str, str] = {}
+    facts = dict(source_facts or {})
 
     chunked_rejection = _chunked_rejection(
         config,
@@ -228,6 +231,7 @@ def classify_job(
         source_tables=source_tables,
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
         registry=registry,
+        source_facts=facts,
     )
     if chunked_rejection is None:
         reason = (
@@ -236,7 +240,8 @@ def classify_job(
             "tables, on the pandas substrate."
         )
         if source_tables is not None:
-            rows = source_tables[mask_tables[0]].num_rows
+            only = source_tables[mask_tables[0]]
+            rows = facts[mask_tables[0]].num_rows if isinstance(only, LazySource) else only.num_rows
             reason += (
                 f" source holds {rows} rows, at or above the auto-chunk "
                 f"threshold ({auto_chunk_threshold_rows}), with chunk-stable dtypes."
@@ -271,6 +276,7 @@ def _chunked_rejection(
     source_tables: Mapping[str, pa.Table | LazySource] | None,
     auto_chunk_threshold_rows: int,
     registry: ProviderRegistry,
+    source_facts: dict[str, _ci.SourceFacts],
 ) -> str | None:
     """None when the job is admissible for chunked streaming; else why not.
 
@@ -354,6 +360,7 @@ def _chunked_rejection(
                     auto_chunk_threshold_rows=auto_chunk_threshold_rows,
                     bucketize_columns=_bucketize_columns(config, table=table),
                     ordered_work=ordered_work,
+                    source_facts=source_facts,
                 )
             )
     return "; ".join(reasons) if reasons else None
@@ -444,13 +451,13 @@ def _runtime_source_rejections(
     auto_chunk_threshold_rows: int,
     bucketize_columns: list[str] | None = None,
     ordered_work: list[Any] | None = None,
+    source_facts: dict[str, _ci.SourceFacts] | None = None,
 ) -> list[str]:
     """Runtime (loaded-source) gates: presence, size threshold, dtypes,
     and the bucketize source shape.
 
-    All metadata reads: `num_rows` and `null_count` come from Arrow array
-    metadata and the schema walk touches no values, so this is O(columns),
-    not O(rows).
+    All metadata reads (Arrow array metadata, or a lazy source's Parquet footer facts),
+    so this is O(columns), not O(rows).
     """
     import pyarrow.types as pat
 
@@ -468,29 +475,25 @@ def _runtime_source_rejections(
     if src is None:
         reasons.append(f"no loaded source frame for table {table!r}")
         return reasons
-    # TB-1 defensive guard, unreachable in production today (see
-    # `_pipeline_sources.lazy_source_rejection`'s docstring): only
-    # relationship jobs carry a LazySource, and those are already rejected
-    # upstream (line 367) before reaching this per-table check. The
-    # `isinstance` check (rather than calling the helper unconditionally)
-    # is what lets the type checker narrow `src` to `pa.Table` below.
-    if isinstance(src, LazySource):
-        reasons.append(lazy_source_rejection(src, table=table) or "")
-        return reasons
-    if src.num_rows < auto_chunk_threshold_rows:
+    facts = _ci.facts_for(source_facts, src, table)
+    schema = facts.schema
+    if facts.num_rows < auto_chunk_threshold_rows:
         reasons.append(
-            f"source holds {src.num_rows} rows, below the auto-chunk "
+            f"source holds {facts.num_rows} rows, below the auto-chunk "
             f"threshold ({auto_chunk_threshold_rows}); full-frame is cheaper "
             "than streaming at this size"
         )
+    gap = _ci.null_count_gap_reason(facts, bucketize_columns or [], table)
+    if gap:
+        reasons.append(gap)
     unstable: list[str] = []
-    for schema_field in src.schema:
+    for schema_field in schema:
         t = schema_field.type
         if pat.is_integer(t):
             # pandas widens int+null to float PER FRAME, so a null-free
             # chunk keeps int64 while a null-bearing one becomes float64;
             # only a null-free integer column round-trips chunk-stably.
-            if src.column(schema_field.name).null_count > 0:
+            if (facts.null_count(schema_field.name) or 0) > 0:
                 unstable.append(f"{schema_field.name} (integer with nulls)")
         elif not (
             pat.is_string(t)
@@ -513,12 +516,12 @@ def _runtime_source_rejections(
     # frame) format to the same all-string column.
     bad_bucketize: list[str] = []
     for name in bucketize_columns or []:
-        if name not in src.schema.names:
+        if name not in schema.names:
             continue  # unknown columns are the compile stage's problem
-        t = src.schema.field(name).type
+        t = schema.field(name).type
         if not (pat.is_integer(t) or pat.is_floating(t)):
             bad_bucketize.append(f"{name} ({t} is not numeric)")
-        elif src.column(name).null_count > 0:
+        elif (facts.null_count(name) or 0) > 0:
             bad_bucketize.append(f"{name} (numeric with nulls)")
     if bad_bucketize:
         reasons.append(
@@ -533,9 +536,7 @@ def _runtime_source_rejections(
     # manual entry's raising gate uses, so the two routes cannot disagree.
     from decoy_engine.execution._chunked_group_key import unsafe_group_key_group_by_columns
 
-    offending_group_key = unsafe_group_key_group_by_columns(
-        ordered_work or [], src.schema, table=table
-    )
+    offending_group_key = unsafe_group_key_group_by_columns(ordered_work or [], schema, table=table)
     if offending_group_key:
         reasons.append(
             "chunked_group_key_group_by_dtype_unsupported: group_key column(s) "
@@ -547,9 +548,7 @@ def _runtime_source_rejections(
     # the manual entry's raising gate uses.
     from decoy_engine.execution._chunked_text_mask import unsafe_text_mask_source_columns
 
-    offending_text_mask = unsafe_text_mask_source_columns(
-        ordered_work or [], src.schema, table=table
-    )
+    offending_text_mask = unsafe_text_mask_source_columns(ordered_work or [], schema, table=table)
     if offending_text_mask:
         reasons.append(
             "chunked_text_mask_source_dtype_unsupported: text_mask column(s) "
@@ -560,7 +559,7 @@ def _runtime_source_rejections(
     # str()-conversion hazard). Same collector the manual entry's raising gate uses.
     from decoy_engine.execution._chunked_code_set import unsafe_code_set_source_columns
 
-    offending_code_set = unsafe_code_set_source_columns(ordered_work or [], src.schema, table=table)
+    offending_code_set = unsafe_code_set_source_columns(ordered_work or [], schema, table=table)
     if offending_code_set:
         reasons.append(
             "chunked_code_set_source_dtype_unsupported: code_set column(s) "
@@ -573,7 +572,7 @@ def _runtime_source_rejections(
     from decoy_engine.execution._chunked_bucket_perturb import unsafe_bucket_perturb_source_columns
 
     offending_bucket_perturb = unsafe_bucket_perturb_source_columns(
-        ordered_work or [], src.schema, table=table
+        ordered_work or [], schema, table=table
     )
     if offending_bucket_perturb:
         reasons.append(

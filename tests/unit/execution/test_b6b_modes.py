@@ -49,6 +49,7 @@ def test_a_routed_lazy_table_with_a_resident_output_is_materialized_once_before_
     from decoy_engine.execution import _pipeline_finalize
 
     cfg, kwargs, sink = _resident_case(reason, tmp_path)
+    kwargs["now_iso"] = "2026-01-01T00:00:00+00:00"
     handed = {b6b.TABLE: _lazy_of_cfg(cfg)}
     twin_sink = b6b.b6a.RecordingSink() if isinstance(sink, b6b.b6a.RecordingSink) else sink
     want = b6b.run(cfg, b6b.twin_sources(handed), twin_sink, **kwargs)

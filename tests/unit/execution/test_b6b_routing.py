@@ -341,8 +341,8 @@ def _instrument(
     real_open = mod.open_input
 
     def capture(*args: Any, **kwargs: Any) -> Any:
-        events.append(("capture", None))
         out = real_capture(*args, **kwargs)
+        events.append(("capture", None))
         seen["captured"].append(out)
         return out
 
@@ -368,9 +368,10 @@ def _instrument(
 
 
 def _between(events: list[tuple[str, Any]], start: str, end: str) -> list[str]:
+    """Metadata events after the first `start` and before the first `end` that follows it."""
     names = [e[0] for e in events]
     first = names.index(start)
-    last = len(names) - 1 - names[::-1].index(end) if end in names else len(names)
+    last = names.index(end, first) if end in names[first:] else len(names)
     return [n for n in names[first + 1 : last] if n in _METADATA]
 
 

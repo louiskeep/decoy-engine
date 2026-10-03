@@ -98,6 +98,98 @@ class ProfileSource(Protocol):
 
 
 @dataclass(frozen=True)
+class FooterFacts:
+    """Everything routing needs about one Parquet file, read from one open handle's footer.
+
+    `null_counts` is `(column, count)` per flat top-level column in schema order; a count is
+    `None` when a row group has no null-count statistic, which is not "no nulls"."""
+
+    num_rows: int
+    schema: pa.Schema
+    null_counts: tuple[tuple[str, int | None], ...]
+    row_groups: int
+    max_row_group_rows: int
+
+
+def _footer_null_counts(metadata: pq.FileMetaData) -> dict[str, int | None]:
+    """Exact null count per flat top-level column from footer statistics, `None` when any
+    non-empty row group lacks one. Nested columns have no single leaf and are omitted."""
+    leaf_index = {metadata.schema.column(j).path: j for j in range(metadata.num_columns)}
+    counts: dict[str, int | None] = {}
+    for name in metadata.schema.to_arrow_schema().names:
+        leaf = leaf_index.get(name)
+        if leaf is None:
+            continue
+        total = 0
+        complete = True
+        for group in range(metadata.num_row_groups):
+            if metadata.row_group(group).num_rows == 0:
+                continue
+            stats = metadata.row_group(group).column(leaf).statistics
+            if stats is None or not stats.has_null_count:
+                complete = False
+                break
+            total += stats.null_count
+        counts[name] = total if complete else None
+    return counts
+
+
+def footer_facts_of(parquet_file: pq.ParquetFile) -> FooterFacts:
+    """The routing facts of an open file, from its own footer (no second open, no data read)."""
+    metadata = parquet_file.metadata
+    groups = [metadata.row_group(i).num_rows for i in range(metadata.num_row_groups)]
+    return FooterFacts(
+        num_rows=metadata.num_rows,
+        schema=parquet_file.schema_arrow,
+        null_counts=tuple(_footer_null_counts(metadata).items()),
+        row_groups=len(groups),
+        max_row_group_rows=max(groups, default=0),
+    )
+
+
+class OpenedLazyBatches:
+    """One open Parquet handle: its footer facts, a batch iterator and the owner of the close.
+
+    `schema`, the facts and `batches` all come from the same handle, so what a caller
+    validates is what it reads. `close()` is idempotent and safe to call from a `finally`
+    on any exit, including one before the first batch."""
+
+    def __init__(self, parquet_file: pq.ParquetFile, batch_rows: int, use_threads: bool) -> None:
+        self._parquet_file = parquet_file
+        self._closed = False
+        self.facts = footer_facts_of(parquet_file)
+        self.batches = self._read(batch_rows, use_threads)
+
+    @property
+    def schema(self) -> pa.Schema:
+        return self.facts.schema
+
+    @property
+    def num_rows(self) -> int:
+        return self.facts.num_rows
+
+    @property
+    def row_groups(self) -> int:
+        return self.facts.row_groups
+
+    @property
+    def max_row_group_rows(self) -> int:
+        return self.facts.max_row_group_rows
+
+    def _read(self, batch_rows: int, use_threads: bool) -> Iterator[pa.RecordBatch]:
+        # Wrap pyarrow's own iterator in a Python generator, as `iter_batches` does.
+        # Returning the C-level iterator raw makes a downstream `yield from` raise
+        # `RuntimeError: generator raised StopIteration` on Python 3.10 for an empty file:
+        # the iterator's StopIteration escapes the consuming generator frame (PEP 479).
+        yield from self._parquet_file.iter_batches(batch_size=batch_rows, use_threads=use_threads)
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._parquet_file.close()
+
+
+@dataclass(frozen=True)
 class LazySource:
     """A batch-readable handle onto one on-disk Parquet file.
 
@@ -116,25 +208,45 @@ class LazySource:
         parquet_file = pq.ParquetFile(self.path)
         yield from parquet_file.iter_batches(batch_size=batch_rows)
 
-    def open_batches(self, batch_rows: int) -> tuple[pa.Schema, Iterator[pa.RecordBatch]]:
-        """Footer schema and a batch iterator from ONE open handle, so the
-        schema a caller validates is the schema its batches are read under.
-        `schema` then `iter_batches` reopens the file twice and leaves a gap in
-        which it can change; a caller that must trust the two agree needs this.
-        The schema is real even for a zero-row file, whose iterator yields none.
-        """
+    def open_batches(
+        self,
+        batch_rows: int,
+        *,
+        pre_buffer: bool | None = None,
+        buffer_size: int = 0,
+        use_threads: bool = True,
+    ) -> OpenedLazyBatches:
+        """Open the file once and return its footer facts, a batch iterator and the owner
+        of the close, so the schema a caller validates is the schema its batches are read
+        under. `schema` then `iter_batches` reopens the file twice and leaves a gap in
+        which it can change; a caller that must trust the two agree needs this. The schema
+        is real even for a zero-row file, whose iterator yields none.
+
+        `pre_buffer=None` omits the argument, so each installed PyArrow keeps its own
+        default (`False` on 24.0.0, `True` on 25.0.1); pass it to pin the behavior.
+        `buffer_size` and `use_threads` default to pyarrow's own defaults."""
+        options: dict[str, Any] = {}
+        if pre_buffer is not None:
+            options["pre_buffer"] = pre_buffer
+        if buffer_size:
+            options["buffer_size"] = buffer_size
+        parquet_file = pq.ParquetFile(self.path, **options)
+        try:
+            return OpenedLazyBatches(parquet_file, batch_rows, use_threads)
+        except BaseException:
+            parquet_file.close()
+            raise
+
+    def footer_facts(self) -> FooterFacts:
+        """Schema, row count, footer null counts and row-group layout from ONE open handle.
+
+        The `schema`, `num_rows` and `column_null_counts` accessors each reopen the file; a
+        caller that needs the facts to agree with one another reads them here."""
         parquet_file = pq.ParquetFile(self.path)
-
-        def _batches() -> Iterator[pa.RecordBatch]:
-            # Wrap pyarrow's own iterator in a Python generator, as iter_batches
-            # does. Returning the C-level iterator raw makes a downstream
-            # `yield from` raise `RuntimeError: generator raised StopIteration`
-            # on Python 3.10 for an empty file: the iterator's StopIteration
-            # escapes the consuming generator frame (PEP 479). The wrapper
-            # absorbs it; the schema still comes from this same open handle.
-            yield from parquet_file.iter_batches(batch_size=batch_rows)
-
-        return parquet_file.schema_arrow, _batches()
+        try:
+            return footer_facts_of(parquet_file)
+        finally:
+            parquet_file.close()
 
     @property
     def schema(self) -> pa.Schema:
@@ -153,25 +265,7 @@ class LazySource:
         written off), so the caller must not read it as "no nulls". A file with no
         rows (no row groups, or only empty ones) has none. Nested columns have no single leaf and are omitted.
         """
-        metadata = pq.read_metadata(self.path)
-        leaf_index = {metadata.schema.column(j).path: j for j in range(metadata.num_columns)}
-        counts: dict[str, int | None] = {}
-        for name in metadata.schema.to_arrow_schema().names:
-            leaf = leaf_index.get(name)
-            if leaf is None:
-                continue
-            total = 0
-            complete = True
-            for group in range(metadata.num_row_groups):
-                if metadata.row_group(group).num_rows == 0:
-                    continue
-                stats = metadata.row_group(group).column(leaf).statistics
-                if stats is None or not stats.has_null_count:
-                    complete = False
-                    break
-                total += stats.null_count
-            counts[name] = total if complete else None
-        return counts
+        return _footer_null_counts(pq.read_metadata(self.path))
 
     def to_table(self) -> pa.Table:
         """Read the whole file into memory. Fallback for small jobs only."""
@@ -380,11 +474,14 @@ __all__ = [
     "BOUNDED_FALLBACK_ROWS",
     "CsvFileSource",
     "FixedWidthFileSource",
+    "FooterFacts",
     "LazySource",
+    "OpenedLazyBatches",
     "ParquetFileSource",
     "ProfileSource",
     "RowCount",
     "build_profile_source",
     "estimate_csv_rows",
+    "footer_facts_of",
     "head_frame_from_batches",
 ]

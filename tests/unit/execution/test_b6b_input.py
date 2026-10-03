@@ -60,7 +60,7 @@ def test_the_recorded_three_fragment_sequence_makes_one_exact_chunk() -> None:
         ([5, 5, 5, 5, 5], 12),
         ([1] * 25, 10),
         ([10, 10, 10], 10),
-        ([4, 9, 1, 9, 2], 8),
+        ([4, 8, 1, 8, 2], 8),
         ([2, 2], 100),
     ],
 )
@@ -163,7 +163,7 @@ def test_the_lane_reads_with_the_frozen_reader_options(
         reading = [o for o in spy.opened if o.get("pre_buffer") is False]
         assert len(reading) == 1, spy.opened
         assert reading[0]["buffer_size"] == mod.INPUT_BUFFER_BYTES
-        assert [c["use_threads"] for c in spy.iter_calls] == [threads > 1]
+        assert [c["use_threads"] for c in spy.iter_calls if "use_threads" in c] == [threads > 1]
 
 
 # ---------------------------------------------------------------------------

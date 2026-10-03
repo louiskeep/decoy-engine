@@ -29,13 +29,14 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution import _chunked_input, _pipeline_auto_chunk
 from decoy_engine.execution import _chunked_output_sink as _output_sink
-from decoy_engine.execution import _pipeline_auto_chunk
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
+    from decoy_engine.execution._chunked_input import SourceFacts
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
@@ -136,10 +137,12 @@ def decide_multi_table_split(
     dispatcher_enabled: bool,
     split_enabled: bool,
     vault_writer_present: bool,
+    source_facts: Mapping[str, SourceFacts] | None = None,
 ) -> MultiTableSplit | None:
     """The per-table split of a multi-table job, or `None` when the job stays whole.
 
-    Read-only: it reads config, the plan, source schemas and Arrow row and null counts.
+    Read-only: it reads config, the plan, source schemas and Arrow row and null counts (a
+    `LazySource`'s from the routing snapshot `source_facts`, never a second footer read).
     A table dispatches exactly when the planner would route it chunked as a single-table
     job with its own source, so each table is classified by the planner itself on the job
     restricted to that table. Passing only that table's source keeps sibling frames out of
@@ -171,6 +174,7 @@ def decide_multi_table_split(
             substrate=substrate,
             source_tables={table: caller_sources[table]} if table in caller_sources else {},
             auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+            source_facts=source_facts,
         )
         if decision.mode == "chunked":
             dispatched.append(table)
@@ -207,7 +211,7 @@ def split_reproducibility_stamp(
 def _table_entry(
     split: MultiTableSplit,
     table: str,
-    resident_sources: Mapping[str, pa.Table],
+    resident_sources: Mapping[str, Any],
     chunk_size_rows: int,
     lane_block: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -222,8 +226,9 @@ def _table_entry(
     }
     if lane_block is not None:
         entry.update({k: lane_block[k] for k in ("lane", "lane_reason", "native_threads")})
-        if "output" in lane_block:
-            entry["output"] = lane_block["output"]
+        for key in ("output", "input"):
+            if key in lane_block:
+                entry[key] = lane_block[key]
     return entry
 
 
@@ -231,7 +236,7 @@ def run_multi_table_split(
     split: MultiTableSplit,
     config: dict[str, Any],
     *,
-    resident_sources: Mapping[str, pa.Table],
+    resident_sources: Mapping[str, Any],
     engine_version: str,
     registry: ProviderRegistry,
     adapter: ExecutionAdapter,
@@ -245,6 +250,8 @@ def run_multi_table_split(
     generate_output_tables: frozenset[str],
     sink: TransactionalSink | None = None,
     output_reason: str | None = None,
+    input_facts: Mapping[str, SourceFacts] | None = None,
+    input_reasons: Mapping[str, str] | None = None,
 ) -> tuple[
     dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any], tuple[Any, ...]
 ]:
@@ -258,7 +265,9 @@ def run_multi_table_split(
 
     With a `sink` (B6a; the caller verified every output is dispatched) each dispatched
     table streams into it and the returned outputs are `{}`; `output_reason` names why a
-    run without a sink stays resident, recorded per dispatched table."""
+    run without a sink stays resident, recorded per dispatched table. A dispatched `LazySource`
+    (B6b; only with a sink) is read as batches and compared with its routing snapshot in
+    `input_facts`; `input_reasons` names why a table that was lazy is resident, per table."""
     if sink is not None and (
         split.full_frame or any(name not in split.dispatched for name in resident_sources)
     ):
@@ -282,6 +291,9 @@ def run_multi_table_split(
     route_by_table: dict[str, Any] = {}
     lane_blocks: dict[str, Mapping[str, Any]] = {}
     for table in split.dispatched:
+        lane_extra: dict[str, Any] = (
+            {} if sink is None else {"sink": sink, "expected": (input_facts or {}).get(table)}
+        )
         out, unit_timings, unit_ms, unit_warnings, unit_metrics = (
             _pipeline_auto_chunk.run_auto_chunk(
                 config,
@@ -295,7 +307,7 @@ def run_multi_table_split(
                 key_provider=key_provider,
                 native_threads=native_threads,
                 dispatcher_enabled=True,
-                **({} if sink is None else {"sink": sink}),
+                **lane_extra,
             )
         )
         dispatched_names.append(table)
@@ -311,6 +323,9 @@ def run_multi_table_split(
             lane_blocks[table] = {
                 **lane_blocks[table],
                 "output": _output_sink.resident_block(output_reason),
+                "input": _chunked_input.resident_block(
+                    (input_reasons or {}).get(table, _chunked_input.REASON_RESIDENT_SOURCE)
+                ),
             }
 
     group_sources = {k: v for k, v in resident_sources.items() if k not in dispatched_names}

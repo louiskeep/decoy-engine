@@ -303,9 +303,9 @@ def cheap_admission(
 
     source = caller_sources.get(table)
     if not isinstance(source, pa.Table):
-        # Excludes both "absent" and a `LazySource` placeholder (TB-1): the
-        # unified slice's D5 single-open seam holds only for an already-
-        # resident table.
+        # Excludes both "absent" and a `LazySource` kept lazy for the auto-chunk lane
+        # (B6b): the unified slice's D5 single-open seam holds only for an already-
+        # resident table. Any other lazy source was resolved to a table before this.
         return None
     if len(set(source.column_names)) != len(source.column_names):
         # Root-cause fix: the coordinator dispatches by NAME-keyed lookup

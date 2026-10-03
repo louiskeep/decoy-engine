@@ -402,9 +402,11 @@ def test_live_chunks_stay_within_one_row_group_plus_one(
     bound = math.ceil(32 / support.CHUNK) + 1
     assert len(seen) == math.ceil(rows / 32)
     assert max(seen) <= bound, (seen, bound)
+    # B6b: the evidence sink folds results into running totals and keeps none, so it can
+    # only report how many chunks it saw. "No output table retained" is proven by
+    # test_b6b_sink.py (weakref and live-object checks), not by iterating results here.
     results = spy.result_lists[support.TABLE]
     assert len(results) == math.ceil(rows / support.CHUNK)
-    assert all(r.outputs == {} for r in results)
 
 
 @pytest.mark.parametrize("route", ["native", "oracle"])

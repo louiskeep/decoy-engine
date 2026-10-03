@@ -9,6 +9,31 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (LazySource batch input on the auto-chunk lane, 2026-10-03)
+
+`run_pipeline` now accepts a `LazySource` for a routed auto-chunk table, so a caller that
+passes `LazySource(path)` for each table plus a `TransactionalSink` gets a job whose input and
+output working sets are both bounded by the chunk size, not by the table. Routing reads each
+lazy table's Parquet footer once and judges it with the same gates as a resident table; a
+gated column with no footer null count declines auto-chunk with
+`lazy_source_null_count_unavailable`. When the output streams, the table is read as record
+batches re-cut to the exact chunk boundaries a resident table would be sliced at, so the result
+equals the resident run chunk for chunk; otherwise it is materialized once, before the lane.
+New error codes: `lazy_source_changed`, `lazy_source_row_count_mismatch` and
+`hold_back_spill_unavailable`. `quality_metrics["auto_chunk"]["input"]` records how each routed
+table was read, and `execution.loaded_fully_in_memory` is `False` when every source of a
+streamed run was read lazily. `LazySource.open_batches` now returns an `OpenedLazyBatches`
+owner and gains `pre_buffer`, `buffer_size` and `use_threads` keywords; `footer_facts()` is new.
+The isolated worker loads every job's sources lazily.
+
+### Changed (the schema hold-back spills beside the output, 2026-10-03)
+
+A streamed run's schema hold-back used to spill to `TMPDIR`. It now spills to the sink's
+`spill_parent` (`ParquetTransactionalSink` exposes its target's parent, creating it on the
+first spill), on the output's filesystem. A streaming sink without `spill_parent` that needs
+to spill fails with `hold_back_spill_unavailable`. The per-chunk evidence of a streamed run is
+now folded into running totals instead of one entry per chunk.
+
 ### Added (the auto-chunk lane streams its output into a `TransactionalSink`, 2026-10-02)
 
 `run_pipeline` gains the keyword-only knob `stream_chunked_output: bool = True`. When the

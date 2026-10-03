@@ -11,15 +11,24 @@ chunked-vs-full_frame routing (a multi-table job is split per table afterwards b
 the sequential early return. `_pipeline_routing` re-exports both functions
 so `run_pipeline` keeps a single `_pipeline_routing.<name>` call surface --
 this split is purely a LOC-budget move, not a behavior or API change.
+
+B6b: when a `LazySource` is a routed or split candidate, this is where its Parquet footer is
+read, once, as the job's routing snapshot (`_chunked_input.capture_source_facts`). The same
+`SourceFacts` objects go to the classifier here, and (through the returned candidate map) to
+the split decision, the input-mode decision and the lane. Design follows Arrow's pull-based
+stream contract (`RecordBatchReader`), `ParquetFile.iter_batches`, Polars' all-or-error
+streaming rule and DuckDB's row-group scan unit; see `_chunked_input`'s docstring.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._chunked_input import SourceFacts
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -35,12 +44,14 @@ def decide_chunk_route(
     registry: ProviderRegistry,
     graph: RelationshipGraph,
     substrate: str,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: Mapping[str, Any],
     auto_chunk_threshold_rows: int,
     explain_plan: bool,
     auto_chunk: bool,
     has_mask_table: bool,
-) -> tuple[ExecutionPlan | None, bool]:
+    table_kinds: Mapping[str, str],
+    prepared_tables: frozenset[str],
+) -> tuple[ExecutionPlan | None, bool, Mapping[str, SourceFacts]]:
     """Auto-chunk go/no-go + explain surfacing.
 
     ONE `classify_job` call serves both the single-table routing decision and
@@ -51,14 +62,19 @@ def decide_chunk_route(
     skips classification entirely unless explain asks: a forced
     full-frame run must not depend on planner behavior.
 
-    Returns `(execution_plan_decision, route_chunked)`; `decision` is
+    Returns `(execution_plan_decision, route_chunked, keep_lazy)`; `decision` is
     `None` when neither `explain_plan` nor `auto_chunk` asked for a
-    classification.
+    classification. `keep_lazy` is the footer snapshot of every `LazySource` that may
+    still stream (`lazy_stream_candidates`); a job with FK edges captures none.
     """
     if not (explain_plan or (auto_chunk and has_mask_table)):
-        return None, False
+        return None, False, {}
 
+    from decoy_engine.execution import _chunked_input
     from decoy_engine.execution._planner import classify_job
+    from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
+
+    facts = {} if graph.edges else _chunked_input.capture_source_facts(caller_sources, table_kinds)
 
     decision = classify_job(
         config,
@@ -68,9 +84,16 @@ def decide_chunk_route(
         substrate=substrate,
         source_tables=caller_sources,
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+        source_facts=facts,
     )
     route_chunked = auto_chunk and decision.mode == "chunked"
-    return decision, route_chunked
+    keep_lazy = _chunked_input.lazy_stream_candidates(
+        facts,
+        table_kinds=table_kinds,
+        route_chunked=route_chunked,
+        bearing=transform_bearing_mask_tables(config) - prepared_tables,
+    )
+    return decision, route_chunked, keep_lazy
 
 
 def auto_chunk_stamp(

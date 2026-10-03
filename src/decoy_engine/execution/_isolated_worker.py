@@ -61,8 +61,7 @@ def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:
 def _load_sources(
     manifest: dict[str, str], *, lazy: bool
 ) -> dict[str, LazySource] | dict[str, pa.Table]:
-    """Load manifest sources -- lazily (TB-1) for a relationship-bearing job,
-    eagerly (pre-TB-1 behavior, unchanged) for everything else.
+    """Load manifest sources, lazily or eagerly.
 
     Pre-TB-1 this always called `pq.read_table` here, materializing every
     input table in the child BEFORE `run_pipeline` ever decides a route --
@@ -72,22 +71,12 @@ def _load_sources(
     `run_fk_out_of_core` paid for a fully resident copy of its own input
     first.
 
-    `lazy` is decided by `_run` from `payload["config"]["relationships"]`
-    presence -- the SAME scope `run_pipeline`'s out-of-core route itself is
-    restricted to (`_pipeline_routing._sequential_eligible`: "if not
-    profile.relationships: return False"; out-of-core eligibility is a
-    strict subset of that). A non-relationship job can never reach
-    out-of-core or sequential, so wrapping it as `LazySource` would buy it
-    nothing while forcing every OTHER caller of its sources (chiefly the S3
-    auto-chunk classifier, `_planner._runtime_source_rejections`, which
-    needs real per-column null counts to decide chunk-stable dtypes) to
-    either read data it does not have or conservatively decline an
-    optimization it previously had -- observed exactly this way in a real
-    memory-cap regression (a 200k-row single-table mask job that used to
-    auto-chunk into a bounded 50k-row pandas working set instead ran
-    full-frame and segfaulted under a low rlimit). Scoping the lazy path to
-    relationship-bearing jobs keeps that existing auto-chunk optimization
-    fully intact for the jobs that don't need `LazySource` at all.
+    `_run` now passes `lazy=True` for every job. A non-relationship job used to stay
+    eager because the auto-chunk classifier refused a `LazySource`, so a lazy 200k-row
+    single-table job ran full-frame and crashed under a low rlimit. B6b admits a
+    `LazySource` to auto-chunk from its Parquet footer facts: it streams when the output
+    streams and is materialized once otherwise, so that regression cannot recur
+    (`_chunked_input`). `lazy=False` keeps the eager load for a direct caller.
 
     `LazySource` (`decoy_engine.profile._readers`) is the SAME lazy-Parquet
     handle the direct/profiling path already uses (`scripts/
@@ -100,13 +89,6 @@ def _load_sources(
     `pa.Table | LazySource`), while sequential/full_frame -- routes that
     legitimately need whole-table residency -- call `.to_table()` only
     when they actually reach that point, never up front.
-
-    **Scope note (TB-1):** this commit fixes input residency for
-    relationship-bearing jobs only. Single-table (non-relationship) mask
-    jobs remain eager: their full input is materialized in the child before
-    routing, even if they later stream through an out-of-core path via a
-    different mechanism. This is a documented roadmap follow-up
-    (`docs/relationships-memory-scaling.md` section 2, Option 1 scope).
     """
     if lazy:
         return {name: LazySource(Path(path)) for name, path in manifest.items()}
@@ -150,7 +132,8 @@ def _finalize_outputs(result: ExecutionResult, staging_output_dir: str) -> list[
     - STREAMED (sequential/out_of_core, and since B6a the auto-chunk lane and a fully
       dispatched multi-table split, now that `_run` always hands
       `run_pipeline` a `ParquetTransactionalSink` pointed at
-      `staging_output_dir`): `result.outputs` is `{}` by construction (see
+      `staging_output_dir`; since B6b those lanes also read their input lazily, as
+      batches, so a routed job holds neither side resident): `result.outputs` is `{}` by construction (see
       `run_out_of_core_route`/`run_sequential_route`'s docstrings) -- the
       sink already wrote bounded batches straight to `staging_output_dir`
       and committed them there (`ParquetTransactionalSink.commit`'s single
@@ -209,12 +192,8 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
 
     staging_output_dir = payload["staging_output_dir"]
     try:
-        # TB-1 fix #1: lazy-load only for a relationship-bearing job -- the
-        # exact scope out-of-core (and its sequential fallback) is itself
-        # restricted to; see `_load_sources`'s docstring for why a
-        # non-relationship job stays eager.
-        has_relationships = bool(payload["config"].get("relationships"))
-        sources = _load_sources(payload.get("sources") or {}, lazy=has_relationships)
+        # Every job loads lazily (B6b); see `_load_sources`'s docstring.
+        sources = _load_sources(payload.get("sources") or {}, lazy=True)
         # TB-1 fix #2: always hand run_pipeline a sink pointed at this run's
         # own staging directory. A route that streams (sequential,
         # out_of_core) writes bounded batches straight through it and

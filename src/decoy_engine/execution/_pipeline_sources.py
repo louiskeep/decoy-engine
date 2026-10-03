@@ -15,16 +15,16 @@ runs, so the routing layer never forces residency it will not use.
 - `resolve_resident_sources`: the full_frame / auto-chunk continuation's
   need -- every source resident at once, because the adapter, the
   auto-chunk slicer, validators, and the fidelity report all operate on
-  whole `pa.Table` frames.
+  whole `pa.Table` frames. B6b: a `LazySource` named in `keep_lazy` (a route or
+  split candidate, `_chunked_input.lazy_stream_candidates`) is left lazy so
+  the auto-chunk lane can read it as batches; it is materialized once, at the
+  point the output mode is known, unless the output streams.
 - `resolve_sequential_loader`: `run_sequential_route`'s need -- one table
   at a time, matching `_sequential.py`'s own bounded-memory contract
   (unrelated to this sprint); a caller-supplied `source_loader` always
   wins (it already returns residents), else fall back to resolving from
   `caller_sources` lazily, per table, only when the sequential runner
   actually asks for it.
-- `lazy_source_rejection`: the auto-chunk planner's defensive guard --
-  see its own docstring for why this is belt-and-suspenders rather than
-  a reachable production path.
 
 Established-methodology note: this mirrors the general "resolve lazily, at
 the point of consumption" pattern (deferred / lazy evaluation), applied here
@@ -35,6 +35,7 @@ never undermined by an eager materialization upstream of the route decision.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from types import MappingProxyType
 from typing import Any
 
 import pyarrow as pa
@@ -45,7 +46,6 @@ from decoy_engine.execution._transforms_table import transform_resolved_source
 from decoy_engine.profile._readers import LazySource
 
 __all__ = [
-    "lazy_source_rejection",
     "materialize_source",
     "resolve_resident_sources",
     "resolve_sequential_loader",
@@ -72,7 +72,8 @@ def resolve_resident_sources(
     required_tables: Iterable[str] = (),
     config: Mapping[str, Any] | None = None,
     prepared: frozenset[str] = frozenset(),
-) -> dict[str, pa.Table]:
+    keep_lazy: Mapping[str, Any] = MappingProxyType({}),
+) -> dict[str, pa.Table | LazySource]:
     """Materialize every source, for routes that need them all resident at once.
 
     The full_frame / auto-chunk continuation is the one caller: the
@@ -98,14 +99,17 @@ def resolve_resident_sources(
     declares transforms and is not in `prepared` (a lazy source, or one supplied
     through the loader) is transformed exactly once here, as it is resolved. A
     `LazySource` is schema-checked before it is read. Tables in `prepared` were
-    transformed before routing and are used as they are.
+    transformed before routing and are used as they are. A `LazySource` named in
+    `keep_lazy` is returned as it is.
     """
     bearing = (
         transform_bearing_mask_tables(config) - prepared if config is not None else frozenset()
     )
-    resident: dict[str, pa.Table] = {}
+    resident: dict[str, pa.Table | LazySource] = {}
     for name, src in caller_sources.items():
-        if name in bearing and config is not None:
+        if name in keep_lazy:
+            resident[name] = src
+        elif name in bearing and config is not None:
             resident[name] = transform_resolved_source(config, name, src)
         else:
             resident[name] = materialize_source(src)
@@ -175,32 +179,3 @@ _MISSING = (
     "table %r declares transforms but has no resident source and no source_loader, "
     "so there is nothing to transform."
 )
-
-
-def lazy_source_rejection(src: pa.Table | LazySource, *, table: str) -> str | None:
-    """None unless `src` is a `LazySource`; else the chunked-route rejection reason.
-
-    TB-1 defensive guard: a `LazySource` is a lazy on-disk handle
-    (`_isolated_worker._load_sources`), not a resident frame -- the
-    dtype/null-bearing walk in `_planner._runtime_source_rejections` reads
-    actual column DATA (`.column(name).null_count`), which is exactly the
-    eager materialization TB-1 exists to avoid. Chunking is already
-    rejected upstream for all relationship-bearing jobs
-    (`config.get("relationships")`), and ONLY relationship jobs carry a
-    `LazySource` by construction, so this guard is unreachable in
-    production. It is kept as belt-and-suspenders defense-in-depth against
-    any future code path that might hand a `LazySource` to a
-    non-relationship job. When this guard fires, conservatively treat it
-    like "no loaded source frame": the job stays on the (still correct,
-    just not chunk-streamed) full_frame path, where
-    `resolve_resident_sources` resolves the `LazySource` at the point
-    full_frame actually consumes it.
-    """
-    if not isinstance(src, LazySource):
-        return None
-    return (
-        f"source for table {table!r} is a lazy (LazySource) handle, not a "
-        "resident frame; the chunk-stable-dtype runtime gate needs real "
-        "column data, so auto-chunk conservatively declines rather than "
-        "force-materializing it just to decide"
-    )

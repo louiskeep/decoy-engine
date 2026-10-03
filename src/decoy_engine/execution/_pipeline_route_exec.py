@@ -61,7 +61,13 @@ _TEMP_DISK_SAFETY_FRACTION = 0.9
 
 
 def execution_telemetry(
-    *, route: str, route_reason: str, sink: Any, source_loader: Any, sources_resident: bool
+    *,
+    route: str,
+    route_reason: str,
+    sink: Any,
+    source_loader: Any,
+    sources_resident: bool,
+    inputs_streamed: bool = False,
 ) -> dict[str, Any]:
     """Per-config execution memory telemetry. Honest by construction: it never
     claims bounded input residency unless the caller's Arrow sources are
@@ -75,6 +81,10 @@ def execution_telemetry(
     supplied. `sources_resident` carries that fact in; bounded input
     residency is reported ONLY for the one configuration that actually bounds
     inputs: a lazy loader supplied AND `sources` empty/omitted.
+
+    B6b: on the full-frame continuation, `inputs_streamed` is true only when the run streamed
+    and every source in the mapping was read lazily as batches, so `loaded_fully_in_memory`
+    is `False` only then; a split mixing a resident table with lazy ones stays `True`.
     """
     if route == "full_frame":
         return {
@@ -84,7 +94,7 @@ def execution_telemetry(
             # B6a: the full-frame continuation passes a sink only when the auto-chunk lane
             # or the B7 split streamed into it; every other run passes `None`.
             "outputs_streamed": sink is not None,
-            "loaded_fully_in_memory": True,
+            "loaded_fully_in_memory": not inputs_streamed,
         }
     # The bounded-memory streaming routes (`sequential`, `out_of_core`) share
     # the same honesty shape: they evict per table and stream outputs when a

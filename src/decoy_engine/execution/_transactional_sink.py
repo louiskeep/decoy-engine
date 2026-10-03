@@ -222,6 +222,13 @@ class ParquetTransactionalSink:
             raise
         writer.close()
 
+    @property
+    def spill_parent(self) -> Path:
+        """The directory a streamed run's schema hold-back may spill into: the target's
+        parent, the same filesystem as the `_decoy_stage_*` staging directory. Not part of
+        the `TransactionalSink` protocol; a sink without it cannot take a spill."""
+        return self._target.parent
+
     def committed_table_path(self, table: str) -> Path:
         """Return the path `table` will be published to once commit() succeeds.
 
