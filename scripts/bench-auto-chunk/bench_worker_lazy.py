@@ -163,6 +163,12 @@ def run(args: argparse.Namespace) -> int:
         sink=ParquetTransactionalSink(staging),
         engine_version=ENGINE_VERSION,
         native_threads=1,
+        # Plan section 10: no trial in either configuration may run the routing
+        # probe, so the wall comparison isolates the input-streaming change from
+        # the resident path's probe cost (the candidate already never probes,
+        # because footer_facts supplies the routing facts). probe_ran is still
+        # recorded and the driver halts the cell if it ever fires.
+        use_probe_routing=False,
     )
     staged = _isolated_worker._finalize_outputs(result, str(staging))
     wall_s = time.perf_counter() - started

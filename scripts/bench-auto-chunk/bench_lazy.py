@@ -202,6 +202,13 @@ def run(args: argparse.Namespace) -> int:
             ev["increment_bytes"] // MIB,
             flush=True,
         )
+        # Plan section 10: a trial problem (the routing probe ran, a staged-bytes
+        # mismatch, the wrong admission, a non-streaming candidate or a memory
+        # ceiling breach) stops the cell for the owner rather than letting the
+        # cell finish on tainted trials. The trial is already recorded above, so
+        # the stop is auditable and the cell resumes after the cause is fixed.
+        if ev["problems"]:
+            raise SystemExit(f"STOP: {cell} {config}/{kind}/{index} problems: {ev['problems']}")
 
     if needs_ref:
         record("a", "reference", 0)
