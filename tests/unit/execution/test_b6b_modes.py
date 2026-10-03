@@ -102,6 +102,7 @@ def test_a_routed_lazy_table_with_a_resident_output_is_materialized_once_before_
     assert block == {"mode": "resident", "reason": out_reason} and out_reason == reason
 
 
+@support.NEEDS_COMPANION  # asserts unified_slice_activation, stamped only on the admitted native path
 def test_a_lazy_table_below_the_threshold_is_resolved_before_the_unified_slice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -368,6 +369,7 @@ def test_a_routed_worker_job_streams_and_matches_the_eager_envelope_bytes(
     ).read_bytes()
 
 
+@support.NEEDS_COMPANION  # asserts unified_slice_activation, stamped only on the admitted native path
 def test_a_small_worker_job_equals_the_eager_run_including_unified_slice_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
