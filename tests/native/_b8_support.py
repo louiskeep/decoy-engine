@@ -93,6 +93,14 @@ def run_pair(
         vault=vault,
         **kw,
     )
+    # run_pair always forces the oracle leg with a date_shift column named FORCE, so by
+    # construction that leg must stay on the oracle with the exact column-qualified reason.
+    # Asserting it here protects every run_pair consumer (even ones that never call
+    # assert_same_as_oracle) from silently degrading into a native-vs-native comparison.
+    assert forced.ev[0].native_admitted is False, forced.ev[0]
+    assert f"{FORCE_STRATEGY}_not_native_chunked_route:{FORCE}" in (
+        forced.ev[0].reroute_reason or ""
+    ), forced.ev[0]
     return native, forced
 
 
@@ -121,7 +129,9 @@ def assert_same_as_oracle(native: Run, forced: Run, *, expect_native: bool = Tru
     if expect_native:
         assert native.ev[0].reroute_reason is None
     assert forced.ev[0].native_admitted is False, forced.ev[0]
-    assert f"{FORCE_STRATEGY}_not_native_chunked_route" in (forced.ev[0].reroute_reason or "")
+    assert f"{FORCE_STRATEGY}_not_native_chunked_route:{FORCE}" in (
+        forced.ev[0].reroute_reason or ""
+    )
     assert len(native.out) == len(forced.out) == len(native.sink) == len(forced.sink)
     for i, (got, want) in enumerate(zip(native.out, forced.out, strict=True)):
         assert identical(got, want.drop_columns([FORCE])), i

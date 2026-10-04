@@ -1080,7 +1080,7 @@ class TestRoutedResultSurface:
         )
         assert auto.quality_metrics["auto_chunk"]["lane"] == "dispatcher"
         assert auto.quality_metrics["chunked_route"]["native_admitted"] is False
-        assert "date_shift_not_native_chunked_route" in (
+        assert "date_shift_not_native_chunked_route:tier" in (
             auto.quality_metrics["chunked_route"]["reroute_reason"] or ""
         )
         codes = [(w.code, w.detail.get("chunk")) for w in auto.warnings]

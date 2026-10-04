@@ -219,7 +219,7 @@ def test_a_still_vetoed_column_beside_categorical_sends_the_table_to_the_oracle(
     config = make_config([cat_col(), force_oracle(FORCE), passthrough("p")])
     run = run_one(config, [with_force(c) for c in split(source(["a", "b", "c"]), 2)])
     assert run.ev[0].native_admitted is False
-    assert "date_shift_not_native_chunked_route" in (run.ev[0].reroute_reason or "")
+    assert f"date_shift_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
 
 
 def test_non_native_admissible_categorical_still_routes_its_table_to_the_oracle() -> None:
@@ -365,7 +365,7 @@ def test_companion_absent_run_matches_a_forced_oracle_run(
     )
     assert absent.ev[0].native_admitted is False
     assert forced.ev[0].native_admitted is False
-    assert "date_shift_not_native_chunked_route" in (forced.ev[0].reroute_reason or "")
+    assert f"date_shift_not_native_chunked_route:{FORCE}" in (forced.ev[0].reroute_reason or "")
     assert {o.schema.field("c").type for o in absent.out} == {pa.string()}
     assert len(absent.out) == len(forced.out)
     for got, want in zip(absent.out, forced.out, strict=True):
