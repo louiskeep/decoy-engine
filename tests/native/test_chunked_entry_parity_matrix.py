@@ -36,8 +36,8 @@ from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
     TABLE,
-    categorical,
     faker_col,
+    force_oracle,
     hash_col,
     key_provider,
     make_config,
@@ -217,7 +217,7 @@ def test_hash_over_a_type_the_kernel_does_not_admit_routes_to_the_oracle(source_
 def _drift_config(route: str) -> dict[str, Any]:
     cols = [redact("r"), passthrough("p")]
     if route == "oracle":
-        cols.append(categorical("k"))
+        cols.append(force_oracle("k"))
     return make_config(cols)
 
 
@@ -228,7 +228,7 @@ def _drift_chunks(first: pa.Array, later: pa.Array, extra: pa.Array | None = Non
             {
                 "r": pa.array([f"r{i}" for i in range(n)], pa.string()),
                 "p": p,
-                "k": pa.array(["a", "b", "c", "a"][:n], pa.string()),
+                "k": pa.array(["2020-03-15"] * n, pa.string()),
             }
         )
 

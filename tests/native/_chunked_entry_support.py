@@ -102,6 +102,20 @@ def categorical(name: str) -> dict[str, Any]:
     }
 
 
+FORCE_ORACLE_VALUE = "2020-03-15"
+
+
+def force_oracle(name: str) -> dict[str, Any]:
+    """A column the chunked dispatcher still vetoes (`bucket_perturb`), so a table that
+    carries it runs on the oracle route. Its source column holds `FORCE_ORACLE_VALUE`."""
+    return {
+        "name": name,
+        "strategy": "bucket_perturb",
+        "namespace": f"ns_{name}",
+        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
+    }
+
+
 def faker_col(name: str) -> dict[str, Any]:
     return {
         "name": name,

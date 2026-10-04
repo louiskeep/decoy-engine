@@ -21,11 +21,13 @@ from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
+    FORCE_ORACLE_VALUE,
     NEEDS_COMPANION,
     TABLE,
     categorical,
     column_values,
     faker_col,
+    force_oracle,
     hash_col,
     key_provider,
     make_config,
@@ -189,6 +191,13 @@ def _values_source() -> pa.Table:
             ),
             "f": pa.array([None if i % 8 == 5 else f"first{i % 6}" for i in range(n)], pa.string()),
             "c": pa.array([None if i % 9 == 4 else f"cat{i % 3}" for i in range(n)], pa.string()),
+            "d": pa.array(
+                [
+                    None if i % 7 == 2 else f"2020-{1 + i % 12:02d}-{1 + i % 27:02d}"
+                    for i in range(n)
+                ],
+                pa.string(),
+            ),
         }
     )
 
@@ -222,8 +231,8 @@ def test_values_native_kernel_set_with_hash_and_faker(tmp_path: Path) -> None:
 
 
 def test_values_vetoed_strategy_runs_on_oracle_route(tmp_path: Path) -> None:
-    config = make_config([redact("r"), passthrough("p"), categorical("c")])
-    _assert_three_way(config, ["r", "p", "c"], tmp_path, expect_native=False)
+    config = make_config([redact("r"), passthrough("p"), force_oracle("d")])
+    _assert_three_way(config, ["r", "p", "d"], tmp_path, expect_native=False)
 
 
 # ---------------------------------------------------------------------------
@@ -232,12 +241,14 @@ def test_values_vetoed_strategy_runs_on_oracle_route(tmp_path: Path) -> None:
 
 
 def _forced_oracle(columns: list[dict[str, Any]]) -> dict[str, Any]:
-    """The same columns plus a categorical one, which the dispatcher always vetoes."""
-    return make_config([*columns, categorical("cat_force")])
+    """The same columns plus a `bucket_perturb` one, which the dispatcher still vetoes."""
+    return make_config([*columns, force_oracle("cat_force")])
 
 
 def _with_force_column(source: pa.Table) -> pa.Table:
-    return source.append_column("cat_force", pa.array(["a"] * source.num_rows, pa.string()))
+    return source.append_column(
+        "cat_force", pa.array([FORCE_ORACLE_VALUE] * source.num_rows, pa.string())
+    )
 
 
 def _string_cols_source(values: list[str | None]) -> pa.Table:

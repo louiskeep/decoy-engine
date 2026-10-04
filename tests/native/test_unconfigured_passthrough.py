@@ -45,8 +45,8 @@ from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
     TABLE,
-    categorical,
     faker_col,
+    force_oracle,
     hash_col,
     key_provider,
     make_config,
@@ -520,7 +520,7 @@ def _both_outcomes(
     gs = policy_settings("warn")
     native = _outcome(make_config(columns, global_settings=gs), chunks)
     forced = _outcome(
-        make_config([*columns, categorical(FORCE)], global_settings=gs),
+        make_config([*columns, force_oracle(FORCE)], global_settings=gs),
         [with_force(c) for c in chunks],
     )
     assert native[3] is True and forced[3] is False
@@ -566,7 +566,7 @@ def test_null_bearing_int_is_carried_when_unconfigured_and_refused_when_truncate
     with pytest.raises(Exception) as oracle_exc:
         run_one(
             make_config(
-                [redact("r"), truncate("ncol"), categorical(FORCE)],
+                [redact("r"), truncate("ncol"), force_oracle(FORCE)],
                 global_settings=policy_settings("warn"),
             ),
             [with_force(c) for c in chunks],
@@ -589,7 +589,7 @@ def test_later_all_null_chunk_of_a_type_with_no_cast_from_null(name: str) -> Non
     for config, src in (
         (make_config([redact("s")], global_settings=gs), chunks),
         (
-            make_config([redact("s"), categorical(FORCE)], global_settings=gs),
+            make_config([redact("s"), force_oracle(FORCE)], global_settings=gs),
             [with_force(c) for c in chunks],
         ),
     ):
