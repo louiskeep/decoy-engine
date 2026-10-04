@@ -106,13 +106,15 @@ FORCE_ORACLE_VALUE = "2020-03-15"
 
 
 def force_oracle(name: str) -> dict[str, Any]:
-    """A column the chunked dispatcher still vetoes (`bucket_perturb`), so a table that
-    carries it runs on the oracle route. Its source column holds `FORCE_ORACLE_VALUE`."""
+    """A column the chunked dispatcher still vetoes (`date_shift`), so a table that
+    carries it runs on the oracle route. Its source column holds `FORCE_ORACLE_VALUE`.
+    Callers assert `native_admitted is False` plus `date_shift_not_native_chunked_route`,
+    so a forced leg cannot silently become a native run."""
     return {
         "name": name,
-        "strategy": "bucket_perturb",
+        "strategy": "date_shift",
         "namespace": f"ns_{name}",
-        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
+        "provider_config": {"date_format": "%Y-%m-%d", "min_days": -30, "max_days": 30},
     }
 
 

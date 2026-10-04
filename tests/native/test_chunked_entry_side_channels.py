@@ -612,7 +612,7 @@ def test_row_error_chunk_is_appended_unnormalized_then_fails_closed(entry_point:
 
 
 def test_unconvertible_column_maps_to_chunked_schema_mismatch() -> None:
-    source = string_source(4).append_column("c", pa.array(["a"] * 4, pa.string()))
+    source = _oracle_route_source(4)
     with pytest.raises(Exception) as info:
         list(_entry(_oracle_route_config(), split(source, 2), adapter=_UnconvertibleAdapter()))
     assert getattr(info.value, "code", None) == "chunked_schema_mismatch"

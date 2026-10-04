@@ -254,7 +254,7 @@ def _veto_case(
         make_config([redact("r"), passthrough("p"), force_oracle("c")]),
         ["r", "p", "c"],
         {},
-        "bucket_perturb_not_native_chunked_route:c",
+        "date_shift_not_native_chunked_route:c",
         {"r": "arrow_python", "p": "arrow_python", "c": "pandas_oracle"},
     )
 
