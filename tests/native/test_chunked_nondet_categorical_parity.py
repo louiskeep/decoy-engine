@@ -313,3 +313,36 @@ def test_the_oracle_leg_reports_no_compiled_work() -> None:
     run = run_one(make_config(columns), [with_force(source(["a", "b"]))])
     assert run.ev[0].native_admitted is False
     assert run.ev[0].compiled_kernel_executed is False
+
+
+@NEEDS_COMPANION
+def test_the_deterministic_variant_keeps_its_zero_row_accounting() -> None:
+    run = run_one(make_config([cat_col(), passthrough("p")]), [source([])])
+    ev = run.ev[0]
+    assert ev.native_admitted is True
+    assert ev.compiled_kernel_executed is True
+    assert ev.kernel_calls["categorical"] == 1
+
+
+@NEEDS_COMPANION
+@pytest.mark.parametrize("threads", [1, 3])
+def test_the_native_thread_budget_and_offsets_reach_the_positional_kernel_call(
+    threads: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution.native import _chunk_masking
+
+    seen: list[tuple[int | None, int]] = []
+    real = _chunk_masking.native_categorical_positional
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append((kwargs["native_threads"], kwargs["row_offset"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_chunk_masking, "native_categorical_positional", spy)
+    run_one(
+        make_config([_nd(), passthrough("p")]),
+        split(source(["a", "b", "c", "a", "b"]), 2),
+        native_threads=threads,
+        base_row_offset=10,
+    )
+    assert seen == [(threads, 10), (threads, 12), (threads, 14)]

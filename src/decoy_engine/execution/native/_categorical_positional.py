@@ -61,8 +61,6 @@ def reject_non_string_positional_sources(
     `string`, with the retained categorical chunked code. The deterministic variant keeps
     its oracle reroute (`real_type_rejection`); only this variant fails closed."""
     for node in node_routes:
-        if node.strategy != "categorical":
-            continue
         if positional_config_for_column(config, table, node.column) is None:
             continue
         if not source_is_string(first_schema, node.column):

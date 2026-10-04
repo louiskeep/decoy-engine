@@ -566,3 +566,65 @@ def test_prepared_artifact_for_the_seeded_variant_carries_categories_and_cdf() -
     assert prepare_chunked_categoricals({"c": seed}, schema) == {
         "c": PreparedCategorical(("a", "b"), None, positional=True)
     }
+
+
+# ---------------------------------------------------------------------------
+# Units: the entry adapters only ever admit the seeded categorical strategy.
+# ---------------------------------------------------------------------------
+
+
+def _entry(**kw: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "name": "x",
+        "strategy": "categorical",
+        "namespace": "ns",
+        "provider_config": {"categories": ["a", "b"]},
+    }
+    return {**base, **kw}
+
+
+def test_the_entry_adapter_admits_only_the_seeded_categorical_strategy() -> None:
+    from decoy_engine.execution.native._categorical_positional import positional_config_of_entry
+
+    assert positional_config_of_entry(_entry()) == PreparedCategorical(
+        ("a", "b"), None, positional=True
+    )
+    assert positional_config_of_entry(_entry(strategy="redact")) is None
+    assert positional_config_of_entry(_entry(deterministic=True)) is None
+    assert positional_config_of_entry(_entry(allow_collisions=True)) is None
+
+
+def test_the_when_gate_ignores_a_non_categorical_column_with_categorical_looking_config() -> None:
+    from decoy_engine.execution._chunked_categorical import reject_nondeterministic_when
+
+    table_cfg = {"columns": [_entry(strategy="redact", when="p > 1")]}
+    reject_nondeterministic_when(table_cfg, table=TABLE)  # no raise
+    with pytest.raises(PlanCompileError) as info:
+        reject_nondeterministic_when({"columns": [_entry(when="p > 1")]}, table=TABLE)
+    assert info.value.code == WHEN_CODE
+
+
+def test_a_blank_when_does_not_trigger_the_when_rejection() -> None:
+    from decoy_engine.execution._chunked_categorical import reject_nondeterministic_when
+
+    reject_nondeterministic_when({"columns": [_entry(when="   ")]}, table=TABLE)
+    reject_nondeterministic_when({"columns": [_entry(when="")]}, table=TABLE)
+
+
+def test_the_column_lookup_matches_both_the_table_and_the_column_name() -> None:
+    from decoy_engine.execution.native._categorical_positional import (
+        positional_config_for_column,
+    )
+
+    config = {
+        "tables": [
+            {"name": "a", "columns": [_entry(name="x"), _entry(name="y", namespace=None)]},
+            {"name": "b", "columns": [_entry(name="x", namespace=None), _entry(name="z")]},
+        ]
+    }
+    assert positional_config_for_column(config, "a", "x") is not None
+    assert positional_config_for_column(config, "a", "y") is None  # not the first column
+    assert positional_config_for_column(config, "a", "missing") is None
+    assert positional_config_for_column(config, "b", "x") is None  # same name, other table
+    assert positional_config_for_column(config, "b", "z") is not None
+    assert positional_config_for_column(config, "nope", "x") is None
