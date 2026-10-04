@@ -223,6 +223,15 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   `categorical_nondeterministic_not_chunk_safe` (slice C1b lifts it); a deterministic one
   without a namespace, with `from_profile`, or without explicit categories keeps
   `chunked_strategy_conditions_unmet`.
+  `bucket_perturb` joined the native chunked route on 2026-10-04 (slice C2). A native-admissible
+  column (explicit non-empty `date_format` without `%z` or `%Z`, valid `bucket`, namespaced, no
+  `when:`, `string` source) is masked by the compiled index kernel. Its chunked output type is
+  unchanged under ROUTE-OUTPUT-CONTRACT: it equals the oracle chunked route's content-dependent
+  type (a zero-row or all-null chunk is `null`, any chunk holding a non-null value is `string`),
+  and the schema rule does not pin it. A `large_string` source, an autodetected or timezone
+  format, an invalid bucket, `when:` and FK-key edges keep their oracle path and codes. A column
+  whose every chunk had no parseable row reports `executed_backend` `arrow_python`, not
+  `rust_companion`, and `compiled_kernel_executed` stays `False`.
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that

@@ -601,9 +601,9 @@ class TestAdmissionBoundary:
 
     def test_fk_key_child_orientation_rejected(self, tmp_path) -> None:
         # child declares bucket_perturb matching the parent's key strategy:
-        # the PRE-EXISTING gate_fk_child_edges already rejects this
-        # (bucket_perturb is not in CHUNK_SAFE_STRATEGIES), proving the child
-        # orientation is closed too -- whichever gate catches it first.
+        # the PRE-EXISTING gate_fk_child_edges rejects this with exactly one
+        # code (the parent key strategy is not hash), proving the child
+        # orientation is closed too.
         cfg = {
             "tables": [
                 {"name": "parent", "columns": [_bucket_perturb_col("id")]},
@@ -619,10 +619,7 @@ class TestAdmissionBoundary:
         }
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(cfg, table="child", registry=get_default_registry())
-        assert exc.value.code in (
-            "chunked_bucket_perturb_fk_key_unsupported",
-            "chunked_fk_parent_strategy_not_self_mask_safe",
-        )
+        assert exc.value.code == "chunked_fk_parent_strategy_not_self_mask_safe"
 
     def test_reject_bucket_perturb_fk_keys_direct_unit_both_orientations(self) -> None:
         cfg = {

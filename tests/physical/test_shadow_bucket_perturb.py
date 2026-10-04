@@ -336,15 +336,14 @@ def test_full_frame_executes_native_bucket_perturb(tmp_path: Path) -> None:
     assert evidence.compiled_kernel_executed is True
 
 
-# ── Seam proof: chunked route DECLINES bucket_perturb to the oracle ──
+# ── Seam proof: the chunked route admits native-admissible bucket_perturb only ──
 
 
-def test_chunked_route_declines_bucket_perturb(tmp_path: Path) -> None:
-    source = pa.table({"c": pa.array(["2024-01-01", "2024-02-02", "2024-03-03"], type=pa.string())})
+def _chunked_preflight(tmp_path: Path, source: pa.Table):
     write_read_only_fixture(tmp_path, source, "bp")
     config = build_config(tmp_path, "t", tmp_path / "bp.parquet", [_bp_column()])
     profile = first_chunk_profile(source, table="t", engine_version=ENGINE_VERSION)
-    preflight = plan_native_route(
+    return plan_native_route(
         config,
         profile,
         table="t",
@@ -352,8 +351,24 @@ def test_chunked_route_declines_bucket_perturb(tmp_path: Path) -> None:
         first_schema=source.schema,
         registry=get_default_registry(),
     )
+
+
+@_NEEDS_COMPANION
+def test_chunked_route_admits_native_admissible_bucket_perturb(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["2024-01-01", "2024-02-02", "2024-03-03"], type=pa.string())})
+    preflight = _chunked_preflight(tmp_path, source)
+    assert preflight.evidence.native_admitted is True
+    assert preflight.evidence.reroute_reason is None
+    assert preflight.index_kernel is not None
+
+
+def test_chunked_route_declines_a_large_string_bucket_perturb_source(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["2024-01-01", "2024-02-02"], type=pa.large_string())})
+    preflight = _chunked_preflight(tmp_path, source)
     assert preflight.evidence.native_admitted is False
-    assert "bucket_perturb_not_native_chunked_route:c" in (preflight.evidence.reroute_reason or "")
+    reason = preflight.evidence.reroute_reason or ""
+    assert "bucket_perturb_source_type_not_string:c:large_string" in reason
+    assert "bucket_perturb_not_native_chunked_route" not in reason
 
 
 # ── Admission declines (positive assertions) ─────────────────────────

@@ -81,7 +81,7 @@ def test_bucket_perturb_is_not_in_the_chunked_veto_set() -> None:
     from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 
     assert "bucket_perturb" not in CHUNKED_ROUTE_VETOED_STRATEGIES
-    assert CHUNKED_ROUTE_VETOED_STRATEGIES == {"group_key", "date_shift"}
+    assert {"group_key", "date_shift"} == CHUNKED_ROUTE_VETOED_STRATEGIES
 
 
 def test_config_only_eligibility_mirror_admits_an_admissible_bucket_perturb() -> None:
@@ -242,9 +242,10 @@ def test_a_timezone_directive_declines_natively_and_the_oracle_runs() -> None:
         [bp_col(date_format="%Y-%m-%d %z"), passthrough("p")], split(source(values), 2)
     )
     config = make_config([bp_col(date_format="%Y-%m-%d %z"), passthrough("p")])
-    assert "bucket_perturb_timezone_directive:d" in native_route_eligibility(
-        config, table=TABLE
-    ).rejections
+    assert (
+        "bucket_perturb_timezone_directive:d"
+        in native_route_eligibility(config, table=TABLE).rejections
+    )
     assert native.ev[0].native_admitted is False
     assert "fallback_policy_not_native:d" in (native.ev[0].reroute_reason or "")
     assert len(native.out) == len(forced.out)
@@ -254,9 +255,10 @@ def test_a_timezone_directive_declines_natively_and_the_oracle_runs() -> None:
 
 def test_an_invalid_bucket_declines_natively_then_the_oracle_raises_its_coded_error() -> None:
     config = make_config([bp_col(bucket="decade"), passthrough("p")])
-    assert "bucket_perturb_unsupported_bucket:d" in native_route_eligibility(
-        config, table=TABLE
-    ).rejections
+    assert (
+        "bucket_perturb_unsupported_bucket:d"
+        in native_route_eligibility(config, table=TABLE).rejections
+    )
     with pytest.raises(StrategyError) as info:
         run_one(config, [_valued()])
     assert info.value.code == "bucket_perturb_invalid_config"

@@ -307,15 +307,15 @@ def test_mixed_table_with_a_vetoed_column_runs_wholly_on_the_oracle_route(
     }
     vetoed = {
         "name": "c",
-        "strategy": "bucket_perturb",
+        "strategy": "date_shift",
         "namespace": "ns_c",
-        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
+        "provider_config": {"date_format": "%Y-%m-%d", "min_days": -30, "max_days": 30},
     }
     cfg, src = _job(tmp_path, [support.hash_col("h"), vetoed], data)
     result = support.run_default(cfg, src)
     evidence = result.quality_metrics["chunked_route"]
     assert evidence["native_admitted"] is False
-    assert evidence["reroute_reason"] == "bucket_perturb_not_native_chunked_route:c"
+    assert evidence["reroute_reason"] == "date_shift_not_native_chunked_route:c"
     backends = _backends(evidence)
     assert backends["c"] == ("pandas_oracle", "pandas_oracle")
     assert backends["h"][0] == "rust_companion" and backends["h"][1] == "pandas_oracle"

@@ -33,6 +33,35 @@ A streamed run's schema hold-back used to spill to `TMPDIR`. It now spills to th
 first spill), on the output's filesystem. A streaming sink without `spill_parent` that needs
 to spill fails with `hold_back_spill_unavailable`. The per-chunk evidence of a streamed run is
 now folded into running totals instead of one entry per chunk.
+### Changed (bucket_perturb runs on the native chunked route, 2026-10-04)
+
+A `bucket_perturb` column no longer sends its whole table to the pandas oracle on the chunked
+route (`run_mask_chunked`, the auto-chunk dispatcher lane). When the column is
+native-admissible (an explicit non-empty `date_format` without `%z` or `%Z`, a valid `bucket`,
+a namespace, no `when:`, and a `string` source), the compiled index kernel masks it chunk by
+chunk, byte-identical to the oracle, and its siblings stay native too. Each chunk's route
+evidence reports the column's planned backend as `rust_companion`. With the index companion
+missing the table reroutes to the oracle (`index_extension_unavailable`).
+
+A `large_string` source declines to the oracle (`bucket_perturb_source_type_not_string`).
+Autodetected formats, timezone directives, invalid buckets, `when:` and FK-key edges keep
+their existing codes and paths.
+
+Output type is unchanged and still content-dependent, matching the oracle chunked route: a
+zero-row or all-null chunk is Arrow `null`, any chunk with a non-null value (an all-unparseable
+one included) is `string`, and the joined column is `string`. It is deliberately not pinned
+to `string` the way categorical is.
+
+Route evidence is now honest about work done. A chunk with no parseable row runs no compiled
+kernel, so `compiled_kernel_executed` stays `False` for a column that never ran one, and its
+`executed_backend` is `arrow_python` rather than `rust_companion`. A column reports
+`rust_companion` as soon as one chunk ran the kernel, whatever the chunk order, on both the
+resident and the streamed aggregation.
+
+The chunked native route now applies the per-chunk bucket_perturb source gate the oracle
+route already applied, so a later null-typed or non-string chunk raises
+`chunked_bucket_perturb_source_dtype_unsupported` on both routes.
+
 ### Changed (deterministic categorical runs on the native chunked route, 2026-10-04)
 
 A deterministic `categorical` column no longer sends its whole table to the pandas oracle

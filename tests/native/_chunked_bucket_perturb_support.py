@@ -12,7 +12,14 @@ from typing import Any
 
 import pyarrow as pa
 
-from tests.native._b8_support import FORCE, Run, assert_same_as_oracle, run_one, run_pair, with_force
+from tests.native._b8_support import (
+    FORCE,
+    Run,
+    assert_same_as_oracle,
+    run_one,
+    run_pair,
+    with_force,
+)
 from tests.native._chunked_entry_support import (
     make_config,
     passthrough,
@@ -74,7 +81,9 @@ def source(values: list[str | None], *, typ: pa.DataType | None = None) -> pa.Ta
     )
 
 
-def expected_derive_sizes(values: list[str | None], bucket: str, fmt: str = "%Y-%m-%d") -> list[int]:
+def expected_derive_sizes(
+    values: list[str | None], bucket: str, fmt: str = "%Y-%m-%d"
+) -> list[int]:
     """The distinct bucket sizes among the PARSEABLE values of one chunk, computed from the
     calendar alone (not through the code under test), sorted."""
     import datetime as dt
