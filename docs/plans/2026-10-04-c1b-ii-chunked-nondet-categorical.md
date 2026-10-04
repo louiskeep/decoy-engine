@@ -1,0 +1,88 @@
+Status: plan (revision 1: pre-gate draft, author = Opus). Awaiting Codex plan-gate.
+
+Date: 2026-10-04. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C, slice **C1b-ii: "Admit seeded non-deterministic categorical to the native CHUNKED route (the fast path)."** Branch `feat/c1b-ii-chunked-nondet-categorical` off engine main `d93e3bde` (C1b-i merged, PR #197). Risk **R2** (routing/compat change on one route; byte-parity-gated; no destructive side effect).
+
+**Context.** C1b-i (merged) made non-deterministic `categorical` reproducible: seeded + position-keyed by the handler-frame ordinal via `derive_index(mask_key, namespace, encode_int(ctx.row_offset + i), pool_size)` + the shared CDF, on the whole-frame/oracle path, and reclassified it seeded engine-wide while HOLDING ALL ROUTING CONSTANT behind honest "positional-deferred" vetoes. C1b-ii lifts ONE of those vetoes: the chunked native route, so the now-seeded categorical runs natively per chunk to 100M with byte parity.
+
+**Scope decision (bounded; the other vetoes stay).** The probe showed the four deferred routes are heterogeneous. The CHUNKED NATIVE route is the critical 100M fast path and is well-scoped (base_row_offset is already plumbed to the chunk loop; byte-parity confirmed; C1/C2 template). The **multi-table split** and **out-of-core** veto-lifts each need genuinely NEW offset plumbing (per-table global offset preservation; an OOC cross-chunk global offset) and are separate routes off the critical path. C1b-ii therefore admits ONLY the chunked native route and leaves the split + OOC vetoes in place (still honest "positional-deferred"); those are deferred to follow-up slices **C1b-iii (multi-table split)** and **C1b-iv (out-of-core)**. Non-deterministic categorical keeps running correctly (reproducible, full-frame) on the split/OOC routes until then.
+
+**Byte-parity (confirmed by the probe).** Public `decoy_engine.kernel.encode_int` IS the pool integer encoder; `derive_index_batch` canonicalizes an int column via `_canonicalize_source` -> `_encode_int`, so feeding an int64/uint64 global-index column `[base_row_offset .. base_row_offset+n)` to the EXISTING `derive_index_batch` yields `derive_index(mask_key, namespace, encode_int(g), pool_size)` byte-identical to C1b-i's oracle draw. Weighted path matches too: native `np.searchsorted(cdf, bucket, side="right")` == oracle `bisect.bisect_right` (differential-pinned). NO new Rust.
+
+## 1. Goal and scope
+
+Lift the chunked-route veto for seeded non-deterministic categorical and execute it natively per chunk, keyed by the per-chunk global row offset, with byte-and-type parity: native chunked == oracle chunked == whole-frame, for the admissible case.
+
+Admissible (chunked native, seeded non-det categorical) = non-deterministic (`not is_deterministic_categorical`) AND namespace AND explicit all-string categories (no `from_profile`) AND buildable CDF AND string source AND NO `when:` AND not FK-affected. (The deterministic admissible case is C1, unchanged.)
+
+In scope:
+- Lift the chunked plan-compile veto `categorical_nondeterministic_not_chunk_safe` for the seeded-admissible case (keep it for genuinely non-admissible configs).
+- Native per-chunk execution: thread the per-chunk `row_offset` into `_mask_chunk_native`; a positional categorical branch builds the global-index int column and feeds `derive_index_batch`, restoring nulls from the SOURCE.
+- Chunked output-type pin + prepared set for the seeded variant (mirror C1's conditional string pin).
+- `when:` and FK rejection on the chunked route for the seeded variant (mirror `reject_windowed_date_when`).
+- Honest evidence (mirror C1: the compiled kernel runs every non-empty chunk).
+- Route-aware admission: full-frame physical stays source-keyed/closed (keep `prepare_categorical` rejecting non-det + the `_shadow_operators.py` assertion as a true invariant); hook only on the chunked-only layers.
+
+OUT of scope (deferred, vetoes stay honest-deferred):
+- Multi-table split veto (`POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED`, `_pipeline_multi_table.py`) -> **C1b-iii**.
+- Out-of-core veto (`out_of_core/_compat.py` + `_mask_group_b.py`) -> **C1b-iv**.
+- Full-frame physical native categorical for non-det (stays closed by design, B3).
+- FK-self-mask admission (unchanged; categorical is not `hash`, already rejected).
+
+## 2. Established facts (engine HEAD d93e3bde; from the C1b-ii probe)
+
+- **Seeded oracle draw (C1b-i):** `_strategies/_categorical.py:184-207`; `row_offset = 0 if plan.deterministic else ctx.row_offset` (L187); `key = encode_int(row_offset + i)` for non-det (L193); shared `_build_cdf` + `bisect_right`.
+- **Chunked veto to lift:** `_chunked_categorical.py:30` (`NONDETERMINISTIC_CODE`), `:33-39` (`is_nondeterministic`), `:62-75` (`reject_nondeterministic`); collected at `_chunked.py:322-324`, raised at `:341`. The deterministic `conditional_failures` (namespace, explicit categories, no from_profile) at `_chunked_categorical.py:42-59` must still apply to the seeded case.
+- **Native chunked execution template (C1):** `native/_chunk_masking.py:289-308` calls `native_categorical(source, categories=prepared.categories, cdf=prepared.cdf, mask_key, namespace, index_kernel, native_threads)`; `native_categorical` (`native/_categorical_ext.py:40-126`) calls `derive_index_batch(col, ...)` on the SOURCE column, null-restores from source (L93-99,124-125), output pinned `pa.string()` (L126).
+- **base_row_offset plumbing (PARTIAL):** threaded into the native chunked entry and a per-chunk `row_offset` is maintained (`_chunked_entry.py:212` `row_offset = base_row_offset`, validated `:215`, advanced `:273` via `_chunked_dgrn`), but it is NOT passed into `_mask_chunk_native` (call site `:218-231`) and `_mask_chunk_native` (`_chunk_masking.py:190-204`) has no `row_offset` param. THIS is the one plumbing gap C1b-ii fills.
+- **Null-mask invariant:** `native_categorical` L93-99 asserts the kernel's null mask equals the INPUT column's null mask. A dense global-index column has no nulls, so for the positional variant the null restore must key off the SOURCE null mask, not the index column (the L124-125 restore currently keys off `col`=input).
+- **Output-type pin is CONDITIONAL (C1):** `_chunked_schema_rule.py:93` `strings |= categorical_columns`; `categorical_columns` from `prepare_chunked_categoricals` (`native/_categorical_prepared.py:77-98`), which filters through `prepare_categorical` (deterministic-only) + string first-chunk source. So C1's pin does NOT cover the non-det variant; C1b-ii must add the seeded variant to `categorical_columns` AND `categorical_by_column` via a chunked-only branch (both read from `prepare_chunked_categoricals`, wired at `_chunked_entry.py:319-329,418,425`).
+- **Route-aware admission (B3):** `prepare_categorical` (`native/_categorical_prepared.py:52-53`) is SHARED by full-frame physical (`_shadow_bindings.py:262-283`) and the compiler fallback_policy (`_requirements.py:529-539`). Flipping it widens BOTH. Keep it rejecting non-det; the full-frame physical assertion (`physical/_shadow_operators.py:213-221`) stays a true invariant. Hook the seeded admission ONLY on `_chunked_categorical` / `prepare_chunked_categoricals` / `_mask_chunk_native`.
+- **`when:`/FK rejection template:** `_chunked_dgrn.py:128-154` `reject_windowed_date_when` (code `chunked_windowed_date_when_not_supported`), called at `_chunked.py:300`. Rationale is exactly the positional-categorical case.
+- **FK-self-mask:** `_chunked_fk.py` gate admits only `parent_strategy == "hash"`; categorical stays rejected; admitting non-det categorical to the chunked route does not widen it (orthogonal check). No change.
+- **Evidence:** categorical sets `evidence.compiled_kernel_executed = True` in its branch (`_chunk_masking.py:308`); the kernel runs every non-empty chunk, so True is honest (mirror C1; an empty chunk runs no kernel -> idle, per the C2 pattern). `kernel_calls`/`kernel_elapsed_s` per column per chunk (`:329-330`).
+
+## 3. Semantics + parity contract
+
+Native chunked seeded non-det categorical output == oracle chunked == whole-frame, byte-for-byte on values + Arrow type + metadata, for the admissible case. Per-chunk global index `g = base_row_offset + local_index` (the entry already maintains this). The key is `encode_int(g)` as an int column fed to `derive_index_batch` (byte-identical to the oracle scalar path). Output type pinned to `string` (same as C1, conditional on the seeded-admissible set). `when:`/FK are rejected on the chunked route (handler-frame ordinal != global physical position there; mirrors windowed_date). Nulls restored from the SOURCE null mask.
+
+## 4. Implementation
+
+1. **Lift the chunked veto (seeded-admissible only).** `_chunked.py:322-324`: do not collect a seeded non-det categorical that passes the admissibility set into `nondeterministic_categoricals`; a genuinely non-admissible non-det categorical (missing namespace, from_profile, non-string categories) still rejects with `categorical_nondeterministic_not_chunk_safe`. Keep `conditional_failures` applying (namespace, explicit categories). Update `_chunked_categorical.py` prose/predicate to distinguish "admissible seeded -> allowed" from "non-admissible -> rejected".
+2. **Chunked-only prepared set + string pin.** Add a chunked-only branch to `prepare_chunked_categoricals` (`native/_categorical_prepared.py:77-98`) that prepares the seeded non-det variant (resolved categories + CDF) WITHOUT going through `prepare_categorical`'s deterministic filter (so the full-frame physical route is NOT widened, B3). Add the seeded variant to the returned `categorical_columns` (string pin, `_chunked_schema_rule.py:93`) and `categorical_by_column` (execution), both wired at `_chunked_entry.py:319-329,418,425`. The variant must carry a flag marking it positional (so `_mask_chunk_native` keys by offset, not source).
+3. **Thread row_offset into the masker.** Add a `row_offset` parameter to `_mask_chunk_native` (`_chunk_masking.py:190-204`) and pass the loop's per-chunk `row_offset` at the call site (`_chunked_entry.py:218-231`). (The entry already computes/validates/advances it; only this hop is missing.)
+4. **Positional categorical branch.** In `_mask_chunk_native`'s categorical branch (`:289-308`), when the prepared entry is the positional (seeded non-det) variant: build an int64 (or uint64) column `[row_offset .. row_offset+n)`, call `native_categorical` (or a `native_categorical_positional` sibling) with THAT as the keyed input and `pool_size` from categories/CDF; restore nulls from the SOURCE column's null mask (NOT the index column). Prefer the smallest change: a sibling or a `key_array`/`source_validity` parameter on `native_categorical`, keeping C1's deterministic (source-keyed) path untouched and its null-mask invariant intact for that path. Set `compiled_kernel_executed = True` when the kernel ran (honest; mirror C1), idle for an empty chunk (C2 pattern).
+5. **`when:` + FK chunked rejection.** Add a `reject_*_when`-style gate for seeded non-det categorical carrying `when:` (new code, mirror `reject_windowed_date_when`), invoked near `_chunked.py:300`. Add an FK-affected rejection for a seeded non-det categorical on an FK-affected table on the chunked route (the handler-frame ordinal is a synthetic/match ordinal under FK/when, not the global physical position). Deterministic categorical + when:/FK is unaffected.
+6. **Route-aware admission stays closed for full-frame physical (B3).** Do NOT change `prepare_categorical:52-53`, `categorical_config_rejection`, `_requirements.py:529-539`, `native_route_eligibility`, `_shadow_bindings.py`, or the `_shadow_operators.py:213` assertion. Confirm with a test that the full-frame physical route still rejects non-det.
+7. **Evidence (honest).** `compiled_kernel_executed = True` when the kernel ran; `kernel_calls["categorical"]` per column per chunk; empty-chunk idle. Mirror C1 (the index kernel runs on every non-empty chunk; there is no all-unparseable degenerate class for categorical).
+8. **Docs:** CHANGELOG + compatibility-contract (non-det categorical now runs the chunked native route; split/OOC still deferred). Barry pass with exact-HEAD receipt. Roadmap + RECENTLY-SHIPPED on merge. Note C1b-iii (split) / C1b-iv (OOC) as the remaining deferred routes.
+
+## 5. Acceptance tests (written before implementation; red-before recorded)
+
+Parity contract: native chunked == oracle chunked == whole-frame, byte-for-byte on values + Arrow type + metadata, order, warnings, errors, evidence. Mirror C1's `_chunked_categorical_support.py` / parity + admission suites.
+
+1. **Parity matrix.** Seeded non-det categorical (uniform + weighted), string source, namespace, over chunk shapes {empty, all-null, single-row, ragged, all-null-beside-valued, null-block-then-valued}, sizes {1, 7, 50_000}, threads {1, 4}. Assert native chunked == oracle chunked == whole-frame per chunk and reassembled (values + Arrow type + metadata). Include a chunk-boundary split where the same source value spans two chunks and gets DIFFERENT categories by position (proving position-keying across the boundary with the correct global offset).
+2. **Global-offset correctness.** A multi-chunk run keys chunk 2's rows by `base_row_offset + local`, so chunk-boundary rows match the whole-frame result at those global indices. A nonzero `base_row_offset` entry matches the whole-frame rows at those global positions (not at 0-based local). Row-offset domain validated.
+3. **Position-keyed, not value-keyed (KAT, frozen literal indices).** Same value at two global indices can differ; two different values at the same global index map to the same category; exact output == direct scalar `derive_index(mask_key, ns, encode_int(g), pool_size)` with frozen literal expected indices.
+4. **when:/FK rejection (chunked).** Seeded non-det categorical + `when:` -> rejected on the chunked route with the new exact code. Seeded non-det categorical on an FK-affected table -> rejected on the chunked route. Deterministic categorical + when:/FK still works. (These run whole-frame, reproducibly, per C1b-i.)
+5. **Route-aware admission (B3 no-widening).** Full-frame physical native categorical STILL rejects non-det (`prepare_categorical` returns the rejection; the `_shadow_operators.py:213` assertion holds). The chunked route admits it; the full-frame physical route does not.
+6. **Non-admissible still rejected.** A non-det categorical missing a namespace / with from_profile / non-string categories / non-string source still fails with its exact existing code (chunked veto or config rejection), not silently admitted.
+7. **Output-type pin.** Seeded non-det admissible categorical pins to `string` on both chunked legs (like C1); non-admissible stays on its existing path/type.
+8. **Evidence.** Admitted + >=1 non-empty chunk: `compiled_kernel_executed is True`, `executed_backend == rust_companion`, `kernel_calls["categorical"]` per column per chunk. Companion-absent -> downgrade to oracle, byte-identical. An all-empty/all-null admitted column: honest idle evidence (mirror C2's empty handling).
+9. **Deferred routes still vetoed (regression, the split boundary for C1b-iii/iv).** Multi-table split STILL does not split a non-det categorical job (veto intact); out-of-core STILL rejects it. Assert the exact deferred-reason codes are unchanged (so C1b-ii did not accidentally open them).
+10. **Forced-oracle proof (C2 lesson).** Every forced-oracle leg in the new suites captures route evidence and asserts the exact still-vetoed reason, so no test silently becomes native-vs-native.
+
+Record red-before (fails on current main: seeded non-det categorical is vetoed from the chunked route) and green-after.
+
+## 6. Risk, rollback, docs, gates
+
+- **Risk R2.** One route opened (chunked native), byte-parity-gated; the native kernel + offset machinery already exist (only the final hop + a positional branch are new). Chief hazards: the null-restore-from-source (not index column) for the positional variant (test 1/3 catch a mismatch), the chunked-only admission not widening full-frame physical (test 5), and the when:/FK rejection (test 4). Split + OOC explicitly NOT opened (test 9).
+- **Rollback:** revert the branch; the chunked veto returns (non-det categorical back to whole-frame, still seeded/reproducible from C1b-i).
+- **Clean-env check:** `ci-mirror` at the final gate.
+- **Gates:** Codex plan-gate -> Sonnet tests-first build (red-before) -> dennis -> Codex final -> merge on local gates with Cam's go. Rebase onto latest main before merge.
+
+## 7. Open questions for the plan-gate
+
+1. Positional native API: add a `key_array` + `source_validity` parameter to `native_categorical`, or a `native_categorical_positional` sibling? (Keep C1's deterministic source-keyed path + its null-mask invariant untouched; prefer the smaller/clearer change.)
+2. The chunked-only prepared branch in `prepare_chunked_categoricals`: confirm it can prepare the seeded variant (categories + CDF, all-string, string source) WITHOUT reusing `prepare_categorical`'s deterministic filter, and that nothing else consuming `prepare_chunked_categoricals` assumes deterministic-only.
+3. FK rejection scope: is "FK-affected table" the right granularity, or only when the categorical column IS an FK key / a child of one? Confirm the minimal correct rejection (don't over-reject deterministic categorical or non-FK columns).
+4. Does the `_chunked_schema_rule` string pin, once the seeded variant is in `categorical_columns`, apply correctly on BOTH chunked legs (oracle + native) for the seeded case, matching C1's conditional pin semantics?
