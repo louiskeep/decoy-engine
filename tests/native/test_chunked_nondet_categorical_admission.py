@@ -155,9 +155,12 @@ def test_a_non_admissible_config_fails_before_any_chunk_and_never_reaches_the_or
 ) -> None:
     oracle_calls: list[int] = []
     real = _chunked_entry._oracle_route
-    monkeypatch.setattr(
-        _chunked_entry, "_oracle_route", lambda *a, **k: oracle_calls.append(1) or real(*a, **k)
-    )
+
+    def counting(*a: Any, **k: Any) -> Any:
+        oracle_calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(_chunked_entry, "_oracle_route", counting)
     consumed: list[int] = []
 
     def stream() -> Iterator[pa.Table]:
@@ -263,9 +266,12 @@ def _run_typed(typ: pa.DataType, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, 
     """Run the seeded categorical over a `typ` source; return (run, evidence, oracle calls)."""
     oracle_calls: list[int] = []
     real = _chunked_entry._oracle_route
-    monkeypatch.setattr(
-        _chunked_entry, "_oracle_route", lambda *a, **k: oracle_calls.append(1) or real(*a, **k)
-    )
+
+    def counting(*a: Any, **k: Any) -> Any:
+        oracle_calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(_chunked_entry, "_oracle_route", counting)
     ev: list[Any] = []
     run = run_one(
         make_config([_nd(), passthrough("p")]), [_typed_source(typ)], route_evidence_sink=ev
