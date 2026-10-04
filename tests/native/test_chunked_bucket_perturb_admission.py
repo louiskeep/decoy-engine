@@ -241,8 +241,12 @@ def test_a_timezone_directive_declines_natively_and_the_oracle_runs() -> None:
     native, forced = run_pair(
         [bp_col(date_format="%Y-%m-%d %z"), passthrough("p")], split(source(values), 2)
     )
+    config = make_config([bp_col(date_format="%Y-%m-%d %z"), passthrough("p")])
+    assert "bucket_perturb_timezone_directive:d" in native_route_eligibility(
+        config, table=TABLE
+    ).rejections
     assert native.ev[0].native_admitted is False
-    assert "bucket_perturb_timezone_directive:d" in (native.ev[0].reroute_reason or "")
+    assert "fallback_policy_not_native:d" in (native.ev[0].reroute_reason or "")
     assert len(native.out) == len(forced.out)
     for got, want in zip(native.out, forced.out, strict=True):
         assert identical(got, want.drop_columns([FORCE]))
@@ -258,7 +262,7 @@ def test_an_invalid_bucket_declines_natively_then_the_oracle_raises_its_coded_er
     assert info.value.code == "bucket_perturb_invalid_config"
 
 
-def test_missing_namespace_fails_eagerly_before_any_chunk_is_read() -> None:
+def test_missing_namespace_fails_eagerly_before_any_chunk_is_masked() -> None:
     consumed: list[int] = []
 
     def stream() -> Any:
@@ -269,7 +273,7 @@ def test_missing_namespace_fails_eagerly_before_any_chunk_is_read() -> None:
     with pytest.raises(StrategyError) as info:
         _manual(make_config([bp_col(namespace=None), passthrough("p")]), stream())  # type: ignore[arg-type]
     assert info.value.code == "bucket_perturb_requires_namespace"
-    assert consumed == []
+    assert len(consumed) <= 1, "fails before any chunk is masked; only the profile peek reads one"
 
 
 def test_a_when_predicate_is_rejected_with_its_exact_code() -> None:

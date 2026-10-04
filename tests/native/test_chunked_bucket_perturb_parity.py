@@ -165,7 +165,8 @@ def _types(run_out: list[pa.Table]) -> list[pa.DataType]:
 
 
 def _reassembled(run_out: list[pa.Table]) -> pa.DataType:
-    return concat_masked_chunks(run_out, table=TABLE).schema.field("d").type
+    chunks = [t.drop_columns([FORCE]) if FORCE in t.column_names else t for t in run_out]
+    return concat_masked_chunks(chunks, table=TABLE).schema.field("d").type
 
 
 _TYPE_CASES: dict[str, tuple[Callable[[], list[pa.Table]], list[pa.DataType], pa.DataType]] = {

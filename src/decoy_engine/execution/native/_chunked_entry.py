@@ -32,6 +32,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution import _chunked, _chunked_oracle
+from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
@@ -195,6 +196,13 @@ def _native_route(
     unconfigured_set = frozenset(unconfigured)
 
     def _guard(raw: pa.Table) -> pa.Table:
+        # The oracle route re-checks this on every chunk before masking; without it a
+        # later null-typed chunk would be cast to string here and masked, where the
+        # oracle route raises, so the two routes would disagree on that input.
+        if state.bucket_perturb_cols:
+            bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
+                raw.schema, state.bucket_perturb_cols, table=table
+            )
         run_chunk_ingest_guards(plan, {table: raw}, state.registry, state.graph)
         return cast_null_columns(first.schema, raw)
 
