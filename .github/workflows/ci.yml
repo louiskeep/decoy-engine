@@ -58,7 +58,7 @@ jobs:
         # dev-deps group in pyproject.toml. [cloud] is required so
         # connectors/gcs.py's google.api_core/google.oauth2 imports resolve;
         # the pyproject mypy override only covers google.cloud.
-        run: pip install -e ".[dev,cloud]" mypy==2.1.0
+        run: pip install -e ".[dev,cloud]" mypy==2.3.0
       - name: Type check
         # testflight/ holds real runner+invariant logic (acceptance suite); it
         # lives outside src/tests so it must be named explicitly. scripts/ stays
