@@ -145,17 +145,15 @@ def test_full_frame_executes_native_categorical(tmp_path: Path) -> None:
     assert evidence.compiled_kernel_executed is True
 
 
-# ── Seam proof: chunked route DECLINES categorical to the oracle ────
+# ── Seam proof: the chunked route admits native-admissible categorical only ──
 
 
-def test_chunked_route_declines_categorical(tmp_path: Path) -> None:
-    source = pa.table({"c": pa.array(["x", "y", "z"], type=pa.string())})
+def _chunked_preflight(tmp_path: Path, column: dict[str, Any], values: list[Any]):
+    source = pa.table({"c": pa.array(values)})
     write_read_only_fixture(tmp_path, source, "cat")
-    config = build_config(
-        tmp_path, "t", tmp_path / "cat.parquet", [_cat_column({"categories": _UNI})]
-    )
+    config = build_config(tmp_path, "t", tmp_path / "cat.parquet", [column])
     profile = first_chunk_profile(source, table="t", engine_version=ENGINE_VERSION)
-    preflight = plan_native_route(
+    return plan_native_route(
         config,
         profile,
         table="t",
@@ -163,8 +161,33 @@ def test_chunked_route_declines_categorical(tmp_path: Path) -> None:
         first_schema=source.schema,
         registry=get_default_registry(),
     )
+
+
+@_NEEDS_COMPANION
+def test_chunked_route_admits_native_admissible_categorical(tmp_path: Path) -> None:
+    preflight = _chunked_preflight(tmp_path, _cat_column({"categories": _UNI}), ["x", "y", "z"])
+    assert preflight.evidence.native_admitted is True
+    assert preflight.evidence.reroute_reason is None
+    assert preflight.index_kernel is not None
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        _cat_column({"categories": [1, 2, 3]}),
+        _cat_column({"categories": _UNI}, deterministic=False),
+        _cat_column({"categories": _UNI}, namespace=""),
+    ],
+    ids=["numeric_categories", "non_deterministic", "no_namespace"],
+)
+def test_chunked_route_declines_non_admissible_categorical(
+    tmp_path: Path, column: dict[str, Any]
+) -> None:
+    preflight = _chunked_preflight(tmp_path, column, ["x", "y", "z"])
     assert preflight.evidence.native_admitted is False
-    assert "categorical_not_native_chunked_route:c" in (preflight.evidence.reroute_reason or "")
+    reason = preflight.evidence.reroute_reason or ""
+    assert "fallback_policy_not_native:c" in reason
+    assert "categorical_not_native_chunked_route" not in reason
 
 
 # ── Determinism gate: decline at BOTH admission boundaries ──────────

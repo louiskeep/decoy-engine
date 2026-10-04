@@ -1030,7 +1030,7 @@ class TestRoutedResultSurface:
         self, tmp_path, monkeypatch
     ):
         """The same union on the dispatcher lane, on a table B1 sends to its oracle
-        route (a categorical column beside the hash column), where the pandas adapter
+        route (a bucket_perturb column beside the hash column), where the pandas adapter
         runs once per chunk."""
         import dataclasses
 
@@ -1040,7 +1040,7 @@ class TestRoutedResultSurface:
         df = pd.DataFrame(
             {
                 "val": [f"user{i}@example.com" for i in range(_ROWS)],
-                "tier": [["a", "b", "c"][i % 3] for i in range(_ROWS)],
+                "tier": [f"2021-{1 + (i % 12):02d}-15" for i in range(_ROWS)],
             }
         )
         df.to_csv(tmp_path / "in.csv", index=False)
@@ -1050,10 +1050,9 @@ class TestRoutedResultSurface:
                 {"name": "val", "strategy": "hash", "namespace": "hash_ns"},
                 {
                     "name": "tier",
-                    "strategy": "categorical",
-                    "deterministic": True,
+                    "strategy": "bucket_perturb",
                     "namespace": "tier_ns",
-                    "provider_config": {"categories": ["a", "b", "c"]},
+                    "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
                 },
             ],
         )

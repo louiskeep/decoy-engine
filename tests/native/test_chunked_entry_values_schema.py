@@ -482,19 +482,33 @@ def test_non_string_redact_with_keeps_the_oracle_value_and_type() -> None:
         assert g.column("n").to_pylist() == w.column("n").to_pylist()
 
 
-def test_categorical_on_the_oracle_route_keeps_per_chunk_types() -> None:
-    """Characterization: strategies that only run on the oracle route keep the
-    oracle's chunk-content-dependent types until a later phase pins them."""
+def test_categorical_output_type_is_pinned_to_string_on_the_oracle_route() -> None:
+    """A native-admissible categorical column is pinned to `string` on both chunked legs,
+    so its Arrow type no longer depends on which chunk holds the nulls."""
     src = pa.table(
         {
             "c": pa.array([None, None, "a", None], pa.string()),
             "p": pa.array([1, 2, 3, 4], pa.int64()),
+            "d": pa.array(["2020-03-15"] * 4, pa.string()),
         }
     )
-    config = make_config([categorical("c"), passthrough("p")])
+    config = make_config([categorical("c"), passthrough("p"), force_oracle("d")])
     chunks = split(src, 2)
-    got = _entry(config, chunks)
-    want = _oracle(config, chunks)
-    assert [c.schema.field("c").type for c in got] == [c.schema.field("c").type for c in want]
+    evidence: list[NativeRouteEvidence] = []
+    got = _entry(config, chunks, evidence)
+    want = _oracle(
+        make_config([categorical("c"), passthrough("p")]), [c.select(["c", "p"]) for c in chunks]
+    )
+    assert evidence[0].native_admitted is False
+    assert {c.schema.field("c").type for c in got} == {pa.string()}
     assert [c.column("c").to_pylist() for c in got] == [c.column("c").to_pylist() for c in want]
-    assert got[0].schema.field("c").type != got[1].schema.field("c").type
+    unpinned = [c.schema.field("c").type for c in want]
+    assert unpinned[0] != unpinned[1], "the public oracle's per-chunk types differ"
+
+
+@NEEDS_COMPANION
+def test_values_categorical_runs_natively_and_matches_oracle_and_full_frame(
+    tmp_path: Path,
+) -> None:
+    config = make_config([redact("r"), passthrough("p"), categorical("c")])
+    _assert_three_way(config, ["r", "p", "c"], tmp_path, expect_native=True)
