@@ -49,8 +49,9 @@ their existing codes and paths.
 
 Output type is unchanged and still content-dependent, matching the oracle chunked route: a
 zero-row or all-null chunk is Arrow `null`, any chunk with a non-null value (an all-unparseable
-one included) is `string`, and the joined column is `string`. It is deliberately not pinned
-to `string` the way categorical is.
+one included) is `string`, and the joined column is `string` when any chunk contains a
+non-null value, otherwise it remains `null`. It is deliberately not pinned to `string` the
+way categorical is.
 
 Route evidence is now honest about work done. A chunk with no parseable row runs no compiled
 kernel, so `compiled_kernel_executed` stays `False` for a column that never ran one, and its

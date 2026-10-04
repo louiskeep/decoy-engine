@@ -228,11 +228,21 @@ def test_autodetect_fails_chunk_safety_with_its_exact_code(date_format: str | No
 def test_an_invalid_but_truthy_format_raises_the_same_error_on_both_legs() -> None:
     columns = [bp_col(date_format="%Q"), passthrough("p")]
     table = source(["2024-01-15"])
+    native_ev: list[Any] = []
     with pytest.raises(ValueError, match="bad directive") as native_exc:
-        run_one(make_config(columns), [table])
+        run_one(make_config(columns), [table], route_evidence_sink=native_ev)
+    assert native_ev[0].native_admitted is True
+    forced_ev: list[Any] = []
     with pytest.raises(ValueError, match="bad directive") as oracle_exc:
-        run_one(make_config([*columns, force_oracle(FORCE)]), [with_force(table)])
+        run_one(
+            make_config([*columns, force_oracle(FORCE)]),
+            [with_force(table)],
+            route_evidence_sink=forced_ev,
+        )
     assert type(native_exc.value) is type(oracle_exc.value)
+    assert len(forced_ev) == 1
+    assert forced_ev[0].native_admitted is False
+    assert f"{VETOED}:{FORCE}" in (forced_ev[0].reroute_reason or "")
 
 
 @NEEDS_COMPANION

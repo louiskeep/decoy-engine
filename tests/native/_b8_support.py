@@ -40,10 +40,17 @@ class Run:
 
 
 def run_one(
-    config: dict[str, Any], chunks: list[pa.Table], *, vault: bool = False, **kw: Any
+    config: dict[str, Any],
+    chunks: list[pa.Table],
+    *,
+    vault: bool = False,
+    route_evidence_sink: list[Any] | None = None,
+    **kw: Any,
 ) -> Run:
+    """`route_evidence_sink`, when given, is the caller's list: it keeps the decision even
+    when the run raises, so an expected-error leg can still prove which route it took."""
     sink: list[Any] = []
-    ev: list[Any] = []
+    ev: list[Any] = route_evidence_sink if route_evidence_sink is not None else []
     writer = VaultWriter(vault_key()) if vault else None
     out = list(
         run_mask_chunked(

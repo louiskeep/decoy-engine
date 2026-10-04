@@ -97,12 +97,14 @@ def test_empty_and_all_null_chunks_between_valued_chunks_are_identical(threads: 
     assert_same_as_oracle(native, forced)
 
 
-def _outcome(columns: list[dict[str, Any]], chunks: list[pa.Table]) -> Any:
-    """The tables a run yields, or the (type, code) of the error it raises."""
+def _outcome(columns: list[dict[str, Any]], chunks: list[pa.Table]) -> tuple[Any, list[Any]]:
+    """The tables a run yields, or the (type, code) of the error it raises, plus the
+    caller-owned route evidence (kept even when the run raises)."""
+    evidence: list[Any] = []
     try:
-        return run_one(make_config(columns), chunks).out
+        return run_one(make_config(columns), chunks, route_evidence_sink=evidence).out, evidence
     except Exception as exc:
-        return (type(exc).__name__, getattr(exc, "code", None))
+        return (type(exc).__name__, getattr(exc, "code", None)), evidence
 
 
 @NEEDS_COMPANION
@@ -117,8 +119,13 @@ def _outcome(columns: list[dict[str, Any]], chunks: list[pa.Table]) -> Any:
 def test_a_drifted_later_chunk_has_the_same_outcome_on_both_legs(later: pa.Table) -> None:
     valued = source([date_value(1), date_value(2), None, date_value(3)])
     columns = [bp_col(), passthrough("p")]
-    native = _outcome(columns, [valued, later])
-    forced = _outcome([*columns, force_oracle(FORCE)], [with_force(valued), with_force(later)])
+    native, native_ev = _outcome(columns, [valued, later])
+    forced, forced_ev = _outcome(
+        [*columns, force_oracle(FORCE)], [with_force(valued), with_force(later)]
+    )
+    assert len(native_ev) == 1 and native_ev[0].native_admitted is True
+    assert len(forced_ev) == 1 and forced_ev[0].native_admitted is False
+    assert f"date_shift_not_native_chunked_route:{FORCE}" in (forced_ev[0].reroute_reason or "")
     if isinstance(forced, tuple):
         assert native == forced
     else:
