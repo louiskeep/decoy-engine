@@ -296,8 +296,10 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         # Same both-orientation gap for bucket_perturb (see
         # _chunked_bucket_perturb.py point 3).
         bucket_perturb_gate.reject_bucket_perturb_fk_keys(config, table=table)
-    # `windowed_date` + `when:` inadmissible here (public entry; see `_chunked_dgrn.py`).
+    # `windowed_date` + `when:` inadmissible here (public entry; see `_chunked_dgrn.py`),
+    # and so is a seeded non-deterministic `categorical` (see `_chunked_categorical.py`).
     dgrn.reject_windowed_date_when(table_cfg, table=table)
+    categorical_gate.reject_nondeterministic_when(table_cfg, table=table)
     # `group_key` + `when:` inadmissible here too (see `_chunked_group_key.py`).
     group_key.reject_group_key_when(table_cfg, table=table)
     # `text_mask` + `when:` inadmissible here too (see `_chunked_text_mask.py`).
@@ -319,7 +321,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         if strategy is None or strategy in _CHUNK_ADMITTED_STRATEGIES:
             continue
         if strategy in CHUNK_CONDITIONAL_STRATEGIES:
-            if strategy == "categorical" and categorical_gate.is_nondeterministic(col_entry):
+            if strategy == "categorical" and categorical_gate.rejects_nondeterministic(col_entry):
                 nondeterministic_categoricals.append(str(col_entry.get("name", "?")))
                 continue
             failures = _conditional_admission_failures(col_entry)

@@ -66,7 +66,6 @@ def native_categorical(
             "always resolves a concrete key before the native route dispatches."
         )
     col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    n = len(col)
     pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
     idx = index_kernel.derive_index_batch(
         col,
@@ -75,7 +74,24 @@ def native_categorical(
         pool_size=pool_size,
         native_threads=native_threads,
     )
+    return _select(idx, col.is_valid(), col.is_valid(), categories, cdf, pool_size)
 
+
+def _select(
+    idx: pa.Array,
+    input_valid: pa.Array,
+    out_valid: pa.Array,
+    categories: Sequence[str],
+    cdf: Sequence[int] | None,
+    pool_size: int,
+) -> pa.Array:
+    """Validate the kernel's indices and gather the categories.
+
+    `input_valid` is the validity of what the kernel was handed (its null positions must
+    come back unchanged); `out_valid` is the validity the output takes. They coincide for
+    the source-keyed call and differ for the position-keyed one, whose key column has no
+    nulls while the output restores the source's."""
+    n = len(out_valid)
     # Runtime invariants on the kernel's own result, mirroring
     # `sample_faker_array`: the isinstance/type check comes FIRST so a
     # non-`pa.Array` result cannot leak an uncoded AttributeError.
@@ -91,8 +107,8 @@ def native_categorical(
             message=f"derive_index_batch returned {len(idx)} indices for {n} input rows",
         )
     idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
-    col_valid = col.is_valid().to_numpy(zero_copy_only=False)
-    if not np.array_equal(idx_valid, col_valid):
+    in_valid = input_valid.to_numpy(zero_copy_only=False)
+    if not np.array_equal(idx_valid, in_valid):
         raise GenerationError(
             code="index_batch_null_mask_mismatch",
             message="derive_index_batch's null positions do not match the source column's",
@@ -119,11 +135,55 @@ def native_categorical(
         cat_idx = np.searchsorted(cdf_arr, idx_np.astype(np.int64), side="right")
         np.minimum(cat_idx, len(categories) - 1, out=cat_idx)
 
+    keep = out_valid.to_numpy(zero_copy_only=False)
     categories_arr = np.array(list(categories), dtype=object)
     out = np.empty(n, dtype=object)
-    out[idx_valid] = categories_arr[cat_idx[idx_valid]]
-    out[~idx_valid] = None
+    out[keep] = categories_arr[cat_idx[keep]]
+    out[~keep] = None
     return pa.array(out, type=pa.string())
 
 
-__all__ = ["native_categorical"]
+_UINT64_MAX = 2**64 - 1
+
+
+def native_categorical_positional(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    row_offset: int,
+    categories: Sequence[str],
+    cdf: Sequence[int] | None,
+    mask_key: bytes | None,
+    namespace: str,
+    index_kernel: IndexDerivationKernel,
+    native_threads: int | None = None,
+) -> pa.Array:
+    """Seeded non-deterministic selection, keyed by global row position.
+
+    The draw for local row `i` is the index kernel's draw for the canonical integer
+    `row_offset + i`, so it ignores the source value; this reproduces the oracle's
+    `derive_index(mask_key, namespace, encode_int(row_offset + i), pool_size)`. The key
+    column is a dense `uint64` (the offset domain is `[0, 2**64-1]`, which int64 cannot
+    hold) with no nulls, so nulls are restored from the SOURCE and still consume their
+    position, exactly as the oracle's `enumerate` does."""
+    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+        raise AssertionError("positional categorical reached with mask_key=None")
+    col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+    n = len(col)
+    if row_offset < 0 or (n and row_offset + n - 1 > _UINT64_MAX):
+        raise GenerationError(
+            code="categorical_position_out_of_domain",
+            message=f"rows [{row_offset}, {row_offset + n}) leave the uint64 position domain",
+        )
+    keys = pa.array(np.uint64(row_offset) + np.arange(n, dtype=np.uint64), pa.uint64())
+    pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
+    idx = index_kernel.derive_index_batch(
+        keys,
+        mask_key=mask_key,
+        namespace=namespace,
+        pool_size=pool_size,
+        native_threads=native_threads,
+    )
+    return _select(idx, keys.is_valid(), col.is_valid(), categories, cdf, pool_size)
+
+
+__all__ = ["native_categorical", "native_categorical_positional"]

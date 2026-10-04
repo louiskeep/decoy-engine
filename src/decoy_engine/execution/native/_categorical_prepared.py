@@ -27,6 +27,8 @@ class PreparedCategorical:
     categories: tuple[str, ...]
     # None selects the uniform path; otherwise the oracle's `_build_cdf` output.
     cdf: tuple[int, ...] | None
+    # The seeded non-deterministic variant: keyed by global row position, not source value.
+    positional: bool = False
 
 
 def prepare_categorical(
@@ -74,25 +76,59 @@ def prepare_categorical(
     return PreparedCategorical(tuple(categories), cdf), None
 
 
+def prepare_positional_categorical(
+    name: str, *, namespace: str | None, provider_config: Mapping[str, Any]
+) -> tuple[PreparedCategorical | None, str | None]:
+    """Stage A of chunked admission for the SEEDED non-deterministic variant, from config
+    alone: namespace, explicit all-string categories (no `from_profile`) and a CDF the
+    oracle's `_build_cdf` can build. The compat veto, the static route decision, the
+    evidence planner and `prepare_chunked_categoricals` all read this one verdict, so a
+    config that fails it is refused at the veto and never reaches the oracle route.
+
+    The validation is `prepare_categorical`'s own (called as the deterministic variant,
+    which only affects its determinism gate) plus the two things its callers never needed:
+    `from_profile`, and non-finite weights: the CDF arithmetic never validates them, so a
+    NaN, an infinity or an overflowing sum escapes `_build_cdf` as a bare ValueError (or
+    OverflowError), which is caught here and declined like any other unbuildable CDF."""
+    if provider_config.get("from_profile"):
+        return None, f"categorical_from_profile_not_chunk_safe:{name}"
+    try:
+        artifact, reason = prepare_categorical(
+            name, deterministic=True, namespace=namespace, provider_config=provider_config
+        )
+    except (ValueError, OverflowError):
+        return None, f"categorical_weights_unbuildable_cdf:{name}"
+    if artifact is None:
+        return None, reason
+    return PreparedCategorical(artifact.categories, artifact.cdf, positional=True), None
+
+
+def source_is_string(schema: pa.Schema, name: str) -> bool:
+    """Stage B: the compiled index kernel's admitted categorical source is exactly `string`."""
+    return bool(name in schema.names and schema.field(name).type == pa.string())
+
+
 def prepare_chunked_categoricals(
     col_seed_by_name: Mapping[str, Any], first_schema: pa.Schema
 ) -> dict[str, PreparedCategorical]:
     """The prepared artifact for every categorical column that is native-admissible:
-    config-admissible AND a `string` first-chunk source. This is the one predicate the
-    string output-type pin and the native chunk call both consume, so a column is
-    pinned exactly when the native operator could run it, on either chunked leg."""
+    config-admissible (stage A) AND a `string` first-chunk source (stage B). This is the
+    one predicate the string output-type pin and the native chunk call both consume, so a
+    column is pinned exactly when the native operator could run it, on either chunked leg.
+    A non-deterministic column is admitted only as the positional variant."""
     prepared: dict[str, PreparedCategorical] = {}
     for name, seed in col_seed_by_name.items():
-        if seed.strategy != "categorical" or name not in first_schema.names:
+        if seed.strategy != "categorical" or not source_is_string(first_schema, name):
             continue
-        if first_schema.field(name).type != pa.string():
-            continue
-        artifact, _reason = prepare_categorical(
-            name,
-            deterministic=bool(seed.deterministic),
-            namespace=seed.namespace,
-            provider_config=provider_config_to_dict(seed.provider_config),
-        )
+        cfg = provider_config_to_dict(seed.provider_config)
+        if seed.deterministic:
+            artifact, _reason = prepare_categorical(
+                name, deterministic=True, namespace=seed.namespace, provider_config=cfg
+            )
+        else:
+            artifact, _reason = prepare_positional_categorical(
+                name, namespace=seed.namespace, provider_config=cfg
+            )
         if artifact is not None:
             prepared[name] = artifact
     return prepared

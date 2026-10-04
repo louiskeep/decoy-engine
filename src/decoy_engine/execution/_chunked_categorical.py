@@ -7,8 +7,11 @@ A deterministic categorical column is row-local: each row maps from its own
 canonicalized source value and `(mask_key, namespace)` through `derive_index`, so
 per-chunk masking reproduces whole-column masking value for value. A
 non-deterministic one is seeded but position-keyed (by the row ordinal of the frame the
-handler receives), and its chunked implementation is deferred to C1b-ii, so it stays
-rejected here with its own code (`NONDETERMINISTIC_CODE`, which C1b-ii lifts).
+handler receives). Its chunked native route (C1b-ii) admits only a config that is complete
+before any chunk (`positional_config_of_entry`: namespace, explicit string categories, a
+buildable CDF); any other non-deterministic column is rejected here with its own code
+(`NONDETERMINISTIC_CODE`) so it can never reach the oracle route by accident, and it may not
+carry a `when:` (the filtered enumeration is not the global position).
 
 "Deterministic" is `is_deterministic_categorical`, the single definition the native
 determinism gate and the seed envelope share, so the `allow_collisions: true` alias
@@ -37,6 +40,14 @@ def is_nondeterministic(col_entry: dict[str, Any]) -> bool:
     )
 
     return not is_deterministic_categorical(col_entry)
+
+
+def rejects_nondeterministic(col_entry: dict[str, Any]) -> bool:
+    """True for a non-deterministic column the chunked route cannot run: every one that
+    is not the config-complete seeded variant."""
+    from decoy_engine.execution.native._categorical_positional import positional_config_of_entry
+
+    return is_nondeterministic(col_entry) and positional_config_of_entry(col_entry) is None
 
 
 def conditional_failures(col_entry: dict[str, Any]) -> list[str]:
@@ -68,8 +79,46 @@ def reject_nondeterministic(columns: Sequence[str], *, table: str) -> None:
         path=f"tables.{table}.columns",
         message=(
             f"categorical column(s) {', '.join(columns)} are not deterministic: the "
-            "non-deterministic path is position-keyed, and its chunked implementation is "
-            "deferred (C1b-ii). Set `deterministic: true` (or `allow_collisions: true`) with "
-            "a namespace to run it chunked."
+            "non-deterministic path is position-keyed, and the chunked route (C1b-ii) runs it "
+            "only with a namespace, explicit string categories and weights the CDF can build. "
+            "Complete the config, or set `deterministic: true` (or `allow_collisions: true`) "
+            "with a namespace."
+        ),
+    )
+
+
+WHEN_CODE = "chunked_categorical_nondeterministic_when_not_supported"
+
+
+def reject_nondeterministic_when(table_cfg: dict[str, Any], *, table: str) -> None:
+    """Reject a seeded non-deterministic categorical that also carries a `when:` predicate.
+
+    `when` hands the handler only the matching rows, so the oracle enumerates the filtered
+    subset, not each row's physical position, and a chunk's global offset cannot reproduce
+    that. Columns that already fail the config veto keep its code instead.
+
+    Raises:
+        PlanCompileError: ``code='chunked_categorical_nondeterministic_when_not_supported'``.
+    """
+    from decoy_engine.execution.native._categorical_positional import positional_config_of_entry
+
+    cols = sorted(
+        str(c.get("name", "?"))
+        for c in table_cfg.get("columns") or []
+        if isinstance(c, dict)
+        and isinstance(c.get("when"), str)
+        and c["when"].strip()
+        and positional_config_of_entry(c) is not None
+    )
+    if not cols:
+        return
+    raise PlanCompileError(
+        code=WHEN_CODE,
+        path=f"tables.{table}.columns",
+        message=(
+            f"column(s) {', '.join(cols)} combine a non-deterministic categorical with a "
+            "'when:' predicate, which is not supported on the chunked route: `when` passes "
+            "only matching rows to the handler, so the oracle enumerates the filtered subset "
+            "0..matches-1, not each row's physical position."
         ),
     )

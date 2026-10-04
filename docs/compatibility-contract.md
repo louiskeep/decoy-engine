@@ -228,9 +228,20 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   on the chunked route, and a split multi-table job can carry both shapes. Masked values are
   unchanged on every route. A categorical column the native operator cannot run (numeric
   categories, a non-`string` source, unbuildable weights) keeps its oracle values and
-  types. A non-deterministic categorical column fails chunked preflight with
-  `categorical_nondeterministic_not_chunk_safe` (its position-keyed chunked implementation is
-  deferred to slice C1b-ii); a deterministic one
+  types. A non-deterministic categorical column runs on the native chunked route (slice C1b-ii)
+  when its config is complete before any chunk: a namespace, explicit all-`string` categories
+  without `from_profile`, and weights the CDF can build. Its draw is keyed by global row
+  position (`base_row_offset` plus the local index, as a `uint64`), so native chunked output
+  equals the oracle chunked route and the whole-frame run for any chunk size. Any other
+  non-deterministic categorical column fails chunked preflight with
+  `categorical_nondeterministic_not_chunk_safe`. An admitted one whose first-chunk source is
+  not `string` (including an all-null source) runs the chunked oracle route with the same
+  seeded draw, the path a deterministic categorical already takes, so it never fails an
+  auto-chunked job that the whole-frame run completes. A null-typed first chunk followed by
+  a typed chunk raises the existing `chunked_leading_null_type` for every chunked strategy.
+  A column carrying `when:` fails with `chunked_categorical_nondeterministic_when_not_supported`. A table with a declared
+  FK relationship still runs on the oracle route, reproducibly. Multi-table split (C1b-iii)
+  and out-of-core (C1b-iv) still decline it. A deterministic one
   without a namespace, with `from_profile`, or without explicit categories keeps
   `chunked_strategy_conditions_unmet`.
   `bucket_perturb` joined the native chunked route on 2026-10-04 (slice C2). A native-admissible

@@ -21,7 +21,10 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
-from decoy_engine.execution.native._categorical_ext import native_categorical
+from decoy_engine.execution.native._categorical_ext import (
+    native_categorical,
+    native_categorical_positional,
+)
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -201,6 +204,7 @@ def _mask_chunk_native(
     stored_index: frozenset[str] = frozenset(),
     categorical_by_column: dict[str, PreparedCategorical] | None = None,
     kernel_idle: set[str] | None = None,
+    row_offset: int = 0,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -230,6 +234,10 @@ def _mask_chunk_native(
     `kernel_idle`, when given, receives each column that ran its strategy branch but no
     compiled kernel this chunk (a bucket_perturb chunk with no parseable row), so the
     chunk's route evidence does not credit the companion for work it did not do.
+
+    `row_offset` is the global position of the chunk's first row; only the seeded
+    non-deterministic categorical keys on it. A zero-row chunk of that variant makes no
+    compiled call (idle, typed empty `string`); an all-null non-empty one does run it.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
@@ -243,6 +251,7 @@ def _mask_chunk_native(
         cfg = provider_config_to_dict(col_seed.provider_config)
         source = chunk.column(name)
         t0 = time.perf_counter()
+        counted = True
         if strategy == "passthrough":
             arrays[name] = native_passthrough(source)
         elif strategy == "redact":
@@ -296,16 +305,34 @@ def _mask_chunk_native(
                     "index kernel and prepared mapping; preflight should have loaded one "
                     "and `prepare_chunked_categoricals` should have produced the other."
                 )
-            arrays[name] = native_categorical(
-                source,
-                categories=prepared.categories,
-                cdf=prepared.cdf,
-                mask_key=mask_key,
-                namespace=col_seed.namespace or "",
-                index_kernel=index_kernel,
-                native_threads=native_threads,
-            )
-            evidence.compiled_kernel_executed = True
+            if prepared.positional and len(source) == 0:
+                arrays[name] = pa.array([], pa.string())
+                counted = False
+                if kernel_idle is not None:
+                    kernel_idle.add(name)
+            elif prepared.positional:
+                arrays[name] = native_categorical_positional(
+                    source,
+                    row_offset=row_offset,
+                    categories=prepared.categories,
+                    cdf=prepared.cdf,
+                    mask_key=mask_key,
+                    namespace=col_seed.namespace or "",
+                    index_kernel=index_kernel,
+                    native_threads=native_threads,
+                )
+                evidence.compiled_kernel_executed = True
+            else:
+                arrays[name] = native_categorical(
+                    source,
+                    categories=prepared.categories,
+                    cdf=prepared.cdf,
+                    mask_key=mask_key,
+                    namespace=col_seed.namespace or "",
+                    index_kernel=index_kernel,
+                    native_threads=native_threads,
+                )
+                evidence.compiled_kernel_executed = True
         elif strategy == "bucket_perturb":
             arrays[name], ran = _mask_bucket_perturb(
                 source,
@@ -326,7 +353,8 @@ def _mask_chunk_native(
                 "the preflight admission check should have excluded this table."
             )
         elapsed = time.perf_counter() - t0
-        evidence.kernel_calls[strategy] = evidence.kernel_calls.get(strategy, 0) + 1
+        if counted:
+            evidence.kernel_calls[strategy] = evidence.kernel_calls.get(strategy, 0) + 1
         evidence.kernel_elapsed_s[strategy] = evidence.kernel_elapsed_s.get(strategy, 0.0) + elapsed
         if column_elapsed_s is not None:
             column_elapsed_s[name] = elapsed
