@@ -35,7 +35,7 @@ def _plan(*columns: tuple[str, str, str, bool, tuple[tuple[str, Any], ...]]) -> 
 
 
 class TestUnseededRandomNodes:
-    def test_reports_each_unseeded_shape_and_only_those(self) -> None:
+    def test_reports_each_fresh_generator_shape_and_only_those(self) -> None:
         plan = _plan(
             ("t", "a", "categorical", False, ()),
             ("t", "b", "categorical", True, ()),
@@ -49,10 +49,14 @@ class TestUnseededRandomNodes:
             ("u", "j", "redact", False, ()),
         )
         assert pmt.unseeded_random_nodes(plan) == (
-            ("t", "a", "categorical"),
             ("t", "c", "shuffle"),
-            ("t", "e", "nested"),
             ("t", "f", "nested"),
+        )
+        # Non-deterministic categorical is seeded; it is held whole by the separate
+        # positional-deferred veto instead.
+        assert pmt.position_keyed_deferred_nodes(plan) == (
+            ("t", "a", "categorical"),
+            ("t", "e", "nested"),
         )
 
     def test_a_plan_without_random_columns_reports_nothing(self) -> None:
@@ -147,8 +151,10 @@ class TestSplitStamp:
     def test_every_name_in_all_resolves(self) -> None:
         assert sorted(pmt.__all__) == [
             "MultiTableSplit",
+            "POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED",
             "UNSEEDED_RANDOM_STRATEGIES",
             "decide_multi_table_split",
+            "position_keyed_deferred_nodes",
             "run_multi_table_split",
             "split_reproducibility_stamp",
             "unseeded_random_nodes",

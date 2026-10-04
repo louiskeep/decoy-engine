@@ -461,7 +461,7 @@ def test_vault_writer_keyed_differently_is_rejected_before_any_table_masks(
     assert mt.same_error(errors[0], errors[1])
 
 
-# --- unseeded randomness ---------------------------------------------------
+# --- fresh-generator randomness and the positional-deferred categorical veto -----
 
 
 def _random_columns(kind: str) -> tuple[list[dict[str, Any]], pa.Table]:
@@ -485,6 +485,7 @@ def _random_columns(kind: str) -> tuple[list[dict[str, Any]], pa.Table]:
             "name": "v",
             "strategy": "categorical",
             "deterministic": False,
+            "namespace": "v_ns",
             "provider_config": {"categories": ["x", "y", "z"]},
         }
     elif kind == "shuffle":
@@ -494,6 +495,7 @@ def _random_columns(kind: str) -> tuple[list[dict[str, Any]], pa.Table]:
             "name": "v",
             "strategy": "nested",
             "deterministic": False,
+            "namespace": "v_ns",
             "provider_config": {
                 "target": "$.k",
                 "strategy": "categorical",
@@ -504,7 +506,7 @@ def _random_columns(kind: str) -> tuple[list[dict[str, Any]], pa.Table]:
 
 
 @pytest.mark.parametrize("kind", ["categorical", "shuffle", "nested"])
-def test_unseeded_randomness_keeps_the_full_frame_call(
+def test_split_vetoed_random_columns_keep_the_full_frame_call(
     kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     random_cols, random_table = _random_columns(kind)
@@ -549,13 +551,13 @@ def _assert_same_adapter_call(a: tuple[Any, Any], b: tuple[Any, Any]) -> None:
         assert value == b_kwargs[key], key
 
 
-def test_unseeded_random_nodes_reports_exactly_the_unseeded_columns(tmp_path: Path) -> None:
+def test_veto_sets_report_exactly_their_columns(tmp_path: Path) -> None:
     from decoy_engine.execution import _pipeline_multi_table as pmt
     from decoy_engine.plan import compile_plan
     from decoy_engine.profile import profile_source
 
     cols = [
-        {"name": "c1", "strategy": "categorical", "deterministic": False},
+        {"name": "c1", "strategy": "categorical", "deterministic": False, "namespace": "n1"},
         {"name": "c2", "strategy": "categorical", "deterministic": True, "namespace": "n2"},
         {"name": "s1", "strategy": "shuffle", "deterministic": False},
         {"name": "s2", "strategy": "shuffle", "deterministic": True, "namespace": "n3"},
@@ -575,10 +577,8 @@ def test_unseeded_random_nodes_reports_exactly_the_unseeded_columns(tmp_path: Pa
     )
     cfg, _ = mt.build_job(tmp_path, {"t": (cols, src)})
     plan = compile_plan(cfg, profile_source(cfg, seed=42), decoy_engine_version="x")
-    assert sorted(pmt.unseeded_random_nodes(plan)) == [
-        ("t", "c1", "categorical"),
-        ("t", "s1", "shuffle"),
-    ]
+    assert sorted(pmt.unseeded_random_nodes(plan)) == [("t", "s1", "shuffle")]
+    assert sorted(pmt.position_keyed_deferred_nodes(plan)) == [("t", "c1", "categorical")]
 
 
 def test_unseeded_strategy_set_matches_the_strategies_that_draw_from_a_fresh_rng() -> None:
@@ -600,8 +600,9 @@ def test_unseeded_strategy_set_matches_the_strategies_that_draw_from_a_fresh_rng
     offenders = sorted(
         p.stem.lstrip("_") for p in root.glob("*.py") if unseeded.search(p.read_text())
     )
-    assert frozenset({"categorical", "shuffle"}) == pmt.UNSEEDED_RANDOM_STRATEGIES
-    assert offenders == ["categorical", "shuffle"], (
+    assert frozenset({"shuffle"}) == pmt.UNSEEDED_RANDOM_STRATEGIES
+    assert frozenset({"categorical"}) == pmt.POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED
+    assert offenders == ["shuffle"], (
         "a strategy module draws from an unseeded generator; add it to job gate 9"
     )
 
@@ -638,6 +639,8 @@ def test_two_calls_of_every_repeatable_fixture_agree_and_unseeded_ones_differ(
         cfg, _ = mt.build_job(workdir, {"t": (columns, table)})
         plan = compile_plan(cfg, profile_source(cfg, seed=42), decoy_engine_version="x")
         reported = {col for _t, col, _s in pmt.unseeded_random_nodes(plan)}
+        deferred = {col for _t, col, _s in pmt.position_keyed_deferred_nodes(plan)}
+        assert not reported & deferred, "a column cannot be both fresh-generator and seeded"
         a = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
         b = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
         for name in a.outputs["t"].column_names:

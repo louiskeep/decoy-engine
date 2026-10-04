@@ -197,7 +197,7 @@ def _compile_plan_for(config: dict, source: pa.Table):
     return compile_physical_plan(inputs)
 
 
-def test_unseeded_categorical_declines_on_native_route_config_query(tmp_path: Path) -> None:
+def test_nondeterministic_categorical_declines_on_native_route_config_query(tmp_path: Path) -> None:
     """Boundary 1: the config-only native-route eligibility query."""
     config = build_config(
         tmp_path,
@@ -210,7 +210,7 @@ def test_unseeded_categorical_declines_on_native_route_config_query(tmp_path: Pa
     assert any(r == "categorical_not_deterministic:c" for r in result.rejections), result.rejections
 
 
-def test_unseeded_categorical_declines_on_full_frame_binding(tmp_path: Path) -> None:
+def test_nondeterministic_categorical_declines_on_full_frame_binding(tmp_path: Path) -> None:
     """Boundary 2: the compiled full-frame binding leaves the node UNBOUND
     (`execution is None`), so the coordinator never runs it natively -- it
     declines to the oracle."""
@@ -226,7 +226,7 @@ def test_unseeded_categorical_declines_on_full_frame_binding(tmp_path: Path) -> 
     cat_nodes = [n for tbl in plan.tables for n in tbl.nodes if n.strategy == "categorical"]
     assert cat_nodes, "expected a categorical node in the compiled plan"
     assert all(n.execution is None for n in cat_nodes), (
-        "unseeded categorical must NOT bind natively"
+        "non-deterministic categorical must NOT bind natively (the native operator is source-keyed)"
     )
 
 
