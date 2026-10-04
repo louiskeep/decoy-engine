@@ -279,6 +279,7 @@ def _run_typed(typ: pa.DataType, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, 
     return run, ev, len(oracle_calls)
 
 
+@NEEDS_COMPANION  # asserts the string source runs the native leg; companion-absent it downgrades to oracle (index_extension_unavailable), covered by test_companion_absent_run_matches_a_forced_oracle_run
 @pytest.mark.parametrize(("case", "typ", "is_string"), _SOURCE_TYPES, ids=lambda c: str(c)[:14])
 def test_the_two_stage_b_consumers_agree_on_the_source_type(
     case: str, typ: pa.DataType, is_string: bool, monkeypatch: pytest.MonkeyPatch
