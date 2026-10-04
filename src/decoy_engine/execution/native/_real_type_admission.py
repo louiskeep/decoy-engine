@@ -1,13 +1,15 @@
 """Native-route admission decided from real types, not profile labels.
 
 The static admission (`_static_route_decision`) reads the profile's coarse dtype
-labels. Two things it cannot see decide whether the compiled path matches the
+labels. Three things it cannot see decide whether the compiled path matches the
 oracle, so `plan_native_route` checks them here once it has the first chunk:
 
 - a hash column's real Arrow type (a dictionary-encoded string, a date32 or a
   decimal128 profiles as `object` or a numeric label and passes the static
   check, but the compiled hash kernel does not take it while the oracle hashes
   it);
+- a categorical column's real source type (the compiled index kernel's admitted
+  input is `string`; a numeric or dictionary source reroutes to the oracle);
 - a faker column's provider name (the pool is built as strings, which is right
   only for the providers C1 admits; any other provider, for example a
   date-of-birth provider, produces values the string pool cannot hold). The
@@ -41,6 +43,15 @@ def _providers(config: dict[str, Any], table: str) -> dict[str, Any]:
     return {}
 
 
+def categorical_source_type_rejection(column: str, schema: pa.Schema) -> str | None:
+    """The coded reason a categorical column's real source type is not the one the
+    native operator takes, or None. Slice C1 admits `string` only, the domain the
+    full-frame route proves (`_unified_slice_admission`); any other type reroutes to
+    the oracle before masking instead of failing inside the kernel."""
+    typ = schema.field(column).type
+    return None if typ == pa.string() else f"categorical_source_type_not_string:{column}:{typ}"
+
+
 def real_type_rejection(
     config: dict[str, Any],
     node_routes: Iterable[Any],
@@ -68,4 +79,8 @@ def real_type_rejection(
                 return reason
         elif node.strategy == "faker" and providers.get(node.column) not in C1_PROVIDER_ALLOWLIST:
             return f"faker_provider_not_native:{node.column}:{providers.get(node.column)}"
+        elif node.strategy == "categorical":
+            reason = categorical_source_type_rejection(node.column, first_schema)
+            if reason is not None:
+                return reason
     return None

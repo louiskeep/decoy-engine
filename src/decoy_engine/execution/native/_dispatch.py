@@ -70,6 +70,10 @@ from decoy_engine.generation.pool import PoolCache
 
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
 
+# Strategies whose native chunk path calls the compiled index kernel, so preflight
+# loads and self-tests it once and downgrades the table when it is missing.
+_INDEX_KERNEL_STRATEGIES = frozenset({"faker", "categorical"})
+
 
 @dataclass(frozen=True)
 class NodeRouteRecord:
@@ -236,13 +240,13 @@ def _static_route_decision(
         column = node.columns[0]
         scalar_columns.append((column, node.strategy))
         if node.strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
-            # categorical (Phase 5 Track B) and bucket_perturb (S-slate) are
-            # native on the full-frame route but explicitly vetoed on this
-            # chunked/streaming route: the eager per-chunk emit cannot resolve
-            # their data-dependent output type. Each otherwise resolves
-            # fallback_policy == "native" and would reach the missing chunk
-            # handler, so veto the whole table to the oracle here. The reason
-            # carries the strategy so the two stay distinguishable in evidence.
+            # bucket_perturb (S-slate), group_key and date_shift are native on
+            # the full-frame route but explicitly vetoed on this chunked/streaming
+            # route: the eager per-chunk emit cannot resolve their data-dependent
+            # output type (or, for group_key, its sibling input). Each otherwise
+            # resolves fallback_policy == "native" and would reach the missing
+            # chunk handler, so veto the whole table to the oracle here. The
+            # reason carries the strategy so they stay distinguishable in evidence.
             reasons.append(f"{node.strategy}_not_native_chunked_route:{column}")
             continue
         no_kernel = node.strategy not in NATIVE_KERNEL_STRATEGIES
@@ -282,7 +286,7 @@ class NativePreflight:
     index-derivation kernel wrapper (Task 2.3) verified for this decision.
 
     `index_kernel` is `None` whenever the route is not native-admitted or
-    admits no faker node -- there is nothing to select, so nothing was loaded.
+    admits no faker or categorical node -- there is nothing to select, so nothing was loaded.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
     per chunk; the verified wrapper is threaded through `_chunked_entry._native_route`
     -> `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
@@ -310,7 +314,7 @@ def plan_native_route(
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
     source-type guards, then (only when still admitted) the required companion
-    probes -- crypto (any `hash` node) and index (any admitted `faker` node) --
+    probes -- crypto (any `hash` node) and index (any admitted `faker` or `categorical` node) --
     in that order. Guards run BEFORE probes so a schema-rejected table (an
     uncovered column, or a faker node over a non-string source) keeps its own
     reroute reason and never reaches either probe; each probe is itself gated
@@ -420,7 +424,9 @@ def plan_native_route(
             decision = _downgrade_to_oracle(decision, "crypto_extension_unavailable")
 
     index_kernel: IndexDerivationKernel | None = None
-    if decision.native_admitted and any(n.strategy == "faker" for n in decision.node_routes):
+    if decision.native_admitted and any(
+        n.strategy in _INDEX_KERNEL_STRATEGIES for n in decision.node_routes
+    ):
         try:
             index_kernel = load_compiled_index_kernel()
         except CryptoExtensionUnavailableError:

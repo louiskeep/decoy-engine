@@ -247,8 +247,8 @@ def _late_typed_job(
     tmp_path: Path, *, typed: bool = True, other_type: bool = False
 ) -> tuple[dict[str, Any], pa.Table]:
     nulls = _LATE_NULL_CHUNKS * support.CHUNK
-    tiers = [["bronze", "silver", "gold"][i % 3] for i in range(_LATE_ROWS - nulls)]
-    val = [None] * nulls + (tiers if typed else [None] * len(tiers))
+    dates = [f"2021-{1 + (i % 12):02d}-15" for i in range(_LATE_ROWS - nulls)]
+    val = [None] * nulls + (dates if typed else [None] * len(dates))
     src = pa.table(
         {
             "h": pa.array([f"u{i}@x.example" for i in range(_LATE_ROWS)]),
@@ -257,10 +257,9 @@ def _late_typed_job(
     )
     column = {
         "name": "val",
-        "strategy": "categorical",
-        "deterministic": True,
+        "strategy": "bucket_perturb",
         "namespace": "tier_ns",
-        "provider_config": {"categories": ["free", "pro", "team"], "weights": [0.6, 0.3, 0.1]},
+        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
     }
     cfg = support.make_cfg(
         [support.hash_col("h"), column], path=support.write_source(src, tmp_path / "s.parquet")

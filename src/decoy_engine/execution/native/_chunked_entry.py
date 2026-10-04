@@ -42,6 +42,10 @@ from decoy_engine.execution._output_projection import (
     known_output_columns,
 )
 from decoy_engine.execution._transforms import stored_index_fields
+from decoy_engine.execution.native._categorical_prepared import (
+    PreparedCategorical,
+    prepare_chunked_categoricals,
+)
 from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
@@ -160,6 +164,7 @@ def _native_route(
     decision: NativeRouteEvidence,
     index_kernel: Any,
     pool_by_column: dict[str, ValuePool],
+    categorical_by_column: dict[str, PreparedCategorical],
     vault_writer: Any,
     chunk_result_sink: list[Any] | None,
     base_row_offset: int,
@@ -212,6 +217,7 @@ def _native_route(
                 column_elapsed_s=elapsed_s,
                 unconfigured=unconfigured_set,
                 stored_index=stored_index,
+                categorical_by_column=categorical_by_column,
             )
             out = (
                 masked
@@ -297,6 +303,19 @@ def _resolve_admitted_pools(
                 {},
             )
     return decision, pools
+
+
+def _prepared_categoricals(state: Any, *, table: str) -> dict[str, PreparedCategorical]:
+    """The native-admissible categorical columns of `table`, prepared once for the run.
+
+    Config-admissible AND a string first-chunk source, whichever route the table takes:
+    the output-type pin and the native chunk call read this one result."""
+    table_seed = next(
+        (ts for (name, ts) in state.plan.seed_envelope.per_table if name == table), None
+    )
+    if table_seed is None:
+        return {}
+    return prepare_chunked_categoricals(dict(table_seed.per_column), state.first.schema)
 
 
 def _run_chunked(
@@ -385,8 +404,15 @@ def _run_chunked(
         if chunk_result_sink is not None
         else ()
     )
+    categoricals = _prepared_categoricals(state, table=table)
     rule = (
-        build_schema_rule(config, table=table, first=state.first, registry=state.registry)
+        build_schema_rule(
+            config,
+            table=table,
+            first=state.first,
+            registry=state.registry,
+            categorical_columns=frozenset(categoricals),
+        )
         if enforce_schema_rule
         else None
     )
@@ -411,6 +437,7 @@ def _run_chunked(
         decision=decision,
         index_kernel=preflight.index_kernel,
         pool_by_column=pools,
+        categorical_by_column=categoricals,
         vault_writer=vault_writer,
         chunk_result_sink=chunk_result_sink,
         base_row_offset=base_row_offset,

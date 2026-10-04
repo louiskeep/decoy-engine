@@ -176,9 +176,8 @@ def test_chunked_route_admits_native_admissible_categorical(tmp_path: Path) -> N
     [
         _cat_column({"categories": [1, 2, 3]}),
         _cat_column({"categories": _UNI}, deterministic=False),
-        _cat_column({"categories": _UNI}, namespace=""),
     ],
-    ids=["numeric_categories", "non_deterministic", "no_namespace"],
+    ids=["numeric_categories", "non_deterministic"],
 )
 def test_chunked_route_declines_non_admissible_categorical(
     tmp_path: Path, column: dict[str, Any]

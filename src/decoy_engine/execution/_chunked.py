@@ -49,9 +49,10 @@ than derived from the data:
   derive_index maps any value into [0, pool_size) with collisions
   allowed, byte-identical to the full-frame run of the same rows
   (pool_size controls collision rate, not admission).
-- categorical: `deterministic: true` + `namespace` + explicit
-  `provider_config.categories`, and NOT `from_profile` (profile-derived
-  categories would come from the first chunk only).
+- categorical: deterministic (`deterministic: true` or `allow_collisions: true`) +
+  `namespace` + explicit `provider_config.categories`, and NOT `from_profile`
+  (profile-derived categories would come from the first chunk only). A
+  non-deterministic one fails with its own code, see `_chunked_categorical.py`.
 
 DGRN-admitted (Phase 4 slice 1): `windowed_date`, position-keyed on the durable
 global row number via `CHUNK_DGRN_STRATEGIES` (kept SEPARATE from CHUNK_SAFE so
@@ -85,6 +86,7 @@ Rejected at compile time (`check_chunked_compatibility`):
 
 - shuffle (whole-column permutation), composite/nested (bundle state):
   `strategy_not_chunk_safe`;
+- non-deterministic categorical: `categorical_nondeterministic_not_chunk_safe`;
 - faker / categorical with the conditions above unmet:
   `chunked_strategy_conditions_unmet`, naming each unmet condition;
 - FK child edges that fail the self-mask gate (see below);
@@ -161,6 +163,7 @@ import pyarrow as pa
 from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
+from . import _chunked_categorical as categorical_gate
 from . import _chunked_code_set as code_set_gate
 from . import _chunked_dgrn as dgrn
 from . import _chunked_group_key as group_key
@@ -205,6 +208,10 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
         # already fails closed identically on both routes -- see
         # _chunked_bucket_perturb.py).
         return bucket_perturb_gate.bucket_perturb_conditional_failures(col_entry)
+    if strategy == "categorical":
+        # Determinism is not a condition here: a non-deterministic column is rejected
+        # earlier, under its own code (see `check_chunked_compatibility`).
+        return categorical_gate.conditional_failures(col_entry)
     cfg = col_entry.get("provider_config") or {}
     failures: list[str] = []
     if not col_entry.get("deterministic"):
@@ -229,15 +236,6 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
                 "requires cardinality_mode absent or 'reuse' (source-cardinality "
                 "modes describe whole-run state)"
             )
-    if strategy == "categorical":
-        if cfg.get("from_profile"):
-            failures.append(
-                "from_profile derives categories from the profile, which chunked "
-                "mode builds from the first chunk only; declare categories "
-                "explicitly"
-            )
-        elif not cfg.get("categories"):
-            failures.append("requires explicit provider_config.categories")
     return failures
 
 
@@ -255,6 +253,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         chunked_fk_child_strategy_missing: child column has no explicit strategy.
         chunked_fk_child_strategy_mismatch: child strategy != parent strategy.
         strategy_not_chunk_safe: a non-chunk-safe strategy, or a composite provider.
+        categorical_nondeterministic_not_chunk_safe: a categorical column that is not deterministic.
         chunked_strategy_conditions_unmet: faker/categorical conditions unmet (listed).
         chunked_windowed_date_when_not_supported: `windowed_date` + `when:`.
         chunked_text_mask_when_not_supported: `text_mask` + `when:`.
@@ -308,6 +307,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
     # `bucket_perturb` + `when:` inadmissible here too (see `_chunked_bucket_perturb.py`).
     bucket_perturb_gate.reject_bucket_perturb_when(table_cfg, table=table)
     conditions_unmet: list[tuple[str, str, list[str]]] = []
+    nondeterministic_categoricals: list[str] = []
     columns = [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)]
     # Dispatch classifies by provider, not by strategy string; chunked output would
     # overwrite a composite's other bundle columns with source values.
@@ -319,6 +319,9 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         if strategy is None or strategy in _CHUNK_ADMITTED_STRATEGIES:
             continue
         if strategy in CHUNK_CONDITIONAL_STRATEGIES:
+            if strategy == "categorical" and categorical_gate.is_nondeterministic(col_entry):
+                nondeterministic_categoricals.append(str(col_entry.get("name", "?")))
+                continue
             failures = _conditional_admission_failures(col_entry)
             if failures:
                 conditions_unmet.append((str(col_entry.get("name", "?")), str(strategy), failures))
@@ -335,6 +338,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
                 f"{', '.join(sorted(CHUNK_SAFE_STRATEGIES))}."
             ),
         )
+    categorical_gate.reject_nondeterministic(nondeterministic_categoricals, table=table)
     if conditions_unmet:
         details = "; ".join(
             f"{name} ({strategy}: {'; '.join(failures)})"

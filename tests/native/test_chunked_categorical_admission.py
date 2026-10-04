@@ -264,7 +264,7 @@ def _gate_config(case: str) -> dict[str, Any]:
     elif case == "categorical_weights_negative":
         cfg["weights"] = [1.0, -1.0, 1.0, 1.0]
     elif case == "categorical_weights_unbuildable_cdf":
-        cfg["weights"] = [1.0, 1.0, 1.0, 0.0000001]
+        cfg["weights"] = [1.0, 0.000000001, 1.0, 1.0]
     return make_config([col, passthrough("p")])
 
 

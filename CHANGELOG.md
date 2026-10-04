@@ -33,6 +33,33 @@ A streamed run's schema hold-back used to spill to `TMPDIR`. It now spills to th
 first spill), on the output's filesystem. A streaming sink without `spill_parent` that needs
 to spill fails with `hold_back_spill_unavailable`. The per-chunk evidence of a streamed run is
 now folded into running totals instead of one entry per chunk.
+### Changed (deterministic categorical runs on the native chunked route, 2026-10-04)
+
+A deterministic `categorical` column no longer sends its whole table to the pandas oracle
+on the chunked route (`run_mask_chunked`, the auto-chunk dispatcher lane). When the column
+is native-admissible (`deterministic: true` or `allow_collisions: true`, a namespace,
+explicit non-empty all-string categories, weights the CDF can build, and a `string` source
+column), the compiled index kernel masks it chunk by chunk, byte-identical to the oracle,
+and its siblings stay native too. Each chunk's route evidence reports the column's backend
+as `rust_companion`, with `kernel_calls["categorical"]` equal to the chunk count. With the
+index companion missing the table reroutes to the oracle (`index_extension_unavailable`).
+
+A categorical column the native operator cannot run still masks on the oracle with its
+previous values and types: numeric categories, a non-string source (including
+`large_string` and dictionary), or unbuildable weights.
+
+Output type (pre-GA, route-dependent): on both chunked legs a native-admissible
+categorical column is now always `string`. Before, an all-null chunk came back `null` and
+an empty one `double`, so the column's type depended on chunk boundaries. The full-frame
+route still resolves the type at assembly (an all-null column stays `null`), so one job
+that splits across routes can show both shapes. Recorded under ROUTE-OUTPUT-CONTRACT in
+`docs/compatibility-contract.md`.
+
+New error code: a non-deterministic categorical column in a chunked job now fails at
+preflight with `categorical_nondeterministic_not_chunk_safe` (before: the generic
+`chunked_strategy_conditions_unmet`). `allow_collisions: true` now counts as deterministic
+in that check. A categorical column without a namespace, with `from_profile`, or without
+explicit categories keeps `chunked_strategy_conditions_unmet`.
 
 ### Added (the auto-chunk lane streams its output into a `TransactionalSink`, 2026-10-02)
 

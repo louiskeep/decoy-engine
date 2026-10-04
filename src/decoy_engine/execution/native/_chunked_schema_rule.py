@@ -7,6 +7,13 @@ by definition the rule pins one type per column for the whole call:
 
 - hash, truncate and redact with a string `redact_with`, no `when:` predicate:
   `string`, reached by Arrow's checked cast so a value is never changed or lost.
+- a native-admissible deterministic categorical column (all-string categories, a
+  buildable CDF, a string source): `string`, by the same cast. Its all-string
+  categories make string the intrinsic type; pandas' empty -> float64 and
+  all-null -> null are inference artifacts that would otherwise vary with chunk
+  boundaries. The full-frame route still resolves the type at assembly (all-null
+  -> null), so this is a recorded route-dependent difference (see
+  docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
 - passthrough columns (configured, or unconfigured and kept under the
   passthrough policy): the source column itself, never the pandas round trip,
   which rounds nullable integers above 2^53.
@@ -54,9 +61,19 @@ class SchemaRule:
 
 
 def build_schema_rule(
-    config: dict[str, Any], *, table: str, first: pa.Table, registry: Any
+    config: dict[str, Any],
+    *,
+    table: str,
+    first: pa.Table,
+    registry: Any,
+    categorical_columns: frozenset[str] = frozenset(),
 ) -> SchemaRule:
     """Classify `table`'s columns once, from the config and the first chunk.
+
+    `categorical_columns` are the native-admissible categorical columns (config-admissible
+    over a string source, see `_categorical_prepared`): their output is `string` by
+    definition, so they join the string-pinned set on both routes. A categorical column
+    the native operator cannot run is not listed and keeps the type its route produced.
 
     A column some handler writes (see `handler_written_columns`) is never a passthrough
     column here, so `normalize_chunk` cannot restore its source value."""
@@ -73,6 +90,7 @@ def build_schema_rule(
         [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)], registry
     )
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
+    strings |= categorical_columns
     passthrough: dict[str, pa.DataType] = {}
     passthrough_fields: dict[str, pa.Field] = {}
     for field in first.schema:

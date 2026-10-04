@@ -16,8 +16,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._strategies._categorical import _build_cdf
+from decoy_engine.execution.native._categorical_prepared import prepare_categorical
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 
 # Mirrors the oracle's `transforms.bucket_perturb._VALID_BUCKETS`; kept local to
@@ -49,40 +48,15 @@ def categorical_config_rejection(
     provider_config: dict[str, Any],
 ) -> str | None:
     """The coded reason a `categorical` column cannot run on the native
-    operator, or None when it can (Phase 5 Track B).
-
-    v1 admits ONLY the deterministic, namespaced, STRING-category variant. An
-    unseeded (non-deterministic) categorical draws a whole-column vector that
-    is not reproducible, so it declines to the oracle here rather than silently
-    running the always-deterministic native operator. Non-string categories
-    decline (the oracle's data-dependent output-type reconciliation for them is
-    a later slice). A weighted config whose CDF the oracle's `_build_cdf` would
-    reject (nonpositive total, a below-resolution weight) declines here too, so
-    the whole table routes to the oracle, which raises the identical error --
-    never a native-side compile failure the oracle would not produce.
-    """
-    if not deterministic:
-        return f"categorical_not_deterministic:{name}"
-    if not namespace:
-        return f"categorical_requires_namespace:{name}"
-    categories = provider_config.get("categories")
-    if not isinstance(categories, (list, tuple)) or not categories:
-        return f"categorical_categories_not_nonempty_list:{name}"
-    if not all(isinstance(c, str) for c in categories):
-        return f"categorical_categories_not_all_string:{name}"
-    weights = provider_config.get("weights")
-    if weights is not None:
-        if not isinstance(weights, (list, tuple)) or len(weights) != len(categories):
-            return f"categorical_weights_shape:{name}"
-        if any(isinstance(w, bool) or not isinstance(w, (int, float)) for w in weights):
-            return f"categorical_weights_not_numeric:{name}"
-        if any(w < 0 for w in weights):
-            return f"categorical_weights_negative:{name}"
-        try:
-            _build_cdf([float(w) for w in weights])
-        except StrategyError:
-            return f"categorical_weights_unbuildable_cdf:{name}"
-    return None
+    operator, or None when it can (Phase 5 Track B). Delegates to
+    `prepare_categorical`, the one validation both admission and execution use."""
+    _artifact, reason = prepare_categorical(
+        name,
+        deterministic=deterministic,
+        namespace=namespace,
+        provider_config=provider_config,
+    )
+    return reason
 
 
 def bucket_perturb_config_rejection(
