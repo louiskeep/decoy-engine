@@ -97,3 +97,11 @@ CHANGELOG and compatibility-contract entries written by the builder in `93227203
 - `large_string` and dictionary sources are not admitted and not pinned (plan: `pa.string()` only, matching full frame).
 - `test_chunked_entry_evidence.py:254` mixed-table case moved to a vetoed `bucket_perturb` column; the admissible-categorical native evidence assertions live in the new admission file.
 - The companion-absent venv fails about 840 tests on main; only delta-against-main evidence is meaningful there.
+
+## dennis gate (2026-10-04)
+
+APPROVE / GO, 0 blocker/high/medium, 2 LOW. dennis verified by trace + targeted execution: the conditional pin (config AND source-type admissible; the empty-int64 regression is the load-bearing case and is closed), the `when:` interaction (a when: column downgrades the whole table to the oracle, so the native branch is never reached; the oracle-leg pin is lossless), the preflight codes, the fixture migrations (legitimate, not weakening), CDF chunk-count independence, evidence, and the companion-absent delta (independently confirmed a flake).
+
+Remediation:
+- LOW 1 (folded): `categorical:deterministic` added to `STRING_OUTPUT_KEYS` in `tests/unit/execution/_auto_chunk_strategies.py`, so the auto-chunk output-contract matrix test now independently asserts the string pin (198 passed). No behavior change.
+- LOW 2 (accepted coverage-nit): no dedicated test exercises a native-admissible categorical column carrying a `when:` predicate. dennis traced the behavior correct by construction (when: -> whole table to the oracle, lossless pin), and the when:->oracle downgrade is tested elsewhere, so this is left as a follow-up coverage addition, not a merge blocker.

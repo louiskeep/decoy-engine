@@ -171,7 +171,7 @@ NEEDS_COMPANION_KEYS = frozenset(
     {"hash", "faker:deterministic_native", "categorical:deterministic"}
 )
 # Output type rule: hash, truncate and redact always yield `string` on the dispatcher lane.
-STRING_OUTPUT_KEYS = frozenset({"hash", "redact", "truncate"})
+STRING_OUTPUT_KEYS = frozenset({"hash", "redact", "truncate", "categorical:deterministic"})
 # Planned backend of the column under test.
 PLANNED_BACKEND: dict[str, str] = {
     "hash": "rust_companion",
