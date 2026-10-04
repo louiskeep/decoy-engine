@@ -185,8 +185,11 @@ Use it to generalize ages, incomes, or counts into ranges.
 
 Remaps values onto a fixed pool of categories. Deterministic mode maps each
 source value to a category via a keyed index (same source maps to same
-category within a namespace). Non-deterministic mode picks uniformly and
-differs run to run. Nulls are preserved.
+category within a namespace). Non-deterministic mode ignores the source value
+and picks from the pool by row position under the job seed: the same seed and
+input give the same output, but equal source values do not map to equal
+categories, so it does not preserve joins. A namespace is required in both
+modes. Nulls are preserved.
 
 - `categories`: the replacement pool (required).
 - `weights`: per-category floats matching `categories`; picks follow the

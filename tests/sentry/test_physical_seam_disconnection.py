@@ -311,6 +311,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_substrate.py",
         "src/decoy_engine/execution/_when_gate.py",
         "src/decoy_engine/execution/native/_determinism_protocol.py",
+        # Slice C1b-i (seeded non-deterministic categorical, 2026-10-04): the oracle
+        # strategy now draws through `derive_index` keyed by the handler-frame ordinal,
+        # and the draw-site provider registry, the capability row and the out-of-core
+        # impl docstring are corrected to match. None is under execution/physical/ and
+        # none imports it; the physical operator's source-keyed assertion is untouched.
+        "src/decoy_engine/execution/_strategies/_categorical.py",
+        "src/decoy_engine/execution/native/_capabilities.py",
+        "src/decoy_engine/execution/native/_draw_site_providers.py",
+        "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
         # Comment-only edits stripping polars-masking wording from the retained
         # non-pandas substrate guards (the guards themselves stay as fail-closed
         # defence; the pandas path is unchanged).

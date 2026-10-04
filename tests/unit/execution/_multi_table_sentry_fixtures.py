@@ -1,7 +1,8 @@
 """Strategy fixtures for the job-gate-9 registry sentry (B7 acceptance test 2).
 
 `_auto_chunk_strategies.STRATEGY_FIXTURES` covers the chunk-admitted strategies; these
-cover the rest of `SCALAR_HANDLERS`, including the unseeded variants. The sentry asserts the two
+cover the rest of `SCALAR_HANDLERS`: the shuffle with no seed, and the non-deterministic
+categorical, which is reproducible but whose split stays vetoed. The sentry asserts the two
 sets together cover the live registry exactly.
 """
 
@@ -31,12 +32,13 @@ EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
         [_col("val", "shuffle", deterministic=False)],
         {"val": _s("x{i}")},
     ),
-    "categorical:unseeded": (
+    "categorical:nondeterministic": (
         [
             _col(
                 "val",
                 "categorical",
                 deterministic=False,
+                namespace="cat_ns",
                 provider_config={"categories": ["a", "b", "c", "d"]},
             )
         ],
@@ -53,12 +55,13 @@ EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
         ],
         {"val": pa.array([f'{{"k": "z{i}"}}' for i in range(N)])},
     ),
-    "nested:unseeded_categorical": (
+    "nested:nondeterministic_categorical": (
         [
             _col(
                 "val",
                 "nested",
                 deterministic=False,
+                namespace="nc_ns",
                 provider_config={
                     "target": "$.k",
                     "strategy": "categorical",

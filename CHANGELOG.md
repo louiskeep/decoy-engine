@@ -9,6 +9,24 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (non-deterministic categorical is seeded and reproducible, 2026-10-04)
+
+A `categorical` column that is not deterministic used to draw from a generator with no seed,
+so two runs of one job differed. It now draws for each non-null row at ordinal `g` with
+`derive_index(mask_key, namespace, encode_int(g), ...)` (weighted configs go through the same
+CDF as the deterministic mode), so the same job seed and input give the same output. `g` is
+the ordinal within the frame the handler receives: the physical row for a plain table, the
+match ordinal under `when:`, and the synthetic-frame ordinal under FK orphan remapping. The
+draw ignores the source value, so equal values do not map to equal categories. A namespace is
+now required in this mode and a missing one fails with `categorical_requires_namespace`.
+Because the weighted path now shares the deterministic mode's CDF, it also shares its weight
+validation: a positive weight that rounds below the CDF resolution is rejected with
+`categorical_weight_below_resolution` (previously such sub-resolution weights were accepted).
+The draw-site metadata for `mask.categorical_nondeterministic` is now seeded and
+partitionable. No routing outcome changed: multi-table split, out-of-core, the native
+operator and the chunked route still decline it, now with "position-keyed implementation
+deferred" reasons, and the chunked error code is unchanged.
+
 ### Added (LazySource batch input on the auto-chunk lane, 2026-10-03)
 
 `run_pipeline` now accepts a `LazySource` for a routed auto-chunk table, so a caller that
@@ -117,9 +135,10 @@ same `auto_chunk_threshold_rows`) masks on the chunked dispatcher, one table at 
 Independent means the job has no FK edge and no `relationships` block. Masked values are
 unchanged. A job stays whole, with output, `quality_metrics`, warnings, timings and errors
 identical to the previous behavior, when any of these holds: quarantine is enabled, a vault
-writer is passed, validators are configured, a mask column uses unseeded randomness
-(non-deterministic `categorical` or `shuffle`, or `nested` over either), the substrate is
-not pandas, a generate table is present, `auto_chunk=False`, or
+writer is passed, validators are configured, a mask column is a `shuffle` with no seed or a
+non-deterministic `categorical` (whose positional split is deferred), or a `nested` over
+either, the
+substrate is not pandas, a generate table is present, `auto_chunk=False`, or
 `chunked_dispatcher_enabled=False`.
 
 The output shape of a split job is per table. A dispatched table carries exactly what the

@@ -9,7 +9,8 @@ in one full-frame adapter call, exactly as before.
 Two tables are independent when no FK edge touches the job: the only cross-table data read
 during masking is the FK machinery, and every other per-job structure is keyed by table.
 Jobs the split cannot reproduce faithfully stay whole (quarantine, a vault writer,
-validators, unseeded randomness). The plan is
+validators, a shuffle that draws without a seed, a non-deterministic categorical whose
+positional split is deferred). The plan is
 docs/plans/2026-10-01-multi-table-dispatch.md; the per-unit fallback with a recorded reason
 follows the pattern Apache Gluten and Spark RAPIDS use for a partly accelerated plan.
 
@@ -45,9 +46,11 @@ if TYPE_CHECKING:
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
 __all__ = [
+    "POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED",
     "UNSEEDED_RANDOM_STRATEGIES",
     "MultiTableSplit",
     "decide_multi_table_split",
+    "position_keyed_deferred_nodes",
     "run_multi_table_split",
     "split_reproducibility_stamp",
     "unseeded_random_nodes",
@@ -57,7 +60,14 @@ _LOG = logging.getLogger(__name__)
 
 # Strategies with a mode that draws from a fresh `default_rng()` per call, so two
 # invocations differ. `nested` is checked through its child strategy.
-UNSEEDED_RANDOM_STRATEGIES = frozenset({"categorical", "shuffle"})
+UNSEEDED_RANDOM_STRATEGIES = frozenset({"shuffle"})
+
+# Non-deterministic categorical is seeded and keyed by the handler-frame ordinal, so it is
+# reproducible. A split would hand it per-table frames whose ordinals the whole-frame call
+# never saw, and the split path has no positional implementation yet, so a table that
+# carries one stays whole (siblings too). Remove this veto when the split path keys by
+# durable row position.
+POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED = frozenset({"categorical"})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,10 +85,12 @@ class MultiTableSplit:
         object.__setattr__(self, "reasons", MappingProxyType(dict(self.reasons)))
 
 
-def unseeded_random_nodes(plan: Plan) -> tuple[tuple[str, str, str], ...]:
-    """`(table, column, strategy)` of every plan column that masks from an unseeded generator.
-
-    Reads the plan only, so a `when:`-gated column counts whether or not any row matches."""
+def _non_deterministic_nodes(
+    plan: Plan, strategies: frozenset[str]
+) -> tuple[tuple[str, str, str], ...]:
+    """`(table, column, strategy)` of every non-deterministic column whose strategy, or whose
+    `nested` child strategy, is in `strategies`. Reads the plan only, so a `when:`-gated
+    column counts whether or not any row matches."""
     found: list[tuple[str, str, str]] = []
     for table, table_seed in plan.seed_envelope.per_table:
         for column, seed in table_seed.per_column:
@@ -87,11 +99,22 @@ def unseeded_random_nodes(plan: Plan) -> tuple[tuple[str, str, str], ...]:
             strategy = seed.strategy
             if strategy == "nested":
                 child = provider_config_to_dict(seed.provider_config).get("strategy")
-                if child in UNSEEDED_RANDOM_STRATEGIES:
+                if child in strategies:
                     found.append((table, column, strategy))
-            elif strategy in UNSEEDED_RANDOM_STRATEGIES:
+            elif strategy in strategies:
                 found.append((table, column, strategy))
     return tuple(found)
+
+
+def unseeded_random_nodes(plan: Plan) -> tuple[tuple[str, str, str], ...]:
+    """`(table, column, strategy)` of every plan column that masks from an unseeded generator."""
+    return _non_deterministic_nodes(plan, UNSEEDED_RANDOM_STRATEGIES)
+
+
+def position_keyed_deferred_nodes(plan: Plan) -> tuple[tuple[str, str, str], ...]:
+    """`(table, column, strategy)` of every column whose seeded, position-keyed draw has no
+    split implementation yet (`POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED`)."""
+    return _non_deterministic_nodes(plan, POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED)
 
 
 def _job_gates_hold(
@@ -120,6 +143,7 @@ def _job_gates_hold(
         and not vault_writer_present
         and not config.get("validators")
         and not unseeded_random_nodes(plan)
+        and not position_keyed_deferred_nodes(plan)
     )
 
 

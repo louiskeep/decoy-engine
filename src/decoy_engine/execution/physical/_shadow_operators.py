@@ -212,9 +212,9 @@ def run_operator(
             raise AssertionError("categorical node reached run_operator with no KeyBinding")
         if not binding.categorical_deterministic:
             # Runtime determinism assertion (Phase 5 Track B): the native
-            # categorical operator is always source-keyed, so an unseeded plan
-            # must never reach it. Admission already declines a non-deterministic
-            # categorical to the oracle; this fails closed if a wiring bug ever
+            # categorical operator is always source-keyed, so a position-keyed
+            # (non-deterministic) plan must never reach it. Admission already
+            # declines it to the oracle; this fails closed if a wiring bug ever
             # routed one here, rather than silently changing its contract.
             raise AssertionError(
                 "categorical node reached run_operator with categorical_deterministic=False"

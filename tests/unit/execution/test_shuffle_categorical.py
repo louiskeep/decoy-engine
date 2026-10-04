@@ -209,13 +209,19 @@ class TestCategorical:
             _run(_plan("grade", _col("categorical", namespace="g", deterministic=True)), src)
         assert exc.value.code == "categorical_requires_categories"
 
-    def test_non_deterministic_is_unseeded(self) -> None:
-        # M2: non-deterministic categorical is UNSEEDED (matches faker + shuffle),
-        # so two runs with the same job seed differ. Many rows make this robust.
+    def test_non_deterministic_is_seeded_and_reproducible(self) -> None:
+        # Non-deterministic categorical is keyed by the row ordinal under the job's
+        # mask key, so two runs with the same job seed agree and many rows still
+        # reach every category.
         src = pa.table({"grade": ["x"] * 200})
         seed = _col(
-            "categorical", deterministic=False, provider_config=(("categories", list("ABCD")),)
+            "categorical",
+            namespace="g",
+            deterministic=False,
+            provider_config=(("categories", list("ABCD")),),
         )
         out1 = _run(_plan("grade", seed), src).output.column("grade").to_pylist()
         out2 = _run(_plan("grade", seed), src).output.column("grade").to_pylist()
-        assert out1 != out2
+        assert out1 == out2
+        assert set(out1) == set("ABCD")
+        assert len(set(out1)) > 1  # not collapsed onto one value despite one source value

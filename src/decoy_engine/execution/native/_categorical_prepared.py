@@ -40,10 +40,10 @@ def prepare_categorical(
     `(None, coded_reason)`.
 
     The native operator admits ONLY the deterministic, namespaced, STRING-category
-    variant. An unseeded categorical draws a whole-column vector that is not
-    reproducible, so it declines here rather than silently running the
-    always-deterministic native operator. Non-string categories decline (the oracle's
-    data-dependent output type for them is not this operator's to reproduce). A
+    variant. A non-deterministic categorical is position-keyed, which this
+    source-keyed operator does not implement, so it declines here rather than silently
+    running the always-deterministic native operator. Non-string categories decline
+    (the oracle's data-dependent output type for them is not this operator's to reproduce). A
     weighted config whose CDF the oracle's `_build_cdf` would reject (nonpositive
     total, a below-resolution weight) declines too, so the table routes to the
     oracle, which raises the identical error instead of a native-side failure the

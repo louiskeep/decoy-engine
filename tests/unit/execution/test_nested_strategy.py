@@ -40,9 +40,9 @@ _NS = NamespaceRegistry(bindings=())
 _JOB_SEED = b"\xca\xfe" * 4  # 8 bytes
 
 
-def _seed(provider_config: dict) -> ColumnSeed:
+def _seed(provider_config: dict, namespace: str | None = None) -> ColumnSeed:
     return ColumnSeed(
-        namespace=None,
+        namespace=namespace,
         strategy="nested",
         provider=None,
         backend_type="decoy_native",
@@ -58,6 +58,10 @@ class _FakeCtx:
         # Real StrategyContext carries a `row_errors` list; the malformed-cell
         # fail-closed path appends to it, so the stand-in needs one too.
         self.row_errors: list = []
+        # A seeded categorical child reads the mask key and the row offset.
+        self.job_seed = _JOB_SEED
+        self.mask_key = _JOB_SEED
+        self.row_offset = 0
 
 
 # ── happy paths ───────────────────────────────────────────────────────
@@ -129,7 +133,8 @@ class TestHappyPaths:
                     "target": "$.tier",
                     "strategy": "categorical",
                     "strategy_config": {"categories": ["X", "Y"]},
-                }
+                },
+                namespace="tier_ns",
             ),
             _FakeCtx(),
         )

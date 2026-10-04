@@ -97,7 +97,7 @@ class ExecutionBinding:
     deterministic` is set True only for a bound categorical node, sourced from
     `ColumnSeed.deterministic` (equal by construction to `is_deterministic_
     categorical(config)`) -- the runtime asserts it before invoking the native
-    operator so the unseeded path can never reach it under a wiring bug.
+    operator so the position-keyed variant can never reach it under a wiring bug.
     `categorical_categories` is the resolved STRING category tuple; `categorical
     _cdf` is the resolved integer CDF (`_build_cdf`) for the weighted variant,
     `None` for the uniform one. All four default so every non-categorical

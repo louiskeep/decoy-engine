@@ -6,9 +6,9 @@ Extracted to keep `_chunked.py` under the orchestration LOC cap, mirroring
 A deterministic categorical column is row-local: each row maps from its own
 canonicalized source value and `(mask_key, namespace)` through `derive_index`, so
 per-chunk masking reproduces whole-column masking value for value. A
-non-deterministic one draws a whole-column unseeded vector, which no chunking can
-reproduce, so it stays rejected here with its own code (`NONDETERMINISTIC_CODE`,
-owned by slice C1b, which lifts it).
+non-deterministic one is seeded but position-keyed (by the row ordinal of the frame the
+handler receives), and its chunked implementation is deferred to C1b-ii, so it stays
+rejected here with its own code (`NONDETERMINISTIC_CODE`, which C1b-ii lifts).
 
 "Deterministic" is `is_deterministic_categorical`, the single definition the native
 determinism gate and the seed envelope share, so the `allow_collisions: true` alias
@@ -68,8 +68,8 @@ def reject_nondeterministic(columns: Sequence[str], *, table: str) -> None:
         path=f"tables.{table}.columns",
         message=(
             f"categorical column(s) {', '.join(columns)} are not deterministic: the "
-            "non-deterministic path draws one unseeded vector over the whole column, which "
-            "is chunk-variant. Set `deterministic: true` (or `allow_collisions: true`) with "
+            "non-deterministic path is position-keyed, and its chunked implementation is "
+            "deferred (C1b-ii). Set `deterministic: true` (or `allow_collisions: true`) with "
             "a namespace to run it chunked."
         ),
     )

@@ -355,8 +355,8 @@ def categorical_array(
     """Remap each non-null value onto the category pool, byte-identical to the oracle.
 
     Only the deterministic (source-conditioned) path is reachable out-of-core;
-    the compat gate rejects non-deterministic categorical (it draws from an
-    unseeded RNG, so it has no cross-run/cross-route parity).
+    the compat gate rejects non-deterministic categorical (its position-keyed
+    implementation is deferred), so reaching it here is a wiring bug.
     """
     categories, weights = _categorical_config(cfg)
     if not deterministic:

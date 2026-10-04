@@ -337,18 +337,31 @@ class TestGenDeriveContextSubstrate:
 
 
 class TestUnseededSites:
-    @pytest.mark.parametrize(
-        "site_id", ["mask.categorical_nondeterministic", "gen.identifier_nondeterministic"]
-    )
-    def test_reproduce_refuses(self, site_id: str) -> None:
-        p = provider_for(site_id)
+    def test_reproduce_refuses(self) -> None:
+        p = provider_for("gen.identifier_nondeterministic")
         with pytest.raises(DrawSiteProtocolError) as exc:
             p.reproduce()
         assert exc.value.code == "site_not_reproducible"
 
     def test_fresh_generator_is_unseeded_generator(self) -> None:
-        gen = provider_for("mask.categorical_nondeterministic").fresh_generator()
+        gen = provider_for("gen.identifier_nondeterministic").fresh_generator()
         assert isinstance(gen, np.random.Generator)
+
+
+class TestSeededNondeterministicCategorical:
+    def test_site_is_seeded_row_keyed_and_partitionable(self) -> None:
+        site = draw_site_by_id("mask.categorical_nondeterministic")
+        assert site.entropy_root == "mask_key"
+        assert site.family == "source_keyed_hmac"
+        assert site.identity == "row_index"
+        assert site.partitionable is True
+
+    def test_provider_partitioned_draw_reproduces_the_oracle_index(self) -> None:
+        from decoy_engine.kernel import encode_int
+
+        p = provider_for("mask.categorical_nondeterministic")
+        got = p.partitioned_draw(_MASK_KEY, "ns", encode_int(5), pool_size=1_000_000)
+        assert got == derive_index(_MASK_KEY, "ns", encode_int(5), pool_size=1_000_000)
 
 
 # ---------------------------------------------------------------------------

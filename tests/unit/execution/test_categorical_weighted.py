@@ -54,6 +54,7 @@ class _Ctx:
     job_seed = (0x0123456789).to_bytes(8, "big")
     # DE-02: keyed strategies read ctx.mask_key; no-secret path == job_seed.
     mask_key = job_seed
+    row_offset = 0
 
 
 # ── CDF builder ───────────────────────────────────────────────────
@@ -430,16 +431,15 @@ class TestRunConfigErrorFields:
         assert exc.value.strategy == "categorical"
 
 
-# ── Non-deterministic picks (unseeded rng) ────────────────────────
+# ── Non-deterministic picks (seeded, position-keyed) ──────────────
 
 
 class TestNonDeterministicUniform:
     def test_uniform_picks_are_valid_indices(self):
         """Non-deterministic uniform path: picks must be a full-length
-        array of valid category indices covering the whole pool. Pins the
-        `rng.integers(0, len(categories), n)` argument set (a None/dropped
-        arg or a shifted low/high yields a scalar, an out-of-range index,
-        or a raise)."""
+        list of valid categories covering the whole pool. A dropped
+        pool_size or a shifted index range yields a short list, an
+        out-of-range pick, or a raise."""
         n = 500
         df = pd.DataFrame({"col": [f"v{i}" for i in range(n)]})
         handler = CategoricalStrategyHandler()
@@ -509,11 +509,10 @@ class TestNativeVsOracleDifferential:
 
 class TestNonDeterministicWeightedNormalization:
     def test_unnormalized_weights_normalized_by_total(self):
-        """Non-deterministic weighted path divides by the total so the
-        probability vector sums to 1. Un-normalized weights (total != 1)
-        make a `w * total` mutation produce probabilities summing to
-        total**2, which numpy rejects; the correct `w / total` skews the
-        picks toward the heavy category."""
+        """Non-deterministic weighted path normalizes by the total through
+        the shared CDF. Un-normalized weights (total != 1) must still skew
+        the picks toward the heavy category at 9:1; a CDF built from the
+        raw weights instead of the normalized ones would not."""
         n = 2000
         df = pd.DataFrame({"col": [f"v{i}" for i in range(n)]})
         handler = CategoricalStrategyHandler()

@@ -153,7 +153,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.categorical_deterministic",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_categorical.py:187",
+        call_site="execution/_strategies/_categorical.py:198",
         entropy_root="mask_key",
         seed_derivation=(
             "derive_index(ctx.mask_key, plan.namespace, _canonicalize_source(value), "
@@ -178,19 +178,19 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     ),
     DrawSite(
         draw_site_id="mask.categorical_nondeterministic",
-        family="numpy_pcg64",
-        call_site="execution/_strategies/_categorical.py:215",
-        entropy_root="none",
-        seed_derivation="np.random.default_rng()  # unseeded, non-deterministic contract (M2)",
-        api_operation="numpy.random.default_rng().integers / .choice",
-        call_shape="rng.integers(0, len(categories), n)  # whole-column",
+        family="source_keyed_hmac",
+        call_site="execution/_strategies/_categorical.py:198",
+        entropy_root="mask_key",
+        seed_derivation="derive_index(mask_key, namespace, encode_int(row_offset + i), pool_size=n)",
+        api_operation="determinism.derive_index -> index in [0, pool_size)",
+        call_shape="categories[derive_index(...)]  # per non-null row; weighted: bisect over CDF",
         consumes_variable_draws=False,
-        identity="column",
-        null_draw_behavior="nulls handled around the draw; unseeded so not reproducible",
-        partitionable=False,
-        config_fingerprint_source="none(non-deterministic)",
-        provider_version="numpy NEP-19 PCG64",
-        notes="Non-deterministic contract: output differs run to run by design.",
+        identity="row_index",
+        null_draw_behavior="null rows emit null; the null still consumes its row ordinal",
+        partitionable=True,
+        config_fingerprint_source="namespace_registry(namespace)+categories+weights",
+        provider_version=_V6,
+        notes="i is the handler-frame ordinal, not the source value; see the inventory doc.",
     ),
     DrawSite(
         draw_site_id="mask.fpe",
@@ -809,7 +809,7 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
     "nested": DETERMINISTIC_NO_DRAW,  # delegates to a child handler; no own draw
     "hash": "mask.hash",
     "shuffle": "mask.shuffle",
-    "categorical": "mask.categorical_deterministic",  # + mask.categorical_nondeterministic
+    "categorical": "mask.categorical_deterministic",  # + mask.categorical_nondeterministic (seeded)
     "fpe": "mask.fpe",
     "date_shift": "mask.date_shift",
     "bucket_perturb": "mask.bucket_perturb",
