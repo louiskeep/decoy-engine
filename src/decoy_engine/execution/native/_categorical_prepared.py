@@ -11,7 +11,6 @@ builds it once per run and hands it to every chunk; nothing here runs per chunk.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -88,21 +87,11 @@ def prepare_positional_categorical(
 
     The validation is `prepare_categorical`'s own (called as the deterministic variant,
     which only affects its determinism gate) plus the two things its callers never needed:
-    `from_profile`, and weights whose finiteness the oracle's CDF arithmetic does not
-    check (a NaN, an infinity or an overflowing sum would escape as a bare ValueError)."""
+    `from_profile`, and non-finite weights: the CDF arithmetic never validates them, so a
+    NaN, an infinity or an overflowing sum escapes `_build_cdf` as a bare ValueError (or
+    OverflowError), which is caught here and declined like any other unbuildable CDF."""
     if provider_config.get("from_profile"):
         return None, f"categorical_from_profile_not_chunk_safe:{name}"
-    weights = provider_config.get("weights")
-    if isinstance(weights, (list, tuple)):
-        for w in weights:
-            if isinstance(w, bool) or not isinstance(w, (int, float)):
-                continue
-            try:
-                finite = math.isfinite(w)
-            except OverflowError:
-                finite = False
-            if not finite:
-                return None, f"categorical_weights_not_finite:{name}"
     try:
         artifact, reason = prepare_categorical(
             name, deterministic=True, namespace=namespace, provider_config=provider_config
