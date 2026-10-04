@@ -313,7 +313,7 @@ def _prepared_categoricals(state: Any, *, table: str) -> dict[str, PreparedCateg
     table_seed = next(
         (ts for (name, ts) in state.plan.seed_envelope.per_table if name == table), None
     )
-    if table_seed is None:
+    if table_seed is None:  # pragma: no cover - a validated mask table always has a seed envelope
         return {}
     return prepare_chunked_categoricals(dict(table_seed.per_column), state.first.schema)
 
