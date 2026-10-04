@@ -19,6 +19,9 @@ the ordinal within the frame the handler receives: the physical row for a plain 
 match ordinal under `when:`, and the synthetic-frame ordinal under FK orphan remapping. The
 draw ignores the source value, so equal values do not map to equal categories. A namespace is
 now required in this mode and a missing one fails with `categorical_requires_namespace`.
+Because the weighted path now shares the deterministic mode's CDF, it also shares its weight
+validation: a positive weight that rounds below the CDF resolution is rejected with
+`categorical_weight_below_resolution` (the old unseeded path accepted such sub-resolution weights).
 The draw-site metadata for `mask.categorical_nondeterministic` is now seeded and
 partitionable. No routing outcome changed: multi-table split, out-of-core, the native
 operator and the chunked route still decline it, now with "position-keyed implementation
