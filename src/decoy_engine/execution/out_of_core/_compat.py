@@ -298,15 +298,15 @@ def check_out_of_core_compatibility(
             if conditional is not None:
                 rejections.append(conditional)
         elif node.strategy == "categorical" and not _is_deterministic(node.plan_slice):
-            # Non-deterministic categorical draws from an unseeded RNG, so it has
-            # no cross-run/cross-route parity; only the source-conditioned
-            # deterministic path is ported. Reject fail-closed -> full-frame.
+            # Non-deterministic categorical is keyed by the row ordinal of the frame the
+            # handler sees; the out-of-core kernel has no such ordinal yet, so only the
+            # source-conditioned deterministic path is ported. Reject fail-closed -> full-frame.
             rejections.append(
                 OutOfCoreRejection(
                     "out_of_core_categorical_nondeterministic_unsupported",
-                    f"{node.table}.{node.columns}: non-deterministic categorical has no "
-                    "cross-route parity (unseeded RNG); only deterministic categorical "
-                    "is out-of-core-supported. Falls back to full-frame.",
+                    f"{node.table}.{node.columns}: non-deterministic categorical: "
+                    "position-keyed implementation deferred (C1b-ii); only deterministic "
+                    "categorical is out-of-core-supported. Falls back to full-frame.",
                 )
             )
         elif node.strategy not in _SUPPORTED_WORK_STRATEGIES:

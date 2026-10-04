@@ -821,9 +821,8 @@ class GenDeriveContextProvider(DrawSiteProvider):
 class UnseededProvider(DrawSiteProvider):
     """An unseeded ``np.random.default_rng()`` site (non-deterministic by contract).
 
-    Covers ``mask.categorical_nondeterministic`` and
-    ``gen.identifier_nondeterministic``: output differs run to run by design, so
-    there is nothing to reproduce and no partition to serve. ``fresh_generator``
+    Covers ``gen.identifier_nondeterministic``: output differs run to run by
+    design, so there is nothing to reproduce and no partition to serve. ``fresh_generator``
     hands back a genuinely unseeded Generator; ``reproduce``/``partitioned_draw``
     refuse with a coded error so no caller mistakes this for a stable stream.
     """
@@ -861,6 +860,8 @@ _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "mask.bucket_perturb": "derive",
     "mask.group_key": "derive",
     "mask.categorical_deterministic": "derive_index",
+    # Keyed by encode_int(row ordinal) instead of the source value; same primitive.
+    "mask.categorical_nondeterministic": "derive_index",
     "gen.pool_deterministic": "derive_index",
     "mask.faker": "derive_index",
     "gen.identifier_deterministic": "derive_value",
@@ -897,9 +898,7 @@ _DEDICATED_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
 )
 
 # Unseeded, non-deterministic-by-contract sites.
-_UNSEEDED_SITE_IDS: frozenset[str] = frozenset(
-    {"mask.categorical_nondeterministic", "gen.identifier_nondeterministic"}
-)
+_UNSEEDED_SITE_IDS: frozenset[str] = frozenset({"gen.identifier_nondeterministic"})
 
 
 def _build_registry() -> dict[str, DrawSiteProvider]:

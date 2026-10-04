@@ -277,11 +277,7 @@ class TestModeSeparation:
         got = out["col"].tolist()
         assert got[0] == got[2]  # same source value, same category
         expected = [
-            CATS[
-                derive_index(
-                    MK, "ns", kernel.canonicalize_derive_source(v), pool_size=len(CATS)
-                )
-            ]
+            CATS[derive_index(MK, "ns", kernel.canonicalize_derive_source(v), pool_size=len(CATS))]
             for v in values
         ]
         assert got == expected
@@ -350,9 +346,7 @@ class TestNestedWholeFrame:
 class TestHandlerFrameOrdinal:
     def test_when_gate_keys_by_match_ordinal_and_is_reproducible(self) -> None:
         def go() -> pd.DataFrame:
-            df = pd.DataFrame(
-                {"col": [f"v{i}" for i in range(6)], "keep": [0, 1, 0, 1, 1, 0]}
-            )
+            df = pd.DataFrame({"col": [f"v{i}" for i in range(6)], "keep": [0, 1, 0, 1, 1, 0]})
             plan = _seed({"categories": CATS}, when="keep == 1")
             out, _ = run_with_when_gate(CategoricalStrategyHandler(), df, "col", plan, _Ctx())
             return out
@@ -407,20 +401,32 @@ class TestHandlerFrameOrdinal:
                 "strategy": "categorical",
                 "deterministic": False,
                 "namespace": "cat_ns",
-                "when": "keep",
                 "provider_config": {"categories": CATS},
             },
             {"name": "keep", "strategy": "passthrough"},
         ]
         cfg, _ = mt.build_job(tmp_path, {"t": (cols, table)})
+        # `when` is not part of the validated config schema; it is set on the compiled dict.
+        cfg["tables"][0]["columns"][0]["when"] = "keep"
         a = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
         b = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
         assert a.outputs["t"].column("v").to_pylist() == b.outputs["t"].column("v").to_pylist()
         masked = [
-            v for v, k in zip(a.outputs["t"].column("v").to_pylist(), table["keep"].to_pylist())
+            v
+            for v, k in zip(
+                a.outputs["t"].column("v").to_pylist(), table["keep"].to_pylist(), strict=True
+            )
             if k
         ]
         assert set(masked) <= set(CATS) and masked
+        untouched = [
+            v
+            for v, k in zip(
+                a.outputs["t"].column("v").to_pylist(), table["keep"].to_pylist(), strict=True
+            )
+            if not k
+        ]
+        assert untouched == [f"s{i}" for i in range(n) if i % 3 != 0]
 
 
 # ---- end to end through the adapter -------------------------------------------------------

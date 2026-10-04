@@ -209,6 +209,15 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   table keeps the oracle route and raises. The reroute reason
   `unconfigured_set_mismatch:<oracle set>:<native set>` is a defensive cross-check
   between the two definitions of "unconfigured".
+  Non-deterministic categorical became seeded on 2026-10-04 (slice C1b-i), a determinism-contract
+  change on the whole-frame path: the draw for the non-null row at ordinal `g` is
+  `derive_index(mask_key, namespace, encode_int(g), ...)`, where `g` is the ordinal within the
+  frame the handler receives (the physical row for a plain table, the match ordinal under
+  `when:`, the synthetic-frame ordinal under FK orphan remapping). The same job seed and input
+  now give the same output; before, two runs differed. The draw ignores the source value, so
+  it does not preserve joins, and a namespace is now required (`categorical_requires_namespace`).
+  No routing outcome changed: multi-table split, out-of-core and the native and chunked routes
+  still decline it.
   Deterministic categorical joined the native chunked route on 2026-10-04 (slice C1).
   A native-admissible column (deterministic or `allow_collisions`, namespaced, all-string
   categories, buildable CDF, `string` source) is masked by the compiled index kernel and its
@@ -220,7 +229,8 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   unchanged on every route. A categorical column the native operator cannot run (numeric
   categories, a non-`string` source, unbuildable weights) keeps its oracle values and
   types. A non-deterministic categorical column fails chunked preflight with
-  `categorical_nondeterministic_not_chunk_safe` (slice C1b lifts it); a deterministic one
+  `categorical_nondeterministic_not_chunk_safe` (its position-keyed chunked implementation is
+  deferred to slice C1b-ii); a deterministic one
   without a namespace, with `from_profile`, or without explicit categories keeps
   `chunked_strategy_conditions_unmet`.
   `bucket_perturb` joined the native chunked route on 2026-10-04 (slice C2). A native-admissible

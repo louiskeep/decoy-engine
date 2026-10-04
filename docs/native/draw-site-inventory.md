@@ -47,8 +47,8 @@ partitionable.
 - 32 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 20 partitionable, 12 not.
-- Family breakdown: `source_keyed_hmac` 12, `numpy_pcg64` 9, `faker_seed_instance`
+- 21 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 13, `numpy_pcg64` 8, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -93,7 +93,7 @@ both named honestly in the catalog's `entropy_root` field.
 
 ---
 
-## Family: source_keyed_hmac (12 sites)
+## Family: source_keyed_hmac (13 sites)
 
 The HMAC/HKDF digest IS the pseudo-randomness. There is no RNG object and no
 stream position. Every site keys on the source value (or, for `code_set` in
@@ -108,7 +108,7 @@ emitted as `.hex()[:truncate]`. Joinability-preserving. Null/NaN rows emit null
 and consume no derivation.
 
 ### mask.categorical_deterministic
-`execution/_strategies/_categorical.py:187`. Uniform path:
+`execution/_strategies/_categorical.py:198`. Uniform path:
 `derive_index(mask_key, namespace, _canonicalize_source(value), pool_size=len(categories))`.
 Weighted path: `derive_index(..., pool_size=_WEIGHTED_CDF_RES)` then a bisect over
 the CDF. Mirror: the out-of-core categorical kernel
@@ -139,6 +139,17 @@ gives a within-bucket offset per value.
 `transforms/group_key.py:171`. `derive(seed, namespace, source)` per distinct
 group-by source, giving a 32-byte group key. Generation reuses the same call
 (the `group_key` generation kind maps here).
+
+### mask.categorical_nondeterministic
+`execution/_strategies/_categorical.py:198`. Seeded and position-keyed:
+`derive_index(ctx.mask_key, plan.namespace, encode_int(ctx.row_offset + i), pool_size=len(categories))`
+per non-null row (weighted configs use `pool_size=_WEIGHTED_CDF_RES` and the shared CDF, as the
+deterministic site does). `encode_int` is the public `decoy_engine.kernel` encoder, the same
+canonical integer encoding the native batch kernel applies to an integer column. `i` is the
+ordinal within the frame the handler receives: the physical row for a plain whole-frame table,
+the match ordinal under `when:`, the synthetic-frame ordinal under FK orphan remapping. The
+output does not depend on the source value, only on its nullness. Partitionable by row
+ordinal; the whole-frame oracle is the only implementation today.
 
 ### mask.code_set
 `transforms/code_set.py:592`.
@@ -189,7 +200,7 @@ valid `derive` IKM lengths. Wired into output via the provider registry
 
 ---
 
-## Family: numpy_pcg64 (9 sites)
+## Family: numpy_pcg64 (8 sites)
 
 Draws from a `numpy.random.Generator` (`default_rng`, PCG64). Most are
 whole-column vector draws and are therefore NOT partitionable. The exception is
@@ -204,11 +215,6 @@ then `default_rng(seed).permutation(len(non_na_values))`. NOT partitionable: a
 partition sees only its slice and cannot reproduce the global permutation order.
 Nulls are excluded before the draw. Non-deterministic mode uses an unseeded
 `default_rng()`.
-
-### mask.categorical_nondeterministic
-`execution/_strategies/_categorical.py:215`. `np.random.default_rng()` (unseeded)
-then `integers(0, len(categories), n)`. Non-deterministic by contract: output
-differs run to run. Polars mirror at `_strategies/_categorical.py:139`.
 
 ### mask.windowed_date (UNCERTAIN)
 `transforms/windowed_date.py:209`. Per-row seed:
@@ -492,9 +498,8 @@ symbols. The remaining sites are proven at the seed-derivation level in
 sites (`mask.shuffle`, `mask.grouped_series_monotone_walk`, `gen.categorical`,
 `gen.reference`, `gen.null_probability`, `gen.distribution_snapshot`,
 `gen.pool_nondeterministic`, `gen.composite_build_pool`, `mask.formula`) refuse a
-partitioned request with `site_not_partitionable`; the two unseeded
-non-deterministic sites (`mask.categorical_nondeterministic`,
-`gen.identifier_nondeterministic`) refuse reproduction with
+partitioned request with `site_not_partitionable`; the remaining non-deterministic-by-contract
+site (`gen.identifier_nondeterministic`) refuses reproduction with
 `site_not_reproducible`. With the gate green, the protocol is FROZEN: each
 site's `provider_version` below is locked, and any change to a seed derivation,
 call shape, or version is a `SEED_PROTOCOL_VERSION`-class event.
@@ -503,8 +508,8 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (32 sites; 20
-partitionable, 12 not). An import-time invariant fails if the registry drifts
+Registry: exactly one provider per catalogued `draw_site_id` (32 sites; 21
+partitionable, 11 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
 | draw_site_id                      | family              | partitionable | provider_version |
@@ -520,7 +525,6 @@ from `DRAW_SITES`.
 | gen.identifier_nondeterministic   | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
 | gen.null_probability              | numpy_pcg64         | no            | seed_protocol_v7 (GenDeriveContext); numpy NEP-19 PCG64 |
 | gen.pool_nondeterministic         | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
-| mask.categorical_nondeterministic | numpy_pcg64         | no            | numpy NEP-19 PCG64 |
 | mask.shuffle                      | numpy_pcg64         | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.windowed_date                | numpy_pcg64         | yes           | seed_protocol_v7; numpy NEP-19 PCG64 |
 | mask.grouped_series_monotone_walk | per_group_stream    | no            | seed_protocol_v7; numpy NEP-19 PCG64 |
@@ -533,6 +537,7 @@ from `DRAW_SITES`.
 | gen.pool_deterministic            | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.bucket_perturb               | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.categorical_deterministic    | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.categorical_nondeterministic | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v7 |

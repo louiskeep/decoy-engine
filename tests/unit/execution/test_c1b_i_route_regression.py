@@ -89,15 +89,11 @@ def _fk_job(payload: ColumnSeed) -> tuple[Any, RelationshipGraph]:
             per_table=(
                 (
                     "parent",
-                    TableSeed(
-                        per_column=(("pk", _hash_seed()), ("pay", payload)), per_group=()
-                    ),
+                    TableSeed(per_column=(("pk", _hash_seed()), ("pay", payload)), per_group=()),
                 ),
                 (
                     "child",
-                    TableSeed(
-                        per_column=(("fk", _hash_seed()), ("cpay", payload)), per_group=()
-                    ),
+                    TableSeed(per_column=(("fk", _hash_seed()), ("cpay", payload)), per_group=()),
                 ),
             ),
         )
@@ -138,8 +134,10 @@ class TestMultiTableStaysWhole:
         assert pmt.unseeded_random_nodes(plan) == ()
 
     def test_it_is_reported_by_the_truthful_positional_deferred_veto(self) -> None:
-        plan = _single_table_plan(_cat_seed(), _cat_seed(nested=True), _cat_seed(deterministic=True))
-        assert pmt.POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED == frozenset({"categorical"})
+        plan = _single_table_plan(
+            _cat_seed(), _cat_seed(nested=True), _cat_seed(deterministic=True)
+        )
+        assert frozenset({"categorical"}) == pmt.POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED
         assert pmt.position_keyed_deferred_nodes(plan) == (
             ("t", "c0", "categorical"),
             ("t", "c1", "nested"),
@@ -238,9 +236,9 @@ class TestOutOfCoreStillRejects:
         rejections = [r for r in compat.rejections if r.code == OOC_CODE]
         assert len(rejections) == 2  # one per payload column
         for r in rejections:
-            assert DEFERRED_REASON in r.reason
-            assert "unseeded" not in r.reason.lower()
-            assert "Falls back to full-frame" in r.reason
+            assert DEFERRED_REASON in r.message
+            assert "unseeded" not in r.message.lower()
+            assert "Falls back to full-frame" in r.message
 
     def test_deterministic_categorical_is_still_admitted(self) -> None:
         plan, graph = _fk_job(_cat_seed(deterministic=True))
@@ -367,9 +365,7 @@ class TestNativeStillDeclines:
 
         src = inspect.getsource(_shadow_operators)
         assert "if not binding.categorical_deterministic:" in src
-        assert (
-            "categorical node reached run_operator with categorical_deterministic=False" in src
-        )
+        assert "categorical node reached run_operator with categorical_deterministic=False" in src
 
 
 def test_frame_is_whole_frame_only_pandas_handler_is_what_runs() -> None:

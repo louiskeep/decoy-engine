@@ -578,6 +578,8 @@ def test_veto_sets_report_exactly_their_columns(tmp_path: Path) -> None:
     cfg, _ = mt.build_job(tmp_path, {"t": (cols, src)})
     plan = compile_plan(cfg, profile_source(cfg, seed=42), decoy_engine_version="x")
     assert sorted(pmt.unseeded_random_nodes(plan)) == [("t", "s1", "shuffle")]
+
+    # The seeded column is held whole by its own veto, not by the shuffle set above.
     assert sorted(pmt.position_keyed_deferred_nodes(plan)) == [("t", "c1", "categorical")]
 
 
@@ -601,6 +603,8 @@ def test_unseeded_strategy_set_matches_the_strategies_that_draw_from_a_fresh_rng
         p.stem.lstrip("_") for p in root.glob("*.py") if unseeded.search(p.read_text())
     )
     assert frozenset({"shuffle"}) == pmt.UNSEEDED_RANDOM_STRATEGIES
+
+    # Seeded, so the scan above cannot see it; it has its own pinned veto set.
     assert frozenset({"categorical"}) == pmt.POSITION_KEYED_CATEGORICAL_SPLIT_DEFERRED
     assert offenders == ["shuffle"], (
         "a strategy module draws from an unseeded generator; add it to job gate 9"

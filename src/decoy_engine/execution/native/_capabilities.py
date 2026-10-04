@@ -219,9 +219,10 @@ _MASK: dict[str, _Ortho] = {
         True,
         notes=(
             "Deterministic (default) mode is source-keyed and row-local. The "
-            "non-deterministic mode draws a whole-column unseeded vector (global, "
-            "not reproducible); that is a config-resolved variant, excluded from "
-            "the native route by its unseeded draw, not the static row."
+            "non-deterministic mode is seeded but position-keyed (by the row ordinal "
+            "of the frame the handler receives, not the source value); that is a "
+            "config-resolved variant, excluded from the native route because its "
+            "position-keyed implementation is not built, not by the static row."
         ),
     ),
     "faker": _Ortho(

@@ -4,10 +4,15 @@ Re-keyed onto S3/S5 (S9 spec §4 row 8): the replacement set is a pool of
 `provider_config["categories"]`; deterministic mode maps each source value to a
 category via `derive_index(job_seed, namespace, _canonicalize_source(value),
 pool_size=len(categories))` (same source -> same category within a namespace).
-Non-deterministic mode picks uniformly via an UNSEEDED rng -- two non-deterministic
-runs differ. This matches the faker + shuffle handlers so "non-deterministic"
-means one thing across the strategy set (Dennis slice-2h M2); seed reproducibility
-is the deterministic path's job. Null positions preserved.
+Non-deterministic mode is reproducible but NOT source-keyed: the draw for the non-null
+row at ordinal `g = ctx.row_offset + local_index` is
+`derive_index(mask_key, namespace, encode_int(g), pool_size=...)`, so the same job seed
+gives the same output and the output does not depend on the source value (no join
+preservation). `g` is the ordinal within the frame this handler receives: the physical row
+for a plain whole-frame table, the match ordinal under `when:`, the synthetic-frame
+ordinal under FK orphan remapping. The key is the public `decoy_engine.kernel.encode_int`,
+the same encoding the native batch kernel applies to an integer column, so a later batch
+path reproduces these bytes. Null positions preserved (a null still consumes its ordinal).
 
 MG-1 S5 extension (2026-06-01): `weights` and `from_profile`.
 - ``cfg["weights"]``: list of floats matching ``categories`` (must be
@@ -42,7 +47,6 @@ from __future__ import annotations
 
 import bisect
 
-import numpy as np
 import pandas as pd
 
 from decoy_engine.determinism import derive_index
@@ -50,6 +54,7 @@ from decoy_engine.execution._adapter import StrategyContext, provider_config_to_
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.kernel import encode_int
 from decoy_engine.plan._types import ColumnSeed
 
 # Resolution for the deterministic-weighted CDF. 1_000_000 supports
@@ -168,67 +173,37 @@ class CategoricalStrategyHandler:
 
         source = df[column]
         na_mask = source.isna().to_numpy()
-        n = len(source)
 
-        if plan.deterministic:
-            if plan.namespace is None:
-                raise StrategyError(
-                    code="categorical_requires_namespace",
-                    strategy="categorical",
-                    message=f"column {column!r} uses deterministic categorical but has no namespace.",
+        if plan.namespace is None:
+            mode = "deterministic" if plan.deterministic else "non-deterministic"
+            raise StrategyError(
+                code="categorical_requires_namespace",
+                strategy="categorical",
+                message=f"column {column!r} uses {mode} categorical but has no namespace.",
+            )
+        cdf = _build_cdf(weights) if weights is not None else None
+        # Deterministic keys on the canonical source value; non-deterministic keys on
+        # the row ordinal in the frame this handler received.
+        row_offset = 0 if plan.deterministic else ctx.row_offset
+        out: list[object] = []
+        for i, value in enumerate(source):
+            if na_mask[i]:
+                out.append(None)
+                continue
+            key = _canonicalize_source(value) if plan.deterministic else encode_int(row_offset + i)
+            if cdf is None:
+                # Uniform path -- V1 byte identity for the deterministic mode.
+                out.append(
+                    categories[
+                        derive_index(ctx.mask_key, plan.namespace, key, pool_size=len(categories))
+                    ]
                 )
-            out: list[object] = []
-            if weights is None:
-                # Uniform path -- V1 byte identity.
-                for i, value in enumerate(source):
-                    if na_mask[i]:
-                        out.append(None)
-                        continue
-                    idx = derive_index(
-                        ctx.mask_key,
-                        plan.namespace,
-                        _canonicalize_source(value),
-                        pool_size=len(categories),
-                    )
-                    out.append(categories[idx])
-            else:
-                # Weighted path -- CDF over fixed integer resolution.
-                cdf = _build_cdf(weights)
-                for i, value in enumerate(source):
-                    if na_mask[i]:
-                        out.append(None)
-                        continue
-                    bucket = derive_index(
-                        ctx.mask_key,
-                        plan.namespace,
-                        _canonicalize_source(value),
-                        pool_size=_WEIGHTED_CDF_RES,
-                    )
-                    cat_idx = bisect.bisect_right(cdf, bucket)
-                    # Defensive: if rounding ever pushes bucket past
-                    # cdf[-1] (= _WEIGHTED_CDF_RES), clamp to the
-                    # last category.
-                    if cat_idx >= len(categories):
-                        cat_idx = len(categories) - 1
-                    out.append(categories[cat_idx])
-        else:
-            rng = np.random.default_rng()  # unseeded: non-deterministic contract (M2)
-            if weights is None:
-                picks = rng.integers(0, len(categories), n)
-            else:
-                # numpy's choice with p= takes care of normalization.
-                # Normalize manually so the StrategyError on sum<=0
-                # surfaces before numpy raises.
-                total = sum(weights)
-                if total <= 0:
-                    raise StrategyError(
-                        code="categorical_weights_nonpositive",
-                        strategy="categorical",
-                        message="categorical weights sum to <= 0; cannot normalize.",
-                    )
-                normalized = [w / total for w in weights]
-                picks = rng.choice(len(categories), size=n, p=normalized)
-            out = [None if na_mask[i] else categories[int(picks[i])] for i in range(n)]
+                continue
+            bucket = derive_index(ctx.mask_key, plan.namespace, key, pool_size=_WEIGHTED_CDF_RES)
+            cat_idx = bisect.bisect_right(cdf, bucket)
+            # Defensive: if rounding ever pushes bucket past cdf[-1]
+            # (= _WEIGHTED_CDF_RES), clamp to the last category.
+            out.append(categories[min(cat_idx, len(categories) - 1)])
 
         df[column] = out
         return df, []

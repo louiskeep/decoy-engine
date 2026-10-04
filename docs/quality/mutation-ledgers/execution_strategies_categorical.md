@@ -10,7 +10,8 @@ this file.
 
 TQ crown-jewels pass, 2026-07-25. `_categorical` remaps a column onto a category
 pool (uniform, or weighted through a CDF over a fixed integer resolution;
-deterministic keyed by `derive_index`, or non-deterministic via an unseeded rng).
+keyed by `derive_index`, on the source value when deterministic and on the row ordinal
+when not).
 A mutmut run produced **238 mutants, 123 killed (52% baseline), 115 survived**.
 Every survivor was classified LOGIC or EQUIVALENT per
 `docs/quality/module-test-quality-playbook.md` ("Scope the score to LOGIC, not
@@ -27,6 +28,14 @@ Verification note: `str(StrategyError)` embeds `code`, `strategy` AND `message`
 exact `.code` and `.strategy` attributes instead of matching the rendered string.
 
 Bugs found in `_categorical.py`: none introduced or newly exposed by this pass.
+
+Superseded rows (2026-10-04): the table rows for `run__mutmut_135` through `run__mutmut_142`
+and `run__mutmut_160` graded the earlier numpy draw in the non-deterministic branch. That
+branch now draws through `derive_index` keyed by the row ordinal, so those mutants no longer
+exist; the rows stay as the record of that grade. The retargeted tests
+(`TestNonDeterministicUniform`, `TestNonDeterministicWeightedNormalization`) keep their
+validity and distribution assertions, and `tests/unit/execution/test_categorical_seeded_nondet.py`
+pins the new draw to frozen `derive_index` values. The branch needs a fresh mutmut grade.
 
 ## LOGIC (71): killed by new tests in this pass
 

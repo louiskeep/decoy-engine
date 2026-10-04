@@ -1,9 +1,9 @@
 """Strategy fixtures for the job-gate-9 registry sentry (B7 acceptance test 2).
 
 `_auto_chunk_strategies.STRATEGY_FIXTURES` covers the chunk-admitted strategies; these
-cover the rest of `SCALAR_HANDLERS`: the shuffle that draws from a fresh generator, and the
-non-deterministic categorical, which is reproducible but whose split stays vetoed. The sentry
-asserts the two sets together cover the live registry exactly.
+cover the rest of `SCALAR_HANDLERS`: the shuffle with no seed, and the non-deterministic
+categorical, which is reproducible but whose split stays vetoed. The sentry asserts the two
+sets together cover the live registry exactly.
 """
 
 from __future__ import annotations

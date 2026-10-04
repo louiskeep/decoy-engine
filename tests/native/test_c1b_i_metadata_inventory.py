@@ -55,9 +55,7 @@ class TestSiteIsSeeded:
         assert isinstance(p, SourceKeyedHmacProvider)
         assert p.partitionable is True
         # Frozen literals from derive_index(MK, "ns", encode_int(g), pool_size=4).
-        got = [
-            p.partitioned_draw(MK, "ns", kernel.encode_int(g), pool_size=4) for g in range(6)
-        ]
+        got = [p.partitioned_draw(MK, "ns", kernel.encode_int(g), pool_size=4) for g in range(6)]
         assert got == [2, 3, 1, 3, 0, 0]
 
     def test_only_the_identifier_site_remains_unseeded(self) -> None:
@@ -65,9 +63,9 @@ class TestSiteIsSeeded:
         assert unseeded == {"gen.identifier_nondeterministic"}
         assert draw_site_by_id("gen.identifier_nondeterministic").entropy_root == "none"
 
-    def test_no_other_catalogued_site_lost_its_entropy_root(self) -> None:
+    def test_only_the_expected_sites_still_have_no_entropy_root(self) -> None:
         none_roots = {s.draw_site_id for s in DRAW_SITES if s.entropy_root == "none"}
-        assert none_roots == {"gen.identifier_nondeterministic"}
+        assert none_roots == {"gen.identifier_nondeterministic", "mask.formula"}
 
     def test_capabilities_row_does_not_call_the_variant_unseeded(self) -> None:
         from decoy_engine.execution.native._capabilities import capabilities_for
@@ -138,7 +136,7 @@ _STALE = re.compile(
     r"|fresh generator|fresh `?default_rng|default_rng\(\)",
     re.I,
 )
-_CATEGORICAL = re.compile(r"categorical", re.I)
+_CATEGORICAL = re.compile(r"categorical")
 
 _SCOPE_DIRS = (
     "src/decoy_engine/execution",
@@ -165,9 +163,7 @@ _NOT_CATEGORICAL_SPECIFIC = {
 def _active_files() -> list[pathlib.Path]:
     files: list[pathlib.Path] = []
     for d in _SCOPE_DIRS:
-        files += [
-            p for p in (ROOT / d).rglob("*") if p.suffix in (".py", ".md") and p != _SELF
-        ]
+        files += [p for p in (ROOT / d).rglob("*") if p.suffix in (".py", ".md") and p != _SELF]
     files += [ROOT / f for f in _SCOPE_FILES]
     return [p for p in files if str(p.relative_to(ROOT)) not in _NOT_CATEGORICAL_SPECIFIC]
 
@@ -179,21 +175,25 @@ def _unreleased_changelog() -> str:
     return text[start : start + 5 + nxt.start()] if nxt else text[start:]
 
 
-def _blocks(text: str) -> list[tuple[int, str]]:
-    out: list[tuple[int, str]] = []
-    cur: list[str] = []
-    first = 0
-    for i, line in enumerate(text.splitlines(), 1):
-        if line.strip():
-            if not cur:
-                first = i
-            cur.append(line)
-        elif cur:
-            out.append((first, "\n".join(cur)))
-            cur = []
-    if cur:
-        out.append((first, "\n".join(cur)))
-    return out
+def _windows(text: str, radius: int = 1) -> list[tuple[int, str]]:
+    """One `(line_number, surrounding_text)` per line that carries a stale phrase."""
+    lines = text.splitlines()
+    return [
+        (i + 1, "\n".join(lines[max(0, i - radius) : i + radius + 1]))
+        for i, line in enumerate(lines)
+        if _STALE.search(line)
+    ]
+
+
+def _md_section_hits(name: str, text: str) -> list[str]:
+    """Markdown sections whose heading names categorical and whose body says a stale phrase."""
+    hits: list[str] = []
+    for part in re.split(r"(?m)^(?=#{1,6} )", text):
+        heading = part.splitlines()[0] if part else ""
+        stale = _STALE.search(part)
+        if _CATEGORICAL.search(heading) and stale:
+            hits.append(f"{name}:[{heading.strip()}]: {stale.group(0)!r}")
+    return hits
 
 
 def _stale_categorical_hits() -> list[str]:
@@ -201,9 +201,11 @@ def _stale_categorical_hits() -> list[str]:
     sources = [(str(p.relative_to(ROOT)), p.read_text(encoding="utf-8")) for p in _active_files()]
     sources.append(("CHANGELOG.md[Unreleased]", _unreleased_changelog()))
     for name, text in sources:
-        for line_no, block in _blocks(text):
-            if _STALE.search(block) and _CATEGORICAL.search(block):
-                stale = _STALE.search(block)
+        if name.endswith(".md") or name.startswith("CHANGELOG"):
+            hits += _md_section_hits(name, text)
+        for line_no, window in _windows(text):
+            if _CATEGORICAL.search(window):
+                stale = _STALE.search(window)
                 assert stale is not None
                 hits.append(f"{name}:{line_no}: {stale.group(0)!r}")
     return hits
@@ -216,17 +218,39 @@ def test_no_active_categorical_text_calls_the_draw_unseeded() -> None:
     )
 
 
+def _section(path: str, heading: str) -> str:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    start = text.index(heading)
+    nxt = text.find("\n### ", start + len(heading))
+    return text[start : nxt if nxt != -1 else len(text)]
+
+
+def test_capability_row_has_no_stale_unseeded_vector_prose() -> None:
+    text = (ROOT / "src/decoy_engine/execution/native/_capabilities.py").read_text()
+    assert "unseeded vector" not in text
+    assert "excluded from the native route by its unseeded draw" not in text
+
+
+def test_public_docs_describe_categorical_as_seeded() -> None:
+    mask_section = _section("docs/strategies.md", "### categorical").lower()
+    assert "differs run to run" not in mask_section
+    assert "row position under the job seed" in mask_section
+    determinism = (ROOT / "docs" / "determinism.md").read_text(encoding="utf-8")
+    not_deterministic = determinism[determinism.index("## What is NOT deterministic") :]
+    bullet = not_deterministic[: not_deterministic.index("- Profiling without a seed")]
+    assert "categorical" not in bullet
+    assert "Non-deterministic `categorical`" in determinism
+
+
 @pytest.mark.parametrize(
     "path",
     [
         "src/decoy_engine/execution/_strategies/_categorical.py",
         "src/decoy_engine/execution/out_of_core/_compat.py",
         "src/decoy_engine/execution/_pipeline_multi_table.py",
-        "docs/strategies.md",
-        "docs/determinism.md",
     ],
 )
-def test_named_inventory_sites_describe_the_seeded_contract(path: str) -> None:
+def test_named_modules_no_longer_describe_a_numpy_draw(path: str) -> None:
     text = (ROOT / path).read_text(encoding="utf-8").lower()
     assert "numpy rng" not in text
     assert "differs run to run" not in text
