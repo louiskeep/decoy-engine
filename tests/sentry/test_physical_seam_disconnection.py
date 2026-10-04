@@ -417,6 +417,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `execution.physical`; `physical/_inputs.py` reads the same facts.
         "src/decoy_engine/execution/_chunked_input.py",
         "src/decoy_engine/execution/_transactional_sink.py",
+        # C1 (deterministic categorical on the chunked route): `_chunked_categorical.py` is
+        # the chunk-safety gate (it picks the non-deterministic rejection code) and
+        # `_categorical_prepared.py` the prepared categories+CDF shared by the config gate,
+        # the output-type rule and `_chunk_masking.py`. Neither imports `execution.physical`.
+        "src/decoy_engine/execution/_chunked_categorical.py",
+        "src/decoy_engine/execution/native/_categorical_prepared.py",
     }
     unexpected = [
         name
