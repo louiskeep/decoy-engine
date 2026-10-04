@@ -105,3 +105,9 @@ APPROVE / GO, 0 blocker/high/medium, 2 LOW. dennis verified by trace + targeted 
 Remediation:
 - LOW 1 (folded): `categorical:deterministic` added to `STRING_OUTPUT_KEYS` in `tests/unit/execution/_auto_chunk_strategies.py`, so the auto-chunk output-contract matrix test now independently asserts the string pin (198 passed). No behavior change.
 - LOW 2 (accepted coverage-nit): no dedicated test exercises a native-admissible categorical column carrying a `when:` predicate. dennis traced the behavior correct by construction (when: -> whole table to the oracle, lossless pin), and the when:->oracle downgrade is tested elsewhere, so this is left as a follow-up coverage addition, not a merge blocker.
+
+## Rebase onto main with B6b (2026-10-04)
+
+C1 was originally branched off a local engine state (an unpushed Phase D planning-doc commit) that predated the B6b merge, so its merge-base with origin/main was B6a (#192), missing the 16 B6b commits. Nothing reached main (the first merge was blocked on conflicts). C1 was rebased onto current origin/main (8e10bb95, with B6b). There is ZERO src-file overlap between C1 (native chunked-dispatch + _chunked.py) and B6b (pipeline/input/output-sink/readers), so C1's source diff is byte-identical to the gated version; the only conflicts were CHANGELOG.md and tests/sentry/test_physical_seam_disconnection.py (the seam allow-list), both resolved by keeping both sides.
+
+Composition verified on the rebased base (HEAD 8134734f), companion present, tests/native + tests/unit/execution + tests/sentry: 12461 passed, 6 skipped, 0 failed. C1 and B6b compose; the sentry seam gate passes with both module sets allow-listed.
