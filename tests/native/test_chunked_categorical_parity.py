@@ -139,18 +139,24 @@ def test_same_source_value_maps_to_the_same_category_in_every_chunk(
 def test_oracle_leg_pins_native_admissible_categorical_to_string(shape: str) -> None:
     columns = [cat_col(), passthrough("p"), force_oracle(FORCE)]
     chunks = [with_force(c) for c in _chunks(shape, 4)]
-    out = run_one(make_config(columns), chunks).out
-    assert {o.schema.field("c").type for o in out} == {pa.string()}
+    run = run_one(make_config(columns), chunks)
+    # Prove this really exercises the oracle leg; otherwise the string-pin check below
+    # could silently become a native-route test if date_shift were ever admitted.
+    assert run.ev[0].native_admitted is False
+    assert f"date_shift_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert {o.schema.field("c").type for o in run.out} == {pa.string()}
 
 
 @pytest.mark.parametrize("size", [1, 4, 50_000])
 def test_oracle_leg_type_is_independent_of_chunk_count(size: int) -> None:
     values = [None] * 5 + ["a", "b", None, "c", "a", None, None]
-    out = run_one(
+    run = run_one(
         make_config([cat_col(), passthrough("p"), force_oracle(FORCE)]),
         [with_force(c) for c in split(source(values), size)],
-    ).out
-    assert {o.schema.field("c").type for o in out} == {pa.string()}
+    )
+    assert run.ev[0].native_admitted is False
+    assert f"date_shift_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert {o.schema.field("c").type for o in run.out} == {pa.string()}
 
 
 @NEEDS_COMPANION
