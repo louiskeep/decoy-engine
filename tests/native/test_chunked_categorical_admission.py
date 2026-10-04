@@ -148,6 +148,12 @@ def test_missing_namespace_fails_eagerly_on_both_entries() -> None:
     assert consumed == []
 
 
+def test_from_profile_with_explicit_categories_is_still_not_chunk_safe() -> None:
+    col = cat_col()
+    col["provider_config"]["from_profile"] = True
+    assert _code([col]) == "chunked_strategy_conditions_unmet"
+
+
 def test_from_profile_and_missing_categories_keep_the_generic_code() -> None:
     from_profile = cat_col()
     from_profile["provider_config"] = {"from_profile": True}
@@ -412,3 +418,69 @@ def test_cdf_build_count_does_not_scale_with_the_chunk_count(
         counts[size] = len(calls)
     assert counts[48] > 0
     assert counts[48] == counts[6] == counts[1], counts
+
+
+# ---------------------------------------------------------------------------
+# Units: the one prepared-artifact predicate and the thread budget.
+# ---------------------------------------------------------------------------
+
+
+def _seed(**kw: Any) -> Any:
+    from types import SimpleNamespace
+
+    base = {
+        "strategy": "categorical",
+        "deterministic": True,
+        "namespace": "ns",
+        "provider_config": (("categories", ("a", "b")),),
+    }
+    return SimpleNamespace(**{**base, **kw})
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        _seed(strategy="faker"),
+        _seed(deterministic=False),
+        _seed(namespace=None),
+        _seed(provider_config=(("categories", (1, 2)),)),
+    ],
+    ids=["other_strategy", "non_deterministic", "no_namespace", "numeric_categories"],
+)
+def test_prepared_chunked_categoricals_skips_non_admissible_seeds(seed: Any) -> None:
+    from decoy_engine.execution.native._categorical_prepared import prepare_chunked_categoricals
+
+    assert prepare_chunked_categoricals({"c": seed}, pa.schema([("c", pa.string())])) == {}
+
+
+def test_prepared_chunked_categoricals_keeps_admissible_string_source_columns_only() -> None:
+    from decoy_engine.execution.native._categorical_prepared import (
+        PreparedCategorical,
+        prepare_chunked_categoricals,
+    )
+
+    seeds = {"c": _seed(), "n": _seed(), "absent": _seed()}
+    schema = pa.schema([("c", pa.string()), ("n", pa.int64())])
+    assert prepare_chunked_categoricals(seeds, schema) == {
+        "c": PreparedCategorical(("a", "b"), None)
+    }
+
+
+@NEEDS_COMPANION
+@pytest.mark.parametrize("threads", [1, 3])
+def test_the_native_thread_budget_reaches_the_categorical_kernel_call(
+    threads: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution.native import _chunk_masking
+
+    seen: list[int | None] = []
+    real = _chunk_masking.native_categorical
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs["native_threads"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_chunk_masking, "native_categorical", spy)
+    chunks = split(source(["a", "b", "c", "a", "b"]), 2)
+    run_one(make_config([cat_col(), passthrough("p")]), chunks, native_threads=threads)
+    assert seen == [threads] * len(chunks)
