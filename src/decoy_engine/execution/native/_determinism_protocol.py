@@ -181,10 +181,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         family="source_keyed_hmac",
         call_site="execution/_strategies/_categorical.py:198",
         entropy_root="mask_key",
-        seed_derivation=(
-            "derive_index(ctx.mask_key, plan.namespace, encode_int(ctx.row_offset + i), "
-            "pool_size=len(categories))  # weighted path uses pool_size=_WEIGHTED_CDF_RES"
-        ),
+        seed_derivation="derive_index(mask_key, namespace, encode_int(row_offset + i), pool_size=n)",
         api_operation="determinism.derive_index -> index in [0, pool_size)",
         call_shape="categories[derive_index(...)]  # per non-null row; weighted: bisect over CDF",
         consumes_variable_draws=False,
@@ -193,15 +190,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         partitionable=True,
         config_fingerprint_source="namespace_registry(namespace)+categories+weights",
         provider_version=_V6,
-        notes=(
-            "Non-deterministic mode: seeded and keyed by the ordinal i within the frame "
-            "the handler receives (the physical row for a plain whole-frame table, the "
-            "match ordinal under when:, the synthetic-frame ordinal under FK orphan "
-            "remapping), NOT by the source value. encode_int is the public "
-            "decoy_engine.kernel encoder the native batch kernel applies to an integer "
-            "column. Partitionable only where a partition can pin i to a stable ordinal; "
-            "the whole-frame oracle is the only implementation today."
-        ),
+        notes="i is the handler-frame ordinal, not the source value; see the inventory doc.",
     ),
     DrawSite(
         draw_site_id="mask.fpe",

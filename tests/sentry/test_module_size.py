@@ -618,7 +618,7 @@ ALLOWLIST: dict[str, int] = {
     # registry when the next draw-site batch lands.
     # Task 5.2 (2026-09-11): FF1_KEY_LABEL rename touched the `mask.fpe`
     # provider's key-derivation reference, pushing the module from 985 to 986.
-    "src/decoy_engine/execution/native/_draw_site_providers.py": 986,
+    "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # Native program Task 2.3 (Phase 2 merge, 2026-08-30): the compiled-kernel
     # loader gained a load-time known-answer self-test that pushed the module to
     # 702, and the 2026-09-09 native-throughput program's Task 1.6 native_threads
