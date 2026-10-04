@@ -3,29 +3,22 @@
 Stage A (config only) lives in `_categorical_prepared.prepare_positional_categorical`; this
 module reads it from the two shapes a consumer holds before any chunk: a raw column entry
 (the compatibility veto) and a config + table + column name (the static route decision and
-the evidence planner). Stage B (the string source) is checked here once the first chunk's
-schema is known, and a failure is a refusal, not a reroute: sending the column to the
-chunked oracle would open a second route the plan did not admit.
+the evidence planner). Stage B (the source dtype) is leg selection, not admission: a
+string source runs the native kernel, and any other type reroutes to the chunked oracle
+through `real_type_rejection`, the same path the deterministic categorical takes.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
-
-import pyarrow as pa
 
 from decoy_engine.execution.native._categorical_prepared import (
     PreparedCategorical,
     prepare_positional_categorical,
-    source_is_string,
 )
 from decoy_engine.execution.native._operator_config_rejections import (
     is_deterministic_categorical,
 )
-from decoy_engine.plan._errors import PlanCompileError
-
-NONDETERMINISTIC_CODE = "categorical_nondeterministic_not_chunk_safe"
 
 
 def positional_config_of_entry(col_entry: dict[str, Any]) -> PreparedCategorical | None:
@@ -52,26 +45,3 @@ def positional_config_for_column(
             if isinstance(col, dict) and col.get("name") == column:
                 return positional_config_of_entry(col)
     return None
-
-
-def reject_non_string_positional_sources(
-    config: dict[str, Any], node_routes: Iterable[Any], first_schema: pa.Schema, *, table: str
-) -> None:
-    """Stage B: refuse a stage-A-admissible seeded categorical whose real source is not
-    `string`, with the retained categorical chunked code. The deterministic variant keeps
-    its oracle reroute (`real_type_rejection`); only this variant fails closed."""
-    for node in node_routes:
-        if positional_config_for_column(config, table, node.column) is None:
-            continue
-        if not source_is_string(first_schema, node.column):
-            typ = first_schema.field(node.column).type
-            raise PlanCompileError(
-                code=NONDETERMINISTIC_CODE,
-                path=f"tables.{table}.columns",
-                message=(
-                    f"non-deterministic categorical column {node.column!r} has a {typ} source; "
-                    "the chunked route runs it only over a string source and does not fall "
-                    "back to the oracle. Cast the source to string, or set `deterministic: "
-                    "true` with a namespace."
-                ),
-            )

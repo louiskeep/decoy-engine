@@ -1,10 +1,11 @@
-"""C1b-ii acceptance: two-stage admission, fail-closed, `when:`/FK, deferred routes.
+"""C1b-ii acceptance: two-stage admission, config veto, `when:`/FK, deferred routes.
 
 Stage A is config-only (non-deterministic + namespace + explicit all-string categories + no
 `from_profile` + a buildable CDF) and is shared by four chunked-only consumers: the
 compatibility veto, `_static_route_decision`, `plan_column_backends` and
 `prepare_chunked_categoricals`. Stage B is the string source known at the first chunk,
-shared by `prepare_chunked_categoricals` and the positional fail-closed. A non-admissible
+shared by `prepare_chunked_categoricals` and the real-type leg selection (a non-string
+source runs the chunked-oracle leg, never a crash). A non-admissible
 seeded column must never reach the oracle route (plan section 5, tests 4-6, 9).
 """
 
@@ -238,7 +239,7 @@ def test_the_four_stage_a_consumers_return_the_identical_config_verdict(
 
 
 # ---------------------------------------------------------------------------
-# 5. Stage-B agreement: preparation and the positional fail-closed.
+# 5. Stage-B agreement: preparation and the real-type leg selection.
 # ---------------------------------------------------------------------------
 
 _SOURCE_TYPES: list[tuple[str, pa.DataType, bool]] = [
@@ -258,23 +259,18 @@ def _typed_source(typ: pa.DataType) -> pa.Table:
     return pa.table({"c": col, "p": pa.array([1, 2, 3, 4], pa.int64())})
 
 
-def _fail_closed(typ: pa.DataType, monkeypatch: pytest.MonkeyPatch) -> tuple[bool, list[Any], int]:
+def _run_typed(typ: pa.DataType, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[Any], int]:
+    """Run the seeded categorical over a `typ` source; return (run, evidence, oracle calls)."""
     oracle_calls: list[int] = []
     real = _chunked_entry._oracle_route
     monkeypatch.setattr(
         _chunked_entry, "_oracle_route", lambda *a, **k: oracle_calls.append(1) or real(*a, **k)
     )
     ev: list[Any] = []
-    try:
-        run_one(
-            make_config([_nd(), passthrough("p")]),
-            [_typed_source(typ)],
-            route_evidence_sink=ev,
-        )
-    except PlanCompileError as exc:
-        assert exc.code == NONDET
-        return True, ev, len(oracle_calls)
-    return False, ev, len(oracle_calls)
+    run = run_one(
+        make_config([_nd(), passthrough("p")]), [_typed_source(typ)], route_evidence_sink=ev
+    )
+    return run, ev, len(oracle_calls)
 
 
 @pytest.mark.parametrize(("case", "typ", "is_string"), _SOURCE_TYPES, ids=lambda c: str(c)[:14])
@@ -287,9 +283,11 @@ def test_the_two_stage_b_consumers_agree_on_the_source_type(
     plan = compile_plan(config, profile, decoy_engine_version=ENGINE_VERSION, no_profile=True)
     seeds = dict(next(ts for (n, ts) in plan.seed_envelope.per_table if n == TABLE).per_column)
     prepared = "c" in prepare_chunked_categoricals(seeds, table.schema)
-    failed, _ev, _oracle = _fail_closed(typ, monkeypatch)
+    _run, ev, oracle_calls = _run_typed(typ, monkeypatch)
     assert prepared is is_string
-    assert failed is (not is_string)
+    # Leg selection: the same source-type refinement picks the native kernel or the oracle.
+    assert ev[0].native_admitted is is_string
+    assert (oracle_calls == 0) is is_string
 
 
 @pytest.mark.parametrize(
@@ -297,13 +295,42 @@ def test_the_two_stage_b_consumers_agree_on_the_source_type(
     [t for t in _SOURCE_TYPES if not t[2]],
     ids=lambda c: str(c)[:14],
 )
-def test_a_non_string_source_fails_closed_and_is_not_downgraded_to_the_oracle(
+def test_a_non_string_source_runs_the_chunked_oracle_leg_and_does_not_crash(
     case: str, typ: pa.DataType, is_string: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    failed, ev, oracle_calls = _fail_closed(typ, monkeypatch)
-    assert failed
-    assert ev == [], "no route decision (native or oracle) may be recorded for a refused column"
-    assert oracle_calls == 0
+    run, ev, oracle_calls = _run_typed(typ, monkeypatch)
+    assert oracle_calls == 1, "the non-string source must take the chunked-oracle leg"
+    assert ev[0].native_admitted is False
+    assert f"categorical_source_type_not_string:c:{typ}" in (ev[0].reroute_reason or "")
+    assert ev[0].compiled_kernel_executed is False
+    executed = {
+        col["executed_backend"]
+        for r in run.sink
+        for col in r.quality_metrics["chunked_route"]["columns"]
+        if col["column"] == "c"
+    }
+    assert executed == {"pandas_oracle"}
+    assert {o.schema.field("c").type for o in run.out} == {pa.string()}
+    # Reproducible: a second identical run draws the same categories.
+    again, _ev, _calls = _run_typed(typ, monkeypatch)
+    assert column_values(again.out, "c") == column_values(run.out, "c")
+
+
+@pytest.mark.parametrize(
+    "typ",
+    [t[1] for t in _SOURCE_TYPES if not t[2]],
+    ids=lambda c: str(c)[:14],
+)
+def test_a_non_string_source_oracle_leg_equals_the_forced_oracle_run(typ: pa.DataType) -> None:
+    config = make_config([_nd(), passthrough("p")])
+    table = _typed_source(typ)
+    chunks = split(table, 3)
+    routed = run_one(config, chunks)
+    forced = run_one(
+        make_config([_nd(), passthrough("p"), force_oracle(FORCE)]),
+        [with_force(c) for c in chunks],
+    )
+    assert column_values(routed.out, "c") == column_values(forced.out, "c")
 
 
 @pytest.mark.parametrize("typ", [pa.int64(), pa.large_string()], ids=["int64", "large_string"])

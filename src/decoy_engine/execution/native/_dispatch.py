@@ -47,7 +47,6 @@ import pyarrow as pa
 from decoy_engine.execution._transforms_gate import reject_per_table_transforms
 from decoy_engine.execution.native._categorical_positional import (
     positional_config_for_column,
-    reject_non_string_positional_sources,
 )
 from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-exported for tests
     _mask_chunk_native,
@@ -379,10 +378,6 @@ def plan_native_route(
 
     unconfigured: tuple[str, ...] = ()
     if first_schema is not None:
-        # Stage B for the seeded categorical: a refusal, not an oracle reroute.
-        reject_non_string_positional_sources(
-            config, decision.node_routes, first_schema, table=table
-        )
         if decision.native_admitted:
             covered = {n.column for n in decision.node_routes}
             from decoy_engine.execution._transforms import stored_index_fields

@@ -262,6 +262,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_transforms_table.py",
         "src/decoy_engine/execution/out_of_core/_runner.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
+        # C1b-ii: seeded non-deterministic categorical chunked-admission adapters; imports
+        # nothing from `execution.physical` (full-frame physical native stays closed).
+        "src/decoy_engine/execution/native/_categorical_positional.py",
         # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
         # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
         # so the "mask wins ties" precedence cannot drift between the two.
