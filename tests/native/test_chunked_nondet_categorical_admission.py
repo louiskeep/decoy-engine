@@ -303,7 +303,7 @@ def test_a_non_string_source_fails_closed_and_is_not_downgraded_to_the_oracle(
     failed, ev, oracle_calls = _fail_closed(typ, monkeypatch)
     assert failed
     assert ev == [], "no route decision (native or oracle) may be recorded for a refused column"
-    assert oracle_calls == []
+    assert oracle_calls == 0
 
 
 @pytest.mark.parametrize("typ", [pa.int64(), pa.large_string()], ids=["int64", "large_string"])
@@ -393,8 +393,8 @@ def test_a_non_admissible_seeded_column_with_when_keeps_the_retained_code() -> N
 
 
 def _fk_config() -> dict[str, Any]:
-    parent = {"name": "parent", "columns": [hash_col("id", "ns_k")]}
-    child = [hash_col("k", "ns_k"), _nd(), passthrough("p")]
+    parent = {"name": "parent", "columns": [{**hash_col("id", "ns_k"), "dtype": "string"}]}
+    child = [{**hash_col("k", "ns_k"), "dtype": "string"}, _nd(), passthrough("p")]
     return make_config(
         child,
         extra_tables=[parent],
@@ -518,7 +518,9 @@ def test_the_forced_oracle_leg_runs_the_seeded_column_on_the_oracle_with_the_exa
     assert forced.ev[0].native_admitted is False
     assert f"date_shift_not_native_chunked_route:{FORCE}" in (forced.ev[0].reroute_reason or "")
     assert forced.ev[0].compiled_kernel_executed is False
-    native = run_one(make_config([_nd(), passthrough("p")]), split(source(["a", "b", "c", "a", "b"]), 2))
+    native = run_one(
+        make_config([_nd(), passthrough("p")]), split(source(["a", "b", "c", "a", "b"]), 2)
+    )
     assert native.ev[0].native_admitted is True
     assert column_values(native.out, "c") == column_values(forced.out, "c")
 
@@ -562,5 +564,5 @@ def test_prepared_artifact_for_the_seeded_variant_carries_categories_and_cdf() -
     )
     schema = pa.schema([("c", pa.string())])
     assert prepare_chunked_categoricals({"c": seed}, schema) == {
-        "c": PreparedCategorical(("a", "b"), None)
+        "c": PreparedCategorical(("a", "b"), None, positional=True)
     }

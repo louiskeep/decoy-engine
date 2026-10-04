@@ -78,12 +78,14 @@ def test_either_determinism_spelling_passes_chunked_preflight(mode: str) -> None
 @pytest.mark.parametrize("explicit_false", [False, True], ids=["absent", "explicit_false"])
 def test_a_non_deterministic_categorical_gets_the_distinct_code(explicit_false: bool) -> None:
     extra = {"deterministic": False} if explicit_false else {}
-    assert _code([cat_col(mode=None, **extra)]) == NONDET
+    # A config-complete seeded column is admitted by C1b-ii (see
+    # test_chunked_nondet_categorical_admission.py); an incomplete one keeps the code.
+    assert _code([cat_col(mode=None, namespace=None, **extra)]) == NONDET
 
 
 def test_the_distinct_code_names_the_column_and_the_path() -> None:
     with pytest.raises(PlanCompileError) as info:
-        _check([cat_col("tier", mode=None)])
+        _check([cat_col("tier", mode=None, namespace=None)])
     assert info.value.code == NONDET
     assert info.value.path == f"tables.{TABLE}.columns"
     assert "tier" in info.value.message
@@ -100,7 +102,7 @@ def test_non_deterministic_categorical_fails_before_any_chunk_is_read(entry: str
     run = run_mask_chunked if entry == "run_mask_chunked" else run_mask_pipeline_chunked
     with pytest.raises(PlanCompileError) as info:
         run(
-            make_config([cat_col(mode=None), passthrough("p")]),
+            make_config([cat_col(mode=None, namespace=None), passthrough("p")]),
             _chunk_stream(chunks, consumed),
             table=TABLE,
             engine_version=ENGINE_VERSION,
@@ -443,11 +445,11 @@ def _seed(**kw: Any) -> Any:
     "seed",
     [
         _seed(strategy="faker"),
-        _seed(deterministic=False),
+        _seed(deterministic=False, namespace=None),
         _seed(namespace=None),
         _seed(provider_config=(("categories", (1, 2)),)),
     ],
-    ids=["other_strategy", "non_deterministic", "no_namespace", "numeric_categories"],
+    ids=["other_strategy", "non_deterministic_no_namespace", "no_namespace", "numeric_categories"],
 )
 def test_prepared_chunked_categoricals_skips_non_admissible_seeds(seed: Any) -> None:
     from decoy_engine.execution.native._categorical_prepared import prepare_chunked_categoricals

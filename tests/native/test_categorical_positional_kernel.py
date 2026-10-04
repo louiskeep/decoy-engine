@@ -114,8 +114,7 @@ class TestPositionKeyedKats:
         assert high == [CATS[KAT_ACROSS_2_63[2]]]
 
     def test_weighted_uses_the_bucket_through_the_shared_cdf(self, kernel: Any) -> None:
-        weights = [9.0, 1.0, 0.0, 2.0]
-        cdf = _build_cdf(weights)
+        cdf = _build_cdf([0.5, 0.3, 0.2])
         buckets = kernel.derive_index_batch(
             pa.array(range(8), type=pa.uint64()),
             mask_key=MK,
@@ -123,8 +122,8 @@ class TestPositionKeyedKats:
             pool_size=_WEIGHTED_CDF_RES,
         ).to_pylist()
         assert buckets == [50862, 705795, 680373, 622207, 733696, 472172, 22976, 460237]
-        out = _run([f"v{i}" for i in range(8)], cdf=cdf, kernel=kernel)
-        assert out == [CATS[i] for i in [0, 1, 1, 1, 1, 0, 0, 0]]
+        out = _run([f"v{i}" for i in range(8)], cdf=cdf, kernel=kernel, categories=["X", "Y", "Z"])
+        assert out == [["X", "Y", "Z"][i] for i in [0, 1, 1, 1, 1, 0, 0, 0]]
 
     @pytest.mark.parametrize("threads", [None, 1, 4])
     def test_the_thread_budget_does_not_change_the_bytes(self, kernel: Any, threads: Any) -> None:

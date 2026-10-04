@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (seeded non-deterministic categorical on the native chunked route, 2026-10-04)
+
+A non-deterministic `categorical` column with a namespace, explicit string categories (no
+`from_profile`) and buildable weights now runs on the native chunked route instead of failing
+chunked preflight. Each non-null row is drawn from its global position (`base_row_offset` plus
+the local index), so output is byte-identical to the oracle chunked route and the whole-frame
+run at any chunk size. An incomplete config still fails with
+`categorical_nondeterministic_not_chunk_safe` and never reaches the oracle; so does an admitted
+column whose source is not `string`. A seeded categorical with `when:` is rejected on the
+chunked route with `chunked_categorical_nondeterministic_when_not_supported`. Multi-table split
+and out-of-core still decline the column.
+
 ### Changed (non-deterministic categorical is seeded and reproducible, 2026-10-04)
 
 A `categorical` column that is not deterministic used to draw from a generator with no seed,

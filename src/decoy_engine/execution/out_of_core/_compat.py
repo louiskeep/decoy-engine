@@ -305,7 +305,7 @@ def check_out_of_core_compatibility(
                 OutOfCoreRejection(
                     "out_of_core_categorical_nondeterministic_unsupported",
                     f"{node.table}.{node.columns}: non-deterministic categorical: "
-                    "position-keyed implementation deferred (C1b-ii); only deterministic "
+                    "position-keyed implementation deferred (C1b-iv); only deterministic "
                     "categorical is out-of-core-supported. Falls back to full-frame.",
                 )
             )

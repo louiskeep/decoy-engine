@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.native._categorical_positional import positional_config_for_column
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._requirements import (
     CHUNKED_ROUTE_VETOED_STRATEGIES,
@@ -70,7 +71,12 @@ def plan_column_backends(
     for node in plan.nodes:
         if node.table != table:
             continue
-        backend = _planned_backend(node)
+        positional = (
+            node.kind == "scalar"
+            and node.strategy == "categorical"
+            and positional_config_for_column(config, table, node.columns[0]) is not None
+        )
+        backend = RUST_COMPANION if positional else _planned_backend(node)
         out.extend(ColumnPlan(col, node.strategy, backend) for col in node.columns)
     return tuple(out)
 

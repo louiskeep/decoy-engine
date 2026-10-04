@@ -73,9 +73,7 @@ def test_native_chunked_equals_oracle_chunked(
     shape: str, weighted: bool, size: int, threads: int
 ) -> None:
     columns = [_nd(weighted), passthrough("p")]
-    native, forced = run_pair(
-        columns, split(source(_SHAPES[shape]), size), native_threads=threads
-    )
+    native, forced = run_pair(columns, split(source(_SHAPES[shape]), size), native_threads=threads)
     assert_same_as_oracle(native, forced)
     assert native.ev[0].node_routes[0].route == "native_kernel"
     for out in native.out:

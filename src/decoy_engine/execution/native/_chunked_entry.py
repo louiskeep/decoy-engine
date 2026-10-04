@@ -228,6 +228,7 @@ def _native_route(
                 stored_index=stored_index,
                 categorical_by_column=categorical_by_column,
                 kernel_idle=kernel_idle,
+                row_offset=row_offset,
             )
             out = (
                 masked

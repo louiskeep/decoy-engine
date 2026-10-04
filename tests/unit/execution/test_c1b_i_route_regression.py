@@ -44,7 +44,7 @@ pytestmark = pytest.mark.filterwarnings("ignore")
 _REG = get_default_registry()
 _JOB_SEED = (0x42).to_bytes(8, "big")
 OOC_CODE = "out_of_core_categorical_nondeterministic_unsupported"
-DEFERRED_REASON = "position-keyed implementation deferred (C1b-ii)"
+DEFERRED_REASON = "position-keyed implementation deferred (C1b-iv)"
 
 
 def _cat_seed(*, deterministic: bool = False, nested: bool = False) -> ColumnSeed:
@@ -335,7 +335,9 @@ class TestChunkedCodeUnchanged:
 
         cfg = make_config([cat_col(mode="deterministic")])
         check_chunked_compatibility(cfg, table="t", registry=_REG)  # admitted
-        bad = make_config([cat_col(mode=None)])
+        # C1b-ii admits the config-complete seeded variant; an incomplete one keeps the code.
+        check_chunked_compatibility(make_config([cat_col(mode=None)]), table="t", registry=_REG)
+        bad = make_config([cat_col(mode=None, namespace=None)])
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(bad, table="t", registry=_REG)
         assert exc.value.code == "categorical_nondeterministic_not_chunk_safe"
