@@ -11,8 +11,10 @@ keyed draw byte-identically to the oracle's per-row `derive_index`
 null-safe NumPy gather over its output -- no new Rust, parity inherited from
 an existing KAT family.
 
-v1 scope (see docs/plans/2026-09-21-phase5-native-operator-expansion.md):
-STRING categories, deterministic mode, FULL-FRAME route only. The weighted
+Scope (see docs/plans/2026-09-21-phase5-native-operator-expansion.md and
+docs/plans/2026-10-04-c1-chunked-categorical.md): STRING categories over a string
+source, deterministic mode. Both the full-frame shadow operator and the chunked route
+(`_chunk_masking._mask_chunk_native`, one call per chunk) call this function. The weighted
 `np.searchsorted(cdf, bucket, side="right")` reproduces the oracle's
 `bisect.bisect_right(cdf, bucket)` exactly for the sorted integer CDF (pinned
 by a differential test); the runtime invariants below mirror
@@ -53,9 +55,10 @@ def native_categorical(
     vectorized `searchsorted` maps each keyed bucket to a category index).
     Nulls in `array` restore to `None` at the same position, never
     label-aligned. Output is pinned `pa.string()` per batch (stable across
-    batches, so the coordinator's part-concat never type-drifts); the
-    whole-column null-shape reconciliation to the oracle's data-dependent type
-    happens at final assembly (`_shadow_assembly.assemble_column`).
+    batches, so the coordinator's part-concat never type-drifts). The full-frame route
+    reconciles the whole column's null shape to the oracle's data-dependent type at
+    final assembly (`_shadow_assembly.assemble_column`); the chunked route keeps
+    `string` on every chunk (`_chunked_schema_rule`).
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(

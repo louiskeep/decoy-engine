@@ -6,7 +6,7 @@ gate, proven at two boundaries: the shadow coordinator's assembled output
 `schema.field(...).type`), and the production unified-slice `ExecutionResult`
 (flag-off vs flag-on). The seam is proven both ways: the FULL-FRAME route
 EXECUTES native categorical (positive route/kernel evidence), and the CHUNKED
-route DECLINES it to the oracle (v1 scope). The determinism gate is proven at
+route admits it only when it is native-admissible (slice C1), declining the rest. The determinism gate is proven at
 BOTH admission boundaries plus the runtime assertion.
 """
 
