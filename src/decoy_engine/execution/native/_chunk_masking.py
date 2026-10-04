@@ -20,6 +20,7 @@ import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
@@ -148,6 +149,44 @@ def sample_faker_array(
     return pa.array(out, type=pa.string())
 
 
+def _mask_bucket_perturb(
+    source: pa.Array | pa.ChunkedArray,
+    *,
+    cfg: dict[str, Any],
+    namespace: str | None,
+    mask_key: bytes | None,
+    index_kernel: IndexDerivationKernel | None,
+    native_threads: int | None,
+) -> tuple[pa.Array, bool]:
+    """One chunk of a bucket_perturb column: `(masked array, whether a compiled kernel ran)`.
+
+    The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow
+    `null` for a zero-row or all-null chunk (promotable when the chunks are joined) and
+    `string` for any chunk holding a non-null value, an all-unparseable one included.
+    The cast to null is the chunked counterpart of `_shadow_assembly`'s whole-column
+    reconciliation, and it is why bucket_perturb is not string-pinned by the schema rule.
+    """
+    if index_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+        raise AssertionError(
+            "native route admitted a bucket_perturb column with no index_kernel; "
+            "preflight's index probe should have loaded one for any admitted node."
+        )
+    derive_calls: list[int] = []
+    out = native_bucket_perturb(
+        source,
+        bucket=str(cfg.get("bucket", "month")),
+        date_format=cfg["date_format"],
+        mask_key=mask_key,
+        namespace=namespace or "",
+        index_kernel=index_kernel,
+        native_threads=native_threads,
+        derive_calls=derive_calls,
+    )
+    if len(out) == 0 or out.null_count == len(out):
+        out = pa.nulls(len(out))
+    return out, sum(derive_calls) > 0
+
+
 def _mask_chunk_native(
     chunk: pa.Table,
     *,
@@ -161,6 +200,7 @@ def _mask_chunk_native(
     unconfigured: frozenset[str] = frozenset(),
     stored_index: frozenset[str] = frozenset(),
     categorical_by_column: dict[str, PreparedCategorical] | None = None,
+    kernel_idle: set[str] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -182,10 +222,14 @@ def _mask_chunk_native(
     `pool_by_column` is populated once, before the chunk loop, for every admitted faker
     column (Task 3.1 Step 2); a faker column always has an entry by the same
     precondition. `index_kernel` is the preflight-verified compiled index
-    kernel (Task 2.3): non-`None` whenever the admitted table has a faker or
-    categorical column, since preflight's index probe already ran before this ever
+    kernel (Task 2.3): non-`None` whenever the admitted table has a faker,
+    categorical or bucket_perturb column, since preflight's index probe already ran before this ever
     executes. `categorical_by_column` holds each admitted categorical column's
     prepared categories and CDF, built once per run and reused by every chunk.
+
+    `kernel_idle`, when given, receives each column that ran its strategy branch but no
+    compiled kernel this chunk (a bucket_perturb chunk with no parseable row), so the
+    chunk's route evidence does not credit the companion for work it did not do.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
@@ -262,6 +306,19 @@ def _mask_chunk_native(
                 native_threads=native_threads,
             )
             evidence.compiled_kernel_executed = True
+        elif strategy == "bucket_perturb":
+            arrays[name], ran = _mask_bucket_perturb(
+                source,
+                cfg=cfg,
+                namespace=col_seed.namespace,
+                mask_key=mask_key,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+            )
+            if ran:
+                evidence.compiled_kernel_executed = True
+            elif kernel_idle is not None:
+                kernel_idle.add(name)
         else:  # pragma: no cover - preflight admission already excludes this
             raise AssertionError(
                 f"native route admitted column {name!r} with strategy {strategy!r}, "

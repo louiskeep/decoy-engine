@@ -206,6 +206,7 @@ def _native_route(
         for i, chunk in enumerate(guarded):
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             elapsed_s: dict[str, float] = {}
+            kernel_idle: set[str] = set()
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -218,6 +219,7 @@ def _native_route(
                 unconfigured=unconfigured_set,
                 stored_index=stored_index,
                 categorical_by_column=categorical_by_column,
+                kernel_idle=kernel_idle,
             )
             out = (
                 masked
@@ -254,6 +256,7 @@ def _native_route(
                                 columns=columns,
                                 elapsed_ms=elapsed_ms,
                                 pandas_read_passthrough=read_passthrough,
+                                kernel_idle_columns=kernel_idle,
                             )
                         },
                         row_errors=(),

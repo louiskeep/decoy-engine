@@ -137,20 +137,20 @@ NATIVE_KERNEL_STRATEGIES = frozenset(
 )
 
 # Admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
-# route: bucket_perturb has a data-dependent output TYPE (all-null -> null, empty
-# -> float64/null, else -> string) that only a whole-column assembly point can
-# resolve, which the eager per-chunk emit (`_chunk_masking.py`) lacks. group_key
-# is here for a different reason: it keys on a SIBLING column and is deliberately
-# kept out of the chunk-safe set (`_chunked_group_key.py`), so its native path is
-# full-frame only too. date_shift shares bucket_perturb's null-shape output type
-# and also carries a format_error row-error obligation that only the full-frame
-# coordinator routes. Without this veto `_static_route_decision` would admit them
-# on the chunked route and hit the missing chunk handler; instead the preflight
-# routes the whole table to the oracle. Categorical left this set in slice C1: its
-# chunked output type is pinned to string (`_chunked_schema_rule.py`), and a
-# column the native operator cannot run reaches the oracle through the ordinary
+# route. group_key keys on a SIBLING column and is deliberately kept out of the
+# chunk-safe set (`_chunked_group_key.py`), so its native path is full-frame only.
+# date_shift has a data-dependent output TYPE (all-null -> null, else -> string) that
+# only a whole-column assembly point resolves, and it carries a format_error row-error
+# obligation that only the full-frame coordinator routes. Without this veto
+# `_static_route_decision` would admit them on the chunked route and hit the missing
+# chunk handler; instead the preflight routes the whole table to the oracle.
+# Categorical left this set in slice C1 (output pinned to string,
+# `_chunked_schema_rule.py`) and bucket_perturb in slice C2: its null-shape type is
+# reproduced per chunk by the masker's own reconciliation (`_chunk_masking.py`), which
+# matches the oracle chunked route, so it is deliberately NOT string-pinned. A column
+# the native operator cannot run reaches the oracle through the ordinary
 # `fallback_policy` and source-type gates.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"bucket_perturb", "group_key", "date_shift"})
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"group_key", "date_shift"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`
