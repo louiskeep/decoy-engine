@@ -157,10 +157,21 @@ STRATEGY_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] =
 
 # Strategy keys whose columns B1 runs natively when the companion is present, and
 # the subset that needs the companion's kernels to do so.
-NATIVE_KEYS = frozenset({"hash", "redact", "truncate", "passthrough", "faker:deterministic_native"})
-NEEDS_COMPANION_KEYS = frozenset({"hash", "faker:deterministic_native"})
+NATIVE_KEYS = frozenset(
+    {
+        "hash",
+        "redact",
+        "truncate",
+        "passthrough",
+        "faker:deterministic_native",
+        "categorical:deterministic",
+    }
+)
+NEEDS_COMPANION_KEYS = frozenset(
+    {"hash", "faker:deterministic_native", "categorical:deterministic"}
+)
 # Output type rule: hash, truncate and redact always yield `string` on the dispatcher lane.
-STRING_OUTPUT_KEYS = frozenset({"hash", "redact", "truncate"})
+STRING_OUTPUT_KEYS = frozenset({"hash", "redact", "truncate", "categorical:deterministic"})
 # Planned backend of the column under test.
 PLANNED_BACKEND: dict[str, str] = {
     "hash": "rust_companion",
@@ -168,6 +179,7 @@ PLANNED_BACKEND: dict[str, str] = {
     "truncate": "arrow_python",
     "passthrough": "arrow_python",
     "faker:deterministic_native": "rust_pool_select",
+    "categorical:deterministic": "rust_companion",
     # Planned for Rust (the strategy and config qualify) but refused at admission
     # because the provider has no native pool: planned `rust_pool_select`, executed on pandas.
     "faker:deterministic": "rust_pool_select",
@@ -184,6 +196,5 @@ REFUSAL: dict[str, str] = {
     "date_shift:explicit_format": "date_shift_not_native_chunked_route:val",
     "group_key": "group_key_not_native_chunked_route:val",
     "faker:deterministic": "faker_provider_not_native:val",
-    "categorical:deterministic": "categorical_not_native_chunked_route:val",
     "bucket_perturb:explicit_format": "bucket_perturb_not_native_chunked_route:val",
 }

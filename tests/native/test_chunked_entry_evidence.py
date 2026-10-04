@@ -32,8 +32,8 @@ from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
     TABLE,
-    categorical,
     faker_col,
+    force_oracle,
     hash_col,
     key_provider,
     make_config,
@@ -58,7 +58,7 @@ def _source(n: int = 11) -> pa.Table:
                 [None if i % 5 == 3 else f"user{i % 4}@x.com" for i in range(n)], pa.string()
             ),
             "f": pa.array([None if i % 6 == 1 else f"first{i % 5}" for i in range(n)], pa.string()),
-            "c": pa.array(["a"] * n, pa.string()),
+            "c": pa.array(["2020-03-15"] * n, pa.string()),
         }
     )
 
@@ -119,7 +119,7 @@ def _legacy(config: dict[str, Any], chunks: list[pa.Table]) -> NativeRouteEviden
     "columns, names",
     [
         ([redact("r"), truncate("t"), passthrough("p")], ["r", "t", "p"]),
-        ([redact("r"), categorical("c")], ["r", "c"]),
+        ([redact("r"), force_oracle("c")], ["r", "c"]),
     ],
     ids=["native_route", "oracle_route"],
 )
@@ -251,10 +251,10 @@ def _veto_case(
             arrow,
         )
     return (  # mixed table: natively capable columns beside a vetoed one
-        make_config([redact("r"), passthrough("p"), categorical("c")]),
+        make_config([redact("r"), passthrough("p"), force_oracle("c")]),
         ["r", "p", "c"],
         {},
-        "categorical_not_native_chunked_route:c",
+        "bucket_perturb_not_native_chunked_route:c",
         {"r": "arrow_python", "p": "arrow_python", "c": "pandas_oracle"},
     )
 
@@ -354,7 +354,7 @@ def test_given_pool_cache_is_reused_across_routes_and_calls(
     monkeypatch.setattr(PoolBuilder, "build", _counting)
     cache = PoolCache()
     native_cfg = make_config([faker_col("f"), redact("r")])
-    oracle_cfg = make_config([faker_col("f"), redact("r"), categorical("c")])
+    oracle_cfg = make_config([faker_col("f"), redact("r"), force_oracle("c")])
 
     _, _, ev1 = _run(native_cfg, ["f", "r"], pool_cache=cache)
     assert ev1.native_admitted is True and len(builds) == 1

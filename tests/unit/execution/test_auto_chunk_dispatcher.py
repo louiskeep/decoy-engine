@@ -298,25 +298,24 @@ def test_planned_backend_matches_across_lanes_for_the_strategy_matrix(
     assert planned["legacy"] == planned["dispatcher"]
 
 
-def test_mixed_table_with_a_categorical_column_runs_wholly_on_the_oracle_route(
+def test_mixed_table_with_a_vetoed_column_runs_wholly_on_the_oracle_route(
     tmp_path: Path,
 ) -> None:
     data = {
         "h": support.string_source()["h"],
-        "c": pa.array([["a", "b", "c"][i % 3] for i in range(support.ROWS)]),
+        "c": pa.array([f"2021-{1 + (i % 12):02d}-15" for i in range(support.ROWS)]),
     }
-    cat = {
+    vetoed = {
         "name": "c",
-        "strategy": "categorical",
-        "deterministic": True,
+        "strategy": "bucket_perturb",
         "namespace": "ns_c",
-        "provider_config": {"categories": ["a", "b", "c"]},
+        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
     }
-    cfg, src = _job(tmp_path, [support.hash_col("h"), cat], data)
+    cfg, src = _job(tmp_path, [support.hash_col("h"), vetoed], data)
     result = support.run_default(cfg, src)
     evidence = result.quality_metrics["chunked_route"]
     assert evidence["native_admitted"] is False
-    assert evidence["reroute_reason"] == "categorical_not_native_chunked_route:c"
+    assert evidence["reroute_reason"] == "bucket_perturb_not_native_chunked_route:c"
     backends = _backends(evidence)
     assert backends["c"] == ("pandas_oracle", "pandas_oracle")
     assert backends["h"][0] == "rust_companion" and backends["h"][1] == "pandas_oracle"

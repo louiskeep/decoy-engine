@@ -642,13 +642,6 @@ _FULL_FRAME_ONLY_COLUMNS: list[dict[str, Any]] = [
         "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
     },
     {
-        "name": "C",
-        "strategy": "categorical",
-        "namespace": "ns_c",
-        "deterministic": True,
-        "provider_config": {"categories": ["a", "b"]},
-    },
-    {
         "name": "G",
         "strategy": "group_key",
         "provider_config": {"group_by": "P", "length": 16},

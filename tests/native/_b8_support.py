@@ -1,8 +1,8 @@
 """Shared builders for the B8 tests (native admission of unconfigured passthrough columns).
 
 `run_pair` runs one table twice through `run_mask_chunked`: as configured (the route
-under test) and with the oracle route forced by a `categorical("cat_force")` column,
-which the dispatcher always vetoes and which is dropped before the two are compared.
+under test) and with the oracle route forced by a `force_oracle("cat_force")` column
+(`bucket_perturb`), which the dispatcher still vetoes and which is dropped before the two are compared.
 `assert_same_as_oracle` is the comparison of acceptance test 2: values, Arrow types,
 field nullability and metadata, warnings, timing columns, vault entries, sink lengths
 and the route each side took.
@@ -19,8 +19,9 @@ from decoy_engine import run_mask_chunked
 from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
+    FORCE_ORACLE_VALUE,
     TABLE,
-    categorical,
+    force_oracle,
     key_provider,
     make_config,
     vault_key,
@@ -64,7 +65,7 @@ def policy_settings(policy: str | None) -> dict[str, Any] | None:
 
 
 def with_force(chunk: pa.Table) -> pa.Table:
-    return chunk.append_column(FORCE, pa.array(["a"] * chunk.num_rows, pa.string()))
+    return chunk.append_column(FORCE, pa.array([FORCE_ORACLE_VALUE] * chunk.num_rows, pa.string()))
 
 
 def run_pair(
@@ -79,7 +80,7 @@ def run_pair(
     gs = policy_settings(policy)
     native = run_one(make_config(columns, global_settings=gs), chunks, vault=vault, **kw)
     forced = run_one(
-        make_config([*columns, categorical(FORCE)], global_settings=gs),
+        make_config([*columns, force_oracle(FORCE)], global_settings=gs),
         [with_force(c) for c in chunks],
         vault=vault,
         **kw,

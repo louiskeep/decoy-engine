@@ -20,6 +20,7 @@ import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -31,6 +32,7 @@ from decoy_engine.generation.pool._identity import resolve_faker_pool_identity
 from decoy_engine.providers_v2 import get_default_registry
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
     from decoy_engine.execution.native._dispatch import NativeRouteEvidence
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
 
@@ -158,6 +160,7 @@ def _mask_chunk_native(
     column_elapsed_s: dict[str, float] | None = None,
     unconfigured: frozenset[str] = frozenset(),
     stored_index: frozenset[str] = frozenset(),
+    categorical_by_column: dict[str, PreparedCategorical] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -179,8 +182,10 @@ def _mask_chunk_native(
     `pool_by_column` is populated once, before the chunk loop, for every admitted faker
     column (Task 3.1 Step 2); a faker column always has an entry by the same
     precondition. `index_kernel` is the preflight-verified compiled index
-    kernel (Task 2.3): non-`None` whenever the admitted table has a faker
-    column, since preflight's index probe already ran before this ever executes.
+    kernel (Task 2.3): non-`None` whenever the admitted table has a faker or
+    categorical column, since preflight's index probe already ran before this ever
+    executes. `categorical_by_column` holds each admitted categorical column's
+    prepared categories and CDF, built once per run and reused by every chunk.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
@@ -237,6 +242,26 @@ def _mask_chunk_native(
             )
             evidence.pool_select_executed = True
             evidence.pool_select_calls += 1
+        elif strategy == "categorical":
+            prepared = (categorical_by_column or {}).get(name)
+            if (
+                index_kernel is None or prepared is None
+            ):  # pragma: no cover - admission implies both
+                raise AssertionError(
+                    f"native route admitted categorical column {name!r} without a loaded "
+                    "index kernel and prepared mapping; preflight should have loaded one "
+                    "and `prepare_chunked_categoricals` should have produced the other."
+                )
+            arrays[name] = native_categorical(
+                source,
+                categories=prepared.categories,
+                cdf=prepared.cdf,
+                mask_key=mask_key,
+                namespace=col_seed.namespace or "",
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+            )
+            evidence.compiled_kernel_executed = True
         else:  # pragma: no cover - preflight admission already excludes this
             raise AssertionError(
                 f"native route admitted column {name!r} with strategy {strategy!r}, "

@@ -30,6 +30,10 @@ RUST_POOL_SELECT = "rust_pool_select"
 ARROW_PYTHON = "arrow_python"
 PANDAS_ORACLE = "pandas_oracle"
 
+# hash runs on the compiled crypto kernel and categorical on the compiled index
+# kernel; both report the companion as their planned backend.
+_COMPANION_STRATEGIES = frozenset({"hash", "categorical"})
+
 
 @dataclass(frozen=True)
 class ColumnPlan:
@@ -46,7 +50,7 @@ def _planned_backend(node: Any) -> str:
         return PANDAS_ORACLE
     if strategy in NATIVE_POOL_STRATEGIES:
         return RUST_POOL_SELECT
-    if strategy == "hash":
+    if strategy in _COMPANION_STRATEGIES:
         return RUST_COMPANION
     if strategy in NATIVE_KERNEL_STRATEGIES:
         return ARROW_PYTHON

@@ -194,8 +194,8 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   column itself and never goes through pandas, so a value the oracle's round trip rounds or refuses, such as a
   nullable integer above 2^53, comes back exact; a read passthrough column that
   pandas refuses raises `chunked_passthrough_value_unrepresentable`, and a custom
-  or subclass adapter carries nothing), one output type per column per call (`string` for hash, truncate
-  and string-redact columns, the source type for passthrough), no pandas
+  or subclass adapter carries nothing), one output type per column per call (`string` for hash, truncate,
+  string-redact and native-admissible deterministic categorical columns, the source type for passthrough), no pandas
   metadata on yielded chunks, and identical validation on both routes. A column
   that is `null`-typed in the first chunk and typed in a later one raises
   `chunked_leading_null_type` on both routes. Its error codes are
@@ -209,6 +209,20 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   table keeps the oracle route and raises. The reroute reason
   `unconfigured_set_mismatch:<oracle set>:<native set>` is a defensive cross-check
   between the two definitions of "unconfigured".
+  Deterministic categorical joined the native chunked route on 2026-10-04 (slice C1).
+  A native-admissible column (deterministic or `allow_collisions`, namespaced, all-string
+  categories, buildable CDF, `string` source) is masked by the compiled index kernel and its
+  chunked output type is pinned to `string` on both chunked legs; before, the oracle gave
+  `null` for an all-null chunk and `double` for an empty one. This is a new route-dependent
+  output-type case under ROUTE-OUTPUT-CONTRACT: the full-frame and unified-slice routes still
+  resolve the type at assembly, so an all-null categorical column is `null` there and `string`
+  on the chunked route, and a split multi-table job can carry both shapes. Masked values are
+  unchanged on every route. A categorical column the native operator cannot run (numeric
+  categories, a non-`string` source, unbuildable weights) keeps its oracle values and
+  types. A non-deterministic categorical column fails chunked preflight with
+  `categorical_nondeterministic_not_chunk_safe` (slice C1b lifts it); a deterministic one
+  without a namespace, with `from_profile`, or without explicit categories keeps
+  `chunked_strategy_conditions_unmet`.
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that

@@ -358,7 +358,9 @@ ALLOWLIST: dict[str, int] = {
     # admission checks (`check_chunked_compatibility` and its helpers).
     # 2026-10-02 (B8 revision 4.3): +4 for the composite-provider refusal (the helper
     # `composite_provider_offenders` lives in `_column_access.py`); dense exception, below MAX.
-    "src/decoy_engine/execution/_chunked.py": 612,
+    # 2026-10-04 (C1): +4 for the non-deterministic-categorical gate call and its docstring
+    # lines; the categorical conditions live in `_chunked_categorical.py`. Dense exception.
+    "src/decoy_engine/execution/_chunked.py": 616,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
     # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all

@@ -32,7 +32,7 @@ from tests.native._b8_support import FORCE, with_force
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     TABLE,
-    categorical,
+    force_oracle,
     key_provider,
     make_config,
     passthrough,
@@ -323,7 +323,7 @@ def test_a_configured_stored_index_column_is_refused_before_any_chunk(
         # `k` must exist as a source field for the plan to compile.
         chunks = [c.append_column("k", pa.array(["g"] * c.num_rows)) for c in chunks]
     if route == "forced_oracle":
-        columns = [*columns, categorical(FORCE)]
+        columns = [*columns, force_oracle(FORCE)]
         chunks = [with_force(c) for c in chunks]
     config = make_config(columns, global_settings=_WARN)
     entry_point = run_mask_pipeline_chunked if route == "public_oracle" else run_mask_chunked
@@ -426,7 +426,7 @@ def test_a_stored_index_change_between_chunks_is_schema_drift_on_both_routes(
     plain = [c.replace_schema_metadata(None) for c in indexed]
     chunks = [indexed[0], plain[1]] if direction == "index_then_plain" else [plain[0], indexed[1]]
     config = make_config([redact("s"), truncate("t")], global_settings=_WARN)
-    forced = make_config([redact("s"), truncate("t"), categorical(FORCE)], global_settings=_WARN)
+    forced = make_config([redact("s"), truncate("t"), force_oracle(FORCE)], global_settings=_WARN)
     native = _outcome(config, chunks)
     oracle = _outcome(forced, [with_force(c) for c in chunks])
     assert native == oracle == ("native_chunk_schema_drift", 1, 1)

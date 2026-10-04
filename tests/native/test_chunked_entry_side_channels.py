@@ -23,10 +23,11 @@ from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter, collect_vault_entries
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
+    FORCE_ORACLE_VALUE,
     NEEDS_COMPANION,
     TABLE,
-    categorical,
     faker_col,
+    force_oracle,
     hash_col,
     key_provider,
     make_config,
@@ -68,11 +69,11 @@ class _RecordingAdapter(PandasExecutionAdapter):
 
 
 def _oracle_route_config() -> dict[str, Any]:
-    return make_config([redact("s"), passthrough("p"), categorical("c")])
+    return make_config([redact("s"), passthrough("p"), force_oracle("c")])
 
 
 def _oracle_route_source(n: int = 9) -> pa.Table:
-    return string_source(n).append_column("c", pa.array(["a"] * n, pa.string()))
+    return string_source(n).append_column("c", pa.array([FORCE_ORACLE_VALUE] * n, pa.string()))
 
 
 # ---------------------------------------------------------------------------
@@ -419,8 +420,10 @@ def test_vault_writer_keyed_differently_is_rejected_on_both_routes(route: str) -
     columns = _vault_columns(False)
     source = _vault_source().select(["t", "p"])
     if route == "oracle":
-        columns.append(categorical("c"))
-        source = source.append_column("c", pa.array(["a"] * source.num_rows, pa.string()))
+        columns.append(force_oracle("c"))
+        source = source.append_column(
+            "c", pa.array([FORCE_ORACLE_VALUE] * source.num_rows, pa.string())
+        )
     wrong = VaultWriter(b"\x07" * 32)
     code = _failure(lambda: _entry(make_config(columns), split(source, 3), vault_writer=wrong))
     assert code[1] == "vault_key_mismatch"
