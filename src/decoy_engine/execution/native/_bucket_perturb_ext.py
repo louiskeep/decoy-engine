@@ -28,9 +28,10 @@ Two parity facts drive the design (both proven by the acceptance differential):
   `pool_size == its own bucket_size`, identical to the oracle's per-row `%
   bucket_size`.
 
-v1 scope (see docs/plans/2026-09-21-native-bucket-perturb.md): STRING source,
-EXPLICIT date_format, FULL-FRAME route only; every other shape declines to the
-oracle at admission. The runtime invariants below mirror `native_categorical`
+Scope (docs/plans/2026-09-21-native-bucket-perturb.md, widened to the chunked
+route by docs/plans/2026-10-04-c2-chunked-bucket-perturb.md): STRING source,
+EXPLICIT date_format, full-frame AND chunked routes; every other shape declines
+to the oracle at admission. The runtime invariants below mirror `native_categorical`
 so a malformed compiled kernel fails HERE, coded and fail-closed.
 """
 
@@ -184,16 +185,23 @@ def native_bucket_perturb(
     namespace: str,
     index_kernel: IndexDerivationKernel,
     native_threads: int | None = None,
+    derive_calls: list[int] | None = None,
 ) -> pa.Array:
-    """Perturb a `pa.string()` date column onto the native full-frame lane.
+    """Perturb a `pa.string()` date column onto the native lane (full-frame or one chunk).
 
     Parses each value with pandas (the parse authority), snaps parseable rows to
     a keyed within-bucket position via the compiled index kernel, and strftimes
     back with pandas (the format authority). Null and unparseable rows pass
     through UNCHANGED (the original string, never re-null/re-format). Output is
-    pinned `pa.string()` per batch; the whole-column null-shape reconciliation to
-    the oracle's data-dependent type happens at final assembly
-    (`_shadow_assembly.assemble_column`, the bucket_perturb branch).
+    pinned `pa.string()` per batch; the null-shape reconciliation to the oracle's
+    data-dependent type happens afterwards: at full-frame final assembly
+    (`_shadow_assembly.assemble_column`) and, per chunk, in the chunked masker
+    (`_chunk_masking._mask_bucket_perturb`).
+
+    `derive_calls`, when given, receives the number of compiled `derive_index_batch`
+    calls this invocation made (zero for an empty, all-null or all-unparseable
+    input). The chunked route reads it so its evidence only claims a compiled
+    kernel when one ran.
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
@@ -238,6 +246,10 @@ def native_bucket_perturb(
         # directive semantics as the oracle's per-row `perturbed.strftime(fmt)`.
         formatted = pd.DatetimeIndex(perturbed).strftime(date_format)
         out[valid] = np.asarray(formatted, dtype=object)
+        if derive_calls is not None:
+            derive_calls.append(int(np.unique(size).size))
+    elif derive_calls is not None:
+        derive_calls.append(0)
 
     return pa.array(out, type=pa.string())
 

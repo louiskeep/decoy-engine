@@ -72,7 +72,7 @@ RouteTag = Literal["native_kernel", "native_pool", "oracle"]
 
 # Strategies whose native chunk path calls the compiled index kernel, so preflight
 # loads and self-tests it once and downgrades the table when it is missing.
-_INDEX_KERNEL_STRATEGIES = frozenset({"faker", "categorical"})
+_INDEX_KERNEL_STRATEGIES = frozenset({"faker", "categorical", "bucket_perturb"})
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,8 @@ class NodeRouteRecord:
     """The route one masked column took, for job evidence.
 
     Decision 10: job SUCCESS is never the proof a route ran; this record (and
-    `NativeRouteEvidence.compiled_kernel_executed` for hash) is.
+    `NativeRouteEvidence.compiled_kernel_executed`, set once a compiled non-pool kernel
+    invocation completes) is.
     """
 
     column: str
@@ -109,10 +110,12 @@ class NativeRouteEvidence:
     kernel_elapsed_s: dict[str, float] = field(default_factory=dict)
     # Task 3.1 Step 7: the pool-selection counterpart of
     # `compiled_kernel_executed` / `kernel_calls`. The faker route runs its own
-    # compiled kernel (`derive_index_batch`, Task 2.3), distinct from the hash
-    # kernel, so it keeps its own proof-of-execution pair rather than overloading
-    # the hash-kernel fields; `pool_select_calls` counts one unit per (column,
-    # chunk) selection, feeding Task 3.6's exact-count route ledger.
+    # compiled kernel (`derive_index_batch`, Task 2.3), so it keeps its own
+    # proof-of-execution pair rather than overloading the non-pool kernel fields
+    # (`compiled_kernel_executed`: at least one compiled non-pool kernel invocation
+    # completed; `kernel_calls`: branch executions per strategy);
+    # `pool_select_calls` counts one unit per (column, chunk) selection, feeding
+    # Task 3.6's exact-count route ledger.
     pool_select_executed: bool = False
     pool_select_calls: int = 0
 
@@ -142,10 +145,10 @@ def _downgrade_to_oracle(decision: NativeRouteEvidence, reason: str) -> NativeRo
 def _route_tag_for(strategy: str) -> RouteTag:
     """The per-column route tag for an ADMITTED strategy: `"native_pool"` for
     a bounded-value-pool strategy (faker: pool selection via the compiled
-    `derive_index_batch` kernel, distinct from the hash kernel), `"native_kernel"`
-    for everything else in `NATIVE_KERNEL_STRATEGIES`. Distinct tags keep
-    `compiled_kernel_executed` (the hash Rust-kernel-invocation proof) from being
-    misread as also proving a pool selection ran, and vice versa.
+    `derive_index_batch` kernel), `"native_kernel"` for everything else in
+    `NATIVE_KERNEL_STRATEGIES`. Distinct tags keep `compiled_kernel_executed` (at
+    least one compiled non-pool kernel invocation completed) from being misread as
+    also proving a pool selection ran, and vice versa.
     """
     return "native_pool" if strategy in NATIVE_POOL_STRATEGIES else "native_kernel"
 
@@ -240,10 +243,10 @@ def _static_route_decision(
         column = node.columns[0]
         scalar_columns.append((column, node.strategy))
         if node.strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
-            # bucket_perturb (S-slate), group_key and date_shift are native on
-            # the full-frame route but explicitly vetoed on this chunked/streaming
-            # route: the eager per-chunk emit cannot resolve their data-dependent
-            # output type (or, for group_key, its sibling input). Each otherwise
+            # group_key and date_shift are native on the full-frame route but
+            # explicitly vetoed on this chunked/streaming route: the eager per-chunk
+            # emit cannot resolve date_shift's data-dependent output type or
+            # group_key's sibling input. Each otherwise
             # resolves fallback_policy == "native" and would reach the missing
             # chunk handler, so veto the whole table to the oracle here. The
             # reason carries the strategy so they stay distinguishable in evidence.
@@ -286,11 +289,11 @@ class NativePreflight:
     index-derivation kernel wrapper (Task 2.3) verified for this decision.
 
     `index_kernel` is `None` whenever the route is not native-admitted or
-    admits no faker or categorical node -- there is nothing to select, so nothing was loaded.
+    admits no faker, categorical or bucket_perturb node -- there is nothing to
+    derive, so nothing was loaded.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
     per chunk; the verified wrapper is threaded through `_chunked_entry._native_route`
-    -> `_mask_chunk_native` -> `_sample_faker_chunk` so each faker column-chunk
-    makes exactly one real batch call.
+    -> `_mask_chunk_native`, which hands it to each index-kernel column's operator.
     """
 
     evidence: NativeRouteEvidence
@@ -314,7 +317,7 @@ def plan_native_route(
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
     source-type guards, then (only when still admitted) the required companion
-    probes -- crypto (any `hash` node) and index (any admitted `faker` or `categorical` node) --
+    probes -- crypto (any `hash` node) and index (any admitted `faker`, `categorical` or `bucket_perturb` node) --
     in that order. Guards run BEFORE probes so a schema-rejected table (an
     uncovered column, or a faker node over a non-string source) keeps its own
     reroute reason and never reaches either probe; each probe is itself gated

@@ -42,6 +42,7 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.execution._transactional_sink import TransactionalSink
+from decoy_engine.execution.native._chunked_evidence import merge_executed_backend
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
@@ -228,6 +229,7 @@ def fold_route_evidence(state: _RouteFold, result: Any) -> None:
         else:
             acc["calls"] += col["calls"]
             acc["elapsed_ms"] += col["elapsed_ms"]
+            merge_executed_backend(acc, col)
 
 
 class OutputEvidenceAccumulator:

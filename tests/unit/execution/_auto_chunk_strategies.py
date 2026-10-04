@@ -165,10 +165,16 @@ NATIVE_KEYS = frozenset(
         "passthrough",
         "faker:deterministic_native",
         "categorical:deterministic",
+        "bucket_perturb:explicit_format",
     }
 )
 NEEDS_COMPANION_KEYS = frozenset(
-    {"hash", "faker:deterministic_native", "categorical:deterministic"}
+    {
+        "hash",
+        "faker:deterministic_native",
+        "categorical:deterministic",
+        "bucket_perturb:explicit_format",
+    }
 )
 # Output type rule: hash, truncate and redact always yield `string` on the dispatcher lane.
 STRING_OUTPUT_KEYS = frozenset({"hash", "redact", "truncate", "categorical:deterministic"})
@@ -180,6 +186,7 @@ PLANNED_BACKEND: dict[str, str] = {
     "passthrough": "arrow_python",
     "faker:deterministic_native": "rust_pool_select",
     "categorical:deterministic": "rust_companion",
+    "bucket_perturb:explicit_format": "rust_companion",
     # Planned for Rust (the strategy and config qualify) but refused at admission
     # because the provider has no native pool: planned `rust_pool_select`, executed on pandas.
     "faker:deterministic": "rust_pool_select",
@@ -196,5 +203,4 @@ REFUSAL: dict[str, str] = {
     "date_shift:explicit_format": "date_shift_not_native_chunked_route:val",
     "group_key": "group_key_not_native_chunked_route:val",
     "faker:deterministic": "faker_provider_not_native:val",
-    "bucket_perturb:explicit_format": "bucket_perturb_not_native_chunked_route:val",
 }

@@ -1,7 +1,7 @@
 """Native-route admission decided from real types, not profile labels.
 
 The static admission (`_static_route_decision`) reads the profile's coarse dtype
-labels. Three things it cannot see decide whether the compiled path matches the
+labels. Four things it cannot see decide whether the compiled path matches the
 oracle, so `plan_native_route` checks them here once it has the first chunk:
 
 - a hash column's real Arrow type (a dictionary-encoded string, a date32 or a
@@ -10,6 +10,9 @@ oracle, so `plan_native_route` checks them here once it has the first chunk:
   it);
 - a categorical column's real source type (the compiled index kernel's admitted
   input is `string`; a numeric or dictionary source reroutes to the oracle);
+- a bucket_perturb column's real source type (the native operator takes exactly
+  `string`; an Arrow `large_string` profiles as `object`, which maps back to
+  `string`, so only the real schema can tell the two apart);
 - a faker column's provider name (the pool is built as strings, which is right
   only for the providers C1 admits; any other provider, for example a
   date-of-birth provider, produces values the string pool cannot hold). The
@@ -52,6 +55,16 @@ def categorical_source_type_rejection(column: str, schema: pa.Schema) -> str | N
     return None if typ == pa.string() else f"categorical_source_type_not_string:{column}:{typ}"
 
 
+def bucket_perturb_source_type_rejection(column: str, schema: pa.Schema) -> str | None:
+    """The coded reason a bucket_perturb column's real source type is not the one the
+    native operator takes, or None. The native domain is exactly `string`, the same
+    one the full-frame route proves (`bucket_perturb_config_rejection`); `large_string`
+    passes the upstream chunk-safety gate for the oracle route, so it declines here
+    to the oracle instead of reaching the kernel."""
+    typ = schema.field(column).type
+    return None if typ == pa.string() else f"bucket_perturb_source_type_not_string:{column}:{typ}"
+
+
 def real_type_rejection(
     config: dict[str, Any],
     node_routes: Iterable[Any],
@@ -81,6 +94,10 @@ def real_type_rejection(
             return f"faker_provider_not_native:{node.column}:{providers.get(node.column)}"
         elif node.strategy == "categorical":
             reason = categorical_source_type_rejection(node.column, first_schema)
+            if reason is not None:
+                return reason
+        elif node.strategy == "bucket_perturb":
+            reason = bucket_perturb_source_type_rejection(node.column, first_schema)
             if reason is not None:
                 return reason
     return None

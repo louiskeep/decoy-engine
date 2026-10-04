@@ -30,9 +30,9 @@ RUST_POOL_SELECT = "rust_pool_select"
 ARROW_PYTHON = "arrow_python"
 PANDAS_ORACLE = "pandas_oracle"
 
-# hash runs on the compiled crypto kernel and categorical on the compiled index
-# kernel; both report the companion as their planned backend.
-_COMPANION_STRATEGIES = frozenset({"hash", "categorical"})
+# hash runs on the compiled crypto kernel; categorical and bucket_perturb on the
+# compiled index kernel. All three report the companion as their planned backend.
+_COMPANION_STRATEGIES = frozenset({"hash", "categorical", "bucket_perturb"})
 
 
 @dataclass(frozen=True)
@@ -75,6 +75,23 @@ def plan_column_backends(
     return tuple(out)
 
 
+def _executed_backend(plan: ColumnPlan, native_admitted: bool, idle: frozenset[str]) -> str:
+    if not native_admitted:
+        return PANDAS_ORACLE
+    return ARROW_PYTHON if plan.column in idle else plan.planned_backend
+
+
+def merge_executed_backend(acc: dict[str, Any], col: dict[str, Any]) -> None:
+    """Fold one chunk's column evidence into the running per-column total.
+
+    A column reports its planned backend if any chunk really ran it there, so a degenerate
+    first or last chunk (which reports `arrow_python`) never hides a later or earlier
+    compiled run. A column whose every chunk was idle keeps `arrow_python`. Both the resident
+    and the streamed aggregation call this one rule so they cannot disagree on chunk order."""
+    if col["executed_backend"] == col["planned_backend"]:
+        acc["executed_backend"] = col["executed_backend"]
+
+
 def chunk_route_evidence(
     *,
     table: str,
@@ -83,13 +100,19 @@ def chunk_route_evidence(
     columns: Iterable[ColumnPlan],
     elapsed_ms: Mapping[str, float],
     pandas_read_passthrough: Iterable[str] = (),
+    kernel_idle_columns: Iterable[str] = (),
 ) -> dict[str, Any]:
     """One chunk's evidence: every column called once, with its own elapsed time.
 
     `pandas_read_passthrough` lists the passthrough columns that still go through
     pandas because a `when:` predicate or a sibling-reading strategy reads them (every
     passthrough column under a custom adapter); all other passthrough columns are carried
-    and never converted."""
+    and never converted.
+
+    `kernel_idle_columns` lists the admitted columns that ran no compiled kernel on this chunk
+    (a bucket_perturb chunk with no parseable row). They ran Arrow passthrough work in Python,
+    so they report `arrow_python` rather than the planned companion backend."""
+    idle = frozenset(kernel_idle_columns)
     return {
         "table": table,
         "native_admitted": native_admitted,
@@ -100,7 +123,7 @@ def chunk_route_evidence(
                 "column": c.column,
                 "strategy": c.strategy,
                 "planned_backend": c.planned_backend,
-                "executed_backend": c.planned_backend if native_admitted else PANDAS_ORACLE,
+                "executed_backend": _executed_backend(c, native_admitted, idle),
                 "calls": 1,
                 "elapsed_ms": float(elapsed_ms.get(c.column, 0.0)),
             }
@@ -147,6 +170,7 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             else:
                 acc["calls"] += col["calls"]
                 acc["elapsed_ms"] += col["elapsed_ms"]
+                merge_executed_backend(acc, col)
     if head is None:
         return {
             "table": None,

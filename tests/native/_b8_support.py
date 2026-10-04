@@ -2,7 +2,7 @@
 
 `run_pair` runs one table twice through `run_mask_chunked`: as configured (the route
 under test) and with the oracle route forced by a `force_oracle("cat_force")` column
-(`bucket_perturb`), which the dispatcher still vetoes and which is dropped before the two are compared.
+(`date_shift`), which the dispatcher still vetoes and which is dropped before the two are compared.
 `assert_same_as_oracle` is the comparison of acceptance test 2: values, Arrow types,
 field nullability and metadata, warnings, timing columns, vault entries, sink lengths
 and the route each side took.
@@ -28,6 +28,7 @@ from tests.native._chunked_entry_support import (
 )
 
 FORCE = "cat_force"
+FORCE_STRATEGY = "date_shift"
 
 
 @dataclass
@@ -39,10 +40,17 @@ class Run:
 
 
 def run_one(
-    config: dict[str, Any], chunks: list[pa.Table], *, vault: bool = False, **kw: Any
+    config: dict[str, Any],
+    chunks: list[pa.Table],
+    *,
+    vault: bool = False,
+    route_evidence_sink: list[Any] | None = None,
+    **kw: Any,
 ) -> Run:
+    """`route_evidence_sink`, when given, is the caller's list: it keeps the decision even
+    when the run raises, so an expected-error leg can still prove which route it took."""
     sink: list[Any] = []
-    ev: list[Any] = []
+    ev: list[Any] = route_evidence_sink if route_evidence_sink is not None else []
     writer = VaultWriter(vault_key()) if vault else None
     out = list(
         run_mask_chunked(
@@ -85,6 +93,14 @@ def run_pair(
         vault=vault,
         **kw,
     )
+    # run_pair always forces the oracle leg with a date_shift column named FORCE, so by
+    # construction that leg must stay on the oracle with the exact column-qualified reason.
+    # Asserting it here protects every run_pair consumer (even ones that never call
+    # assert_same_as_oracle) from silently degrading into a native-vs-native comparison.
+    assert forced.ev[0].native_admitted is False, forced.ev[0]
+    assert f"{FORCE_STRATEGY}_not_native_chunked_route:{FORCE}" in (
+        forced.ev[0].reroute_reason or ""
+    ), forced.ev[0]
     return native, forced
 
 
@@ -113,6 +129,9 @@ def assert_same_as_oracle(native: Run, forced: Run, *, expect_native: bool = Tru
     if expect_native:
         assert native.ev[0].reroute_reason is None
     assert forced.ev[0].native_admitted is False, forced.ev[0]
+    assert f"{FORCE_STRATEGY}_not_native_chunked_route:{FORCE}" in (
+        forced.ev[0].reroute_reason or ""
+    )
     assert len(native.out) == len(forced.out) == len(native.sink) == len(forced.sink)
     for i, (got, want) in enumerate(zip(native.out, forced.out, strict=True)):
         assert identical(got, want.drop_columns([FORCE])), i

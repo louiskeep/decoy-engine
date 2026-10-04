@@ -32,6 +32,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution import _chunked, _chunked_oracle
+from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
@@ -195,6 +196,13 @@ def _native_route(
     unconfigured_set = frozenset(unconfigured)
 
     def _guard(raw: pa.Table) -> pa.Table:
+        # The oracle route re-checks this on every chunk before masking; without it a
+        # later null-typed chunk would be cast to string here and masked, where the
+        # oracle route raises, so the two routes would disagree on that input.
+        if state.bucket_perturb_cols:
+            bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
+                raw.schema, state.bucket_perturb_cols, table=table
+            )
         run_chunk_ingest_guards(plan, {table: raw}, state.registry, state.graph)
         return cast_null_columns(first.schema, raw)
 
@@ -206,6 +214,7 @@ def _native_route(
         for i, chunk in enumerate(guarded):
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             elapsed_s: dict[str, float] = {}
+            kernel_idle: set[str] = set()
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -218,6 +227,7 @@ def _native_route(
                 unconfigured=unconfigured_set,
                 stored_index=stored_index,
                 categorical_by_column=categorical_by_column,
+                kernel_idle=kernel_idle,
             )
             out = (
                 masked
@@ -254,6 +264,7 @@ def _native_route(
                                 columns=columns,
                                 elapsed_ms=elapsed_ms,
                                 pandas_read_passthrough=read_passthrough,
+                                kernel_idle_columns=kernel_idle,
                             )
                         },
                         row_errors=(),

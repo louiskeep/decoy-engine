@@ -636,12 +636,6 @@ _FULL_FRAME_ONLY_COLUMNS: list[dict[str, Any]] = [
         "provider_config": {"date_format": "%Y-%m-%d"},
     },
     {
-        "name": "B",
-        "strategy": "bucket_perturb",
-        "namespace": "ns_b",
-        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
-    },
-    {
         "name": "G",
         "strategy": "group_key",
         "provider_config": {"group_by": "P", "length": 16},
@@ -658,6 +652,19 @@ def test_chunked_vetoed_strategy_is_not_admitted_on_the_c1_route(column: dict) -
     result = phase3_c1_eligibility(config, table="t")
     assert result.admitted is False
     assert result.reasons == (f"{column['strategy']}_not_native_chunked_route:{column['name']}",)
+
+
+def test_bucket_perturb_is_admitted_on_the_c1_route() -> None:
+    """Slice C2 lifted the veto for bucket_perturb; it must not reappear in the mirror."""
+    column = {
+        "name": "B",
+        "strategy": "bucket_perturb",
+        "namespace": "ns_b",
+        "provider_config": {"date_format": "%Y-%m-%d", "bucket": "month"},
+    }
+    result = phase3_c1_eligibility(_config("t", column), table="t")
+    assert result.admitted is True
+    assert result.reasons == ()
 
 
 def test_chunked_veto_does_not_hide_a_faker_rejection() -> None:

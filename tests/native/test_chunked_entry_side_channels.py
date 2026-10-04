@@ -41,11 +41,29 @@ from tests.native._chunked_entry_support import (
 from tests.unit.execution.test_chunked_fk_gate_kills import _hash_config as _fk_config
 
 
+def _forced_columns(config: dict[str, Any]) -> list[str]:
+    """Columns of `config` whose strategy the chunked dispatcher still vetoes (`date_shift`)."""
+    return [
+        c["name"]
+        for t in config.get("tables", ())
+        for c in t.get("columns", ())
+        if c.get("strategy") == "date_shift"
+    ]
+
+
 def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
+    """`run_mask_chunked` that owns a route-evidence sink and, for a config carrying a
+    forcing column, proves the table stayed on the oracle for the exact reason."""
     kw.setdefault("key_provider", key_provider())
-    return run_mask_chunked(
+    sink = kw.setdefault("route_evidence_sink", [])
+    out = run_mask_chunked(
         config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
     )
+    for column in _forced_columns(config):
+        assert len(sink) == 1, sink
+        assert sink[0].native_admitted is False, sink[0]
+        assert f"date_shift_not_native_chunked_route:{column}" in (sink[0].reroute_reason or "")
+    return out
 
 
 def _oracle(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
@@ -612,7 +630,7 @@ def test_row_error_chunk_is_appended_unnormalized_then_fails_closed(entry_point:
 
 
 def test_unconvertible_column_maps_to_chunked_schema_mismatch() -> None:
-    source = string_source(4).append_column("c", pa.array(["a"] * 4, pa.string()))
+    source = _oracle_route_source(4)
     with pytest.raises(Exception) as info:
         list(_entry(_oracle_route_config(), split(source, 2), adapter=_UnconvertibleAdapter()))
     assert getattr(info.value, "code", None) == "chunked_schema_mismatch"

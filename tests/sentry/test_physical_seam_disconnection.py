@@ -379,6 +379,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # routes call.
         # None imports `execution.physical`.
         "src/decoy_engine/execution/native/_real_type_admission.py",
+        # Slice C2 (bucket_perturb on the chunked route): the native kernel module gains an
+        # optional `derive_calls` out-parameter the chunked masker reads, so evidence only
+        # claims a compiled kernel when one ran. It imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/native/_bucket_perturb_ext.py",
         # B2 (auto-chunk on the chunked dispatcher): `_pipeline_auto_chunk.py` is
         # the new lane executor (it calls `run_mask_chunked` and joins the chunks);
         # `_pipeline_route_exec.run_mask_chunked` becomes its delegate; the generate
