@@ -2,7 +2,7 @@
 
 Status: record
 
-Date: 2026-10-04. Plan: `docs/plans/2026-10-04-c1-chunked-categorical.md` revision 4 (Codex plan-gate GO). Branch `feat/c1-chunked-categorical` off engine main `f8c8bf36`. Built tests-first by a Sonnet build agent; not pushed, not merged. dennis and Codex final gates are still to run.
+Date: 2026-10-04. Plan: `docs/plans/2026-10-04-c1-chunked-categorical.md` revision 4 (Codex plan-gate GO). Branch `feat/c1-chunked-categorical` off engine main `f8c8bf36`. Built tests-first by a Sonnet build agent. Both gates GREEN: dennis APPROVE/GO (0 blocker/high/medium, 2 LOW) and Codex final GO (0 blocker/high/medium, 2 LOW). Merged on local gates while GitHub Actions is out of minutes.
 
 ## What shipped
 
