@@ -13,7 +13,7 @@ Plan: `docs/plans/2026-10-05-unified-route-evidence.md` rev 2.1 (Codex plan gate
 
 ## New tests (71)
 
-- `tests/physical/test_unified_route_evidence.py` (49): exact seven-key evidence per operator and for a mixed table, idle rules on the production lane (oracle poisoned, output compared byte-for-byte with a lane-off run), the all-unparseable date_shift case at the coordinator seam plus the existing `RowErrorsFailedError` parity, batch accumulation at the seam for bucket_perturb and date_shift, the 50,000-valid-then-null production case, the direct `run_operator` group_key monotonic test, `calls` for 50,001 rows and 1 row.
+- `tests/physical/test_unified_route_evidence.py` (49): exact six-key evidence per operator and for a mixed table, idle rules on the production lane (oracle poisoned, output compared byte-for-byte with a lane-off run), the all-unparseable date_shift case at the coordinator seam plus the existing `RowErrorsFailedError` parity, batch accumulation at the seam for bucket_perturb and date_shift, the 50,000-valid-then-null production case, the direct `run_operator` group_key monotonic test, `calls` for 50,001 rows and 1 row.
 - `tests/physical/test_unified_slice_evidence_unit.py` (19): `assemble_node_evidence` as a pure seam. Timing attribution with two same-strategy columns and shuffled records, every invariant raise, idle kernels not raising, and the shared-rule test (one monkeypatch of `_chunked_evidence.executed_backend` is seen by both routes).
 - `tests/sentry/test_unified_backend_map.py` (3): the map keys equal `ALLOWED_OPERATOR_IDS`.
 
@@ -49,7 +49,7 @@ All killed.
 | overwrite instead of accumulate, group_key | `test_group_key_flag_is_monotonic_across_run_operator_calls[populated_then_empty]` |
 | raise on idle group_key | `test_empty_table_is_idle_for_value_dependent_kernels[native_group_key]` |
 | `calls` constant 1 | `test_all_unparseable_date_shift_is_idle_at_the_seam` |
-| timings joined by strategy only | `test_elapsed_ms_is_attributed_by_strategy_and_column` (both parametrizations) |
+| timings joined by strategy only | `test_timings_are_attributed_by_strategy_and_column` (both parametrizations; renamed in rev 2.2) |
 | bijection check skipped | `test_a_missing_timing_record_raises` |
 | D7 dropped | `test_a_d7_miss_raises[hash]` |
 
@@ -67,7 +67,7 @@ The moved block is the comment and code from `# CHANGE 2 (hardened D9 fix)` thro
 - Idle is computed in the assembler as "planned backend is not `arrow_python` and no compiled call ran". Arrow operators never count as idle, so redact, truncate and passthrough stay `arrow_python` with `compiled_kernel_executed=False`.
 - `_unified_slice_evidence.py` is in `DELIBERATELY_CONNECTED_MODULES` (the seam-disconnection sentry). It imports physical types only under `TYPE_CHECKING`, and the sentry's regex counts that. The plan's step 6 anticipated this edit.
 - The D7 operator set moved with the validation, from `_unified_slice.py` to the evidence module. Nothing else referenced it.
-- Whole-dict test edits keep the exact-dict form: `elapsed_ms` is popped and asserted as a float of at least zero, then the remaining six keys are compared exactly.
+- (Superseded by rev 2.2, see Resolution.) Whole-dict test edits keep the exact-dict form: `elapsed_ms` is popped and asserted as a float of at least zero, then the remaining six keys are compared exactly.
 - The compatibility contract lists no unified-slice node keys, so it is unchanged.
 
 ## Stopped on
@@ -82,3 +82,13 @@ Plan fact 5 said three tests would need updating and missed these two. Both only
 ## Resolution (plan author, rev 2.2)
 
 The two failures exposed a plan defect, not a test problem. The engine already keeps elapsed time out of `quality_metrics` on purpose: `_pipeline_auto_chunk._without_elapsed` strips it from the chunked route's evidence because "elapsed time lives in `ExecutionResult.timings` only, so the evidence in `quality_metrics` stays deterministic." The unified slice now follows that same contract. `assemble_node_evidence` still checks that timing records are one-to-one with the nodes (so every node has exactly one `timings` entry), but no longer publishes `elapsed_ms`. Both stopped tests pass unchanged. The new tests assert the evidence dict exactly, the timing attribution through `_timing_by_node`, and (in the Faker parity test) exactly one `timings` record for the node. The earlier `elapsed_ms` pop-and-check edits in the parity and Faker tests are gone; those tests compare the exact six-key dict.
+
+## Post-rev-2.2 mutant re-run (dennis, on HEAD 674d3123, scratch export)
+
+| Mutant | Killed by |
+|---|---|
+| timing bijection dropped | `test_a_duplicate_timing_record_raises` |
+| strategy-only timing key | `test_timings_are_attributed_by_strategy_and_column[redact]` |
+| idle treated as planned | `test_kernel_idle_value_dependent_operators_do_not_raise[bucket_perturb]` |
+| `timings=()` published | `test_faker_case_stamps_positive_kernel_evidence_when_companion_available`, and after the dennis LOW 1 fix every production-lane test through `lane_nodes` |
+| bucket overwrite instead of accumulate | `test_compiled_flag_accumulates_across_batches[valued_then_idle-native_bucket_perturb]` |

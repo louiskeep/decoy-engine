@@ -47,7 +47,10 @@ _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
 def _timing_by_node(
     nodes: Iterable[PhysicalNode], timing_records: Iterable[StrategyTimingRecord]
 ) -> dict[str, float]:
-    """Join the collector's records to nodes on `(strategy, column)`, as a bijection.
+    """Check the collector's records are one-to-one with the nodes on `(strategy, column)`.
+
+    Production calls this only for the check; the returned node-to-elapsed mapping
+    exists so the attribution can be tested directly.
 
     The coordinator opens one `timed_strategy(node.strategy, ",".join(node.columns))`
     scope per node, and admission makes each pair unique, so anything but exactly one

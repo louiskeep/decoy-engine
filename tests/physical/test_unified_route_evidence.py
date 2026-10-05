@@ -1,6 +1,6 @@
 """Unified-slice per-column route evidence, end to end and at the coordinator seam.
 
-Plan: `docs/plans/2026-10-05-unified-route-evidence.md` rev 2.1, section 5.
+Plan: `docs/plans/2026-10-05-unified-route-evidence.md` rev 2.2, section 5.
 
 Every admitted node's published evidence carries `planned_backend`,
 `executed_backend` and `calls` next to the old three keys (elapsed time stays in
@@ -184,6 +184,11 @@ def lane_nodes(
         on = _run(tmp_path, source, columns, lane=True)
     assert off.outputs["t"].schema.equals(on.outputs["t"].schema, check_metadata=True)
     assert off.outputs["t"].to_pylist() == on.outputs["t"].to_pylist()
+    # Per-column elapsed time is published in `timings`, one record per admitted
+    # column, never in quality_metrics.
+    timed = sorted(r.column for r in on.timings)
+    assert timed == sorted(on.outputs["t"].column_names)
+    assert all(r.elapsed_ms >= 0 for r in on.timings)
     return dict(on.quality_metrics[QUALITY_METRICS_KEY]["nodes"])
 
 

@@ -1,6 +1,6 @@
 """Pure unit tests for `assemble_node_evidence` (the evidence seam).
 
-Plan: `docs/plans/2026-10-05-unified-route-evidence.md` rev 2.1, section 5 items 4 and 5.
+Plan: `docs/plans/2026-10-05-unified-route-evidence.md` rev 2.2, section 5 items 4 and 5.
 No coordinator and no companion: nodes, operator evidence and timing records are
 built by hand so each invariant is hit directly.
 """

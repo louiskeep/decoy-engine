@@ -8,11 +8,12 @@ Branch: `feat/unified-route-evidence` off engine main `98f6c03e` (C5a merged).
 
 ## 1. Goal and scope
 
-Every node entry in the unified slice's published evidence (`quality_metrics["unified_slice_activation"]["nodes"]`, built in `_unified_slice.py` ~:286-316) gains four keys:
+Every node entry in the unified slice's published evidence (`quality_metrics["unified_slice_activation"]["nodes"]`, built in `_unified_slice.py` ~:286-316) gains three keys:
 - `planned_backend`
 - `executed_backend`
 - `calls`
-- `elapsed_ms`
+
+Per-column elapsed time is published through `ExecutionResult.timings` (one record per node, checked one-to-one), not in `quality_metrics` (rev 2.2, see 3e).
 
 The values come from the same vocabulary and the same idle rule the chunked route already publishes. Existing keys stay. Two related truth fixes are in scope:
 
@@ -68,7 +69,7 @@ Apply the same monotonic form to group_key's existing assignment (`_shadow_opera
 
 **3d. `calls`** = `OperatorCallEvidence.batches_run`: the operator's batch invocations. The program's "call count" means invocations of the column's operator; compiled-kernel call counts stay internal. This matches the chunked route's per-chunk invocation semantics.
 
-**3e. Elapsed time** (rev 2.2: NOT published in `quality_metrics`). The engine keeps elapsed time out of `quality_metrics` so the evidence stays deterministic; `_pipeline_auto_chunk._without_elapsed` strips it from the chunked route for exactly this reason, and two existing tests compare `quality_metrics` across runs. Per-column elapsed time is already published in `ExecutionResult.timings`, one `StrategyTimingRecord` per node, which satisfies the program's elapsed-per-column obligation. `assemble_node_evidence` still joins the records to the nodes on `(strategy_type, column)` as a bijection check, but does not add an `elapsed_ms` key. The rev 2.1 text follows for the join rule: it comes from joining the collector's records on `(strategy_type, column)`. Every admitted node must have exactly one record, and every record must belong to an admitted node (a bijection). A violation raises `UnifiedSliceInvariantError`, consistent with D7. Admission makes duplicates impossible, so a violation means a bug. `elapsed_ms` is the record's float, rounded to 3 decimals for JSON stability; non-negative.
+**3e. Elapsed time** (rev 2.2: NOT published in `quality_metrics`). The engine keeps elapsed time out of `quality_metrics` so the evidence stays deterministic; `_pipeline_auto_chunk._without_elapsed` strips it from the chunked route for exactly this reason, and two existing tests compare `quality_metrics` across runs. Per-column elapsed time is already published in `ExecutionResult.timings`, one `StrategyTimingRecord` per node, which satisfies the program's elapsed-per-column obligation. `assemble_node_evidence` still joins the records to the nodes on `(strategy_type, column)` as a bijection check, but does not add an `elapsed_ms` key. The rev 2.1 text follows for the join rule: it comes from joining the collector's records on `(strategy_type, column)`. Every admitted node must have exactly one record, and every record must belong to an admitted node (a bijection). A violation raises `UnifiedSliceInvariantError`, consistent with D7. Admission makes duplicates impossible, so a violation means a bug. (Rev 2.1 also published the joined value as a rounded `elapsed_ms` key; rev 2.2 dropped that.)
 
 **3f. One pure evidence-assembly helper** (also the owed split). New sibling module `execution/_unified_slice_evidence.py` holding:
 
@@ -98,7 +99,7 @@ It returns the JSON-safe dict. `_execute_admitted` calls it in place of the inli
 
 ## 5. Acceptance tests (written first; red-before recorded)
 
-1. **Exact evidence per operator.** One production-lane table per operator, plus a mixed table holding every admitted operator. Each node's dict equals exactly: `operator`, `executed=True`, `compiled_kernel_executed`, `planned_backend`, `executed_backend`, `calls`, and `elapsed_ms` (asserted as a float ≥ 0; not exact). Expected backends per 3a/3b. Output is unchanged versus main: same bytes as the lane-off oracle, and the oracle is poisoned during lane runs.
+1. **Exact evidence per operator.** One production-lane table per operator, plus a mixed table holding every admitted operator. Each node's dict equals exactly: `operator`, `executed=True`, `compiled_kernel_executed`, `planned_backend`, `executed_backend` and `calls` (the six-key dict; no `elapsed_ms`). `ExecutionResult.timings` holds exactly one record per node `(strategy, column)` with `elapsed_ms >= 0`. Expected backends per 3a/3b. Output is unchanged versus main: same bytes as the lane-off oracle, and the oracle is poisoned during lane runs.
 2. **Idle rules on the production lane:**
    - empty table: bucket_perturb, date_shift and group_key report `arrow_python` with `compiled_kernel_executed=False`
    - all-null bucket_perturb and date_shift: `arrow_python`
@@ -113,7 +114,7 @@ It returns the JSON-safe dict. `_execute_admitted` calls it in place of the inli
    - empty hash, categorical and Faker: their planned backend, with `compiled_kernel_executed=True`, and no invariant raised
 3. **`calls`:** 50,001 rows across the default 50,000-row batch gives `calls == 2` for every node. A 1-row table gives `calls == 1`.
 4. **`assemble_node_evidence` unit tests** (pure seam).
-   - Timing attribution: two admitted columns with the SAME strategy (e.g. two redact columns, two hash columns), timing records supplied in shuffled order with distinct known `elapsed_ms` values. Assert the exact rounded `elapsed_ms` per node; this kills strategy-only joins, swapped joins and constant timings.
+   - Timing attribution: two admitted columns with the SAME strategy (e.g. two redact columns, two hash columns), timing records supplied in shuffled order with distinct known `elapsed_ms` values. Assert the exact per-node mapping from the bijection-checked join (`_timing_by_node`), and that no `elapsed_ms` key is published; this kills strategy-only joins, swapped joins and constant timings.
    - Each of these raises `UnifiedSliceInvariantError`:
    - a missing node
    - a not-executed node
@@ -127,7 +128,7 @@ It returns the JSON-safe dict. `_execute_admitted` calls it in place of the inli
 5. **Shared rule:** a test proves the unified and chunked routes call the same executed-backend helper (monkeypatch it, and both routes observe the patched rule).
 6. **Map coverage sentry:** the operator-to-backend map's keys equal `ALLOWED_OPERATOR_IDS`.
 7. **Pure moves:** the reconstruction body is byte-identical apart from parameters and imports (diff check in the build record). It keeps the same ownership of `candidate.source_frame`, the same exception scope and the same timing boundaries; if the clock call moves, the module-local clock patch in `test_unified_slice_timings.py:199` moves with it.
-   - **Allowed test updates are exactly:** the whole-dict evidence assertions in `test_unified_slice_parity.py:266` and `test_unified_slice_faker.py:248`, updated to the new 7-key dict; and the idle shapes in `test_shadow_date_shift.py:648-667`, changed to expect `compiled_kernel_executed=False`.
+   - **Allowed test updates are exactly:** the whole-dict evidence assertions in `test_unified_slice_parity.py:266` and `test_unified_slice_faker.py:248`, updated to the new six-key dict; and the idle shapes in `test_shadow_date_shift.py:648-667`, changed to expect `compiled_kernel_executed=False`.
    - Every value, schema, error and row-error parity assertion in those files stays unchanged.
 8. **Companion-absent clean env:** evidence tests are guarded with `@NEEDS_COMPANION` where native.
 
