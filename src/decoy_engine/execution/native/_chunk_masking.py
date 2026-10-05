@@ -25,6 +25,11 @@ from decoy_engine.execution.native._categorical_ext import (
     native_categorical,
     native_categorical_positional,
 )
+from decoy_engine.execution.native._date_shift_ext import (
+    DEFAULT_MAX_DAYS,
+    DEFAULT_MIN_DAYS,
+    native_date_shift,
+)
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -190,6 +195,43 @@ def _mask_bucket_perturb(
     return out, sum(derive_calls) > 0
 
 
+def _mask_date_shift(
+    source: pa.Array | pa.ChunkedArray,
+    *,
+    cfg: dict[str, Any],
+    namespace: str | None,
+    mask_key: bytes | None,
+    index_kernel: IndexDerivationKernel | None,
+    native_threads: int | None,
+) -> tuple[pa.Array, bool, tuple[int, ...]]:
+    """One chunk of a date_shift column: `(shifted array, whether a compiled kernel ran,
+    chunk-local format_error positions)`.
+
+    The positions stay relative to this chunk. The oracle chunked leg records `row_index`
+    within its chunk and never adds the chunk's global offset, so rebasing here would make
+    the two legs disagree. The array is `pa.string()` for every chunk shape; the schema rule
+    pins the column to `string` on both legs, which is why no null-shape cast happens here.
+    """
+    if index_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+        raise AssertionError(
+            "native route admitted a date_shift column with no index_kernel; "
+            "preflight's index probe should have loaded one for any admitted node."
+        )
+    derive_calls: list[int] = []
+    out, positions = native_date_shift(
+        source,
+        min_days=cfg.get("min_days", DEFAULT_MIN_DAYS),
+        max_days=cfg.get("max_days", DEFAULT_MAX_DAYS),
+        date_format=cfg["date_format"],
+        mask_key=mask_key,
+        namespace=namespace or "",
+        index_kernel=index_kernel,
+        native_threads=native_threads,
+        derive_calls=derive_calls,
+    )
+    return out, sum(derive_calls) > 0, positions
+
+
 def _mask_chunk_native(
     chunk: pa.Table,
     *,
@@ -205,6 +247,7 @@ def _mask_chunk_native(
     categorical_by_column: dict[str, PreparedCategorical] | None = None,
     kernel_idle: set[str] | None = None,
     row_offset: int = 0,
+    format_errors: dict[str, tuple[int, ...]] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -227,13 +270,18 @@ def _mask_chunk_native(
     column (Task 3.1 Step 2); a faker column always has an entry by the same
     precondition. `index_kernel` is the preflight-verified compiled index
     kernel (Task 2.3): non-`None` whenever the admitted table has a faker,
-    categorical or bucket_perturb column, since preflight's index probe already ran before this ever
-    executes. `categorical_by_column` holds each admitted categorical column's
+    categorical, bucket_perturb or date_shift column, since preflight's index probe already ran
+    before this ever executes. `categorical_by_column` holds each admitted categorical column's
     prepared categories and CDF, built once per run and reused by every chunk.
 
     `kernel_idle`, when given, receives each column that ran its strategy branch but no
-    compiled kernel this chunk (a bucket_perturb chunk with no parseable row), so the
-    chunk's route evidence does not credit the companion for work it did not do.
+    compiled kernel this chunk (a bucket_perturb or date_shift chunk with no parseable row),
+    so the chunk's route evidence does not credit the companion for work it did not do.
+
+    `format_errors`, when given, receives each date_shift column's chunk-local positions of
+    non-null values that did not parse. A date_shift column that has such positions with no
+    `format_errors` to carry them raises: dropping them would let the raw value reach the
+    output with the job succeeding.
 
     `row_offset` is the global position of the chunk's first row; only the seeded
     non-deterministic categorical keys on it. A zero-row chunk of that variant makes no
@@ -346,6 +394,26 @@ def _mask_chunk_native(
                 evidence.compiled_kernel_executed = True
             elif kernel_idle is not None:
                 kernel_idle.add(name)
+        elif strategy == "date_shift":
+            arrays[name], ran, positions = _mask_date_shift(
+                source,
+                cfg=cfg,
+                namespace=col_seed.namespace,
+                mask_key=mask_key,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+            )
+            if ran:
+                evidence.compiled_kernel_executed = True
+            elif kernel_idle is not None:
+                kernel_idle.add(name)
+            if positions:
+                if format_errors is None:
+                    raise AssertionError(
+                        f"date_shift column {name!r} has unparseable values but the caller "
+                        "gave no format_errors channel to carry them."
+                    )
+                format_errors[name] = positions
         else:  # pragma: no cover - preflight admission already excludes this
             raise AssertionError(
                 f"native route admitted column {name!r} with strategy {strategy!r}, "

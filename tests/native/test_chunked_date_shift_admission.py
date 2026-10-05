@@ -196,8 +196,10 @@ def test_a_large_string_source_runs_the_oracle_leg_and_matches_full_run(tmp_path
 
 @NEEDS_COMPANION
 def test_a_non_string_source_fails_closed_through_the_oracle_not_the_kernel() -> None:
-    """An int64 source never reaches the compiled kernel. The oracle's own behavior for it
-    (every value is unparseable under the format) is reproduced exactly: same error."""
+    """An int64 source never reaches the compiled kernel: the profile-typed static gate
+    declines it (`fallback_policy_not_native`) before the real-type gate is consulted. The
+    oracle's own behavior for it (every value is unparseable under the format) is
+    reproduced exactly: same error."""
     chunks = [pa.table({"d": pa.array([20240101, None], pa.int64()), "p": pa.array([1, 2])})]
     native = run_outcome(make_config([ds_col(), passthrough("p")]), chunks)
     forced = run_outcome(
@@ -205,7 +207,7 @@ def test_a_non_string_source_fails_closed_through_the_oracle_not_the_kernel() ->
         [with_force(c) for c in chunks],
     )
     assert native.ev[0].native_admitted is False
-    assert "date_shift_source_type_not_string:d:int64" in (native.ev[0].reroute_reason or "")
+    assert "fallback_policy_not_native:d" in (native.ev[0].reroute_reason or "")
     assert isinstance(native.error, RowErrorsFailedError)
     assert isinstance(forced.error, RowErrorsFailedError)
     assert native.error.records == forced.error.records
@@ -213,10 +215,14 @@ def test_a_non_string_source_fails_closed_through_the_oracle_not_the_kernel() ->
 
 
 @NEEDS_COMPANION
-def test_a_zero_row_large_string_chunk_still_goes_to_the_oracle_leg() -> None:
-    run = run_one(make_config([ds_col(), passthrough("p")]), [source([], typ=pa.large_string())])
-    assert run.ev[0].native_admitted is False
-    assert run.out[0].schema.field("d").type == pa.string()
+def test_a_zero_row_large_string_chunk_keeps_the_oracle_type_it_has_today() -> None:
+    """A non-admissible source is outside the string pin, so it keeps the type the oracle
+    gives a zero-row chunk (`double`) exactly as before the veto lifted."""
+    chunks = [source([], typ=pa.large_string())]
+    native, forced = run_pair([ds_col(), passthrough("p")], chunks)
+    assert native.ev[0].native_admitted is False
+    assert native.out[0].schema.field("d").type == pa.float64()
+    assert identical(native.out[0], forced.out[0].drop_columns([FORCE]))
 
 
 # ---------------------------------------------------------------------------

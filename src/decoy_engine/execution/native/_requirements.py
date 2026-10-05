@@ -139,18 +139,16 @@ NATIVE_KERNEL_STRATEGIES = frozenset(
 # Admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
 # route. group_key keys on a SIBLING column and is deliberately kept out of the
 # chunk-safe set (`_chunked_group_key.py`), so its native path is full-frame only.
-# date_shift has a data-dependent output TYPE (all-null -> null, else -> string) that
-# only a whole-column assembly point resolves, and it carries a format_error row-error
-# obligation that only the full-frame coordinator routes. Without this veto
-# `_static_route_decision` would admit them on the chunked route and hit the missing
-# chunk handler; instead the preflight routes the whole table to the oracle.
-# Categorical left this set in slice C1 (output pinned to string,
-# `_chunked_schema_rule.py`) and bucket_perturb in slice C2: its null-shape type is
-# reproduced per chunk by the masker's own reconciliation (`_chunk_masking.py`), which
-# matches the oracle chunked route, so it is deliberately NOT string-pinned. A column
-# the native operator cannot run reaches the oracle through the ordinary
+# Without this veto `_static_route_decision` would admit it on the chunked route and
+# hit the missing chunk handler; instead the preflight routes the whole table to the
+# oracle. Categorical left this set in slice C1 (output pinned to string,
+# `_chunked_schema_rule.py`), bucket_perturb in C2 (its null-shape type is reproduced
+# per chunk by the masker's own reconciliation, `_chunk_masking.py`), and date_shift
+# in C4 (tokenizing, so string-pinned like categorical, with its format_error
+# row errors reported chunk-local and fail-closed by `_chunked_entry`). A column the
+# native operator cannot run reaches the oracle through the ordinary
 # `fallback_policy` and source-type gates.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"group_key", "date_shift"})
+CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"group_key"})
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`

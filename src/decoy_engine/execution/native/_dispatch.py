@@ -75,7 +75,7 @@ RouteTag = Literal["native_kernel", "native_pool", "oracle"]
 
 # Strategies whose native chunk path calls the compiled index kernel, so preflight
 # loads and self-tests it once and downgrades the table when it is missing.
-_INDEX_KERNEL_STRATEGIES = frozenset({"faker", "categorical", "bucket_perturb"})
+_INDEX_KERNEL_STRATEGIES = frozenset({"faker", "categorical", "bucket_perturb", "date_shift"})
 
 
 @dataclass(frozen=True)
@@ -246,13 +246,11 @@ def _static_route_decision(
         column = node.columns[0]
         scalar_columns.append((column, node.strategy))
         if node.strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
-            # group_key and date_shift are native on the full-frame route but
-            # explicitly vetoed on this chunked/streaming route: the eager per-chunk
-            # emit cannot resolve date_shift's data-dependent output type or
-            # group_key's sibling input. Each otherwise
-            # resolves fallback_policy == "native" and would reach the missing
-            # chunk handler, so veto the whole table to the oracle here. The
-            # reason carries the strategy so they stay distinguishable in evidence.
+            # group_key is native on the full-frame route but explicitly vetoed on this
+            # chunked/streaming route: its sibling input is not available per chunk. It
+            # otherwise resolves fallback_policy == "native" and would reach the missing
+            # chunk handler, so veto the whole table to the oracle here. The reason
+            # carries the strategy so vetoes stay distinguishable in evidence.
             reasons.append(f"{node.strategy}_not_native_chunked_route:{column}")
             continue
         no_kernel = node.strategy not in NATIVE_KERNEL_STRATEGIES
@@ -298,8 +296,8 @@ class NativePreflight:
     index-derivation kernel wrapper (Task 2.3) verified for this decision.
 
     `index_kernel` is `None` whenever the route is not native-admitted or
-    admits no faker, categorical or bucket_perturb node -- there is nothing to
-    derive, so nothing was loaded.
+    admits no faker, categorical, bucket_perturb or date_shift node -- there is
+    nothing to derive, so nothing was loaded.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
     per chunk; the verified wrapper is threaded through `_chunked_entry._native_route`
     -> `_mask_chunk_native`, which hands it to each index-kernel column's operator.
@@ -326,8 +324,8 @@ def plan_native_route(
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
     source-type guards, then (only when still admitted) the required companion
-    probes -- crypto (any `hash` node) and index (any admitted `faker`, `categorical` or `bucket_perturb` node) --
-    in that order. Guards run BEFORE probes so a schema-rejected table (an
+    probes -- crypto (any `hash` node) and index (any admitted `faker`,
+    `categorical`, `bucket_perturb` or `date_shift` node) -- in that order. Guards run BEFORE probes so a schema-rejected table (an
     uncovered column, or a faker node over a non-string source) keeps its own
     reroute reason and never reaches either probe; each probe is itself gated
     on the decision still being admitted, so a rejection from an earlier probe

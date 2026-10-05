@@ -1,7 +1,7 @@
 """Native-route admission decided from real types, not profile labels.
 
 The static admission (`_static_route_decision`) reads the profile's coarse dtype
-labels. Four things it cannot see decide whether the compiled path matches the
+labels. Five things it cannot see decide whether the compiled path matches the
 oracle, so `plan_native_route` checks them here once it has the first chunk:
 
 - a hash column's real Arrow type (a dictionary-encoded string, a date32 or a
@@ -13,6 +13,9 @@ oracle, so `plan_native_route` checks them here once it has the first chunk:
 - a bucket_perturb column's real source type (the native operator takes exactly
   `string`; an Arrow `large_string` profiles as `object`, which maps back to
   `string`, so only the real schema can tell the two apart);
+- a date_shift column's real source type (the native operator takes exactly `string`,
+  and a non-string source keeps running on the oracle, which is what it ran on before
+  date_shift left the chunked veto set);
 - a faker column's provider name (the pool is built as strings, which is right
   only for the providers C1 admits; any other provider, for example a
   date-of-birth provider, produces values the string pool cannot hold). The
@@ -65,6 +68,15 @@ def bucket_perturb_source_type_rejection(column: str, schema: pa.Schema) -> str 
     return None if typ == pa.string() else f"bucket_perturb_source_type_not_string:{column}:{typ}"
 
 
+def date_shift_source_type_rejection(column: str, schema: pa.Schema) -> str | None:
+    """The coded reason a date_shift column's real source type is not the one the native
+    operator takes, or None. The native domain is exactly `string` (the full-frame route's
+    domain too, `date_shift_config_rejection`); any other type declines to the oracle, which
+    runs it as it always has, instead of reaching the kernel."""
+    typ = schema.field(column).type
+    return None if typ == pa.string() else f"date_shift_source_type_not_string:{column}:{typ}"
+
+
 def real_type_rejection(
     config: dict[str, Any],
     node_routes: Iterable[Any],
@@ -98,6 +110,10 @@ def real_type_rejection(
                 return reason
         elif node.strategy == "bucket_perturb":
             reason = bucket_perturb_source_type_rejection(node.column, first_schema)
+            if reason is not None:
+                return reason
+        elif node.strategy == "date_shift":
+            reason = date_shift_source_type_rejection(node.column, first_schema)
             if reason is not None:
                 return reason
     return None

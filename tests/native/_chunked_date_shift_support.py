@@ -13,6 +13,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import run_mask_chunked
+from decoy_engine.vault import VaultWriter
 from tests.native._b8_support import (
     FORCE,
     Run,
@@ -29,6 +30,7 @@ from tests.native._chunked_entry_support import (
     key_provider,
     make_config,
     passthrough,
+    vault_key,
 )
 
 __all__ = [
@@ -98,12 +100,16 @@ class Outcome:
     chunks_pulled: int = 0
 
 
-class _CountingVault:
+class _CountingVault(VaultWriter):
+    """A real `VaultWriter` (the entry point type-checks it) that counts `add` calls."""
+
     def __init__(self, outcome: Outcome) -> None:
+        super().__init__(vault_key())
         self._outcome = outcome
 
-    def add(self, _entries: Any) -> None:
+    def add(self, entries: Any) -> None:
         self._outcome.vault_adds += 1
+        super().add(entries)
 
 
 def run_outcome(

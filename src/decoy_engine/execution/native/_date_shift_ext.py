@@ -22,15 +22,21 @@ and `.dt.strftime` sequence the oracle runs.
 
 Row errors: a NON-null value that fails to parse under the explicit format is a
 `format_error`. The oracle leaves the original value in its frame and records a
-`RowError`; this operator does the same and returns the BATCH-LOCAL positions,
-so the coordinator can rebase them to table-global indices. Dropping them would
-let an unparseable raw value reach the main output with the job succeeding, so
-the caller must route them (the coordinator does; see `_shadow_coordinator`).
+`RowError`; this operator does the same and returns the BATCH-LOCAL positions.
+Dropping them would let an unparseable raw value reach the main output with the
+job succeeding, so every caller must route them. The two callers differ on what
+the positions mean afterwards:
+
+- the full-frame coordinator (`_shadow_coordinator`) passes the whole column as
+  one batch and rebases the positions to table-global indices;
+- the chunked native route (`_chunk_masking._mask_date_shift`) passes one chunk
+  and keeps the positions chunk-local, because the oracle chunked leg reports
+  `row_index` within its chunk and never adds the chunk's global offset.
 
 v1 scope: STRING source, EXPLICIT `date_format` (no `%z`/`%Z`), no `group_by`,
-integer `min_days`/`max_days` inside the pandas Timedelta range, FULL-FRAME
-route only. Every other shape declines to the oracle at admission
-(`date_shift_config_rejection`).
+integer `min_days`/`max_days` inside the pandas Timedelta range, on the full-frame
+route and, per chunk, on the chunked route. Every other shape declines to the
+oracle at admission (`date_shift_config_rejection`).
 """
 
 from __future__ import annotations
@@ -124,8 +130,9 @@ def native_date_shift(
     namespace: str,
     index_kernel: IndexDerivationKernel,
     native_threads: int | None = None,
+    derive_calls: list[int] | None = None,
 ) -> tuple[pa.Array, tuple[int, ...]]:
-    """Shift a `pa.string()` date column on the native full-frame lane.
+    """Shift a `pa.string()` date column on the native lane (full-frame or one chunk).
 
     Returns `(out, format_error_positions)`: `out` is pinned `pa.string()` (the
     whole-column null-shape reconciliation to the oracle's data-dependent type
@@ -133,6 +140,11 @@ def native_date_shift(
     `format_error_positions` are the 0-based positions WITHIN `array` of the
     non-null values that failed to parse. Null and unparseable rows keep their
     original value, as in the oracle.
+
+    `derive_calls`, when given, receives the number of compiled `derive_index_batch`
+    calls this invocation made: one when any row parsed, zero for an empty, all-null or
+    all-unparseable input. The chunked route reads it so its evidence only claims a
+    compiled kernel when one ran.
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
@@ -166,6 +178,8 @@ def native_date_shift(
             native_threads=native_threads,
         )
         shifts[usable] = offsets.astype(np.int64) + min_days
+    if derive_calls is not None:
+        derive_calls.append(int(usable.any()))
 
     shifted = parsed + pd.to_timedelta(shifts, unit="D")
     formatted = shifted.dt.strftime(date_format)

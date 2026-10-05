@@ -31,9 +31,9 @@ RUST_POOL_SELECT = "rust_pool_select"
 ARROW_PYTHON = "arrow_python"
 PANDAS_ORACLE = "pandas_oracle"
 
-# hash runs on the compiled crypto kernel; categorical and bucket_perturb on the
-# compiled index kernel. All three report the companion as their planned backend.
-_COMPANION_STRATEGIES = frozenset({"hash", "categorical", "bucket_perturb"})
+# hash runs on the compiled crypto kernel; categorical, bucket_perturb and date_shift on
+# the compiled index kernel. All four report the companion as their planned backend.
+_COMPANION_STRATEGIES = frozenset({"hash", "categorical", "bucket_perturb", "date_shift"})
 
 
 @dataclass(frozen=True)
@@ -116,7 +116,7 @@ def chunk_route_evidence(
     and never converted.
 
     `kernel_idle_columns` lists the admitted columns that ran no compiled kernel on this chunk
-    (a bucket_perturb chunk with no parseable row). They ran Arrow passthrough work in Python,
+    (a bucket_perturb or date_shift chunk with no parseable row). They ran Arrow passthrough work in Python,
     so they report `arrow_python` rather than the planned companion backend."""
     idle = frozenset(kernel_idle_columns)
     return {
