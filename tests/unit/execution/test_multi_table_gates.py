@@ -548,6 +548,10 @@ def _assert_same_adapter_call(a: tuple[Any, Any], b: tuple[Any, Any]) -> None:
         assert a_args[1][name].equals(b_args[1][name], check_metadata=True), name
     assert a_kwargs.keys() == b_kwargs.keys()
     for key, value in a_kwargs.items():
+        if key == "pool_cache":
+            # One cache per job, so two jobs never share an instance; the kind must match.
+            assert type(value) is type(b_kwargs[key]), key
+            continue
         assert value == b_kwargs[key], key
 
 
