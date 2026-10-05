@@ -7,6 +7,7 @@ to both legs and the comparison is native-chunked vs oracle-chunked, byte for by
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,8 +35,8 @@ from tests.native._chunked_entry_support import (
 )
 
 __all__ = [
-    "FORMAT_ERROR_REASON",
     "FORCE",
+    "FORMAT_ERROR_REASON",
     "Outcome",
     "Run",
     "assert_same_as_oracle",
@@ -78,7 +79,7 @@ def ds_col(
     return col
 
 
-def source(values: list[str | None], *, typ: pa.DataType | None = None) -> pa.Table:
+def source(values: Sequence[str | None], *, typ: pa.DataType | None = None) -> pa.Table:
     """A table with the date_shift source `d` and an integer passthrough `p`."""
     return pa.table(
         {
@@ -148,5 +149,7 @@ def run_outcome(
     return outcome
 
 
-def force_leg(columns: list[dict[str, Any]], chunks: list[pa.Table]) -> tuple[list[dict[str, Any]], list[pa.Table]]:
+def force_leg(
+    columns: list[dict[str, Any]], chunks: list[pa.Table]
+) -> tuple[list[dict[str, Any]], list[pa.Table]]:
     return [*columns, force_oracle(FORCE)], [with_force(c) for c in chunks]

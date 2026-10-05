@@ -32,7 +32,6 @@ from tests.native._chunked_date_shift_support import (
     FORCE,
     FORMAT_ERROR_REASON,
     Outcome,
-    assert_same_as_oracle,
     date_value,
     ds_col,
     make_config,
@@ -48,7 +47,6 @@ from tests.native._chunked_entry_support import (
     NEEDS_COMPANION,
     TABLE,
     force_oracle,
-    split,
 )
 from tests.native.test_chunked_entry_values_schema import _full_frame
 from tests.unit.execution import _auto_chunk_support as support
@@ -156,7 +154,9 @@ def test_the_pin_is_applied_by_the_shared_schema_rule_without_site_arguments() -
         "out_of_range_bound",
     ],
 )
-def test_a_non_admissible_date_shift_is_not_pinned(column: dict[str, Any], typ: pa.DataType) -> None:
+def test_a_non_admissible_date_shift_is_not_pinned(
+    column: dict[str, Any], typ: pa.DataType
+) -> None:
     values: list[Any] = [date_value(1), None]
     if typ == pa.int64():
         values = [20240101, None]
@@ -318,7 +318,9 @@ def test_the_failing_chunk_is_recorded_before_the_raise_and_nothing_after_it_run
     ]
     native, forced = _legs([ds_col(), passthrough("p")], chunks, with_vault=True)
     for leg in (native, forced):
-        assert _records(leg) == (RowErrorRecord(TABLE, "d", 1, "format_error", FORMAT_ERROR_REASON),)
+        assert _records(leg) == (
+            RowErrorRecord(TABLE, "d", 1, "format_error", FORMAT_ERROR_REASON),
+        )
         assert len(leg.out) == 1, "only the chunk before the failing one was yielded"
         assert len(leg.sink) == 2, "the clean chunk and the failing chunk"
         assert leg.sink[-1].row_errors == _records(leg)

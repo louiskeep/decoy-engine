@@ -279,9 +279,7 @@ def _native_route(
             # warning (and, if a table were ever admitted under `error`, the refusal)
             # cannot drift from the oracle route's.
             warnings = tuple(
-                enforce_output_projection(
-                    table, masked.column_names, plan, state.projection_policy
-                )
+                enforce_output_projection(table, masked.column_names, plan, state.projection_policy)
             )
             row_errors = format_error_records(table, format_errors)
             if row_errors:

@@ -180,7 +180,9 @@ def test_native_chunked_output_matches_the_frozen_vectors_and_the_formula(
 def test_a_different_mask_key_or_namespace_gives_a_different_shift() -> None:
     values = [date_value(i) for i in range(40)]
     base = run_one(make_config([ds_col(), passthrough("p")]), [source(values)])
-    other_ns = run_one(make_config([ds_col(namespace="ns_other"), passthrough("p")]), [source(values)])
+    other_ns = run_one(
+        make_config([ds_col(namespace="ns_other"), passthrough("p")]), [source(values)]
+    )
     assert column_values(base.out, "d") != column_values(other_ns.out, "d")
     assert base.ev[0].native_admitted is True and other_ns.ev[0].native_admitted is True
 

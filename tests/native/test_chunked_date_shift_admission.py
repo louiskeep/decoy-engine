@@ -634,7 +634,10 @@ def test_a_real_date_shift_column_is_not_the_forcing_stand_in() -> None:
     it is what the comparison measures."""
     native, forced = run_pair([ds_col(), passthrough("p")], split(_valued(), 4))
     assert_same_as_oracle(native, forced)
-    assert {t.strategy_type for r in native.sink for t in r.timings} == {"date_shift", "passthrough"}
+    assert {t.strategy_type for r in native.sink for t in r.timings} == {
+        "date_shift",
+        "passthrough",
+    }
     assert {t.strategy_type for r in forced.sink for t in r.timings} == {
         "date_shift",
         "passthrough",
