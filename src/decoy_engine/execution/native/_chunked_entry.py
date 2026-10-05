@@ -217,13 +217,16 @@ def _native_route(
     read_passthrough: tuple[str, ...],
     unconfigured: tuple[str, ...] = (),
     stored_index: frozenset[str] = frozenset(),
+    raw_hex_kernel: Any = None,
 ) -> Iterator[pa.Table]:
     """The one native chunk loop. Per chunk: row-offset domain check, mask, schema rule
     (when `rule` is given), the unconfigured-column warning, result for the sink (when
     one is given), offset advance, vault entries, yield. Source drift was already refused
     by `_run_chunked`; the ingest guards run here on the chunk as the source produced it,
     and only then are null-typed columns cast. `unconfigured` names the source columns
-    the plan does not cover; they are carried unchanged."""
+    the plan does not cover; they are carried unchanged. A group_key column reads its sibling
+    from the raw chunk, so the loop keeps both tables (see `_mask_group_key`); everything else
+    works on the cast one."""
     from decoy_engine.errors import RowErrorsFailedError
     from decoy_engine.keyprovider import require_mask_key
 
@@ -253,8 +256,8 @@ def _native_route(
         # Every chunk, the first included, is guarded here so a refusal surfaces at
         # the first `next()` exactly as it does on the oracle route.
         row_offset = base_row_offset
-        guarded = (_guard(c) for c in _chain_first(first, state.chunk_iter))
-        for i, chunk in enumerate(guarded):
+        for i, raw_chunk in enumerate(_chain_first(first, state.chunk_iter)):
+            chunk = _guard(raw_chunk)
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             elapsed_s: dict[str, float] = {}
             kernel_idle: set[str] = set()
@@ -274,6 +277,8 @@ def _native_route(
                 kernel_idle=kernel_idle,
                 row_offset=row_offset,
                 format_errors=format_errors,
+                raw_chunk=raw_chunk,
+                raw_hex_kernel=raw_hex_kernel,
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
@@ -462,6 +467,7 @@ def _run_chunked(
             table=table,
             engine_version=engine_version,
             registry=state.registry,
+            first_schema=state.first.schema,
         )
         if chunk_result_sink is not None
         else ()
@@ -509,6 +515,7 @@ def _run_chunked(
         read_passthrough=read_passthrough,
         unconfigured=preflight.unconfigured_passthrough,
         stored_index=frozenset(stored_index_fields(state.first.schema)),
+        raw_hex_kernel=preflight.raw_hex_kernel,
     )
 
 

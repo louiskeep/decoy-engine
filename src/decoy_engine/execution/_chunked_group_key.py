@@ -8,11 +8,14 @@ for the group_key-admitted-strategy summary and
 `group_key` (`transforms/group_key.apply_group_key`) derives a key from a
 SIBLING column's value (`group_by`), not its own: `derive(seed, "group_key/
 <col>", str(df[group_by_col][i]).encode())`. Every row sharing a group_by
-value gets the identical key, and that computation is per-row pure -- no
-whole-column state -- so chunking the rows reproduces the full-frame output
-byte-for-byte, PROVIDED the group_by cell each chunk sees is identical to
-what the full frame would see at that row. Two correctness properties this
-module enforces:
+value gets the identical key. The derivation is per-row, but `apply_group_key`
+memoizes by the RAW Python value, so it is partition-independent only where no
+two distinct raw values share a cache slot: the collision-free domain Trap E
+(point 3 below) and the native leg's {string, int64, bool} gate establish.
+Outside it the first-seen value wins, an order a chunk boundary changes. Within
+it, chunking the rows reproduces the full-frame output byte-for-byte, PROVIDED
+the group_by cell each chunk sees is identical to what the full frame would see
+at that row. Two correctness properties this module enforces:
 
 1. `group_key` must stay OUT of `CHUNK_SAFE_STRATEGIES` (`_chunked_fk.py`,
    Trap A). That set is reused verbatim by `_chunked_fk.gate_fk_child_edges`

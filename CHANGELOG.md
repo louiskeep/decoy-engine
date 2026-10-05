@@ -68,6 +68,37 @@ A streamed run's schema hold-back used to spill to `TMPDIR`. It now spills to th
 first spill), on the output's filesystem. A streaming sink without `spill_parent` that needs
 to spill fails with `hold_back_spill_unavailable`. The per-chunk evidence of a streamed run is
 now folded into running totals instead of one entry per chunk.
+### Changed (group_key runs on the native chunked route, 2026-10-05)
+
+A `group_key` column no longer sends its table to the pandas oracle on the chunked route
+(`run_mask_chunked`, the auto-chunk dispatcher lane) when the native leg can match the oracle
+exactly. The compiled raw-hex kernel keys each row on its `group_by` sibling, chunk by chunk,
+byte-identical to the oracle chunked leg. The native leg takes a sibling of Arrow type `string`,
+`int64` or `bool` that no other node masks. That domain is the one where the oracle's per-call
+cache (keyed by the raw value) cannot collide, which is what makes the result independent of
+chunk boundaries. Everything else stays on the oracle leg, reproducibly and without failing:
+a wider sibling (`int32`, `uint64`, `large_string`, dictionary, date, timestamp)
+reroutes with `fallback_policy_not_native:<column>:python_only` (the static plan rejects it
+from the real first-chunk type; the group_key-specific `group_key_sibling_type_not_native` is a
+defense-in-depth code surfaced only for an exotic/union sibling the static plan cannot classify;
+a sibling absent from the first chunk is reported earlier by the coverage gate as
+`missing_configured_columns`), a masked sibling with
+`group_key_masked_sibling_not_native_chunked_route`, a self-anchor with
+`group_key_self_anchor_not_native_chunked_route`, and a missing or broken raw-hex kernel
+with `raw_hex_extension_unavailable`. Float and decimal siblings, `when:` and FK-key edges keep
+their existing rejections.
+
+The chunked veto set (`CHUNKED_ROUTE_VETOED_STRATEGIES`) is now empty. A later null-typed
+sibling chunk keys its nulls from the source chunk, as the oracle does (`"None"`), not from the
+chunk cast to the first chunk's type. A non-string `prefix` is `str()`-normalized on every route.
+
+Output type is pinned to `string` on both chunked legs when the native config is admissible,
+with or without the companion. The whole-frame route still resolves an empty column to
+`double` at assembly, an accepted route-dependent difference under ROUTE-OUTPUT-CONTRACT; there
+is no all-null case because the key is never null. `native_group_key` takes an optional
+`derive_calls` list, and the full-frame operator now reports `compiled_kernel_executed` only
+when the kernel derived at least one row (an empty column loads the kernel but derives nothing).
+
 ### Changed (date_shift runs on the native chunked route, 2026-10-05)
 
 A `date_shift` column no longer runs on the pandas oracle for a native-admissible config on

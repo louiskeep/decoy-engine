@@ -38,6 +38,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
+from tests.native._chunked_entry_support import force_oracle, forced_reason
 
 _ENGINE_VERSION = "p3-auto-chunk-test"
 
@@ -1030,7 +1031,7 @@ class TestRoutedResultSurface:
         self, tmp_path, monkeypatch
     ):
         """The same union on the dispatcher lane, on a table B1 sends to its oracle
-        route (a group_key column beside the hash column), where the pandas adapter
+        route (a non-native categorical beside the hash column), where the pandas adapter
         runs once per chunk."""
         import dataclasses
 
@@ -1048,7 +1049,7 @@ class TestRoutedResultSurface:
             tmp_path,
             [
                 {"name": "val", "strategy": "hash", "namespace": "hash_ns"},
-                {"name": "tier", "strategy": "group_key", "provider_config": {"group_by": "tier"}},
+                force_oracle("tier"),
             ],
         )
         sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
@@ -1075,7 +1076,7 @@ class TestRoutedResultSurface:
         )
         assert auto.quality_metrics["auto_chunk"]["lane"] == "dispatcher"
         assert auto.quality_metrics["chunked_route"]["native_admitted"] is False
-        assert "group_key_not_native_chunked_route:tier" in (
+        assert forced_reason("tier") in (
             auto.quality_metrics["chunked_route"]["reroute_reason"] or ""
         )
         codes = [(w.code, w.detail.get("chunk")) for w in auto.warnings]

@@ -21,6 +21,12 @@ by definition the rule pins one type per column for the whole call:
   companion, so both legs agree with or without it. The whole-frame route still resolves
   the type at assembly, so this is the same recorded route-dependent difference
   (docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
+- a native-admissible group_key column (no `when:`, a sibling the first chunk carries in
+  `{string, int64, bool}` that no other node masks): `string`, by the same cast. Its output is
+  always a populated hex string, so pandas' empty -> float64 is the only inference artifact
+  (there is no all-null case). The decision keys on the SIBLING's type, never the target's,
+  because the key overwrites the target. The whole-frame route still resolves an empty column
+  to float64 at assembly, the same recorded route-dependent difference.
 - passthrough columns (configured, or unconfigured and kept under the
   passthrough policy): the source column itself, never the pandas round trip,
   which rounds nullable integers above 2^53.
@@ -89,6 +95,46 @@ def date_shift_pinned_columns(
     return frozenset(pinned)
 
 
+def group_key_pinned_columns(
+    configured: dict[str, dict[str, Any]],
+    first_schema: pa.Schema,
+    *,
+    table: str,
+    written: frozenset[str] | None,
+) -> frozenset[str]:
+    """The group_key columns whose output is pinned to `string`.
+
+    One classifier for both schema-rule construction sites, config plus the first chunk's real
+    SIBLING type, independent of whether the compiled companion is installed. The sibling must
+    reach group_key unmasked: not the column itself (a self-anchor), not a configured column
+    with any strategy but a plain `passthrough`, and not a column another handler writes
+    (`written`, the columns composites write beyond their own; `None` when unknown)."""
+    from decoy_engine.execution.native._operator_config_rejections import (
+        group_key_config_rejection,
+        group_key_sibling_type_admitted,
+    )
+
+    pinned: set[str] = set()
+    for name, col in configured.items():
+        if col.get("strategy") != "group_key" or _has_when(col) or written is None:
+            continue
+        provider_config = col.get("provider_config")
+        cfg = provider_config if isinstance(provider_config, dict) else {}
+        group_by = cfg.get("group_by")
+        if not isinstance(group_by, str) or group_by == name or group_by in written:
+            continue
+        sibling = configured.get(group_by)
+        if sibling is not None and (sibling.get("strategy") != "passthrough" or _has_when(sibling)):
+            continue
+        if group_by not in first_schema.names:
+            continue
+        if not group_key_sibling_type_admitted(first_schema.field(group_by).type):
+            continue
+        if group_key_config_rejection(name, table, None, provider_config=cfg) is None:
+            pinned.add(name)
+    return frozenset(pinned)
+
+
 @dataclass(frozen=True)
 class SchemaRule:
     string_columns: frozenset[str]
@@ -113,8 +159,9 @@ def build_schema_rule(
     definition, so they join the string-pinned set on both routes. A categorical column
     the native operator cannot run is not listed and keeps the type its route produced.
 
-    A native-admissible date_shift column is added by `date_shift_pinned_columns`, so every
-    caller gets the pin without passing anything.
+    A native-admissible date_shift column is added by `date_shift_pinned_columns` and a
+    native-admissible group_key column by `group_key_pinned_columns`, so every caller gets
+    both pins without passing anything.
 
     A column some handler writes (see `handler_written_columns`) is never a passthrough
     column here, so `normalize_chunk` cannot restore its source value."""
@@ -133,6 +180,7 @@ def build_schema_rule(
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     strings |= categorical_columns
     strings |= date_shift_pinned_columns(configured, first.schema, table=table)
+    strings |= group_key_pinned_columns(configured, first.schema, table=table, written=written)
     passthrough: dict[str, pa.DataType] = {}
     passthrough_fields: dict[str, pa.Field] = {}
     for field in first.schema:

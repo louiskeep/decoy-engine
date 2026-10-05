@@ -31,7 +31,7 @@ from decoy_engine.execution.native._phase3_eligibility import phase3_c1_eligibil
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import identical
+from tests.native._b8_support import FORCE_REASON, identical
 from tests.native._chunked_date_shift_support import (
     FORCE,
     assert_same_as_oracle,
@@ -52,12 +52,11 @@ from tests.native._chunked_entry_support import (
     NEEDS_COMPANION,
     TABLE,
     force_oracle,
+    forced_reason,
     key_provider,
     redact,
     split,
 )
-
-VETOED = "group_key_not_native_chunked_route"
 
 
 def _check(config: dict[str, Any], table: str = TABLE) -> None:
@@ -92,8 +91,8 @@ def _columns(agg: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def test_the_chunked_veto_set_is_exactly_group_key() -> None:
-    assert frozenset({"group_key"}) == CHUNKED_ROUTE_VETOED_STRATEGIES
+def test_the_chunked_veto_set_is_empty() -> None:
+    assert frozenset() == CHUNKED_ROUTE_VETOED_STRATEGIES
 
 
 def test_config_only_eligibility_mirror_admits_an_admissible_date_shift() -> None:
@@ -101,10 +100,10 @@ def test_config_only_eligibility_mirror_admits_an_admissible_date_shift() -> Non
     assert not any("date_shift_not_native_chunked_route" in r for r in result.reasons)
 
 
-def test_config_only_eligibility_mirror_still_vetoes_group_key() -> None:
+def test_config_only_eligibility_mirror_still_declines_a_non_native_column() -> None:
     result = phase3_c1_eligibility(make_config([ds_col(), force_oracle("b")]), table=TABLE)
     assert result.admitted is False
-    assert f"{VETOED}:b" in result.reasons
+    assert "categorical_categories_not_all_string:b" in result.reasons
     assert not any(r.startswith("date_shift_not_native_chunked_route") for r in result.reasons)
 
 
@@ -155,7 +154,7 @@ def test_a_group_key_column_beside_date_shift_sends_the_table_to_the_oracle() ->
     config = make_config([ds_col(), force_oracle(FORCE), passthrough("p")])
     run = run_one(config, [with_force(c) for c in split(_valued(), 4)])
     assert run.ev[0].native_admitted is False
-    assert f"{VETOED}:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert FORCE_REASON in (run.ev[0].reroute_reason or "")
     assert "date_shift_not_native_chunked_route" not in (run.ev[0].reroute_reason or "")
 
 
@@ -281,7 +280,7 @@ def test_companion_absent_run_matches_a_forced_oracle_run(monkeypatch: pytest.Mo
     )
     assert absent.ev[0].native_admitted is False
     assert forced.ev[0].native_admitted is False
-    assert f"{VETOED}:{FORCE}" in (forced.ev[0].reroute_reason or "")
+    assert FORCE_REASON in (forced.ev[0].reroute_reason or "")
     assert len(absent.out) == len(forced.out)
     for got, want in zip(absent.out, forced.out, strict=True):
         assert identical(got, want.drop_columns([FORCE]))
@@ -625,16 +624,18 @@ def test_an_unparseable_value_fails_closed_on_the_native_leg_like_the_full_frame
 # ---------------------------------------------------------------------------
 
 
-def test_force_oracle_emits_the_group_key_self_anchor() -> None:
+def test_force_oracle_emits_the_numeric_categorical_stand_in() -> None:
     assert force_oracle("x") == {
         "name": "x",
-        "strategy": "group_key",
-        "provider_config": {"group_by": "x"},
+        "strategy": "categorical",
+        "deterministic": True,
+        "namespace": "force_oracle/x",
+        "provider_config": {"categories": [1, 2, 3]},
     }
 
 
 @pytest.mark.parametrize("name", [FORCE, "other"])
-def test_force_oracle_routes_to_the_oracle_with_the_group_key_reason(name: str) -> None:
+def test_force_oracle_routes_to_the_oracle_with_the_stand_in_reason(name: str) -> None:
     table = pa.table({name: pa.array([FORCE_ORACLE_VALUE] * 3, pa.string())})
     ev: list[Any] = []
     from decoy_engine import run_mask_chunked
@@ -650,7 +651,7 @@ def test_force_oracle_routes_to_the_oracle_with_the_group_key_reason(name: str) 
         )
     )
     assert ev[0].native_admitted is False
-    assert f"group_key_not_native_chunked_route:{name}" in (ev[0].reroute_reason or "")
+    assert forced_reason(name) in (ev[0].reroute_reason or "")
 
 
 @NEEDS_COMPANION
@@ -666,5 +667,5 @@ def test_a_real_date_shift_column_is_not_the_forcing_stand_in() -> None:
     assert {t.strategy_type for r in forced.sink for t in r.timings} == {
         "date_shift",
         "passthrough",
-        "group_key",
+        "categorical",
     }

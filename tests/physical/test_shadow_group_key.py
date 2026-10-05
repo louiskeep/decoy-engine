@@ -335,15 +335,15 @@ def test_full_frame_executes_native_group_key(tmp_path: Path) -> None:
     assert gk_ev[0].compiled_kernel_executed is True
 
 
-# ── Seam proof: chunked route DECLINES group_key to the oracle ───────────────
+# ── Seam proof: the chunked route ADMITS group_key (slice C3) ─────────────────
 
 
-def test_chunked_route_declines_group_key(tmp_path: Path) -> None:
+def _chunked_preflight(tmp_path: Path, columns: list[dict]) -> Any:
     source = _source(pa.array(["a", "b", "c"], type=pa.string()))
     write_read_only_fixture(tmp_path, source, "gk")
-    config = build_config(tmp_path, "t", tmp_path / "gk.parquet", _gk_columns())
+    config = build_config(tmp_path, "t", tmp_path / "gk.parquet", columns)
     profile = first_chunk_profile(source, table="t", engine_version=ENGINE_VERSION)
-    preflight = plan_native_route(
+    return plan_native_route(
         config,
         profile,
         table="t",
@@ -351,8 +351,24 @@ def test_chunked_route_declines_group_key(tmp_path: Path) -> None:
         first_schema=source.schema,
         registry=get_default_registry(),
     )
+
+
+@_NEEDS_COMPANION
+def test_chunked_route_admits_group_key(tmp_path: Path) -> None:
+    preflight = _chunked_preflight(tmp_path, _gk_columns())
+    assert preflight.evidence.native_admitted is True
+    assert preflight.evidence.reroute_reason is None
+    assert preflight.raw_hex_kernel is not None
+
+
+def test_chunked_route_declines_a_masked_sibling_group_key(tmp_path: Path) -> None:
+    preflight = _chunked_preflight(
+        tmp_path, _gk_columns(gb_strategy="redact", gb_provider_config={})
+    )
     assert preflight.evidence.native_admitted is False
-    assert "group_key_not_native_chunked_route:key" in (preflight.evidence.reroute_reason or "")
+    assert "group_key_masked_sibling_not_native_chunked_route:key:gb" in (
+        preflight.evidence.reroute_reason or ""
+    )
 
 
 # ── Admission declines (config-only native_route_eligibility) ────────────────
@@ -754,4 +770,100 @@ def test_run_operator_asserts_group_key_binding_present() -> None:
             binding=binding,
             ctx=ctx,  # type: ignore[arg-type]
             evidence=evidence,
+        )
+
+
+# ── Shared-kernel contracts (slice C3): the empty short-circuit and its ordering ──
+
+
+def _run_gk_operator(sibling: pa.Array) -> tuple[pa.Array, OperatorCallEvidence]:
+    evidence = OperatorCallEvidence(planned_operator="native_group_key")
+    ctx = SimpleNamespace(mask_key=_MASK_KEY, native_threads=None)
+    out, _ = run_operator(
+        sibling,
+        binding=_binding(),
+        ctx=ctx,  # type: ignore[arg-type]
+        evidence=evidence,
+        group_key_sibling=_sib(sibling),
+    )
+    return out, evidence
+
+
+@_NEEDS_COMPANION
+def test_full_frame_operator_records_no_compiled_work_on_empty_input() -> None:
+    out, evidence = _run_gk_operator(pa.array([], type=pa.string()))
+    assert len(out) == 0 and out.type == pa.string()
+    assert evidence.executed is True
+    assert evidence.compiled_kernel_executed is False
+
+
+@_NEEDS_COMPANION
+def test_full_frame_operator_records_compiled_work_on_populated_input() -> None:
+    out, evidence = _run_gk_operator(pa.array(["a", "b", "a"], type=pa.string()))
+    assert len(out) == 3
+    assert evidence.compiled_kernel_executed is True
+
+
+@pytest.mark.parametrize("rows", [[], ["a", "b"]], ids=["empty", "populated"])
+def test_full_frame_operator_still_declines_when_the_raw_hex_loader_raises(
+    rows: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The load inside `native_group_key` is the full-frame route's only companion probe, so an
+    EMPTY column must still decline (the kernel is resolved before the empty short-circuit)."""
+    import decoy_engine.execution.native._group_key_kernel as gk_mod
+    from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+    from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
+
+    def _raise() -> Any:
+        raise CryptoExtensionUnavailableError("raw-hex kernel unavailable for the test")
+
+    monkeypatch.setattr(gk_mod, "load_compiled_raw_hex_kernel", _raise)
+    with pytest.raises(ShadowDifference) as exc:
+        _run_gk_operator(pa.array(rows, type=pa.string()))
+    assert exc.value.code == "native_companion_unavailable"
+
+
+@_NEEDS_COMPANION
+def test_native_group_key_derive_spy_counts_only_real_kernel_work() -> None:
+    populated: list[int] = []
+    out = native_group_key(
+        _sib(pa.array(["a", "b", "a"], type=pa.string())),
+        length=16,
+        prefix="",
+        mask_key=_MASK_KEY,
+        namespace=f"group_key/{_TARGET}",
+        derive_calls=populated,
+    )
+    assert out.type == pa.string() and len(out) == 3
+    assert sum(populated) > 0
+    idle: list[int] = []
+    empty = native_group_key(
+        _sib(pa.array([], type=pa.string())),
+        length=16,
+        prefix="p",
+        mask_key=_MASK_KEY,
+        namespace=f"group_key/{_TARGET}",
+        derive_calls=idle,
+    )
+    assert empty.type == pa.string() and len(empty) == 0
+    assert sum(idle) == 0
+
+
+def test_native_group_key_resolves_the_kernel_before_the_empty_short_circuit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import decoy_engine.execution.native._group_key_kernel as gk_mod
+    from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+
+    def _raise() -> Any:
+        raise CryptoExtensionUnavailableError("raw-hex kernel unavailable for the test")
+
+    monkeypatch.setattr(gk_mod, "load_compiled_raw_hex_kernel", _raise)
+    with pytest.raises(CryptoExtensionUnavailableError):
+        native_group_key(
+            _sib(pa.array([], type=pa.string())),
+            length=16,
+            prefix="",
+            mask_key=_MASK_KEY,
+            namespace=f"group_key/{_TARGET}",
         )

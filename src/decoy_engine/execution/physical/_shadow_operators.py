@@ -272,6 +272,7 @@ def run_operator(
             raise AssertionError(
                 "group_key node reached run_operator with no KeyBinding/group_by/length/sibling"
             )
+        derive_calls: list[int] = []
         try:
             out = native_group_key(
                 group_key_sibling,
@@ -280,13 +281,15 @@ def run_operator(
                 mask_key=ctx.mask_key,
                 namespace=binding.key_binding.namespace,
                 native_threads=ctx.native_threads,
+                derive_calls=derive_calls,
             )
         except CryptoExtensionUnavailableError as exc:
             raise ShadowDifference(
                 code=NATIVE_COMPANION_UNAVAILABLE,
                 detail=f"operator={binding.operator_id!r}: compiled raw-hex companion unavailable",
             ) from exc
-        evidence.compiled_kernel_executed = True
+        # An empty column loads the kernel (the companion probe) but derives nothing.
+        evidence.compiled_kernel_executed = sum(derive_calls) > 0
     elif binding.operator_id == _DATE_SHIFT:
         out, row_errors = _run_date_shift(
             array, binding=binding, ctx=ctx, index_kernel=index_kernel, column=column

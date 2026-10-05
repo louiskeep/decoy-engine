@@ -38,6 +38,7 @@ from tests.native._chunked_entry_support import (
     NEEDS_COMPANION,
     TABLE,
     force_oracle,
+    forced_reason,
     key_provider,
     redact,
     split,
@@ -185,7 +186,7 @@ def test_categorical_is_not_in_the_chunked_veto_set() -> None:
     from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 
     assert "categorical" not in CHUNKED_ROUTE_VETOED_STRATEGIES
-    assert frozenset({"group_key"}) == CHUNKED_ROUTE_VETOED_STRATEGIES
+    assert frozenset() == CHUNKED_ROUTE_VETOED_STRATEGIES
 
 
 def test_config_only_eligibility_mirror_admits_an_admissible_categorical() -> None:
@@ -193,10 +194,10 @@ def test_config_only_eligibility_mirror_admits_an_admissible_categorical() -> No
     assert not any("categorical_not_native_chunked_route" in r for r in result.reasons)
 
 
-def test_config_only_eligibility_mirror_still_vetoes_the_other_strategies() -> None:
+def test_config_only_eligibility_mirror_still_declines_a_non_native_column() -> None:
     result = phase3_c1_eligibility(make_config([cat_col(), force_oracle("b")]), table=TABLE)
     assert result.admitted is False
-    assert "group_key_not_native_chunked_route:b" in result.reasons
+    assert "categorical_categories_not_all_string:b" in result.reasons
 
 
 @NEEDS_COMPANION
@@ -221,7 +222,7 @@ def test_a_still_vetoed_column_beside_categorical_sends_the_table_to_the_oracle(
     config = make_config([cat_col(), force_oracle(FORCE), passthrough("p")])
     run = run_one(config, [with_force(c) for c in split(source(["a", "b", "c"]), 2)])
     assert run.ev[0].native_admitted is False
-    assert f"group_key_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert forced_reason(FORCE) in (run.ev[0].reroute_reason or "")
 
 
 def test_non_native_admissible_categorical_still_routes_its_table_to_the_oracle() -> None:
@@ -367,7 +368,7 @@ def test_companion_absent_run_matches_a_forced_oracle_run(
     )
     assert absent.ev[0].native_admitted is False
     assert forced.ev[0].native_admitted is False
-    assert f"group_key_not_native_chunked_route:{FORCE}" in (forced.ev[0].reroute_reason or "")
+    assert forced_reason(FORCE) in (forced.ev[0].reroute_reason or "")
     assert {o.schema.field("c").type for o in absent.out} == {pa.string()}
     assert len(absent.out) == len(forced.out)
     for got, want in zip(absent.out, forced.out, strict=True):

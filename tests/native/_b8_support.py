@@ -2,7 +2,8 @@
 
 `run_pair` runs one table twice through `run_mask_chunked`: as configured (the route
 under test) and with the oracle route forced by a `force_oracle("cat_force")` column
-(`group_key`), which the dispatcher still vetoes and which is dropped before the two are compared.
+(a numeric-categories categorical the native route never admits), dropped before the two
+are compared.
 `assert_same_as_oracle` is the comparison of acceptance test 2: values, Arrow types,
 field nullability and metadata, warnings, timing columns, vault entries, sink lengths
 and the route each side took.
@@ -28,7 +29,7 @@ from tests.native._chunked_entry_support import (
 )
 
 FORCE = "cat_force"
-FORCE_STRATEGY = "group_key"
+FORCE_REASON = f"fallback_policy_not_native:{FORCE}:python_only"
 
 
 @dataclass
@@ -93,14 +94,12 @@ def run_pair(
         vault=vault,
         **kw,
     )
-    # run_pair always forces the oracle leg with a group_key column named FORCE, so by
+    # run_pair always forces the oracle leg with a categorical column named FORCE, so by
     # construction that leg must stay on the oracle with the exact column-qualified reason.
     # Asserting it here protects every run_pair consumer (even ones that never call
     # assert_same_as_oracle) from silently degrading into a native-vs-native comparison.
     assert forced.ev[0].native_admitted is False, forced.ev[0]
-    assert f"{FORCE_STRATEGY}_not_native_chunked_route:{FORCE}" in (
-        forced.ev[0].reroute_reason or ""
-    ), forced.ev[0]
+    assert FORCE_REASON in (forced.ev[0].reroute_reason or ""), forced.ev[0]
     return native, forced
 
 
@@ -129,9 +128,7 @@ def assert_same_as_oracle(native: Run, forced: Run, *, expect_native: bool = Tru
     if expect_native:
         assert native.ev[0].reroute_reason is None
     assert forced.ev[0].native_admitted is False, forced.ev[0]
-    assert f"{FORCE_STRATEGY}_not_native_chunked_route:{FORCE}" in (
-        forced.ev[0].reroute_reason or ""
-    )
+    assert FORCE_REASON in (forced.ev[0].reroute_reason or "")
     assert len(native.out) == len(forced.out) == len(native.sink) == len(forced.sink)
     for i, (got, want) in enumerate(zip(native.out, forced.out, strict=True)):
         assert identical(got, want.drop_columns([FORCE])), i

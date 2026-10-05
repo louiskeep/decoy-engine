@@ -106,13 +106,30 @@ FORCE_ORACLE_VALUE = "2020-03-15"
 
 
 def force_oracle(name: str) -> dict[str, Any]:
-    """A column the chunked dispatcher still vetoes (`group_key`), so a table that
-    carries it runs on the oracle route. It groups by itself (`group_by=<name>`), so
-    it needs no sibling column and works over any hashable-safe source, and its source
-    column holds `FORCE_ORACLE_VALUE`. Callers assert `native_admitted is False` plus
-    the exact column-qualified `group_key_not_native_chunked_route:<name>` reason,
-    so a forced leg cannot silently become a native run."""
-    return {"name": name, "strategy": "group_key", "provider_config": {"group_by": name}}
+    """A column that is never native-admissible, so a table that carries it runs on the
+    oracle route. It is a deterministic categorical with NUMERIC categories: the native
+    categorical domain is all-string categories, so the dispatcher declines it with
+    `fallback_policy_not_native:<name>:python_only`. `deterministic` and the namespace are
+    both required: without them the config is rejected before routing. Callers assert
+    `native_admitted is False` plus that exact column-qualified reason, so a forced leg
+    cannot silently become a native run. Its source column holds `FORCE_ORACLE_VALUE`."""
+    return {
+        "name": name,
+        "strategy": "categorical",
+        "deterministic": True,
+        "namespace": f"force_oracle/{name}",
+        "provider_config": {"categories": [1, 2, 3]},
+    }
+
+
+def is_forced(col: dict[str, Any]) -> bool:
+    """True for a column built by `force_oracle`."""
+    return str(col.get("namespace", "")).startswith("force_oracle/")
+
+
+def forced_reason(name: str) -> str:
+    """The exact reason the dispatcher gives for a `force_oracle(name)` column."""
+    return f"fallback_policy_not_native:{name}:python_only"
 
 
 def faker_col(name: str) -> dict[str, Any]:

@@ -103,9 +103,10 @@ def phase3_c1_eligibility(
     faker_columns: list[tuple[str, dict[str, Any]]] = []
     faker_names: set[str] = set()
     # C1 IS the chunked route, and `native_route_eligibility` is route-agnostic:
-    # it admits the full-frame-only strategies the chunked dispatcher vetoes
-    # (`_dispatch._static_route_decision`). Apply the same veto, with the same
-    # reason code, so this predicate cannot admit a table that route refuses.
+    # it admits whatever full-frame-only strategy the chunked dispatcher vetoes
+    # (`_dispatch._static_route_decision`; the set is empty since group_key left it in C3).
+    # Apply the same veto, with the same reason code, so this predicate cannot admit a
+    # table that route refuses.
     chunked_vetoes: list[str] = []
     if table_cfg is not None:
         for col in table_cfg.get("columns", ()) or ():

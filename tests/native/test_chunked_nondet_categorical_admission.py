@@ -48,6 +48,7 @@ from tests.native._chunked_entry_support import (
     TABLE,
     column_values,
     force_oracle,
+    forced_reason,
     hash_col,
     key_provider,
     split,
@@ -550,7 +551,7 @@ def test_the_forced_oracle_leg_runs_the_seeded_column_on_the_oracle_with_the_exa
     chunks = [with_force(c) for c in split(source(["a", "b", "c", "a", "b"]), 2)]
     forced = run_one(make_config([_nd(), passthrough("p"), force_oracle(FORCE)]), chunks)
     assert forced.ev[0].native_admitted is False
-    assert f"group_key_not_native_chunked_route:{FORCE}" in (forced.ev[0].reroute_reason or "")
+    assert forced_reason(FORCE) in (forced.ev[0].reroute_reason or "")
     assert forced.ev[0].compiled_kernel_executed is False
     native = run_one(
         make_config([_nd(), passthrough("p")]), split(source(["a", "b", "c", "a", "b"]), 2)

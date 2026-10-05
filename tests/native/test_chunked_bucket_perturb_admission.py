@@ -23,7 +23,7 @@ from decoy_engine.execution.native._phase3_eligibility import phase3_c1_eligibil
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
-from tests.native._b8_support import identical, run_one
+from tests.native._b8_support import FORCE_REASON, identical, run_one
 from tests.native._chunked_bucket_perturb_support import (
     FORCE,
     assert_same_as_oracle,
@@ -45,8 +45,6 @@ from tests.native._chunked_entry_support import (
     redact,
     split,
 )
-
-VETOED = "group_key_not_native_chunked_route"
 
 
 def _check(config: dict[str, Any], table: str = TABLE) -> None:
@@ -81,7 +79,7 @@ def test_bucket_perturb_is_not_in_the_chunked_veto_set() -> None:
     from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 
     assert "bucket_perturb" not in CHUNKED_ROUTE_VETOED_STRATEGIES
-    assert frozenset({"group_key"}) == CHUNKED_ROUTE_VETOED_STRATEGIES
+    assert frozenset() == CHUNKED_ROUTE_VETOED_STRATEGIES
 
 
 def test_config_only_eligibility_mirror_admits_an_admissible_bucket_perturb() -> None:
@@ -89,10 +87,10 @@ def test_config_only_eligibility_mirror_admits_an_admissible_bucket_perturb() ->
     assert not any("bucket_perturb_not_native_chunked_route" in r for r in result.reasons)
 
 
-def test_config_only_eligibility_mirror_still_vetoes_the_other_strategies() -> None:
+def test_config_only_eligibility_mirror_still_declines_a_non_native_column() -> None:
     result = phase3_c1_eligibility(make_config([bp_col(), force_oracle("b")]), table=TABLE)
     assert result.admitted is False
-    assert f"{VETOED}:b" in result.reasons
+    assert "categorical_categories_not_all_string:b" in result.reasons
     assert not any(r.startswith("bucket_perturb_not_native_chunked_route") for r in result.reasons)
 
 
@@ -128,7 +126,7 @@ def test_a_still_vetoed_column_beside_bucket_perturb_sends_the_table_to_the_orac
     config = make_config([bp_col(), force_oracle(FORCE), passthrough("p")])
     run = run_one(config, [with_force(c) for c in split(_valued(), 4)])
     assert run.ev[0].native_admitted is False
-    assert f"{VETOED}:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert FORCE_REASON in (run.ev[0].reroute_reason or "")
     assert "bucket_perturb_not_native_chunked_route" not in (run.ev[0].reroute_reason or "")
 
 
@@ -242,7 +240,7 @@ def test_an_invalid_but_truthy_format_raises_the_same_error_on_both_legs() -> No
     assert type(native_exc.value) is type(oracle_exc.value)
     assert len(forced_ev) == 1
     assert forced_ev[0].native_admitted is False
-    assert f"{VETOED}:{FORCE}" in (forced_ev[0].reroute_reason or "")
+    assert FORCE_REASON in (forced_ev[0].reroute_reason or "")
 
 
 @NEEDS_COMPANION
@@ -367,7 +365,7 @@ def test_companion_absent_run_matches_a_forced_oracle_run(monkeypatch: pytest.Mo
     )
     assert absent.ev[0].native_admitted is False
     assert forced.ev[0].native_admitted is False
-    assert f"{VETOED}:{FORCE}" in (forced.ev[0].reroute_reason or "")
+    assert FORCE_REASON in (forced.ev[0].reroute_reason or "")
     assert len(absent.out) == len(forced.out)
     for got, want in zip(absent.out, forced.out, strict=True):
         assert identical(got, want.drop_columns([FORCE]))
