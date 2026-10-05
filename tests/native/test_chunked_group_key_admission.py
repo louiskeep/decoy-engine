@@ -582,10 +582,10 @@ def test_an_empty_chunk_is_branch_counted_but_reports_idle(monkeypatch: pytest.M
     col = _agg(run)[TARGET]
     assert col["planned_backend"] == "rust_companion"
     assert col["executed_backend"] == "arrow_python"
-    assert run.sink[0].quality_metrics["chunked_route"]["columns"][1]["executed_backend"] in {
-        "arrow_python",
-        "rust_companion",
-    }
+    assert (
+        run.sink[0].quality_metrics["chunked_route"]["columns"][1]["executed_backend"]
+        == "arrow_python"
+    )
 
 
 @NEEDS_COMPANION

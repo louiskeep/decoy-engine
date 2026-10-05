@@ -80,8 +80,9 @@ chunk boundaries. Everything else stays on the oracle leg, reproducibly and with
 a wider sibling (`int32`, `uint64`, `large_string`, dictionary, date, timestamp)
 reroutes with `fallback_policy_not_native:<column>:python_only` (the static plan rejects it
 from the real first-chunk type; the group_key-specific `group_key_sibling_type_not_native` is a
-defense-in-depth code surfaced only for an exotic/union sibling or one absent from the first
-chunk), a masked sibling with
+defense-in-depth code surfaced only for an exotic/union sibling the static plan cannot classify;
+a sibling absent from the first chunk is reported earlier by the coverage gate as
+`missing_configured_columns`), a masked sibling with
 `group_key_masked_sibling_not_native_chunked_route`, a self-anchor with
 `group_key_self_anchor_not_native_chunked_route`, and a missing or broken raw-hex kernel
 with `raw_hex_extension_unavailable`. Float and decimal siblings, `when:` and FK-key edges keep
