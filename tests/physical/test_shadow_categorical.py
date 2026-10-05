@@ -163,9 +163,16 @@ def _chunked_preflight(tmp_path: Path, column: dict[str, Any], values: list[Any]
     )
 
 
+# Non-deterministic string categorical is native-admissible since C1b-ii (seeded +
+# position-keyed on the chunked fast path), same as the deterministic case.
 @_NEEDS_COMPANION
-def test_chunked_route_admits_native_admissible_categorical(tmp_path: Path) -> None:
-    preflight = _chunked_preflight(tmp_path, _cat_column({"categories": _UNI}), ["x", "y", "z"])
+@pytest.mark.parametrize("deterministic", [True, False], ids=["deterministic", "non_deterministic"])
+def test_chunked_route_admits_native_admissible_categorical(
+    tmp_path: Path, deterministic: bool
+) -> None:
+    preflight = _chunked_preflight(
+        tmp_path, _cat_column({"categories": _UNI}, deterministic=deterministic), ["x", "y", "z"]
+    )
     assert preflight.evidence.native_admitted is True
     assert preflight.evidence.reroute_reason is None
     assert preflight.index_kernel is not None
@@ -175,9 +182,8 @@ def test_chunked_route_admits_native_admissible_categorical(tmp_path: Path) -> N
     "column",
     [
         _cat_column({"categories": [1, 2, 3]}),
-        _cat_column({"categories": _UNI}, deterministic=False),
     ],
-    ids=["numeric_categories", "non_deterministic"],
+    ids=["numeric_categories"],
 )
 def test_chunked_route_declines_non_admissible_categorical(
     tmp_path: Path, column: dict[str, Any]
