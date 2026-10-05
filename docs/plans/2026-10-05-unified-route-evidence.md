@@ -1,4 +1,4 @@
-Status: plan (revision 1, author = Opus). Awaiting Codex plan gate.
+Status: plan (revision 2, author = Opus). Codex plan-gate round 1 REVISE (1 HIGH, 3 MEDIUM) folded; awaiting round 2.
 
 # Unified-slice per-column route evidence
 
@@ -37,13 +37,16 @@ Out of scope:
    | categorical | always True | yes, `_categorical_ext` calls `derive_index_batch` unconditionally (~:36) |
    | bucket_perturb | always True | NO, the helper short-circuits; this is a lie today |
    | date_shift | always True | NO, the helper short-circuits; this is a lie today |
-   | group_key | `sum(derive_calls) > 0` | already truthful (empty is False; all-null hashes `"None"`, so it is NOT idle) |
+   | group_key | `sum(derive_calls) > 0` (per batch; overwritten each batch, see 3c) | empty is False; an all-null sibling still stringifies (to `"None"` or `"<NA>"`, `_group_key_kernel.py:80`) and invokes Rust, so it is NOT idle |
    | redact, truncate, passthrough | stays False | none; they run as Arrow/Python |
 
    `batches_run` increments once per operator invocation (~:302).
 3. **Timing.** The coordinator wraps each node's whole run in ONE `timed_strategy(node.strategy, ",".join(node.columns))` scope (`_shadow_coordinator.py:317`). That produces one `StrategyTimingRecord(strategy_type, column, elapsed_ms, peak_memory_delta_kb)` per node (`instrumentation/timing.py:66`). Records carry no node id. Admitted unified nodes are scalar, single-column and unique per table, so `(strategy, column)` identifies a node.
 4. **D7.** Hash and Faker must show `compiled_kernel_executed=True` (`_unified_slice.py`, positive-kernel set); a miss raises `UnifiedSliceInvariantError`.
-5. **Consumers.** No engine code outside tests reads the `nodes` dict. Engine tests read individual fields. The platform reads `activated` only.
+5. **Consumers.** No engine production code reads the `nodes` dict, and the platform reads `activated` only. Three tests WILL need evidence-assertion updates (corrected in rev 2):
+   - `test_unified_slice_parity.py:266` and `test_unified_slice_faker.py:248` compare the whole three-key dict.
+   - `test_shadow_date_shift.py:648-667` parametrizes empty/all-null shapes and asserts `compiled_kernel_executed=True`, which 3c makes False for the idle shapes.
+6. **All-unparseable date_shift never publishes evidence on the production lane.** Its row errors make finalize raise `RowErrorsFailedError` (`_pipeline_finalize.py:440`), and the lane's generic boundary reroutes it (`_unified_slice.py:425`). That is the deferred finalize-reroute ticket, out of scope here.
 
 ## 3. Decisions
 
@@ -59,7 +62,9 @@ Import the constants from `_chunked_evidence`; do not restate the strings. Put t
 - Arrow operators: `arrow_python`.
 - Kernel-idle work is NOT an invariant failure, apart from D7 (hash and Faker, which always call their kernel).
 
-**3c. Truthful bucket_perturb and date_shift.** `run_operator` passes a `derive_calls` list to `native_bucket_perturb` / `native_date_shift`, the same way the group_key branch does, and sets `compiled_kernel_executed = sum(derive_calls) > 0`. The kernels, outputs and the chunked route are untouched.
+**3c. Truthful bucket_perturb and date_shift, accumulated across batches.** `run_operator` passes a `derive_calls` list to `native_bucket_perturb` and, through `_run_date_shift`, to `native_date_shift`. The coordinator reuses ONE `OperatorCallEvidence` per node across all batches (`_shadow_coordinator.py:314`, batch loop ~:345), so the flag must accumulate monotonically: `evidence.compiled_kernel_executed = evidence.compiled_kernel_executed or sum(derive_calls) > 0`. This is the chunked route's "any compiled chunk wins" rule (`_chunked_evidence.py:112`). A valid batch followed by an all-null batch therefore stays compiled.
+
+Apply the same monotonic form to group_key's existing assignment (`_shadow_operators.py` ~:292), which has the same overwrite bug across batches today (Codex round 1 HIGH). The kernels, outputs and the chunked route are untouched.
 
 **3d. `calls`** = `OperatorCallEvidence.batches_run`: the operator's batch invocations. The program's "call count" means invocations of the column's operator; compiled-kernel call counts stay internal. This matches the chunked route's per-chunk invocation semantics.
 
@@ -96,11 +101,19 @@ It returns the JSON-safe dict. `_execute_admitted` calls it in place of the inli
 1. **Exact evidence per operator.** One production-lane table per operator, plus a mixed table holding every admitted operator. Each node's dict equals exactly: `operator`, `executed=True`, `compiled_kernel_executed`, `planned_backend`, `executed_backend`, `calls`, and `elapsed_ms` (asserted as a float ≥ 0; not exact). Expected backends per 3a/3b. Output is unchanged versus main: same bytes as the lane-off oracle, and the oracle is poisoned during lane runs.
 2. **Idle rules on the production lane:**
    - empty table: bucket_perturb, date_shift and group_key report `arrow_python` with `compiled_kernel_executed=False`
-   - all-null and all-unparseable bucket_perturb / date_shift: `arrow_python`
+   - all-null bucket_perturb and date_shift: `arrow_python`
+   - All-unparseable date_shift (and any input with row errors) is asserted at the coordinator / `assemble_node_evidence` seam, before finalize: idle → `arrow_python`. Separately, on the production lane, the existing `RowErrorsFailedError` and row-error parity with the oracle are asserted, with no oracle poisoning (the reroute is existing behavior, fact 6).
+2b. **Batch accumulation (3c):** at the coordinator seam with a small `batch_size_rows`, assert per operator (bucket_perturb, date_shift, group_key):
+   - valued batch then idle batch → compiled, planned backend
+   - idle batch then valued batch → compiled
+   - all batches idle → `arrow_python`
+   Also on the production lane: 50,000 valid dates followed by one null row → `rust_companion`.
    - all-null group_key: `rust_companion`
    - empty hash, categorical and Faker: their planned backend, with `compiled_kernel_executed=True`, and no invariant raised
 3. **`calls`:** 50,001 rows across the default 50,000-row batch gives `calls == 2` for every node. A 1-row table gives `calls == 1`.
-4. **`assemble_node_evidence` unit tests** (pure seam). Each of these raises `UnifiedSliceInvariantError`:
+4. **`assemble_node_evidence` unit tests** (pure seam).
+   - Timing attribution: two admitted columns with the SAME strategy (e.g. two redact columns, two hash columns), timing records supplied in shuffled order with distinct known `elapsed_ms` values. Assert the exact rounded `elapsed_ms` per node; this kills strategy-only joins, swapped joins and constant timings.
+   - Each of these raises `UnifiedSliceInvariantError`:
    - a missing node
    - a not-executed node
    - an operator mismatch
@@ -112,13 +125,17 @@ It returns the JSON-safe dict. `_execute_admitted` calls it in place of the inli
    Kernel-idle bucket_perturb, date_shift and group_key does NOT raise. The JSON-safety check is `json.dumps` of the result.
 5. **Shared rule:** a test proves the unified and chunked routes call the same executed-backend helper (monkeypatch it, and both routes observe the patched rule).
 6. **Map coverage sentry:** the operator-to-backend map's keys equal `ALLOWED_OPERATOR_IDS`.
-7. **Pure moves:** the reconstruction body is byte-identical (diff check in the build record), and `test_unified_slice_parity.py` stays green unchanged.
+7. **Pure moves:** the reconstruction body is byte-identical apart from parameters and imports (diff check in the build record). It keeps the same ownership of `candidate.source_frame`, the same exception scope and the same timing boundaries; if the clock call moves, the module-local clock patch in `test_unified_slice_timings.py:199` moves with it.
+   - **Allowed test updates are exactly:** the whole-dict evidence assertions in `test_unified_slice_parity.py:266` and `test_unified_slice_faker.py:248`, updated to the new 7-key dict; and the idle shapes in `test_shadow_date_shift.py:648-667`, changed to expect `compiled_kernel_executed=False`.
+   - Every value, schema, error and row-error parity assertion in those files stays unchanged.
 8. **Companion-absent clean env:** evidence tests are guarded with `@NEEDS_COMPANION` where native.
 
 Mutation targets (each must be killed):
 - map Faker to `rust_companion`
 - treat idle as planned
 - drop the bucket `derive_calls` spy (set True)
+- drop the date_shift `derive_calls` spy
+- overwrite instead of accumulate across batches (non-monotonic flag)
 - raise on idle group_key
 - report `calls` as a constant 1
 - join timings by strategy only
@@ -132,5 +149,14 @@ Mutation targets (each must be killed):
 
 ## 7. Open questions for the plan gate
 
-1. Is `calls` = operator batch invocations the right reading of the program's "call count", or should it count compiled-kernel invocations (where those differ, e.g. bucket_perturb's per-unique-size derives)?
-2. Does any test or doc pin `compiled_kernel_executed=True` for an empty or all-null bucket_perturb / date_shift on the full-frame route (which 3c makes False)?
+Round 1 answers (Codex):
+1. Keep `calls` as operator batch invocations; the chunked route likewise counts one per chunk (`_chunked_evidence.py:155`). Compiled execution is proven by `compiled_kernel_executed` / `executed_backend`, not `calls`. Legitimate idle exceptions to "zero compiled-call wording" are the documented idle rules (3b).
+2. Yes for date_shift (`test_shadow_date_shift.py:648-667`), now an allowed update (section 5 item 7); no bucket equivalent.
+
+## 8. Plan-gate history
+
+- Round 1 (Codex, gpt-6-astra): REVISE, 1 HIGH / 3 MEDIUM, all folded in rev 2.
+  - HIGH: per-batch overwrite loses compiled evidence → monotonic accumulation, including the group_key fix.
+  - MEDIUM: three tests pin the old evidence → explicit, bounded update list.
+  - MEDIUM: all-unparseable date_shift cannot publish evidence → assert at the seam, plus the production exception parity.
+  - MEDIUM: timing attribution not proven → same-strategy shuffled-records test.
