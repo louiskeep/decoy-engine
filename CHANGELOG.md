@@ -9,6 +9,34 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (non-deterministic reuse Faker is position-keyed on the job seed, 2026-10-05)
+
+OUTPUT BREAK, pre-GA, owner-approved. Every `faker` column with `deterministic: false` and
+`cardinality_mode: reuse` (the default) changes output once. It used to draw all its row
+indices from one `numpy` stream seeded only by `job_seed`, so two non-deterministic Faker
+columns with the same pool size drew the same indices, and two columns with the same provider,
+locale and config (and no namespace) came out identical row for row. Row `g` now takes
+`pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool_size)]`, where `g`
+is the row's ordinal in the frame the handler receives (the physical row for a plain table,
+the match ordinal under `when:`, the synthetic-frame ordinal under FK orphan remapping, the
+flattened leaf ordinal for a nested child). `selection_namespace` is the configured
+`namespace`, else a default built from the table and column names, so columns without a
+namespace no longer share a stream. Columns that share an explicit namespace still do. The
+same job seed and input give the same output, as before, and the draw still ignores the
+source value. The key is `job_seed`, not `mask_key`.
+
+The value pool is built exactly as before and the selection namespace never reaches the build,
+so pool contents are unchanged. Non-deterministic `unique`, `match_source_cardinality` and
+`scale_source_cardinality` keep their whole-column draw, deterministic Faker is unchanged, and
+generation (including composites) is byte-identical. A non-deterministic reuse column with no
+namespace now needs the table name from the execution context; a caller that dispatches a
+handler without setting it gets `faker_positional_table_unknown`. Every engine dispatch path
+sets it. The draw-site metadata gains `mask.faker_nondeterministic` (seeded, partitionable by
+row ordinal); the earlier public text that said this mode "differs run to run" or draws from
+an unseeded generator was wrong and is corrected. No routing outcome changed: the chunked,
+out-of-core, native and unified routes still decline the column, with truthful reasons, and
+the multi-table split still treats its table as whole while siblings dispatch.
+
 ### Added (route evidence on the unified slice, 2026-10-05)
 
 Each node entry under `quality_metrics["unified_slice_activation"]["nodes"]` now carries three more

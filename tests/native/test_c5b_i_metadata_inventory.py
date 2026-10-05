@@ -126,7 +126,8 @@ class TestInventoryDocument:
 
 # ---- stale-prose gate (Faker) ---------------------------------------------------------------
 
-_STALE = re.compile(r"unseeded|differs run to run|two runs differ|chunk-variant", re.I)
+# `unseeded` as a word; the `UnseededProvider` class name is not a claim about Faker.
+_STALE = re.compile(r"unseeded(?![a-z])|differs run to run|two runs differ|chunk-variant", re.I)
 _FAKER = re.compile(r"faker", re.I)
 _SCOPE_DIRS = ("src/decoy_engine/execution",)
 _SCOPE_FILES = (

@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 32 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 33 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 21 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 13, `numpy_pcg64` 8, `faker_seed_instance`
+- 22 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 14, `numpy_pcg64` 8, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -93,7 +93,7 @@ both named honestly in the catalog's `entropy_root` field.
 
 ---
 
-## Family: source_keyed_hmac (13 sites)
+## Family: source_keyed_hmac (14 sites)
 
 The HMAC/HKDF digest IS the pseudo-randomness. There is no RNG object and no
 stream position. Every site keys on the source value (or, for `code_set` in
@@ -170,12 +170,32 @@ version only: the modular index shifts if `row_count` changes.
 `HMAC-SHA256(mask_key, matched_text)`. The span text keys the shift.
 
 ### mask.faker
-`execution/_strategies/_faker.py:102`. The masking `faker` strategy. The
-value-visible draw is the pool SELECTION: `PoolSampler.sample` runs a per-row
-`derive_index(mask_key, namespace, canonical(source), pool.size)` over a
-provider value pool. Deterministic selection re-keys onto `mask_key`; the pool
-BUILD stays on `job_seed` (see `gen.pool_build_faker`). Non-deterministic mode
-selects with `np.random.default_rng` off `job_seed` and is not partitionable.
+`execution/_strategies/_faker.py:98`. The masking `faker` strategy, deterministic
+selection. The value-visible draw is the pool SELECTION: `PoolSampler.sample` runs a
+per-row `derive_index(mask_key, namespace, canonical(source), pool.size)` over a provider
+value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_seed` (see
+`gen.pool_build_faker`). Non-deterministic `reuse` is a separate site,
+`mask.faker_nondeterministic`. Non-deterministic `unique`, `match_source_cardinality` and
+`scale_source_cardinality` still draw whole-column from `np.random.default_rng` off
+`job_seed` through `PoolSampler` (`gen.pool_nondeterministic`) and are not partitionable.
+
+### mask.faker_nondeterministic
+`execution/_strategies/_faker.py:98`. Position-keyed on `job_seed`, for non-deterministic
+`cardinality_mode: reuse`. Row `g` takes
+`pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool_size=pool.size)]`,
+where `g = ctx.row_offset + i` and `i` is the row's ordinal in the frame the handler
+receives: the physical row for a whole-frame table, the match ordinal under `when:`, the
+synthetic-frame ordinal under FK orphan remapping, the flattened leaf ordinal for a nested
+child. `encode_int` is the public `decoy_engine.kernel` encoder, the canonical integer
+encoding the native batch kernel applies to a `uint64` key column. The source value is
+ignored; a null row keeps its ordinal and emits null. The selection namespace is the
+configured `namespace`, else `faker-nd/{len(table)}:{table}/{len(column)}:{column}`
+(length-prefixed so path-like names cannot collide; a nested child uses the outer column).
+`None` and `""` both mean "not configured". The pool is built exactly as before, from the
+original namespace; the selection namespace never reaches the build. The key is `job_seed`,
+not `mask_key`: non-deterministic mode generates fresh values and does not re-identify a
+source value. Partitionable by row ordinal; the whole-frame oracle is the only
+implementation today.
 
 ### gen.pool_deterministic
 `generation/pool/_sampler.py:225`.
@@ -508,7 +528,7 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (32 sites; 21
+Registry: exactly one provider per catalogued `draw_site_id` (33 sites; 22
 partitionable, 11 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
@@ -541,6 +561,7 @@ from `DRAW_SITES`.
 | mask.code_set                     | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.date_shift                   | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.faker                        | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.faker_nondeterministic       | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v7 |

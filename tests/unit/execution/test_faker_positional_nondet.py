@@ -636,7 +636,7 @@ class TestRoutingConstant:
         chunked = decision.rejections["chunked"]
         assert chunked.startswith("chunked_strategy_conditions_unmet: column(s) f (faker: ")
         head = chunked.split(". faker/categorical", 1)[0]
-        assert head.count("; ") + 1 == unmet
+        assert head.count("requires ") == unmet
         assert "requires deterministic: true" in head
 
     @pytest.mark.parametrize(("mode", "namespace", "unmet"), _ROUTE_CASES[:2])

@@ -215,10 +215,11 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
     cfg = col_entry.get("provider_config") or {}
     failures: list[str] = []
     if not col_entry.get("deterministic"):
-        failures.append(
-            "requires deterministic: true (the non-deterministic path draws "
-            "per-row randomness, which is chunk-variant)"
-        )
+        if strategy == "faker" and col_entry.get("cardinality_mode") in (None, "reuse"):
+            why = "position-keyed; chunked implementation deferred to C5b-ii"
+        else:
+            why = "whole-column draw; not chunk-safe"
+        failures.append(f"requires deterministic: true ({why})")
     if not col_entry.get("namespace"):
         failures.append("requires a namespace (the value-keyed mapping derives from it)")
     if strategy == "faker":

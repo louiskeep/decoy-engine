@@ -576,13 +576,13 @@
       ],
       "output": [
         {
-          "first_name": "Jerry"
+          "first_name": "Meagan"
         },
         {
-          "first_name": "Paul"
+          "first_name": "Victoria"
         },
         {
-          "first_name": "Tara"
+          "first_name": "Amber"
         }
       ],
       "invariant": "Values are replaced with synthetic provider output drawn from a value pool, not the originals."
