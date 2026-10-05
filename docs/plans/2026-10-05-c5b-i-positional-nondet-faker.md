@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan-gate round 1 REVISE (2 HIGH, 3 MEDIUM) folded; awaiting round 2.
+Status: plan (revision 2.1, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 closed all five round-1 findings with 1 new MEDIUM (an ambiguous default-namespace encoding), folded here as length-prefixed components.
 
 # C5b-i: position-keyed non-deterministic Faker (oracle semantics, routes held constant)
 
@@ -25,7 +25,7 @@ value = pool.values[idx]
 - **Nulls.** Null rows are restored positionally and still consume their ordinal (the same rule as today's REUSE and as C1b).
 - **`encode_int`** is the public `decoy_engine.kernel.encode_int`. It is the canonical integer encoding `derive_index_batch` applies to an integer column, so C5b-ii's native uint64 key path is byte-identical with no rework (C1b-ii proved this for categorical).
 - **Batch form.** The oracle uses the index kernel in batch over the integer keys: the compiled `derive_index_batch` when the companion is present, the byte-identical reference otherwise. This is the same "compiled if present, reference otherwise" pattern `PoolSampler._deterministic` uses. Do not use a per-row Python loop; Faker columns are large.
-- **`selection_namespace`** is `plan.namespace` when it is a non-empty string. Otherwise (`None` OR `""`; rev 2) it is a per-column default `faker-nd/{table}/{column}`, so two namespace-less columns never share a stream. That fixes the existing identical-columns bug (section 2, fact 3). The prefix keeps the default out of the space users normally write.
+- **`selection_namespace`** is `plan.namespace` when it is a non-empty string. Otherwise (`None` OR `""`; rev 2) it is a per-column default built from the table and column with an UNAMBIGUOUS, length-prefixed encoding (rev 2.1): `f"faker-nd/{len(table)}:{table}/{len(column)}:{column}"`. Plain `faker-nd/{table}/{column}` would let table `a/b` + column `c` collide with table `a` + column `b/c`, since names are unrestricted strings (`config/_tables.py:61,273`). So two namespace-less columns never share a stream. That fixes the existing identical-columns bug (section 2, fact 3). The prefix keeps the default out of the space users normally write.
   - `table` is `ctx.current_table`.
   - `column` is `ctx.nested_outer_column` when the handler runs as a nested strategy's child, otherwise the handler's `column` argument (3b).
   - The pool is still built with the ORIGINAL `plan.namespace` (`None` or `""` unchanged), so pool identity is untouched.
@@ -123,6 +123,7 @@ All other modes call `PoolSampler().sample(...)` exactly as today. Reuse the uin
     - Two namespace-less nested Faker columns in one table differ. Sparse leaf matches, multiple leaves and null leaves keep their flattened ordinal rules.
     - An empty-string namespace behaves exactly like `None`: it gets the default, keeps today's pool, and does not crash (regression).
     - An empty `current_table` raises `faker_positional_table_unknown`.
+    - Encoding regression: table `exports/customer` + column `name` and table `exports` + column `customer/name` resolve to DIFFERENT selection namespaces, and draw different values (each verified independently against the formula).
 11. **Offsets and frames.**
     - Nonzero-offset KATs for both the scalar and batch paths (`row_offset=1000`).
     - A fixture where `mask_key` and `job_seed` differ, proving the key is `job_seed`.
@@ -140,6 +141,7 @@ Mutation targets (each must be killed):
 - route UNIQUE through the new draw
 - build the pool with the selection namespace
 - treat `""` as a real namespace
+- join the default components with a plain `/` (no length prefix)
 - use the synthetic `_nested_leaves` column instead of `nested_outer_column`
 
 ## 6. Risk, rollback, gates
@@ -156,3 +158,4 @@ Mutation targets (each must be killed):
   - MEDIUM: test gaps → nonzero offsets, distinct keys, `when:`, orphan and multi-table tests.
   - MEDIUM: metadata consumers → keep the deterministic strategy mapping, catalogue a separate site, update goldens and structural checks.
 - Codex answers: the plan field would have been safe only with serialization work (moot now); no unseeded-label route trap exists for Faker; match-ordinal semantics under `when:` are consistent with the approved contract.
+- Round 2 (Codex, gpt-6-astra): all round-1 findings CLOSED. 1 new MEDIUM: the `faker-nd/{table}/{column}` default was ambiguous for path-like names. Folded in rev 2.1 as length-prefixed components plus a regression test. Proceeding to build; the final code gates verify it.
