@@ -21,7 +21,13 @@ The job now owns one pool cache that the unified slice and the pandas route shar
 Faker provider's code runs at most once per job even when the unified slice hands the table to
 the pandas route. A rebound provider that yields non-string values reroutes to the pandas
 route after one build. A provider failure or a pool larger than the cache budget raises the
-same error the pandas route raises, after one invocation, with no reroute.
+same error the pandas route raises (same type, code, message and cause chain), after one
+invocation, with no reroute.
+
+On the unified slice, columns now run in the pandas route's order (sorted by column name)
+instead of config order, so providers with state, and the error raised when two columns
+fail, match the pandas route whatever order the config lists the columns in. Output
+columns keep the source order.
 
 ### Fixed (unified slice ignored `native_threads`, 2026-10-05)
 
