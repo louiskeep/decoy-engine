@@ -9,6 +9,26 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (pooled Faker on the unified slice, 2026-10-05)
+
+A deterministic, reuse-mode `faker` column (`person_first_name` or `person_last_name`, explicit
+`namespace` and `pool_size`, `string` source, no `when` or `vault`, table outside any
+relationship) now runs on the single-table unified slice instead of declining the whole table
+to the pandas full-frame route. Output is byte-and-type-identical to the pandas route. Every
+other Faker shape keeps declining as before, including `large_string` sources.
+
+The job now owns one pool cache that the unified slice and the pandas route share, so a
+Faker provider's code runs at most once per job even when the unified slice hands the table to
+the pandas route. A rebound provider that yields non-string values reroutes to the pandas
+route after one build. A provider failure or a pool larger than the cache budget raises the
+same error the pandas route raises, after one invocation, with no reroute.
+
+### Fixed (unified slice ignored `native_threads`, 2026-10-05)
+
+`run_pipeline` now forwards its `native_threads` value into the unified slice. Before, every
+compiled unified-slice operator ran with the default of one thread regardless of the grant.
+Output does not depend on the thread count.
+
 ### Added (seeded non-deterministic categorical on the native chunked route, 2026-10-04)
 
 A non-deterministic `categorical` column with a namespace, explicit string categories (no
