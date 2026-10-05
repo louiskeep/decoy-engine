@@ -245,6 +245,7 @@ def run_operator(
             )
         if index_kernel is None:  # pragma: no cover - the coordinator loads it first
             raise AssertionError("bucket_perturb node reached run_operator with no index_kernel")
+        bucket_calls: list[int] = []
         out = native_bucket_perturb(
             array,
             bucket=binding.bucket_perturb_bucket,
@@ -253,8 +254,12 @@ def run_operator(
             namespace=binding.key_binding.namespace,
             index_kernel=index_kernel,
             native_threads=ctx.native_threads,
+            derive_calls=bucket_calls,
         )
-        evidence.compiled_kernel_executed = True
+        # Any compiled batch wins: the evidence object lives across all of a node's batches.
+        evidence.compiled_kernel_executed = (
+            evidence.compiled_kernel_executed or sum(bucket_calls) > 0
+        )
     elif binding.operator_id == _GROUP_KEY:
         # group_key is the one operator whose input is NOT the target column and
         # NOT the bare `array`: the coordinator feeds the SIBLING as a
@@ -289,12 +294,22 @@ def run_operator(
                 detail=f"operator={binding.operator_id!r}: compiled raw-hex companion unavailable",
             ) from exc
         # An empty column loads the kernel (the companion probe) but derives nothing.
-        evidence.compiled_kernel_executed = sum(derive_calls) > 0
-    elif binding.operator_id == _DATE_SHIFT:
-        out, row_errors = _run_date_shift(
-            array, binding=binding, ctx=ctx, index_kernel=index_kernel, column=column
+        evidence.compiled_kernel_executed = (
+            evidence.compiled_kernel_executed or sum(derive_calls) > 0
         )
-        evidence.compiled_kernel_executed = True
+    elif binding.operator_id == _DATE_SHIFT:
+        date_shift_calls: list[int] = []
+        out, row_errors = _run_date_shift(
+            array,
+            binding=binding,
+            ctx=ctx,
+            index_kernel=index_kernel,
+            column=column,
+            derive_calls=date_shift_calls,
+        )
+        evidence.compiled_kernel_executed = (
+            evidence.compiled_kernel_executed or sum(date_shift_calls) > 0
+        )
     else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
         raise AssertionError(f"unbound operator id {binding.operator_id!r}")
     evidence.actual_operator = binding.operator_id
@@ -310,6 +325,7 @@ def _run_date_shift(
     ctx: ShadowContext,
     index_kernel: IndexDerivationKernel | None,
     column: str | None,
+    derive_calls: list[int],
 ) -> tuple[pa.Array, tuple[RowError, ...]]:
     if binding.key_binding is None:  # pragma: no cover - C0 always binds this
         raise AssertionError("date_shift node reached run_operator with no KeyBinding")
@@ -336,6 +352,7 @@ def _run_date_shift(
         namespace=binding.key_binding.namespace,
         index_kernel=index_kernel,
         native_threads=ctx.native_threads,
+        derive_calls=derive_calls,
     )
     errors = tuple(
         RowError(column=column, row_index=i, trigger="format_error", reason=FORMAT_ERROR_REASON)

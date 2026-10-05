@@ -267,7 +267,14 @@ def test_faker_case_stamps_positive_kernel_evidence_when_companion_available(
         "operator": "native_faker_select",
         "executed": True,
         "compiled_kernel_executed": True,
+        "planned_backend": "rust_pool_select",
+        "executed_backend": "rust_pool_select",
+        "calls": 1,
     }
+    # Per-column elapsed time is published through `timings` only (one record per
+    # admitted node), never in quality_metrics, so the evidence stays deterministic.
+    faker_timings = [r for r in on.timings if (r.strategy_type, r.column) == ("faker", "c")]
+    assert len(faker_timings) == 1 and faker_timings[0].elapsed_ms >= 0.0
 
 
 # ---------------------------------------------------------------------------

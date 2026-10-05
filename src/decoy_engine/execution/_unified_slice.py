@@ -69,13 +69,6 @@ __all__ = [
 # absent flag-off, and compares every OTHER quality_metrics leaf exactly.
 QUALITY_METRICS_KEY = "unified_slice_activation"
 
-# Operators whose "the compiled kernel really ran" claim must be observed, not
-# inferred: a completed node of one of these without positive evidence is an
-# admission bug.
-_POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
-    {_admission.HASH_OPERATOR_ID, _admission.FAKER_OPERATOR_ID}
-)
-
 _logger = logging.getLogger(__name__)
 _REROUTE_LOG = "unified_slice_unexpected_exception_reroute exc_type=%s table=%s"
 
@@ -177,10 +170,13 @@ def _execute_admitted(
     `adapter` is `run_pipeline`'s own up-front selection, reused for
     `stamp_execution_metrics` parity rather than selected a second time.
     """
-    import pyarrow as pa
 
     from decoy_engine.execution import _pipeline_finalize, _pipeline_route_exec
     from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.execution._unified_slice_evidence import (
+        assemble_node_evidence,
+        reconstruct_source_shaped_output,
+    )
     from decoy_engine.execution.physical._activation import build_unified_slice_activation
     from decoy_engine.execution.physical._compiler import compile_physical_plan
     from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
@@ -283,78 +279,19 @@ def _execute_admitted(
         # D7: stamp completed-execution evidence ONLY from the successfully-
         # returned, already-validated coordinator result -- never from the
         # pre-execution activation overlay alone (Settled decision 1).
-        node_evidence: dict[str, dict[str, Any]] = {}
-        for node in physical_table.nodes:
-            binding = node.execution
-            if binding is None:  # pragma: no cover - excluded by resident_contract_admission
-                raise UnifiedSliceInvariantError(
-                    f"unified slice: node {node.node_id!r} lost its admitted binding "
-                    "between admission and execution."
-                )
-            evidence = shadow_result.route_evidence.get(node.node_id)
-            if (
-                evidence is None
-                or not evidence.executed
-                or evidence.actual_operator != binding.operator_id
-            ):
-                raise UnifiedSliceInvariantError(
-                    f"unified slice: node {node.node_id!r} completed without matching "
-                    "completed-execution evidence."
-                )
-            if (
-                binding.operator_id in _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS
-                and not evidence.compiled_kernel_executed
-            ):
-                raise UnifiedSliceInvariantError(
-                    f"unified slice: {binding.operator_id} node {node.node_id!r} completed "
-                    "without positive compiled-kernel evidence."
-                )
-            node_evidence[node.node_id] = {
-                "operator": evidence.actual_operator,
-                "executed": evidence.executed,
-                "compiled_kernel_executed": evidence.compiled_kernel_executed,
-            }
+        node_evidence = assemble_node_evidence(
+            physical_table.nodes, shadow_result.route_evidence, collector.records
+        )
 
-        # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
-        # trip of the coordinator's own metadata-free output. `candidate.
-        # source_frame` is the SAME source-aware pandas conversion the legacy
-        # adapter performs (`_pandas_adapter.py:210`'s `to_pandas_fk_safe`; here
-        # `fk_columns` is empty (relationships declined) but a group_key `group_by`
-        # SIBLING is fk-safe-typed so an integer sibling reads as its nullable
-        # dtype exactly like the oracle -- see cheap_admission); leaving a passthrough
-        # column untouched on it reproduces the legacy `PassthroughHandler`
-        # exactly (it is a literal no-op, `_strategies/_passthrough.py`), and
-        # overlaying a masked column's `to_pylist()` POSITIONALLY reproduces
-        # every tokenizing handler's own `df[column] = masked.to_pylist()`
-        # assignment (`_redact.py` / `_truncate.py` / `_hash.py`). The closing
-        # `pa.Table.from_pandas(frame, preserve_index=False)` is then EXACTLY
-        # the legacy adapter's own conversion (`_pandas_adapter.py:325`),
-        # attaching the identical `b"pandas"` schema metadata by construction --
-        # not by hand-copying bytes. `candidate.source_frame` is single-use
-        # (admission built it once for this call only), so mutating it in place
-        # costs no extra conversion beyond the one admission already paid for.
-        # The output bridge (Arrow column extraction and overlay through the
-        # final `Table.from_pandas`) is added to the admission crossings, so
-        # `boundary_conversion_ms` covers all lane boundary work outside the
-        # per-node scopes and never overlaps `timings`.
+        # Source-shaped output reconstruction (see `reconstruct_source_shaped_output`).
+        # The clock stays here so `boundary_conversion_ms` still covers it.
         bridge_t0 = time.perf_counter()
-        frame = candidate.source_frame
-        masked_table = shadow_result.outputs[candidate.table]
-        # A ZERO-ROW overlay via to_pylist() assigns [], which pandas infers as
-        # float64 -- right for the tokenizing oracles (empty -> float64) but wrong
-        # for bucket_perturb, whose passed-through source object series is legacy
-        # null. For an empty table, to_pandas() carries the coordinator's
-        # authoritative empty dtype (from _assemble_column) through the
-        # reconstruction so flag-on matches flag-off's dtype + metadata; a non-empty
-        # column stays on to_pylist(), the exact legacy tokenizing assignment.
-        empty = masked_table.num_rows == 0
-        for node in physical_table.nodes:
-            if node.strategy == "passthrough":
-                continue
-            column = node.columns[0]
-            masked_col = masked_table.column(column)
-            frame[column] = masked_col.to_pandas() if empty else masked_col.to_pylist()
-        outputs = {candidate.table: pa.Table.from_pandas(frame, preserve_index=False)}
+        outputs = reconstruct_source_shaped_output(
+            table=candidate.table,
+            frame=candidate.source_frame,
+            masked_table=shadow_result.outputs[candidate.table],
+            nodes=physical_table.nodes,
+        )
         boundary_conversion_ms = (
             candidate.boundary_conversion_ms + (time.perf_counter() - bridge_t0) * 1000.0
         )

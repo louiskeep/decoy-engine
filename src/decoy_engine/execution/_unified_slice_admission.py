@@ -43,7 +43,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final
 
 import pandas as pd
 import pyarrow as pa
@@ -54,6 +55,11 @@ from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
     _group_key_sibling_admitted,
+)
+from decoy_engine.execution.native._chunked_evidence import (
+    ARROW_PYTHON,
+    RUST_COMPANION,
+    RUST_POOL_SELECT,
 )
 from decoy_engine.execution.native._companion_status import native_kernel_availability
 from decoy_engine.profile._readers import LazySource
@@ -70,6 +76,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ALLOWED_OPERATOR_IDS",
+    "BACKEND_BY_OPERATOR_ID",
     "BUCKET_PERTURB_OPERATOR_ID",
     "CATEGORICAL_OPERATOR_ID",
     "DATE_SHIFT_OPERATOR_ID",
@@ -97,6 +104,22 @@ ALLOWED_OPERATOR_IDS = frozenset(
         "native_group_key",
         "native_date_shift",
         "native_faker_select",
+    }
+)
+# The backend each admitted operator plans to run on, in the chunked route's vocabulary.
+# Declared next to `ALLOWED_OPERATOR_IDS` so a new admitted operator must name its backend
+# (a sentry test pins that the keys equal the allowed set).
+BACKEND_BY_OPERATOR_ID: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "native_keyed_hash": RUST_COMPANION,
+        "native_categorical": RUST_COMPANION,
+        "native_bucket_perturb": RUST_COMPANION,
+        "native_date_shift": RUST_COMPANION,
+        "native_group_key": RUST_COMPANION,
+        "native_faker_select": RUST_POOL_SELECT,
+        "native_redact": ARROW_PYTHON,
+        "native_truncate": ARROW_PYTHON,
+        "native_passthrough": ARROW_PYTHON,
     }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
