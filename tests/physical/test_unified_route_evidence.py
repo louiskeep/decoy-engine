@@ -176,7 +176,7 @@ def lane_nodes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, dict[str, Any]]:
     """Run the production lane with the oracle poisoned, assert byte-identical
-    output against a separate lane-off run, return the evidence nodes by column."""
+    output against a separate lane-off run, return the evidence nodes by node id."""
     (tmp_path / "on").mkdir()
     (tmp_path / "off").mkdir()
     off = _run(tmp_path, source, columns, lane=False)
@@ -184,11 +184,7 @@ def lane_nodes(
         on = _run(tmp_path, source, columns, lane=True)
     assert off.outputs["t"].schema.equals(on.outputs["t"].schema, check_metadata=True)
     assert off.outputs["t"].to_pylist() == on.outputs["t"].to_pylist()
-    leaf = on.quality_metrics[QUALITY_METRICS_KEY]
-    by_column: dict[str, dict[str, Any]] = {}
-    for node_id, ev in leaf["nodes"].items():
-        by_column[node_id.split(":")[-1] if ":" in node_id else node_id] = ev
-    return by_column
+    return dict(on.quality_metrics[QUALITY_METRICS_KEY]["nodes"])
 
 
 def _evidence_for(nodes: dict[str, dict[str, Any]], operator: str) -> dict[str, Any]:

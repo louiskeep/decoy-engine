@@ -69,13 +69,6 @@ __all__ = [
 # absent flag-off, and compares every OTHER quality_metrics leaf exactly.
 QUALITY_METRICS_KEY = "unified_slice_activation"
 
-# Operators whose "the compiled kernel really ran" claim must be observed, not
-# inferred: a completed node of one of these without positive evidence is an
-# admission bug.
-_POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
-    {_admission.HASH_OPERATOR_ID, _admission.FAKER_OPERATOR_ID}
-)
-
 _logger = logging.getLogger(__name__)
 _REROUTE_LOG = "unified_slice_unexpected_exception_reroute exc_type=%s table=%s"
 
@@ -181,6 +174,7 @@ def _execute_admitted(
 
     from decoy_engine.execution import _pipeline_finalize, _pipeline_route_exec
     from decoy_engine.execution._adapter import ExecutionResult
+    from decoy_engine.execution._unified_slice_evidence import assemble_node_evidence
     from decoy_engine.execution.physical._activation import build_unified_slice_activation
     from decoy_engine.execution.physical._compiler import compile_physical_plan
     from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
@@ -283,37 +277,9 @@ def _execute_admitted(
         # D7: stamp completed-execution evidence ONLY from the successfully-
         # returned, already-validated coordinator result -- never from the
         # pre-execution activation overlay alone (Settled decision 1).
-        node_evidence: dict[str, dict[str, Any]] = {}
-        for node in physical_table.nodes:
-            binding = node.execution
-            if binding is None:  # pragma: no cover - excluded by resident_contract_admission
-                raise UnifiedSliceInvariantError(
-                    f"unified slice: node {node.node_id!r} lost its admitted binding "
-                    "between admission and execution."
-                )
-            evidence = shadow_result.route_evidence.get(node.node_id)
-            if (
-                evidence is None
-                or not evidence.executed
-                or evidence.actual_operator != binding.operator_id
-            ):
-                raise UnifiedSliceInvariantError(
-                    f"unified slice: node {node.node_id!r} completed without matching "
-                    "completed-execution evidence."
-                )
-            if (
-                binding.operator_id in _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS
-                and not evidence.compiled_kernel_executed
-            ):
-                raise UnifiedSliceInvariantError(
-                    f"unified slice: {binding.operator_id} node {node.node_id!r} completed "
-                    "without positive compiled-kernel evidence."
-                )
-            node_evidence[node.node_id] = {
-                "operator": evidence.actual_operator,
-                "executed": evidence.executed,
-                "compiled_kernel_executed": evidence.compiled_kernel_executed,
-            }
+        node_evidence = assemble_node_evidence(
+            physical_table.nodes, shadow_result.route_evidence, collector.records
+        )
 
         # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
         # trip of the coordinator's own metadata-free output. `candidate.

@@ -103,10 +103,14 @@ def plan_column_backends(
     return tuple(out)
 
 
-def _executed_backend(plan: ColumnPlan, native_admitted: bool, idle: frozenset[str]) -> str:
+def executed_backend(planned_backend: str, *, native_admitted: bool, kernel_idle: bool) -> str:
+    """The one executed-backend rule, shared by the chunked route and the unified slice.
+
+    A column the native route did not take ran on pandas. An admitted column that made no
+    compiled call ran Arrow work in Python. Anything else ran its planned backend."""
     if not native_admitted:
         return PANDAS_ORACLE
-    return ARROW_PYTHON if plan.column in idle else plan.planned_backend
+    return ARROW_PYTHON if kernel_idle else planned_backend
 
 
 def merge_executed_backend(acc: dict[str, Any], col: dict[str, Any]) -> None:
@@ -151,7 +155,9 @@ def chunk_route_evidence(
                 "column": c.column,
                 "strategy": c.strategy,
                 "planned_backend": c.planned_backend,
-                "executed_backend": _executed_backend(c, native_admitted, idle),
+                "executed_backend": executed_backend(
+                    c.planned_backend, native_admitted=native_admitted, kernel_idle=c.column in idle
+                ),
                 "calls": 1,
                 "elapsed_ms": float(elapsed_ms.get(c.column, 0.0)),
             }

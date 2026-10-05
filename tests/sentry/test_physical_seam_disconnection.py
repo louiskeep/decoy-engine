@@ -110,10 +110,14 @@ GUARDED_MODULES: tuple[str, ...] = (
 # flag-checked-before-import discipline. `_unified_slice_resident_types.py` is the
 # per-strategy resident-type gate module split out of it (C5a remediation, pure move); it
 # keeps the one `PhysicalTable` annotation import, under TYPE_CHECKING.
+# `_unified_slice_evidence.py` holds the completed-evidence assembly and the output
+# reconstruction split out of `_unified_slice.py`; it imports physical types only for
+# annotations, under TYPE_CHECKING.
 DELIBERATELY_CONNECTED_MODULES: tuple[str, ...] = (
     "execution/_unified_slice.py",
     "execution/_unified_slice_admission.py",
     "execution/_unified_slice_resident_types.py",
+    "execution/_unified_slice_evidence.py",
 )
 
 _PHYSICAL_IMPORT_RE = re.compile(

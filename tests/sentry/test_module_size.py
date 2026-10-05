@@ -506,7 +506,7 @@ ALLOWLIST: dict[str, int] = {
     # Owed by the NEXT unified-slice change: move the completed-evidence validation and
     # the source-shaped output reconstruction (`_execute_admitted`'s post-run block) into
     # a sibling module.
-    "src/decoy_engine/execution/_unified_slice.py": 658,
+    "src/decoy_engine/execution/_unified_slice.py": 624,
     # Track A input formats (2026-09-30): resolve_input_arrow_type prefers the
     # resident Arrow table, threaded through the requirements and config-gate
     # helpers. Dense reviewed exception (<= MAX). Move the resident-type
