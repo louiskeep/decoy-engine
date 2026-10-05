@@ -442,6 +442,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the output-type rule and `_chunk_masking.py`. Neither imports `execution.physical`.
         "src/decoy_engine/execution/_chunked_categorical.py",
         "src/decoy_engine/execution/native/_categorical_prepared.py",
+        # C3 (group_key on the chunked route): the oracle gate's docstring (`_chunked_group_key.py`),
+        # the raw-hex operator's `derive_calls` spy and empty short-circuit
+        # (`_group_key_kernel.py`) and the new config-level admission gate
+        # (`_chunked_group_key_gate.py`). None imports `execution.physical`.
+        "src/decoy_engine/execution/_chunked_group_key.py",
+        "src/decoy_engine/execution/native/_chunked_group_key_gate.py",
+        "src/decoy_engine/execution/native/_group_key_kernel.py",
     }
     unexpected = [
         name

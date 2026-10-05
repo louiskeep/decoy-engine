@@ -256,6 +256,16 @@ def test_length_prefix_and_target_column_each_change_the_key() -> None:
 
 
 @NEEDS_COMPANION
+def test_a_plan_namespace_on_the_column_does_not_change_the_synthesized_one() -> None:
+    """The oracle handler derives under `group_key/<target>` and ignores the plan namespace."""
+    table = gk_source(["alice", "bob"], pa.string())
+    cols = columns(gk_col(namespace="ns_custom"))
+    native, forced = run_pair(cols, split(table, 2))
+    assert_native_equals_oracle(native, forced)
+    assert [k for o in native.out for k in o.column(TARGET).to_pylist()] == [_ALICE, _BOB]
+
+
+@NEEDS_COMPANION
 def test_renaming_the_group_by_source_column_leaves_the_key_unchanged() -> None:
     table = gk_source(["alice", "bob"], pa.string()).rename_columns(["household", "k", "p"])
     cols = [passthrough("household"), gk_col(group_by="household"), passthrough("p")]
