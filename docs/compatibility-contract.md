@@ -253,6 +253,16 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   format, an invalid bucket, `when:` and FK-key edges keep their oracle path and codes. A column
   whose every chunk had no parseable row reports `executed_backend` `arrow_python`, not
   `rust_companion`, and `compiled_kernel_executed` stays `False`.
+  `date_shift` joined the native chunked route on 2026-10-05 (slice C4). A native-admissible
+  column (explicit non-empty `date_format` without `%z` or `%Z`, namespaced, no `group_by`,
+  no `when:`, integer day bounds, `string` source) is shifted by the compiled index kernel.
+  Its chunked output type is pinned to `string` on both chunked legs, with or without the
+  companion. Under ROUTE-OUTPUT-CONTRACT the whole-frame route still resolves the type at
+  assembly, so an empty column is `double` there and an all-null column is `null` there,
+  while both are `string` on the chunked route; shifted values are unchanged. A non-null
+  unparseable value fails closed with `RowErrorsFailedError` on both chunked legs, with
+  chunk-local `row_index` records. A non-string source, an autodetected format, `group_by`,
+  `when:` and FK-key edges keep their oracle path and codes.
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that
