@@ -504,18 +504,6 @@ ALLOWLIST: dict[str, int] = {
     # no such helpers remain in this file (the source alignment now lives inside
     # `cheap_admission`), so the entry is bumped to the actual size instead.
     "src/decoy_engine/execution/_unified_slice.py": 658,
-    # Track A input formats (2026-09-30): format admission widened to csv and
-    # fixed_width, with the resident-type gates documented alongside. Dense
-    # reviewed exception (<= MAX). Split the per-strategy resident-type gates
-    # into a sibling on the next admission change.
-    # Lane timings (2026-09-30): +21 lines (mostly docstring) for
-    # boundary_conversion_ms on CheapCandidate; the gate split stays owed by
-    # the next admission change.
-    # C5a (2026-10-05): +8 lines adding the Faker operator to the admission tables.
-    # C5a dennis remediation (2026-10-05): the owed gate split is DONE. The per-strategy
-    # resident-type gates (`_ADMITTED_RESIDENT_TYPES`, `_group_key_sibling_admitted`) moved
-    # byte-identical to `_unified_slice_resident_types.py`; 637 -> 564.
-    "src/decoy_engine/execution/_unified_slice_admission.py": 564,
     # Track A input formats (2026-09-30): resolve_input_arrow_type prefers the
     # resident Arrow table, threaded through the requirements and config-gate
     # helpers. Dense reviewed exception (<= MAX). Move the resident-type
