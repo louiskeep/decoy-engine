@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan-gate round 1 = REVISE (0 BLOCKER, 4 HIGH, 1 MEDIUM), all folded here; awaiting round 2.
+Status: plan (revision 3, author = Opus). Codex plan-gate round 1 REVISE (4 HIGH/1 MEDIUM) folded in rev 2; round 2 REVISE (0 BLOCKER, 3 HIGH, 2 MEDIUM) folded here; awaiting round 3.
 
 # C5a: pooled Faker on the unified slice
 
@@ -49,17 +49,18 @@ The UTF-8 namespace check and the per-operator kernel gate in `resident_contract
 
 **3b. Thread the registry into the coordinator** (`_unified_slice.py:242`): `ShadowCoordinator(ctx=ctx, registry=inputs.registry)`. Use `inputs.registry`, the one resolved `ProviderRegistry` the physical plan compiled against, so the binder's `classify_provider` and the coordinator's `PoolBuilder` see the same registry. Update the coordinator docstring (~:216-219) that says the unified slice never admits Faker. `ShadowContext.from_key_provider` already supplies a real `job_seed`, so the job_seed guard holds.
 
-**3c. A rebound provider declines at admission, before any provider code runs** (rev 2; replaces rev 1's post-build reroute). Admission proves only that the provider NAME is allowlisted and `pool_native`. A custom registry can rebind that name to an arbitrary adapter. Rev 1 proposed catching the coordinator's `FAKER_POOL_NON_STRING_OUTPUT` and rerouting, but that check runs after `PoolBuilder.build` has already called the adapter and filled the cache (`_shadow_coordinator.py:553-588`). A stateful adapter would then run twice, once on each route, so the reroute cannot guarantee single execution or side-effect parity.
+**3c. Provider code runs at most once per job: one job-scoped pool cache shared by both routes** (rev 3; replaces rev 1's post-build reroute and rev 2's binding-identity check, both rejected by Codex).
 
-Decision: add a binding-identity check to the Faker admission path. A Faker node admits only if the admitted provider's binding in `inputs.registry` is the proven default binding:
-- `registry.get_adapter(p) is get_default_registry().get_adapter(p)`, or
-- the same adapter type (exact `type`, not a subclass) with an equal `get_capabilities(p)`.
+The root problem: the pool build calls user-pluggable provider code (`PoolBuilder.build` → registry adapter, `_shadow_coordinator.py:553-588`), and the lane can fall through to the oracle after that build, which then builds again. No static check on the registry can prove a binding's behavior. The V2 custom-function override keeps the singleton adapter identity (`_faker_adapter.py:130,245`; Codex probe: `person_first_name -> 7` passed the identity check). So the fix is structural: the pool is built at most once per job, whichever route finishes the work.
 
-Put it in one helper, `_faker_provider_binding_is_default(registry, provider)`, called from `resident_contract_admission`'s Faker branch. Do not change `_faker_pool_bindable`, which the dormant shadow corpus also uses.
-
-A registry that overrides only an unrelated provider still admits. A rebound admitted provider declines, so the whole table runs on the oracle exactly once, as today.
-
-The coordinator's runtime non-string check stays as defense in depth. If it is ever reached on the unified lane, that is an admission gap, and D8 fails closed (`UnifiedSliceInvariantError`) as for every other coded difference. No reroute code is added.
+- **Shared cache.** The full-frame mask path in `run_pipeline` (`_pipeline_generate_mask.py`, around the `adapter.run(...)` call at ~:270) creates ONE `PoolCache` for the job. It passes the same object to the unified lane (new `pool_cache` parameter, threaded through `maybe_run_unified_slice` and the forwarding census, then into the coordinator) and to `adapter.run(pool_cache=...)` (the parameter already exists, `_pandas_adapter.py:142,177`). `ShadowCoordinator` takes an optional injected `pool_cache` and uses it instead of its fresh one (`_shadow_coordinator.py:283`). With no injection it behaves exactly as today, so the dormant shadow corpus is unchanged.
+  - The shared cache is built with `max_bytes` set high enough that a put never evicts or refuses within one job. It stores references to pools the run already holds, so it adds no copy. This guarantees the oracle's `ctx.pool_cache.get(identity)` (`_faker.py:69`) finds any pool the lane built, under the identical key from the shared `resolve_faker_pool_identity`.
+  - Pool content depends only on identity, and the full-frame route never reads `PoolCache.warnings()` (fact 4), so sharing the cache changes no output, warning or evidence.
+- **Non-string pool (rebound provider).** The coordinator builds once, puts the pool in the shared cache, and only then detects `FAKER_POOL_NON_STRING_OUTPUT`. The lane treats exactly that one coded difference as a reroute and returns None, using a named single-code constant, not a broad catch. Every other coded difference keeps D8 fail-closed. The oracle then takes the cached pool (no second provider call) and produces its normal output for that pool. No output or side effect exists before the reroute, because the coordinator raises inside `_resolve_pool` before any batch runs and the lane publishes nothing until `run` returns.
+- **Pool build raises (provider failure).** The coordinator wraps only the `builder.build(...)` call and re-raises any exception as a lane-private `_PoolBuildFailed` carrying the original. The lane catches `_PoolBuildFailed` ahead of its broad reroute boundary (`_unified_slice.py:390`) and re-raises the ORIGINAL exception object, so there is no reroute and no second build.
+  - This matches the oracle only if the oracle surfaces the same exception unwrapped. Test 13 proves that against a lane-off run. If the oracle wraps it (for example in `ExecutionError`), the builder STOPS and reports. Adding a wrapper needs a plan amendment, never an improvised one.
+- **Rebound provider yielding strings.** It runs natively, built once. Both routes use the same `inputs.registry` (fact 6), so the output equals the oracle's.
+- No binding-identity admission check is added (rev 2's 3c is withdrawn).
 
 **3d. Zero-row and all-null parity** (rev 2: assert the existing rule; no new code). Faker is already a tokenizing strategy in `_shadow_assembly.py`, so a zero-row Faker column reconciles to `float64` like the oracle's `df[column] = []`. The tests assert that on the production lane. An all-null column must match exactly in values, type and `b"pandas"` metadata. Change reconstruction only if a test shows a real divergence, and then fix it at `_shadow_assembly.py`.
 
@@ -71,18 +72,19 @@ The coordinator's runtime non-string check stays as defense in depth. If it is e
 
 **3h. Per-node route evidence to the program contract** (rev 2, fixes fact 8). Extend every unified node's evidence entry. Keep the existing keys and add:
 - `planned_backend`: from the admitted binding, using the chunked vocabulary in `native/_chunked_evidence.py` (import those constants; do not invent new names). Faker is `rust_pool_select`; hash, categorical, bucket_perturb, date_shift and group_key are `rust_companion`; redact, truncate and passthrough are `arrow_python`.
-- `executed_backend`: derived from the coordinator's completed `OperatorCallEvidence`. It is the planned backend only when `executed` holds and, for companion and pool operators, `compiled_kernel_executed` holds. Any mismatch raises `UnifiedSliceInvariantError` alongside the existing D7 check.
+- `executed_backend`: derived from the coordinator's completed `OperatorCallEvidence` by the SAME rule the chunked route uses (`_chunked_evidence.py:106`). A companion or pool operator that ran its compiled kernel reports its planned backend. Kernel-idle work, such as an empty or all-null `group_key` that deliberately records `compiled_kernel_executed=False` (`_shadow_operators.py:291`, pinned by `test_shadow_group_key.py:792`), reports `arrow_python` and is NOT an invariant failure. Only the existing D7 operators (hash, Faker) must show `compiled_kernel_executed=True`; Faker always calls the kernel, even on an empty batch (Codex round 1). Prefer importing or factoring the chunked derivation helper over re-implementing it.
 - `calls`: `OperatorCallEvidence.batches_run`.
-- `elapsed_ms`: joined from that node's `TimingCollector` record. Define one join rule (by node id) and assert that every node has exactly one record.
+- `elapsed_ms`: joined from the `TimingCollector` record keyed by `(strategy, column)`. `StrategyTimingRecord` carries no node id (`timing.py:65`), and the admitted single-table, single-column nodes make that pair unique. Assert a bijection between admitted nodes and records; any duplicate or missing pair raises `UnifiedSliceInvariantError`. Do not add node ids to timing records.
 
 All new values must be JSON-safe. A positive unified run has, by construction, zero oracle fallbacks for the table; the tests assert that by poisoning the oracle adapter (section 5). Existing tests that pin the exact evidence dict get the new keys. This is additive, and no consumer outside the engine reads these keys today (the builder must grep and record that).
 
 ## 4. Implementation
 
 1. `_unified_slice_admission.py`: the 3a entries, the `FAKER_OPERATOR_ID` constant, and the 3c binding-identity helper and its call. Update the comments that enumerate companion-dependent operators.
-2. `_unified_slice.py`: pass the registry (3b); add the D7 operator set (3e); forward `native_threads` (3g); add the 3h evidence fields. No reroute code.
-3. `physical/_shadow_coordinator.py`: docstring only.
-4. No Rust, no new kernel, no change to `sample_faker_array`, `_faker_pool_bindable`, the chunked route, or the oracle.
+2. `_unified_slice.py`: pass the registry (3b); thread `pool_cache` in and catch `_PoolBuildFailed` before the broad boundary (3c); add the single-code `FAKER_POOL_NON_STRING_OUTPUT` reroute (3c); add the D7 operator set (3e); forward `native_threads` (3g); add the 3h evidence fields.
+2b. `_pipeline_generate_mask.py`: create the job-scoped shared `PoolCache` and pass it to both the lane and `adapter.run` (3c).
+3. `physical/_shadow_coordinator.py`: an optional injected `pool_cache`; wrap only `builder.build` in `_PoolBuildFailed`; update the docstring that says the unified slice never admits Faker.
+4. No Rust, no new kernel, no change to `sample_faker_array`, `_faker_pool_bindable`, the chunked route, or the oracle handler logic. The oracle only receives a caller-supplied cache, through its existing parameter.
 5. Docs: CHANGELOG entry; compatibility-contract line if the unified-slice admitted set is listed there; build record `docs/records/2026-10-05-c5a-unified-slice-faker-build.md`.
 
 ## 5. Acceptance tests (written first; red-before recorded)
@@ -96,9 +98,11 @@ New file `tests/physical/test_unified_slice_faker.py`, plus additions to `test_u
 3. **Two Faker columns sharing one pool identity:** identical to the oracle, and `PoolBuilder.build` is called exactly once.
 4. **Two Faker columns with different namespaces:** identical.
 5. **Nulls:** interleaved nulls kept by position; an all-null column; a zero-row table, which yields `float64`/`double` exactly like the oracle (3d).
-6. **Batch boundaries:** 50,001 rows (crosses the coordinator's 50,000-row batch, `calls == 2`). Also an uneven last batch at a smaller configured `batch_size_rows` (several batch sizes, e.g. 7, 1000, default). And a source whose Arrow column is a ragged multi-chunk `ChunkedArray`. All identical to the oracle.
+6. **Batch boundaries:**
+   - Production lane: 50,001 rows crosses the coordinator's 50,000-row batch (`calls == 2`, uneven last batch), identical to the oracle. A source whose Arrow column is a ragged multi-chunk `ChunkedArray` is also identical.
+   - Coordinator seam (production `run_pipeline` exposes no batch size; `_shadow_context.py:134`): `ShadowContext.from_key_provider(batch_size_rows=7 / 1000 / default)` over the same Faker table gives identical output, compared against the oracle output.
 7. **Thread invariance (3g):** `run_pipeline(native_threads=1)` and `native_threads=4` give byte-identical output. A spy on the compiled `derive_index_batch` proves that the value 4 actually arrives in the second run. The same spy check applies to one non-Faker index operator (categorical), proving 3g's lane-wide fix.
-8. **Locale and provider config:** a supported non-default locale and a provider-config variation on the production lane, identical to the oracle.
+8. **Locale and pool size:** a supported non-default locale and two different `pool_size` values on the production lane, identical to the oracle. The allowlisted providers take no provider kwargs, so there is no other config dimension (Codex round 2).
 9. **Determinism:** two runs give identical bytes; a different `mask_key` changes the output; a different `job_seed` changes the pool content.
 10. **Declines to the oracle** (lane returns None, job output equals the lane-off run). One parametrized case each:
     - non-deterministic
@@ -112,15 +116,20 @@ New file `tests/physical/test_unified_slice_faker.py`, plus additions to `test_u
     - `large_string` source
     - int64 source
     - companion index kernel unavailable
-11. **3c rebound provider:** a custom registry rebinding `person_first_name` to a poolable adapter yielding ints. The lane declines at admission. A spy proves zero coordinator pool builds and exactly one oracle build, and the job output equals the oracle's. Two sibling tests:
-    - A registry that overrides only an UNRELATED provider still admits Faker natively.
-    - A registry re-registering the same default adapter type with equal capabilities admits.
-12. **3e D7 / 3h mismatch:** a stubbed coordinator result where the Faker node has `compiled_kernel_executed=False`, or `executed_backend != planned_backend`, raises `UnifiedSliceInvariantError`.
-13. **Real runtime error parity:** an in-scope provider whose pool build raises (monkeypatch the default adapter to raise a coded `ProviderError` on build). The lane and the oracle raise the same exception type, code and message. No output is returned, and no sink or vault side effect occurs (assert the sink is empty or not written).
+11. **3c single build, rebound non-string provider:** a custom registry (and, separately, the V2 custom-function override of `person_first_name` on the default adapter) yields ints through a STATEFUL adapter that counts invocations. The lane reroutes (returns None, no `UnifiedSliceInvariantError`). The provider is invoked exactly once across the whole job, and the job output equals the lane-off oracle run. Sibling tests:
+    - A rebound provider yielding strings runs natively (poisoned oracle), is built once, and is identical to the oracle with the same registry.
+    - Any OTHER coded ShadowDifference raised from the coordinator still raises `UnifiedSliceInvariantError` (the reroute is single-code).
+    - With no injected cache, the coordinator still uses a fresh run-scoped cache (the shadow corpus is unchanged).
+12. **3e D7 / 3h evidence:**
+    - A stubbed coordinator result with the Faker (or hash) node at `compiled_kernel_executed=False` raises `UnifiedSliceInvariantError`.
+    - An empty and an all-null `group_key` table through the production lane do NOT raise, and report `executed_backend == "arrow_python"`.
+    - A duplicated or missing `(strategy, column)` timing record raises `UnifiedSliceInvariantError`.
+    - `executed_backend` is derived, so these tests stub only the coordinator's `OperatorCallEvidence` inputs.
+13. **Provider failure, single invocation, oracle-identical:** a stateful in-scope adapter whose build raises a coded `ProviderError`. The lane run invokes it exactly once and raises the original exception, and a lane-off run raises the same type, code and message. No output is returned, and the sink is unwritten.
 14. **Warnings/evidence parity (3f), non-vacuous:** instrument `PoolCache.warnings` with a spy that records calls. On an admitted Faker run, the full-frame lane and the oracle both never call it, and `result.warnings` are equal. Equality of two empty tuples alone does not count as evidence.
 15. **Companion-absent clean env** (ci-mirror): Faker tables decline, and companion-only assertions are guarded with `@NEEDS_COMPANION`.
 
-Mutation targets (hand-mutants, each must be killed): drop Faker from `ALLOWED_OPERATOR_IDS`; drop it from `_COMPANION_DEPENDENT_OPERATOR_IDS`; add `large_string` to the type matrix; omit `registry=`; make the 3c identity check always true; accept a subclass in 3c; drop Faker from the D7 set; drop the `native_threads` forwarding; report `calls` as a constant 1; swap `mask_key` for `job_seed` in selection.
+Mutation targets (hand-mutants, each must be killed): drop Faker from `ALLOWED_OPERATOR_IDS`; drop it from `_COMPANION_DEPENDENT_OPERATOR_IDS`; add `large_string` to the type matrix; omit `registry=`; pass a fresh cache instead of the shared one (kills test 11 single-build); catch `_PoolBuildFailed` with the broad reroute (kills test 13); widen the reroute to all coded differences; treat kernel-idle group_key as an invariant failure; drop Faker from the D7 set; drop the `native_threads` forwarding; report `calls` as a constant 1; swap `mask_key` for `job_seed` in selection.
 
 ## 6. Risk, rollback, docs, gates
 
@@ -137,3 +146,10 @@ Mutation targets (hand-mutants, each must be killed): drop Faker from `ALLOWED_O
   - HIGH 4: the acceptance matrix was below the parity contract → section 5 (batch boundaries, ragged chunks, threads, locale/config, real error parity, poisoned oracle, non-vacuous warnings).
   - MEDIUM 5: two facts were wrong (three decline points; zero-row is already `float64`) → facts 2 and 5, and 3d.
 - Codex's answers to rev 1's open questions: decline only a rebound admitted provider (3c); full-frame never surfaces `PoolCache.warnings()` (fact 4, test 14); `inputs.registry` is the oracle's registry (fact 6).
+- Round 2 (Codex): REVISE, 0 BLOCKER / 3 HIGH / 2 MEDIUM, all folded in rev 3.
+  - HIGH 1: the identity check is unsound (the V2 custom override keeps adapter identity) → 3c rewritten as a job-scoped shared `PoolCache` (single build) plus a single-code reroute.
+  - HIGH 2: a provider failure executed twice via the broad reroute → `_PoolBuildFailed` re-raises the original, with no reroute.
+  - HIGH 3: 3h crashed an empty `group_key` → the chunked kernel-idle rule (`arrow_python`).
+  - MEDIUM 1: the timing join is on `(strategy, column)` with a bijection.
+  - MEDIUM 2: test seams corrected (batch sizes at the coordinator seam, derived backend, no provider kwargs).
+  - Round-1 HIGH 2 (`native_threads`) and MEDIUM 5 were confirmed CLOSED.
