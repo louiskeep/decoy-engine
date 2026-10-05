@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pyarrow as pa
 
+from decoy_engine.execution._positional_keys import positional_key_array
 from decoy_engine.execution._strategies._categorical import _WEIGHTED_CDF_RES
 from decoy_engine.generation.pool import GenerationError
 
@@ -143,9 +144,6 @@ def _select(
     return pa.array(out, type=pa.string())
 
 
-_UINT64_MAX = 2**64 - 1
-
-
 def native_categorical_positional(
     array: pa.Array | pa.ChunkedArray,
     *,
@@ -168,13 +166,7 @@ def native_categorical_positional(
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError("positional categorical reached with mask_key=None")
     col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    n = len(col)
-    if row_offset < 0 or (n and row_offset + n - 1 > _UINT64_MAX):
-        raise GenerationError(
-            code="categorical_position_out_of_domain",
-            message=f"rows [{row_offset}, {row_offset + n}) leave the uint64 position domain",
-        )
-    keys = pa.array(np.uint64(row_offset) + np.arange(n, dtype=np.uint64), pa.uint64())
+    keys = positional_key_array(row_offset, len(col), code="categorical_position_out_of_domain")
     pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
     idx = index_kernel.derive_index_batch(
         keys,

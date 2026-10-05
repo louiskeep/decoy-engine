@@ -71,7 +71,7 @@ from decoy_engine.generation.synthesize import (
 )
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
-from decoy_engine.kernel._canonicalize import canonicalize_derive_source
+from decoy_engine.kernel._canonicalize import canonicalize_derive_source, encode_int
 from decoy_engine.kernel._scalar import hash_array
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -620,6 +620,49 @@ class TestPoolDeterministicGolden:
             _record(site_id)
 
 
+class TestFakerNondeterministicGolden:
+    def test_provider_reproduces_shipped_position_keyed_selection(self) -> None:
+        """The real handler's non-deterministic REUSE output is the provider's draw per ordinal."""
+        from decoy_engine.execution._strategies._faker import FakerStrategyHandler
+        from decoy_engine.generation.pool import PoolBuilder
+
+        plan = ColumnSeed(
+            namespace=None,
+            strategy="faker",
+            provider="person_first_name",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=False,
+            provider_config=(("pool_size", 48),),
+            coherent_with=(),
+        )
+        ctx = _full_ctx()
+        object.__setattr__(ctx, "current_table", "people")
+        values = ["a", "b", None, "c", "a", "d"]
+        out_df, _ = FakerStrategyHandler().run(pd.DataFrame({"first": values}), "first", plan, ctx)
+        shipped = out_df["first"].tolist()
+
+        pool = PoolBuilder(get_default_registry()).build(
+            provider="person_first_name",
+            size=48,
+            job_seed=_MASK_KEY,
+            locale=None,
+            config={},
+            namespace=None,
+        )
+        ns = "faker-nd/6:people/5:first"
+        p = provider_for("mask.faker_nondeterministic")
+        reproduced = [
+            None
+            if v is None
+            else pool.values[p.draw(_MASK_KEY, ns, encode_int(g), pool_size=pool.size)]
+            for g, v in enumerate(values)
+        ]
+        assert reproduced == shipped
+        _record("mask.faker_nondeterministic")
+
+
 class TestIdentifierDeterministicGolden:
     def test_provider_reproduces_shipped_ssn_adapter(self) -> None:
         ns = "identifier/ssn"
@@ -690,17 +733,18 @@ class TestGoldenGateCoverage:
             "mask.code_set",
             "gen.pool_deterministic",
             "mask.faker",
+            "mask.faker_nondeterministic",
             "gen.identifier_deterministic",
             "gen.faker_pool_build",
             "gen.faker_pool_selection",
         }
         assert set(_ROUTED) == expected_sites
-        # 21 distinct sites, each routed exactly once through the REAL shipped
-        # code. 20 reproduce the shipped OUTPUT byte-for-byte; mask.fpe is
+        # 22 distinct sites, each routed exactly once through the REAL shipped
+        # code. 21 reproduce the shipped OUTPUT byte-for-byte; mask.fpe is
         # keyed-material (the provider emits the FF1 key, and the ciphertext
         # is reproduced via the shipped fpe_encrypt_value driven by that key).
         _keyed_material_only = {"mask.fpe"}
         _reproduces_output = expected_sites - _keyed_material_only
-        assert len(_reproduces_output) == 20
-        assert len(_ROUTED) == 21
+        assert len(_reproduces_output) == 21
+        assert len(_ROUTED) == 22
         assert sorted(_ROUTED) == sorted(expected_sites)
