@@ -9,6 +9,27 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (route evidence on the unified slice, 2026-10-05)
+
+Each node entry under `quality_metrics["unified_slice_activation"]["nodes"]` now carries four more
+keys next to `operator`, `executed` and `compiled_kernel_executed`: `planned_backend`,
+`executed_backend`, `calls` and `elapsed_ms`. They use the chunked route's vocabulary
+(`rust_companion`, `rust_pool_select`, `arrow_python`). `calls` is the number of batches the
+operator ran, and `elapsed_ms` is the node's own timing record, rounded to three decimals.
+Outputs, warnings, errors and row errors are unchanged.
+
+A node planned for a compiled kernel that made no compiled call reports `arrow_python`. That
+covers a `bucket_perturb` or `date_shift` column with no parseable value, and a `group_key`
+column on an empty table. Hash, Faker and categorical always call their kernel and keep their
+planned backend, empty input included.
+
+### Fixed (route evidence on the unified slice, 2026-10-05)
+
+`compiled_kernel_executed` for `bucket_perturb` and `date_shift` was always `True` on the unified
+slice, even when no compiled call ran. It now reflects the calls made. The flag also now stays
+`True` once any batch ran a compiled call; `group_key` used to be overwritten by each batch, so a
+populated batch followed by an empty one reported `False`.
+
 ### Added (pooled Faker on the unified slice, 2026-10-05)
 
 A deterministic, reuse-mode `faker` column (`person_first_name` or `person_last_name`, explicit
