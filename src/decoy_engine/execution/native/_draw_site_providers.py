@@ -864,8 +864,6 @@ _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "mask.categorical_nondeterministic": "derive_index",
     "gen.pool_deterministic": "derive_index",
     "mask.faker": "derive_index",
-    # Keyed by encode_int(row ordinal) on job_seed instead of the source value; same primitive.
-    "mask.faker_nondeterministic": "derive_index",
     "gen.identifier_deterministic": "derive_value",
 }
 

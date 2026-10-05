@@ -18,8 +18,10 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine.execution.native._determinism_protocol import DrawSite
 from decoy_engine.execution.native._draw_site_providers import (
     DrawSiteProvider,
+    SourceKeyedHmacProvider,
     _SeededFromBytesNumpyProvider,
 )
 from decoy_engine.generators.derivation import GenDeriveContext
@@ -86,13 +88,29 @@ class FakerPoolSelectionProvider(_SeededFromBytesNumpyProvider):
         return self.generator(self.selection_seed(gen_ctx))
 
 
+class FakerNondeterministicProvider(SourceKeyedHmacProvider):
+    """``mask.faker_nondeterministic``: masking Faker's position-keyed reuse selection.
+
+    The draw is ``derive_index(job_seed, selection_namespace, encode_int(g), pool_size)``,
+    the same keyed primitive as the source-keyed sites with the row ordinal as the key.
+    Lives beside the pool providers because it is the same pool-backed Faker family.
+    """
+
+    draw_site_id = "mask.faker_nondeterministic"
+
+    def __init__(self, site: DrawSite) -> None:
+        super().__init__(site, primitive="derive_index")
+
+
 GEN_POOL_PROVIDER_CLASSES: tuple[type[DrawSiteProvider], ...] = (
     FakerPoolBuildLocalProvider,
     FakerPoolSelectionProvider,
+    FakerNondeterministicProvider,
 )
 
 __all__ = [
     "GEN_POOL_PROVIDER_CLASSES",
+    "FakerNondeterministicProvider",
     "FakerPoolBuildLocalProvider",
     "FakerPoolSelectionProvider",
 ]
