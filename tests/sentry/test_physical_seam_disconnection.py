@@ -384,6 +384,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_chunk_schema.py",
         "src/decoy_engine/execution/native/_chunked_entry.py",
         "src/decoy_engine/execution/native/_chunked_evidence.py",
+        # C4: the native chunked route's date_shift row-error records, re-sorted into the
+        # oracle's work-list order. Imports only `_row_errors` and `_date_shift_ext`.
+        "src/decoy_engine/execution/native/_chunked_row_errors.py",
         "src/decoy_engine/execution/native/_chunked_schema_rule.py",
         # Round-1 gate fixes: admission from real Arrow types and provider
         # output type (`_real_type_admission.py`, imported only by `_dispatch.py`),
