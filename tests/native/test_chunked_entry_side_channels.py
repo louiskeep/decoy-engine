@@ -42,12 +42,12 @@ from tests.unit.execution.test_chunked_fk_gate_kills import _hash_config as _fk_
 
 
 def _forced_columns(config: dict[str, Any]) -> list[str]:
-    """Columns of `config` whose strategy the chunked dispatcher still vetoes (`date_shift`)."""
+    """Columns of `config` whose strategy the chunked dispatcher still vetoes (`group_key`)."""
     return [
         c["name"]
         for t in config.get("tables", ())
         for c in t.get("columns", ())
-        if c.get("strategy") == "date_shift"
+        if c.get("strategy") == "group_key"
     ]
 
 
@@ -62,7 +62,7 @@ def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
     for column in _forced_columns(config):
         assert len(sink) == 1, sink
         assert sink[0].native_admitted is False, sink[0]
-        assert f"date_shift_not_native_chunked_route:{column}" in (sink[0].reroute_reason or "")
+        assert f"group_key_not_native_chunked_route:{column}" in (sink[0].reroute_reason or "")
     return out
 
 

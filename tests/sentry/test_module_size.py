@@ -507,7 +507,7 @@ ALLOWLIST: dict[str, int] = {
     # resident Arrow table, threaded through the requirements and config-gate
     # helpers. Dense reviewed exception (<= MAX). Move the resident-type
     # resolution into its own module when the next operator gate lands.
-    "src/decoy_engine/execution/native/_requirements.py": 648,
+    "src/decoy_engine/execution/native/_requirements.py": 646,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table

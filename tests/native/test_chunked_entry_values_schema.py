@@ -52,15 +52,15 @@ def _oracle(config: dict[str, Any], chunks: list[pa.Table]) -> list[pa.Table]:
 
 
 def _assert_forced_on_oracle(config: dict[str, Any], evidence: list[NativeRouteEvidence]) -> None:
-    """Every `date_shift` (still-vetoed) column in `config` must have kept the table on the
+    """Every `group_key` (still-vetoed) column in `config` must have kept the table on the
     oracle route for its exact reason, so a forced leg cannot silently run natively."""
     for t in config.get("tables", ()):
         for col in t.get("columns", ()):
-            if col.get("strategy") == "date_shift":
+            if col.get("strategy") == "group_key":
                 assert len(evidence) == 1, evidence
                 assert evidence[0].native_admitted is False, evidence[0]
                 reason = evidence[0].reroute_reason or ""
-                assert f"date_shift_not_native_chunked_route:{col['name']}" in reason
+                assert f"group_key_not_native_chunked_route:{col['name']}" in reason
 
 
 def _entry(
@@ -256,7 +256,7 @@ def test_values_vetoed_strategy_runs_on_oracle_route(tmp_path: Path) -> None:
 
 
 def _forced_oracle(columns: list[dict[str, Any]]) -> dict[str, Any]:
-    """The same columns plus a `date_shift` one, which the dispatcher still vetoes."""
+    """The same columns plus a `group_key` one, which the dispatcher still vetoes."""
     return make_config([*columns, force_oracle("cat_force")])
 
 
@@ -297,7 +297,7 @@ def _select(chunks: list[pa.Table], names: list[str]) -> list[pa.Table]:
 def _both_routes(
     columns: list[dict[str, Any]], chunks: list[pa.Table]
 ) -> tuple[list[pa.Table], list[pa.Table]]:
-    """Run `columns` natively, then with a `date_shift` column that forces the oracle."""
+    """Run `columns` natively, then with a `group_key` column that forces the oracle."""
     names = [c["name"] for c in columns]
     native_ev: list[NativeRouteEvidence] = []
     oracle_ev: list[NativeRouteEvidence] = []
@@ -307,7 +307,7 @@ def _both_routes(
     )
     assert native_ev[0].native_admitted is True
     assert oracle_ev[0].native_admitted is False
-    assert "date_shift_not_native_chunked_route:cat_force" in (oracle_ev[0].reroute_reason or "")
+    assert "group_key_not_native_chunked_route:cat_force" in (oracle_ev[0].reroute_reason or "")
     return native, oracle_route
 
 

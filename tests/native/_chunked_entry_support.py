@@ -106,17 +106,13 @@ FORCE_ORACLE_VALUE = "2020-03-15"
 
 
 def force_oracle(name: str) -> dict[str, Any]:
-    """A column the chunked dispatcher still vetoes (`date_shift`), so a table that
-    carries it runs on the oracle route. Its source column holds `FORCE_ORACLE_VALUE`.
-    Callers assert `native_admitted is False` plus the exact column-qualified
-    `date_shift_not_native_chunked_route:<name>` reason,
+    """A column the chunked dispatcher still vetoes (`group_key`), so a table that
+    carries it runs on the oracle route. It groups by itself (`group_by=<name>`), so
+    it needs no sibling column and works over any hashable-safe source, and its source
+    column holds `FORCE_ORACLE_VALUE`. Callers assert `native_admitted is False` plus
+    the exact column-qualified `group_key_not_native_chunked_route:<name>` reason,
     so a forced leg cannot silently become a native run."""
-    return {
-        "name": name,
-        "strategy": "date_shift",
-        "namespace": f"ns_{name}",
-        "provider_config": {"date_format": "%Y-%m-%d", "min_days": -30, "max_days": 30},
-    }
+    return {"name": name, "strategy": "group_key", "provider_config": {"group_by": name}}
 
 
 def faker_col(name: str) -> dict[str, Any]:

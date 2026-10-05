@@ -1030,7 +1030,7 @@ class TestRoutedResultSurface:
         self, tmp_path, monkeypatch
     ):
         """The same union on the dispatcher lane, on a table B1 sends to its oracle
-        route (a date_shift column beside the hash column), where the pandas adapter
+        route (a group_key column beside the hash column), where the pandas adapter
         runs once per chunk."""
         import dataclasses
 
@@ -1048,12 +1048,7 @@ class TestRoutedResultSurface:
             tmp_path,
             [
                 {"name": "val", "strategy": "hash", "namespace": "hash_ns"},
-                {
-                    "name": "tier",
-                    "strategy": "date_shift",
-                    "namespace": "tier_ns",
-                    "provider_config": {"date_format": "%Y-%m-%d", "min_days": -30, "max_days": 30},
-                },
+                {"name": "tier", "strategy": "group_key", "provider_config": {"group_by": "tier"}},
             ],
         )
         sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
@@ -1080,7 +1075,7 @@ class TestRoutedResultSurface:
         )
         assert auto.quality_metrics["auto_chunk"]["lane"] == "dispatcher"
         assert auto.quality_metrics["chunked_route"]["native_admitted"] is False
-        assert "date_shift_not_native_chunked_route:tier" in (
+        assert "group_key_not_native_chunked_route:tier" in (
             auto.quality_metrics["chunked_route"]["reroute_reason"] or ""
         )
         codes = [(w.code, w.detail.get("chunk")) for w in auto.warnings]

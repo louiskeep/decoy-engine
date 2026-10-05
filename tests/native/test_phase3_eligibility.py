@@ -630,12 +630,6 @@ def test_jc5_admitted_set_is_exactly_deterministic_source_keyed_partition_indepe
 
 _FULL_FRAME_ONLY_COLUMNS: list[dict[str, Any]] = [
     {
-        "name": "D",
-        "strategy": "date_shift",
-        "namespace": "ns_d",
-        "provider_config": {"date_format": "%Y-%m-%d"},
-    },
-    {
         "name": "G",
         "strategy": "group_key",
         "provider_config": {"group_by": "P", "length": 16},
@@ -652,6 +646,19 @@ def test_chunked_vetoed_strategy_is_not_admitted_on_the_c1_route(column: dict) -
     result = phase3_c1_eligibility(config, table="t")
     assert result.admitted is False
     assert result.reasons == (f"{column['strategy']}_not_native_chunked_route:{column['name']}",)
+
+
+def test_date_shift_is_admitted_on_the_c1_route() -> None:
+    """Slice C4 lifted the veto for date_shift; it must not reappear in the mirror."""
+    column = {
+        "name": "D",
+        "strategy": "date_shift",
+        "namespace": "ns_d",
+        "provider_config": {"date_format": "%Y-%m-%d"},
+    }
+    result = phase3_c1_eligibility(_config("t", column), table="t")
+    assert result.admitted is True
+    assert result.reasons == ()
 
 
 def test_bucket_perturb_is_admitted_on_the_c1_route() -> None:
@@ -671,7 +678,7 @@ def test_chunked_veto_does_not_hide_a_faker_rejection() -> None:
     config = _config("t", _FULL_FRAME_ONLY_COLUMNS[0], _faker_col("F", deterministic=False))
     result = phase3_c1_eligibility(config, table="t")
     assert set(result.reasons) == {
-        "date_shift_not_native_chunked_route:D",
+        "group_key_not_native_chunked_route:G",
         "faker_not_deterministic:F",
     }
 

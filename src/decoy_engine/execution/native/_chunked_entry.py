@@ -59,6 +59,7 @@ from decoy_engine.execution.native._chunked_evidence import (
     chunk_route_evidence,
     plan_column_backends,
 )
+from decoy_engine.execution.native._chunked_row_errors import format_error_records
 from decoy_engine.execution.native._chunked_schema_rule import (
     SchemaRule,
     build_schema_rule,
@@ -157,6 +158,47 @@ def _oracle_route(
     )
 
 
+def _native_chunk_result(
+    *,
+    table: str,
+    out: pa.Table,
+    warnings: tuple[Any, ...],
+    elapsed_s: dict[str, float],
+    col_seed_by_name: dict[str, Any],
+    columns: tuple[ColumnPlan, ...],
+    read_passthrough: tuple[str, ...],
+    kernel_idle: set[str],
+    row_errors: tuple[Any, ...],
+) -> ExecutionResult:
+    elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
+    return ExecutionResult(
+        outputs={table: out},
+        timings=tuple(
+            StrategyTimingRecord(
+                strategy_type=col_seed_by_name[col].strategy,
+                column=col,
+                elapsed_ms=ms,
+                peak_memory_delta_kb=0,
+            )
+            for col, ms in elapsed_ms.items()
+        ),
+        boundary_conversion_ms=0.0,
+        warnings=warnings,
+        quality_metrics={
+            "chunked_route": chunk_route_evidence(
+                table=table,
+                native_admitted=True,
+                reroute_reason=None,
+                columns=columns,
+                elapsed_ms=elapsed_ms,
+                pandas_read_passthrough=read_passthrough,
+                kernel_idle_columns=kernel_idle,
+            )
+        },
+        row_errors=row_errors,
+    )
+
+
 def _native_route(
     state: Any,
     *,
@@ -182,6 +224,7 @@ def _native_route(
     by `_run_chunked`; the ingest guards run here on the chunk as the source produced it,
     and only then are null-typed columns cast. `unconfigured` names the source columns
     the plan does not cover; they are carried unchanged."""
+    from decoy_engine.errors import RowErrorsFailedError
     from decoy_engine.keyprovider import require_mask_key
 
     first = state.first
@@ -215,6 +258,7 @@ def _native_route(
             dgrn.validate_chunk_row_offset_range(row_offset, chunk.num_rows)
             elapsed_s: dict[str, float] = {}
             kernel_idle: set[str] = set()
+            format_errors: dict[str, tuple[int, ...]] = {}
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -229,45 +273,51 @@ def _native_route(
                 categorical_by_column=categorical_by_column,
                 kernel_idle=kernel_idle,
                 row_offset=row_offset,
-            )
-            out = (
-                masked
-                if rule is None
-                else normalize_chunk(rule, masked, chunk, table=table, chunk_index=i)
+                format_errors=format_errors,
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
             # cannot drift from the oracle route's.
             warnings = tuple(
-                enforce_output_projection(table, out.column_names, plan, state.projection_policy)
+                enforce_output_projection(table, masked.column_names, plan, state.projection_policy)
+            )
+            row_errors = format_error_records(table, format_errors)
+            if row_errors:
+                # The oracle leg's rule: a per-row error cannot be routed anywhere on the
+                # chunked path, and yielding the chunk would leave the raw value in the
+                # output. Record the failing chunk, then fail before the offset advances,
+                # the vault is written or the chunk is yielded.
+                if chunk_result_sink is not None:
+                    chunk_result_sink.append(
+                        _native_chunk_result(
+                            table=table,
+                            out=masked,
+                            warnings=warnings,
+                            elapsed_s=elapsed_s,
+                            col_seed_by_name=col_seed_by_name,
+                            columns=columns,
+                            read_passthrough=read_passthrough,
+                            kernel_idle=kernel_idle,
+                            row_errors=row_errors,
+                        )
+                    )
+                raise RowErrorsFailedError(row_errors)
+            out = (
+                masked
+                if rule is None
+                else normalize_chunk(rule, masked, chunk, table=table, chunk_index=i)
             )
             if chunk_result_sink is not None:
-                elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
                 chunk_result_sink.append(
-                    ExecutionResult(
-                        outputs={table: out},
-                        timings=tuple(
-                            StrategyTimingRecord(
-                                strategy_type=col_seed_by_name[col].strategy,
-                                column=col,
-                                elapsed_ms=ms,
-                                peak_memory_delta_kb=0,
-                            )
-                            for col, ms in elapsed_ms.items()
-                        ),
-                        boundary_conversion_ms=0.0,
+                    _native_chunk_result(
+                        table=table,
+                        out=out,
                         warnings=warnings,
-                        quality_metrics={
-                            "chunked_route": chunk_route_evidence(
-                                table=table,
-                                native_admitted=True,
-                                reroute_reason=None,
-                                columns=columns,
-                                elapsed_ms=elapsed_ms,
-                                pandas_read_passthrough=read_passthrough,
-                                kernel_idle_columns=kernel_idle,
-                            )
-                        },
+                        elapsed_s=elapsed_s,
+                        col_seed_by_name=col_seed_by_name,
+                        columns=columns,
+                        read_passthrough=read_passthrough,
+                        kernel_idle=kernel_idle,
                         row_errors=(),
                     )
                 )

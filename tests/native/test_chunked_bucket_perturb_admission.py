@@ -46,7 +46,7 @@ from tests.native._chunked_entry_support import (
     split,
 )
 
-VETOED = "date_shift_not_native_chunked_route"
+VETOED = "group_key_not_native_chunked_route"
 
 
 def _check(config: dict[str, Any], table: str = TABLE) -> None:
@@ -81,7 +81,7 @@ def test_bucket_perturb_is_not_in_the_chunked_veto_set() -> None:
     from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 
     assert "bucket_perturb" not in CHUNKED_ROUTE_VETOED_STRATEGIES
-    assert {"group_key", "date_shift"} == CHUNKED_ROUTE_VETOED_STRATEGIES
+    assert frozenset({"group_key"}) == CHUNKED_ROUTE_VETOED_STRATEGIES
 
 
 def test_config_only_eligibility_mirror_admits_an_admissible_bucket_perturb() -> None:

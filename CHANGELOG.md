@@ -68,6 +68,32 @@ A streamed run's schema hold-back used to spill to `TMPDIR`. It now spills to th
 first spill), on the output's filesystem. A streaming sink without `spill_parent` that needs
 to spill fails with `hold_back_spill_unavailable`. The per-chunk evidence of a streamed run is
 now folded into running totals instead of one entry per chunk.
+### Changed (date_shift runs on the native chunked route, 2026-10-05)
+
+A `date_shift` column no longer runs on the pandas oracle for a native-admissible config on
+the chunked route (`run_mask_chunked`, the auto-chunk dispatcher lane). With an explicit
+non-empty `date_format` (no `%z` or `%Z`), a namespace, no `group_by`, no `when:`, integer
+day bounds and a `string` source, the compiled index kernel shifts it chunk by chunk,
+byte-identical to the oracle. A `large_string` or other non-string source, an autodetected
+format, `group_by`, `when:` and FK-key edges keep their existing paths and codes. With the
+index companion missing the table reroutes to the oracle (`index_extension_unavailable`).
+
+Output type is now pinned to `string` on both chunked legs, with or without the companion.
+The whole-frame route still resolves the type at assembly, so two route-dependent
+differences are accepted under ROUTE-OUTPUT-CONTRACT: a zero-row column is `double`
+whole-frame and `string` chunked, and an all-null column is `null` whole-frame and `string`
+chunked. Shifted values are unchanged on every route.
+
+A non-null value that does not parse under the format still fails the job closed with
+`RowErrorsFailedError`, now on the native leg too. The records are identical to the oracle
+chunked leg's, including `row_index`, which is relative to the failing chunk (neither leg
+adds `base_row_offset`), and the failing chunk is recorded in `chunk_result_sink` before the
+error is raised.
+
+Route evidence follows the bucket_perturb rule: a chunk with no parseable value runs no
+compiled kernel and reports `arrow_python`, and `compiled_kernel_executed` stays `False`
+for a column that never ran one.
+
 ### Changed (bucket_perturb runs on the native chunked route, 2026-10-04)
 
 A `bucket_perturb` column no longer sends its whole table to the pandas oracle on the chunked

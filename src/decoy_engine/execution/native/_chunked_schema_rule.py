@@ -14,6 +14,13 @@ by definition the rule pins one type per column for the whole call:
   boundaries. The full-frame route still resolves the type at assembly (all-null
   -> null), so this is a recorded route-dependent difference (see
   docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
+- a native-admissible date_shift column (explicit format, a namespace, no `group_by`, no
+  `when:`, a string source): `string`, by the same cast. date_shift output is always a
+  strftime string, so pandas' empty -> float64 and all-null -> null are inference
+  artifacts. The decision reads only the config and the first chunk's type, never the
+  companion, so both legs agree with or without it. The whole-frame route still resolves
+  the type at assembly, so this is the same recorded route-dependent difference
+  (docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
 - passthrough columns (configured, or unconfigured and kept under the
   passthrough policy): the source column itself, never the pandas round trip,
   which rounds nullable integers above 2^53.
@@ -51,6 +58,37 @@ def _string_output_is_fixed(col: dict[str, Any]) -> bool:
     return isinstance(cfg.get("redact_with", "REDACTED"), str)
 
 
+def date_shift_pinned_columns(
+    configured: dict[str, dict[str, Any]], first_schema: pa.Schema, *, table: str
+) -> frozenset[str]:
+    """The date_shift columns whose output is pinned to `string`.
+
+    One classifier for both schema-rule construction sites (the dispatcher entry and the
+    streamed output sink), config plus the first chunk's real source type, independent of
+    whether the compiled companion is installed."""
+    from decoy_engine.execution.native._operator_config_rejections import (
+        date_shift_config_rejection,
+    )
+
+    pinned: set[str] = set()
+    for name, col in configured.items():
+        if col.get("strategy") != "date_shift" or _has_when(col):
+            continue
+        if name not in first_schema.names or first_schema.field(name).type != pa.string():
+            continue
+        provider_config = col.get("provider_config")
+        reason = date_shift_config_rejection(
+            name,
+            table,
+            None,
+            namespace=col.get("namespace"),
+            provider_config=provider_config if isinstance(provider_config, dict) else {},
+        )
+        if reason is None:
+            pinned.add(name)
+    return frozenset(pinned)
+
+
 @dataclass(frozen=True)
 class SchemaRule:
     string_columns: frozenset[str]
@@ -75,6 +113,9 @@ def build_schema_rule(
     definition, so they join the string-pinned set on both routes. A categorical column
     the native operator cannot run is not listed and keeps the type its route produced.
 
+    A native-admissible date_shift column is added by `date_shift_pinned_columns`, so every
+    caller gets the pin without passing anything.
+
     A column some handler writes (see `handler_written_columns`) is never a passthrough
     column here, so `normalize_chunk` cannot restore its source value."""
     table_cfg = next(
@@ -91,6 +132,7 @@ def build_schema_rule(
     )
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     strings |= categorical_columns
+    strings |= date_shift_pinned_columns(configured, first.schema, table=table)
     passthrough: dict[str, pa.DataType] = {}
     passthrough_fields: dict[str, pa.Field] = {}
     for field in first.schema:

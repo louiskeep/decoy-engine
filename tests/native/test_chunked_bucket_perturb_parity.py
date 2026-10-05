@@ -125,7 +125,7 @@ def test_a_drifted_later_chunk_has_the_same_outcome_on_both_legs(later: pa.Table
     )
     assert len(native_ev) == 1 and native_ev[0].native_admitted is True
     assert len(forced_ev) == 1 and forced_ev[0].native_admitted is False
-    assert f"date_shift_not_native_chunked_route:{FORCE}" in (forced_ev[0].reroute_reason or "")
+    assert f"group_key_not_native_chunked_route:{FORCE}" in (forced_ev[0].reroute_reason or "")
     if isinstance(forced, tuple):
         assert native == forced
     else:
