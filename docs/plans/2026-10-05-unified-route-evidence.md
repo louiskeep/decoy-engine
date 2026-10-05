@@ -1,4 +1,4 @@
-Status: plan (revision 2.1, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (1 LOW folded).
+Status: plan (revision 2.2, BUILT, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (1 LOW folded).
 
 # Unified-slice per-column route evidence
 
@@ -68,7 +68,7 @@ Apply the same monotonic form to group_key's existing assignment (`_shadow_opera
 
 **3d. `calls`** = `OperatorCallEvidence.batches_run`: the operator's batch invocations. The program's "call count" means invocations of the column's operator; compiled-kernel call counts stay internal. This matches the chunked route's per-chunk invocation semantics.
 
-**3e. `elapsed_ms`** comes from joining the collector's records on `(strategy_type, column)`. Every admitted node must have exactly one record, and every record must belong to an admitted node (a bijection). A violation raises `UnifiedSliceInvariantError`, consistent with D7. Admission makes duplicates impossible, so a violation means a bug. `elapsed_ms` is the record's float, rounded to 3 decimals for JSON stability; non-negative.
+**3e. Elapsed time** (rev 2.2: NOT published in `quality_metrics`). The engine keeps elapsed time out of `quality_metrics` so the evidence stays deterministic; `_pipeline_auto_chunk._without_elapsed` strips it from the chunked route for exactly this reason, and two existing tests compare `quality_metrics` across runs. Per-column elapsed time is already published in `ExecutionResult.timings`, one `StrategyTimingRecord` per node, which satisfies the program's elapsed-per-column obligation. `assemble_node_evidence` still joins the records to the nodes on `(strategy_type, column)` as a bijection check, but does not add an `elapsed_ms` key. The rev 2.1 text follows for the join rule: it comes from joining the collector's records on `(strategy_type, column)`. Every admitted node must have exactly one record, and every record must belong to an admitted node (a bijection). A violation raises `UnifiedSliceInvariantError`, consistent with D7. Admission makes duplicates impossible, so a violation means a bug. `elapsed_ms` is the record's float, rounded to 3 decimals for JSON stability; non-negative.
 
 **3f. One pure evidence-assembly helper** (also the owed split). New sibling module `execution/_unified_slice_evidence.py` holding:
 
@@ -162,3 +162,4 @@ Round 1 answers (Codex):
   - MEDIUM: all-unparseable date_shift cannot publish evidence → assert at the seam, plus the production exception parity.
   - MEDIUM: timing attribution not proven → same-strategy shuffled-records test.
 - Round 2 (Codex, gpt-6-astra): GO, all round-1 findings closed; 1 LOW (the group_key mixed-batch fixture is unreachable through real batching) folded as a direct `run_operator` test.
+- Rev 2.2 (plan author, during build): the builder stopped on two existing tests that compare `quality_metrics` across runs. Root cause: the plan published wall-clock `elapsed_ms` in `quality_metrics`, contrary to the engine's existing rule that elapsed time lives only in `ExecutionResult.timings` (`_pipeline_auto_chunk._without_elapsed`). Fixed by not publishing it (3e); the bijection check stays.

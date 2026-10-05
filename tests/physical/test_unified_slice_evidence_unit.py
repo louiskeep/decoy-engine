@@ -78,19 +78,22 @@ REDACT = "native_redact"
     "strategy, operator, compiled",
     [("redact", REDACT, False), ("hash", HASH, True)],
 )
-def test_elapsed_ms_is_attributed_by_strategy_and_column(
+def test_timings_are_attributed_by_strategy_and_column(
     strategy: str, operator: str, compiled: bool
 ) -> None:
+    from decoy_engine.execution import _unified_slice_evidence as evidence_mod
+
     nodes = [node("n1", strategy, "a", operator), node("n2", strategy, "b", operator)]
     evidence = {
         "n1": ev(operator, compiled=compiled, calls=3),
         "n2": ev(operator, compiled=compiled, calls=7),
     }
-    # Shuffled relative to node order; distinct values, one with a long fraction.
+    # Shuffled relative to node order; distinct values per column.
     timings = [rec(strategy, "b", 9.87654321), rec(strategy, "a", 1.2344)]
+    assert evidence_mod._timing_by_node(nodes, timings) == {"n1": 1.2344, "n2": 9.87654321}
     out = _assemble(nodes, evidence, timings)
-    assert out["n1"]["elapsed_ms"] == 1.234
-    assert out["n2"]["elapsed_ms"] == 9.877
+    # Elapsed time stays out of quality_metrics so the evidence is deterministic.
+    assert all("elapsed_ms" not in entry for entry in out.values())
     assert out["n1"]["calls"] == 3
     assert out["n2"]["calls"] == 7
     json.dumps(out, allow_nan=False)
@@ -113,7 +116,6 @@ def test_full_node_dict_for_each_backend_family() -> None:
             "planned_backend": RUST_COMPANION,
             "executed_backend": RUST_COMPANION,
             "calls": 1,
-            "elapsed_ms": 1.0,
         },
         "f": {
             "operator": FAKER,
@@ -122,7 +124,6 @@ def test_full_node_dict_for_each_backend_family() -> None:
             "planned_backend": RUST_POOL_SELECT,
             "executed_backend": RUST_POOL_SELECT,
             "calls": 1,
-            "elapsed_ms": 2.0,
         },
         "r": {
             "operator": REDACT,
@@ -131,7 +132,6 @@ def test_full_node_dict_for_each_backend_family() -> None:
             "planned_backend": ARROW_PYTHON,
             "executed_backend": ARROW_PYTHON,
             "calls": 1,
-            "elapsed_ms": 3.0,
         },
     }
 

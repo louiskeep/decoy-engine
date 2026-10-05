@@ -3,10 +3,14 @@
 `assemble_node_evidence` turns the coordinator's per-node operator evidence and the
 timing collector's records into the JSON-safe `nodes` leaf under
 `quality_metrics["unified_slice_activation"]`. It takes no context, so every invariant
-is unit-testable without running a pipeline. Each node entry carries the same four
-fields the chunked route publishes per column (`planned_backend`, `executed_backend`,
-`calls`, `elapsed_ms`) next to the original three, and the executed backend comes from
-the one rule the chunked route also uses (`_chunked_evidence.executed_backend`).
+is unit-testable without running a pipeline. Each node entry carries the fields the
+chunked route publishes per column (`planned_backend`, `executed_backend`, `calls`) next
+to the original three, and the executed backend comes from the one rule the chunked route
+also uses (`_chunked_evidence.executed_backend`). Elapsed time is NOT published here: as
+on the chunked route (`_pipeline_auto_chunk._without_elapsed`), it lives only in
+`ExecutionResult.timings` so `quality_metrics` stays deterministic. The timing records are
+still checked one-to-one against the nodes, which guarantees every node has exactly one
+`timings` entry under its `(strategy, column)`.
 """
 
 from __future__ import annotations
@@ -38,8 +42,6 @@ __all__ = ["assemble_node_evidence", "reconstruct_source_shaped_output"]
 _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
     {_admission.HASH_OPERATOR_ID, _admission.FAKER_OPERATOR_ID}
 )
-
-_ELAPSED_DECIMALS = 3
 
 
 def _timing_by_node(
@@ -81,7 +83,7 @@ def assemble_node_evidence(
     mismatch, a hash or Faker node without positive kernel evidence, or timing records
     that are not one-to-one with the nodes."""
     nodes = tuple(nodes)
-    elapsed_by_node = _timing_by_node(nodes, timing_records)
+    _timing_by_node(nodes, timing_records)
     node_evidence: dict[str, dict[str, Any]] = {}
     for node in nodes:
         binding = node.execution
@@ -122,7 +124,6 @@ def assemble_node_evidence(
                 planned, native_admitted=True, kernel_idle=kernel_idle
             ),
             "calls": evidence.batches_run,
-            "elapsed_ms": round(float(elapsed_by_node[node.node_id]), _ELAPSED_DECIMALS),
         }
     return node_evidence
 

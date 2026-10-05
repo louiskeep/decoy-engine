@@ -78,3 +78,7 @@ Two existing tests outside the plan's allowed edit list fail, because they compa
 - `tests/unit/execution/test_b6b_modes.py::test_a_lazy_table_below_the_threshold_is_resolved_before_the_unified_slice` compares the whole `unified_slice_activation` leaf of two runs.
 
 Plan fact 5 said three tests would need updating and missed these two. Both only assert that two runs agree, so the fix is to drop `elapsed_ms` from each node before comparing (a one-line normalizer per test). I did not make that edit because the plan forbids edits beyond its list. Every value, schema and parity assertion in them would stay as is.
+
+## Resolution (plan author, rev 2.2)
+
+The two failures exposed a plan defect, not a test problem. The engine already keeps elapsed time out of `quality_metrics` on purpose: `_pipeline_auto_chunk._without_elapsed` strips it from the chunked route's evidence because "elapsed time lives in `ExecutionResult.timings` only, so the evidence in `quality_metrics` stays deterministic." The unified slice now follows that same contract. `assemble_node_evidence` still checks that timing records are one-to-one with the nodes (so every node has exactly one `timings` entry), but no longer publishes `elapsed_ms`. Both stopped tests pass unchanged. The new tests assert the evidence dict exactly, the timing attribution through `_timing_by_node`, and (in the Faker parity test) exactly one `timings` record for the node. The earlier `elapsed_ms` pop-and-check edits in the parity and Faker tests are gone; those tests compare the exact six-key dict.

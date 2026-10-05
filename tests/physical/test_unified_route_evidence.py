@@ -3,7 +3,8 @@
 Plan: `docs/plans/2026-10-05-unified-route-evidence.md` rev 2.1, section 5.
 
 Every admitted node's published evidence carries `planned_backend`,
-`executed_backend`, `calls` and `elapsed_ms` next to the old three keys. These
+`executed_backend` and `calls` next to the old three keys (elapsed time stays in
+`ExecutionResult.timings` only, as on the chunked route). These
 tests pin the exact dict per operator on the production lane (with the oracle
 poisoned so a silent decline cannot pass), the idle rules, the monotonic
 accumulation of the compiled-kernel flag across batches, and `calls`.
@@ -57,7 +58,6 @@ EVIDENCE_KEYS = {
     "planned_backend",
     "executed_backend",
     "calls",
-    "elapsed_ms",
 }
 
 
@@ -203,9 +203,7 @@ def assert_exact_evidence(
     calls: int,
 ) -> None:
     assert set(ev) == EVIDENCE_KEYS
-    elapsed = ev["elapsed_ms"]
-    assert isinstance(elapsed, float) and elapsed >= 0.0
-    assert {k: v for k, v in ev.items() if k != "elapsed_ms"} == {
+    assert ev == {
         "operator": operator,
         "executed": True,
         "compiled_kernel_executed": compiled,

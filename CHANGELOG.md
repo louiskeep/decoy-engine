@@ -11,11 +11,13 @@ minimum engine version it was tested against via its
 
 ### Added (route evidence on the unified slice, 2026-10-05)
 
-Each node entry under `quality_metrics["unified_slice_activation"]["nodes"]` now carries four more
+Each node entry under `quality_metrics["unified_slice_activation"]["nodes"]` now carries three more
 keys next to `operator`, `executed` and `compiled_kernel_executed`: `planned_backend`,
-`executed_backend`, `calls` and `elapsed_ms`. They use the chunked route's vocabulary
-(`rust_companion`, `rust_pool_select`, `arrow_python`). `calls` is the number of batches the
-operator ran, and `elapsed_ms` is the node's own timing record, rounded to three decimals.
+`executed_backend` and `calls`. They use the chunked route's vocabulary (`rust_companion`,
+`rust_pool_select`, `arrow_python`), and `calls` is the number of batches the operator ran.
+Per-column elapsed time stays in `ExecutionResult.timings` only, as on the chunked route, so
+`quality_metrics` remains deterministic; the lane now checks there is exactly one timing record
+per admitted node.
 Outputs, warnings, errors and row errors are unchanged.
 
 A node planned for a compiled kernel that made no compiled call reports `arrow_python`. That

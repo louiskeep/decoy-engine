@@ -246,8 +246,6 @@ def test_1_admits_and_runs_native(tmp_path: Path) -> None:
     leaf = assert_lane_parity(case)
     faker_evidence = [e for e in leaf["nodes"].values() if e["operator"] == FAKER_OP]
     assert len(faker_evidence) == 1
-    elapsed = faker_evidence[0].pop("elapsed_ms")
-    assert isinstance(elapsed, float) and elapsed >= 0.0
     assert faker_evidence == [
         {
             "operator": FAKER_OP,
