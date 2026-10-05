@@ -404,8 +404,8 @@ class ShadowCoordinator:
 
             if columns:
                 # Assemble in SOURCE-SCHEMA order -- the pandas full-frame
-                # oracle preserves the source column order, NOT the node/config
-                # declaration order this loop iterates in (Codex final-gate
+                # oracle preserves the source column order, NOT the work order
+                # this loop iterates in (Codex final-gate
                 # HIGH: source [a,b] with config [b,a] otherwise diverged). For
                 # the bounded slice EVERY source column must be configured with
                 # an in-slice strategy, so the assembled set must equal the

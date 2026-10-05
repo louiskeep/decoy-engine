@@ -503,6 +503,9 @@ ALLOWLIST: dict[str, int] = {
     # handler (keeps __cause__). The owed "admission-source helper" move found nothing to move:
     # no such helpers remain in this file (the source alignment now lives inside
     # `cheap_admission`), so the entry is bumped to the actual size instead.
+    # Owed by the NEXT unified-slice change: move the completed-evidence validation and
+    # the source-shaped output reconstruction (`_execute_admitted`'s post-run block) into
+    # a sibling module.
     "src/decoy_engine/execution/_unified_slice.py": 658,
     # Track A input formats (2026-09-30): resolve_input_arrow_type prefers the
     # resident Arrow table, threaded through the requirements and config-gate
