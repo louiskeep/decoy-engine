@@ -360,6 +360,7 @@ def test_the_legacy_evidence_is_planned_from_this_tables_config_and_engine_versi
         "table": "t",
         "engine_version": "ev-1",
         "registry": get_default_registry(),
+        "first_schema": src.schema,
     }
 
 
@@ -378,7 +379,14 @@ def test_the_legacy_lane_plans_its_evidence_with_the_run_engine_version(
     monkeypatch.setattr(_chunked_evidence, "plan_column_backends", spy)
     cfg, src = _native_table()
     _call(cfg, src, dispatcher_enabled=False, engine_version="ev-2")
-    assert seen == [{"table": "t", "engine_version": "ev-2", "registry": get_default_registry()}]
+    assert seen == [
+        {
+            "table": "t",
+            "engine_version": "ev-2",
+            "registry": get_default_registry(),
+            "first_schema": src.schema,
+        }
+    ]
 
 
 def _schema_disagreement(monkeypatch: pytest.MonkeyPatch, target: Any, name: str) -> None:
