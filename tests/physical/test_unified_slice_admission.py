@@ -667,6 +667,76 @@ def test_encodable_hash_namespace_admits(tmp_path: Path) -> None:
     assert _resident_contract(physical_plan, plan, source, registry=registry) is not None
 
 
+def _faker_column(namespace: str = "ns_faker") -> dict[str, Any]:
+    return {
+        "name": "c",
+        "strategy": "faker",
+        "provider": "person_first_name",
+        "deterministic": True,
+        "namespace": namespace,
+        "pool_size": 30,
+    }
+
+
+def test_faker_operator_is_in_every_admission_table() -> None:
+    adm = _unified_slice_admission
+    assert adm.FAKER_OPERATOR_ID == "native_faker_select"
+    assert adm.FAKER_OPERATOR_ID in adm.ALLOWED_OPERATOR_IDS
+    assert adm.FAKER_OPERATOR_ID in adm._COMPANION_DEPENDENT_OPERATOR_IDS
+    assert adm._OPERATOR_REQUIRED_KERNEL[adm.FAKER_OPERATOR_ID] == "index"
+    # string only: the binder also accepts large_string, the slice must not.
+    assert adm._ADMITTED_RESIDENT_TYPES["faker"] == frozenset({pa.string()})
+
+
+@pytest.mark.skipif(
+    not native_companion_status().ok,
+    reason="compiled decoy-engine-native companion unavailable",
+)
+def test_faker_string_source_admits(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [_faker_column()], source)
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    admitted = _resident_contract(physical_plan, plan, source, registry=registry)
+    assert admitted is not None
+    assert admitted.nodes[0].execution is not None
+    assert admitted.nodes[0].execution.operator_id == "native_faker_select"
+
+
+def test_faker_large_string_source_binds_but_declines_admission(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.large_string())})
+    config, source = _build(tmp_path, [_faker_column()], source)
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert physical_plan.tables[0].nodes[0].execution is not None
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+
+
+def test_faker_unencodable_namespace_declines(tmp_path: Path) -> None:
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [_faker_column("\ud800bad")], source)
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+
+
+def test_faker_declines_when_the_index_kernel_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution.native._companion_status import KernelAvailability
+
+    source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
+    config, source = _build(tmp_path, [_faker_column()], source)
+    profile, plan = _profile_and_plan(config, source)
+    physical_plan, registry = _compile(config, profile, plan, source)
+    monkeypatch.setattr(
+        _unified_slice_admission,
+        "native_kernel_availability",
+        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True),
+    )
+    assert _resident_contract(physical_plan, plan, source, registry=registry) is None
+
+
 def test_resolved_substrate_env_change_after_resolution_does_not_flip_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -243,6 +243,33 @@ def test_hash_case_stamps_positive_kernel_evidence_when_companion_available(
     assert evidence["compiled_kernel_executed"] is True
 
 
+@pytest.mark.skipif(
+    not native_companion_status().ok, reason="compiled decoy-engine-native companion unavailable"
+)
+def test_faker_case_stamps_positive_kernel_evidence_when_companion_available(
+    tmp_path: Path,
+) -> None:
+    source = pa.table({"c": pa.array([f"src_{i % 5}" for i in range(20)], type=pa.string())})
+    columns = [
+        {
+            "name": "c",
+            "strategy": "faker",
+            "provider": "person_first_name",
+            "deterministic": True,
+            "namespace": "ns_faker",
+            "pool_size": 30,
+        }
+    ]
+    off, on = _run_both(tmp_path, "t", source, columns)
+    leaf = _assert_full_parity(off, on)
+    (evidence,) = leaf["nodes"].values()
+    assert evidence == {
+        "operator": "native_faker_select",
+        "executed": True,
+        "compiled_kernel_executed": True,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Non-vacuity: poison the legacy pandas adapter on the flag-on admitted path.
 # ---------------------------------------------------------------------------
