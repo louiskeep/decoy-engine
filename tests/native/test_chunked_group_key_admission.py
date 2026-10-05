@@ -333,8 +333,9 @@ def test_a_wider_oracle_safe_sibling_downgrades_to_the_oracle_and_matches_it(
     run = run_one(config, chunks)
     assert run.ev[0].native_admitted is False, run.ev[0]
     reason = run.ev[0].reroute_reason or ""
-    # The static plan rejects a sibling whose profile label is not admitted; the real-type gate
-    # names the rest (a large_string or dictionary sibling profiles as an admitted label).
+    # Integrated, the static plan rejects a wider sibling from its real first-chunk type
+    # (fallback_policy_not_native); the group_key-specific real-type-gate code is defense-in-depth
+    # for exotic/union siblings or a sibling absent from the first chunk. Either is accepted here.
     assert reason.startswith(
         (
             f"group_key_sibling_type_not_native:{TARGET}:{GB}:",
