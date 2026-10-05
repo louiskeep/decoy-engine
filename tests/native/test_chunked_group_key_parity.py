@@ -21,6 +21,7 @@ from decoy_engine import run_mask_chunked
 from decoy_engine.execution._chunked import concat_masked_chunks
 from decoy_engine.execution.native import _chunk_masking
 from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
+from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -266,7 +267,7 @@ def test_the_branch_receives_the_resolved_mask_key_namespace_and_sibling_slice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    real = _chunk_masking.native_group_key
+    real = native_group_key
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         calls.append((args, kwargs))
@@ -336,11 +337,12 @@ def _pandas_chunk(g: list[Any], u: list[Any], dtype: str) -> pa.Table:
 @NEEDS_COMPANION
 @pytest.mark.parametrize("dtype", ["string", "boolean", "Int64"])
 def test_a_metadata_bearing_sibling_survives_an_unrelated_null_typed_column(dtype: str) -> None:
-    g1: list[Any] = {
+    by_dtype: dict[str, list[Any]] = {
         "string": ["a", None, "a"],
         "boolean": [True, None, True],
         "Int64": [1, None, 1],
-    }[dtype]
+    }
+    g1 = by_dtype[dtype]
     first = _pandas_chunk(g1, [1, 2, 3], dtype)
     second = _pandas_chunk(g1, [None, None, None], dtype)
     assert pa.types.is_null(second.schema.field("u").type)

@@ -187,7 +187,12 @@ def _legacy_route_evidence(
         source.slice(0, chunk_size_rows), table=table, engine_version=engine_version
     )
     columns = plan_column_backends(
-        config, profile, table=table, engine_version=engine_version, registry=registry
+        config,
+        profile,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        first_schema=source.schema,
     )
     evidence = chunk_route_evidence(
         table=table,

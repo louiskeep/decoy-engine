@@ -24,11 +24,11 @@ drive this operator:
   string, so group_key never emits a null; its only degenerate shape is EMPTY.
 
 v1 scope (see docs/plans/2026-09-21-native-group-key.md): the `group_by` sibling
-must be an UNMASKED/passthrough column, on the FULL-FRAME route only; every other
-shape declines to the oracle at admission. This operator masks the full
-stringify-safe type set byte-identically, but production admission narrows the
-sibling to `{string, int64, bool}` (what a passthrough node can carry in
-production); the wider set is deferred to a later slice. The runtime invariants
+must be an UNMASKED/passthrough column; every other shape declines to the oracle at
+admission, on the full-frame route and on the chunked route alike (slice C3). This
+operator masks the full stringify-safe type set byte-identically, but production
+admission narrows the sibling to `{string, int64, bool}` (what a passthrough node can
+carry in production); the wider set is deferred to a later slice. The runtime invariants
 below mirror `native_categorical` so a malformed compiled kernel fails HERE,
 coded and fail-closed.
 """
@@ -92,6 +92,7 @@ def native_group_key(
     namespace: str,
     native_threads: int | None = None,
     raw_hex_kernel: RawHexDerivationKernel | None = None,
+    derive_calls: list[int] | None = None,
 ) -> pa.Array:
     """Derive one consistent key per row from the `group_by` sibling column.
 
@@ -111,6 +112,13 @@ def native_group_key(
     `native_keyed_hash`'s own `load_compiled_crypto_kernel`) unless an override
     is injected for tests; a missing companion raises
     `CryptoExtensionUnavailableError`, which the caller maps to a coded decline.
+
+    `derive_calls`, when given, receives the row count of each compiled call, so a caller can
+    tell a chunk that ran the kernel from one that did not. An empty column runs no kernel and
+    returns an empty `pa.string()` (the caller's own empty-type rule applies afterwards).
+    The kernel is resolved BEFORE that short-circuit: the full-frame route has no separate
+    raw-hex probe and relies on this load to decline when the companion is absent, empty
+    columns included.
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
@@ -119,8 +127,10 @@ def native_group_key(
         )
     n = group_by_sibling.num_rows
 
-    string_col = _stringify_sibling(group_by_sibling)
     kernel = raw_hex_kernel if raw_hex_kernel is not None else load_compiled_raw_hex_kernel()
+    if n == 0:
+        return pa.array([], type=pa.string())
+    string_col = _stringify_sibling(group_by_sibling)
     hex_out = kernel.derive_hex_raw_batch(
         string_col,
         mask_key=mask_key,
@@ -128,6 +138,8 @@ def native_group_key(
         hex_chars=length,
         native_threads=native_threads,
     )
+    if derive_calls is not None:
+        derive_calls.append(n)
 
     # Runtime invariants on the kernel's own result, mirroring `native_categorical`:
     # the isinstance/type check comes FIRST so a non-`pa.Array` result cannot leak

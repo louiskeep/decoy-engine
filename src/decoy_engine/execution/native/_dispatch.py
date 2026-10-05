@@ -54,9 +54,18 @@ from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-e
     _resolve_truncate_keep,
 )
 from decoy_engine.execution.native._chunk_schema import NativeChunkSchemaDriftError
+from decoy_engine.execution.native._chunked_group_key_gate import (
+    group_by_columns,
+    order_dependence_rejection,
+    sibling_resident_sources,
+)
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
+)
+from decoy_engine.execution.native._group_key_ext import (
+    RawHexDerivationKernel,
+    load_compiled_raw_hex_kernel,
 )
 from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
@@ -201,7 +210,13 @@ def _first_when_column(config: dict[str, Any], table: str) -> str | None:
 
 
 def _static_route_decision(
-    config: dict[str, Any], profile: Any, *, table: str, engine_version: str, registry: Any = None
+    config: dict[str, Any],
+    profile: Any,
+    *,
+    table: str,
+    engine_version: str,
+    registry: Any = None,
+    first_schema: pa.Schema | None = None,
 ) -> NativeRouteEvidence:
     """Config/profile-only admission: no I/O, no compiled-extension probe.
 
@@ -225,7 +240,13 @@ def _static_route_decision(
     if _table_in_declared_relationship(config, table):
         return _oracle_evidence(table, "fk_relationship_not_native_route")
 
-    plan = compile_native_plan(config, profile, engine_version=engine_version, registry=registry)
+    plan = compile_native_plan(
+        config,
+        profile,
+        engine_version=engine_version,
+        registry=registry,
+        resident_sources=sibling_resident_sources(config, table, first_schema),
+    )
     table_nodes = [n for n in plan.nodes if n.table == table]
     if not table_nodes:
         return _oracle_evidence(table, "no_mask_nodes")
@@ -246,13 +267,22 @@ def _static_route_decision(
         column = node.columns[0]
         scalar_columns.append((column, node.strategy))
         if node.strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
-            # group_key is native on the full-frame route but explicitly vetoed on this
-            # chunked/streaming route: its sibling input is not available per chunk. It
-            # otherwise resolves fallback_policy == "native" and would reach the missing
-            # chunk handler, so veto the whole table to the oracle here. The reason
-            # carries the strategy so vetoes stay distinguishable in evidence.
+            # A strategy native on the full-frame route but vetoed on this chunked route
+            # would otherwise resolve fallback_policy == "native" and reach a missing chunk
+            # handler, so veto the whole table to the oracle here. The set is empty today;
+            # the reason carries the strategy so a future veto stays distinguishable.
             reasons.append(f"{node.strategy}_not_native_chunked_route:{column}")
             continue
+        if node.strategy == "group_key" and node.fallback_policy == "native":
+            # The sibling must reach group_key unmasked, or the native leg (which masks from
+            # the source chunk) would read a different value than the oracle.
+            group_by = group_by_columns(config, table).get(column)
+            order_reason = (
+                order_dependence_rejection(column, group_by, table_nodes) if group_by else None
+            )
+            if order_reason is not None:
+                reasons.append(order_reason)
+                continue
         no_kernel = node.strategy not in NATIVE_KERNEL_STRATEGIES
         no_pool_path = node.strategy not in NATIVE_POOL_STRATEGIES
         # The seeded non-deterministic categorical resolves a non-native policy (the
@@ -297,7 +327,8 @@ class NativePreflight:
 
     `index_kernel` is `None` whenever the route is not native-admitted or
     admits no faker, categorical, bucket_perturb or date_shift node -- there is
-    nothing to derive, so nothing was loaded.
+    nothing to derive, so nothing was loaded. `raw_hex_kernel` is likewise `None`
+    unless an admitted group_key node needs it.
     Loading + self-testing the kernel happens ONCE here, at preflight, never
     per chunk; the verified wrapper is threaded through `_chunked_entry._native_route`
     -> `_mask_chunk_native`, which hands it to each index-kernel column's operator.
@@ -308,6 +339,9 @@ class NativePreflight:
     # Source columns the plan does not cover that the native route carries unchanged
     # (admitted only under the `warn` policy, see `plan_native_route`).
     unconfigured_passthrough: tuple[str, ...] = ()
+    # The raw-hex kernel group_key derives with (a different compiled entry point from the
+    # index kernel), loaded and self-tested once here for any admitted group_key node.
+    raw_hex_kernel: RawHexDerivationKernel | None = None
 
 
 def plan_native_route(
@@ -325,7 +359,8 @@ def plan_native_route(
     (when `first_schema` is given) the actual first-chunk coverage + faker
     source-type guards, then (only when still admitted) the required companion
     probes -- crypto (any `hash` node) and index (any admitted `faker`,
-    `categorical`, `bucket_perturb` or `date_shift` node) -- in that order. Guards run BEFORE probes so a schema-rejected table (an
+    `categorical`, `bucket_perturb` or `date_shift` node), then raw-hex (any admitted
+    `group_key` node) -- in that order. Guards run BEFORE probes so a schema-rejected table (an
     uncovered column, or a faker node over a non-string source) keeps its own
     reroute reason and never reaches either probe; each probe is itself gated
     on the decision still being admitted, so a rejection from an earlier probe
@@ -354,7 +389,12 @@ def plan_native_route(
     registry; it decides which providers are composite nodes.
     """
     decision = _static_route_decision(
-        config, profile, table=table, engine_version=engine_version, registry=registry
+        config,
+        profile,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        first_schema=first_schema,
     )
     # A `when:` predicate names the reroute reason even when another column would
     # have vetoed the table anyway: its meaning (leave unselected rows untouched)
@@ -372,7 +412,7 @@ def plan_native_route(
         if type(adapter) is not PandasExecutionAdapter:
             decision = _downgrade_to_oracle(decision, "adapter_requested")
     if not decision.native_admitted:
-        return NativePreflight(decision, None)
+        return NativePreflight(decision, None, raw_hex_kernel=None)
 
     unconfigured: tuple[str, ...] = ()
     if first_schema is not None:
@@ -443,7 +483,17 @@ def plan_native_route(
             decision = _downgrade_to_oracle(decision, "index_extension_unavailable")
             index_kernel = None
 
-    return NativePreflight(decision, index_kernel, unconfigured)
+    raw_hex_kernel: RawHexDerivationKernel | None = None
+    if decision.native_admitted and any(n.strategy == "group_key" for n in decision.node_routes):
+        # One code for every loader failure (no companion, ABI mismatch, missing
+        # `derive_hex_raw_batch`, failed load-time self-test): the table runs on the oracle.
+        try:
+            raw_hex_kernel = load_compiled_raw_hex_kernel()
+        except CryptoExtensionUnavailableError:
+            decision = _downgrade_to_oracle(decision, "raw_hex_extension_unavailable")
+            raw_hex_kernel = None
+
+    return NativePreflight(decision, index_kernel, unconfigured, raw_hex_kernel)
 
 
 def run_native_or_oracle_chunked(

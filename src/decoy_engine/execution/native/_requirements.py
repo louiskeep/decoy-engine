@@ -136,19 +136,19 @@ NATIVE_KERNEL_STRATEGIES = frozenset(
     }
 )
 
-# Admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
-# route. group_key keys on a SIBLING column and is deliberately kept out of the
-# chunk-safe set (`_chunked_group_key.py`), so its native path is full-frame only.
-# Without this veto `_static_route_decision` would admit it on the chunked route and
-# hit the missing chunk handler; instead the preflight routes the whole table to the
-# oracle. Categorical left this set in slice C1 (output pinned to string,
-# `_chunked_schema_rule.py`), bucket_perturb in C2 (its null-shape type is reproduced
-# per chunk by the masker's own reconciliation, `_chunk_masking.py`), and date_shift
-# in C4 (tokenizing, so string-pinned like categorical, with its format_error
-# row errors reported chunk-local and fail-closed by `_chunked_entry`). A column the
-# native operator cannot run reaches the oracle through the ordinary
-# `fallback_policy` and source-type gates.
-CHUNKED_ROUTE_VETOED_STRATEGIES = frozenset({"group_key"})
+# Strategies admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
+# route. Empty since slice C3; the three refusal sites that read it (`_dispatch`,
+# `_phase3_eligibility`, `_chunked_evidence`) stay as defensive consumers for a future
+# strategy. How each former member left it: categorical in C1 (output pinned to string,
+# `_chunked_schema_rule.py`), bucket_perturb in C2 (its null-shape type is reproduced per
+# chunk by the masker's own reconciliation, `_chunk_masking.py`), date_shift in C4
+# (tokenizing, so string-pinned like categorical, with its format_error row errors reported
+# chunk-local and fail-closed by `_chunked_entry`), and group_key in C3 (its sibling is
+# another column of the same row, so always in the same chunk; partition independence holds
+# only for a {string, int64, bool} sibling that no other node masks, both enforced at
+# admission). A column the native operator cannot run reaches the oracle through the
+# ordinary `fallback_policy` and source-type gates.
+CHUNKED_ROUTE_VETOED_STRATEGIES: frozenset[str] = frozenset()
 
 # Strategies with a native BOUNDED-VALUE-POOL execution path (Phase 3 Task
 # 3.1): the pool is built once (via the shared `PoolBuilder`/`PoolCache`

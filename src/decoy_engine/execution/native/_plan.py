@@ -34,6 +34,7 @@ in `_requirements.py`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -140,13 +141,23 @@ class NativeEligibility:
 
 
 def compile_native_plan(
-    config: dict[str, Any], profile: Any, *, engine_version: str, registry: Any = None
+    config: dict[str, Any],
+    profile: Any,
+    *,
+    engine_version: str,
+    registry: Any = None,
+    resident_sources: Mapping[str, Any] | None = None,
 ) -> NativeExecutionPlan:
     """Compile (config, profile) into a ``NativeExecutionPlan``.
 
     Runs the existing plan compilation, builds the work list, resolves each
     node's requirements, and attaches them to the work node (inertly) and to the
     enriched native node.
+
+    `resident_sources`, when given, makes the type decisions for the columns it carries
+    resident-Arrow-authoritative (see `requirements_for`); the chunked route passes the
+    first chunk's group_by siblings, because the profile's coarse labels read an
+    int64 column holding nulls as `double`.
     """
     plan = compile_plan(config, profile, decoy_engine_version=engine_version)
     if registry is None:
@@ -158,7 +169,7 @@ def compile_native_plan(
     for wn in work:
         strategy_name = _resolved_strategy(wn)
         caps = capabilities_for(strategy_name)
-        req = requirements_for(wn, plan=plan, profile=profile)
+        req = requirements_for(wn, plan=plan, profile=profile, resident_sources=resident_sources)
         attached.append(replace(wn, requirements=req))
         nodes.append(
             NativePlanNode(

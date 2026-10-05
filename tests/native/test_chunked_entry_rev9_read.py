@@ -365,8 +365,13 @@ def test_sibling_reference_puts_the_passthrough_column_in_the_read_set(
         return real(table, fk)
 
     monkeypatch.setattr(_pandas_adapter, "to_pandas_fk_safe", spy)
-    out, sink, _ev = run_entry(config, chunks)
-    assert seen and not any(pa.types.is_null(t) for t in seen), case
+    out, sink, ev = run_entry(config, chunks)
+    if case == "group_key" and ev[0].native_admitted:
+        # The native leg stringifies the sibling inside its kernel; the pandas adapter never
+        # converts it. Without the companion the oracle runs it and the spy below applies.
+        assert not seen
+    else:
+        assert seen and not any(pa.types.is_null(t) for t in seen), case
     assert _read_lists(sink) == [[ref]]
     for got, want in zip(out, expected, strict=True):
         assert got.to_pydict() == want.to_pydict()

@@ -30,6 +30,7 @@ from decoy_engine.execution.native._date_shift_ext import (
     DEFAULT_MIN_DAYS,
     native_date_shift,
 )
+from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
@@ -43,6 +44,7 @@ from decoy_engine.providers_v2 import get_default_registry
 if TYPE_CHECKING:
     from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
     from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+    from decoy_engine.execution.native._group_key_ext import RawHexDerivationKernel
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
 
 
@@ -232,6 +234,45 @@ def _mask_date_shift(
     return out, sum(derive_calls) > 0, positions
 
 
+def _mask_group_key(
+    sibling: pa.Table,
+    *,
+    name: str,
+    cfg: dict[str, Any],
+    mask_key: bytes | None,
+    raw_hex_kernel: RawHexDerivationKernel | None,
+    native_threads: int | None,
+) -> tuple[pa.Array, bool]:
+    """One chunk of a group_key column: `(key array, whether a compiled kernel ran)`.
+
+    `sibling` is the single-column slice of the RAW chunk, the table as the source produced
+    it. The oracle stringifies the raw chunk (a null-typed later chunk's null is "None" there,
+    "<NA>" once cast to the first chunk's integer type), and `cast_null_columns` drops the
+    schema metadata that decides a nullable string or boolean sibling's dtype, so the cast
+    table would key a null differently. The namespace is synthesized from the TARGET column,
+    never the plan namespace, as the oracle handler does. The array is `pa.string()` for every
+    chunk shape; the schema rule pins the column to `string` on both legs.
+    """
+    if raw_hex_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+        raise AssertionError(
+            "native route admitted a group_key column with no raw_hex_kernel; "
+            "preflight's raw-hex probe should have loaded one for any admitted node."
+        )
+    derive_calls: list[int] = []
+    out = native_group_key(
+        sibling,
+        length=cfg.get("length", 16),
+        # The oracle and the full-frame binding both str() the prefix: None -> "None".
+        prefix=str(cfg.get("prefix", "")),
+        mask_key=mask_key,
+        namespace=f"group_key/{name}",
+        native_threads=native_threads,
+        raw_hex_kernel=raw_hex_kernel,
+        derive_calls=derive_calls,
+    )
+    return out, sum(derive_calls) > 0
+
+
 def _mask_chunk_native(
     chunk: pa.Table,
     *,
@@ -248,6 +289,8 @@ def _mask_chunk_native(
     kernel_idle: set[str] | None = None,
     row_offset: int = 0,
     format_errors: dict[str, tuple[int, ...]] | None = None,
+    raw_chunk: pa.Table | None = None,
+    raw_hex_kernel: RawHexDerivationKernel | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -275,13 +318,19 @@ def _mask_chunk_native(
     prepared categories and CDF, built once per run and reused by every chunk.
 
     `kernel_idle`, when given, receives each column that ran its strategy branch but no
-    compiled kernel this chunk (a bucket_perturb or date_shift chunk with no parseable row),
+    compiled kernel this chunk (a bucket_perturb or date_shift chunk with no parseable row, or
+    an empty group_key chunk),
     so the chunk's route evidence does not credit the companion for work it did not do.
 
     `format_errors`, when given, receives each date_shift column's chunk-local positions of
     non-null values that did not parse. A date_shift column that has such positions with no
     `format_errors` to carry them raises: dropping them would let the raw value reach the
     output with the job succeeding.
+
+    `raw_chunk` is the chunk as the source produced it, before null-typed columns were cast to
+    the first chunk's types; only a group_key column reads it (for its sibling), every other
+    branch masks `chunk`. It defaults to `chunk`, which is the same table when nothing was cast.
+    `raw_hex_kernel` is the preflight-verified raw-hex kernel group_key derives with.
 
     `row_offset` is the global position of the chunk's first row; only the seeded
     non-deterministic categorical keys on it. A zero-row chunk of that variant makes no
@@ -414,6 +463,19 @@ def _mask_chunk_native(
                         "gave no format_errors channel to carry them."
                     )
                 format_errors[name] = positions
+        elif strategy == "group_key":
+            arrays[name], ran = _mask_group_key(
+                (chunk if raw_chunk is None else raw_chunk).select([cfg["group_by"]]),
+                name=name,
+                cfg=cfg,
+                mask_key=mask_key,
+                raw_hex_kernel=raw_hex_kernel,
+                native_threads=native_threads,
+            )
+            if ran:
+                evidence.compiled_kernel_executed = True
+            elif kernel_idle is not None:
+                kernel_idle.add(name)
         else:  # pragma: no cover - preflight admission already excludes this
             raise AssertionError(
                 f"native route admitted column {name!r} with strategy {strategy!r}, "

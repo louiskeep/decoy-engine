@@ -17,8 +17,11 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import pyarrow as pa
+
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.native._categorical_positional import positional_config_for_column
+from decoy_engine.execution.native._chunked_group_key_gate import sibling_resident_sources
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._requirements import (
     CHUNKED_ROUTE_VETOED_STRATEGIES,
@@ -32,8 +35,11 @@ ARROW_PYTHON = "arrow_python"
 PANDAS_ORACLE = "pandas_oracle"
 
 # hash runs on the compiled crypto kernel; categorical, bucket_perturb and date_shift on
-# the compiled index kernel. All four report the companion as their planned backend.
-_COMPANION_STRATEGIES = frozenset({"hash", "categorical", "bucket_perturb", "date_shift"})
+# the compiled index kernel; group_key on the compiled raw-hex kernel. All five report the
+# companion as their planned backend.
+_COMPANION_STRATEGIES = frozenset(
+    {"hash", "categorical", "bucket_perturb", "date_shift", "group_key"}
+)
 
 
 @dataclass(frozen=True)
@@ -59,14 +65,30 @@ def _planned_backend(node: Any) -> str:
 
 
 def plan_column_backends(
-    config: dict[str, Any], profile: Any, *, table: str, engine_version: str, registry: Any
+    config: dict[str, Any],
+    profile: Any,
+    *,
+    table: str,
+    engine_version: str,
+    registry: Any,
+    first_schema: pa.Schema | None = None,
 ) -> tuple[ColumnPlan, ...]:
     """The configured columns of `table` with their planned backends.
 
     Unconfigured columns kept under the passthrough policy are not listed: they
     veto the table to the oracle, which enforces the policy.
+
+    `first_schema` is the first chunk's schema when the caller has it: a group_key node's
+    sibling type is then the real one and not the profile's coarse label, so the planned
+    backend agrees with the route decision.
     """
-    plan = compile_native_plan(config, profile, engine_version=engine_version, registry=registry)
+    plan = compile_native_plan(
+        config,
+        profile,
+        engine_version=engine_version,
+        registry=registry,
+        resident_sources=sibling_resident_sources(config, table, first_schema),
+    )
     out: list[ColumnPlan] = []
     for node in plan.nodes:
         if node.table != table:
@@ -116,7 +138,7 @@ def chunk_route_evidence(
     and never converted.
 
     `kernel_idle_columns` lists the admitted columns that ran no compiled kernel on this chunk
-    (a bucket_perturb or date_shift chunk with no parseable row). They ran Arrow passthrough work in Python,
+    (a bucket_perturb or date_shift chunk with no parseable row, an empty group_key chunk). They ran Arrow passthrough work in Python,
     so they report `arrow_python` rather than the planned companion backend."""
     idle = frozenset(kernel_idle_columns)
     return {

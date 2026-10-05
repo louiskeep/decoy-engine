@@ -28,7 +28,11 @@ from decoy_engine.execution.native import _group_key_kernel as gk_kernel
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
-from decoy_engine.execution.native._group_key_ext import RAW_HEX_KAT
+from decoy_engine.execution.native._group_key_ext import (
+    RAW_HEX_KAT,
+    load_compiled_raw_hex_kernel,
+)
+from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.execution.native._phase3_eligibility import phase3_c1_eligibility
 from decoy_engine.execution.native._real_type_admission import real_type_rejection
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
@@ -41,6 +45,7 @@ from tests.native._chunked_entry_support import (
     TABLE,
     force_oracle,
     forced_reason,
+    hash_col,
     is_forced,
     key_provider,
 )
@@ -195,8 +200,14 @@ def test_an_unconfigured_sibling_cannot_be_named_by_group_by() -> None:
     """The plan compiler requires `group_by` to name a configured column, so the shape the
     native route reads (an unconfigured sibling) never reaches it."""
     with pytest.raises(PlanCompileError) as exc:
-        check_chunked_compatibility(
-            make_config(columns(sibling=False)), table=TABLE, registry=get_default_registry()
+        list(
+            run_mask_chunked(
+                make_config(columns(sibling=False)),
+                [_table()],
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+            )
         )
     assert exc.value.code == "group_key_missing_group_by_ref"
 
@@ -317,7 +328,15 @@ def test_a_wider_oracle_safe_sibling_downgrades_to_the_oracle_and_matches_it(
     chunks = split(table, 4)
     run = run_one(config, chunks)
     assert run.ev[0].native_admitted is False, run.ev[0]
-    assert f"group_key_sibling_type_not_native:{TARGET}:{GB}:" in (run.ev[0].reroute_reason or "")
+    reason = run.ev[0].reroute_reason or ""
+    # The static plan rejects a sibling whose profile label is not admitted; the real-type gate
+    # names the rest (a large_string or dictionary sibling profiles as an admitted label).
+    assert reason.startswith(
+        (
+            f"group_key_sibling_type_not_native:{TARGET}:{GB}:",
+            f"fallback_policy_not_native:{TARGET}:",
+        )
+    ), reason
     assert _values(run.out) == _values(_oracle(config, chunks))
     assert _values(run.out) == _full_frame(config, table, tmp_path).column(TARGET).to_pylist()
     assert {o.schema.field(TARGET).type for o in run.out} == {pa.string()}
@@ -436,7 +455,7 @@ def test_the_raw_hex_kernel_is_loaded_once_at_preflight_and_never_per_chunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loads: list[str] = []
-    real = _dispatch.load_compiled_raw_hex_kernel
+    real = load_compiled_raw_hex_kernel
 
     def counting() -> Any:
         loads.append("preflight")
@@ -478,12 +497,11 @@ def test_a_populated_run_reports_the_companion_and_counts_the_kernel_work() -> N
 @NEEDS_COMPANION
 def test_an_empty_chunk_is_branch_counted_but_reports_idle(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
-    real = _chunk_masking.native_group_key
+    real = native_group_key
 
     def spy(*args: Any, **kwargs: Any) -> Any:
-        sink: list[int] = []
-        out = real(*args, derive_calls=sink, **kwargs)
-        calls.append(sum(sink))
+        out = real(*args, **kwargs)
+        calls.append(sum(kwargs["derive_calls"]))
         return out
 
     monkeypatch.setattr(_chunk_masking, "native_group_key", spy)
@@ -520,12 +538,11 @@ def test_the_derive_spy_sees_work_only_when_the_kernel_ran(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[int] = []
-    real = _chunk_masking.native_group_key
+    real = native_group_key
 
     def spy(*args: Any, **kwargs: Any) -> Any:
-        sink: list[int] = []
-        out = real(*args, derive_calls=sink, **kwargs)
-        seen.append(sum(sink))
+        out = real(*args, **kwargs)
+        seen.append(sum(kwargs["derive_calls"]))
         return out
 
     monkeypatch.setattr(_chunk_masking, "native_group_key", spy)
@@ -549,25 +566,32 @@ def test_companion_absent_downgrade_reports_the_oracle_for_the_planned_companion
 # ---------------------------------------------------------------------------
 
 
-def test_a_group_key_fk_key_stays_rejected_and_not_natively_admitted() -> None:
+def _fk_config() -> dict[str, Any]:
+    parent = hash_col("id", "ns_id")
+    parent["dtype"] = "int64"
+    child = gk_col(namespace="ns_id")
+    child["dtype"] = "int64"
     relationships = [
         {
-            "parent": {"table": "parents", "column": "id"},
-            "children": [{"table": TABLE, "column": TARGET}],
+            "parent": {"table": "parents", "columns": ["id"]},
+            "children": [{"table": TABLE, "columns": [TARGET]}],
+            "orphan_policy": "remap",
         }
     ]
-    config = make_config(
-        columns(),
-        extra_tables=[{"name": "parents", "columns": [passthrough("id")]}],
+    return make_config(
+        columns(child),
+        extra_tables=[{"name": "parents", "columns": [parent]}],
         relationships=relationships,
     )
+
+
+def test_a_group_key_fk_key_stays_rejected_and_not_natively_admitted() -> None:
+    """group_key stays out of the chunk-safe set, so an FK edge keyed on it keeps the existing
+    strategy-mismatch rejection, and the native route does not newly admit the table."""
+    config = _fk_config()
     with pytest.raises(PlanCompileError) as exc:
         check_chunked_compatibility(config, table=TABLE, registry=get_default_registry())
-    assert exc.value.code in {
-        "chunked_fk_child_strategy_not_self_mask_safe",
-        "chunked_fk_parent_strategy_not_self_mask_safe",
-        "chunked_fk_strategy_not_chunk_safe",
-    } or exc.value.code.startswith("chunked_fk")
+    assert exc.value.code == "chunked_fk_child_strategy_mismatch"
     profile = _chunked_profile.first_chunk_profile(
         _table(), table=TABLE, engine_version=ENGINE_VERSION
     )
@@ -673,9 +697,9 @@ def _auto_table(typ: pa.DataType, values: list[Any]) -> pa.Table:
     ("label", "typ", "values", "native"),
     [
         pytest.param("string", pa.string(), ["h1", "h2", None, "h3"], True, marks=NEEDS_COMPANION),
-        pytest.param("int64", pa.int64(), [1, 2, None, 3], True, marks=NEEDS_COMPANION),
+        pytest.param("int64", pa.int64(), [1, 2, 3, 4], True, marks=NEEDS_COMPANION),
         pytest.param("bool", pa.bool_(), [True, False, None], True, marks=NEEDS_COMPANION),
-        pytest.param("int32", pa.int32(), [1, 2, None, 3], False, marks=NEEDS_COMPANION),
+        pytest.param("int32", pa.int32(), [1, 2, 3, 4], False, marks=NEEDS_COMPANION),
         pytest.param("large_string", pa.large_string(), ["a", "b", None], False),
     ],
 )
@@ -693,6 +717,22 @@ def test_auto_routed_group_key_succeeds_and_equals_the_full_frame_run(
     assert legacy.outputs[auto.TABLE].column(TARGET).to_pylist() == expected
     by_col = {c["column"]: c for c in evidence["columns"]}
     assert by_col[TARGET]["executed_backend"] == ("rust_companion" if native else "pandas_oracle")
+
+
+@pytest.mark.parametrize("typ", [pa.int64(), pa.int32()])
+def test_an_integer_sibling_holding_nulls_is_still_not_auto_chunked(
+    typ: pa.DataType, tmp_path: Path
+) -> None:
+    """The auto-router has never chunked an integer column that holds nulls (its pandas round
+    trip widens by chunk), so C3 changes nothing there: the job runs full-frame."""
+    data = _auto_table(typ, [1, 2, None, 3])
+    cols = [auto.pass_col(GB), gk_col(), auto.pass_col("p")]
+    dispatcher, full, _ = _routed(tmp_path, cols, data)
+    assert dispatcher.quality_metrics["auto_chunk"]["mode"] == "full_frame"
+    assert (
+        dispatcher.outputs[auto.TABLE].column(TARGET).to_pylist()
+        == full.outputs[auto.TABLE].column(TARGET).to_pylist()
+    )
 
 
 @NEEDS_COMPANION

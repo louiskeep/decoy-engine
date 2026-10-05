@@ -667,5 +667,5 @@ def test_a_real_date_shift_column_is_not_the_forcing_stand_in() -> None:
     assert {t.strategy_type for r in forced.sink for t in r.timings} == {
         "date_shift",
         "passthrough",
-        "group_key",
+        "categorical",
     }

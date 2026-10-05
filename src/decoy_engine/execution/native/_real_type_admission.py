@@ -16,6 +16,11 @@ oracle, so `plan_native_route` checks them here once it has the first chunk:
 - a date_shift column's real source type (the native operator takes exactly `string`,
   and a non-string source keeps running on the oracle, which is what it ran on before
   date_shift left the chunked veto set);
+- a group_key column's real SIBLING type (the native operator takes exactly
+  `{string, int64, bool}`, the one domain where the oracle's raw-value cache cannot collide;
+  a wider oracle-safe sibling such as int32, uint64, large_string, dictionary, date or
+  timestamp keeps running on the oracle, as it did before group_key left the chunked veto
+  set), and that the sibling is in the first chunk at all;
 - a faker column's provider name (the pool is built as strings, which is right
   only for the providers C1 admits; any other provider, for example a
   date-of-birth provider, produces values the string pool cannot hold). The
@@ -34,6 +39,10 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution.native._chunked_group_key_gate import group_by_columns
+from decoy_engine.execution.native._operator_config_rejections import (
+    group_key_sibling_type_admitted,
+)
 from decoy_engine.execution.native._phase3_eligibility import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import hash_config_rejection
 
@@ -77,6 +86,19 @@ def date_shift_source_type_rejection(column: str, schema: pa.Schema) -> str | No
     return None if typ == pa.string() else f"date_shift_source_type_not_string:{column}:{typ}"
 
 
+def group_key_sibling_type_rejection(column: str, group_by: str, schema: pa.Schema) -> str | None:
+    """The coded reason a group_key column's real SIBLING type is not one the native operator
+    takes, or None. The domain is `{string, int64, bool}`, the full-frame route's domain and
+    the collision-free one; any other type (a null-typed first chunk included) declines to the
+    oracle. A sibling the first chunk does not carry declines cleanly instead of raising."""
+    if group_by not in schema.names:
+        return f"group_key_sibling_missing_not_native_chunked_route:{column}:{group_by}"
+    typ = schema.field(group_by).type
+    if group_key_sibling_type_admitted(typ):
+        return None
+    return f"group_key_sibling_type_not_native:{column}:{group_by}:{typ}"
+
+
 def real_type_rejection(
     config: dict[str, Any],
     node_routes: Iterable[Any],
@@ -97,6 +119,7 @@ def real_type_rejection(
         ).empty_table()
     }
     providers = _providers(config, table)
+    group_by_of = group_by_columns(config, table)
     for node in node_routes:
         if node.strategy == "hash":
             reason = hash_config_rejection(node.column, table, profile, resident_sources=resident)
@@ -114,6 +137,12 @@ def real_type_rejection(
                 return reason
         elif node.strategy == "date_shift":
             reason = date_shift_source_type_rejection(node.column, first_schema)
+            if reason is not None:
+                return reason
+        elif node.strategy == "group_key" and node.column in group_by_of:
+            reason = group_key_sibling_type_rejection(
+                node.column, group_by_of[node.column], first_schema
+            )
             if reason is not None:
                 return reason
     return None
