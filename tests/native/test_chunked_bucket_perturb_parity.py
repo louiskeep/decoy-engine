@@ -37,6 +37,7 @@ from tests.native._chunked_entry_support import (
     TABLE,
     column_values,
     force_oracle,
+    forced_reason,
     split,
 )
 from tests.native.test_chunked_entry_values_schema import _full_frame
@@ -125,7 +126,7 @@ def test_a_drifted_later_chunk_has_the_same_outcome_on_both_legs(later: pa.Table
     )
     assert len(native_ev) == 1 and native_ev[0].native_admitted is True
     assert len(forced_ev) == 1 and forced_ev[0].native_admitted is False
-    assert f"group_key_not_native_chunked_route:{FORCE}" in (forced_ev[0].reroute_reason or "")
+    assert forced_reason(FORCE) in (forced_ev[0].reroute_reason or "")
     if isinstance(forced, tuple):
         assert native == forced
     else:

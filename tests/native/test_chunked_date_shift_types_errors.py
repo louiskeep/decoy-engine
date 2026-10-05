@@ -47,6 +47,7 @@ from tests.native._chunked_entry_support import (
     NEEDS_COMPANION,
     TABLE,
     force_oracle,
+    forced_reason,
 )
 from tests.native.test_chunked_entry_values_schema import _full_frame
 from tests.unit.execution import _auto_chunk_support as support
@@ -249,7 +250,7 @@ def _legs(
     )
     assert len(native.ev) == 1 and native.ev[0].native_admitted is True, native.ev
     assert len(forced.ev) == 1 and forced.ev[0].native_admitted is False, forced.ev
-    assert "group_key_not_native_chunked_route" in (forced.ev[0].reroute_reason or "")
+    assert forced_reason(FORCE) in (forced.ev[0].reroute_reason or "")
     return native, forced
 
 

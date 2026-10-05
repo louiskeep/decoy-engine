@@ -103,7 +103,10 @@ def test_output_contract_per_strategy(
     if native:
         evidence = _assert_lane(dispatcher, native=True)
     elif key in strategies.NATIVE_KEYS:
-        reason = {"hash": "crypto_extension_unavailable"}.get(key, "index_extension_unavailable")
+        reason = {
+            "hash": "crypto_extension_unavailable",
+            "group_key": "raw_hex_extension_unavailable",
+        }.get(key, "index_extension_unavailable")
         evidence = _assert_lane(dispatcher, native=False, reason_prefix=reason)
     else:
         evidence = _assert_lane(dispatcher, native=False, reason_prefix=strategies.REFUSAL[key])

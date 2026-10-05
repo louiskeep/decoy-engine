@@ -622,30 +622,25 @@ def test_jc5_admitted_set_is_exactly_deterministic_source_keyed_partition_indepe
 
 
 # ---------------------------------------------------------------------------
-# C1 is the chunked route: the full-frame-only strategies the chunked
-# dispatcher vetoes must not be admitted here just because the route-agnostic
-# base predicate accepts them.
+# C1 is the chunked route. The chunked veto set is empty (group_key left it in C3), so no
+# strategy is vetoed by it; the mirror must still read the same shared set as the dispatcher.
 # ---------------------------------------------------------------------------
 
 
-_FULL_FRAME_ONLY_COLUMNS: list[dict[str, Any]] = [
-    {
-        "name": "G",
-        "strategy": "group_key",
-        "provider_config": {"group_by": "P", "length": 16},
-    },
-]
+_GROUP_KEY_COLUMN: dict[str, Any] = {
+    "name": "G",
+    "strategy": "group_key",
+    "provider_config": {"group_by": "P", "length": 16},
+}
 
 
-@pytest.mark.parametrize("column", _FULL_FRAME_ONLY_COLUMNS, ids=lambda c: c["strategy"])
-def test_chunked_vetoed_strategy_is_not_admitted_on_the_c1_route(column: dict) -> None:
-    config = _config("t", column)
-    assert native_route_eligibility(config, table="t").accepted, (
-        "precondition: the base predicate admits it, so only the veto can reject"
-    )
+def test_group_key_is_admitted_on_the_c1_route() -> None:
+    """Slice C3 lifted the veto for group_key; it must not reappear in the mirror."""
+    config = _config("t", _GROUP_KEY_COLUMN)
+    assert native_route_eligibility(config, table="t").accepted
     result = phase3_c1_eligibility(config, table="t")
-    assert result.admitted is False
-    assert result.reasons == (f"{column['strategy']}_not_native_chunked_route:{column['name']}",)
+    assert result.admitted is True
+    assert result.reasons == ()
 
 
 def test_date_shift_is_admitted_on_the_c1_route() -> None:
@@ -674,23 +669,30 @@ def test_bucket_perturb_is_admitted_on_the_c1_route() -> None:
     assert result.reasons == ()
 
 
-def test_chunked_veto_does_not_hide_a_faker_rejection() -> None:
-    config = _config("t", _FULL_FRAME_ONLY_COLUMNS[0], _faker_col("F", deterministic=False))
+def test_a_faker_rejection_is_the_only_reason_beside_an_admitted_group_key() -> None:
+    config = _config("t", _GROUP_KEY_COLUMN, _faker_col("F", deterministic=False))
     result = phase3_c1_eligibility(config, table="t")
-    assert set(result.reasons) == {
-        "group_key_not_native_chunked_route:G",
-        "faker_not_deterministic:F",
-    }
+    assert set(result.reasons) == {"faker_not_deterministic:F"}
 
 
-def test_chunked_veto_set_matches_the_dispatcher() -> None:
-    """Every strategy the dispatcher vetoes is vetoed here, via the one shared set."""
+def test_chunked_veto_set_is_empty_and_shared_with_the_dispatcher() -> None:
     from decoy_engine.execution.native import _dispatch, _phase3_eligibility
 
     assert (
         _phase3_eligibility.CHUNKED_ROUTE_VETOED_STRATEGIES
         is _dispatch.CHUNKED_ROUTE_VETOED_STRATEGIES
     )
-    assert {c["strategy"] for c in _FULL_FRAME_ONLY_COLUMNS} == set(
-        _dispatch.CHUNKED_ROUTE_VETOED_STRATEGIES
+    assert frozenset() == _dispatch.CHUNKED_ROUTE_VETOED_STRATEGIES
+
+
+def test_the_mirror_still_honors_a_non_empty_veto_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The seam is kept for a future strategy: a strategy placed in the set is refused here
+    with the same reason code the dispatcher uses."""
+    from decoy_engine.execution.native import _phase3_eligibility
+
+    strategy = _GROUP_KEY_COLUMN["strategy"]
+    monkeypatch.setattr(
+        _phase3_eligibility, "CHUNKED_ROUTE_VETOED_STRATEGIES", frozenset({strategy})
     )
+    result = phase3_c1_eligibility(_config("t", _GROUP_KEY_COLUMN), table="t")
+    assert result.reasons == (f"{strategy}_not_native_chunked_route:G",)

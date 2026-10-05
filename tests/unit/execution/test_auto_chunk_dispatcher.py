@@ -23,6 +23,7 @@ import pytest
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from tests.native._chunked_entry_support import force_oracle, forced_reason
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution.test_auto_chunk_routing import (
     _CHUNK,
@@ -298,19 +299,19 @@ def test_planned_backend_matches_across_lanes_for_the_strategy_matrix(
     assert planned["legacy"] == planned["dispatcher"]
 
 
-def test_mixed_table_with_a_vetoed_column_runs_wholly_on_the_oracle_route(
+def test_mixed_table_with_a_non_native_column_runs_wholly_on_the_oracle_route(
     tmp_path: Path,
 ) -> None:
     data = {
         "h": support.string_source()["h"],
         "c": pa.array([f"2021-{1 + (i % 12):02d}-15" for i in range(support.ROWS)]),
     }
-    vetoed = {"name": "c", "strategy": "group_key", "provider_config": {"group_by": "c"}}
-    cfg, src = _job(tmp_path, [support.hash_col("h"), vetoed], data)
+    forced = force_oracle("c")
+    cfg, src = _job(tmp_path, [support.hash_col("h"), forced], data)
     result = support.run_default(cfg, src)
     evidence = result.quality_metrics["chunked_route"]
     assert evidence["native_admitted"] is False
-    assert evidence["reroute_reason"] == "group_key_not_native_chunked_route:c"
+    assert evidence["reroute_reason"] == forced_reason("c")
     backends = _backends(evidence)
     assert backends["c"] == ("pandas_oracle", "pandas_oracle")
     assert backends["h"][0] == "rust_companion" and backends["h"][1] == "pandas_oracle"
