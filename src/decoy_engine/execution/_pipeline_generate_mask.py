@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
+    from decoy_engine.generation.pool import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -89,6 +90,7 @@ def run_generate_and_mask_steps(
     vault_writer: Any,
     chunk_size_rows: int,
     native_threads: int,
+    pool_cache: PoolCache,
     chunked_dispatcher_enabled: bool,
     multi_table_dispatch_enabled: bool,
     key_provider: KeyProvider | None,
@@ -271,6 +273,7 @@ def run_generate_and_mask_steps(
                 plan,
                 merged_sources,
                 registry=registry,
+                pool_cache=pool_cache,
                 relationship_graph=graph,
                 namespace_registry=namespace_registry,
                 unconfigured_column_policy=unconfigured_column_policy,

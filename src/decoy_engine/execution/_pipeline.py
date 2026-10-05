@@ -98,6 +98,7 @@ from decoy_engine.execution._transforms_admission import (
 from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.execution._unified_slice import run_from_pipeline_locals
+from decoy_engine.generation.pool import PoolCache
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -553,6 +554,9 @@ def run_pipeline(
     )
     caller_sources = {k: v for k, v in resident_sources.items() if k in caller_sources}
 
+    # One pool cache per job, shared by the unified lane and the full-frame oracle,
+    # so a Faker pool's provider code runs at most once even if the lane reroutes.
+    pool_cache = PoolCache()
     unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
     if unified_slice_result is not None:
         return unified_slice_result
@@ -579,6 +583,7 @@ def run_pipeline(
             vault_writer=vault_writer,
             chunk_size_rows=chunk_size_rows,
             native_threads=native_threads,
+            pool_cache=pool_cache,
             chunked_dispatcher_enabled=chunked_dispatcher_enabled,
             multi_table_dispatch_enabled=multi_table_dispatch_enabled,
             key_provider=resolved_key_provider,

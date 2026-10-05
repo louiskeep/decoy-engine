@@ -490,6 +490,7 @@ def test_9_determinism_mask_key_and_job_seed(tmp_path: Path) -> None:
 
     # job_seed governs pool CONTENT: the set of values the column can draw from
     # changes, not only which one a row picks.
+    (tmp_path / "s2").mkdir()
     other_seed = Case(tmp_path / "s2", source, [faker_column(pool_size=64)], seed=777)
     seeded = lane_run(other_seed)
     assert set(seeded.outputs["t"].column("c").to_pylist()) != set(
@@ -824,18 +825,19 @@ class _CacheRecorder:
 
 
 def _four_column_abac() -> tuple[pa.Table, list[dict[str, Any]]]:
+    # The oracle visits nodes in sorted-name order, so c1..c4 keeps the config order the same.
     n = 24
     source = pa.table(
         {
             name: pa.array([f"src_{i % 5}" for i in range(n)], type=pa.string())
-            for name in ("a1", "b", "a2", "c")
+            for name in ("c1", "c2", "c3", "c4")
         }
     )
     columns = [
-        faker_column("a1", namespace="ns_A"),
-        faker_column("b", namespace="ns_B"),
-        faker_column("a2", namespace="ns_A"),
-        faker_column("c", namespace="ns_C"),
+        faker_column("c1", namespace="ns_A"),
+        faker_column("c2", namespace="ns_B"),
+        faker_column("c3", namespace="ns_A"),
+        faker_column("c4", namespace="ns_C"),
     ]
     return source, columns
 

@@ -69,6 +69,7 @@ __all__ = [
     "BUCKET_PERTURB_OPERATOR_ID",
     "CATEGORICAL_OPERATOR_ID",
     "DATE_SHIFT_OPERATOR_ID",
+    "FAKER_OPERATOR_ID",
     "GROUP_KEY_OPERATOR_ID",
     "HASH_OPERATOR_ID",
     "CheapCandidate",
@@ -76,11 +77,11 @@ __all__ = [
     "resident_contract_admission",
 ]
 
-# The four operators the 4.4 shadow coordinator dispatches for this slice
+# The operators the 4.4 shadow coordinator dispatches for this slice
 # (`_shadow_bindings.OPERATOR_ID_BY_STRATEGY.values()`); restated here rather
 # than imported so this module's cheap-admission surface stays importable
 # with zero `execution.physical` reach. Public (no leading underscore):
-# `_unified_slice.py`'s D7 evidence check reads `HASH_OPERATOR_ID` too.
+# `_unified_slice.py`'s D7 evidence check reads `HASH_OPERATOR_ID` and `FAKER_OPERATOR_ID`.
 ALLOWED_OPERATOR_IDS = frozenset(
     {
         "native_passthrough",
@@ -91,6 +92,7 @@ ALLOWED_OPERATOR_IDS = frozenset(
         "native_bucket_perturb",
         "native_group_key",
         "native_date_shift",
+        "native_faker_select",
     }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
@@ -103,10 +105,11 @@ CATEGORICAL_OPERATOR_ID = "native_categorical"
 BUCKET_PERTURB_OPERATOR_ID = "native_bucket_perturb"
 GROUP_KEY_OPERATOR_ID = "native_group_key"
 DATE_SHIFT_OPERATOR_ID = "native_date_shift"
+FAKER_OPERATOR_ID = "native_faker_select"
 
 # The operators whose native execution needs the compiled companion loadable at
-# this host: hash (its crypto kernel), the two index-kernel operators
-# (categorical, bucket_perturb), and group_key (its raw-hex kernel). A table
+# this host: hash (its crypto kernel), the index-kernel operators (categorical,
+# bucket_perturb, date_shift, faker), and group_key (its raw-hex kernel). A table
 # carrying any of these declines to the oracle when the companion is absent --
 # the CI `substrate(pandas)` leg. Named as a set so a new index/crypto operator
 # joins by one edit, not another ad-hoc branch in `resident_contract_admission`.
@@ -117,6 +120,7 @@ _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
         BUCKET_PERTURB_OPERATOR_ID,
         GROUP_KEY_OPERATOR_ID,
         DATE_SHIFT_OPERATOR_ID,
+        FAKER_OPERATOR_ID,
     }
 )
 
@@ -133,6 +137,7 @@ _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
     BUCKET_PERTURB_OPERATOR_ID: "index",
     GROUP_KEY_OPERATOR_ID: "raw_hex",
     DATE_SHIFT_OPERATOR_ID: "index",
+    FAKER_OPERATOR_ID: "index",
 }
 
 # The ONE diagnostic obligation the coordinator routes, per operator: date_shift's
@@ -169,6 +174,9 @@ _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     "bucket_perturb": frozenset({pa.string()}),
     # date_shift parses a STRING date column and keys on that same string.
     "date_shift": frozenset({pa.string()}),
+    # Pooled Faker selects from a pool keyed on a STRING source. The binder also
+    # accepts large_string; the slice does not, like every sibling index operator.
+    "faker": frozenset({pa.string()}),
 }
 
 # Track A Option 2: the sanctioned single-file-source formats. Widened from
@@ -592,7 +600,7 @@ def resident_contract_admission(
         if resident_type not in _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset()):
             return None
         if binding.operator_id in _COMPANION_DEPENDENT_OPERATOR_IDS:
-            # hash / categorical / bucket_perturb / date_shift consume their namespace
+            # hash / categorical / bucket_perturb / date_shift / faker consume their namespace
             # through the compiled companion at every batch; a missing KeyBinding
             # or a non-UTF-8 namespace declines to the oracle (the compiled
             # kernel requires an encodable namespace).
