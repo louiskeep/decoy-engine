@@ -188,12 +188,13 @@ def _execute_admitted(
     from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
     from decoy_engine.execution.physical._shadow_diff_codes import (
         FAKER_POOL_NON_STRING_OUTPUT,
+        PoolBuildFailed,
         ShadowDifference,
-        _PoolBuildFailed,
     )
     from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
     from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 
+    pool_failure: Exception | None = None
     try:
         inputs = build_live_physical_plan_inputs(
             config=config,
@@ -415,13 +416,20 @@ def _execute_admitted(
         )
     except UnifiedSliceInvariantError:
         raise
-    except _PoolBuildFailed as failed:
+    except PoolBuildFailed as failed:
         # Provider code or the cache insert raised. Rerouting would run the
         # provider a second time, so surface the original, as the oracle would.
-        raise failed.original from None
+        # Captured here and raised after the handler: re-raising inside it would
+        # make `PoolBuildFailed` the `__context__` of an exception that had none.
+        pool_failure = failed.original
     except Exception as exc:
         _logger.warning(_REROUTE_LOG, type(exc).__name__, candidate.table)
         return None
+    # Only the PoolBuildFailed handler falls through to here. A bare `raise` (no
+    # `from`) keeps the original's __cause__, __context__ and __suppress_context__.
+    if pool_failure is None:  # pragma: no cover - the other handler returns
+        raise UnifiedSliceInvariantError("unified slice: fell through without a pool failure")
+    raise pool_failure
 
 
 def maybe_run_unified_slice(

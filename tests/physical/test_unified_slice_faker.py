@@ -686,15 +686,22 @@ def test_10_declines_an_fk_participating_table(tmp_path: Path) -> None:
 
 
 @NEEDS_COMPANION
-def test_11_rebound_non_string_provider_reroutes_with_one_build(tmp_path: Path) -> None:
+def test_11_rebound_non_string_provider_reroutes_with_one_build(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     case = Case(tmp_path, string_source(40, mod=9), [faker_column()])
     off_adapter = CountingAdapter(lambda i: i)
     off = case.run(lane=False, registry=rebound_registry(off_adapter))
     assert off_adapter.builds == 1
 
     adapter = CountingAdapter(lambda i: i)
-    on = case.run(lane=True, registry=rebound_registry(adapter))
+    with caplog.at_level("INFO", logger="decoy_engine.execution._unified_slice"):
+        on = case.run(lane=True, registry=rebound_registry(adapter))
     assert adapter.builds == 1, "the lane's build and the oracle's build must be one build"
+    # Pin the path taken: the reroute came from FAKER_POOL_NON_STRING_OUTPUT, not another decline.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(m.startswith("unified_slice_faker_non_string_pool_reroute") for m in messages)
+    assert not any(m.startswith("unified_slice_unexpected_exception_reroute") for m in messages)
     assert QUALITY_METRICS_KEY not in on.quality_metrics
     assert on.outputs["t"].equals(off.outputs["t"], check_metadata=True)
 
@@ -825,19 +832,22 @@ class _CacheRecorder:
 
 
 def _four_column_abac() -> tuple[pa.Table, list[dict[str, Any]]]:
-    # The oracle visits nodes in sorted-name order, so c1..c4 keeps the config order the same.
+    # The oracle visits nodes in sorted-name order (a, b, c, d), so the namespaces read A B A C
+    # on that order. The config is declared in REVERSE-sorted order (d, c, b, a), which is the
+    # plan order the coordinator used to follow (C A B A): a lane that kept plan order ends with
+    # a different LRU residue than the oracle.
     n = 24
     source = pa.table(
         {
             name: pa.array([f"src_{i % 5}" for i in range(n)], type=pa.string())
-            for name in ("c1", "c2", "c3", "c4")
+            for name in ("a", "b", "c", "d")
         }
     )
     columns = [
-        faker_column("c1", namespace="ns_A"),
-        faker_column("c2", namespace="ns_B"),
-        faker_column("c3", namespace="ns_A"),
-        faker_column("c4", namespace="ns_C"),
+        faker_column("d", namespace="ns_C"),
+        faker_column("c", namespace="ns_A"),
+        faker_column("b", namespace="ns_B"),
+        faker_column("a", namespace="ns_A"),
     ]
     return source, columns
 
@@ -869,6 +879,89 @@ def test_12b_lru_state_matches_the_oracle_for_a_b_a_c(
     (lane_cached,) = lane_cache.populated()
     assert set(lane_cached._entries) == oracle_keys
     assert len(oracle_keys) == 2
+
+
+@NEEDS_COMPANION
+def test_12c_two_stateful_columns_in_reverse_sorted_order_match_the_oracle(
+    tmp_path: Path,
+) -> None:
+    # A stateful (impure) adapter hands out a different value per call, so the two columns
+    # only agree lane-on vs lane-off when both routes visit the nodes in the same order.
+    source = pa.table(
+        {
+            "a": pa.array([f"s{i % 4}" for i in range(12)], type=pa.string()),
+            "b": pa.array([f"s{i % 4}" for i in range(12)], type=pa.string()),
+        }
+    )
+    case = Case(
+        tmp_path,
+        source,
+        [
+            faker_column("b", provider="person_first_name", namespace="ns_b"),
+            faker_column("a", provider="person_last_name", namespace="ns_a"),
+        ],
+    )
+
+    def _registry() -> ProviderRegistry:
+        counter = iter(range(10_000))
+        default = get_default_registry()
+        stateful = CountingAdapter(lambda i: f"v{next(counter)}")
+        reg = default.override(
+            "person_first_name", stateful, default.get_capabilities("person_first_name")
+        )
+        return reg.override(
+            "person_last_name", stateful, default.get_capabilities("person_last_name")
+        )
+
+    off = case.run(lane=False, registry=_registry())
+    on = lane_run(case, registry=_registry())
+    assert on.outputs["t"].equals(off.outputs["t"], check_metadata=True)
+    assert on.outputs["t"].column_names == off.outputs["t"].column_names
+
+
+@NEEDS_COMPANION
+def test_12d_two_failing_columns_raise_the_identical_error(tmp_path: Path) -> None:
+    source = pa.table(
+        {
+            "a": pa.array(["x"] * 5, type=pa.string()),
+            "b": pa.array(["y"] * 5, type=pa.string()),
+        }
+    )
+    case = Case(
+        tmp_path,
+        source,
+        [
+            faker_column("b", provider="person_first_name", namespace="ns_b"),
+            faker_column("a", provider="person_last_name", namespace="ns_a"),
+        ],
+    )
+
+    def _registry() -> ProviderRegistry:
+        default = get_default_registry()
+
+        def _failing(code: str) -> CountingAdapter:
+            return CountingAdapter(
+                lambda i: "x", fail=ProviderError(code=code, message=f"{code} message")
+            )
+
+        reg = default.override(
+            "person_first_name",
+            _failing("first_name_fail"),
+            default.get_capabilities("person_first_name"),
+        )
+        return reg.override(
+            "person_last_name",
+            _failing("last_name_fail"),
+            default.get_capabilities("person_last_name"),
+        )
+
+    with pytest.raises(ProviderError) as off_info:
+        case.run(lane=False, registry=_registry())
+    with poisoned_oracle(), pytest.raises(ProviderError) as on_info:
+        case.run(lane=True, registry=_registry())
+    assert type(on_info.value) is type(off_info.value)
+    assert on_info.value.code == off_info.value.code == "last_name_fail"
+    assert str(on_info.value) == str(off_info.value)
 
 
 @NEEDS_COMPANION
@@ -914,9 +1007,14 @@ def test_13b_provider_failure_is_invoked_once_and_raised_unwrapped(tmp_path: Pat
     case = Case(tmp_path, string_source(30, mod=5), [faker_column()])
 
     def _failing() -> CountingAdapter:
-        return CountingAdapter(
-            lambda i: f"N{i}", fail=ProviderError(code="synthetic_provider_failure", message="boom")
-        )
+        # A raised-from chain, so the lane's re-raise must keep __cause__ and the
+        # suppress flag as the provider set them (a `from None` re-raise drops both).
+        try:
+            raise ValueError("root cause", 7)
+        except ValueError as root:
+            err = ProviderError(code="synthetic_provider_failure", message="boom")
+            err.__cause__ = root
+        return CountingAdapter(lambda i: f"N{i}", fail=err)
 
     off_adapter = _failing()
     with pytest.raises(ProviderError) as off_info:
@@ -931,6 +1029,9 @@ def test_13b_provider_failure_is_invoked_once_and_raised_unwrapped(tmp_path: Pat
     assert type(on_info.value) is type(off_info.value)
     assert on_info.value.code == off_info.value.code == "synthetic_provider_failure"
     assert str(on_info.value) == str(off_info.value)
+    assert type(on_info.value.__cause__) is type(off_info.value.__cause__) is ValueError
+    assert on_info.value.__cause__.args == off_info.value.__cause__.args == ("root cause", 7)
+    assert on_info.value.__suppress_context__ == off_info.value.__suppress_context__
     assert [c for c in sink.calls if c in ("write", "write_batches", "commit")] == []
 
 

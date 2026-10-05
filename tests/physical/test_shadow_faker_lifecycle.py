@@ -195,10 +195,11 @@ def test_abi2_companion_without_derive_index_batch_yields_the_same_coded_failure
 def test_bound_faker_node_with_no_registry_raises_assertion_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`ShadowCoordinator.registry` defaults to `None` so the pre-existing
-    unified-slice caller (`ShadowCoordinator(ctx=ctx)`, no faker admitted in
-    this slice) is unaffected; a bound faker node must assert the registry
-    is present rather than silently masking against the wrong one."""
+    """`ShadowCoordinator.registry` defaults to `None` so a caller that admits no
+    faker node (a coordinator built with `ShadowCoordinator(ctx=ctx)`) is
+    unaffected; the unified slice itself now passes the resolved `registry` and
+    the job's `pool_cache`. A bound faker node must assert the registry is
+    present rather than silently masking against the wrong one."""
     kernel = _CountingIndexKernel()
     loader, _ = _counting_loader(kernel)
     monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", loader)
@@ -245,21 +246,23 @@ def test_lifecycle_counters_under_a_shared_and_distinct_identity_a_b_a_order(
 
     monkeypatch.setattr(PoolBuilder, "build", _counting_build)
 
-    # Node order A -> B -> A2: A and A2 share provider+namespace+pool_size
+    # Visit order A -> B -> A2: A and A2 share provider+namespace+pool_size
     # (the same PoolIdentity); B is a distinct identity. Proves build-once
-    # holds under adversarial order, not merely "first node wins."
-    node_a = _faker_node("colA", namespace="ns_shared")
-    node_b = _faker_node("colB", namespace="ns_b")
-    node_a2 = _faker_node("colA2", namespace="ns_shared")
-    plan = _plan_with_nodes(node_a, node_b, node_a2)
+    # holds under adversarial order, not merely "first node wins." The coordinator
+    # visits nodes in the oracle's sorted-column order, so the A/B/A2 shape is
+    # carried by the names (col1 < col2 < col3) and the plan lists them REVERSED.
+    node_a = _faker_node("col1", namespace="ns_shared")
+    node_b = _faker_node("col2", namespace="ns_b")
+    node_a2 = _faker_node("col3", namespace="ns_shared")
+    plan = _plan_with_nodes(node_a2, node_b, node_a)
 
     n_rows = 5
     values = [f"src_{i % 3}" for i in range(n_rows)]
     source = pa.table(
         {
-            "colA": pa.array(values, type=pa.string()),
-            "colB": pa.array(values, type=pa.string()),
-            "colA2": pa.array(values, type=pa.string()),
+            "col1": pa.array(values, type=pa.string()),
+            "col2": pa.array(values, type=pa.string()),
+            "col3": pa.array(values, type=pa.string()),
         }
     )
     snapshot = capture_shadow_snapshot({"t": source})
@@ -273,13 +276,13 @@ def test_lifecycle_counters_under_a_shared_and_distinct_identity_a_b_a_order(
     # batch_size=2 over 5 rows -> batches of [2, 2, 1] = 3 per node x 3 nodes.
     assert kernel.batch_calls == 9
 
-    for node_id in ("t:colA:scalar:faker", "t:colB:scalar:faker", "t:colA2:scalar:faker"):
+    for node_id in ("t:col1:scalar:faker", "t:col2:scalar:faker", "t:col3:scalar:faker"):
         evidence = result.route_evidence[node_id]
         assert evidence.executed is True
         assert evidence.compiled_kernel_executed is True
 
     out = result.outputs["t"]
-    assert out.column("colA").to_pylist() == out.column("colA2").to_pylist()
+    assert out.column("col1").to_pylist() == out.column("col3").to_pylist()
 
 
 # ---------------------------------------------------------------------------

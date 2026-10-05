@@ -220,7 +220,7 @@ class ShadowDifference(Exception):  # noqa: N818 -- plan-named (TASK-4.4-PLAN.md
         super().__init__(f"{code}: {detail}")
 
 
-class _PoolBuildFailed(Exception):  # noqa: N818 -- a carrier, not an error type
+class PoolBuildFailed(Exception):  # noqa: N818 -- a carrier, not an error type
     """A faker pool build or its cache insert raised. Carries the original so the
     unified lane re-raises it instead of rerouting, which would run provider code twice."""
 

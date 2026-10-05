@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import heapq
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._types import ColumnSeed, GroupSeed
@@ -34,6 +35,29 @@ if TYPE_CHECKING:
     from decoy_engine.relationships import RelationshipGraph
 
 _NodeKey = tuple[str, tuple[str, ...]]
+
+
+class _HasColumns(Protocol):
+    @property
+    def columns(self) -> tuple[str, ...]: ...
+
+
+_N = TypeVar("_N", bound=_HasColumns)
+
+
+def work_order_key(table: str, columns: tuple[str, ...]) -> _NodeKey:
+    """The identity AND sort key of a work node. `order_work`'s tie-break
+    (`_kahn_sorted`) takes the smallest of these, so any route that must visit
+    nodes in the oracle's order sorts by this one key instead of restating it."""
+    return (table, columns)
+
+
+def in_work_order(table: str, nodes: Iterable[_N]) -> list[_N]:
+    """`nodes` of one table in `order_work` order, for a route with no FK or
+    composite dependency edges (the unified slice), where that order is exactly
+    key order. Visit order is observable: a provider with state, or two columns
+    that both fail, behave differently under plan (config) order."""
+    return sorted(nodes, key=lambda n: work_order_key(table, n.columns))
 
 
 @dataclass(frozen=True)
@@ -55,7 +79,7 @@ class WorkNode:
 
     @property
     def key(self) -> _NodeKey:
-        return (self.table, self.columns)
+        return work_order_key(self.table, self.columns)
 
 
 def provider_is_composite(provider: str | None, registry: ProviderRegistry) -> bool:

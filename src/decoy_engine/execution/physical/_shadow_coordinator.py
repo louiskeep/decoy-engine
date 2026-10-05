@@ -66,6 +66,7 @@ import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.execution._runner import in_work_order
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
@@ -85,8 +86,8 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     RESOURCE_LIMIT_BREACH,
     SCHEMA_DIFF,
+    PoolBuildFailed,
     ShadowDifference,
-    _PoolBuildFailed,
 )
 from decoy_engine.execution.physical._shadow_fk import build_fk_dispatch, resolve_admitted_fk_node
 from decoy_engine.execution.physical._shadow_operators import (
@@ -291,7 +292,7 @@ class ShadowCoordinator:
         for table in plan.tables:
             source = snapshot.tables[table.table]
             columns: dict[str, pa.Array] = {}
-            for node in table.nodes:
+            for node in in_work_order(table.table, table.nodes):
                 fk_resolution = resolve_admitted_fk_node(node, table.table, source, columns, fk)
                 if fk_resolution is not None:
                     columns[node.columns[0]] = fk_resolution.column
@@ -577,7 +578,7 @@ class ShadowCoordinator:
                     )
                     pool_cache.put(built)
                 except Exception as exc:
-                    raise _PoolBuildFailed(exc) from exc
+                    raise PoolBuildFailed(exc) from exc
             pool = built
             pools_by_identity[identity] = pool
 
