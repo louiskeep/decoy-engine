@@ -8,7 +8,7 @@ chunked leg to equal the oracle chunked leg, and both are decided here, from the
   group_key's position in the work order, so another node that masks the sibling first changes
   what it reads. The native leg masks every column from the source chunk and never feeds a
   masked column back, so a masked or self-anchored sibling stays on the oracle leg. This is the
-  gate the full-frame route applies (`_unified_slice_admission._group_key_sibling_admitted`);
+  gate the full-frame route applies (`_unified_slice_resident_types._group_key_sibling_admitted`);
   that one answers a boolean, so the chunked route names its own reasons.
 - The sibling's Arrow type must be in the collision-free native domain. That is the real-type
   check in `_real_type_admission`, not this module, because it needs the first chunk.
