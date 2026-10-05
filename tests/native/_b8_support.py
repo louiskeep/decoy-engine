@@ -2,7 +2,7 @@
 
 `run_pair` runs one table twice through `run_mask_chunked`: as configured (the route
 under test) and with the oracle route forced by a `force_oracle("cat_force")` column
-(`date_shift`), which the dispatcher still vetoes and which is dropped before the two are compared.
+(`group_key`), which the dispatcher still vetoes and which is dropped before the two are compared.
 `assert_same_as_oracle` is the comparison of acceptance test 2: values, Arrow types,
 field nullability and metadata, warnings, timing columns, vault entries, sink lengths
 and the route each side took.
@@ -28,7 +28,7 @@ from tests.native._chunked_entry_support import (
 )
 
 FORCE = "cat_force"
-FORCE_STRATEGY = "date_shift"
+FORCE_STRATEGY = "group_key"
 
 
 @dataclass
@@ -93,7 +93,7 @@ def run_pair(
         vault=vault,
         **kw,
     )
-    # run_pair always forces the oracle leg with a date_shift column named FORCE, so by
+    # run_pair always forces the oracle leg with a group_key column named FORCE, so by
     # construction that leg must stay on the oracle with the exact column-qualified reason.
     # Asserting it here protects every run_pair consumer (even ones that never call
     # assert_same_as_oracle) from silently degrading into a native-vs-native comparison.

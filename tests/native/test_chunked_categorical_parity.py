@@ -141,9 +141,9 @@ def test_oracle_leg_pins_native_admissible_categorical_to_string(shape: str) -> 
     chunks = [with_force(c) for c in _chunks(shape, 4)]
     run = run_one(make_config(columns), chunks)
     # Prove this really exercises the oracle leg; otherwise the string-pin check below
-    # could silently become a native-route test if date_shift were ever admitted.
+    # could silently become a native-route test if group_key were ever admitted.
     assert run.ev[0].native_admitted is False
-    assert f"date_shift_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert f"group_key_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
     assert {o.schema.field("c").type for o in run.out} == {pa.string()}
 
 
@@ -155,7 +155,7 @@ def test_oracle_leg_type_is_independent_of_chunk_count(size: int) -> None:
         [with_force(c) for c in split(source(values), size)],
     )
     assert run.ev[0].native_admitted is False
-    assert f"date_shift_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
+    assert f"group_key_not_native_chunked_route:{FORCE}" in (run.ev[0].reroute_reason or "")
     assert {o.schema.field("c").type for o in run.out} == {pa.string()}
 
 
