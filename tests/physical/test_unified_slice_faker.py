@@ -245,8 +245,18 @@ def test_1_admits_and_runs_native(tmp_path: Path) -> None:
     case = Case(tmp_path, source, [faker_column(), {"name": "p", "strategy": "passthrough"}])
     leaf = assert_lane_parity(case)
     faker_evidence = [e for e in leaf["nodes"].values() if e["operator"] == FAKER_OP]
+    assert len(faker_evidence) == 1
+    elapsed = faker_evidence[0].pop("elapsed_ms")
+    assert isinstance(elapsed, float) and elapsed >= 0.0
     assert faker_evidence == [
-        {"operator": FAKER_OP, "executed": True, "compiled_kernel_executed": True}
+        {
+            "operator": FAKER_OP,
+            "executed": True,
+            "compiled_kernel_executed": True,
+            "planned_backend": "rust_pool_select",
+            "executed_backend": "rust_pool_select",
+            "calls": 1,
+        }
     ]
 
 

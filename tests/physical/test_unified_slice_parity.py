@@ -263,10 +263,15 @@ def test_faker_case_stamps_positive_kernel_evidence_when_companion_available(
     off, on = _run_both(tmp_path, "t", source, columns)
     leaf = _assert_full_parity(off, on)
     (evidence,) = leaf["nodes"].values()
+    elapsed = evidence.pop("elapsed_ms")
+    assert isinstance(elapsed, float) and elapsed >= 0.0
     assert evidence == {
         "operator": "native_faker_select",
         "executed": True,
         "compiled_kernel_executed": True,
+        "planned_backend": "rust_pool_select",
+        "executed_backend": "rust_pool_select",
+        "calls": 1,
     }
 
 

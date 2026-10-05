@@ -664,7 +664,8 @@ def test_unified_slice_execution_result_byte_identical(
         for ev in nodes.values():
             assert ev["operator"] == "native_date_shift"
             assert ev["executed"] is True
-            assert ev["compiled_kernel_executed"] is True
+            # Empty and all-null input makes no compiled call, so the flag is False.
+            assert ev["compiled_kernel_executed"] is (label not in ("empty", "all_null"))
     else:
         assert QUALITY_METRICS_KEY not in on.quality_metrics
 
