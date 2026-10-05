@@ -27,6 +27,7 @@ from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
     TABLE,
+    force_oracle,
     key_provider,
 )
 from tests.native._chunked_group_key_support import (
@@ -337,6 +338,21 @@ def test_a_later_null_typed_sibling_chunk_stringifies_none_like_the_oracle(
     )
 
 
+@NEEDS_COMPANION
+def test_a_later_non_null_sibling_type_drift_fails_the_same_way_on_both_legs() -> None:
+    """The shared schema guard accepts the first chunk's type or a raw null chunk and refuses
+    every other drift, before either leg masks the chunk."""
+    from decoy_engine.execution.native._chunk_schema import NativeChunkSchemaDriftError
+
+    chunks = [gk_source([1, 2], pa.int64()), gk_source(["a", "b"], pa.string())]
+    with pytest.raises(NativeChunkSchemaDriftError) as native:
+        run_one(make_config(columns()), chunks)
+    with pytest.raises(NativeChunkSchemaDriftError) as forced:
+        run_one(make_config([*columns(), force_oracle(FORCE)]), [with_force(c) for c in chunks])
+    assert native.value.code == forced.value.code == "native_chunk_schema_drift"
+    assert native.value.detail == forced.value.detail
+
+
 def _pandas_chunk(g: list[Any], u: list[Any], dtype: str) -> pa.Table:
     frame = pd.DataFrame(
         {GB: pd.array(g, dtype=dtype), TARGET: ["x"] * len(g), "u": pd.Series(u, dtype=object)}
@@ -368,8 +384,6 @@ def test_a_metadata_bearing_sibling_survives_an_unrelated_null_typed_column(dtyp
 
 
 def _force_cols() -> list[dict[str, Any]]:
-    from tests.native._chunked_entry_support import force_oracle
-
     return [force_oracle(FORCE)]
 
 

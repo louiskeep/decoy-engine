@@ -27,6 +27,10 @@ from decoy_engine.execution.native import _chunk_masking, _chunked_evidence, _di
 from decoy_engine.execution.native import _group_key_kernel as gk_kernel
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
+from decoy_engine.execution.native._chunked_group_key_gate import (
+    group_by_columns,
+    sibling_resident_sources,
+)
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._group_key_ext import (
     RAW_HEX_KAT,
@@ -340,6 +344,69 @@ def test_a_wider_oracle_safe_sibling_downgrades_to_the_oracle_and_matches_it(
     assert _values(run.out) == _values(_oracle(config, chunks))
     assert _values(run.out) == _full_frame(config, table, tmp_path).column(TARGET).to_pylist()
     assert {o.schema.field(TARGET).type for o in run.out} == {pa.string()}
+
+
+_GK_NODE = (_dispatch.NodeRouteRecord(column=TARGET, strategy="group_key", route="native_kernel"),)
+
+
+@pytest.mark.parametrize(
+    "typ", [pa.string(), pa.int64(), pa.bool_()], ids=["string", "int64", "bool"]
+)
+def test_the_real_type_gate_accepts_exactly_the_native_sibling_domain(typ: pa.DataType) -> None:
+    schema = pa.schema([pa.field(GB, typ), pa.field(TARGET, pa.string())])
+    assert (
+        real_type_rejection(make_config(columns()), _GK_NODE, schema, table=TABLE, profile=None)
+        is None
+    )
+
+
+@pytest.mark.parametrize("label", sorted(_WIDER))
+def test_the_real_type_gate_names_a_wider_sibling_on_its_own(label: str) -> None:
+    """The static plan usually rejects a wider sibling first; the gate is the authority when it
+    could not (no resident type for the compiler), so it is checked by itself."""
+    typ = _WIDER[label][0]
+    schema = pa.schema([pa.field(GB, typ), pa.field(TARGET, pa.string())])
+    reason = real_type_rejection(
+        make_config(columns()), _GK_NODE, schema, table=TABLE, profile=None
+    )
+    assert reason == f"group_key_sibling_type_not_native:{TARGET}:{GB}:{typ}"
+
+
+def test_the_real_type_gate_declines_a_null_typed_first_chunk_sibling() -> None:
+    schema = pa.schema([pa.field(GB, pa.null()), pa.field(TARGET, pa.string())])
+    reason = real_type_rejection(
+        make_config(columns()), _GK_NODE, schema, table=TABLE, profile=None
+    )
+    assert reason == f"group_key_sibling_type_not_native:{TARGET}:{GB}:null"
+
+
+def test_the_gate_reads_group_by_from_the_config_and_gives_the_real_sibling_type() -> None:
+    config = make_config(columns())
+    assert group_by_columns(config, TABLE) == {TARGET: GB}
+    assert group_by_columns(config, "elsewhere") == {}
+    schema = pa.schema([pa.field(GB, pa.int64()), pa.field(TARGET, pa.string())])
+    resident = sibling_resident_sources(config, TABLE, schema)
+    assert resident is not None and list(resident) == [TABLE]
+    assert resident[TABLE].schema.names == [GB], (
+        "only the sibling, every other column stays on the profile"
+    )
+    assert resident[TABLE].schema.field(GB).type == pa.int64()
+
+
+def test_the_gate_gives_no_resident_source_when_there_is_nothing_to_give() -> None:
+    schema = pa.schema([pa.field(GB, pa.string()), pa.field(TARGET, pa.string())])
+    assert sibling_resident_sources(make_config(columns()), TABLE, None) is None
+    no_group_key = make_config([passthrough(GB), passthrough(TARGET)])
+    assert sibling_resident_sources(no_group_key, TABLE, schema) is None
+    assert (
+        sibling_resident_sources(
+            make_config(columns()), TABLE, pa.schema([pa.field("x", pa.string())])
+        )
+        is None
+    )
+    union = pa.union([pa.field("a", pa.int64()), pa.field("b", pa.string())], mode="dense")
+    exotic = pa.schema([pa.field(GB, union), pa.field(TARGET, pa.string())])
+    assert sibling_resident_sources(make_config(columns()), TABLE, exotic) is None
 
 
 @pytest.mark.parametrize("typ", [pa.float64(), pa.decimal128(10, 2)], ids=["float64", "decimal"])
