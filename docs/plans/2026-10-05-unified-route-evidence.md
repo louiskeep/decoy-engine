@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan-gate round 1 REVISE (1 HIGH, 3 MEDIUM) folded; awaiting round 2.
+Status: plan (revision 2.1, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (1 LOW folded).
 
 # Unified-slice per-column route evidence
 
@@ -103,11 +103,12 @@ It returns the JSON-safe dict. `_execute_admitted` calls it in place of the inli
    - empty table: bucket_perturb, date_shift and group_key report `arrow_python` with `compiled_kernel_executed=False`
    - all-null bucket_perturb and date_shift: `arrow_python`
    - All-unparseable date_shift (and any input with row errors) is asserted at the coordinator / `assemble_node_evidence` seam, before finalize: idle → `arrow_python`. Separately, on the production lane, the existing `RowErrorsFailedError` and row-error parity with the oracle are asserted, with no oracle poisoning (the reroute is existing behavior, fact 6).
-2b. **Batch accumulation (3c):** at the coordinator seam with a small `batch_size_rows`, assert per operator (bucket_perturb, date_shift, group_key):
+2b. **Batch accumulation (3c):** for bucket_perturb and date_shift, at the coordinator seam with a small `batch_size_rows`, assert:
    - valued batch then idle batch → compiled, planned backend
    - idle batch then valued batch → compiled
    - all batches idle → `arrow_python`
    Also on the production lane: 50,000 valid dates followed by one null row → `rust_companion`.
+   group_key is idle only on a zero-row sibling, and the coordinator emits either one empty batch or only populated slices (`_shadow_coordinator.py:170`), so a mixed sequence cannot arise from real batching. Test its monotonic assignment directly instead: repeated `run_operator` calls sharing one evidence object, populated→empty and empty→populated, both stay compiled. Keep the production empty and all-null group_key tests.
    - all-null group_key: `rust_companion`
    - empty hash, categorical and Faker: their planned backend, with `compiled_kernel_executed=True`, and no invariant raised
 3. **`calls`:** 50,001 rows across the default 50,000-row batch gives `calls == 2` for every node. A 1-row table gives `calls == 1`.
@@ -160,3 +161,4 @@ Round 1 answers (Codex):
   - MEDIUM: three tests pin the old evidence → explicit, bounded update list.
   - MEDIUM: all-unparseable date_shift cannot publish evidence → assert at the seam, plus the production exception parity.
   - MEDIUM: timing attribution not proven → same-strategy shuffled-records test.
+- Round 2 (Codex, gpt-6-astra): GO, all round-1 findings closed; 1 LOW (the group_key mixed-batch fixture is unreachable through real batching) folded as a direct `run_operator` test.
