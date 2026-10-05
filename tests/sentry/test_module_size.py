@@ -479,7 +479,9 @@ ALLOWLIST: dict[str, int] = {
     # stamping the out-of-core decline telemetry. The logic lives in `_transforms_gate.py`,
     # `_transforms_prepare.py`, `_transforms_admission.py` and `_transforms_table.py`; this
     # file only calls them. Dense reviewed exception (<= MAX).
-    "src/decoy_engine/execution/_pipeline.py": 679,
+    # C5a (2026-10-05): +5 lines creating the job-scoped pool cache shared by the
+    # unified lane and the oracle. Dense reviewed exception (<= MAX).
+    "src/decoy_engine/execution/_pipeline.py": 684,
     # A1 post-validation wiring (2026-09-24): crossed GOAL (was under) threading
     # the resident-source resolution the post-validation scans need -- the
     # source_loader + required_tables plumbing and the admission-path source
@@ -494,15 +496,17 @@ ALLOWLIST: dict[str, int] = {
     # Lane timings (2026-09-30): +12 lines for the collector and output-bridge
     # timing; the split was not folded into a timing change to keep its blast
     # radius small. The move above is owed by the next unified-slice change.
-    "src/decoy_engine/execution/_unified_slice.py": 614,
-    # Track A input formats (2026-09-30): format admission widened to csv and
-    # fixed_width, with the resident-type gates documented alongside. Dense
-    # reviewed exception (<= MAX). Split the per-strategy resident-type gates
-    # into a sibling on the next admission change.
-    # Lane timings (2026-09-30): +21 lines (mostly docstring) for
-    # boundary_conversion_ms on CheapCandidate; the gate split stays owed by
-    # the next admission change.
-    "src/decoy_engine/execution/_unified_slice_admission.py": 629,
+    # C5a (2026-10-05): +36 lines for the Faker route (registry, shared pool cache,
+    # native_threads forwarding, the non-string reroute, the pool-failure re-raise).
+    # The owed admission-source helper move still stands.
+    # C5a dennis remediation (2026-10-05): +8 lines to re-raise the pool failure after the
+    # handler (keeps __cause__). The owed "admission-source helper" move found nothing to move:
+    # no such helpers remain in this file (the source alignment now lives inside
+    # `cheap_admission`), so the entry is bumped to the actual size instead.
+    # Owed by the NEXT unified-slice change: move the completed-evidence validation and
+    # the source-shaped output reconstruction (`_execute_admitted`'s post-run block) into
+    # a sibling module.
+    "src/decoy_engine/execution/_unified_slice.py": 658,
     # Track A input formats (2026-09-30): resolve_input_arrow_type prefers the
     # resident Arrow table, threaded through the requirements and config-gate
     # helpers. Dense reviewed exception (<= MAX). Move the resident-type

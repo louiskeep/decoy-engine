@@ -186,7 +186,7 @@ def date_shift_config_rejection(
 # integer, bool, string, large_string, date, timestamp), and the operator itself
 # masks all of them byte-identically -- but the sibling MUST be an unmasked
 # passthrough node, and passthrough's own production resident set is exactly
-# {string, int64, bool} (`_unified_slice_admission._ADMITTED_RESIDENT_TYPES`).
+# {string, int64, bool} (`_unified_slice_resident_types._ADMITTED_RESIDENT_TYPES`).
 # So a large_string/int32/uint64/date/timestamp sibling could never activate
 # end-to-end anyway; admitting it here would over-advertise. Narrow to the
 # intersection so admission is honest; float/decimal/dictionary stay excluded

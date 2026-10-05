@@ -66,6 +66,7 @@ import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.execution._runner import in_work_order
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
@@ -85,6 +86,7 @@ from decoy_engine.execution.physical._shadow_diff_codes import (
     PLANNED_VS_ACTUAL_ROUTE_DIFF,
     RESOURCE_LIMIT_BREACH,
     SCHEMA_DIFF,
+    PoolBuildFailed,
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_fk import build_fk_dispatch, resolve_admitted_fk_node
@@ -213,15 +215,16 @@ class ShadowCoordinator:
     oracle used for the same job, never `get_default_registry()` (a
     caller-overridden registry builds different values under the same
     provider name, so falling back to the default would silently diverge
-    from a custom-registry oracle run). Optional, defaulting to `None`, so
-    the pre-existing unified-slice production caller (`_unified_slice.py`,
-    which never admits a faker node in this slice) constructs
-    `ShadowCoordinator(ctx=ctx)` unchanged; a bound faker node asserts the
-    registry is present rather than silently masking with the wrong one.
+    from a custom-registry oracle run). Optional; a bound faker node asserts
+    the registry is present rather than silently masking with the wrong one.
+
+    `pool_cache`, when given, replaces the run-scoped fresh cache: the unified
+    lane shares one job-scoped cache with the oracle so a pool is built once.
     """
 
     ctx: ShadowContext
     registry: ProviderRegistry | None = None
+    pool_cache: PoolCache | None = None
 
     def run(
         self,
@@ -277,10 +280,10 @@ class ShadowCoordinator:
         # The authoritative build-once-per-identity store for this run,
         # keyed by `PoolIdentity` (NOT node_id): two nodes sharing an
         # identity share one build, and an A->B->A node order cannot rebuild
-        # A. Backed by a fresh, run-scoped `PoolCache` -- never the
-        # module-global default (see the module docstring).
+        # A. Backed by the injected job-scoped cache, else a fresh run-scoped
+        # `PoolCache`, never the module-global default (see the module docstring).
         pools_by_identity: dict[PoolIdentity, ValuePool] = {}
-        pool_cache = PoolCache()
+        pool_cache = self.pool_cache if self.pool_cache is not None else PoolCache()
         # Slice 5b-ii: an FK-child column resolves against its parent ahead of native binding.
         fk = build_fk_dispatch(snapshot, self.ctx.relationship_graph, admitted_edges)
         warnings: list[QualityWarning] = []
@@ -289,7 +292,7 @@ class ShadowCoordinator:
         for table in plan.tables:
             source = snapshot.tables[table.table]
             columns: dict[str, pa.Array] = {}
-            for node in table.nodes:
+            for node in in_work_order(table.table, table.nodes):
                 fk_resolution = resolve_admitted_fk_node(node, table.table, source, columns, fk)
                 if fk_resolution is not None:
                     columns[node.columns[0]] = fk_resolution.column
@@ -401,8 +404,8 @@ class ShadowCoordinator:
 
             if columns:
                 # Assemble in SOURCE-SCHEMA order -- the pandas full-frame
-                # oracle preserves the source column order, NOT the node/config
-                # declaration order this loop iterates in (Codex final-gate
+                # oracle preserves the source column order, NOT the work order
+                # this loop iterates in (Codex final-gate
                 # HIGH: source [a,b] with config [b,a] otherwise diverged). For
                 # the bounded slice EVERY source column must be configured with
                 # an in-slice strategy, so the assembled set must equal the
@@ -522,14 +525,11 @@ class ShadowCoordinator:
         pools_by_identity: dict[PoolIdentity, ValuePool],
         pool_cache: PoolCache,
     ) -> ValuePool:
-        """Resolve one faker node's pool, ONCE, outside the batch loop:
-        consult the run-scoped identity map first (the authoritative
-        build-once store -- an LRU-backed cache alone could evict an entry
-        between two nodes sharing an identity and force a spurious rebuild),
-        then the per-run `PoolCache`, and build via `PoolBuilder` only on a
-        genuine miss on both. Uses the SAME `resolve_faker_pool_identity`
-        the oracle and the native chunked route use, so all three can never
-        compute different identities for one column.
+        """Resolve one faker node's pool, ONCE, outside the batch loop: the
+        run-scoped identity map first (the build-once store; an LRU cache alone
+        could evict between two nodes sharing an identity), then the `PoolCache`,
+        and `PoolBuilder` only on a miss on both. Uses the same
+        `resolve_faker_pool_identity` as the oracle and the native chunked route.
         """
         if binding.pool_binding is None or binding.key_binding is None:
             # pragma: no cover - only ever called for a faker-bound node,
@@ -542,10 +542,8 @@ class ShadowCoordinator:
                 "for any run admitting a faker node."
             )
         if self.ctx.job_seed == b"":
-            # Symmetric to the registry guard: a bound faker node with the
-            # empty-default job_seed would build a wrong-but-passing pool
-            # (job_seed governs pool content). from_key_provider always
-            # supplies the real value, so this only fires on a mis-wired caller.
+            # Symmetric to the registry guard: an empty job_seed would build a
+            # wrong-but-passing pool; from_key_provider always supplies the real one.
             raise AssertionError(
                 "a faker node is bound but ShadowContext.job_seed is empty; the shadow "
                 "caller must build the context via from_key_provider so job_seed is set."
@@ -563,19 +561,24 @@ class ShadowCoordinator:
         cached_pool = pools_by_identity.get(identity)
         if cached_pool is not None:
             pool = cached_pool
+            # Touch the LRU like the oracle's reuse does; a pinned hit would skip it.
+            pool_cache.get(identity)
         else:
             from_secondary_cache = pool_cache.get(identity)
             built = from_secondary_cache if isinstance(from_secondary_cache, ValuePool) else None
             if built is None:
-                built = builder.build(
-                    provider=binding.pool_binding.provider,
-                    size=pool_size,
-                    job_seed=self.ctx.job_seed,
-                    locale=locale,
-                    config=build_config,
-                    namespace=binding.key_binding.namespace,
-                )
-                pool_cache.put(built)
+                try:
+                    built = builder.build(
+                        provider=binding.pool_binding.provider,
+                        size=pool_size,
+                        job_seed=self.ctx.job_seed,
+                        locale=locale,
+                        config=build_config,
+                        namespace=binding.key_binding.namespace,
+                    )
+                    pool_cache.put(built)
+                except Exception as exc:
+                    raise PoolBuildFailed(exc) from exc
             pool = built
             pools_by_identity[identity] = pool
 

@@ -51,6 +51,10 @@ import pyarrow as pa
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._unified_slice_resident_types import (
+    _ADMITTED_RESIDENT_TYPES,
+    _group_key_sibling_admitted,
+)
 from decoy_engine.execution.native._companion_status import native_kernel_availability
 from decoy_engine.profile._readers import LazySource
 
@@ -69,6 +73,7 @@ __all__ = [
     "BUCKET_PERTURB_OPERATOR_ID",
     "CATEGORICAL_OPERATOR_ID",
     "DATE_SHIFT_OPERATOR_ID",
+    "FAKER_OPERATOR_ID",
     "GROUP_KEY_OPERATOR_ID",
     "HASH_OPERATOR_ID",
     "CheapCandidate",
@@ -76,11 +81,11 @@ __all__ = [
     "resident_contract_admission",
 ]
 
-# The four operators the 4.4 shadow coordinator dispatches for this slice
+# The operators the 4.4 shadow coordinator dispatches for this slice
 # (`_shadow_bindings.OPERATOR_ID_BY_STRATEGY.values()`); restated here rather
 # than imported so this module's cheap-admission surface stays importable
 # with zero `execution.physical` reach. Public (no leading underscore):
-# `_unified_slice.py`'s D7 evidence check reads `HASH_OPERATOR_ID` too.
+# `_unified_slice.py`'s D7 evidence check reads `HASH_OPERATOR_ID` and `FAKER_OPERATOR_ID`.
 ALLOWED_OPERATOR_IDS = frozenset(
     {
         "native_passthrough",
@@ -91,6 +96,7 @@ ALLOWED_OPERATOR_IDS = frozenset(
         "native_bucket_perturb",
         "native_group_key",
         "native_date_shift",
+        "native_faker_select",
     }
 )
 HASH_OPERATOR_ID = "native_keyed_hash"
@@ -103,10 +109,11 @@ CATEGORICAL_OPERATOR_ID = "native_categorical"
 BUCKET_PERTURB_OPERATOR_ID = "native_bucket_perturb"
 GROUP_KEY_OPERATOR_ID = "native_group_key"
 DATE_SHIFT_OPERATOR_ID = "native_date_shift"
+FAKER_OPERATOR_ID = "native_faker_select"
 
 # The operators whose native execution needs the compiled companion loadable at
-# this host: hash (its crypto kernel), the two index-kernel operators
-# (categorical, bucket_perturb), and group_key (its raw-hex kernel). A table
+# this host: hash (its crypto kernel), the index-kernel operators (categorical,
+# bucket_perturb, date_shift, faker), and group_key (its raw-hex kernel). A table
 # carrying any of these declines to the oracle when the companion is absent --
 # the CI `substrate(pandas)` leg. Named as a set so a new index/crypto operator
 # joins by one edit, not another ad-hoc branch in `resident_contract_admission`.
@@ -117,6 +124,7 @@ _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
         BUCKET_PERTURB_OPERATOR_ID,
         GROUP_KEY_OPERATOR_ID,
         DATE_SHIFT_OPERATOR_ID,
+        FAKER_OPERATOR_ID,
     }
 )
 
@@ -133,6 +141,7 @@ _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
     BUCKET_PERTURB_OPERATOR_ID: "index",
     GROUP_KEY_OPERATOR_ID: "raw_hex",
     DATE_SHIFT_OPERATOR_ID: "index",
+    FAKER_OPERATOR_ID: "index",
 }
 
 # The ONE diagnostic obligation the coordinator routes, per operator: date_shift's
@@ -143,32 +152,6 @@ _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
 # carrying one still declines: nothing else is routed.
 _ROUTED_DIAGNOSTIC_OBLIGATIONS: dict[str, frozenset[str]] = {
     DATE_SHIFT_OPERATOR_ID: frozenset({"reduce_row_error:format_error"}),
-}
-
-# The fixed, reviewed resident-type domain per slice strategy -- the actual
-# set the 4.4 shadow corpus characterizes, not the compiler's coarse profile
-# label. A resident type outside its strategy's set declines regardless of
-# whether it happens to match the compiled `input_schema` type (e.g. a
-# genuinely int64 column bound to redact, which the compiler's own config-
-# only gate never rejects). Widening this later is a separately-proven
-# slice, never a default.
-_ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
-    "passthrough": frozenset({pa.string(), pa.int64(), pa.bool_()}),
-    "redact": frozenset({pa.string()}),
-    "truncate": frozenset({pa.string()}),
-    # hash also requires null-freedom, enforced separately below via the
-    # same `reject_null_bearing_int` guard the legacy adapter runs.
-    "hash": frozenset({pa.string(), pa.int64()}),
-    # Phase 5 Track B: native categorical selects over string categories keyed
-    # on a STRING source (the compiled index kernel's admitted input); a
-    # non-string source declines to the oracle.
-    "categorical": frozenset({pa.string()}),
-    # S-slate: native bucket_perturb parses/perturbs a STRING date column keyed
-    # on that same STRING source (astype(str) identity keeps canonicalization
-    # byte-parity-safe); a non-string source declines to the oracle.
-    "bucket_perturb": frozenset({pa.string()}),
-    # date_shift parses a STRING date column and keys on that same string.
-    "date_shift": frozenset({pa.string()}),
 }
 
 # Track A Option 2: the sanctioned single-file-source formats. Widened from
@@ -438,54 +421,6 @@ def _has_when_gate(col: Mapping[str, Any]) -> bool:
     return isinstance(when, str) and bool(when.strip())
 
 
-def _group_key_sibling_admitted(
-    binding: Any, physical_table: PhysicalTable, source: pa.Table
-) -> bool:
-    """Whether a bound group_key node's `group_by` SIBLING column is admissible:
-    resident, an admitted type (v1: `{string, int64, bool}` via
-    `group_key_sibling_type_admitted`), matching the binding's input_schema, and
-    NOT itself masked by another node in the table (the order-dependence
-    decline).
-
-    Runs on the SIBLING, not the target: the oracle keys on `df[group_by]` at
-    group_key's execution point, so native parity holds only when
-    `batch.column(group_by)` (the original source value) equals what the oracle
-    reads -- which requires the sibling to be resident, safe-typed, and left
-    UNMASKED (a passthrough node). A masked sibling means the pandas adapter
-    would have mutated that column in the frame before group_key reads it, so
-    native declines to the oracle (v1 does not model the effective-input
-    dependency)."""
-    from decoy_engine.execution.native._operator_config_rejections import (
-        group_key_sibling_type_admitted,
-    )
-
-    group_by = binding.group_key_group_by
-    if not isinstance(group_by, str) or not group_by:
-        return False
-    if group_by not in source.schema.names:
-        # A non-resident sibling declines cleanly (never a raising KeyError).
-        return False
-    sibling_type = source.schema.field(group_by).type
-    if not group_key_sibling_type_admitted(sibling_type):
-        # float / decimal / dictionary (and any unlisted type) decline.
-        return False
-    # Track A Option 2 guard reconciliation: `execution_binding_for_slice_node`
-    # now builds `input_schema` from this SAME resident sibling type (not a
-    # profile re-read), so comparing the two types here would always be true --
-    # a tautology, not a check. What is still load-bearing is the STRUCTURAL
-    # shape (exactly one field, named `group_by`): a binding of any other shape
-    # would be a compiler bug, not a resident-type question.
-    input_schema = binding.input_schema
-    if len(input_schema) != 1 or input_schema.names != [group_by]:
-        return False
-    # Order-dependence: the sibling must be an UNMASKED (passthrough) node. Any
-    # other node masking it means the oracle would key on the mutated value.
-    for other in physical_table.nodes:
-        if group_by in other.columns and other.strategy != "passthrough":
-            return False
-    return True
-
-
 def resident_contract_admission(
     physical_plan: PhysicalPlan,
     *,
@@ -592,7 +527,7 @@ def resident_contract_admission(
         if resident_type not in _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset()):
             return None
         if binding.operator_id in _COMPANION_DEPENDENT_OPERATOR_IDS:
-            # hash / categorical / bucket_perturb / date_shift consume their namespace
+            # hash / categorical / bucket_perturb / date_shift / faker consume their namespace
             # through the compiled companion at every batch; a missing KeyBinding
             # or a non-UTF-8 namespace declines to the oracle (the compiled
             # kernel requires an encodable namespace).

@@ -107,10 +107,13 @@ GUARDED_MODULES: tuple[str, ...] = (
 # is the D3 admission-predicate module `_unified_slice.py` was split out of
 # to hold the ~600-LOC orchestration cap; its `resident_contract_admission`
 # reaches for `execution.physical._types.DriverId`, lazily, behind the same
-# flag-checked-before-import discipline.
+# flag-checked-before-import discipline. `_unified_slice_resident_types.py` is the
+# per-strategy resident-type gate module split out of it (C5a remediation, pure move); it
+# keeps the one `PhysicalTable` annotation import, under TYPE_CHECKING.
 DELIBERATELY_CONNECTED_MODULES: tuple[str, ...] = (
     "execution/_unified_slice.py",
     "execution/_unified_slice_admission.py",
+    "execution/_unified_slice_resident_types.py",
 )
 
 _PHYSICAL_IMPORT_RE = re.compile(
@@ -237,6 +240,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         f"src/decoy_engine/{rel}" for rel in DELIBERATELY_CONNECTED_MODULES
     } | {
         "src/decoy_engine/execution/_pipeline.py",
+        # C5a remediation: `_runner.py` gains the shared `work_order_key` / `in_work_order`
+        # ordering helpers so the coordinator visits nodes in `order_work`'s order from one
+        # key. Pure functions; `_runner.py` imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/_runner.py",
         # Engine-owned table transforms: `run_pipeline` now applies a mask table's
         # transforms before routing, which touches the resident-source resolvers,
         # the routing signals, the sequential and out-of-core docstring contract and

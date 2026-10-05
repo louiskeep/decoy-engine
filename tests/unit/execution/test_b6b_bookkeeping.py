@@ -25,8 +25,8 @@ def test_module_sizes_hold_their_bars() -> None:
     assert size_sentry._loc(EXEC / NEW) <= 600
     assert f"src/decoy_engine/execution/{NEW}" not in size_sentry.ALLOWLIST
     assert size_sentry._loc(EXEC / "_planner.py") <= 600
-    assert size_sentry.ALLOWLIST["src/decoy_engine/execution/_pipeline.py"] == 679
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 679
+    assert size_sentry.ALLOWLIST["src/decoy_engine/execution/_pipeline.py"] == 684
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 684
 
 
 def test_the_new_module_is_guarded_by_the_seam_disconnection_sentry() -> None:

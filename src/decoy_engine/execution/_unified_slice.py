@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter, ExecutionResult
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
+    from decoy_engine.generation.pool import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._readers import LazySource
@@ -67,6 +68,13 @@ __all__ = [
 # under; the differential parity harness (D9) asserts it present flag-on,
 # absent flag-off, and compares every OTHER quality_metrics leaf exactly.
 QUALITY_METRICS_KEY = "unified_slice_activation"
+
+# Operators whose "the compiled kernel really ran" claim must be observed, not
+# inferred: a completed node of one of these without positive evidence is an
+# admission bug.
+_POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
+    {_admission.HASH_OPERATOR_ID, _admission.FAKER_OPERATOR_ID}
+)
 
 _logger = logging.getLogger(__name__)
 _REROUTE_LOG = "unified_slice_unexpected_exception_reroute exc_type=%s table=%s"
@@ -151,6 +159,8 @@ def _execute_admitted(
     resolved_substrate: str,
     explain_plan: bool,
     execution_plan_decision: ExecutionPlan | None,
+    pool_cache: PoolCache,
+    native_threads: int,
 ) -> ExecutionResult | None:
     """Everything past the cheap admission gate: build the LIVE (D4)
     `PhysicalPlanInputs`, compile the real physical plan, run the remaining
@@ -176,10 +186,15 @@ def _execute_admitted(
     from decoy_engine.execution.physical._live_inputs import build_live_physical_plan_inputs
     from decoy_engine.execution.physical._shadow_context import ShadowContext
     from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
-    from decoy_engine.execution.physical._shadow_diff_codes import ShadowDifference
+    from decoy_engine.execution.physical._shadow_diff_codes import (
+        FAKER_POOL_NON_STRING_OUTPUT,
+        PoolBuildFailed,
+        ShadowDifference,
+    )
     from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
     from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 
+    pool_failure: Exception | None = None
     try:
         inputs = build_live_physical_plan_inputs(
             config=config,
@@ -233,14 +248,26 @@ def _execute_admitted(
             unified_slice_enabled=True,
         )
 
-        ctx = ShadowContext.from_key_provider(plan=plan, key_provider=key_provider)
+        ctx = ShadowContext.from_key_provider(
+            plan=plan, key_provider=key_provider, native_threads=native_threads
+        )
         snapshot = capture_shadow_snapshot({candidate.table: candidate.source})
 
         collector = TimingCollector()
         try:
             with use_collector(collector):
-                shadow_result = ShadowCoordinator(ctx=ctx).run(physical_plan, snapshot)
+                shadow_result = ShadowCoordinator(
+                    ctx=ctx, registry=inputs.registry, pool_cache=pool_cache
+                ).run(physical_plan, snapshot)
         except ShadowDifference as exc:
+            if exc.code == FAKER_POOL_NON_STRING_OUTPUT:
+                # A rebound provider yielded non-strings. The pool is already in
+                # the shared cache, so the oracle reuses it without a second
+                # provider call, and nothing has been published yet.
+                _logger.info(
+                    "unified_slice_faker_non_string_pool_reroute table=%s", candidate.table
+                )
+                return None
             # D8: an admitted job's execution boundary. Admission already
             # preflighted companion availability, node binding, coverage, and
             # invariants, so reaching a coded `ShadowDifference` here means the
@@ -275,12 +302,12 @@ def _execute_admitted(
                     "completed-execution evidence."
                 )
             if (
-                binding.operator_id == _admission.HASH_OPERATOR_ID
+                binding.operator_id in _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS
                 and not evidence.compiled_kernel_executed
             ):
                 raise UnifiedSliceInvariantError(
-                    f"unified slice: hash node {node.node_id!r} completed without positive "
-                    "compiled-kernel evidence."
+                    f"unified slice: {binding.operator_id} node {node.node_id!r} completed "
+                    "without positive compiled-kernel evidence."
                 )
             node_evidence[node.node_id] = {
                 "operator": evidence.actual_operator,
@@ -389,9 +416,20 @@ def _execute_admitted(
         )
     except UnifiedSliceInvariantError:
         raise
+    except PoolBuildFailed as failed:
+        # Provider code or the cache insert raised. Rerouting would run the
+        # provider a second time, so surface the original, as the oracle would.
+        # Captured here and raised after the handler: re-raising inside it would
+        # make `PoolBuildFailed` the `__context__` of an exception that had none.
+        pool_failure = failed.original
     except Exception as exc:
         _logger.warning(_REROUTE_LOG, type(exc).__name__, candidate.table)
         return None
+    # Only the PoolBuildFailed handler falls through to here. A bare `raise` (no
+    # `from`) keeps the original's __cause__, __context__ and __suppress_context__.
+    if pool_failure is None:  # pragma: no cover - the other handler returns
+        raise UnifiedSliceInvariantError("unified slice: fell through without a pool failure")
+    raise pool_failure
 
 
 def maybe_run_unified_slice(
@@ -432,6 +470,8 @@ def maybe_run_unified_slice(
     route_reason: str,
     key_provider: KeyProvider | None,
     engine_version: str,
+    pool_cache: PoolCache,
+    native_threads: int,
 ) -> ExecutionResult | None:
     """`run_pipeline`'s single call site for the Task 4.5 unified-slice lane.
 
@@ -511,6 +551,8 @@ def maybe_run_unified_slice(
         resolved_substrate=resolved_substrate,
         explain_plan=explain_plan,
         execution_plan_decision=execution_plan_decision,
+        pool_cache=pool_cache,
+        native_threads=native_threads,
     )
 
 
@@ -561,6 +603,8 @@ _PIPELINE_LOCAL_KWARGS: Final[tuple[str, ...]] = (
     "execution_plan_decision",
     "route_reason",
     "engine_version",
+    "pool_cache",
+    "native_threads",
 )
 
 

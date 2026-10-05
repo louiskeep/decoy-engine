@@ -17,6 +17,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import RowErrorsFailedError, ValidatorFailedError
 from decoy_engine.execution import ExecutionError, run_pipeline
+from decoy_engine.generation.pool import PoolCache
 from tests.unit.execution import _auto_chunk_support as support
 from tests.unit.execution import _multi_table_support as mt
 
@@ -548,6 +549,11 @@ def _assert_same_adapter_call(a: tuple[Any, Any], b: tuple[Any, Any]) -> None:
         assert a_args[1][name].equals(b_args[1][name], check_metadata=True), name
     assert a_kwargs.keys() == b_kwargs.keys()
     for key, value in a_kwargs.items():
+        if key == "pool_cache":
+            # One cache per job, so two jobs never share an instance.
+            assert isinstance(value, PoolCache), key
+            assert value is not b_kwargs[key], key
+            continue
         assert value == b_kwargs[key], key
 
 
