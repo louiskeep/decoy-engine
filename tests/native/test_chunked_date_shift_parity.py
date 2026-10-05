@@ -23,6 +23,7 @@ from tests.native._chunked_date_shift_support import (
     make_config,
     passthrough,
     run_one,
+    run_outcome,
     run_pair,
     source,
 )
@@ -148,13 +149,16 @@ _KAT = {
 }
 
 
-def _expected_by_formula(value: str | None, ns: str, lo: int, hi: int) -> str | None:
+def _expected_by_formula(
+    value: str | None, ns: str, lo: int, hi: int, secret: bytes | None = None
+) -> str | None:
     """The oracle's documented offset, computed here from `derive` alone."""
     if value is None:
         return None
     import datetime as dt
 
-    digest = derive(key_provider().mask_key(), ns, _canonicalize_source(value))
+    key = (key_provider() if secret is None else key_provider(secret)).mask_key()
+    digest = derive(key, ns, _canonicalize_source(value))
     shift = lo + int.from_bytes(digest[:8], "big") % (hi - lo + 1)
     day = dt.datetime.strptime(value, "%Y-%m-%d") + dt.timedelta(days=shift)
     return day.strftime("%Y-%m-%d")
@@ -176,8 +180,28 @@ def test_native_chunked_output_matches_the_frozen_vectors_and_the_formula(
     assert got == [_expected_by_formula(v, ns, lo, hi) for v in _KAT_VALUES]
 
 
+_OTHER_SECRET = bytes(range(1, 33))
+
+
 @NEEDS_COMPANION
-def test_a_different_mask_key_or_namespace_gives_a_different_shift() -> None:
+def test_a_different_mask_key_gives_a_different_shift_pinned_to_the_formula() -> None:
+    """Kills a mutant that hard-codes or swaps in a wrong mask key while keeping the
+    namespace: both runs share namespace and input, so only the key differs, and each
+    output must equal the scalar `derive(mask_key, ns, value)` shift for ITS key."""
+    values = [date_value(i) for i in range(40)]
+    config = make_config([ds_col(), passthrough("p")])
+    outputs = {}
+    for label, secret in (("default", None), ("other", _OTHER_SECRET)):
+        out = run_outcome(config, [source(values)], secret=secret)
+        assert out.error is None and out.ev[0].native_admitted is True
+        got = column_values(out.out, "d")
+        assert got == [_expected_by_formula(v, "ns_d", -30, 30, secret) for v in values], label
+        outputs[label] = got
+    assert outputs["default"] != outputs["other"]
+
+
+@NEEDS_COMPANION
+def test_a_different_namespace_gives_a_different_shift() -> None:
     values = [date_value(i) for i in range(40)]
     base = run_one(make_config([ds_col(), passthrough("p")]), [source(values)])
     other_ns = run_one(

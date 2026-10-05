@@ -215,6 +215,28 @@ def test_a_non_string_source_fails_closed_through_the_oracle_not_the_kernel() ->
 
 
 @NEEDS_COMPANION
+def test_a_large_string_unparseable_source_fails_closed_identically_on_both_legs() -> None:
+    """large_string passes the profile gate, so the real-type gate declines it with its own
+    reason, and the oracle fails closed on the unparseable value exactly as the forced leg."""
+    chunks = [
+        source([date_value(1), "not-a-date", None], typ=pa.large_string()),
+        source([date_value(2)], typ=pa.large_string()),
+    ]
+    native = run_outcome(make_config([ds_col(), passthrough("p")]), chunks)
+    forced = run_outcome(
+        make_config([ds_col(), passthrough("p"), force_oracle(FORCE)]),
+        [with_force(c) for c in chunks],
+    )
+    assert native.ev[0].native_admitted is False
+    assert "date_shift_source_type_not_string:d:large_string" in (native.ev[0].reroute_reason or "")
+    assert native.ev[0].kernel_calls == {}
+    assert isinstance(native.error, RowErrorsFailedError)
+    assert isinstance(forced.error, RowErrorsFailedError)
+    assert native.error.records == forced.error.records
+    assert [r.row_index for r in native.error.records] == [1]
+
+
+@NEEDS_COMPANION
 def test_a_zero_row_large_string_chunk_keeps_the_oracle_type_it_has_today() -> None:
     """A non-admissible source is outside the string pin, so it keeps the type the oracle
     gives a zero-row chunk (`double`) exactly as before the veto lifted."""
@@ -445,6 +467,9 @@ def test_the_branch_passes_exact_config_and_reuses_the_preflight_index_kernel(
     run_one(config, chunks, native_threads=threads)
     assert len(seen) == len(chunks)
     for kwargs in seen:
+        # The resolved caller key, not a constant: a hard-coded key would survive every
+        # other assertion here.
+        assert kwargs["mask_key"] == key_provider().mask_key()
         assert kwargs["min_days"] == -5
         assert kwargs["max_days"] == 9
         assert kwargs["date_format"] == "%Y-%m-%d"

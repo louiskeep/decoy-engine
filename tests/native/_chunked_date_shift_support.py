@@ -120,6 +120,7 @@ def run_outcome(
     base_row_offset: int = 0,
     native_threads: int = 1,
     with_vault: bool = False,
+    secret: bytes | None = None,
 ) -> Outcome:
     """Run to exhaustion or to the first error; never raises. The caller-owned sinks keep
     the failing chunk's record, the route decision and the vault-add count."""
@@ -136,7 +137,7 @@ def run_outcome(
             pulled(),
             table=TABLE,
             engine_version=ENGINE_VERSION,
-            key_provider=key_provider(),
+            key_provider=key_provider() if secret is None else key_provider(secret),
             chunk_result_sink=outcome.sink,
             route_evidence_sink=outcome.ev,
             base_row_offset=base_row_offset,
