@@ -35,7 +35,7 @@ Tests that pass before the implementation, because the lane declines outright, a
 
 Green after (companion venv `/home/cam/.cache/decoy-native-venv`):
 
-- New and edited acceptance files: `test_unified_slice_faker.py` 41 passed, 0 skipped (one test only runs where the companion is absent); admission and parity files 76 passed.
+- New and edited acceptance files: `test_unified_slice_faker.py` 40 passed, 1 skipped (the skipped test only runs where the companion is absent); admission and parity files 76 passed.
 - `tests/sentry`, `tests/physical`, `tests/native/test_sample_faker_array.py`, `tests/parity/native/test_c1_faker_parity.py`: 3629 passed, 2 skipped.
 - `tests/unit/execution`, `tests/integration`, `tests/native`, `tests/parity`: 12066 passed, 9 failed. Three failures were mine (`test_multi_table_gates.py` compared every `adapter.run` kwarg by equality, and the per-job `pool_cache` instance differs between two jobs; the spy now compares that kwarg by type). Six are pre-existing and fail identically on `a33d58a6`: four isolated-child-process tests (`test_b6a_split_worker`, two in `test_engine_transforms_routes`, `test_isolated_run::TestMemCapOom`; the child imports the companion venv's editable `decoy_engine`, which points at another worktree) and two in `test_auto_chunk_units.py` (an unrelated `first_schema` kwarg).
 - Companion-absent clean venv (`/home/cam/vscode/decoy-engine/.venv`, no companion): faker, admission and parity files 83 passed, 34 skipped, 0 failed.
