@@ -1,4 +1,4 @@
-Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 authorized by the owner (2026-10-06) and pending.
+Status: plan (revision 4, BUILD-READY, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 (owner-authorized) GO, 2 LOW folded. Build starts after C5b-ii merges.
 Rules consulted: 00-universal, development-loop, security, testing, architecture, api-and-compatibility, code-review, scope-discipline
 
 # C8-i: a public, closed `when:` language, plus native `when` on the chunked route
@@ -105,7 +105,7 @@ Cost: one pandas conversion of the referenced columns plus one numexpr evaluatio
 4. Every referenced column is the target itself or a column that NO work node earlier in the oracle's order writes. Otherwise it declines with `when_predicate_reads_masked_column:<col>:<ref>`.
    - The order is the adapter's actual work-node order (the lexicographic topological order), not config-list order.
    - A node's writes are its OWN affected columns (its target column(s)) PLUS its declared extra writes (`handler_written_columns` / access `writes`), per Codex round 2 HIGH 2. The helper alone omits a scalar node's own target.
-   - A node whose writes are unknown (`reads_unknown` or an unclassifiable handler) is treated as writing every column, so any `when` after it declines.
+   - A node whose writes are unknown (`writes_unknown`, `_column_access.py:43-54`, or an unclassifiable handler) is treated as writing every column, so any `when` after it declines. Declining after a node with unknown READS too is conservative policy, not a parity requirement, and is labelled as such in the code.
    - A genuine passthrough or unconfigured reference stays admissible.
 
 Referenced columns may be of any type: 3c computes the mask exactly as the oracle does. A declined column takes the existing downgrade to the chunked-oracle leg with its code, never a hard error.
@@ -158,7 +158,8 @@ The chunked adapter calls it per chunk with the chunk's mask. The grammar is row
 6. **Declines.**
    - Each 3d rule gives its exact code, takes the chunked-oracle leg, and produces output equal to today's.
    - Covered rules: non-admitted strategy, non-string target, raw predicate outside the grammar, a reference to a column an earlier node writes, and a node with unknown writes.
-   - The earlier-node case is Codex round 2's counterexample: `a` redacts to `"REDACTED"` before `z`, with `z`'s predicate `a == 'REDACTED'`, and the config order reversed from the execution order. A composite's extra written column is also covered.
+   - The earlier-node case is Codex round 2's counterexample: `a` redacts to `"REDACTED"` before `z`, with `z`'s predicate `a == 'REDACTED'`, and the config order reversed from the execution order. End-to-end decline and mutation evidence use ordinary scalar writers like this.
+   - Composite writers: tested DIRECTLY against the write-set classifier (a composite's extra written column counts as written). End to end, composites are already rejected by the chunked compatibility check (`strategy_not_chunk_safe`, `_chunked.py:315-336`) before native admission, and that existing rejection is kept.
    - A numeric-reference predicate is ADMITTED on the explicit chunked route and equals the chunked oracle.
    - The unified route still declines every `when` column.
 7. **Public config.**
@@ -224,3 +225,4 @@ Gates: Codex plan gate, Sonnet tests-first build after C5b-ii merges, dennis, Co
   - M2: native mask conversion runs inside the oracle's carry diagnosis (test 5b).
   - M3: reservation is a language restriction, characterized separately; the sentry allowlist names the audited simpleeval call, with planted violations; the evaluation-success claim is qualified by compatible types.
   - Round 4 requires the owner's go-ahead (three-round cap).
+- Codex round 4 (owner-authorized): GO, 0 BLOCKER/HIGH/MEDIUM. 2 LOW folded: unknown writes use `writes_unknown`; composite write-set cases are tested at the classifier because composites are rejected earlier end to end.
