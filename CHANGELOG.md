@@ -65,8 +65,9 @@ not change.
 
 New failure for a rare setup: a custom provider registered under `person_first_name` or
 `person_last_name` whose pool holds non-string values now fails with
-`chunked_faker_nondeterministic_pool_not_string`, before any chunk is written, on every chunked
-path. Such a job ran whole-frame before. Disable auto-chunking for it or register the provider
+`chunked_faker_nondeterministic_pool_not_string`, before any chunk is written, on both legs of the
+chunked dispatcher (the default). The legacy lane (`run_pipeline(chunked_dispatcher_enabled=False)`)
+does not run this check; there such a job can fail later with `chunked_schema_mismatch`. Such a job ran whole-frame before. Disable auto-chunking for it or register the provider
 under a different name. Pre-GA, so no migration path is provided.
 
 The unified full-frame route and out-of-core still decline this column. Opening the unified route

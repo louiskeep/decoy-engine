@@ -315,7 +315,9 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   ROUTE-OUTPUT-CONTRACT a whole-frame column that is empty or entirely null keeps the type
   pandas infers there, while the chunked route yields `string`; values are unchanged. A custom
   provider registered under an allowlisted name whose pool holds non-string values fails closed
-  with `chunked_faker_nondeterministic_pool_not_string` before any chunk is written, which is
+  with `chunked_faker_nondeterministic_pool_not_string` before any chunk is written on both
+  dispatcher legs (the legacy `chunked_dispatcher_enabled=False` lane does not run this check and
+  can instead fail later with `chunked_schema_mismatch`), which is
   a new failure for an auto-chunked job that ran whole-frame before; disable auto-chunking or
   register the provider under another name. A multi-table split run now dispatches an
   above-threshold Faker table chunked like its siblings, with the same values. The unified
