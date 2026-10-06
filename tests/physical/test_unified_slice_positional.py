@@ -322,22 +322,25 @@ def test_4_a_default_namespace_never_reuses_a_sibling_pool_keyed_by_the_same_str
 # ---------------------------------------------------------------------------
 
 
-def _unit_node(strategy: str, operator: str) -> Any:
+def _unit_node(strategy: str, operator: str, params: Any = None) -> Any:
     return SimpleNamespace(
         node_id="n",
         strategy=strategy,
         columns=("c",),
-        execution=SimpleNamespace(operator_id=operator),
+        execution=SimpleNamespace(operator_id=operator, params=params),
     )
 
 
-def _assemble_one(strategy: str, operator: str, evidence: OperatorCallEvidence) -> dict[str, Any]:
+def _assemble_one(
+    strategy: str, operator: str, evidence: OperatorCallEvidence, params: Any = None
+) -> dict[str, Any]:
     from decoy_engine.execution._unified_slice_evidence import assemble_node_evidence
 
     record = StrategyTimingRecord(
         strategy_type=strategy, column="c", elapsed_ms=1.0, peak_memory_delta_kb=0
     )
-    return assemble_node_evidence([_unit_node(strategy, operator)], {"n": evidence}, [record])["n"]
+    node = _unit_node(strategy, operator, params)
+    return assemble_node_evidence([node], {"n": evidence}, [record])["n"]
 
 
 def _recorded(operator: str, *, compiled: bool, rows: int | None) -> OperatorCallEvidence:
@@ -354,16 +357,32 @@ def _recorded(operator: str, *, compiled: bool, rows: int | None) -> OperatorCal
     return evidence
 
 
+def _faker_params(*, positional: bool) -> Any:
+    from decoy_engine.execution.native._operator_params import FakerParams
+
+    return FakerParams("ns_faker", positional=positional)
+
+
 def test_5_a_zero_row_faker_node_without_kernel_evidence_is_accepted() -> None:
-    out = _assemble_one("faker", FAKER_OP, _recorded(FAKER_OP, compiled=False, rows=0))
+    evidence = _recorded(FAKER_OP, compiled=False, rows=0)
+    out = _assemble_one("faker", FAKER_OP, evidence, _faker_params(positional=True))
     assert out["compiled_kernel_executed"] is False
     assert out["executed_backend"] == ARROW_PYTHON
 
 
 @pytest.mark.parametrize("rows", [1, 5, None], ids=["one_row", "five_rows", "unrecorded"])
 def test_5_a_non_empty_faker_node_without_kernel_evidence_still_raises(rows: int | None) -> None:
+    evidence = _recorded(FAKER_OP, compiled=False, rows=rows)
     with pytest.raises(UnifiedSliceInvariantError):
-        _assemble_one("faker", FAKER_OP, _recorded(FAKER_OP, compiled=False, rows=rows))
+        _assemble_one("faker", FAKER_OP, evidence, _faker_params(positional=True))
+
+
+@pytest.mark.parametrize("params", [None, "deterministic"], ids=["unbound", "deterministic"])
+def test_5_a_zero_row_exemption_is_only_for_the_positional_faker(params: str | None) -> None:
+    bound = _faker_params(positional=False) if params else None
+    evidence = _recorded(FAKER_OP, compiled=False, rows=0)
+    with pytest.raises(UnifiedSliceInvariantError):
+        _assemble_one("faker", FAKER_OP, evidence, bound)
 
 
 @NEEDS_COMPANION

@@ -23,6 +23,7 @@ from decoy_engine.execution import _unified_slice_admission as _admission
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._unified_slice import UnifiedSliceInvariantError
 from decoy_engine.execution.native import _chunked_evidence
+from decoy_engine.execution.native._operator_params import FakerParams
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -46,6 +47,12 @@ __all__ = ["assemble_node_evidence", "reconstruct_source_shaped_output"]
 _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
     spec.operator_id for spec in OPERATORS.values() if spec.positive_kernel_evidence
 )
+
+
+def _is_positional_faker(binding: Any) -> bool:
+    # A positional Faker draw on zero rows never calls the kernel; every other operator
+    # still must, so an idle kernel on an empty table stays a defect for them.
+    return isinstance(binding.params, FakerParams) and binding.params.positional
 
 
 def _timing_by_node(
@@ -112,7 +119,7 @@ def assemble_node_evidence(
         if (
             binding.operator_id in _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS
             and not evidence.compiled_kernel_executed
-            and evidence.rows_seen != 0
+            and not (evidence.rows_seen == 0 and _is_positional_faker(binding))
         ):
             raise UnifiedSliceInvariantError(
                 f"unified slice: {binding.operator_id} node {node.node_id!r} completed "

@@ -92,7 +92,7 @@ Harness: a script applied one string replacement, ran `tests/physical/test_unifi
 | M29 categorical binds through the value-keyed prepare | `test_1_multi_batch_...[cat_uniform]` |
 | M30 Faker params built non-positional | `test_1_multi_batch_...[faker_ns]` |
 
-**M28 (equivalent mutant).** Replacing the positional draw-site family with `caps.draw_family` survives everything. All four sites (`mask.faker_deterministic`, `mask.faker_nondeterministic`, `mask.categorical_deterministic`, `mask.categorical_nondeterministic`) carry the family string `source_keyed_hmac`, so the two expressions are equal today. The tests assert `determinism_family == "source_keyed_hmac"` for both variants; they cannot tell the two sources apart until a site's family changes.
+**M28 (equivalent mutant).** Replacing the positional draw-site family with `caps.draw_family` survives everything. All four sites (`mask.faker`, `mask.faker_nondeterministic`, `mask.categorical_deterministic`, `mask.categorical_nondeterministic`) carry the family string `source_keyed_hmac`, so the two expressions are equal today. The tests assert `determinism_family == "source_keyed_hmac"` for both variants; they cannot tell the two sources apart until a site's family changes.
 
 A mutation score was not computed with a tool. Only the hand-picked mutants above were run; this is not generative property testing, and the parity tests are enumerated shapes, not Hypothesis tests.
 
