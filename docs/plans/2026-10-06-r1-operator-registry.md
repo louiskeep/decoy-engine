@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan-gate round 1 REVISE (0 BLOCKER, 3 MEDIUM, 2 LOW) folded; awaiting round 2.
+Status: plan (revision 2, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (0 findings).
 Rules consulted: 00-universal, development-loop, refactoring, architecture, testing, code-review, scope-discipline, api-and-compatibility
 
 # R1: one descriptor per masking operator
