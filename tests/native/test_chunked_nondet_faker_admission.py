@@ -490,6 +490,7 @@ def test_override_through_the_streamed_sink_writes_nothing(tmp_path: Path) -> No
     assert sink.count("write_batches") == 0 and sink.count("commit") == 0
 
 
+@NEEDS_COMPANION
 def test_a_deterministic_faker_with_the_override_keeps_its_downgrade() -> None:
     from tests.native._chunked_entry_support import faker_col
 

@@ -207,6 +207,7 @@ def test_non_c1_faker_variant_stays_on_oracle(columns: list[dict]) -> None:
     assert all(r.route == "oracle" for r in decision.node_routes)
 
 
+@_NEEDS_COMPANION
 @pytest.mark.parametrize(
     "column",
     [
