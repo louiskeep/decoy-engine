@@ -23,7 +23,8 @@ stay outside `DecoyError` on purpose. A new sentry fails when an engine-defined 
 lands outside `DecoyError` without an allowlist entry.
 
 Also in this slice (no behavior change): `date_shift` derives its per-row offsets in one batched
-`DeriveContext` call and assembles the output column without a per-row `iloc` loop, byte- and
+`DeriveContext` call and avoids per-row `iloc` for usable output cells (unusable cells keep
+the original lookup so their scalar types, and the column dtype, are unchanged), byte- and
 dtype-identical to the old path; every CI job now has `timeout-minutes`; the CI ruff pin
 matches the `[lint]` extra (0.15.22); stale comments and docs naming removed modules were fixed.
 
