@@ -1,4 +1,4 @@
-Status: plan (revision 3, author = Opus). Codex plan gate: rounds 1 and 2 REVISE folded; round 3 (final before escalation) pending.
+Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE; round 3's single HIGH folded here. Review cap reached: round 4 awaits the owner's go-ahead.
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, api-and-compatibility
 
 # C5b-ii: non-deterministic REUSE Faker on the chunked native route
@@ -66,7 +66,7 @@ Explicitly IN scope (Codex round 1, HIGH 2): **multi-table split per-table routi
 
 `_requirements.py`, `prepare_categorical`, `_shadow_bindings` and `_shadow_operators` are NOT touched: the full-frame route stays closed.
 
-**3c. Stage B, leg selection at the first chunk.** A string source runs native. A non-string source takes the existing real-type downgrade to the chunked-oracle leg (`faker_source_type_not_string`), never a hard error; the output is the pinned `string` either way (§3f). One exotic case fails closed instead: an allowlisted provider NAME whose registered implementation returns non-string pool values (a custom provider registered under a built-in name). The pool check at `_chunked_entry.py:363-371` raises a coded `chunked_faker_nondeterministic_pool_not_string` error before any chunk is masked, naming the column and provider. The error tells the user to disable auto-chunking or use a different provider name. Downgrading would have the string pin silently change the column's type relative to whole-frame. This case is a new failure for an auto-chunked job that ran whole-frame before. It is accepted pre-GA and recorded in the CHANGELOG. The positional draw ignores source values, so a native run on non-string sources is possible, but it is deferred: the oracle leg's output type for non-string sources has to be characterized first, and C1b-ii made the same call.
+**3c. Stage B, leg selection at the first chunk.** A string source runs native. A non-string source takes the existing real-type downgrade to the chunked-oracle leg (`faker_source_type_not_string`), never a hard error; the output is the pinned `string` either way (§3f). One exotic case fails closed instead: an allowlisted provider NAME whose registered implementation returns non-string pool values (a custom provider registered under a built-in name). Every stage-A positional Faker pool is validated EAGERLY on BOTH dispatcher legs, before any masking, normalization or sink write, regardless of the table's native admission (Codex round 3 HIGH: the existing check at `_chunked_entry.py:363-371` runs only while `decision.native_admitted` holds, and the oracle leg only warms pools, `_chunked_entry.py:112`, `_chunked.py:485`). The pool is resolved once with the configured namespace and `job_seed` and cached for the leg that runs. A non-string value raises a coded `chunked_faker_nondeterministic_pool_not_string` naming the column and provider. Deterministic Faker's existing downgrade behavior is unchanged. The error tells the user to disable auto-chunking or use a different provider name. Downgrading would have the string pin silently change the column's type relative to whole-frame. This case is a new failure for an auto-chunked job that ran whole-frame before. It is accepted pre-GA and recorded in the CHANGELOG. The positional draw ignores source values, so a native run on non-string sources is possible, but it is deferred: the oracle leg's output type for non-string sources has to be characterized first, and C1b-ii made the same call.
 
 **3d. `when:` is rejected on the chunked route.** New `reject_nondeterministic_faker_when(table_cfg, table=)` raises `PlanCompileError(code="chunked_faker_nondeterministic_when_not_supported")` for a stage-A Faker with a non-empty `when:`. It is called next to `categorical_gate.reject_nondeterministic_when` (`_chunked.py:302`). Reason: `when:` hands the oracle only matching rows, so its ordinal is the match index, not the physical position. Columns that already fail stage A keep their existing code.
 
@@ -139,7 +139,13 @@ Parity means native chunked == oracle chunked == whole-frame on values, column o
 6c. **Non-allowlisted providers stay whole-frame (Codex round 2 HIGH).** Each of these is vetoed for the chunked route, the auto-router keeps it whole-frame, the run succeeds, and the output equals today's:
    - a non-det REUSE Faker with a numeric-output provider over a string source with mixed null and non-null rows across what would be chunk boundaries (the reported int-then-float case);
    - the same with a date-output provider.
-6d. **Override fails closed.** A custom provider registered under an allowlisted name that returns integers gives `chunked_faker_nondeterministic_pool_not_string` before any chunk is masked; nothing is written.
+6d. **Override fails closed on every path.** A custom provider registered under an allowlisted name that returns integers (the registry-override mechanism of `tests/native/test_chunked_entry_gate_findings.py:61`) gives `chunked_faker_nondeterministic_pool_not_string` with zero output writes in each of these cases:
+   - native admitted;
+   - downgraded by a non-string source;
+   - downgraded by companion absence;
+   - downgraded by ANOTHER column's rejection;
+   - through the streamed sink.
+   Required mutant: restoring the `native_admitted` guard around the validation must be killed.
 7. **`when:` rejected.** Gives the new code. Deterministic Faker with `when:` behaves as today.
 8. **FK (Codex round 2 MEDIUM), both orientations tested separately.**
    - Child side: a positional Faker column as a CHILD FK key is rejected by the existing child-edge gate (`_chunked_fk.py:253-275`, existing codes).
@@ -205,3 +211,4 @@ Gates: Codex plan gate, Sonnet tests-first build, dennis, Codex final gate, ci-m
   - H: stage A admits only C1-allowlisted (string-output) providers, so other providers stay whole-frame as before (test 6c); an overridden allowlisted provider fails closed (test 6d).
   - M: the type contract is fixed in §3f as a table, enforced by a string pin through `build_schema_rule` on both legs and the sink; one documented degenerate exception; route evidence asserted per route.
   - M: FK both orientations are tested separately; parent-only positional masking is accepted as equal to whole-frame.
+- Codex round 3, REVISE (1 HIGH). Folded in rev 4: the non-string-pool check is eager on both dispatcher legs, before any write, with test 6d covering every downgrade path and a guard-restoring mutant. Round 4 needs the owner's go-ahead (three-round cap).
