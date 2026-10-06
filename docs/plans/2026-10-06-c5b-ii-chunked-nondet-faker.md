@@ -1,11 +1,11 @@
-Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 authorized by the owner (2026-10-06) and pending.
+Status: plan (revision 4, BUILD-READY, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 (owner-authorized) GO, 1 LOW folded.
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, api-and-compatibility
 
 # C5b-ii: non-deterministic REUSE Faker on the chunked native route
 
 Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C. Decision: Cam 2026-10-05 (position-keyed like C1b; job_seed key; namespace defaults from table and column; REUSE only; one pre-GA output break, already shipped in C5b-i, engine #205).
 
-Branch: `feat/c5b-ii-chunked-nondet-faker`, stacked on `feat/r1b-merged-dispatch` (R1b: one kernel step per operator). It is rebased onto main after R1b merges and before this slice's final gate. Risk R2: one route opened, parity-gated, no new kernel.
+Branch: `feat/c5b-ii-chunked-nondet-faker`, rebased onto engine main `5095bb3d`, which includes R1b (one kernel step per operator, #209) and C6c-i (text_redact native, #210). Risk R2: one route opened, parity-gated, no new kernel.
 
 Template: C1b-ii (`docs/plans/2026-10-04-c1b-ii-chunked-nondet-categorical.md`, rev 5), which did the same for the position-keyed categorical. Its two dennis lessons apply here directly: a non-string source must take the chunked-oracle leg rather than fail closed, and the auto-router needs an end-to-end test.
 
@@ -45,7 +45,7 @@ Explicitly IN scope (Codex round 1, HIGH 2): **multi-table split per-table routi
 
 **C1b-ii structure to mirror:** a config-only stage-A predicate (`native/_categorical_positional.py`) read by four consumers: the compat veto, `_static_route_decision`'s positional exception (`_dispatch.py:292-298`), evidence `plan_column_backends` (`_chunked_evidence.py:104-109`), and preparation. Stage B (source dtype) only picks the leg.
 
-**FK:** a chunked FK parent key must be `hash` and the child must declare the same strategy (`_chunked_fk.py:253-275`), so a Faker FK key is already rejected. Native preflight reroutes any table touched by a declared relationship to the oracle (`_dispatch.py:244-245`).
+**FK:** a chunked FK parent key must be `hash` and the child must declare the same strategy (`_chunked_fk.py:253-275`), so a Faker CHILD FK key is already rejected. The gate checks only the executed table's child edges (`_chunked.py:289`, `_chunked_fk.py:398`), so a parent-only chunked run may mask its parent key with positional Faker on the oracle leg; test 8 accepts that as equal to whole-frame. Native preflight reroutes any table touched by a declared relationship to the oracle (`_dispatch.py:244-245`).
 
 ## 3. Decisions
 
@@ -212,3 +212,4 @@ Gates: Codex plan gate, Sonnet tests-first build, dennis, Codex final gate, ci-m
   - M: the type contract is fixed in §3f as a table, enforced by a string pin through `build_schema_rule` on both legs and the sink; one documented degenerate exception; route evidence asserted per route.
   - M: FK both orientations are tested separately; parent-only positional masking is accepted as equal to whole-frame.
 - Codex round 3, REVISE (1 HIGH). Folded in rev 4: the non-string-pool check is eager on both dispatcher legs, before any write, with test 6d covering every downgrade path and a guard-restoring mutant. Round 4 needs the owner's go-ahead (three-round cap).
+- Codex round 4 (owner-authorized): GO, 0 BLOCKER/HIGH/MEDIUM. 1 LOW folded: the facts section now distinguishes child-key rejection from parent-only oracle execution, and names the real base (R1b and C6c-i merged).
