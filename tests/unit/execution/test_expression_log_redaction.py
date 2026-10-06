@@ -146,3 +146,21 @@ def test_run_with_when_gate_passes_the_target_column(monkeypatch) -> None:
     df = pd.DataFrame({"email": ["a", "b"]})
     gate.run_with_when_gate(handler, df, "email", plan, SimpleNamespace(row_errors=[]))
     assert seen["column"] == "email"
+
+
+def test_referenced_formula_undefined_name_is_reported(caplog) -> None:
+    cfg = _formula_cfg("first_name + nope")
+    cfg["tables"][0]["generate_columns"] = [
+        {"name": "first_name", "type": "faker", "faker_type": "first_name"},
+        {
+            "name": "f",
+            "type": "formula",
+            "references": ["first_name"],
+            "formula": "first_name + nope",
+        },
+    ]
+    with caplog.at_level(logging.WARNING):
+        compile_and_generate(cfg)
+    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
+    assert len(failures) == 1
+    assert "undefined name(s) ['nope']" in failures[0].getMessage()
