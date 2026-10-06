@@ -52,3 +52,10 @@ dennis's gate returned NO-GO: 1 BLOCKER, 1 MEDIUM, 3 LOW.
   The result is byte-identical to scalar `derive_index`; spot-checked on 303 positions, and the KAT and goldens pass. Measured at 2.95 us/row, about 3 s per million rows, roughly 12x the old numpy draw rather than 42x. The CHANGELOG discloses the cost.
 - **LOW:** the inventory call-site lines were corrected to `_faker.py:118` and `:101`. The site's `config_fingerprint_source` now names the table/column default. The `_chunked.py` census bump has a dated rationale.
 - **Verification after the fixes:** `tests/sentry` plus the KAT, determinism, goldens, Faker positional and `sample_faker_array` tests gave 2510 passed and 1 skipped. Ruff and mypy are clean.
+
+## dennis re-gate (round 2): GO, with 1 MEDIUM and 2 LOW folded in
+
+- **MEDIUM:** the batched reference canonicalized every row before the first `derive_index`, so an input with two faults (a bad later value plus a bad pool size, seed or namespace) reported the value error first, reversing the documented per-row order (`docs/native/derive-index-contract.md` §4, Rust `batch.rs`). Fixed: the first non-null row is canonicalized and run through scalar `derive_index`, and later rows are canonicalized lazily, in row order, as the batched HMAC consumes them. New test `test_reference_batch_keeps_per_row_error_precedence` (`["a", 1.5]`, pool_size 0 → `pool_size_invalid`).
+- **LOW:** `DeriveContext.derive_sources` now has direct unit tests (`tests/unit/determinism/test_derive_sources.py`), equal to `derive_source` and `derive` at both seed lengths and over empty, long and Unicode sources.
+- **LOW:** the earlier "error codes unchanged" wording in the remediation section held only for single faults. With the fix above it now holds for multi-fault inputs too.
+- **Verification:** companion venv, index-ext, determinism, KAT, Faker positional, categorical positional and `tests/sentry`: 2530 passed, 1 skipped. Companion-absent venv, index-ext, determinism and KAT: 104 passed, 47 skipped (compiled-only). Ruff and mypy are clean.

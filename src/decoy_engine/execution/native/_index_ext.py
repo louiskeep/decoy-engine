@@ -288,18 +288,25 @@ class _ReferenceIndexDerivation:
         del native_threads
         key = _require_mask_key(mask_key, "index_derivation")
         # The HKDF key depends only on (key, namespace), so derive it once per call
-        # instead of once per row. The first non-null row still goes through the
-        # scalar `derive_index`, which keeps its input validation and error codes
-        # (and an all-null column still validates nothing, as before).
+        # instead of once per row. Errors keep the per-row order of the scalar path
+        # (and of the Rust kernel): the first non-null row is canonicalized and run
+        # through scalar `derive_index`, so its value, pool-size, seed and namespace
+        # checks come first; later rows are canonicalized lazily, in row order, as
+        # the batched HMAC consumes them. An all-null column validates nothing.
         pylist = _array_to_pylist(values)
-        sources = [None if _is_missing(v) else _canonicalize_source(v) for v in pylist]
-        present = [src for src in sources if src is not None]
-        if not present:
-            return pa.array([None] * len(sources), type=pa.uint64())
-        first = derive_index(key, namespace, present[0], pool_size=pool_size)
-        digests = DeriveContext.for_column(key, namespace).derive_sources(namespace, present[1:])
-        indices = iter([first, *(int.from_bytes(d[:8], "big") % pool_size for d in digests)])
-        out = [None if src is None else next(indices) for src in sources]
+        out: list[int | None] = [None] * len(pylist)
+        first = next((i for i, v in enumerate(pylist) if not _is_missing(v)), None)
+        if first is None:
+            return pa.array(out, type=pa.uint64())
+        out[first] = derive_index(
+            key, namespace, _canonicalize_source(pylist[first]), pool_size=pool_size
+        )
+        rest = [i for i in range(first + 1, len(pylist)) if not _is_missing(pylist[i])]
+        digests = DeriveContext.for_column(key, namespace).derive_sources(
+            namespace, (_canonicalize_source(pylist[i]) for i in rest)
+        )
+        for i, digest in zip(rest, digests, strict=True):
+            out[i] = int.from_bytes(digest[:8], "big") % pool_size
         return pa.array(out, type=pa.uint64())
 
 
