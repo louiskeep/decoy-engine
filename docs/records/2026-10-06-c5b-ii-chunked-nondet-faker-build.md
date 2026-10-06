@@ -46,7 +46,7 @@ Each mutant was applied to the committed source, the four new test files (plus n
 | M1 `mask_key` used instead of `job_seed` (step call) | killed: `test_native_chunked_equals_oracle_chunked[...]`, `test_the_key_is_job_seed_never_the_mask_key`, auto-route equality |
 | M2 `row_offset` dropped (sampler keys from 0) | killed: base-offset and UINT64 KAT tests, split test |
 | M3 configured namespace used for selection when None | killed: default-namespace parity cases, split test, KAT |
-| M4 pool identity (cache key) computed on the selection namespace | SURVIVED, equivalent: only the cache key changes, so every lookup misses and the same pool is rebuilt and cached under its true identity; no output, evidence or error differs |
+| M4 pool identity (cache key) computed on the selection namespace | Initially recorded as an equivalent survivor; dennis showed it is NOT equivalent: a sibling column whose configured namespace equals this column's default selection namespace caches its pool under that identity, so the mutant would draw from the sibling's pool. Now killed by `test_a_default_namespace_never_reuses_a_sibling_pool_keyed_by_the_same_string` (added at the gate). |
 | M4b pool BUILD on the selection namespace (the plan's "pool built on the selection namespace") | killed: default-namespace parity cases, pool-equality, split test |
 | M5 nulls not restored | killed: null-bearing parity cases, auto-route |
 | M6 `ran` on zero rows | killed: `test_a_zero_row_source_returns_a_typed_empty_array_without_calling_the_kernel`, `test_a_run_reports_pool_select_per_non_empty_chunk` |
@@ -124,3 +124,10 @@ Lint before each commit: `ruff check src tests`, `ruff format --check src tests`
 5. The new failure is an `ExecutionError`, like the other chunked runtime codes, not a `PlanCompileError`.
 6. The legacy lane (`chunked_dispatcher_enabled=False`, which calls the public oracle `run_mask_pipeline_chunked`) does not run the eager pool check or the string pin. Both belong to `run_mask_chunked`. The plan names the two dispatcher legs only, so this is left as is; it is a kill-switch lane.
 7. Test 6c's numeric-output case registers an integer-returning adapter under `address_zip` (a non-allowlisted string provider), because no built-in poolable provider returns numbers; the date case uses the real `person_dob`.
+
+## dennis gate (round 1: GO, 0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW), fixed by the plan author
+
+- MEDIUM, M4 not equivalent: collision parity test added (see the mutation table), and the record is corrected.
+- LOW 1, legacy lane (`chunked_dispatcher_enabled=False`): accepted. Production reaches it only via platform `NATIVE_DISPATCHER_ENABLED=false`, and platform Phase-1 streaming never admits Faker. With real (string) providers it matches whole-frame, degenerate chunks included. It diverges only for a custom Python provider that shadows an allowlisted name, which is not plausible on the platform (DB providers are string-only).
+- LOW 2, positional null-index check: added (`index_batch_null_mask_mismatch`), with a malformed-kernel test case.
+- LOW 3, design: per-strategy positional branches in `_faker_positional_admission.chunked_positional_column` and `_chunked._conditional_admission_failures`. Carried to the refactor track: a positional flag on `OperatorSpec` before a third position-keyed operator.

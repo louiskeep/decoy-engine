@@ -154,6 +154,12 @@ def sample_faker_array_positional(
         ),
         n=n,
     )
+    if idx.null_count:
+        # Dense uint64 keys have no nulls, so a null index is a malformed kernel, not data.
+        raise GenerationError(
+            code="index_batch_null_mask_mismatch",
+            message="derive_index_batch returned null indices for non-null positional keys",
+        )
     return _gather_pool_values(pool, idx, col.is_valid().to_numpy(zero_copy_only=False))
 
 

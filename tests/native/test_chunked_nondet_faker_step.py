@@ -144,8 +144,9 @@ def test_a_range_past_the_uint64_domain_raises_the_faker_code() -> None:
         ([0, 1, 2], "index_batch_type_mismatch"),
         (pa.array([0, 1], pa.uint64()), "index_batch_length_mismatch"),
         (pa.array([0, 1, 99], pa.uint64()), "index_batch_out_of_bounds"),
+        (pa.array([0, None, 1], pa.uint64()), "index_batch_null_mask_mismatch"),
     ],
-    ids=["wrong_dtype", "not_an_array", "wrong_length", "out_of_bounds"],
+    ids=["wrong_dtype", "not_an_array", "wrong_length", "out_of_bounds", "null_index"],
 )
 def test_a_malformed_kernel_result_fails_closed(result: Any, code: str) -> None:
     class _Bad:

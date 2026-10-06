@@ -170,6 +170,34 @@ def test_the_same_explicit_namespace_and_pool_give_equal_columns_by_design() -> 
     assert column_values(run.out, "f") == column_values(run.out, "g")
 
 
+@NEEDS_COMPANION
+def test_a_default_namespace_never_reuses_a_sibling_pool_keyed_by_the_same_string(
+    tmp_path: Path,
+) -> None:
+    # `g` (declared first) configures, as its own namespace, exactly the string `f`'s default
+    # selection namespace resolves to. Pool identity must stay on each column's CONFIGURED
+    # namespace, so `f` builds its own pool rather than reusing `g`'s cached one.
+    config = make_config(
+        [
+            nd_faker("g", namespace=default_namespace("t", "f")),
+            nd_faker("f"),
+            passthrough("p"),
+        ]
+    )
+    table = pa.table(
+        {
+            "g": pa.array(["x"] * 40),
+            "f": pa.array(["x"] * 40),
+            "p": pa.array(range(40), pa.int64()),
+        }
+    )
+    run = run_one(config, split(table, 9))
+    assert run.ev[0].native_admitted is True
+    full = _full_frame(config, table, tmp_path)
+    assert column_values(run.out, "f") == full.column("f").to_pylist()
+    assert column_values(run.out, "g") == full.column("g").to_pylist()
+
+
 # ---------------------------------------------------------------------------
 # 2. Global offset and uint64 domain.
 # ---------------------------------------------------------------------------
