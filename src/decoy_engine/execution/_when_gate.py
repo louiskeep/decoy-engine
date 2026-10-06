@@ -84,6 +84,7 @@ def _eval_predicate(
     pdf: pd.DataFrame,
     expression: str,
     strategy: str,
+    *,
     column: str | None = None,
 ) -> pd.Series[bool]:
     """Shared numexpr-pinned, scope-clamped predicate eval.
@@ -201,7 +202,7 @@ def run_with_when_gate(
     if preflight is not None:
         preflight(plan, ctx)
 
-    mask = _eval_predicate(df, plan.when, plan.strategy, column)
+    mask = _eval_predicate(df, plan.when, plan.strategy, column=column)
 
     if not mask.any():
         return df, []

@@ -13,6 +13,7 @@ from collections import Counter
 from typing import Any
 
 import pandas as pd
+from simpleeval import FunctionNotDefined, NameNotDefined
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.internal.crypto import hmac_hex
@@ -43,6 +44,19 @@ def _formula_hash_keyed(value: str, local_seed: int) -> str:
     # the per-row keying purpose.
     seed_bytes = (local_seed & ((1 << 64) - 1)).to_bytes(8, "big")
     return hmac_hex(seed_bytes * 4, value)[:8]
+
+
+def _undefined_name(exc: Exception) -> str | None:
+    """The undefined name a formula referenced, if that is why it failed. A name is
+    config, not data, and is what the formula's author needs to fix. `safe_eval` runs
+    on simpleeval, which raises its own exceptions rather than `NameError`."""
+    if isinstance(exc, NameNotDefined):
+        return str(exc.name)
+    if isinstance(exc, FunctionNotDefined):
+        return str(exc.func_name)
+    if isinstance(exc, NameError) and exc.name:
+        return exc.name
+    return None
 
 
 class _FormulaMixin:
@@ -142,6 +156,7 @@ class _FormulaMixin:
         row_rng = random.Random()
         # Exception text can echo cell values, so only type names and counts are logged.
         error_types: Counter[str] = Counter()
+        missing_names: set[str] = set()
         for i in range(len(out)):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -162,12 +177,16 @@ class _FormulaMixin:
                 values.append(result)
             except Exception as exc:
                 error_types[type(exc).__name__] += 1
+                name = _undefined_name(exc)
+                if name is not None:
+                    missing_names.add(name)
                 values.append(None)
 
         if error_types:
             self.logger.warning(
                 f"Formula column {col_name!r}: {sum(error_types.values())} row(s) failed to "
                 f"evaluate and were set to None ({dict(error_types)!r})"
+                + (f"; undefined name(s) {sorted(missing_names)!r}" if missing_names else "")
             )
         if null_subs:
             self.logger.warning(
@@ -221,9 +240,9 @@ class _FormulaMixin:
                 values.append(result)
             except Exception as e:
                 error_types[type(e).__name__] += 1
-                if isinstance(e, NameError) and e.name:
-                    # A name is config, not data, and is what the author needs to fix.
-                    missing_names.add(e.name)
+                name = _undefined_name(e)
+                if name is not None:
+                    missing_names.add(name)
                 values.append(None)
 
         if error_types:

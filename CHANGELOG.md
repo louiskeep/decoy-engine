@@ -20,7 +20,8 @@ minimum engine version it was tested against via its
   logs a count and the column name.
 - **Formula errors.** Formula generation logged one warning per failing row with the exception text,
   which can quote cell values. It now logs one line per column with a count and the exception type
-  names. An undefined-name error still reports the missing names, which are config, not data.
+  names. When a formula fails because it references an undefined name or function (simpleeval's
+  `NameNotDefined` / `FunctionNotDefined`), that line also lists the names, which are config, not data.
 
 Error messages raised to the caller are unchanged: they go to the user who wrote the config, not to
 the server log.

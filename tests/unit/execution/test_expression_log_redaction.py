@@ -34,7 +34,7 @@ def test_when_fallback_log_names_the_column_not_the_expression(caplog) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
         with caplog.at_level(logging.WARNING, logger="decoy_engine.execution._when_gate"):
-            _eval_predicate(_nullable_frame(), expr, "hash", "email")
+            _eval_predicate(_nullable_frame(), expr, "hash", column="email")
     records = _fallback_records(caplog)
     assert records, "numexpr fallback was not surfaced through the logger"
     for record in records:
@@ -96,3 +96,53 @@ def test_formula_errors_are_one_line_per_column_without_cell_values(caplog) -> N
     assert "ValueError" in failures[0].getMessage()
     for name in names:
         assert repr(name) not in caplog.text
+
+
+def _formula_cfg(formula: str) -> dict:
+    return {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {},
+        "tables": [
+            {
+                "name": "t",
+                "row_count": 3,
+                "generate_columns": [{"name": "f", "type": "formula", "formula": formula}],
+            }
+        ],
+    }
+
+
+def test_formula_undefined_name_is_reported_once(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        compile_and_generate(_formula_cfg("nope + 1"))
+    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
+    assert len(failures) == 1
+    assert "undefined name(s) ['nope']" in failures[0].getMessage()
+
+
+def test_formula_undefined_function_is_reported(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        compile_and_generate(_formula_cfg("nofn(1)"))
+    failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
+    assert len(failures) == 1
+    assert "undefined name(s) ['nofn']" in failures[0].getMessage()
+
+
+def test_run_with_when_gate_passes_the_target_column(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import decoy_engine.execution._when_gate as gate
+
+    seen: dict[str, object] = {}
+
+    def spy(pdf, expression, strategy, *, column=None):  # type: ignore[no-untyped-def]
+        seen["column"] = column
+        return pd.Series([False] * len(pdf), index=pdf.index)
+
+    monkeypatch.setattr(gate, "_eval_predicate", spy)
+    handler = SimpleNamespace(run=lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    plan = SimpleNamespace(when="email == 'x'", strategy="hash")
+    df = pd.DataFrame({"email": ["a", "b"]})
+    gate.run_with_when_gate(handler, df, "email", plan, SimpleNamespace(row_errors=[]))
+    assert seen["column"] == "email"
