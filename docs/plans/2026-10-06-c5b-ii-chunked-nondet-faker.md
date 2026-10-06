@@ -1,4 +1,4 @@
-Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE; round 3's single HIGH folded here. Review cap reached: round 4 awaits the owner's go-ahead.
+Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 authorized by the owner (2026-10-06) and pending.
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, api-and-compatibility
 
 # C5b-ii: non-deterministic REUSE Faker on the chunked native route
