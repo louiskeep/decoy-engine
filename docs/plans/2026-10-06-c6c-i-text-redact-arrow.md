@@ -1,4 +1,4 @@
-Status: plan (revision 3, author = Opus). Codex plan gate: rounds 1 and 2 REVISE folded; round 3 (final before escalation) pending.
+Status: plan (revision 3, BUILD-READY, author = Opus). Codex plan gate: rounds 1-2 REVISE folded; round 3 GO (2 LOW folded below).
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline
 
 # C6c-i: text_redact as an Arrow operator on both native routes
@@ -51,7 +51,7 @@ Out of scope:
 - Capability row `text_redact` declares zero diagnostics (`native/_capabilities.py:246`), so unified admission needs no new routing.
 - Determinism class `DETERMINISTIC_NO_DRAW` (`native/_determinism_protocol.py:808`).
 
-**Chunked:** text_redact is in `CHUNK_SAFE_STRATEGIES` (`_chunked_fk.py:86`). The source-dtype gate exists only on the auto route (`_planner.py:447`). `_chunked_group_key.py:153-161` already models text_redact's pass-through vs stringifying behavior for group_key siblings.
+**Chunked:** text_redact is in `CHUNK_SAFE_STRATEGIES` (`_chunked_fk.py:86`). There is no text_redact-specific source-dtype gate today: the planner's dtype checks (`_planner.py:489`) are general chunk-stability checks (Codex round 3 corrected rev 1-3's citation of `:447`, which is an FPE check). The `_real_type_admission` addition in 3c is the new string-source gate. `_chunked_group_key.py:153-161` already models text_redact's pass-through vs stringifying behavior for group_key siblings.
 
 **Native template:** `native_redact` and `native_truncate` (`native/_kernels_scalar.py`) are the existing `ARROW_PYTHON` operators. Their `OperatorSpec` has `shape="kernel"`, `planned_backend=ARROW_PYTHON`, `required_kernel=None`, `positive_kernel_evidence=False`, `unified_resident_types=_STRING_ONLY` and `full_frame_assembly="tokenizing"`. The chunked string pin `_STRING_OUTPUT_STRATEGIES = {hash, truncate, redact}` (`native/_chunked_schema_rule.py:49`) guards the degenerate-chunk types.
 
@@ -198,3 +198,6 @@ Gates: Codex plan gate, Sonnet tests-first build, dennis, Codex final gate, ci-m
   - H: the unified adapter's `_UNKEYED_PARAMS` and the binding narrowing are in scope; an end-to-end unified run (test 2a), with and without the companion, was added.
   - M: the kernel keeps an empty tuple empty; only the resolver applies empty-means-all.
   - L: evidence wording keeps the ordinary call counters.
+- Codex round 3: GO, 0 BLOCKER/HIGH/MEDIUM. 2 LOW folded:
+  - Editing `native/_kernels_scalar.py` needs a narrowly documented entry in the seam sentry's `permitted_non_physical` (`tests/sentry/test_physical_seam_disconnection.py:502`), with import-direction checks kept, as must any other changed execution module the sentry lists.
+  - Corrected the planner citation in §2.
