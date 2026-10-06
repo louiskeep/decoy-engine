@@ -1,4 +1,4 @@
-Status: plan (revision 3, author = Opus). Codex plan gate: rounds 1 and 2 REVISE folded; round 3 (final before escalation) pending. Rev 3 replaces the separate Arrow predicate evaluator with the oracle's own mask function (see §7).
+Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE folded (round 3: 3 MEDIUM, no HIGH). Review cap reached: round 4 needs the owner's go-ahead.
 Rules consulted: 00-universal, development-loop, security, testing, architecture, api-and-compatibility, code-review, scope-discipline
 
 # C8-i: a public, closed `when:` language, plus native `when` on the chunked route
@@ -77,9 +77,11 @@ Allowed:
 
 Everything else fails with `ValidationError(code="when_outside_closed_grammar")`. That includes arithmetic, calls, attributes, subscripts, `@`, ref-to-ref comparisons, chained comparisons, `None`, empty lists and reserved identifiers. Null checks are not in the grammar (no method-free pandas spelling).
 
-Every accepted string must evaluate under the oracle's `pdf.eval(engine="numexpr", local_dict={}, global_dict={})` without error, for a frame holding the referenced columns. Test 1b enforces this with generated identifiers and literal spellings.
+Every accepted string must evaluate under the oracle's `pdf.eval(engine="numexpr", local_dict={}, global_dict={})` without error when each referenced column's type is compatible with the literals it is compared to (a string column against string literals, a numeric column against numeric literals). A grammar-valid predicate over incompatible types (for example `x < 1` on a string column) is valid config, and fails at run time with the oracle's own error on both legs. Test 1b enforces the compatible-type claim with generated identifiers and literal spellings.
 
 **3b. Public config.** `ColumnConfig.when: str | None = None`, with a field validator: strip the value; blank becomes None; otherwise `parse_when`. The plan compiler is unchanged and stores the raw string. Raw dicts are not re-validated (owner decision).
+
+Error contract (Codex round 3): the validator translates every `parse_when` failure into `pydantic_core.PydanticCustomError("when_outside_closed_grammar", <message>)`, so it surfaces inside pydantic's `ValidationError` with location `tables.<i>.columns.<j>.when`. The engine's own `ValidationError` inherits `Exception`, not `ValueError` (`errors.py:54`), so raising it from a field validator would escape pydantic and bypass the platform's structured handler (`decoy-platform api/pipelines/v2_validation.py:260-264`).
 
 Audit required by Codex round 1 LOW: list and test every consumer of `ColumnConfig`:
 - model serialization, JSON-schema export (if any), and manifest serialization (`plan/_serialize.py:138-139,475`, round-trip test);
@@ -91,6 +93,8 @@ Audit required by Codex round 1 LOW: list and test every consumer of `ColumnConf
 - converts the boolean Series to Arrow with the oracle's selection rule. The builder characterizes how `df.loc[mask]` treats a nullable `NA` in baseline test 2 and reproduces exactly that (excluded, or the oracle's error).
 
 This removes rev 2's parity gaps (Codex rounds 1 and 2): nullable vs object dtypes, int64 widening, representation drift between chunks, and pandas-global collisions such as `inf`. Each chunk's mask is computed exactly as the chunked oracle leg computes it for that chunk, so native chunked == oracle chunked by construction, for any column type. An oracle error (for example `when_expression_not_boolean` from a name collision) is raised identically.
+
+Conversion errors (Codex round 3): converting a referenced column can fail, for example a `time64[ns]` passthrough value that pandas cannot represent. The chunked oracle catches that at `_chunked_oracle.py:343` and diagnoses it through `CarryPlan.diagnose_adapter` (`_chunked_carry.py:121-158`), producing the public coded error (for example `chunked_passthrough_value_unrepresentable`). The native mask conversion runs inside the SAME diagnosis wrapper, with the same table and chunk attribution and exception chaining, and raises before the chunk is emitted, so errors are identical on both legs.
 
 Cost: one pandas conversion of the referenced columns plus one numexpr evaluation per chunk. Both are vectorized and small next to a full-chunk conversion. Timings are recorded in the build.
 
@@ -136,7 +140,7 @@ The chunked adapter calls it per chunk with the chunk's mask. The grammar is row
 1. **Grammar.** Accepts every allowed form and both quote styles. Rejects every excluded form with `when_outside_closed_grammar`, including `sin == 1`, any reserved identifier, backslashes and quotes inside strings, `None`, and empty lists.
    - 1b. Hypothesis: generated grammar-valid predicates, with generated identifiers and literal spellings, all evaluate under the oracle's `pdf.eval` without error.
    - 1c. The reserved list contains numexpr's live function set, pandas' default eval globals and the keywords.
-   - 1d. For each reserved name used as a string column name, the oracle `_eval_predicate` does NOT return a boolean column mask. This proves each reservation is needed, asserting the Series result rather than mere evaluation.
+   - 1d. Reserved names are a deliberate language restriction: each is rejected at config time. This is a separate characterization, not a proof that every name breaks pandas (Codex round 3 found `abs`, `sin` and `nan` still give valid masks for string columns). The test records which reserved names DO collide in the oracle (for example `inf` gives a scalar, not a Series) so the restriction's rationale is documented, but it does not require every name to fail.
 2. **Baseline (green-before): oracle selection.** Record the oracle's `_eval_predicate` result and its `df.loc[mask]` selection for:
    - object strings, `StringDtype` (pandas metadata) and int64 with nulls;
    - `==`, `!=`, `<`, `in`, `not in` and `not` on null cells;
@@ -145,6 +149,7 @@ The chunked adapter calls it per chunk with the chunk's mask. The grammar is row
    - Hypothesis (`derandomize=True`): `when_mask` on a chunk equals the oracle's selection for the same chunk across generated predicates and column types (string, int64, float64, bool, with nulls).
    - A two-chunk case where chunk 1 converts to object and chunk 2 to `StringDtype` (metadata drift, Codex round 2 HIGH 1), with null predicate references and non-null targets, gives the chunked oracle's selection per chunk.
 4. **Baseline (green-before): oracle output types.** For each operator with `when`, on whole-frame and both chunked legs: zero-row, all-null, zero-match, all-match and partial-match.
+5b. **Conversion-error identity.** A two-chunk table with a `time64[ns]` passthrough column referenced by the predicate: chunk 1 is microsecond-aligned and chunk 2 holds 1001 ns. Native and oracle chunked runs raise the same coded error with the same table and chunk attribution and a chained cause, and chunk 2 is not emitted.
 5a. **Zero-match evidence.** Kernel-call spies plus per-column evidence. A zero-match chunk makes no kernel call, counts nothing and is in `kernel_idle`. A mixed run (some chunks zero-match, some partial) credits the compiled backend only for chunks that ran.
 5. **Chunked parity.**
    - For each of the four operators: predicates referencing the target, an unconfigured string column and a passthrough string column; partial, zero and all matches; nulls; chunk shapes zero-row, single-row, ragged and all-null.
@@ -156,13 +161,16 @@ The chunked adapter calls it per chunk with the chunk's mask. The grammar is row
    - The earlier-node case is Codex round 2's counterexample: `a` redacts to `"REDACTED"` before `z`, with `z`'s predicate `a == 'REDACTED'`, and the config order reversed from the execution order. A composite's extra written column is also covered.
    - A numeric-reference predicate is ADMITTED on the explicit chunked route and equals the chunked oracle.
    - The unified route still declines every `when` column.
-7. **Public config.** Valid strings pass, every test-1 rejection fails, blank becomes None, the manifest round-trips, and a validated config with `when` runs end to end through `run_pipeline` on the chunked native route.
+7. **Public config.**
+   - Valid strings pass. Blank becomes None. The manifest round-trips.
+   - Every test-1 rejection fails `PipelineConfig.model_validate` with pydantic's `ValidationError`, error type `when_outside_closed_grammar`, at location `tables.0.columns.0.when`. A test reproduces the platform's catch pattern (catch pydantic's `ValidationError` only) to prove the error is caught there.
+   - A validated config with `when` runs end to end through `run_pipeline` on the chunked native route.
 8. **Auto-router and split.**
    - A table whose `when` columns are all admitted auto-chunks and runs native.
    - Codex's integer/redact-0.5 counterexample stays full-frame with `when_predicate_not_chunk_stable` and succeeds.
    - A raw-dict non-grammar predicate stays full-frame.
    - A two-table split, with one admitted `when` table and one non-admitted, routes each table correctly and equals forced whole-frame.
-9. **Security sentry.** `.eval(` and `.query(` method calls appear only in `execution/_when_gate.py` and `execution/_transforms.py`. `native/_when_mask.py` and `expressions/_when_parser.py` contain no `eval`, `exec` or `compile` calls of their own (`_when_mask.py` reaches pandas eval only through the oracle's `_eval_predicate`).
+9. **Security sentry.** `.eval(` and `.query(` method calls appear only in `execution/_when_gate.py` and `execution/_transforms.py`, plus the existing audited simpleeval call in `expressions/_safe_eval.py:153`, named exactly in the allowlist. Planted-violation cases prove a new pandas-eval call anywhere else fails the sentry. `native/_when_mask.py` and `expressions/_when_parser.py` contain no `eval`, `exec` or `compile` calls of their own (`_when_mask.py` reaches pandas eval only through the oracle's `_eval_predicate`).
 10. **Mutation (by hand).** Required mutants:
     - the mask built from the converted frame of the WRONG chunk, or from a non-protected conversion;
     - the zero-match short-circuit removed;
@@ -211,3 +219,8 @@ Gates: Codex plan gate, Sonnet tests-first build after C5b-ii merges, dennis, Co
   - H2: a node's write set is its own target plus its declared extra writes, and unknown writes decline, with the counterexample added.
   - M4: zero-match is skipped, idle and uncounted, with evidence tests.
   - This is a design change made during review (review discipline rule 3). It is recorded here because it removes the defect class both rounds found instead of adding special cases. If round 3 is not GO, it escalates to the owner.
+- Codex round 3, REVISE (3 MEDIUM, no HIGH). Folded in rev 4:
+  - M1: parser errors become `PydanticCustomError` at the field boundary, tested through `PipelineConfig.model_validate` and the platform's catch pattern.
+  - M2: native mask conversion runs inside the oracle's carry diagnosis (test 5b).
+  - M3: reservation is a language restriction, characterized separately; the sentry allowlist names the audited simpleeval call, with planted violations; the evaluation-success claim is qualified by compatible types.
+  - Round 4 requires the owner's go-ahead (three-round cap).
