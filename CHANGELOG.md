@@ -34,6 +34,44 @@ post-Phase F observability program: `geo_generalize` logs a 3-digit zip prefix a
 Error messages raised to the caller are unchanged: they go to the user who wrote the config, not to
 the server log.
 
+### Changed (non-deterministic Faker runs on the chunked route, 2026-10-06)
+
+A non-deterministic `reuse` Faker column no longer forces a large job onto the whole-frame path.
+The chunked route, including the auto-chunked `run_pipeline` path and the per-table runs of a
+multi-table split, now runs it with the same draw the whole-frame run makes: row `g` picks
+`pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool.size)]`, with `g` the
+row's global position. Chunk size, thread count and where a chunk starts do not change the output,
+and values equal the whole-frame run row for row.
+
+Which columns qualify is narrow on purpose. The column needs an explicit `pool_size` (top level or
+in `provider_config`) and one of the string-output providers `person_first_name` or
+`person_last_name`. The namespace stays optional. A non-deterministic Faker column with another
+provider, with no `pool_size`, or in the `unique`, `match_source_cardinality` or
+`scale_source_cardinality` mode keeps running whole-frame, and a veto now says which condition is
+unmet and no longer calls the draw "deferred". A string source runs on the compiled path. Any
+other source type runs the chunked oracle leg with the same draw, so auto-chunking never turns a
+job that completes whole-frame into an error.
+
+A column that qualifies and carries `when:` is rejected on the chunked route with
+`chunked_faker_nondeterministic_when_not_supported`. The oracle numbers only the rows a `when:`
+selects, so a chunk's global offset cannot reproduce that numbering. Remove the `when:` or run
+the job without auto-chunking.
+
+Documented output type: an admitted column is `string` on every chunk, on both legs, with or
+without the compiled companion. The one exception is a column that is empty or entirely null
+across the whole table. The chunked route yields `string` for it and the whole-frame route keeps
+the type pandas infers, the same route-dependent difference other pinned columns carry. Values do
+not change.
+
+New failure for a rare setup: a custom provider registered under `person_first_name` or
+`person_last_name` whose pool holds non-string values now fails with
+`chunked_faker_nondeterministic_pool_not_string`, before any chunk is written, on every chunked
+path. Such a job ran whole-frame before. Disable auto-chunking for it or register the provider
+under a different name. Pre-GA, so no migration path is provided.
+
+The unified full-frame route and out-of-core still decline this column. Opening the unified route
+for the position-keyed Faker and categorical columns is a separate slice, C5b-iii.
+
 ### Changed (text_redact runs on both native routes, 2026-10-06)
 
 A table with a plain `text_redact` column no longer falls back to pandas for every column in it.

@@ -172,6 +172,9 @@ def test_faker_determinism_condition_is_unchanged() -> None:
         "provider": "person_first_name",
         "namespace": "ns_f",
         "pool_size": 10,
+        # A non-deterministic REUSE faker is position-keyed and admitted (C5b-ii); the
+        # whole-column modes still require `deterministic: true`.
+        "cardinality_mode": "unique",
     }
     assert _code([faker]) == "chunked_strategy_conditions_unmet"
 

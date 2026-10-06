@@ -27,6 +27,7 @@ from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution.native import _chunked_entry, _dispatch
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
 from decoy_engine.execution.native._plan import native_route_eligibility
+from decoy_engine.generation.pool import PoolCapacityError
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
@@ -115,29 +116,35 @@ def _compiled(config: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
 def test_the_stage_a_consumers_return_the_identical_config_verdict(
     case: str, col: dict[str, Any], admissible: bool
 ) -> None:
+    from decoy_engine.execution.native._chunked_schema_rule import faker_positional_pinned_columns
     from decoy_engine.execution.native._faker_positional_admission import (
         positional_faker_config_for_column,
         positional_faker_config_of_entry,
     )
 
-    from decoy_engine.execution.native._chunked_schema_rule import faker_positional_pinned_columns
-
     config = make_config([col, passthrough("p")])
-    profile, _seeds = _compiled(config)
-    static = _dispatch._static_route_decision(
-        config, profile, table=TABLE, engine_version=ENGINE_VERSION, registry=_REG
-    )
-    backends = {
-        c.column: c.planned_backend
-        for c in plan_column_backends(
+    try:
+        profile, _seeds = _compiled(config)
+    except PoolCapacityError:
+        # A whole-column mode cannot compile without a profile, so the route consumers never
+        # run: the veto, which precedes the compile, is the only verdict that exists.
+        static_admitted, evidence_native = False, False
+    else:
+        static = _dispatch._static_route_decision(
             config, profile, table=TABLE, engine_version=ENGINE_VERSION, registry=_REG
         )
-    }
+        backends = {
+            c.column: c.planned_backend
+            for c in plan_column_backends(
+                config, profile, table=TABLE, engine_version=ENGINE_VERSION, registry=_REG
+            )
+        }
+        static_admitted, evidence_native = static.native_admitted, backends["f"] == "rust_companion"
     entry = next(c for c in config["tables"][0]["columns"] if c["name"] == "f")
     verdicts = {
         "veto": _code([col, passthrough("p")]) is None,
-        "static_route": static.native_admitted,
-        "evidence": backends["f"] == "rust_companion",
+        "static_route": static_admitted,
+        "evidence": evidence_native,
         "predicate": positional_faker_config_of_entry(entry) is not None,
         "by_column": positional_faker_config_for_column(config, TABLE, "f") is not None,
         "pin": "f" in faker_positional_pinned_columns({"f": entry}),
@@ -609,6 +616,7 @@ def test_a_parent_only_chunked_run_equals_the_whole_frame_run_on_the_oracle_leg(
             {
                 "parent": {"table": TABLE, "columns": ["id"]},
                 "children": [{"table": "child", "columns": ["k"]}],
+                "namespace": "ns_k",
                 "orphan_policy": "remap",
             }
         ],

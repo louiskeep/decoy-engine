@@ -25,9 +25,12 @@ joins intact. Non-deterministic mode ignores the source value. In the default
 `reuse` cardinality mode it picks from the pool by row position under the job
 seed: the same seed and input give the same output, but equal source values do
 not map to equal outputs, so it does not preserve joins. Without a `namespace`
-each column gets its own stream; columns that share a namespace share one. The
-`unique`, `match_source_cardinality` and `scale_source_cardinality` modes draw
-a seeded whole-column stream from the job seed.
+each column gets its own stream; columns that share a namespace share one. A job
+large enough to auto-chunk runs this mode chunked, with the same output as the
+whole-frame run, when the column sets an explicit `pool_size`, uses
+`person_first_name` or `person_last_name`, and has no `when:`; otherwise it runs
+whole-frame. The `unique`, `match_source_cardinality` and `scale_source_cardinality`
+modes draw a seeded whole-column stream from the job seed.
 
 - `provider`: the provider name (required). Providers come from the engine's
   default registry.

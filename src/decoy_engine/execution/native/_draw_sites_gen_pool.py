@@ -111,6 +111,7 @@ GEN_POOL_DRAW_SITES: tuple[DrawSite, ...] = (
             "draw. Keyed on job_seed, not mask_key, because it generates rather than "
             "re-identifies; see the inventory doc."
         ),
+        mirror_call_sites=("execution/native/_operator_step.py:148",),
     ),
 )
 

@@ -214,7 +214,7 @@ def test_named_modules_use_truthful_faker_chunk_prose(path: str) -> None:
 def test_chunked_faker_rejection_prose_is_truthful_per_mode() -> None:
     from decoy_engine.execution._chunked import _conditional_admission_failures
 
-    def failures(mode: str) -> str:
+    def failures(mode: str, **extra: object) -> str:
         return " ".join(
             _conditional_admission_failures(
                 {
@@ -222,14 +222,16 @@ def test_chunked_faker_rejection_prose_is_truthful_per_mode() -> None:
                     "strategy": "faker",
                     "provider": "person_first_name",
                     "namespace": "ns",
-                    "pool_size": 10,
                     "cardinality_mode": mode,
+                    **extra,
                 }
             )
         )
 
+    # C5b-ii admits a complete REUSE entry (explicit pool_size), so the prose is read from an
+    # entry that still fails stage A; the deferral wording is gone.
     reuse = failures("reuse")
-    assert "position-keyed" in reuse and "C5b-ii" in reuse
-    unique = failures("unique")
+    assert "position-keyed" in reuse and "C5b-ii" not in reuse
+    unique = failures("unique", pool_size=10)
     assert "whole-column draw" in unique and "not chunk-safe" in unique
     assert "chunk-variant" not in reuse + unique

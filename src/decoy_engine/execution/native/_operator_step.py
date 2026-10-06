@@ -13,11 +13,12 @@ checks a route precondition. Its index-kernel guards are defensive duplicates of
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyarrow as pa
 
+from decoy_engine.execution._positional_keys import positional_key_array
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import (
     native_categorical,
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.pool import ValuePool
 
-__all__ = ["StepResult", "run_kernel_step", "sample_faker_array"]
+__all__ = ["StepResult", "run_kernel_step", "sample_faker_array", "sample_faker_array_positional"]
 
 
 def sample_faker_array(
@@ -96,20 +97,74 @@ def sample_faker_array(
         )
     col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     n = len(col)
-    idx = index_kernel.derive_index_batch(
-        col,
-        mask_key=mask_key,
-        namespace=namespace,
-        pool_size=pool.size,
-        native_threads=native_threads,
+    idx = _checked_batch(
+        index_kernel.derive_index_batch(
+            col,
+            mask_key=mask_key,
+            namespace=namespace,
+            pool_size=pool.size,
+            native_threads=native_threads,
+        ),
+        n=n,
     )
+    idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
+    col_valid = col.is_valid().to_numpy(zero_copy_only=False)
+    if not np.array_equal(idx_valid, col_valid):
+        raise GenerationError(
+            code="index_batch_null_mask_mismatch",
+            message="derive_index_batch's null positions do not match the source column's",
+        )
+    return _gather_pool_values(pool, idx, idx_valid)
 
-    # Runtime invariants on the kernel's own result: a malformed compiled (or
-    # stub, in tests) kernel must fail HERE, coded and fail-closed, never as an
-    # uncoded exception. The isinstance/type check comes FIRST: a non-`pa.Array`
-    # result (a bare list, None) has no `.type`/`.is_valid()`, so probing those
-    # (or `len`) before confirming the shape would leak an uncoded AttributeError
-    # instead of the coded error every other malformed shape gets.
+
+def sample_faker_array_positional(
+    source: pa.Array | pa.ChunkedArray,
+    *,
+    pool: ValuePool,
+    row_offset: int,
+    job_seed: bytes | None,
+    namespace: str,
+    index_kernel: IndexDerivationKernel,
+    native_threads: int | None,
+) -> pa.Array:
+    """Select one batch's non-deterministic REUSE faker values by global row position.
+
+    Row `i` draws `pool.values[derive_index(job_seed, namespace, encode_int(row_offset + i),
+    pool.size)]`, the oracle's `positional_pool_indices`, so a chunk at any offset reproduces
+    the whole-frame draw. `namespace` is the SELECTION namespace; the pool was built from the
+    configured one. The key is `job_seed`, never the secret-derived `mask_key`: this mode
+    generates fresh values and does not re-identify a source value.
+
+    Unlike `sample_faker_array` the keys are a dense `uint64` column, so the index null mask
+    is the keys' (none) and cannot equal the source's. Nulls are restored from the SOURCE and
+    still consume their ordinal, as the oracle's `na_mask` does.
+    """
+    if job_seed is None:  # pragma: no cover - the chunked adapter always passes the job seed
+        raise AssertionError("positional faker selection reached with job_seed=None.")
+    col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+    n = len(col)
+    keys = positional_key_array(row_offset, n, code="faker_position_out_of_domain")
+    idx = _checked_batch(
+        index_kernel.derive_index_batch(
+            keys,
+            mask_key=job_seed,
+            namespace=namespace,
+            pool_size=pool.size,
+            native_threads=native_threads,
+        ),
+        n=n,
+    )
+    return _gather_pool_values(pool, idx, col.is_valid().to_numpy(zero_copy_only=False))
+
+
+def _checked_batch(idx: object, *, n: int) -> pa.Array:
+    """`idx` as the kernel's uint64 index array of length `n`, or a coded error.
+
+    A malformed compiled (or stub, in tests) kernel must fail HERE, coded and fail-closed,
+    never as an uncoded exception. The isinstance/type check comes FIRST: a non-`pa.Array`
+    result (a bare list, None) has no `.type`/`.is_valid()`, so probing those (or `len`)
+    before confirming the shape would leak an uncoded AttributeError instead of the coded
+    error every other malformed shape gets."""
     if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
         got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
         raise GenerationError(
@@ -121,15 +176,16 @@ def sample_faker_array(
             code="index_batch_length_mismatch",
             message=f"derive_index_batch returned {len(idx)} indices for {n} input rows",
         )
-    idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
-    col_valid = col.is_valid().to_numpy(zero_copy_only=False)
-    if not np.array_equal(idx_valid, col_valid):
-        raise GenerationError(
-            code="index_batch_null_mask_mismatch",
-            message="derive_index_batch's null positions do not match the source column's",
-        )
+    return idx
+
+
+def _gather_pool_values(pool: ValuePool, idx: pa.Array, valid: Any) -> pa.Array:
+    """The pool values at `idx` where `valid`, null elsewhere.
+
+    A null-safe NumPy gather (no dedup, raw pool order preserved -- pool.values may be gathered
+    with repeats): valid selections scatter positionally, null positions stay None."""
     idx_np = idx.fill_null(0).to_numpy(zero_copy_only=False)
-    if idx_valid.any() and int(idx_np[idx_valid].max()) >= pool.size:
+    if valid.any() and int(idx_np[valid].max()) >= pool.size:
         raise GenerationError(
             code="index_batch_out_of_bounds",
             message=(
@@ -137,13 +193,9 @@ def sample_faker_array(
                 "refusing to gather from the pool with it"
             ),
         )
-
-    # Null-safe NumPy gather (no dedup, raw pool order preserved -- pool.values
-    # may be gathered with repeats): scatter valid selections positionally,
-    # leave null positions as None.
-    out = np.empty(n, dtype=object)
-    out[idx_valid] = pool.values[idx_np[idx_valid]]
-    out[~idx_valid] = None
+    out = np.empty(len(idx_np), dtype=object)
+    out[valid] = pool.values[idx_np[valid]]
+    out[~valid] = None
     return pa.array(out, type=pa.string())
 
 
@@ -178,11 +230,13 @@ def run_kernel_step(
     pool: ValuePool | None = None,
     sibling: pa.Table | None = None,
     row_offset: int = 0,
+    job_seed: bytes | None = None,
 ) -> StepResult:
     """Run one operator's compiled kernel over `source` and say whether it ran.
 
     `sibling` is group_key's input (the single-column slice of its group_by column) and
-    `source` is ignored for it. `row_offset` only matters to the position-keyed categorical.
+    `source` is ignored for it. `row_offset` only matters to the position-keyed categorical and
+    the position-keyed faker, which also keys on `job_seed` (never `mask_key`).
     `raw_hex_kernel=None` lets group_key load its own, which the unified route relies on as
     its one companion probe. `ran` for bucket_perturb, group_key and date_shift is each
     kernel's own `derive_calls` total, and those kernels disagree on purpose: group_key counts
@@ -214,6 +268,26 @@ def run_kernel_step(
             mask_key=mask_key,
             namespace=params.namespace,
             truncate=params.truncate,
+            native_threads=native_threads,
+        )
+        return StepResult(out, True)
+    if isinstance(params, FakerParams) and params.positional:
+        if pool is None or job_seed is None or params.selection_namespace is None:
+            # The unified route never builds positional params, and the chunked adapter passes
+            # the pool and the job seed for every admitted column.
+            raise AssertionError(
+                "positional FakerParams reached the kernel step with no pool, job_seed or "
+                "selection namespace."
+            )
+        if len(source) == 0:
+            return StepResult(pa.array([], pa.string()), False)
+        out = sample_faker_array_positional(
+            source,
+            pool=pool,
+            row_offset=row_offset,
+            job_seed=job_seed,
+            namespace=params.selection_namespace,
+            index_kernel=_index_kernel_for(params, index_kernel),
             native_threads=native_threads,
         )
         return StepResult(out, True)

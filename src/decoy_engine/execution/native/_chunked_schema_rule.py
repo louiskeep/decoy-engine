@@ -35,6 +35,13 @@ by definition the rule pins one type per column for the whole call:
   still masks but runs only on the oracle. Config only, so both legs agree.
   The whole-frame route still resolves an empty or all-null column to Arrow `null`, the same
   recorded route-dependent difference (docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
+- a faker column the chunked route admits as a position-keyed draw (non-deterministic REUSE, an
+  explicit `pool_size`, a string-output provider, no `when:`): `string`, by the same cast. Its
+  provider pool holds strings (a custom provider that returns anything else fails closed before
+  any chunk), so pandas' empty -> float64 and all-null -> null are inference artifacts. Config
+  only, so both legs agree. The whole-frame route still resolves an empty or all-null column to
+  pandas' inferred type, the same recorded route-dependent difference
+  (docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
 - passthrough columns (configured, or unconfigured and kept under the
   passthrough policy): the source column itself, never the pandas round trip,
   which rounds nullable integers above 2^53.
@@ -91,6 +98,22 @@ def text_redact_pinned_columns(configured: dict[str, dict[str, Any]]) -> frozens
         if text_redact_config_rejection(name, cfg) is None:
             pinned.add(name)
     return frozenset(pinned)
+
+
+def faker_positional_pinned_columns(configured: dict[str, dict[str, Any]]) -> frozenset[str]:
+    """The position-keyed faker columns whose output is pinned to `string`.
+
+    One classifier for both schema-rule construction sites, config only: the pin follows stage A
+    (`when:` is rejected for these columns, so a column carrying one is never pinned)."""
+    from decoy_engine.execution.native._faker_positional_admission import (
+        positional_faker_config_of_entry,
+    )
+
+    return frozenset(
+        name
+        for name, col in configured.items()
+        if not _has_when(col) and positional_faker_config_of_entry(col) is not None
+    )
 
 
 def date_shift_pinned_columns(
@@ -189,9 +212,9 @@ def build_schema_rule(
     the native operator cannot run is not listed and keeps the type its route produced.
 
     A native-admissible date_shift column is added by `date_shift_pinned_columns`, a
-    native-admissible group_key column by `group_key_pinned_columns` and a native-admissible
-    text_redact column by `text_redact_pinned_columns`, so every caller gets the pins without
-    passing anything.
+    native-admissible group_key column by `group_key_pinned_columns`, a native-admissible
+    text_redact column by `text_redact_pinned_columns` and a position-keyed faker column by
+    `faker_positional_pinned_columns`, so every caller gets the pins without passing anything.
 
     A column some handler writes (see `handler_written_columns`) is never a passthrough
     column here, so `normalize_chunk` cannot restore its source value."""
@@ -210,6 +233,7 @@ def build_schema_rule(
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     strings |= categorical_columns
     strings |= text_redact_pinned_columns(configured)
+    strings |= faker_positional_pinned_columns(configured)
     strings |= date_shift_pinned_columns(configured, first.schema, table=table)
     strings |= group_key_pinned_columns(configured, first.schema, table=table, written=written)
     passthrough: dict[str, pa.DataType] = {}

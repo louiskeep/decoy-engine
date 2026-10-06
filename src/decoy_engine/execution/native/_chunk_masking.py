@@ -18,12 +18,14 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.native._operator_params import (
     BucketPerturbParams,
     CategoricalParams,
     FakerParams,
     GroupKeyParams,
     OperatorParams,
+    is_positional_faker_seed,
 )
 from decoy_engine.execution.native._operator_step import run_kernel_step
 from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
@@ -34,6 +36,9 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._dispatch import NativeRouteEvidence
     from decoy_engine.execution.native._group_key_ext import RawHexDerivationKernel
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
+
+
+NONSTRING_POOL_CODE = "chunked_faker_nondeterministic_pool_not_string"
 
 
 def _mask_chunk_native(
@@ -54,6 +59,7 @@ def _mask_chunk_native(
     format_errors: dict[str, tuple[int, ...]] | None = None,
     raw_chunk: pa.Table | None = None,
     raw_hex_kernel: RawHexDerivationKernel | None = None,
+    job_seed: bytes | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -102,8 +108,9 @@ def _mask_chunk_native(
     derives with.
 
     `row_offset` is the global position of the chunk's first row; only the seeded
-    non-deterministic categorical keys on it. A zero-row chunk of that variant makes no
-    compiled call (idle, uncounted, typed empty `string`); an all-null non-empty one does run it.
+    non-deterministic categorical and the position-keyed faker key on it (the faker also on
+    `job_seed`). A zero-row chunk of either makes no compiled call (idle, uncounted, typed empty
+    `string`); an all-null non-empty one does run it.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
@@ -140,6 +147,7 @@ def _mask_chunk_native(
             pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
             sibling=sibling,
             row_offset=row_offset,
+            job_seed=job_seed,
         )
         out = result.out
         # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
@@ -151,13 +159,13 @@ def _mask_chunk_native(
             out = pa.nulls(len(out))
         arrays[name] = out
         counted = True
-        if isinstance(params, FakerParams):
+        if isinstance(params, FakerParams) and result.ran:
             evidence.pool_select_executed = True
             evidence.pool_select_calls += 1
         elif result.ran:
             evidence.compiled_kernel_executed = True
         elif result.ran is False:
-            counted = not isinstance(params, CategoricalParams)
+            counted = not isinstance(params, (CategoricalParams, FakerParams))
             if kernel_idle is not None:
                 kernel_idle.add(name)
         if result.format_error_positions:
@@ -189,6 +197,43 @@ def pool_values_are_strings(pool: ValuePool) -> bool:
         or pa.types.is_large_string(values.type)
         or pa.types.is_null(values.type)
     )
+
+
+def reject_nonstring_positional_pools(state: Any, *, table: str) -> None:
+    """Fail closed when a position-keyed faker column's pool holds non-string values.
+
+    Runs eagerly on BOTH chunked legs, before any masking, normalization or write, whether or
+    not the table is native-admitted: the column's output type is pinned to `string` on every
+    chunk, so a custom provider registered under an allowlisted name that returns another type
+    would silently change the column's type relative to the whole-frame run. The pools are
+    cached in `state.pool_cache`, so the leg that runs reuses them.
+
+    Raises:
+        ExecutionError: ``code='chunked_faker_nondeterministic_pool_not_string'``.
+    """
+    envelope = state.plan.seed_envelope
+    table_seed = next((ts for (name, ts) in envelope.per_table if name == table), None)
+    if table_seed is None:  # pragma: no cover - a validated mask table always has a seed envelope
+        return
+    positional = {n: s for n, s in table_seed.per_column if is_positional_faker_seed(s)}
+    pools = _resolve_faker_pools(
+        positional,
+        job_seed=envelope.job_seed,
+        pool_cache=state.pool_cache,
+        registry=state.registry,
+    )
+    for column, pool in pools.items():
+        if not pool_values_are_strings(pool):
+            raise ExecutionError(
+                code=NONSTRING_POOL_CODE,
+                message=(
+                    f"column {column!r}: provider {positional[column].provider!r} returns "
+                    "non-string values, but a non-deterministic faker column runs chunked with "
+                    "a string output type on every chunk, which would change this column's type "
+                    "relative to the whole-frame run. Disable auto-chunking for this job or "
+                    "register the provider under a different name."
+                ),
+            )
 
 
 def _resolve_faker_pools(

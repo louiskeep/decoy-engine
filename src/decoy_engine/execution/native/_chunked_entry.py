@@ -51,6 +51,7 @@ from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
     pool_values_are_strings,
+    reject_nonstring_positional_pools,
 )
 from decoy_engine.execution.native._chunk_schema import cast_null_columns, validated_rest
 from decoy_engine.execution.native._chunked_evidence import (
@@ -242,7 +243,10 @@ def _native_route(
     col_seed_by_name = dict(table_seed.per_column)
     unconfigured_set = frozenset(unconfigured)
     params_by_column = resolve_params_by_column(
-        col_seed_by_name, categorical_by_column, excluded=unconfigured_set | stored_index
+        col_seed_by_name,
+        categorical_by_column,
+        excluded=unconfigured_set | stored_index,
+        table=table,
     )
 
     def _guard(raw: pa.Table) -> pa.Table:
@@ -283,6 +287,7 @@ def _native_route(
                 format_errors=format_errors,
                 raw_chunk=raw_chunk,
                 raw_hex_kernel=raw_hex_kernel,
+                job_seed=plan.seed_envelope.job_seed,
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
@@ -428,6 +433,7 @@ def _run_chunked(
             route_evidence_sink.append(_oracle_evidence(table, "empty_input"))
         return iter(())
 
+    reject_nonstring_positional_pools(state, table=table)
     # One drift contract for both routes: each chunk is validated against the
     # first chunk's schema and passed on unchanged. Validation never casts, so the
     # oracle route's adapter runs its own ingest guards on the chunk exactly as the

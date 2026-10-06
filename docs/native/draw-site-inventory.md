@@ -194,8 +194,12 @@ configured `namespace`, else `faker-nd/{len(table)}:{table}/{len(column)}:{colum
 `None` and `""` both mean "not configured". The pool is built exactly as before, from the
 original namespace; the selection namespace never reaches the build. The key is `job_seed`,
 not `mask_key`: non-deterministic mode generates fresh values and does not re-identify a
-source value. Partitionable by row ordinal; the whole-frame oracle is the only
-implementation today.
+source value. Partitionable by row ordinal. The whole-frame oracle is the reference; the
+chunked native route mirrors it in `execution/native/_operator_step.py`
+(`sample_faker_array_positional`), which calls `derive_index_batch` over a dense `uint64`
+key column `[row_offset, row_offset + n)` with `mask_key=job_seed`, so every chunk reproduces
+the whole-frame draw from its global offset. The mirror runs only for string-output providers
+in the C1 allowlist, with an explicit `pool_size` and no `when:`.
 
 ### gen.pool_deterministic
 `generation/pool/_sampler.py:225`.
