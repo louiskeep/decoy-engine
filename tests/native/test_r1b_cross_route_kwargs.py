@@ -222,6 +222,12 @@ SNAPSHOT: list[tuple[str, dict[str, Any], str, dict[str, Any]]] = [
         {"length": 2, "keep": "tail", "mask_char": None},
     ),
     (
+        "truncate_defaults",
+        _column("truncate", provider_config={"length": 5}),
+        "native_truncate",
+        {"length": 5, "keep": "head", "mask_char": None},
+    ),
+    (
         "hash_plain",
         _column("hash", namespace="ns_h"),
         "native_keyed_hash",
