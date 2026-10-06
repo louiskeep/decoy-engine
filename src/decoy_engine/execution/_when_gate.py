@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._expression_fingerprint import expression_fingerprint
 from decoy_engine.execution._row_errors import RowError
 
 _log = logging.getLogger(__name__)
@@ -113,8 +114,10 @@ def _eval_predicate(
         for _w in _caught:
             if issubclass(_w.category, RuntimeWarning):
                 _log.warning(
-                    "when expression %r: numexpr fell back to the python engine (%s)",
-                    expression,
+                    "when expression sha256:%s (strategy %s): numexpr fell back to the "
+                    "python engine (%s)",
+                    expression_fingerprint(expression),
+                    strategy,
                     _w.message,
                 )
     except ImportError as exc:

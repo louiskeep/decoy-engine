@@ -64,6 +64,7 @@ from decoy_engine.config._transforms import (
     TransformOp,
 )
 from decoy_engine.errors import DecoyError
+from decoy_engine.execution._expression_fingerprint import expression_fingerprint
 
 _log = logging.getLogger(__name__)
 
@@ -84,8 +85,8 @@ def _eval_clamped(df: pd.DataFrame, expression: str) -> object:
     for w in caught:
         if issubclass(w.category, RuntimeWarning):
             _log.warning(
-                "transform expression %r: numexpr fell back to the python engine (%s)",
-                expression,
+                "transform expression sha256:%s: numexpr fell back to the python engine (%s)",
+                expression_fingerprint(expression),
                 w.message,
             )
     return result

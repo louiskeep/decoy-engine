@@ -9,6 +9,16 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Security (log lines no longer carry user expression text, 2026-10-06)
+
+The numexpr-fallback warnings for `when:` predicates (`execution/_when_gate.py`) and table
+transforms (`execution/_transforms.py`) logged the full expression, so a predicate such as
+`email == 'bob@example.com'` wrote a literal value into server logs. Both lines now log a
+12-character SHA-256 fingerprint of the expression instead (`sha256:<hex>`; the `when` line
+also names the strategy), which still matches a log line to its config without revealing
+literals. Error messages raised to the caller are unchanged: they go to the user who wrote the
+config, not to the server log.
+
 ### Changed (text_redact runs on both native routes, 2026-10-06)
 
 A table with a plain `text_redact` column no longer falls back to pandas for every column in it.
