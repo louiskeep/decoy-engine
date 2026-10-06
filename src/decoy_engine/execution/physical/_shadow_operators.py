@@ -32,6 +32,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextRedactParams,
     TruncateParams,
 )
 from decoy_engine.execution.native._operator_step import run_kernel_step
@@ -59,6 +60,7 @@ __all__ = [
 _PASSTHROUGH: Final = OPERATORS["passthrough"].operator_id
 _REDACT: Final = OPERATORS["redact"].operator_id
 _TRUNCATE: Final = OPERATORS["truncate"].operator_id
+_TEXT_REDACT: Final = OPERATORS["text_redact"].operator_id
 _KEYED_HASH: Final = OPERATORS["hash"].operator_id
 _FAKER_SELECT: Final = OPERATORS["faker"].operator_id
 _CATEGORICAL: Final = OPERATORS["categorical"].operator_id
@@ -144,6 +146,7 @@ _UNKEYED_PARAMS: Final = {
     _PASSTHROUGH: PassthroughParams,
     _REDACT: RedactParams,
     _TRUNCATE: TruncateParams,
+    _TEXT_REDACT: TextRedactParams,
 }
 
 

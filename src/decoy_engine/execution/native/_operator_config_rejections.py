@@ -258,6 +258,24 @@ def group_key_config_rejection(
     return None
 
 
+def text_redact_config_rejection(name: str, provider_config: Mapping[str, Any]) -> str | None:
+    """The coded reason a `text_redact` column cannot run natively, or None.
+
+    The native operator is the plain configuration: no `ner` (a model load per run), a string
+    `token`, and `detectors` absent, null, a list or a tuple. The oracle leaves the source
+    column untouched for a non-string token or a malformed `detectors`, so admitting either
+    would stringify cells it never touches. Both config dispatchers call this ONE predicate.
+    """
+    if provider_config.get("ner"):
+        return f"text_redact_ner_not_native:{name}"
+    if "token" in provider_config and not isinstance(provider_config["token"], str):
+        return f"text_redact_token_not_string:{name}"
+    detectors = provider_config.get("detectors")
+    if detectors is not None and not isinstance(detectors, (list, tuple)):
+        return f"text_redact_detectors_malformed:{name}"
+    return None
+
+
 __all__ = [
     "bucket_perturb_config_rejection",
     "categorical_config_rejection",
@@ -265,4 +283,5 @@ __all__ = [
     "group_key_config_rejection",
     "group_key_sibling_type_admitted",
     "is_deterministic_categorical",
+    "text_redact_config_rejection",
 ]

@@ -107,6 +107,17 @@ _SPECS = (
         full_frame_assembly="tokenizing",
     ),
     OperatorSpec(
+        strategy="text_redact",
+        operator_id="native_text_redact",
+        shape="kernel",
+        planned_backend=ARROW_PYTHON,
+        required_kernel=None,
+        positive_kernel_evidence=False,
+        unified_resident_types=_STRING_ONLY,
+        # The oracle assigns an object column, so an empty or all-null result is Arrow null.
+        full_frame_assembly="null_on_empty",
+    ),
+    OperatorSpec(
         strategy="hash",
         operator_id="native_keyed_hash",
         shape="kernel",

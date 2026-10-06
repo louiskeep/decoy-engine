@@ -23,6 +23,7 @@ from typing import Any
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._operator_registry import OPERATORS
+from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN
 from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
 
@@ -36,6 +37,7 @@ __all__ = [
     "OperatorParams",
     "PassthroughParams",
     "RedactParams",
+    "TextRedactParams",
     "TruncateParams",
     "resolve_operator_params",
     "resolve_params_by_column",
@@ -57,6 +59,14 @@ class TruncateParams:
     length: int
     keep: str
     mask_char: Any
+
+
+@dataclass(frozen=True)
+class TextRedactParams:
+    # None runs every detector. The empty-list-means-all rule is applied once, by the resolver.
+    detectors: tuple[str, ...] | None
+    token: str
+    label_token: bool
 
 
 @dataclass(frozen=True)
@@ -104,6 +114,7 @@ OperatorParams = (
     PassthroughParams
     | RedactParams
     | TruncateParams
+    | TextRedactParams
     | HashParams
     | FakerParams
     | CategoricalParams
@@ -156,6 +167,15 @@ def resolve_operator_params(
             length if isinstance(length, int) else 0,
             _resolve_truncate_keep(cfg),
             cfg.get("mask_char"),
+        )
+    if strategy == "text_redact":
+        # The oracle's normalization (`TextRedactHandler.run`): an empty list means every
+        # detector, never none, and a value that is not a list or tuple means every detector
+        # too (admission excludes it, so only the all-detectors reading is reachable).
+        raw = cfg.get("detectors")
+        detectors = tuple(str(d) for d in raw) or None if isinstance(raw, (list, tuple)) else None
+        return TextRedactParams(
+            detectors, cfg.get("token", _DEFAULT_TOKEN), bool(cfg.get("label_token", False))
         )
     if strategy == "hash":
         return HashParams(namespace, cfg.get("truncate"))

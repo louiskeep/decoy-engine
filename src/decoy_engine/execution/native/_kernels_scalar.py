@@ -9,6 +9,11 @@ those functions (rather than re-expressing their per-value logic here) is
 what makes native output byte-identical to the shipped handlers: there is one
 logic source, and this module is just its Arrow-native entry point.
 
+`text_redact` is the one exception to "calls `kernel/_scalar.py`": its per-cell span logic lives
+in the oracle handler and the storm detectors, so `native_text_redact` calls `iter_spans` and
+`_splice` from there. It runs the same Python per cell as the oracle, so the column's own speed
+is unchanged; the gain is that its table stays native.
+
 `truncate`'s fail-closed config validation lives in `TruncateHandler.run`,
 not in `kernel.truncate_array` (the kernel trusts its caller). A native
 caller bypasses the handler entirely, so this module re-raises the same
@@ -43,7 +48,9 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._text_redact import _splice
 from decoy_engine.kernel import passthrough_array, redact_array, truncate_array
+from decoy_engine.storm.detectors import iter_spans
 
 
 def native_passthrough(array: pa.Array | pa.ChunkedArray) -> pa.Array:
@@ -113,4 +120,32 @@ def native_truncate(
     return truncate_array(array, length=length, keep=keep, mask_char=mask_char)
 
 
-__all__ = ["native_passthrough", "native_redact", "native_truncate"]
+def native_text_redact(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    detectors: tuple[str, ...] | None,
+    token: str,
+    label_token: bool,
+) -> pa.Array:
+    """Replace PII spans in every non-null cell; nulls stay null.
+
+    Runs the oracle's own `iter_spans` and `_splice` per cell, so span detection and splicing
+    have one implementation and a detector change cannot make the routes disagree. The
+    empty-means-all rule is the resolver's: `detectors` arrives normalized, and an empty tuple
+    here runs zero detectors, as `iter_spans([])` does. Output is `pa.string()`; each route's
+    assembly decides the type of an empty or all-null column.
+    """
+    detector_ids = list(detectors) if detectors is not None else None
+    out: list[str | None] = []
+    for text in array.to_pylist():
+        if text is None:
+            out.append(None)
+            continue
+        if not isinstance(text, str):
+            text = str(text)
+        spans = iter_spans(text, detector_ids, extra_spans=None)
+        out.append(text if not spans else _splice(text, spans, token, label_token))
+    return pa.array(out, type=pa.string())
+
+
+__all__ = ["native_passthrough", "native_redact", "native_text_redact", "native_truncate"]

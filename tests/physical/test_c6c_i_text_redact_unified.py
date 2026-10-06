@@ -37,7 +37,6 @@ from tests.physical.test_unified_route_evidence import (
     _HASH,
     NEEDS_COMPANION,
     _evidence_for,
-    _oracle_poisoned,
     assert_exact_evidence,
     lane_nodes,
 )
@@ -291,8 +290,7 @@ def test_the_unified_evidence_never_claims_compiled_work_for_text_redact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     table = pa.table({"s": pa.array(CORPUS, pa.string())})
-    with _oracle_poisoned(monkeypatch):
-        nodes = lane_nodes(tmp_path, table, [tr_col("s")], monkeypatch)
+    nodes = lane_nodes(tmp_path, table, [tr_col("s")], monkeypatch)
     ev = _evidence_for(nodes, OPERATOR)
     assert ev["compiled_kernel_executed"] is False
     assert ev["planned_backend"] == ev["executed_backend"] == ARROW_PYTHON

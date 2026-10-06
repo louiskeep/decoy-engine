@@ -16,6 +16,9 @@ oracle, so `plan_native_route` checks them here once it has the first chunk:
 - a date_shift column's real source type (the native operator takes exactly `string`,
   and a non-string source keeps running on the oracle, which is what it ran on before
   date_shift left the chunked veto set);
+- a text_redact column's real source type (the native operator takes exactly `string`; the
+  oracle stringifies any other cell, which the string-only kernel contract does not reproduce
+  for a decimal, date or dictionary source, so a non-string source keeps running on the oracle);
 - a group_key column's real SIBLING type (the native operator takes exactly
   `{string, int64, bool}`, the one domain where the oracle's raw-value cache cannot collide;
   a wider oracle-safe sibling such as int32, uint64, large_string, dictionary, date or
@@ -53,8 +56,10 @@ C1_PROVIDER_ALLOWLIST: Final[frozenset[str]] = OPERATORS["faker"].provider_allow
 # The strategies whose native source domain is exactly `string` (checked by
 # `string_source_type_rejection`). Route-specific, so not an operator-registry field: the
 # chunked route keeps its own source-type gates with coded reasons (the unified domain for
-# these three happens to be `{string}` too, but the two routes are gated separately).
-_STRING_SOURCE_STRATEGIES: Final = frozenset({"categorical", "bucket_perturb", "date_shift"})
+# these four happens to be `{string}` too, but the two routes are gated separately).
+_STRING_SOURCE_STRATEGIES: Final = frozenset(
+    {"categorical", "bucket_perturb", "date_shift", "text_redact"}
+)
 
 
 def _providers(config: dict[str, Any], table: str) -> dict[str, Any]:
@@ -70,9 +75,9 @@ def _providers(config: dict[str, Any], table: str) -> dict[str, Any]:
 
 def string_source_type_rejection(strategy: str, column: str, schema: pa.Schema) -> str | None:
     """The coded reason a `strategy` column's real source type is not the one its native
-    operator takes, or None. categorical, bucket_perturb and date_shift all take exactly
-    `string`, the domain the full-frame route proves (`_unified_slice_admission`); any other
-    type, including `large_string` (which passes the upstream chunk-safety gate for the
+    operator takes, or None. categorical, bucket_perturb, date_shift and text_redact all take
+    exactly `string`, the domain the full-frame route proves (`_unified_slice_admission`); any
+    other type, including `large_string` (which passes the upstream chunk-safety gate for the
     oracle route), declines to the oracle before masking instead of failing inside the
     kernel."""
     typ = schema.field(column).type
