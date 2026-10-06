@@ -114,3 +114,7 @@ Spy tests: exactly one `DeriveContext.for_column` and one `derive_sources` call 
 ## Docs gate
 
 `grep -n "import-linter\|graph/runner.py" CLAUDE.md src/decoy_engine/errors.py` returns nothing.
+
+## Plan-author resolution of the stopped test
+
+`tests/unit/test_public_api.py::TestV2BehaviorRegressionPinsS11::test_v2_strategies_derive_per_strategy_namespace` monkeypatched `_date_shift.derive`, which item 4 removes by design (date_shift now derives once per column through `DeriveContext`). The test's intent is that each strategy binds its column's own namespace, never a shared label. Its date_shift spy now records the namespace passed to `DeriveContext.for_column`. The assertions are unchanged (hash `{"A_ns"}`, date_shift `{"B_ns"}`). 17 passed.
