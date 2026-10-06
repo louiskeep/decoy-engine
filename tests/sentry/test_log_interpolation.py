@@ -161,6 +161,10 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
             isinstance(func, ast.Attribute) and func.attr in {"format", "join"}
         ):
             children = [*value.args, *(k.value for k in value.keywords)]
+        elif isinstance(func, ast.Attribute):
+            # A method on a risky value (`row.items()`, `exc.strip()`) still exposes it.
+            root = _root_name(func.value)
+            return [root] if root in risky else []
     return [hit for child in children for hit in _risky_in(child, risky)]
 
 
