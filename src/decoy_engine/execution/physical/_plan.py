@@ -45,8 +45,9 @@ __all__ = [
 class KeyBinding:
     """Non-secret key reference for a keyed slice node (Task 4.4 C0).
 
-    Carries ONLY the `KeySource` TOKEN (`native/_capabilities.py:51`'s
-    `Literal["mask_key", "generation_seed"]`) plus the column's namespace --
+    Carries ONLY the key-source TOKEN (`mask_key`, or `job_seed` for a position-keyed
+    Faker, whose draw never re-identifies a source value) plus the namespace the draw
+    keys on --
     never a `KeyProvider` object and never key bytes. The resolved
     `KeyProvider` and the resolved mask-key bytes live EXCLUSIVELY in the
     runtime `ShadowContext` (`_shadow_context.py`), passed at execution, never
@@ -67,8 +68,9 @@ class PoolBinding:
     build_config are NOT duplicated here: they are resolved solely inside
     `resolve_faker_pool_identity` from `dict(binding.resolved_config)`, the
     same way the native chunked route resolves them, so there is exactly one
-    place that split lives. Namespace is reused from `KeyBinding.namespace`,
-    never copied a second time onto this binding.
+    place that split lives. The pool namespace is the CONFIGURED one, read from the bound
+    `FakerParams.namespace` (it can be None, and for a position-keyed Faker it differs from
+    `KeyBinding.namespace`, which names the selection namespace).
     """
 
     provider: str
@@ -125,22 +127,22 @@ class ExecutionBinding:
     @property
     def needs_index_kernel(self) -> bool:
         """Whether this node draws through the compiled `derive_index_batch`
-        kernel: faker (pool selection), categorical, bucket_perturb, or
-        date_shift. The coordinator loads the kernel once per run for any such
+        kernel: faker (pool selection), categorical (either keying), bucket_perturb,
+        or date_shift. The coordinator loads the kernel once per run for any such
         node. Deliberately separate from `pool_binding`, which alone gates POOL
         RESOLUTION: a date_shift node needs the kernel but has no pool."""
         params = self.params
         return (
             self.pool_binding is not None
-            or self.categorical_deterministic
+            or isinstance(params, CategoricalParams)
             or (isinstance(params, BucketPerturbParams) and params.bucket is not None)
             or (isinstance(params, DateShiftParams) and params.date_format is not None)
         )
 
     @property
     def categorical_deterministic(self) -> bool:
-        """True for a bound source-keyed categorical node. The unified operator is always
-        source-keyed, so a position-keyed one (`prepared.positional`) must never reach it."""
+        """True for a bound source-keyed categorical node; a position-keyed one
+        (`prepared.positional`) is keyed on the row ordinal and answers False."""
         return isinstance(self.params, CategoricalParams) and not self.params.prepared.positional
 
     @property

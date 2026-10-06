@@ -16,6 +16,7 @@ job into a `chunked_schema_mismatch`. Those columns keep running whole-frame.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,7 +37,7 @@ class PositionalFakerConfig:
     namespace: str | None
 
 
-def is_positional_faker_entry(col_entry: dict[str, Any]) -> bool:
+def is_positional_faker_entry(col_entry: Mapping[str, Any]) -> bool:
     """True for a faker column on the position-keyed path: not deterministic (`allow_collisions`
     is the compile-time alias for it) and REUSE (an absent mode defaults to it)."""
     return (
@@ -47,7 +48,7 @@ def is_positional_faker_entry(col_entry: dict[str, Any]) -> bool:
     )
 
 
-def positional_faker_failures(col_entry: dict[str, Any]) -> list[str]:
+def positional_faker_failures(col_entry: Mapping[str, Any]) -> list[str]:
     """Unmet stage-A conditions of a position-keyed faker column; empty when admitted."""
     cfg = col_entry.get("provider_config") or {}
     failures: list[str] = []
@@ -67,7 +68,7 @@ def positional_faker_failures(col_entry: dict[str, Any]) -> list[str]:
     return failures
 
 
-def positional_faker_config_of_entry(col_entry: dict[str, Any]) -> PositionalFakerConfig | None:
+def positional_faker_config_of_entry(col_entry: Mapping[str, Any]) -> PositionalFakerConfig | None:
     """The stage-A artifact for a raw column entry, or None when it is not a position-keyed
     faker column or its config fails stage A."""
     if not is_positional_faker_entry(col_entry) or positional_faker_failures(col_entry):
@@ -76,14 +77,14 @@ def positional_faker_config_of_entry(col_entry: dict[str, Any]) -> PositionalFak
 
 
 def positional_faker_config_for_column(
-    config: dict[str, Any], table: str, column: str
+    config: Mapping[str, Any], table: str, column: str
 ) -> PositionalFakerConfig | None:
     """`positional_faker_config_of_entry` for `column` of `table` in a whole job config."""
     for table_cfg in config.get("tables") or ():
-        if not isinstance(table_cfg, dict) or table_cfg.get("name") != table:
+        if not isinstance(table_cfg, Mapping) or table_cfg.get("name") != table:
             continue
         for col in table_cfg.get("columns") or ():
-            if isinstance(col, dict) and col.get("name") == column:
+            if isinstance(col, Mapping) and col.get("name") == column:
                 return positional_faker_config_of_entry(col)
     return None
 

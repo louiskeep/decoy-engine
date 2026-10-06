@@ -221,8 +221,8 @@ _MASK: dict[str, _Ortho] = {
             "Deterministic (default) mode is source-keyed and row-local. The "
             "non-deterministic mode is seeded but position-keyed (by the row ordinal "
             "of the frame the handler receives, not the source value); that is a "
-            "config-resolved variant, excluded from the native route because its "
-            "position-keyed implementation is not built, not by the static row."
+            "config-resolved variant, not the static row; the chunked and unified "
+            "native routes run it by global row position."
         ),
     ),
     "faker": _Ortho(
@@ -236,7 +236,8 @@ _MASK: dict[str, _Ortho] = {
             "Pool SELECTION is source-keyed and row-local (deterministic mode). "
             "Non-deterministic reuse is seeded and position-keyed on job_seed (by the row "
             "ordinal of the frame the handler receives, not the source value); that is a "
-            "config-resolved variant outside the native route, not the static row. "
+            "config-resolved variant, not the static row; the chunked and unified "
+            "native routes run it by global row position. "
             "The only handler that builds/samples a bounded value pool, so the "
             "sole class-A pool-fidelity obligation; pool warnings ride the "
             "PoolCache side channel, not the run() return tuple."

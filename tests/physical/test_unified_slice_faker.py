@@ -479,6 +479,33 @@ def test_8_pool_sizes(tmp_path: Path, pool_size: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 8b. The non-deterministic REUSE column was a decline case here; it now runs native.
+# ---------------------------------------------------------------------------
+
+
+@NEEDS_COMPANION
+def test_8b_non_deterministic_reuse_admits_and_runs_native(tmp_path: Path) -> None:
+    column = {
+        "name": "c",
+        "strategy": "faker",
+        "provider": "person_first_name",
+        "namespace": "ns_faker",
+        "pool_size": 30,
+    }
+    leaf = assert_lane_parity(Case(tmp_path, string_source(40, null_every=7), [column]))
+    assert evidence_by_operator(leaf) == [
+        {
+            "operator": FAKER_OP,
+            "executed": True,
+            "compiled_kernel_executed": True,
+            "planned_backend": "rust_pool_select",
+            "executed_backend": "rust_pool_select",
+            "calls": 1,
+        }
+    ]
+
+
+# ---------------------------------------------------------------------------
 # 9. Determinism.
 # ---------------------------------------------------------------------------
 
@@ -516,19 +543,6 @@ def _when(config: dict[str, Any]) -> None:
 
 
 _DECLINE_CASES: dict[str, tuple[pa.Table, list[dict[str, Any]], Callable[..., None] | None]] = {
-    "non_deterministic": (
-        string_source(),
-        [
-            {
-                "name": "c",
-                "strategy": "faker",
-                "provider": "person_first_name",
-                "namespace": "ns_faker",
-                "pool_size": 30,
-            }
-        ],
-        None,
-    ),
     "cardinality_not_reuse": (
         string_source(),
         [faker_column(cardinality_mode="match_source_cardinality")],

@@ -252,7 +252,9 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   a typed chunk raises the existing `chunked_leading_null_type` for every chunked strategy.
   A column carrying `when:` fails with `chunked_categorical_nondeterministic_when_not_supported`. A table with a declared
   FK relationship still runs on the oracle route, reproducibly. Multi-table split (C1b-iii)
-  and out-of-core (C1b-iv) still decline it. A deterministic one
+  and out-of-core (C1b-iv) still decline it. The unified full-frame route runs it from
+  2026-10-06 (slice C5b-iii), for a single-table job whose source is `string`, with no `when:`,
+  vault or FK relationship, and the output equals the pandas run. A deterministic one
   without a namespace, with `from_profile`, or without explicit categories keeps
   `chunked_strategy_conditions_unmet`.
   `bucket_perturb` joined the native chunked route on 2026-10-04 (slice C2). A native-admissible
@@ -320,8 +322,11 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   can instead fail later with `chunked_schema_mismatch`), which is
   a new failure for an auto-chunked job that ran whole-frame before; disable auto-chunking or
   register the provider under another name. A multi-table split run now dispatches an
-  above-threshold Faker table chunked like its siblings, with the same values. The unified
-  full-frame route and out-of-core still decline it (the unified route is slice C5b-iii).
+  above-threshold Faker table chunked like its siblings, with the same values. Out-of-core
+  still declines it. The unified full-frame route runs it from 2026-10-06 (slice C5b-iii), for a
+  single-table job whose source is `string`, with no `when:`, vault or FK relationship, and the
+  values equal the pandas run. A zero-row table reports `arrow_python` evidence there, as an idle
+  chunked column does.
   `ColumnConfig` gained an optional `when: str` field (2026-10-06, slice C8-i), additive. It accepts
   a closed grammar only (a comparison of one column and one literal, `in` and `not in` over a
   literal list, `and`, `or`, `not` and parentheses), validated when the config loads with the

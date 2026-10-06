@@ -10,7 +10,6 @@ crash (plan section 5, tests 4 to 8, 11).
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -675,11 +674,14 @@ def _full_frame_of_parent(config: dict[str, Any], table: pa.Table, tmp_path: Pat
 
 
 # ---------------------------------------------------------------------------
-# 11. Closed routes stay closed.
+# 11. The unified binding admits it; the out-of-core route stays closed.
 # ---------------------------------------------------------------------------
 
 
-def test_the_unified_binding_never_binds_a_non_deterministic_faker(tmp_path: Path) -> None:
+def test_the_unified_binding_binds_a_non_deterministic_faker_keyed_on_the_job_seed(
+    tmp_path: Path,
+) -> None:
+    from decoy_engine.execution.native._operator_params import FakerParams
     from decoy_engine.execution.physical._compiler import compile_physical_plan
     from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
     from tests.physical._shadow_helpers import build_config, write_read_only_fixture
@@ -690,16 +692,57 @@ def test_the_unified_binding_never_binds_a_non_deterministic_faker(tmp_path: Pat
     inputs = capture_physical_plan_inputs(config, {"t": src}, engine_version=ENGINE_VERSION)
     plan = compile_physical_plan(inputs)
     nodes = [n for tbl in plan.tables for n in tbl.nodes if n.strategy == "faker"]
-    assert nodes and all(n.execution is None for n in nodes)
+    assert len(nodes) == 1
+    binding = nodes[0].execution
+    assert binding is not None
+    assert isinstance(binding.params, FakerParams) and binding.params.positional
+    assert binding.key_binding is not None and binding.key_binding.key_source == "job_seed"
+    assert binding.pool_binding is not None and binding.needs_index_kernel
+    # The config-only eligibility report still describes the value-keyed operator.
     assert not native_route_eligibility(config, table="t").accepted
 
 
-def test_the_unified_shadow_operator_keeps_its_determinism_assertion() -> None:
-    from decoy_engine.execution.physical import _shadow_operators
+@NEEDS_COMPANION
+def test_the_unified_shadow_operator_draws_a_positional_faker_by_job_seed_and_offset(
+    tmp_path: Path,
+) -> None:
+    from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+    from decoy_engine.execution.physical._compiler import compile_physical_plan
+    from decoy_engine.execution.physical._shadow_context import ShadowContext
+    from decoy_engine.execution.physical._shadow_operators import (
+        OperatorCallEvidence,
+        run_operator,
+    )
+    from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+    from tests.native._chunked_faker_support import expected_values, pool_of
+    from tests.physical._shadow_helpers import build_config, write_read_only_fixture
 
-    src = inspect.getsource(_shadow_operators)
-    assert "FakerParams" in src
-    assert "positional" not in src.lower().split("class ")[0]
+    src = pa.table({"f": pa.array(["a", "b", "c"], pa.string())})
+    write_read_only_fixture(tmp_path, src, "x")
+    config = build_config(tmp_path, "t", tmp_path / "x.parquet", [nd_faker()])
+    inputs = capture_physical_plan_inputs(config, {"t": src}, engine_version=ENGINE_VERSION)
+    (node,) = [n for t in compile_physical_plan(inputs).tables for n in t.nodes]
+    binding = node.execution
+    assert binding is not None
+    job_seed = inputs.plan.seed_envelope.job_seed
+    # A mask key unlike the job seed: the draw must follow the job seed.
+    ctx = ShadowContext(mask_key=b"\x09" * 32, job_seed=job_seed)
+    evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
+    values = ["x", None, "y", "z", "w", None, "v", "u"]
+    out, _ = run_operator(
+        pa.array(values, pa.string()),
+        binding=binding,
+        ctx=ctx,
+        evidence=evidence,
+        pool=pool_of(namespace=None, job_seed=job_seed),
+        index_kernel=load_compiled_index_kernel(),
+        row_offset=3,
+    )
+    want = expected_values(
+        range(3, 3 + len(values)), config=config, namespace=None, job_seed=job_seed
+    )
+    assert out.to_pylist() == [None if v is None else w for v, w in zip(values, want, strict=True)]
+    assert (evidence.compiled_kernel_executed, evidence.rows_seen) == (True, len(values))
 
 
 def test_the_out_of_core_veto_is_unchanged() -> None:
