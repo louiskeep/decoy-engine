@@ -74,12 +74,30 @@ def test_a_given_namespace_reaches_the_kernel_unchanged(
     assert calls[0].kwargs["namespace"] == "ns_given"
 
 
+@pytest.mark.parametrize(
+    "cfg",
+    [{}, {"length": None}, {"length": "3"}, {"length": 2.5}],
+    ids=["absent", "none", "string", "float"],
+)
+def test_a_length_that_is_not_an_int_reaches_the_truncate_kernel_as_zero(
+    cfg: dict[str, Any],
+) -> None:
+    """Admission rejects such a config, so no admitted example reaches this coercion; the
+    kernel's own validation then fails closed on 0, where a default of 1 would silently
+    truncate to one character."""
+    with recording_kernels() as calls:
+        call_step("truncate", cfg=cfg, namespace=None, source=_DATES)
+    assert [c.kernel for c in calls] == ["native_truncate"]
+    assert calls[0].kwargs["length"] == 0
+
+
 _SOURCES: dict[str, list[Any]] = {
     "zero_rows": [],
     "all_null": [None, None],
     "mixed": ["2024-01-05", None, "bad"],
     "all_unparseable": ["bad", "worse"],
     "all_parseable": ["2024-01-05", "2024-02-01"],
+    "one_row": ["2024-01-05"],
 }
 
 _PARSE_GATED = {
@@ -88,6 +106,7 @@ _PARSE_GATED = {
     "mixed": True,
     "all_unparseable": False,
     "all_parseable": True,
+    "one_row": True,
 }
 # group_key stringifies its sibling (a null cell included), so only zero rows is idle.
 _GROUP_KEY = {**_PARSE_GATED, "all_null": True, "all_unparseable": True}
