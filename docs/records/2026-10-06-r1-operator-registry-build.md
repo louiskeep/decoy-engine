@@ -54,3 +54,19 @@ Plan: `docs/plans/2026-10-06-r1-operator-registry.md` rev 2 (Codex plan gate GO)
 
 - Whether categorical belongs in `_POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS` (plan section 1).
 - R1b: merging the two per-operator dispatch chains.
+
+## dennis gate (round 1): NO-GO, remediated by the plan author
+
+- **HIGH-1:** the seam sentry was red because `native/_pool_quality.py` (comment-only edit) was not permitted, and the earlier "tests/sentry green" claim was wrong. Permitted with a reason.
+- **HIGH-2 (a plan error):** plan 3b derived `_ROUTED_DIAGNOSTIC_OBLIGATIONS` from the capability reducers. That table is coordinator POLICY (what the unified coordinator actually routes), and deriving it from the same function that produces each binding's obligations made the `obligations <= routed` gate always pass. A future operator with declared diagnostics would have been auto-admitted, with its warnings dropped or row errors unquarantined.
+  - Fix: a new descriptor field, `OperatorSpec.routed_diagnostics` (date_shift = `{"reduce_row_error:format_error"}`, all others empty). The table reads it, and admission no longer imports `_diagnostic_reducers`.
+  - New tests:
+    - every slice operator's declared capability reducers must be a subset of its `routed_diagnostics` (a future mismatch fails the suite and forces a decision);
+    - the table equals the field derivation, and admission does not reference `_diagnostic_reducers`.
+  - An earlier subprocess probe version of the second test was found vacuous (the admission module is imported before any patch can apply) and replaced.
+- **MEDIUM-1:** `_NATIVE_GROUP_KEY_SIBLING_TYPES` lost the group_key stringify-safe intersection. It is now `group_key_sibling_types(passthrough set)`, which filters through `group_by_type_is_safe`, with a test that float64 and decimal stay excluded even if passthrough widens.
+- **MEDIUM-2:** the single-source sentry derives the operator ids from `OPERATORS` (the snapshot test still pins the literals).
+- **LOW-1:** the `_STRING_SOURCE_STRATEGIES` rationale was corrected.
+- **LOW-2:** `_shadow_bindings` reads the Faker allowlist from the registry.
+- **Red-before:** all three new tests fail on the pre-fix commit `bc13aeca`.
+- **After the fix:** `tests/sentry tests/native tests/physical tests/unit/execution tests/parity/native`: 15165 passed, 7 skipped, 59 xfailed, 0 failed. `tests/sentry` on Python 3.10: 2286 passed, 1 skipped. ruff and mypy are clean.

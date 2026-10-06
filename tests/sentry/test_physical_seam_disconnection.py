@@ -390,6 +390,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the dispatcher already enforces, so it cannot admit a full-frame-only
         # strategy. It imports only execution.native modules, never physical.
         "src/decoy_engine/execution/native/_phase3_eligibility.py",
+        # R1 (operator registry, 2026-10-06): a comment-only edit referencing the deleted
+        # phase3 predicate.
+        "src/decoy_engine/execution/native/_pool_quality.py",
         # R1 (operator registry, 2026-10-06): the `native/` entry above is DELETED (its
         # predicate had no production caller; `C1_PROVIDER_ALLOWLIST` moved into the
         # registry's faker descriptor). `_operator_registry.py` is the new leaf module

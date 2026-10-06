@@ -55,7 +55,8 @@ class OperatorSpec:
     sibling column instead, so it has no entry in the derived table).
     `required_kernel` names the compiled kernel the operator loads, `None` for the
     pure-Arrow operators. `positive_kernel_evidence` marks operators whose "compiled kernel
-    ran" claim must be observed rather than inferred."""
+    ran" claim must be observed rather than inferred. `routed_diagnostics` lists the
+    diagnostic obligations the unified coordinator routes for the operator (a policy)."""
 
     strategy: str
     operator_id: str
@@ -66,6 +67,10 @@ class OperatorSpec:
     unified_resident_types: frozenset[pa.DataType] | None
     full_frame_assembly: AssemblyShape
     provider_allowlist: frozenset[str] | None = None
+    # Diagnostic obligations the unified-slice coordinator actually ROUTES for this
+    # operator. A coordinator policy, not a capability fact: an operator whose
+    # capabilities declare any diagnostic outside this set declines the unified slice.
+    routed_diagnostics: frozenset[str] = frozenset()
 
 
 _STRING_ONLY = frozenset({pa.string()})
@@ -166,6 +171,7 @@ _SPECS = (
         positive_kernel_evidence=False,
         unified_resident_types=_STRING_ONLY,
         full_frame_assembly="tokenizing",
+        routed_diagnostics=frozenset({"reduce_row_error:format_error"}),
     ),
 )
 

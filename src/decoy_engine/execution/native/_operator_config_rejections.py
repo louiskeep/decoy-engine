@@ -193,10 +193,20 @@ def date_shift_config_rejection(
 # intersection so admission is honest; float/decimal/dictionary stay excluded
 # (str()/collision + exact-type-map reasons). Extending passthrough's resident
 # set + end-to-end coverage for the wider set is a later slice.
-# Derived from the operator registry: it is exactly passthrough's resident set, since the
-# sibling must be an unmasked passthrough node. Edit the registry. An unset domain admits no
-# sibling (fail closed).
-_NATIVE_GROUP_KEY_SIBLING_TYPES = OPERATORS["passthrough"].unified_resident_types or frozenset()
+def group_key_sibling_types(
+    passthrough_types: frozenset[pa.DataType] | None,
+) -> frozenset[pa.DataType]:
+    """The intersection described above: passthrough's resident set narrowed to the types
+    group_key can stringify safely, so widening passthrough never admits a float sibling.
+    An unset passthrough domain admits no sibling (fail closed)."""
+    from decoy_engine.execution._chunked_group_key import group_by_type_is_safe
+
+    return frozenset(t for t in (passthrough_types or frozenset()) if group_by_type_is_safe(t))
+
+
+_NATIVE_GROUP_KEY_SIBLING_TYPES = group_key_sibling_types(
+    OPERATORS["passthrough"].unified_resident_types
+)
 
 
 def group_key_sibling_type_admitted(arrow_type: pa.DataType) -> bool:

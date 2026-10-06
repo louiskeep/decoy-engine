@@ -52,7 +52,8 @@ C1_PROVIDER_ALLOWLIST: Final[frozenset[str]] = OPERATORS["faker"].provider_allow
 
 # The strategies whose native source domain is exactly `string` (checked by
 # `string_source_type_rejection`). Route-specific, so not an operator-registry field: the
-# unified route's domains differ for some of these operators' siblings.
+# chunked route keeps its own source-type gates with coded reasons (the unified domain for
+# these three happens to be `{string}` too, but the two routes are gated separately).
 _STRING_SOURCE_STRATEGIES: Final = frozenset({"categorical", "bucket_perturb", "date_shift"})
 
 

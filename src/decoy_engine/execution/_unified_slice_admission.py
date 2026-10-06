@@ -57,9 +57,7 @@ from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
     _group_key_sibling_admitted,
 )
-from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._companion_status import native_kernel_availability
-from decoy_engine.execution.native._requirements import _diagnostic_reducers
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -137,13 +135,13 @@ _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
 # `finalize_validators_and_quarantine` (a non-empty set raises there and the
 # unified slice reroutes the table to the oracle, which fails identically). Any
 # other obligation (a warning reducer, a second trigger) or any other operator
-# carrying one still declines: nothing else is routed. Derived from the capability
-# reducers (the authority for diagnostics), keeping only operators that have any, so
-# it stays the sparse date_shift-only mapping.
+# carrying one still declines: nothing else is routed. This is coordinator POLICY,
+# read from each descriptor's `routed_diagnostics`; it must not be derived from the
+# capability reducers, or the `obligations <= routed` gate below would always pass.
 _ROUTED_DIAGNOSTIC_OBLIGATIONS: dict[str, frozenset[str]] = {
-    spec.operator_id: frozenset(_diagnostic_reducers(capabilities_for(spec.strategy)))
+    spec.operator_id: spec.routed_diagnostics
     for spec in OPERATORS.values()
-    if _diagnostic_reducers(capabilities_for(spec.strategy))
+    if spec.routed_diagnostics
 }
 
 # Track A Option 2: the sanctioned single-file-source formats. Widened from

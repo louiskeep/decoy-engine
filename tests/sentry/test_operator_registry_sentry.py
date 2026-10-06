@@ -7,23 +7,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from decoy_engine.execution._operator_registry import OPERATORS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXEC_ROOT = REPO_ROOT / "src" / "decoy_engine" / "execution"
 REGISTRY = EXEC_ROOT / "_operator_registry.py"
 
-OPERATOR_IDS = frozenset(
-    {
-        "native_passthrough",
-        "native_redact",
-        "native_truncate",
-        "native_keyed_hash",
-        "native_categorical",
-        "native_bucket_perturb",
-        "native_group_key",
-        "native_date_shift",
-        "native_faker_select",
-    }
-)
+# Derived from the registry (a stdlib + pyarrow leaf), so an operator added later is
+# guarded too; the literal values are pinned by the snapshot test.
+OPERATOR_IDS = frozenset(spec.operator_id for spec in OPERATORS.values())
 
 
 def _exported_function_names(tree: ast.Module) -> set[str]:

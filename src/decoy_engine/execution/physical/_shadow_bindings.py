@@ -29,7 +29,6 @@ from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._chunk_masking import _resolve_truncate_keep
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
 from decoy_engine.execution.native._provider_class import classify_provider
-from decoy_engine.execution.native._real_type_admission import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding, PoolBinding
 from decoy_engine.plan._types import ColumnSeed
@@ -44,6 +43,9 @@ if TYPE_CHECKING:
 # regardless of native admission.
 # Derived from the operator registry; edit the registry.
 SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(OPERATORS)
+
+# The Faker providers the slice can pool natively (read from the operator registry).
+_FAKER_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 
 OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
     spec.strategy: spec.operator_id for spec in OPERATORS.values()
@@ -128,7 +130,7 @@ def _faker_pool_bindable(
     provider = plan_slice.provider
     if not isinstance(provider, str) or not provider:
         return False
-    if provider not in C1_PROVIDER_ALLOWLIST:
+    if provider not in _FAKER_PROVIDER_ALLOWLIST:
         return False
     if classify_provider(provider, None, registry=inputs.registry) != "pool_native":
         return False

@@ -10,8 +10,8 @@ import dataclasses
 
 import pyarrow as pa
 import pytest
-from decoy_engine.execution._operator_registry import OPERATORS, OperatorSpec, operator_spec
 
+from decoy_engine.execution._operator_registry import OPERATORS, OperatorSpec, operator_spec
 from decoy_engine.execution.native._chunked_evidence import (
     ARROW_PYTHON,
     RUST_COMPANION,
@@ -59,3 +59,43 @@ def test_group_key_has_no_target_resident_types_and_faker_has_the_allowlist() ->
         {pa.string(), pa.int64(), pa.bool_()}
     )
     assert all(spec.provider_allowlist is None for key, spec in OPERATORS.items() if key != "faker")
+
+
+def test_capability_diagnostics_are_routed_for_every_slice_operator() -> None:
+    """A slice operator whose capabilities declare a diagnostic the unified coordinator
+    does not route must be a conscious decision (add it to `routed_diagnostics` with a
+    real routing path, or keep the operator declined), never an automatic admission."""
+    from decoy_engine.execution.native._capabilities import capabilities_for
+    from decoy_engine.execution.native._requirements import _diagnostic_reducers
+
+    for spec in OPERATORS.values():
+        declared = frozenset(_diagnostic_reducers(capabilities_for(spec.strategy)))
+        assert declared <= spec.routed_diagnostics, (spec.strategy, declared)
+
+
+def test_routed_obligations_are_policy_not_derived_from_capabilities() -> None:
+    """The unified slice's routed-diagnostics table is coordinator policy read from each
+    descriptor's `routed_diagnostics`. Deriving it from the capability reducers would make
+    the admission gate `obligations <= routed` pass for every operator, silently admitting
+    a future operator whose diagnostics the coordinator never routes."""
+    import ast
+    import inspect
+
+    from decoy_engine.execution import _unified_slice_admission as adm
+
+    expected = {
+        s.operator_id: s.routed_diagnostics for s in OPERATORS.values() if s.routed_diagnostics
+    }
+    assert expected == adm._ROUTED_DIAGNOSTIC_OBLIGATIONS
+    names = {n.id for n in ast.walk(ast.parse(inspect.getsource(adm))) if isinstance(n, ast.Name)}
+    assert "_diagnostic_reducers" not in names
+
+
+def test_group_key_sibling_types_exclude_floats_even_if_passthrough_widens() -> None:
+    import pyarrow as pa
+
+    from decoy_engine.execution.native._operator_config_rejections import group_key_sibling_types
+
+    widened = frozenset({pa.string(), pa.int64(), pa.bool_(), pa.float64(), pa.decimal128(10, 2)})
+    assert group_key_sibling_types(widened) == frozenset({pa.string(), pa.int64(), pa.bool_()})
+    assert group_key_sibling_types(None) == frozenset()
