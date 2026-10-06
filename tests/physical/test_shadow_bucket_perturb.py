@@ -31,6 +31,7 @@ proven envelope.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -48,6 +49,7 @@ from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_pert
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._dispatch import plan_native_route
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.native._operator_params import BucketPerturbParams
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
@@ -476,6 +478,9 @@ def test_no_date_format_leaves_node_unbound_on_full_frame(tmp_path: Path) -> Non
 # ── Runtime fail-closed guards at dispatch ───────────────────────────
 
 
+_FULL_PARAMS = BucketPerturbParams("month", "%Y-%m-%d", "ns")
+
+
 def _binding(**overrides: Any) -> ExecutionBinding:
     base: dict[str, Any] = dict(
         operator_id="native_bucket_perturb",
@@ -489,8 +494,7 @@ def _binding(**overrides: Any) -> ExecutionBinding:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
-        bucket_perturb_bucket="month",
-        bucket_perturb_date_format="%Y-%m-%d",
+        params=_FULL_PARAMS,
     )
     base.update(overrides)
     return ExecutionBinding(**base)
@@ -511,7 +515,7 @@ def test_run_operator_asserts_key_binding_present() -> None:
 
 
 def test_run_operator_asserts_resolved_config_present() -> None:
-    binding = _binding(bucket_perturb_date_format=None)
+    binding = _binding(params=dataclasses.replace(_FULL_PARAMS, date_format=None))
     ctx = SimpleNamespace(mask_key=_MASK_KEY, native_threads=None)
     evidence = OperatorCallEvidence(planned_operator="native_bucket_perturb")
     with pytest.raises(AssertionError, match="no resolved bucket/date_format"):

@@ -190,11 +190,12 @@ def resolve_operator_params(
 
 def resolve_params_by_column(
     col_seed_by_name: Mapping[str, Any],
-    *,
     prepared_categoricals: Mapping[str, PreparedCategorical],
+    *,
     excluded: frozenset[str],
 ) -> dict[str, OperatorParams]:
-    """Parameters for every configured column of one table, resolved once for the whole run.
+    """Parameters for every configured column of one table, resolved once for the whole run
+    (defaults, coercions and namespaces never change between chunks).
 
     A column is left out when it is `excluded` (unconfigured passthrough, stored index), when
     its strategy is not a native operator, or when it is a categorical the chunked entry did

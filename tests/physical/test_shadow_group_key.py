@@ -43,6 +43,7 @@ from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._dispatch import plan_native_route
 from decoy_engine.execution.native._group_key_kernel import native_group_key
+from decoy_engine.execution.native._operator_params import GroupKeyParams
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
@@ -752,9 +753,7 @@ def _binding(**overrides: Any) -> ExecutionBinding:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
-        group_key_group_by=_GB,
-        group_key_length=16,
-        group_key_prefix="",
+        params=GroupKeyParams(_GB, 16, "", f"group_key/{_TARGET}"),
     )
     base.update(overrides)
     return ExecutionBinding(**base)

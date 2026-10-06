@@ -241,11 +241,8 @@ def _native_route(
         )
     col_seed_by_name = dict(table_seed.per_column)
     unconfigured_set = frozenset(unconfigured)
-    # Resolved once per table: defaults, coercions and namespaces never change between chunks.
     params_by_column = resolve_params_by_column(
-        col_seed_by_name,
-        prepared_categoricals=categorical_by_column,
-        excluded=unconfigured_set | stored_index,
+        col_seed_by_name, categorical_by_column, excluded=unconfigured_set | stored_index
     )
 
     def _guard(raw: pa.Table) -> pa.Table:

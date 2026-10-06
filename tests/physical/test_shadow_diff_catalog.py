@@ -8,6 +8,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.native._operator_params import HashParams
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
@@ -79,6 +80,7 @@ def _hash_binding(namespace: str = "n") -> ExecutionBinding:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
+        params=HashParams(namespace, None),
     )
 
 

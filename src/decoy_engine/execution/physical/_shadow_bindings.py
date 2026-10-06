@@ -22,12 +22,18 @@ from typing import TYPE_CHECKING, Any, Final
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
-from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._operator_registry import OPERATORS
-from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import capabilities_for
-from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
-from decoy_engine.execution.native._operator_params import _resolve_truncate_keep
+from decoy_engine.execution.native._categorical_prepared import prepare_categorical
+from decoy_engine.execution.native._operator_params import (
+    DateShiftParams,
+    GroupKeyParams,
+    OperatorParams,
+    PassthroughParams,
+    RedactParams,
+    TruncateParams,
+    resolve_operator_params,
+)
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding, PoolBinding
@@ -35,6 +41,7 @@ from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
     from decoy_engine.execution._runner import WorkNode
+    from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
     from decoy_engine.execution.native._requirements import NodeRequirements
     from decoy_engine.execution.physical._inputs import PhysicalPlanInputs
 
@@ -142,6 +149,16 @@ def _faker_pool_bindable(
     return not _table_in_fk_relationship(table, inputs)
 
 
+def _key_binding(key_source: str | None, params: OperatorParams) -> KeyBinding | None:
+    """The non-secret key reference of a keyed operator. Its namespace is read from the
+    resolved parameters, so the binding and the operator cannot disagree on it."""
+    if isinstance(params, (PassthroughParams, RedactParams, TruncateParams)):
+        return None
+    if key_source is None or params.namespace is None:
+        return None  # pragma: no cover - the per-operator guards leave neither unset
+    return KeyBinding(key_source=key_source, namespace=params.namespace)
+
+
 def execution_binding_for_slice_node(
     work_node: WorkNode,
     *,
@@ -180,53 +197,25 @@ def execution_binding_for_slice_node(
     strategy = work_node.strategy
     column = work_node.columns[0]
     cfg = provider_config_to_dict(plan_slice.provider_config)
-    resolved_config: dict[str, Any] = dict(cfg)
-    if strategy == "truncate":
-        resolved_config["keep"] = _resolve_truncate_keep(cfg)
-
-    # Track A Option 2: resident-Arrow-authoritative typing. `inputs.
-    # caller_sources` is the same resident table BOTH the unified-slice and
-    # pandas-oracle routes actually mask, so binding this node's input type
-    # from it (rather than the profiler's separate descriptor-backed re-read)
-    # is what lets a loosely-typed source (csv, fixed_width) admit and stay
-    # byte-parity-safe instead of drifting between a resident string column
-    # and a profiled numeric one.
-    input_type = (
-        resolve_input_arrow_type(
-            table, column, inputs.profile, resident_sources=inputs.caller_sources
-        )
-        or pa.string()
-    )
-    input_schema = pa.schema([pa.field(column, input_type)])
-
+    namespace = plan_slice.namespace
     caps = capabilities_for(strategy)
-    key_binding: KeyBinding | None = None
+
+    # Admission (`requirements.fallback_policy == "native"`, checked above) already proved each
+    # operator's config gate, so most of the guards below are defensive: a node that slipped
+    # past them stays unbound and the shadow coordinator never runs it. The resolver below
+    # resolves defaults; it never declines.
+    prepared: PreparedCategorical | None = None
     pool_binding: PoolBinding | None = None
-    categorical_deterministic = False
-    categorical_categories: tuple[str, ...] | None = None
-    categorical_cdf: tuple[int, ...] | None = None
-    bucket_perturb_bucket: str | None = None
-    bucket_perturb_date_format: str | None = None
-    group_key_group_by: str | None = None
-    group_key_length: int | None = None
-    group_key_prefix: str | None = None
-    date_shift_date_format: str | None = None
-    date_shift_min_days: int | None = None
-    date_shift_max_days: int | None = None
     if strategy == "hash":
-        if caps.key_source is None or plan_slice.namespace is None:
+        if caps.key_source is None or namespace is None:
             # hash_requires_namespace is enforced upstream of the native
             # route too (native_keyed_hash's own guard); a namespace-less
             # hash column never reaches here as a "native"-admitted node.
             return None
-        key_binding = KeyBinding(key_source=caps.key_source, namespace=plan_slice.namespace)
     elif strategy == "faker":
-        # JC-5 (`requirements.fallback_policy == "native"`, checked above)
-        # already guarantees deterministic + reuse + a namespace + a
-        # resolved pool_size; captured into locals so mypy narrows them
-        # instead of re-reading `plan_slice.*` after the predicate call
-        # below, which it cannot prove leaves them unchanged.
-        namespace = plan_slice.namespace
+        # JC-5 already guarantees deterministic + reuse + a namespace + a resolved pool_size;
+        # captured into locals so mypy narrows them instead of re-reading `plan_slice.*`
+        # after the predicate call below, which it cannot prove leaves them unchanged.
         pool_size = plan_slice.pool_size
         provider = plan_slice.provider
         if caps.key_source is None or namespace is None or pool_size is None:
@@ -236,102 +225,69 @@ def execution_binding_for_slice_node(
         if not _faker_pool_bindable(
             plan_slice=plan_slice, table=table, column=column, inputs=inputs
         ):
-            # Any miss in the shared slice-domain predicate (§3.2) leaves the
-            # node unbound; the shadow coordinator simply never runs it.
+            # Any miss in the shared slice-domain predicate (§3.2) leaves the node unbound.
             return None
-        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
         pool_binding = PoolBinding(provider=provider, plan_pool_size=pool_size)
     elif strategy == "categorical":
-        # `requirements.fallback_policy == "native"` (checked above) already
-        # proved `categorical_config_rejection` passed: deterministic, a
-        # namespace, a non-empty STRING category list, and a buildable weight
-        # CDF. Capture the resolved categories + CDF onto the binding so the
-        # operator never re-reads/re-validates config per batch.
-        namespace = plan_slice.namespace
+        # Deterministic, namespaced, string categories and a buildable CDF were proved by
+        # `categorical_config_rejection`, which calls this same `prepare_categorical`.
         if caps.key_source is None or namespace is None:
             return None  # pragma: no cover - config gate guarantees both
-        categories_raw = cfg.get("categories")
-        if not isinstance(categories_raw, (list, tuple)) or not all(
-            isinstance(c, str) for c in categories_raw
-        ):
-            return None  # pragma: no cover - config gate guarantees string categories
-        categorical_categories = tuple(categories_raw)
-        weights_raw = cfg.get("weights")
-        if weights_raw is not None:
-            try:
-                categorical_cdf = tuple(_build_cdf([float(w) for w in weights_raw]))
-            except StrategyError:
-                return None  # pragma: no cover - config gate already proved buildable
-        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
-        categorical_deterministic = True
-    elif strategy == "bucket_perturb":
-        # `requirements.fallback_policy == "native"` (checked above) already
-        # proved `bucket_perturb_config_rejection` passed: a namespace, a valid
-        # bucket, and an explicit string date_format. Capture both onto the
-        # binding so the operator never re-reads/re-resolves config per batch,
-        # and bind the source key (bucket_perturb is source-keyed like hash).
-        namespace = plan_slice.namespace
+        prepared, _reason = prepare_categorical(
+            column, deterministic=True, namespace=namespace, provider_config=cfg
+        )
+        if prepared is None:
+            return None  # pragma: no cover - config gate already proved it admissible
+    elif strategy in ("bucket_perturb", "date_shift"):
         if caps.key_source is None or namespace is None:
             return None  # pragma: no cover - config gate guarantees both
-        bucket_perturb_bucket = str(cfg.get("bucket", "month"))
         date_format = cfg.get("date_format")
         if not isinstance(date_format, str) or not date_format:
             return None  # pragma: no cover - config gate guarantees an explicit format
-        bucket_perturb_date_format = date_format
-        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
     elif strategy == "group_key":
-        # group_key keys on a SIBLING column, not the target. Its namespace is the
-        # SYNTHESIZED f"group_key/{target}" (the oracle ignores the plan namespace,
-        # `_group_key.py`), and its `input_schema` is built from the GROUP_BY
-        # column's resident type, not the target's -- the admission gate validates
-        # the sibling against that type. `group_key_config_rejection` (checked via
-        # `requirements.fallback_policy == "native"` above) already proved group_by
-        # is present and `length` is a valid even int in range.
+        # group_key keys on a SIBLING column, not the target; `group_key_config_rejection`
+        # already proved group_by is present and `length` is a valid even int in range.
         group_by = cfg.get("group_by")
         if not isinstance(group_by, str) or not group_by:
             return None  # pragma: no cover - config gate guarantees a group_by
         if caps.key_source is None:
             return None  # pragma: no cover - group_key is mask-keyed
-        length_cfg = cfg.get("length", 16)
-        if not isinstance(length_cfg, int) or isinstance(length_cfg, bool):
+
+    params = resolve_operator_params(
+        strategy,
+        target=column,
+        provider_config=cfg,
+        namespace=namespace,
+        prepared_categorical=prepared,
+    )
+    resolved_config: dict[str, Any] = dict(cfg)
+    input_schema_column = column
+    if isinstance(params, TruncateParams):
+        resolved_config["keep"] = params.keep
+    elif isinstance(params, GroupKeyParams):
+        if not isinstance(params.length, int) or isinstance(params.length, bool):
             return None  # pragma: no cover - config gate guarantees an int length
-        group_key_group_by = group_by
-        group_key_length = length_cfg
-        group_key_prefix = str(cfg.get("prefix", ""))
-        key_binding = KeyBinding(key_source=caps.key_source, namespace=f"group_key/{column}")
-        # Rebind input_schema to the SIBLING column's resident type (not the
-        # target's): the coordinator feeds `batch.column(group_by)` and the
-        # admission gate checks that sibling's type, so the binding must carry
-        # it. Resident-Arrow-authoritative (Track A Option 2), matching the
-        # target-column binding above.
-        gb_type = (
-            resolve_input_arrow_type(
-                table, group_by, inputs.profile, resident_sources=inputs.caller_sources
-            )
-            or pa.string()
-        )
-        input_schema = pa.schema([pa.field(group_by, gb_type)])
-    elif strategy == "date_shift":
-        # `requirements.fallback_policy == "native"` (checked above) already
-        # proved `date_shift_config_rejection` passed: a namespace, no group_by,
-        # an explicit tz-free format, and each day bound either absent (the
-        # oracle default applies) or a non-bool int; an explicit null is
-        # rejected there as `date_shift_<key>_not_int`. Resolve the
-        # oracle's defaults here once so the operator never re-reads config.
-        namespace = plan_slice.namespace
-        if caps.key_source is None or namespace is None:
-            return None  # pragma: no cover - config gate guarantees both
-        date_format = cfg.get("date_format")
-        if not isinstance(date_format, str) or not date_format:
-            return None  # pragma: no cover - config gate guarantees an explicit format
-        min_cfg = cfg.get("min_days", DEFAULT_MIN_DAYS)
-        max_cfg = cfg.get("max_days", DEFAULT_MAX_DAYS)
-        if not isinstance(min_cfg, int) or not isinstance(max_cfg, int):
+        input_schema_column = params.group_by
+    elif isinstance(params, DateShiftParams):
+        # An explicit null bound is rejected at admission (`date_shift_<key>_not_int`).
+        if not isinstance(params.min_days, int) or not isinstance(params.max_days, int):
             return None  # pragma: no cover - config gate guarantees int bounds
-        date_shift_date_format = date_format
-        date_shift_min_days = min_cfg
-        date_shift_max_days = max_cfg
-        key_binding = KeyBinding(key_source=caps.key_source, namespace=namespace)
+    key_binding = _key_binding(caps.key_source, params)
+
+    # Track A Option 2: resident-Arrow-authoritative typing. `inputs.caller_sources` is the
+    # same resident table BOTH the unified-slice and pandas-oracle routes actually mask, so
+    # binding this node's input type from it (rather than the profiler's separate
+    # descriptor-backed re-read) is what lets a loosely-typed source (csv, fixed_width) admit
+    # and stay byte-parity-safe. group_key's input is its SIBLING column (the coordinator
+    # feeds `batch.column(group_by)` and admission checks that sibling's type), so the
+    # binding carries the sibling's resident type, not the target's.
+    input_type = (
+        resolve_input_arrow_type(
+            table, input_schema_column, inputs.profile, resident_sources=inputs.caller_sources
+        )
+        or pa.string()
+    )
+    input_schema = pa.schema([pa.field(input_schema_column, input_type)])
 
     return ExecutionBinding(
         operator_id=OPERATOR_ID_BY_STRATEGY[strategy],
@@ -346,15 +302,5 @@ def execution_binding_for_slice_node(
         required_prepasses=requirements.required_prepasses,
         batch_estimate=_batch_estimate(table, inputs),
         pool_binding=pool_binding,
-        categorical_deterministic=categorical_deterministic,
-        categorical_categories=categorical_categories,
-        categorical_cdf=categorical_cdf,
-        bucket_perturb_bucket=bucket_perturb_bucket,
-        bucket_perturb_date_format=bucket_perturb_date_format,
-        group_key_group_by=group_key_group_by,
-        group_key_length=group_key_length,
-        group_key_prefix=group_key_prefix,
-        date_shift_date_format=date_shift_date_format,
-        date_shift_min_days=date_shift_min_days,
-        date_shift_max_days=date_shift_max_days,
+        params=params,
     )

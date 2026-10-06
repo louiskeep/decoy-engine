@@ -55,7 +55,7 @@ def _group_key_sibling_admitted(
         group_key_sibling_type_admitted,
     )
 
-    group_by = binding.group_key_group_by
+    group_by = binding.group_key_sibling
     if not isinstance(group_by, str) or not group_by:
         return False
     if group_by not in source.schema.names:

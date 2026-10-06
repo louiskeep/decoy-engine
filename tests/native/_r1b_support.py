@@ -218,9 +218,7 @@ def chunked_route_kwargs(compiled: Compiled) -> dict[str, Any]:
 
         return {
             "params_by_column": resolve_params_by_column(
-                compiled.col_seed_by_name,
-                prepared_categoricals=categoricals,
-                excluded=frozenset(),
+                compiled.col_seed_by_name, categoricals, excluded=frozenset()
             )
         }
     return {"categorical_by_column": categoricals}

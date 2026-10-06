@@ -19,6 +19,7 @@ import pytest
 
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._index_ext import reference_index_derivation
+from decoy_engine.execution.native._operator_params import FakerParams
 from decoy_engine.execution.physical import _shadow_coordinator
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
@@ -64,6 +65,7 @@ def _faker_binding(
         required_prepasses=(),
         batch_estimate=None,
         pool_binding=PoolBinding(provider=provider, plan_pool_size=plan_pool_size),
+        params=FakerParams(namespace),
     )
 
 

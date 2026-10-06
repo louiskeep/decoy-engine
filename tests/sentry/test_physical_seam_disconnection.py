@@ -277,6 +277,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_transforms_table.py",
         "src/decoy_engine/execution/out_of_core/_runner.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
+        # R1b: the resolved per-operator parameters and the shared kernel step both native
+        # routes call; `_chunk_masking.py` and `_chunked_entry.py` above only rewire to them.
+        # Both are leaf modules under `native/` that import nothing from `execution.physical`.
+        "src/decoy_engine/execution/native/_operator_params.py",
+        "src/decoy_engine/execution/native/_operator_step.py",
         # C1b-ii: seeded non-deterministic categorical chunked-admission adapters; imports
         # nothing from `execution.physical` (full-frame physical native stays closed).
         "src/decoy_engine/execution/native/_categorical_positional.py",
