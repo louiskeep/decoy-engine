@@ -39,10 +39,14 @@ def load_disguises(directory: Path | None = None) -> list[Disguise]:
             with path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh)
         except yaml.YAMLError as exc:
+            # PyYAML's message quotes the offending text; log only where it failed.
+            mark = getattr(exc, "problem_mark", None)
+            where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
             _log.error(
-                "load_disguises: YAML parse failed for %s: %s",
+                "load_disguises: YAML parse failed for %s (%s%s)",
                 path.name,
-                exc,
+                type(exc).__name__,
+                where,
             )
             continue
         except OSError as exc:
