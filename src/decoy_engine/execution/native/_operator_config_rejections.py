@@ -16,6 +16,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._categorical_prepared import prepare_categorical
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 
@@ -192,7 +193,10 @@ def date_shift_config_rejection(
 # intersection so admission is honest; float/decimal/dictionary stay excluded
 # (str()/collision + exact-type-map reasons). Extending passthrough's resident
 # set + end-to-end coverage for the wider set is a later slice.
-_NATIVE_GROUP_KEY_SIBLING_TYPES = frozenset({pa.string(), pa.int64(), pa.bool_()})
+# Derived from the operator registry: it is exactly passthrough's resident set, since the
+# sibling must be an unmasked passthrough node. Edit the registry. An unset domain admits no
+# sibling (fail closed).
+_NATIVE_GROUP_KEY_SIBLING_TYPES = OPERATORS["passthrough"].unified_resident_types or frozenset()
 
 
 def group_key_sibling_type_admitted(arrow_type: pa.DataType) -> bool:
