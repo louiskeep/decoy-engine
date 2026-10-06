@@ -103,7 +103,7 @@ GEN_POOL_DRAW_SITES: tuple[DrawSite, ...] = (
         identity="row_index",
         null_draw_behavior="null rows emit null; the null still consumes its row ordinal",
         partitionable=True,
-        config_fingerprint_source="namespace_registry(namespace)+provider+pool build config",
+        config_fingerprint_source="plan.namespace or the table/column default+provider+pool build config",
         provider_version=_V6,
         notes=(
             "Non-deterministic reuse Faker. i is the handler-frame ordinal, not the source value; "

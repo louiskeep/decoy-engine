@@ -25,6 +25,14 @@ namespace no longer share a stream. Columns that share an explicit namespace sti
 same job seed and input give the same output, as before, and the draw still ignores the
 source value. The key is `job_seed`, not `mask_key`.
 
+Speed: the new draw is a keyed hash per row instead of one vectorized random-number call. With
+the compiled companion it costs about 0.9 s per million rows (was 0.27 s). Without the
+companion it runs on the pure-Python reference: about 3 s per million rows (was 0.25 s),
+roughly 12x slower. The Python reference index kernel now derives its per-column HKDF key and
+absorbs the fixed HMAC prefix once per call instead of once per row (byte-identical; it was
+about 10 s per million rows before that change), which also speeds up deterministic Faker,
+categorical and every other caller of the reference index kernel.
+
 The value pool is built exactly as before and the selection namespace never reaches the build,
 so pool contents are unchanged. Non-deterministic `unique`, `match_source_cardinality` and
 `scale_source_cardinality` keep their whole-column draw, deterministic Faker is unchanged, and

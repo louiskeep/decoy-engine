@@ -361,6 +361,7 @@ ALLOWLIST: dict[str, int] = {
     # 2026-10-04 (C1): +4 for the non-deterministic-categorical gate call and its docstring
     # lines; the categorical conditions live in `_chunked_categorical.py`. Dense exception.
     # 2026-10-04 (C1b-ii): +2 for the positional-admission veto call. Dense exception.
+    # 2026-10-05 (C5b-i): +1 for per-mode truthful rejection prose. Dense exception.
     "src/decoy_engine/execution/_chunked.py": 619,
     # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
     # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the

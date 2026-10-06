@@ -28,6 +28,7 @@ from typing import Protocol
 import pyarrow as pa
 
 from decoy_engine.determinism import DeterminismError, derive_index
+from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
@@ -286,14 +287,19 @@ class _ReferenceIndexDerivation:
         # the thread count never changes indices on either side.
         del native_threads
         key = _require_mask_key(mask_key, "index_derivation")
-        out: list[int | None] = []
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            out.append(
-                derive_index(key, namespace, _canonicalize_source(value), pool_size=pool_size)
-            )
+        # The HKDF key depends only on (key, namespace), so derive it once per call
+        # instead of once per row. The first non-null row still goes through the
+        # scalar `derive_index`, which keeps its input validation and error codes
+        # (and an all-null column still validates nothing, as before).
+        pylist = _array_to_pylist(values)
+        sources = [None if _is_missing(v) else _canonicalize_source(v) for v in pylist]
+        present = [src for src in sources if src is not None]
+        if not present:
+            return pa.array([None] * len(sources), type=pa.uint64())
+        first = derive_index(key, namespace, present[0], pool_size=pool_size)
+        digests = DeriveContext.for_column(key, namespace).derive_sources(namespace, present[1:])
+        indices = iter([first, *(int.from_bytes(d[:8], "big") % pool_size for d in digests)])
+        out = [None if src is None else next(indices) for src in sources]
         return pa.array(out, type=pa.uint64())
 
 
