@@ -145,3 +145,56 @@ def test_a_validated_config_with_when_runs_end_to_end_on_the_chunked_native_rout
     assert got == full.outputs["t"].column("s").to_pylist()
     masked = [i for i, v in enumerate(got) if v != f"name-{i}"]
     assert masked == [1, 4, 7, 10]
+
+
+# Pinned on engine main before `when` existed: a config without `when` must keep hashing
+# byte-identically, so adding the field changes no fingerprint for existing jobs.
+_PRE_WHEN_PIPELINE_HASH = "9af1bc73bf23b67df77fe643f60028ac19407f7f18f67ea46ab5f374e9390cd1"
+_PRE_WHEN_CANONICAL_SHA = "79edebace4df538a6e9cc1bf0749a0f713b40d7bb5ac3e3fcdead052f43290c1"
+
+
+def _hash_fixture(**column_extra: object) -> dict:
+    return {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {"t": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}},
+        "targets": {"t": {"type": "file", "format": "csv", "path": "/tmp/y.csv"}},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "a", "strategy": "hash", **column_extra},
+                    {"name": "b", "strategy": "redact"},
+                ],
+            }
+        ],
+    }
+
+
+def _hashes(raw: dict) -> tuple[str, str]:
+    import hashlib
+
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.execution.physical._inputs import _canonical_config_json
+    from decoy_engine.plan._compile import _hash_config
+
+    dumped = PipelineConfig.model_validate(raw).model_dump()
+    canonical = hashlib.sha256(_canonical_config_json(dumped).encode()).hexdigest()
+    return _hash_config(dumped), canonical
+
+
+def test_a_config_without_when_hashes_exactly_as_before_the_field_existed() -> None:
+    assert _hashes(_hash_fixture()) == (_PRE_WHEN_PIPELINE_HASH, _PRE_WHEN_CANONICAL_SHA)
+
+
+def test_an_unset_when_is_omitted_from_the_dump() -> None:
+    from decoy_engine.config import PipelineConfig
+
+    dumped = PipelineConfig.model_validate(_hash_fixture()).model_dump()
+    assert all("when" not in column for column in dumped["tables"][0]["columns"])
+
+
+def test_a_set_when_moves_both_hashes() -> None:
+    pipeline, canonical = _hashes(_hash_fixture(when="b == 'x'"))
+    assert pipeline != _PRE_WHEN_PIPELINE_HASH
+    assert canonical != _PRE_WHEN_CANONICAL_SHA

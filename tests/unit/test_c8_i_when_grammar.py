@@ -306,3 +306,40 @@ def test_some_reserved_names_collide_in_the_oracle_and_some_do_not() -> None:
     # Several reserved names still yield valid masks over a string column (the restriction is
     # a deliberate language rule, not a proof that every name breaks the oracle).
     assert collides != {n for n in RESERVED_NAMES if n.isidentifier()}
+
+
+def test_more_than_the_comparison_cap_is_rejected() -> None:
+
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.expressions._when_parser import parse_when
+
+    too_many = " or ".join(f"c == 's{i}'" for i in range(33))
+    with pytest.raises(ValidationError):
+        parse_when(too_many)
+
+
+def test_nesting_beyond_the_depth_cap_is_rejected() -> None:
+
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.expressions._when_parser import parse_when
+
+    with pytest.raises(ValidationError):
+        parse_when("not " * 50 + "c == 'a'")
+
+
+def test_the_largest_accepted_predicates_evaluate_under_the_oracle() -> None:
+    import pandas as pd
+
+    from decoy_engine.execution._when_gate import _eval_predicate
+    from decoy_engine.expressions._when_parser import parse_when
+
+    frame = pd.DataFrame({"c": ["s1", "x", None], "n": [1, 5, None]})
+    largest = [
+        " or ".join(f"c == 's{i}'" for i in range(32)),
+        " or ".join(f"n == {i}" for i in range(32)),
+        "not " * 49 + "c == 'x'",
+    ]
+    for predicate in largest:
+        parse_when(predicate)
+        mask = _eval_predicate(frame, predicate, "hash")
+        assert len(mask) == 3

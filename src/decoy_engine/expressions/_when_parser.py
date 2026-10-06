@@ -34,6 +34,10 @@ _PARSER = lark.Lark(
 
 _MAX_EXPR_LENGTH = 4096
 _MAX_NESTING_DEPTH = 50
+# pandas eval fails well above these (64 string terms: too many numexpr inputs; 164 numeric
+# terms: recursion; 200 stacked `not`), so the grammar never accepts what the oracle cannot run.
+_MAX_COMPARISONS = 32
+_MAX_TREE_DEPTH = 50
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
 _INTEGER_CHARS = frozenset("-0123456789")
@@ -187,6 +191,7 @@ def parse_when(expr: str) -> WhenExpr:
     try:
         tree = _PARSER.parse(text)
         built: WhenExpr = _Build().transform(tree)
+        _check_size(built)
         return built
     except lark.exceptions.VisitError as exc:
         orig = exc.orig_exc
@@ -201,6 +206,24 @@ def parse_when(expr: str) -> WhenExpr:
         raise _reject("the predicate does not parse", exc) from exc
     except RecursionError as exc:
         raise _reject("the predicate is nested too deeply", exc) from exc
+
+
+def _check_size(ast: WhenExpr) -> None:
+    """Reject a predicate with more comparisons or deeper nesting than pandas eval can run."""
+    comparisons = 0
+    stack: list[tuple[WhenExpr, int]] = [(ast, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_TREE_DEPTH:
+            raise _reject(f"the predicate nests more than {_MAX_TREE_DEPTH} levels")
+        if isinstance(node, (Compare, InList)):
+            comparisons += 1
+            if comparisons > _MAX_COMPARISONS:
+                raise _reject(f"the predicate has more than {_MAX_COMPARISONS} comparisons")
+        elif isinstance(node, Not):
+            stack.append((node.operand, depth + 1))
+        else:
+            stack.extend((operand, depth + 1) for operand in node.operands)
 
 
 def when_column_refs(ast: WhenExpr) -> tuple[str, ...]:

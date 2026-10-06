@@ -30,7 +30,16 @@ from __future__ import annotations
 
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from decoy_engine.config._transforms import TransformOp
@@ -141,6 +150,15 @@ class ColumnConfig(BaseModel):
                 WHEN_OUTSIDE_GRAMMAR_CODE, "{reason}", {"reason": exc.raw_message}
             ) from exc
         return stripped
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_when(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # An unset `when` stays out of dumps, so configs without it serialize and hash exactly
+        # as before the field existed, and an older engine can re-validate them.
+        data: dict[str, Any] = handler(self)
+        if data.get("when") is None:
+            data.pop("when", None)
+        return data
 
 
 class GenerateColumnConfig(BaseModel):
