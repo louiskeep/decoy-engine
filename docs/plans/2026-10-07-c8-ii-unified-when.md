@@ -54,15 +54,21 @@ Out of scope:
   - `when_native_rejection(...)` returns None (the same function the chunked route uses, called with the same config, registry and source schema);
   - every referenced column is in `source.column_names`;
   - the target's resident type is `pa.string()`.
+- A table is also declined when two of its column names map to the same pandas eval resolver key (pandas' `clean_column_name`, e.g. `a b` and `BACKTICK_QUOTED_STRING_a_b`). One column can then shadow another inside `eval`, and rule 4 only tracks physical names (Codex round 1 LOW).
 - Any failure declines the whole table to the oracle, as today.
 - The decline reason is recorded with the C8-i code where one exists. No new codes, unless the builder finds a case without one; that is listed in the record.
 
 **3b. The mask: once per table, from the oracle's frame.**
-- Before the coordinator runs, the unified driver computes, for each admitted `when` node, `mask = _eval_predicate(candidate.source_frame[refs], expr, strategy, column=column)`, converted to a non-null `pa.bool_()` array with nulls unselected.
+- Before the coordinator runs, the unified driver computes, for each admitted `when` node, `mask = _eval_predicate(candidate.source_frame, expr, strategy, column=column)`. It evaluates on the FULL frame, not a projection, so pandas resolves names exactly as the oracle does.
+- Each mask is kept in two forms built from the same values, with nulls unselected:
+  - a non-null NumPy `bool` array for the pandas selection and write-back (3d);
+  - a `pa.bool_()` array for kernel slicing and `filter`.
+
+  Both must have the frame's length. A length mismatch raises `UnifiedSliceInvariantError` (Codex round 1 MEDIUM: an Arrow array cannot index `frame.loc`).
 - This is the oracle's function on the oracle's own frame. Rule 4 of the verdict guarantees the referenced columns hold their source values at that node's turn, so the mask equals the oracle's by construction for any reference type, numeric included.
 - No per-batch conversion is needed. That is why C8-i's numeric chunk-stability limit does not apply here.
 - The masks travel to the coordinator as `when_masks: Mapping[node_id, pa.Array]`.
-- A predicate error raises the oracle's coded error (same code, same message). Error parity is test 6.
+- **Mask failure declines.** If computing any mask raises, the driver declines the table before ANY node runs, and the oracle executes it from the start. The oracle then decides which error surfaces first, which matters when another node would fail earlier in work order, for example an admitted Faker whose pool build fails ahead of a later `when` column (Codex round 1 HIGH). The decline is logged by code only, with no predicate text. Test 6.
 
 **3c. Execution: fail closed on a missing mask.**
 - `ExecutionBinding` gains `when_expression: str | None`, set at bind time from the plan slice for the four admitted strategies.
@@ -74,13 +80,13 @@ Out of scope:
 **3d. Reconstruction: replay the oracle's write-back.** For a `when` node, `reconstruct_source_shaped_output` does exactly what the gate does, with the kernel's values:
 
 ```
-if mask.any():
-    sub = frame.loc[mask].copy()
+if mask_np.any():
+    sub = frame.loc[mask_np].copy()
     sub[column] = masked_selected            # list of the kernel outputs at the selected rows
-    frame.loc[mask, column] = sub[column]
+    frame.loc[mask_np, column] = sub[column]
 ```
 
-- `masked_selected` is `masked_col.filter(mask).to_pylist()`. For the value-keyed operators over strings it equals the handler's output on the subset, row by row (C8-i design note).
+- `masked_selected` is `masked_col.filter(mask_arrow).to_pylist()`. For the value-keyed operators over strings it equals the handler's output on the subset, row by row (C8-i design note).
 - With no selected row, the frame column is left untouched, exactly as the oracle returns `df` unchanged.
 - Non-`when` nodes keep today's overlay.
 - Nodes are replayed in work order, so a later node sees the same frame the oracle would.
@@ -100,24 +106,35 @@ if mask.any():
 
 ## 4. Acceptance tests (written first; no later contributor weakens them)
 
-Every differential test compares the lane-on run against an explicit lane-off run with the unified lane poisoned, on:
+Every differential test compares the lane-on run against an explicit lane-off run, on:
 - output tables byte-equal, including schema and `b"pandas"` metadata;
 - quality warnings;
 - row errors;
-- quality metrics minus timing keys.
+- every non-timing quality metric except the `unified_slice_activation` leaf, which exists only on the lane-on side. No other exclusion is allowed. The leaf is checked separately: node coverage, calls, actual backend, and idle evidence for a zero-selected hash node (Codex round 1 MEDIUM).
+
+Cases are split in two, so a case cannot pass by falling back silently (Codex round 1 MEDIUM):
+- **Admitted cases** assert activation, with the oracle fallback poisoned so any reroute fails the test.
+- **Decline cases** assert the decline and the lane-off output.
 
 1. **Differential matrix:**
    - the four strategies;
    - selectivity 0, partial and all;
    - target nulls selected (`c != 'x'` selects nulls) and unselected;
-   - references: the target itself, a string sibling, an int64 sibling with nulls, a float sibling, a bool sibling, and `in` / `not in` lists;
+   - references, admitted: the target itself; a string sibling; `in` and `not in` lists; a nullable integer sibling carried as `Int64` through `b"pandas"` metadata; a nullable integer reached through a group_key-protected passthrough sibling;
+   - references, declined: a float passthrough sibling (outside passthrough's unified resident types) and a plain Arrow int64 sibling with nulls (fails the round-trip check). The test asserts the decline. Widening the resident domain is out of scope;
    - a source with and without a `b"pandas"` StringDtype sidecar;
    - several batches (small `batch_size_rows`, ragged) and an empty table.
 2. **Several `when` columns in one table**, including two that reference the same sibling, and a `when` column after a non-`when` column that it does not reference.
 3. **Rule 4 counterexample:** an earlier node masks the referenced column. The table declines to the oracle and the output still equals lane-off.
-4. **Reference not in the source:** declines. Predicate outside the closed grammar (raw dict): declines.
+4. **Declines:**
+   - a reference not in the source;
+   - a predicate outside the closed grammar (raw dict);
+   - two column names that collide under pandas' resolver normalization, including a variant where an earlier node writes the aliasing column.
 5. **Fail-closed:** a binding with `when_expression` and no mask raises `ShadowDifference`. The shadow and mixed harnesses still decline `when`.
-6. **Error parity:** a predicate that raises `when_expression_error` (for example a string literal compared with an int column, if numexpr rejects it; the builder pins a real case). Lane-on raises the same code and message as lane-off.
+6. **Error parity and order:**
+   - a predicate that raises (the builder pins a real case, for example `z < 1` on a string column) declines before any node runs. The job raises the oracle's error with the same code and message;
+   - competing failures: an earlier node that fails (for example an admitted Faker whose pool build fails) plus a later failing predicate. The job raises the oracle's FIRST error;
+   - the same pair with config order and work order reversed.
 7. **Evidence:**
    - a zero-selected hash node completes with idle evidence;
    - a selected hash node without kernel evidence still raises;
@@ -138,7 +155,10 @@ Every differential test compares the lane-on run against an explicit lane-off ru
 | Predicate reads a column an earlier node masked | Verdict rule 4; test 3 |
 | A `when` node running unmasked | 3c fail-closed guard; test 5 |
 | Zero-selected node tripping the evidence check | 3e scoped exemption; test 7 |
-| Predicate errors differ | Same function, same frame; test 6 |
+| Predicate errors differ, or surface in a different order | A mask failure declines before any node runs; test 6 |
+| Arrow mask used as a pandas indexer | 3b keeps a NumPy mask for pandas; 3d uses it |
+| A column name shadows another inside `eval` | Full-frame evaluation plus the collision decline; test 4 |
+| A test passes through silent fallback | Admitted cases poison the fallback; test 1 split |
 | Shadow or mixed callers picking up `when` | No masks are supplied, so the guard declines; test 5 |
 | Predicate text in logs | 3f; sentry |
 
@@ -149,3 +169,13 @@ Rollback: revert the merge commit.
 - Reuse, do not copy: `when_native_rejection`, `_eval_predicate` and `run_kernel_step_masked`.
 - Keep `_shadow_coordinator.py` under 600 lines. If the mask handoff pushes it over, move the per-batch mask slicing into a helper module rather than adding a census entry.
 - One test process at a time (`~/bin/pytest-one`). Run tests/sentry on 3.10 and 3.11.
+
+## 7. Review log
+
+- **Codex plan gate, round 1: REVISE** (1 HIGH, 3 MEDIUM, 1 LOW). All folded into rev 2:
+  - **HIGH (error order):** a mask failure now declines before any node runs, so the oracle decides the first error. Test 6 adds competing failures in both orders.
+  - **MEDIUM (mask representation):** a NumPy mask is kept for pandas and an Arrow mask for the kernel, with a length check.
+  - **MEDIUM (metric contract):** the activation leaf is the only exclusion, and it is checked separately.
+  - **MEDIUM (silent fallback in the matrix):** admitted and decline cases are split, admitted cases poison the fallback, and the numeric references are restated against what admission really accepts.
+  - **LOW (resolver aliasing):** full-frame evaluation plus a collision decline.
+  - **Fact qualifications noted:** redact's `try` also wraps the kernel and the assignment, and reconstruction uses `to_pandas()` for empty tables (`_unified_slice_evidence.py`). 3d leaves the empty-table branch as it is: an empty table selects no rows.
