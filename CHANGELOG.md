@@ -9,6 +9,24 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (engine exception roots all inherit `DecoyError`, 2026-10-06)
+
+`DecoyError` is documented as the base class of every engine exception, but 25 exception
+roots inherited `Exception` (or `ValueError`/`RuntimeError`) directly, so `except DecoyError`
+missed most runtime failures. Every family root now inherits `DecoyError`; subclasses follow.
+`PipelineConfigError`, `ModelPackLoadError` and `Ff1Error` keep `ValueError` as a second parent,
+and `DrawSiteProtocolError` keeps `RuntimeError`, so existing `except ValueError` and
+`except RuntimeError` handlers still work. `PoolCapacityError` is reparented on its own and is
+still not a `GenerationError`. Constructors, attributes and messages are unchanged. The shadow
+lane carriers `ShadowDifference` and `PoolBuildFailed` and the private `_InfeasibleAtEpsQError`
+stay outside `DecoyError` on purpose. A new sentry fails when an engine-defined exception class
+lands outside `DecoyError` without an allowlist entry.
+
+Also in this slice (no behavior change): `date_shift` derives its per-row offsets in one batched
+`DeriveContext` call and assembles the output column without a per-row `iloc` loop, byte- and
+dtype-identical to the old path; every CI job now has `timeout-minutes`; the CI ruff pin
+matches the `[lint]` extra (0.15.22); stale comments and docs naming removed modules were fixed.
+
 ### Changed (non-deterministic reuse Faker is position-keyed on the job seed, 2026-10-05)
 
 OUTPUT BREAK, pre-GA, owner-approved. Every `faker` column with `deterministic: false` and
