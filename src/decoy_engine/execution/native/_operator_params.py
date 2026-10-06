@@ -1,0 +1,217 @@
+"""Resolved per-operator parameters, shared by both native routes.
+
+Each native operator needs the same few facts before it can call its kernel: config defaults,
+coercions and a namespace. One frozen dataclass per operator holds them resolved, and
+`resolve_operator_params` is the only place a default is written, so the unified full-frame
+route (which resolves when it binds a node) and the chunked route (which resolves once per
+table) cannot drift apart.
+
+The resolver resolves; it never validates or declines. Declining is admission's job and the
+chunked entry's tolerant categorical preparation, so moving a default here cannot change which
+route a table takes. It reads no key material: a keyed operator's secret stays in the run
+context and only its namespace lands here.
+
+A leaf module: it imports `_categorical_prepared`, the date_shift defaults and the operator
+registry, never the kernels or anything under `execution.physical`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._operator_registry import OPERATORS
+from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
+from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
+
+__all__ = [
+    "BucketPerturbParams",
+    "CategoricalParams",
+    "DateShiftParams",
+    "FakerParams",
+    "GroupKeyParams",
+    "HashParams",
+    "OperatorParams",
+    "PassthroughParams",
+    "RedactParams",
+    "TruncateParams",
+    "resolve_operator_params",
+    "resolve_params_by_column",
+]
+
+
+@dataclass(frozen=True)
+class PassthroughParams:
+    pass
+
+
+@dataclass(frozen=True)
+class RedactParams:
+    redact_with: Any
+
+
+@dataclass(frozen=True)
+class TruncateParams:
+    length: int
+    keep: str
+    mask_char: Any
+
+
+@dataclass(frozen=True)
+class HashParams:
+    namespace: str | None
+    truncate: Any
+
+
+@dataclass(frozen=True)
+class FakerParams:
+    namespace: str | None
+
+
+@dataclass(frozen=True)
+class CategoricalParams:
+    prepared: PreparedCategorical
+    namespace: str | None
+
+
+@dataclass(frozen=True)
+class BucketPerturbParams:
+    bucket: str
+    date_format: str
+    namespace: str | None
+
+
+@dataclass(frozen=True)
+class GroupKeyParams:
+    group_by: str
+    length: int
+    prefix: str
+    # The oracle ignores the plan namespace and keys on the TARGET column's own name.
+    namespace: str
+
+
+@dataclass(frozen=True)
+class DateShiftParams:
+    date_format: str
+    min_days: int
+    max_days: int
+    namespace: str | None
+
+
+OperatorParams = (
+    PassthroughParams
+    | RedactParams
+    | TruncateParams
+    | HashParams
+    | FakerParams
+    | CategoricalParams
+    | BucketPerturbParams
+    | GroupKeyParams
+    | DateShiftParams
+)
+
+
+def _resolve_truncate_keep(cfg: Mapping[str, Any]) -> str:
+    """Resolve the legacy `from_end` key to `keep` the way `TruncateHandler.run`
+    does: an explicit `keep` wins; otherwise `from_end` maps tail/head.
+
+    This is only the from_end->keep RESOLUTION, not the config VALIDATION: an
+    invalid `keep` is rejected upstream at admission (Task 2.6's
+    `truncate_config_rejection`, which reroutes the table before it reaches here)
+    and again by `native_truncate` itself, so a bad value never reaches this
+    admitted-only path.
+    """
+    keep = cfg.get("keep")
+    if keep is not None:
+        return keep
+    return "tail" if bool(cfg.get("from_end", False)) else "head"
+
+
+def resolve_operator_params(
+    strategy: str,
+    *,
+    target: str,
+    provider_config: Mapping[str, Any],
+    namespace: str | None,
+    prepared_categorical: PreparedCategorical | None = None,
+) -> OperatorParams:
+    """The resolved parameters of one admitted column.
+
+    `target` is the column the operator writes (group_key's namespace is derived from it).
+    `prepared_categorical` is the artifact the caller already holds for a categorical column:
+    unified binding takes it from `prepare_categorical`, the chunked route from
+    `_prepared_categoricals`. Its absence is a wiring bug, never an input condition.
+    """
+    cfg = provider_config
+    if strategy == "passthrough":
+        return PassthroughParams()
+    if strategy == "redact":
+        return RedactParams(cfg.get("redact_with", "REDACTED"))
+    if strategy == "truncate":
+        # Admission proved `length` a positive int; `native_truncate` re-validates it anyway.
+        length = cfg.get("length")
+        return TruncateParams(
+            length if isinstance(length, int) else 0,
+            _resolve_truncate_keep(cfg),
+            cfg.get("mask_char"),
+        )
+    if strategy == "hash":
+        return HashParams(namespace, cfg.get("truncate"))
+    if strategy == "faker":
+        return FakerParams(namespace)
+    if strategy == "categorical":
+        if prepared_categorical is None:  # pragma: no cover - callers hold it by admission
+            raise AssertionError(
+                f"categorical column {target!r} reached the parameter resolver with no "
+                "prepared categories; the caller must pass the prepare_categorical artifact."
+            )
+        return CategoricalParams(prepared_categorical, namespace)
+    if strategy == "bucket_perturb":
+        return BucketPerturbParams(str(cfg.get("bucket", "month")), cfg["date_format"], namespace)
+    if strategy == "group_key":
+        return GroupKeyParams(
+            cfg["group_by"],
+            cfg.get("length", 16),
+            # The oracle and the full-frame binding both str() the prefix: None -> "None".
+            str(cfg.get("prefix", "")),
+            f"group_key/{target}",
+        )
+    if strategy == "date_shift":
+        return DateShiftParams(
+            cfg["date_format"],
+            cfg.get("min_days", DEFAULT_MIN_DAYS),
+            cfg.get("max_days", DEFAULT_MAX_DAYS),
+            namespace,
+        )
+    raise AssertionError(f"no native operator parameters for strategy {strategy!r}")
+
+
+def resolve_params_by_column(
+    col_seed_by_name: Mapping[str, Any],
+    *,
+    prepared_categoricals: Mapping[str, PreparedCategorical],
+    excluded: frozenset[str],
+) -> dict[str, OperatorParams]:
+    """Parameters for every configured column of one table, resolved once for the whole run.
+
+    A column is left out when it is `excluded` (unconfigured passthrough, stored index), when
+    its strategy is not a native operator, or when it is a categorical the chunked entry did
+    not prepare. The route then fails closed on the missing entry, as it did when it looked
+    these up per chunk.
+    """
+    params: dict[str, OperatorParams] = {}
+    for name, seed in col_seed_by_name.items():
+        if name in excluded or seed.strategy not in OPERATORS:
+            continue
+        if seed.strategy == "categorical" and name not in prepared_categoricals:
+            continue
+        params[name] = resolve_operator_params(
+            seed.strategy,
+            target=name,
+            provider_config=provider_config_to_dict(seed.provider_config),
+            namespace=seed.namespace,
+            prepared_categorical=prepared_categoricals.get(name),
+        )
+    return params

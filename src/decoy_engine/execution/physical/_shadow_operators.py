@@ -22,7 +22,6 @@ from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
-from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON, native_date_shift
 from decoy_engine.execution.native._group_key_kernel import native_group_key
@@ -32,6 +31,7 @@ from decoy_engine.execution.native._kernels_scalar import (
     native_redact,
     native_truncate,
 )
+from decoy_engine.execution.native._operator_step import sample_faker_array
 from decoy_engine.execution.physical._plan import ExecutionBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (

@@ -26,8 +26,8 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import capabilities_for
-from decoy_engine.execution.native._chunk_masking import _resolve_truncate_keep
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
+from decoy_engine.execution.native._operator_params import _resolve_truncate_keep
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding, PoolBinding

@@ -268,36 +268,6 @@ def real_kernels() -> tuple[Any, Any]:
     return load_compiled_index_kernel(), load_compiled_raw_hex_kernel()
 
 
-def _seeded_chunk_call(
-    strategy: str,
-    cfg: dict[str, Any],
-    namespace: str | None,
-    source: pa.Array,
-    index_kernel: Any,
-) -> StepView:
-    """Hash and categorical have no per-operator helper: they run inside the chunk loop."""
-    from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
-
-    seed = SimpleNamespace(
-        strategy=strategy, provider_config=tuple(cfg.items()), namespace=namespace
-    )
-    evidence = chunk_evidence()
-    prepared = (
-        PreparedCategorical(tuple(cfg["categories"]), None) if strategy == "categorical" else None
-    )
-    _chunk_masking._mask_chunk_native(
-        pa.table({TARGET: source}),
-        col_seed_by_name={TARGET: seed},
-        mask_key=MASK_KEY,
-        evidence=evidence,
-        pool_by_column={},
-        native_threads=1,
-        index_kernel=index_kernel,
-        categorical_by_column={TARGET: prepared} if prepared is not None else {},
-    )
-    return StepView(None, evidence.compiled_kernel_executed)
-
-
 def call_step(
     strategy: str,
     *,
@@ -308,36 +278,28 @@ def call_step(
     index_kernel: Any = INDEX_KERNEL,
     raw_hex_kernel: Any = RAW_HEX_KERNEL,
 ) -> StepView:
-    """One column of one batch through the per-operator kernel call, bypassing both routes."""
-    if strategy == "bucket_perturb":
-        out, ran = _chunk_masking._mask_bucket_perturb(
-            source,
-            cfg=cfg,
-            namespace=namespace,
-            mask_key=MASK_KEY,
-            index_kernel=index_kernel,
-            native_threads=1,
-        )
-        return StepView(out, ran)
-    if strategy == "date_shift":
-        out, ran, positions = _chunk_masking._mask_date_shift(
-            source,
-            cfg=cfg,
-            namespace=namespace,
-            mask_key=MASK_KEY,
-            index_kernel=index_kernel,
-            native_threads=1,
-        )
-        return StepView(out, ran, positions)
-    if strategy == "group_key":
-        assert sibling is not None
-        out, ran = _chunk_masking._mask_group_key(
-            sibling,
-            name=TARGET,
-            cfg=cfg,
-            mask_key=MASK_KEY,
-            raw_hex_kernel=raw_hex_kernel,
-            native_threads=1,
-        )
-        return StepView(out, ran)
-    return _seeded_chunk_call(strategy, cfg, namespace, source, index_kernel)
+    """One column of one batch through the shared kernel step, bypassing both routes."""
+    from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
+    from decoy_engine.execution.native._operator_params import resolve_operator_params
+    from decoy_engine.execution.native._operator_step import run_kernel_step
+
+    prepared = (
+        PreparedCategorical(tuple(cfg["categories"]), None) if strategy == "categorical" else None
+    )
+    params = resolve_operator_params(
+        strategy,
+        target=TARGET,
+        provider_config=cfg,
+        namespace=namespace,
+        prepared_categorical=prepared,
+    )
+    result = run_kernel_step(
+        params,
+        source,
+        mask_key=MASK_KEY,
+        native_threads=1,
+        index_kernel=index_kernel,
+        raw_hex_kernel=raw_hex_kernel,
+        sibling=sibling,
+    )
+    return StepView(result.out, result.ran, result.format_error_positions)

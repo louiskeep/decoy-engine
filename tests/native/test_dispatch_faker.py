@@ -29,7 +29,7 @@ import pytest
 
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution import run_pipeline
-from decoy_engine.execution.native import _chunk_masking, _dispatch
+from decoy_engine.execution.native import _dispatch, _operator_step
 from decoy_engine.execution.native import _index_ext as _index_ext_module
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._dispatch import (
@@ -1388,7 +1388,7 @@ def test_mixed_hash_and_faker_index_absence_downgrades_whole_table_hash_never_ru
     def _fail_hash(*args: object, **kwargs: object) -> None:
         raise AssertionError("native_keyed_hash must never run once the whole table downgrades")
 
-    monkeypatch.setattr(_chunk_masking, "native_keyed_hash", _fail_hash)
+    monkeypatch.setattr(_operator_step, "native_keyed_hash", _fail_hash)
 
     config = _config(
         _faker_column(),

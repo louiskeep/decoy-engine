@@ -14,8 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pyarrow as pa
 
-from decoy_engine.execution.native._chunk_masking import sample_faker_array
 from decoy_engine.execution.native._index_ext import reference_index_derivation
+from decoy_engine.execution.native._operator_step import sample_faker_array
 from decoy_engine.generation.pool import ValuePool
 
 
