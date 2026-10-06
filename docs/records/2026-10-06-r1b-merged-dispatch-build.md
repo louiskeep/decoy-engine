@@ -142,7 +142,7 @@ Python 3.11 (`decoy-native-venv`, companion present), at the head of the branch 
 
 | Directory | Result | Baseline (3.11, before the change) |
 |---|---|---|
-| `tests/sentry` | 2338 passed, 1 skipped | 2330 passed, 1 skipped |
+| `tests/sentry` | 2339 passed, 1 skipped (2338 before this record was added; a docs sentry counts it) | 2330 passed, 1 skipped |
 | `tests/native` | 5120 passed, 1 skipped | 5079 passed, 1 skipped |
 | `tests/physical` | 1443 passed, 1 skipped | 1420 passed, 1 skipped |
 | `tests/unit/execution` | 6375 passed, 4 skipped | 6375 passed, 4 skipped |
