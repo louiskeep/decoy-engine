@@ -19,7 +19,7 @@ Tests were written first and run against the unmodified source.
 
 | Test file | Red before | Green after |
 |---|---|---|
-| `tests/sentry/test_exception_hierarchy.py` (37 tests) | 36 failed, 1 passed (the allowlist-carriers check passed because the carriers were never reparented) | 37 passed |
+| `tests/sentry/test_exception_hierarchy.py` (37 tests) | 35 failed, 2 passed (the allowlist-carriers check, because the carriers were never reparented, and the `NativeChunkSchemaDriftError` two-parent check, which already held) | 37 passed |
 | `tests/sentry/test_ci_config.py` (3 tests) | 3 failed | 3 passed |
 | `tests/unit/execution/test_date_shift_oracle_identity.py` (41 tests) | 2 failed (the call-count spy tests), 39 passed | 41 passed |
 
