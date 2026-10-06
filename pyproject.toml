@@ -78,10 +78,9 @@ dependencies = [
     # Was always required at runtime; was undeclared until benchmark CI
     # caught the gap on a fresh-environment install.
     "pydantic>=2.0",
-    # Promoted from optional `[hybrid]` extras (Bug 1).
-    # Phase 8 flipped `engine: hybrid` to the default, so a pandas-only
-    # install would crash on first pipeline run with ModuleNotFoundError.
-    # Both libs are now required to match the runtime contract.
+    # Promoted from optional `[hybrid]` extras (Bug 1). Polars masking was
+    # later removed; polars stays for the subset path (and duckdb for the
+    # out-of-core join), so both remain required runtime dependencies.
     # Upper bound pinned in S11: Polars ships a major every ~6 months and the
     # expression surface evolves; the execution-substrate path is validated
     # against the 1.x I/O API, so cap below 2.0 until a 2.x validation pass.
