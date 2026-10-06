@@ -1,4 +1,4 @@
-Status: plan (revision 1, author = Opus). Awaiting Codex plan gate.
+Status: plan (revision 2, author = Opus). Codex plan-gate round 1 REVISE (0 BLOCKER, 3 MEDIUM, 2 LOW) folded; awaiting round 2.
 Rules consulted: 00-universal, development-loop, refactoring, architecture, testing, code-review, scope-discipline, api-and-compatibility
 
 # R1: one descriptor per masking operator
@@ -50,7 +50,7 @@ Out of scope:
    - `native/_phase3_eligibility.py:59`: `C1_PROVIDER_ALLOWLIST`
 3. Proved restatements (member lists in the inventory):
    - ALLOWED = values(OPERATOR_ID_BY_STRATEGY) = keys(BACKEND) = the `_shadow_operators` literals
-   - SLICE_STRATEGIES = keys(_ADMITTED_RESIDENT_TYPES) = NATIVE_KERNEL ∪ NATIVE_POOL
+   - SLICE_STRATEGIES = NATIVE_KERNEL ∪ NATIVE_POOL (9 strategies). `_ADMITTED_RESIDENT_TYPES` has only 8 keys: group_key is absent, because its admission checks the sibling and skips the target-type gate (`_unified_slice_admission.py:520-539`). Corrected in rev 2.
    - COMPANION_DEPENDENT = keys(_OPERATOR_REQUIRED_KERNEL) = {backend ≠ arrow_python}
    - `_COMPANION_STRATEGIES` = {backend = rust_companion}
    - `_INDEX_KERNEL_STRATEGIES` = {kernel = index}
@@ -81,7 +81,7 @@ Out of scope:
 | `planned_backend` | one of the 3 native backends | `BACKEND_BY_OPERATOR_ID`, `_COMPANION_STRATEGIES`, `_planned_backend` |
 | `required_kernel` | `None` / `"crypto"` / `"index"` / `"raw_hex"` | `_OPERATOR_REQUIRED_KERNEL`, `_COMPANION_DEPENDENT_OPERATOR_IDS`, `_INDEX_KERNEL_STRATEGIES` |
 | `positive_kernel_evidence` | bool | `_POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS` (true for hash and faker only, unchanged) |
-| `unified_resident_types` | frozenset[pa.DataType] | `_ADMITTED_RESIDENT_TYPES` (unified slice only; the chunked gates keep their own domains) |
+| `unified_resident_types` | frozenset[pa.DataType] or `None` | `_ADMITTED_RESIDENT_TYPES` (unified slice only; the chunked gates keep their own domains). `None` means "no target resident-type gate" and is used for group_key, whose admission checks its sibling instead. A `None` entry is excluded from the derived table, so the 8-key table is reproduced exactly. Do not invent a group_key target domain or reuse its sibling domain. |
 | `full_frame_assembly` | `"tokenizing"` / `"null_on_empty"` / `"type_preserving"` | `_TOKENIZING_STRATEGIES`, `_NULL_ON_EMPTY_STRATEGIES` |
 | `provider_allowlist` | frozenset[str] or None | `C1_PROVIDER_ALLOWLIST` (faker only) |
 
@@ -97,7 +97,15 @@ ALLOWED_OPERATOR_IDS = frozenset(s.operator_id for s in OPERATORS.values())
 _OPERATOR_REQUIRED_KERNEL = {s.operator_id: s.required_kernel for s in OPERATORS.values() if s.required_kernel}
 ```
 
-Each derived view gets a one-line "derived from the operator registry; edit the registry" comment. Consumers stay untouched, which keeps the diff small and the existing tests meaningful. The six `*_OPERATOR_ID` constants become `OPERATORS["hash"].operator_id` and so on. `_shadow_operators.py`'s literals use the registry.
+Each derived view gets a one-line "derived from the operator registry; edit the registry" comment. Concrete container contracts are preserved: `BACKEND_BY_OPERATOR_ID` stays a `MappingProxyType`, frozensets stay frozensets, and `Final` annotations stay. `_ROUTED_DIAGNOSTIC_OBLIGATIONS` filters out operators with empty reducer sets, so it stays the sparse date_shift-only mapping. `_planned_backend` in `_chunked_evidence.py` keeps its node-kind, fallback-policy, veto and unknown-strategy handling (`:52-64`), and only its strategy-to-backend step reads the registry. It is NOT replaced by an unconditional registry lookup. Consumers stay untouched, which keeps the diff small and the existing tests meaningful. The six `*_OPERATOR_ID` constants become `OPERATORS["hash"].operator_id` and so on. `_shadow_operators.py`'s literals use the registry.
+
+**3c-bis. Broader per-strategy contracts that are NOT operator descriptors** (out of scope, deliberately excluded rather than given speculative fields):
+- `_TYPE_PRESERVING` and `_STATE_TABLE_BY_STRATEGY` (`native/_requirements.py:39,42`)
+- the chunk-safety classifications (`_chunked_fk.py:80,109,120`)
+- `TECHNIQUE_CLASS_BY_STRATEGY` (`_technique_class.py:73`)
+- the capabilities and draw-site catalogues
+
+They cover all strategies, not just the nine native slice operators, and have their own authorities.
 
 **3d. Route-specific facts that stay where they are** (inventory "do not unify"):
 - the chunked source-type domains (`_real_type_admission`), which differ from the unified domains for passthrough, redact, truncate, hash and Faker large_string
@@ -114,13 +122,18 @@ Each derived view gets a one-line "derived from the operator registry; edit the 
 - Move `C1_PROVIDER_ALLOWLIST` to `OPERATORS["faker"].provider_allowlist`, and keep a module-level `C1_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist` re-export where the two production importers read it (or update both importers; the builder picks one and records it).
 - Delete `native/_phase3_eligibility.py`'s predicate, `Phase3Eligibility`, `_faker_column_rejection` and `_is_reclassified_faker_kernel_rejection`. Delete the module entirely if nothing remains.
 - Delete `tests/native/test_phase3_eligibility.py`.
-- In the four `test_chunked_*_admission.py` files, remove only the assertions that call `phase3_c1_eligibility`. Each removed assertion compared the predicate to the real chunked admission; the real admission's own assertions in the same tests stay.
+- In the four `test_chunked_*_admission.py` files, remove the phase3 usages. Where a phase3 check is a standalone test function (e.g. `test_chunked_bucket_perturb_admission.py:85-94`), delete that whole function. Where it shares a test with real-dispatch assertions, remove only the phase3 lines. The separate real-dispatch tests (e.g. from `:97`) are preserved untouched.
+- Historical plan and record docs that mention the predicate stay as history; no rewrite.
 - Clean up the comment-only references.
 - `native_route_eligibility` (the platform's import) is untouched.
 
 **3f. One string-source gate (E4).** Replace `categorical_source_type_rejection`, `bucket_perturb_source_type_rejection` and `date_shift_source_type_rejection` with one `string_source_type_rejection(strategy, column, schema)`. It returns exactly `f"{strategy}_source_type_not_string:{column}:{typ}"` for each, matching today's codes byte for byte. Callers and the `if/elif` at `_real_type_admission.py:123-147` use it. The old names may stay as thin aliases only if a test imports them; otherwise remove them.
 
-**3g. Stand-in guard (E7).** Add a test in `tests/native/` asserting that the stand-in config is NOT native-admitted on the chunked route. Its failure message must name the helper to migrate and the procedure. Fix the stale docstrings at `_chunked_categorical_support.py:4`, `_chunked_bucket_perturb_support.py:4` and `_chunked_date_shift_support.py:4`.
+**3g. Stand-in guard (E7).** Add a test in `tests/native/` that calls `_static_route_decision` (`native/_dispatch.py:212-225`, which performs no compiled-extension probe, so a missing companion or unrelated veto cannot make it pass for the wrong reason). It asserts:
+- the stand-in config (numeric-categories categorical) declines with EXACTLY `fallback_policy_not_native:<name>:python_only`;
+- the otherwise identical config with STRING categories is admitted.
+
+Both together pin the intended admission boundary. The failure message names the helper to migrate (`tests/native/_chunked_entry_support.py` `force_oracle`) and the procedure. Fix the stale docstrings at `_chunked_categorical_support.py:4`, `_chunked_bucket_perturb_support.py:4` and `_chunked_date_shift_support.py:4`.
 
 ## 4. Design notes
 
@@ -141,10 +154,14 @@ Each derived view gets a one-line "derived from the operator registry; edit the 
 ## 5. Acceptance tests (written first; red-before recorded)
 
 1. **Snapshot equality.** The behavior-preservation proof.
+   - `_ADMITTED_RESIDENT_TYPES` is pinned with its 8 keys; group_key is absent.
+   - The test also asserts container types: `BACKEND_BY_OPERATOR_ID` is a `MappingProxyType`, and the sets are frozensets.
    - For every derived view, a test asserts it equals the literal value copied from engine main `01c560da` into the test as an explicit literal: `ALLOWED_OPERATOR_IDS`, `BACKEND_BY_OPERATOR_ID`, `_COMPANION_DEPENDENT_OPERATOR_IDS`, `_OPERATOR_REQUIRED_KERNEL`, `_ROUTED_DIAGNOSTIC_OBLIGATIONS`, `_POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS`, `SLICE_STRATEGIES`, `OPERATOR_ID_BY_STRATEGY`, `_ADMITTED_RESIDENT_TYPES`, `NATIVE_KERNEL_STRATEGIES`, `NATIVE_POOL_STRATEGIES`, `_INDEX_KERNEL_STRATEGIES`, `_COMPANION_STRATEGIES`, `_TOKENIZING_STRATEGIES`, `_NULL_ON_EMPTY_STRATEGIES`, `_NATIVE_GROUP_KEY_SIBLING_TYPES`, `C1_PROVIDER_ALLOWLIST`, and the six op-id constants.
    - Written and green on main BEFORE the refactor, so it pins today's values.
 2. **Registry totality.** `OPERATORS` keys equal `SLICE_STRATEGIES`. Operator ids are unique. Every spec's `planned_backend` and `required_kernel` are consistent: `arrow_python` ⇔ `required_kernel is None`, and `rust_pool_select` ⇔ `shape == "pool"`. `operator_spec("nope")` raises `KeyError`.
-3. **Single source sentry.** An AST/grep sentry asserts no module under `src/decoy_engine/execution/` other than `_operator_registry.py` contains a string literal equal to any operator id (e.g. `"native_keyed_hash"`). Strategy names are excluded because they are config vocabulary used everywhere.
+3. **Single source sentry.** An AST sentry asserts no module under `src/decoy_engine/execution/` other than `_operator_registry.py` contains a string literal equal to any operator id (e.g. `"native_keyed_hash"`).
+   - The ONE exemption is a literal that is an element of a module's `__all__` assignment AND names a function defined in that module. Kernel modules legitimately export functions named like operator ids (e.g. `native/_kernels_scalar.py:116`, `_kernels_keyed.py:70`). No whole-file exemptions.
+   - Strategy names are excluded because they are config vocabulary used everywhere.
 4. **Leaf-module sentry.** `_operator_registry.py` imports only the stdlib and `pyarrow`. The existing fresh-import probe passes. `import decoy_engine.execution._unified_slice_admission` in a fresh interpreter does not import `decoy_engine.execution.physical`.
 5. **String gate.** Parametrized over the three strategies × {string, large_string, int64, null}: the reason (or None) equals main's exact output.
 6. **Phase3 deletion.** No reference to `phase3_c1_eligibility` / `Phase3Eligibility` remains in `src/` or `tests/` (grep gate). `native_route_eligibility` still imports and behaves identically. The chunked admission tests that lost their phase3 assertions still pass.
@@ -161,11 +178,18 @@ Mutation targets (each must be killed):
 
 ## 6. Risk, rollback, gates
 
-- **Risk: R1-R2.** A behavior-preserving refactor on the admission path, proven by snapshot equality plus unchanged suites. Rollback is a revert.
+- **Risk: R2** (structural change to the admission path; dev-rules `risk-and-exceptions.md`). It is behavior-preserving, proven by literal snapshot equality pinned before the refactor plus unchanged suites. Rollback is a revert.
 - **Gates:** Codex plan gate → Sonnet build (tests first) → dennis (including the design check) → Codex final → ci-mirror → merge under the standing authority.
 
-## 7. Open questions for the plan gate
+## 7. Plan-gate history
 
-1. Is keeping the old table names as derived views (3c) the right trade, versus updating consumers to call the registry directly? Keeping names gives a smaller diff and lets existing tests keep pinning behavior.
-2. Should the backend vocabulary move to the registry (3a), or into a separate tiny constants module both import?
-3. Is the E2 split to R1b justified by the inventory's route-difference list, or is any part of E2 safe enough to fold in here (for example, the identical passthrough/redact/truncate branches)?
+- Round 1 (Codex, gpt-6-astra): REVISE, 0 BLOCKER / 3 MEDIUM / 2 LOW, all folded in rev 2.
+  - MEDIUM: group_key has no resident-type entry → `unified_resident_types=None`, excluded from the derived table.
+  - MEDIUM: the op-id sentry would flag `__all__` exports → a narrow `__all__`-function exemption.
+  - MEDIUM: the stand-in guard could pass for the wrong reason → `_static_route_decision`, the exact reason, and a positive control.
+  - LOW: broader per-strategy contracts are explicitly excluded; phase3 standalone tests are deleted whole.
+  - LOW: risk is R2.
+- Codex answers:
+  - keep the derived names, preserving container types;
+  - move the backend constants into the leaf registry, preserving `_planned_backend`'s guards;
+  - keep E2 in R1b (truncate's `from_end` resolution, date_shift error coordinates and degenerate assembly differ by route).
