@@ -33,9 +33,11 @@ from decoy_engine.plan._types import ColumnSeed
 # below 1.5x, tighten if above 4x.
 
 
-def _seed(strategy: str, provider_config: dict | None = None) -> ColumnSeed:
+def _seed(
+    strategy: str, provider_config: dict | None = None, *, namespace: str | None = None
+) -> ColumnSeed:
     return ColumnSeed(
-        namespace=None,
+        namespace=namespace,
         strategy=strategy,
         provider=None,
         backend_type="decoy_native",
@@ -188,12 +190,16 @@ def test_categorical_throughput_10k_rows_under_1s():
     weights = [1.0] * 50
     handler = CategoricalStrategyHandler()
 
-    seed = _seed("categorical", {"categories": categories, "weights": weights})
+    # Non-deterministic categorical is position-keyed and needs a namespace.
+    seed = _seed(
+        "categorical", {"categories": categories, "weights": weights}, namespace="perf.category"
+    )
 
     class _Ctx:
         job_seed = b"\x00" * 8
         mask_key = job_seed  # DE-02: keyed strategies read ctx.mask_key
         namespace_registry = None
+        row_offset = 0  # position-keyed: global position of the frame's first row
 
     tracemalloc.start()
     start = time.perf_counter()
