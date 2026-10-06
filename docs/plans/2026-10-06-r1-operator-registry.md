@@ -86,7 +86,7 @@ Out of scope:
 | `provider_allowlist` | frozenset[str] or None | `C1_PROVIDER_ALLOWLIST` (faker only) |
 
 Not fields, and why:
-- `_ROUTED_DIAGNOSTIC_OBLIGATIONS` stays derived from capabilities (`_diagnostic_reducers`), the authority for diagnostics; a second copy in the registry would restate it. The admission module computes it from `capabilities_for` restricted to registry operators.
+- ~~`_ROUTED_DIAGNOSTIC_OBLIGATIONS` stays derived from capabilities~~ Superseded at review: deriving it from the capability reducers made the admission gate vacuous (it compared capabilities to themselves). It is now the policy field `OperatorSpec.routed_diagnostics`, and a test asserts capability diagnostics are a subset of it. See the build record's Remediation section.
 - `_STRING_OUTPUT_STRATEGIES` and the conditional pins stay in `native/_chunked_schema_rule.py`. They are a chunked-route output contract with config conditions, not a per-operator constant (3d).
 - `_NATIVE_GROUP_KEY_SIBLING_TYPES` becomes a derivation from `OPERATORS["passthrough"].unified_resident_types` (its own comment says it is that set), but it stays named where it is.
 
