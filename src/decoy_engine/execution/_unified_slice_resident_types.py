@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
+
 if TYPE_CHECKING:
     from decoy_engine.execution.physical._plan import PhysicalTable
 
@@ -17,27 +19,18 @@ if TYPE_CHECKING:
 # whether it happens to match the compiled `input_schema` type (e.g. a
 # genuinely int64 column bound to redact, which the compiler's own config-
 # only gate never rejects). Widening this later is a separately-proven
-# slice, never a default.
+# slice, never a default. Derived from the operator registry; edit the registry
+# (`unified_resident_types`). group_key has no target-type gate (its admission
+# checks the sibling column), so it has no entry. Reasons behind individual
+# domains: hash also requires null-freedom, enforced separately via the same
+# `reject_null_bearing_int` guard the legacy adapter runs; categorical,
+# bucket_perturb, date_shift and Pooled Faker key on a STRING source (the
+# compiled index kernel's admitted input; Faker's binder also accepts
+# large_string, the slice does not, like every sibling index operator).
 _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
-    "passthrough": frozenset({pa.string(), pa.int64(), pa.bool_()}),
-    "redact": frozenset({pa.string()}),
-    "truncate": frozenset({pa.string()}),
-    # hash also requires null-freedom, enforced separately below via the
-    # same `reject_null_bearing_int` guard the legacy adapter runs.
-    "hash": frozenset({pa.string(), pa.int64()}),
-    # Phase 5 Track B: native categorical selects over string categories keyed
-    # on a STRING source (the compiled index kernel's admitted input); a
-    # non-string source declines to the oracle.
-    "categorical": frozenset({pa.string()}),
-    # S-slate: native bucket_perturb parses/perturbs a STRING date column keyed
-    # on that same STRING source (astype(str) identity keeps canonicalization
-    # byte-parity-safe); a non-string source declines to the oracle.
-    "bucket_perturb": frozenset({pa.string()}),
-    # date_shift parses a STRING date column and keys on that same string.
-    "date_shift": frozenset({pa.string()}),
-    # Pooled Faker selects from a pool keyed on a STRING source. The binder also
-    # accepts large_string; the slice does not, like every sibling index operator.
-    "faker": frozenset({pa.string()}),
+    spec.strategy: spec.unified_resident_types
+    for spec in OPERATORS.values()
+    if spec.unified_resident_types is not None
 }
 
 

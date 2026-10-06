@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Final
 import pyarrow as pa
 
 from decoy_engine.execution import _unified_slice_admission as _admission
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._unified_slice import UnifiedSliceInvariantError
 from decoy_engine.execution.native import _chunked_evidence
 
@@ -39,8 +40,9 @@ __all__ = ["assemble_node_evidence", "reconstruct_source_shaped_output"]
 # admission bug. The value-dependent kernels (bucket_perturb, date_shift, group_key)
 # are deliberately absent: running no compiled call on idle input is legitimate and is
 # reported as `arrow_python` instead of failing.
+# Derived from the operator registry (`positive_kernel_evidence`); edit the registry.
 _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS: Final = frozenset(
-    {_admission.HASH_OPERATOR_ID, _admission.FAKER_OPERATOR_ID}
+    spec.operator_id for spec in OPERATORS.values() if spec.positive_kernel_evidence
 )
 
 
