@@ -58,9 +58,10 @@ offset, same as an ungrouped column).
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from decoy_engine.determinism import derive
+from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
@@ -156,11 +157,15 @@ class DateShiftStrategyHandler:
         unusable = parsed.isna().to_numpy()  # null source OR unparseable date
         source_null = col.isna().to_numpy()
 
-        shifts: list[int] = []
-        for i, value in enumerate(col):
-            if unusable[i]:
-                shifts.append(0)
-                continue
+        # Canonical anchor bytes for usable rows only, in row order, so the
+        # batched derivation sees the same sources the old per-row loop did.
+        # `list(col)` (not `col.iloc[i]`) keeps the iteration scalars the old
+        # loop used, e.g. a Python int rather than numpy.int64 for numeric dtypes.
+        values = list(col)
+        usable_idx = np.flatnonzero(~unusable)
+        sources: list[bytes] = []
+        for i in usable_idx:
+            value = values[i]
             if anchor_col is not None:
                 group_value = anchor_col.iloc[i]
                 if pd.isna(group_value):
@@ -182,8 +187,17 @@ class DateShiftStrategyHandler:
                     anchor = group_value.item() if hasattr(group_value, "item") else group_value
             else:
                 anchor = value
-            digest = derive(ctx.mask_key, plan.namespace, _canonicalize_source(anchor))
-            shifts.append(min_days + (int.from_bytes(digest[:8], "big") % range_size))
+            sources.append(_canonicalize_source(anchor))
+
+        # One keyed context per column: the HKDF key and the HMAC prefix are
+        # constant across rows, so only the per-row finish remains.
+        shifts = [0] * len(values)
+        if sources:
+            digests = DeriveContext.for_column(ctx.mask_key, plan.namespace).derive_sources(
+                plan.namespace, sources
+            )
+            for i, d in zip(usable_idx, digests, strict=True):
+                shifts[i] = min_days + (int.from_bytes(d[:8], "big") % range_size)
 
         shifted = parsed + pd.to_timedelta(shifts, unit="D")
         formatted = shifted.dt.strftime(fmt) if fmt else shifted.astype(str)
@@ -193,16 +207,22 @@ class DateShiftStrategyHandler:
         # (a per-row format error; the original value is still LEFT in the
         # frame per trap T4, the pipeline-level rule guarantees it never
         # reaches the main output).
-        out = [col.iloc[i] if unusable[i] else formatted.iloc[i] for i in range(len(col))]
-        for i in range(len(col)):
-            if unusable[i] and not source_null[i]:
-                ctx.row_errors.append(
-                    RowError(
-                        column=column,
-                        row_index=i,
-                        trigger="format_error",
-                        reason="value is not a parseable date under date_shift",
-                    )
+        #
+        # Assemble as a Python list: pandas infers the column dtype from the
+        # exact scalar objects, so unusable cells must be the very objects
+        # `col.iloc[i]` returns (a boxed or np.where'd source changes the
+        # dtype of all-null float32/float16, None, NaT and NA-only columns).
+        out = formatted.to_numpy(dtype=object).tolist()
+        for i in np.flatnonzero(unusable):
+            out[i] = col.iloc[i]
+        for i in np.flatnonzero(unusable & ~source_null):
+            ctx.row_errors.append(
+                RowError(
+                    column=column,
+                    row_index=int(i),
+                    trigger="format_error",
+                    reason="value is not a parseable date under date_shift",
                 )
+            )
         df[column] = out
         return df, []
