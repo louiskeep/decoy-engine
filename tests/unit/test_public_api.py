@@ -426,7 +426,8 @@ class TestV2BehaviorRegressionPinsS11:
 
     def test_v2_strategies_derive_per_strategy_namespace(self, monkeypatch):
         """Q9 regression pin: each V2 strategy binds the column's namespace
-        into its `derive(job_seed, namespace, source)` call. The V1 carrier
+        into its derivation (hash: per-row `derive`; date_shift: once per column
+        via `DeriveContext.for_column`). The V1 carrier
         was `transforms/{hash, date_shift}.py` both calling
         `derive_key("mask")` with the same literal label, sharing the
         derived subkey across strategies. V2 strategies (`_hash.py:55`,

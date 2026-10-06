@@ -118,3 +118,11 @@ Spy tests: exactly one `DeriveContext.for_column` and one `derive_sources` call 
 ## Plan-author resolution of the stopped test
 
 `tests/unit/test_public_api.py::TestV2BehaviorRegressionPinsS11::test_v2_strategies_derive_per_strategy_namespace` monkeypatched `_date_shift.derive`, which item 4 removes by design (date_shift now derives once per column through `DeriveContext`). The test's intent is that each strategy binds its column's own namespace, never a shared label. Its date_shift spy now records the namespace passed to `DeriveContext.for_column`. The assertions are unchanged (hash `{"A_ns"}`, date_shift `{"B_ns"}`). 17 passed.
+
+## dennis gate (round 1): NO-GO, remediated
+
+- **BLOCKER:** `tests/sentry/test_ci_config.py` imported `tomllib` unconditionally, which would break collection of the whole regression-gate on Python 3.10, the CI interpreter. It now uses the repo's existing `tomllib`/`tomli` fallback.
+- **HIGH:** the seam sentry's permitted list lacked `execution/_errors.py` and `execution/_isolated_commit.py` (base-class-only changes). Both are added with a reason. The earlier Verification section's claim of a single failure was wrong: this sentry was also red locally.
+- **MEDIUM:** the `Ff1Error` docstring claimed no dependency on the engine taxonomy. It is rewritten.
+- **LOW:** the `test_public_api` docstring was updated.
+- **LOW (recorded as tech debt):** `values = list(col)` holds one Python object per row for the derive anchors. It is bounded per chunk and identical in scalar semantics to the old `enumerate(col)`.
