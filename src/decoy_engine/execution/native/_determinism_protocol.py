@@ -191,6 +191,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+categories+weights",
         provider_version=_V6,
         notes="i is the handler-frame ordinal, not the source value; see the inventory doc.",
+        mirror_call_sites=("execution/native/_operator_step.py:335",),
     ),
     DrawSite(
         draw_site_id="mask.fpe",
