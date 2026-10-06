@@ -16,9 +16,9 @@ Engine-specific rules to watch in V2 sprints:
 
 - Snapshot before extraction (V2.0-A snapshot harness mandatory).
 - Validation never mutates; mutation has a name; reports are frozen; land the assertion test first.
-- `internal/` means internal (import-linter enforced from V2.0-C).
+- `internal/` means internal (regex sentry enforced: `tests/sentry/test_public_import_boundary.py`).
 - Library code does not know its callers. CLI and platform helpers live in their own repos.
-- Orchestration modules cap at ~600 LOC (`graph/runner.py` threshold).
+- Modules aim for 600 LOC with a hard max of 700. Over 600 needs a census entry at the exact LOC (`tests/sentry/test_module_size.py`); over-max legacy files may only shrink.
 - Use established methodology (the rule above).
 - Pre-GA = hard delete (V2.1 framing). The switch is `decoy_engine.RELEASE_PHASE` (`release.py`); `is_pre_ga()` is what the CI gates branch on. Flipping it to `"ga"` at launch makes the [compatibility contract](docs/compatibility-contract.md) binding.
 

@@ -63,6 +63,8 @@ from typing import NamedTuple
 
 from packaging.utils import canonicalize_name
 
+from decoy_engine.errors import DecoyError
+
 __all__ = [
     "CERTIFIED_PLATFORM",
     "PlatformTriple",
@@ -79,7 +81,7 @@ __all__ = [
 ]
 
 
-class ProvenanceError(Exception):
+class ProvenanceError(DecoyError):
     """A proof-stack provenance violation the DP fit/generation must not run
     through. Mirrors ``carriers.CarrierError`` / ``dp_budget.DpBudgetError``:
     it carries a machine-readable ``code`` so callers branch on the failure

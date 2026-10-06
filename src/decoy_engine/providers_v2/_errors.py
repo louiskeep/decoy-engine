@@ -27,8 +27,10 @@ Codes used in S4:
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class ProviderError(Exception):
+
+class ProviderError(DecoyError):
     """Provider-routing failure. Peer of PlanCompileError.
 
     Args:

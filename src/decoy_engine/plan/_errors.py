@@ -18,8 +18,10 @@ Callers catch `except PlanCompileError as e:` and inspect `e.code`,
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class PlanCompileError(Exception):
+
+class PlanCompileError(DecoyError):
     """Raised by `compile_plan` on validation failure.
 
     Args:

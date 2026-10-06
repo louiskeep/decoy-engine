@@ -51,9 +51,9 @@ class PipelineValidationError(ConfigError):
         super().__init__(message)
 
 
-class ValidationError(Exception):
+class ValidationError(DecoyError):
     """Lower-level validation failure raised by individual modular
-    validators (``decoy_engine.graph.validators.*``).
+    validators (the per-op ``validate_config`` callbacks).
 
     The public boundary catches this and re-wraps as
     :class:`PipelineValidationError` for the raise-on-first-error
@@ -134,10 +134,9 @@ class FlagPauseSignal(DecoyError):  # noqa: N818 -- control-flow Signal, not a r
 # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
 # materialize parent pool; child samples with replacement.
 #
-# Raised by the pool_resolver closure built in graph/runner.py when a
-# declared FK in `column_relationships` cannot be resolved at runtime.
-# The graph errors translator (graph/errors.py::translate) maps these
-# to the corresponding fk.* stable codes from validation_result.CODES.
+# Raised when a declared FK in `column_relationships` cannot be resolved
+# at runtime. The matching stable fk.* codes live in
+# validation_result.CODES.
 # Strict mode aborts the run; lenient mode drops the offending child
 # rows + writes a manifest warning.
 

@@ -40,6 +40,8 @@ from __future__ import annotations
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from decoy_engine.errors import DecoyError
+
 # ---------------------------------------------------------------------------
 # Deployable-profile constants (NIST SP 800-38G Rev.1 2PD pinned parameters).
 #
@@ -88,13 +90,12 @@ def min_domain_length(radix: int) -> int:
     return length
 
 
-class Ff1Error(ValueError):
+class Ff1Error(DecoyError, ValueError):
     """Invalid input to the FF1 primitive (parameter, not domain policy).
 
-    Deliberately a plain, local exception: this module has no dependency
-    on the engine's error taxonomy (``decoy_engine.errors``); the caller in
-    ``transforms/fpe.py`` translates these into the engine's typed,
-    redacted errors (``FpeUnencryptableError`` etc.) per the Stage 2 wiring.
+    Inherits ``DecoyError`` (and ``ValueError``) so an engine-wide catch sees
+    it. Callers should not catch it raw: ``transforms/fpe.py`` translates it
+    into the engine's typed, redacted errors (``FpeUnencryptableError`` etc.).
     """
 
 

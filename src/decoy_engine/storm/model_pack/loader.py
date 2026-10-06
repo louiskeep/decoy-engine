@@ -29,6 +29,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.storm.model_pack.provenance import (
     SIGNING_KEY_ENV,
     load_signing_key_from_env,
@@ -47,7 +48,7 @@ _REQUIRE_SIG_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _REQUIRE_SIG_FALSY = frozenset({"0", "false", "no", "off", ""})
 
 
-class ModelPackLoadError(ValueError):
+class ModelPackLoadError(DecoyError, ValueError):
     """Raised when a pack fails any validation check."""
 
 

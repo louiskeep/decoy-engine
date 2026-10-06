@@ -11,8 +11,10 @@ routing model (e.g. all 4 HMAC offsets hit the blocklist).
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class IdentifierError(Exception):
+
+class IdentifierError(DecoyError):
     """Runtime failure inside an identifier adapter or domain.
 
     Codes used in S6:

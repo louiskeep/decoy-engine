@@ -10,8 +10,10 @@ exception-handling shapes.
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class PipelineConfigError(ValueError):
+
+class PipelineConfigError(DecoyError, ValueError):
     """Raised when a pipeline config fails strict validation.
 
     Subclass of ValueError so the standard "bad input" catch idiom

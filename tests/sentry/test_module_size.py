@@ -1,8 +1,8 @@
 """Sentry test: module size is ratcheted, with a soft goal and a hard ceiling.
 
 engineering-best-practices section 4.1 treats ~600 LOC as the point where an
-orchestration module should be decomposed (CLAUDE.md names `graph/runner.py` as
-the reference threshold). LOC is a proxy for reviewability, not a truth: a
+orchestration module should be decomposed (CLAUDE.md points at this census as
+the enforced policy). LOC is a proxy for reviewability, not a truth: a
 genuinely-dense 680-LOC module should not be force-split just to satisfy a round
 number, but nothing should be allowed to grow without bound either. So this is a
 two-line policy (2026-09-22 revision):
@@ -17,6 +17,11 @@ ratchet), split by value, not by a second dict:
   - DENSE (GOAL < size <= MAX): a reviewed dense-module exception. It MAY grow,
     up to MAX, by bumping its recorded number in the same PR (the growth lands
     in the diff for the reviewer). It MUST ratchet DOWN when it shrinks.
+    "A split would be artificial" is the named justification for such an entry:
+    the module is one cohesive unit (a registry, a protocol catalogue, a single
+    algorithm's helpers) and cutting it would add seams without removing any
+    coupling. The census line states that reason, or the decomposition target
+    that would replace it.
   - LEGACY (size > MAX): pre-existing debt from before this policy. It may ONLY
     shrink; its recorded number may never be raised. When it drops to <= MAX it
     becomes an ordinary dense entry. No file may CROSS MAX fresh -- decompose.
@@ -56,633 +61,56 @@ MAX = 700
 # must ratchet down on shrink); an entry > MAX is pre-policy LEGACY debt (may only
 # shrink, its number may never be raised). Recorded value must equal current LOC.
 # Each owes a decomposition target (tracked via ADR-0005 / the hardening plan).
+# One-line rationale per entry; the per-file growth history lives in
+# docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
-    # round-3 Fix C SUB-FIX 4 (2026-07-20): crossed the 600 cap (596 -> 608)
-    # applying the same decimal-correct fan-in guard `_memory_estimate.
-    # _per_instance_mib` uses to this resolver's own `max(1, ...)` floor,
-    # which over-committed at >67-way fan-in on a near-floor budget. The
-    # module docstring already flagged this file as "within a handful of
-    # lines of the 600-LOC cap"; decompose the OOC-D disk-preflight helpers
-    # (`check_disk_spill_preflight` / `DiskSpillPreflight` /
-    # `_nearest_existing_ancestor`) into a `_disk_budget.py` sibling,
-    # mirroring the `_spill_estimate.py` split this module's own docstring
-    # already documents as precedent, when the next budget change lands.
+    # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
-    # finding #13 (2026-07-27): crossed the 600 cap (600 -> 623) pricing a
-    # float/fractional-decimal FK key spill token at its real decimal width. The
-    # RI fix (finding #1) widened the float FK join token from a compact repr to
-    # the exact-decimal expansion of Decimal(float), so `_staged_key_token_bytes`
-    # must price a float64 key at the `_FLOAT_FK_TOKEN_MAX_BYTES` bound instead of
-    # the MIN_KEY_TOKEN_BYTES floor, else the OOC disk preflight under-predicts
-    # scratch (the dangerous refuse-early direction). The added constant +
-    # `_is_float_fk_dtype` + the token branch tipped it over. Decompose the disk-
-    # WIDTH helpers (`_source_disk_width_bytes`/`_provider_config_and_strategy`/
-    # `_strategy_output_width_bytes`/`_masked_disk_width_bytes`/
-    # `_staged_key_token_bytes`) into a `_spill_widths.py` sibling when the next
-    # spill-sizing change lands (the module docstring already flags this split).
+    # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
-    # DPS Scope B (2026-07-22): crossed the 600 cap (was 600 exactly in the
-    # parked branch, guide section 4.8) to thread the pinned-Plan
-    # generation contract through the existing per-generator dispatch:
-    # `_generate_tables_from_config`/`_generate_column`/`_statistical` all
-    # gain `table_name`/`statistical_specs`/`snapshot_index_for_column`/
-    # `snapshot_artifacts` parameters so the `statistical` branch and the
-    # fidelity gate consume the compiled Plan's pinned specs/artifacts
-    # instead of reopening a `snapshot_file` path (guide section 4.7/4.8,
-    # closing defect F3/F4). The guide's own new-module split
-    # (`generation/_plan_entry.py`) already carries the public
-    # `generate_tables(plan, ...)` wrapper and its Plan-only guards out of
-    # this file; this remaining growth is the internal signature threading
-    # the guide's split could not remove. Decompose the `statistical`/
-    # `derived`/`formula` per-type dispatch branches into sibling modules
-    # (mirroring `transforms/derived_aggregate.py`) when the next
-    # generator-type addition lands. +8 more (654 -> 662) for the bottom-of-
-    # module re-export of `generate_tables` from the new `_plan_entry.py`
-    # (avoids a real import cycle: `_plan_entry` imports
-    # `_generate_tables_from_config` FROM this module) so the documented
-    # `decoy_engine.generation.synthesize.generate_tables` path
-    # (`decoy_engine/__init__.py`) still resolves after the move.
-    # DPS Scope B follow-up (2026-07-22): +6 LOC (662 -> 668) closing a
-    # residual F4 reopen the guide's own step-8 wiring missed: `_statistical`
-    # still built its `GenDeriveContext` from the raw `col` dict, whose
-    # `snapshot_file` the fingerprint step (`generators.derivation.
-    # strategy_config_fingerprint`) read fresh off disk to compute a content
-    # digest for seed derivation -- a real re-open of a path the Plan already
-    # pinned. `_statistical` now passes the pinned `StatisticalSpec.
-    # snapshot_digest` straight through instead. Same decomposition target
-    # stands.
-    # gen-5a-faker (2026-09-17): +25 LOC (668 -> 693) threading the optional,
-    # keyword-only `provider_snapshot` through `_generate_tables_from_config` /
-    # `_generate_column` / `_faker` so a caller comparing two independent
-    # `generate_tables` calls (the shadow-parity harness) can pin both to one
-    # captured custom-faker-provider registry snapshot instead of two live
-    # reads a concurrent register/unregister could straddle. Additive only:
-    # `None` (every existing caller) reads the live registry exactly as
-    # before. gen-5a-faker dennis re-gate (2026-09-17): the ceiling raise
-    # above violated this sentry's own shrink-only rule, so the same commit
-    # pays down the standing decomposition target instead of deferring it
-    # again: `_statistical` moved to `generation/_statistical_column.py`
-    # (`statistical_generate`), a pure code move with no logic change,
-    # landing this file at 632 (693 -> 632). Ceiling lowered accordingly.
+    # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
     "src/decoy_engine/generation/synthesize.py": 632,
     "src/decoy_engine/storm/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 660,
     "src/decoy_engine/storm/profiler.py": 635,
     "src/decoy_engine/quality/synth_report.py": 863,
-    # MLF-4 (2026-07-19): expanded ML training corpus split out of
-    # fixtures.py (module-size cap); cohesive synthetic-data generators.
-    # Further decomposition (value-generators vs corpus builders) is the
-    # next decomposition target.
+    # expanded ML training corpus generators split out of fixtures.py; split value-generators from corpus builders next.
     "src/decoy_engine/storm/eval/corpus.py": 976,
-    # Sprint B (ML2.x): monolithic train_and_evaluate; decompose into
-    # separate split / fit / calibrate / evaluate modules in ML3.x.
+    # monolithic train_and_evaluate; decompose into split/fit/calibrate/evaluate modules.
     "src/decoy_engine/storm/model_pack/trainer.py": 715,
-    # SP-10 (2026-06-28): check_derived_column_refs (row 16) added to the
-    # compile-check ownership table. Decompose the growing _checks.py into
-    # per-strategy check sub-modules in a follow-up sprint when the check set
-    # stabilises (post-SP-15 or when the next strategy batch lands).
-    # DPS Scope B (2026-07-22): +29 LOC (736 -> 765). `check_statistical_
-    # columns` moved the "snapshot_file required" check here from
-    # `load_spec` (guide section 4.7/4.8's read-once contract needs the
-    # path validated before any pinned-bytes lookup), gained `pinned`/
-    # `dp_verified_columns` parameters and the pinned-snapshot lookup
-    # (falling back to a direct read only when the compiler's read-once
-    # pass could not open the path), and now returns the per-column
-    # `(table, column, path, spec_dict)` list `plan._generation.
-    # build_generation_plan` pins into the compiled Plan. Same
-    # decomposition target stands.
-    # DPS Scope B follow-up (2026-07-22): +9 LOC (765 -> 774) threading the
-    # read-once pass's own digest (`read.sha256`) onto `load_spec`'s
-    # `snapshot_digest` kwarg so generation-time seed derivation has a
-    # pinned digest to reuse instead of reopening `snapshot_file` (see the
-    # matching `synthesize.py` entry above; same F4 closure). Same
-    # decomposition target stands.
-    # Round-3 remediation (2026-07-23), C-M1: +9 LOC (774 -> 783) resolving
-    # a `snapshot_file` through the new `plan._generation.resolve_pinned_
-    # snapshot` helper instead of an inline `_load_snapshot` fallback, so a
-    # path the read-once pass already attempted and classified is never
-    # reopened. The docstring update explaining `failures` is most of the
-    # growth; the call-site change itself is one line. Same decomposition
-    # target stands.
+    # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
     "src/decoy_engine/plan/_checks.py": 783,
-    # HC-5 (2026-07-17): +16 LOC (695 -> 711) adding the `high_cardinality`
-    # wrong-type guard to `check_statistical_columns` -- a `high_cardinality`
-    # key on a non-`type: statistical` column (the one case `load_spec` never
-    # sees, since it is only called for statistical columns) plus its
-    # docstring note. Same per-strategy-check decomposition target stands.
-    # HC-3b (2026-07-17): crossed the 600 cap adding the top_code compile-check
-    # wiring (import + one call-site + one checks_passed entry, x2 for the
-    # no_profile/full branches, plus run_config_only_checks' call + return
-    # entry) -- the same repeated-four-times pattern every prior per-strategy
-    # check module (bucketize, categorical, date_shift group_by, ...) already
-    # added here. Decompose the four call/list sites into a small
-    # data-driven table (check fn -> passed-name) when the next strategy
-    # check lands and this module is touched again.
-    # TX-2 (2026-07-20): +25 LOC (711 -> 736) extracting the shared
-    # `_check_ner_available_for_strategy` walk (parametrized on `strategy`)
-    # and adding `check_text_mask_ner_available` (row #30), the text_mask
-    # analog of `check_text_redact_ner_available` (row #13). The extraction
-    # keeps the two checks byte-identical in shape without duplicating the
-    # column walk. Same per-strategy-check decomposition target stands.
-    # HC-5 gate remediation MED-1 (2026-07-17): +19 LOC (609 -> 628) for
-    # `_NON_SEMANTIC_GLOBAL_SETTINGS` + the strip-before-hash block in
-    # `_hash_config`, restoring pipeline_config_hash byte-stability against
-    # the new `categorical_retention_warn_threshold` advisory key. Small,
-    # localized addition to an already-oversized module; the decomposition
-    # target above still stands for the next touch.
-    # HC-7 (2026-07-17): +30 LOC (628 -> 658) for the clinical free-text
-    # advisory wiring: the import + Row 29 call site + its checks_passed
-    # entry (x2 for the no_profile/full branches) + the warnings-fold line +
-    # two new keys in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Same per-strategy
-    # check-module pattern as every prior addition here; same decomposition
-    # target stands.
-    # TX-2 (2026-07-20): +13 LOC (658 -> 671) for Row 30 (text_mask `ner`
-    # compile-time availability check): the import + one call site in
-    # `compile_plan` + its checks_passed entry (x2 for the no_profile/full
-    # branches) + one call site + one return-tuple entry in
-    # `run_config_only_checks`. Same per-strategy check-module pattern as
-    # every prior addition here; same decomposition target stands.
-    # DPS (2026-07-20): +8 LOC (671 -> 679) for the two dp compile checks --
-    # dp_generate_contract (Row 31, DPS-3) + dp_snapshot_provenance (Row 32,
-    # gate remediation Fix 3): the import + their call sites (compile_plan x2
-    # branches + run_config_only_checks). dp_generate_contract also adds its
-    # checks_passed/returned-tuple entries; dp_snapshot_provenance runs but is
-    # not recorded in checks_passed. Same per-strategy check-module pattern;
-    # same decomposition target stands.
-    # Option A DPS remediation (2026-07-21): +11 LOC (679 -> 690) for
-    # `check_dp_categorical_unsupported`'s import + two call sites
-    # (compile_plan's no_profile/full branches share one call + comment,
-    # run_config_only_checks its own). Not recorded in checks_passed (same
-    # convention as dp_snapshot_provenance). Same decomposition target stands.
-    # DPS Scope B (2026-07-22): +7 LOC (690 -> 697), net of a genuine size
-    # reduction: `check_dp_categorical_unsupported`/`check_dp_snapshot_
-    # provenance` (Option A) are DELETED outright, but compile_plan and
-    # run_config_only_checks both gain the read-and-pin-once call site
-    # (`read_and_pin_snapshots`), the DP verification call site
-    # (`verify_dp_snapshots`), and compile_plan alone gains the
-    # `GenerationPlan` builder call site (`build_generation_plan`) plus the
-    # `generation=` field in the `Plan(...)` construction -- exactly the
-    # "call sites only" growth guide section 4.7 anticipated when it moved
-    # the read-and-pin pass, the `GenerationPlan` builder, and the
-    # recursive freeze into the new `plan/_generation.py` sibling module
-    # rather than inlining them here. Same decomposition target stands.
-    # Round-3 remediation (2026-07-23), C-M1: +6 LOC (697 -> 703) across
-    # both call sites: `read_and_pin_snapshots` now returns a
-    # `(pinned, failures)` pair instead of just `pinned`, and threading
-    # `failures=` into `check_statistical_columns` pushes each call over
-    # the 100-column line-length cap, forcing a multi-line call. Same
-    # decomposition target stands.
+    # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
     "src/decoy_engine/plan/_compile.py": 703,
-    # B5 dennis-remediation (2026-07-11): the HIGH (percentile-knob
-    # under-shoot) and MEDIUM (crashed-run miscount) fixes each needed a
-    # safety invariant documented in the module's docstrings, not just
-    # enforced in code -- this is the safety-critical self-calibration
-    # loop, and the invariant text IS part of the fix. Decompose the
-    # emission helpers (telemetry_record_from_isolated_run /
-    # _from_governor_trip) into their own module when B5's production
-    # wiring sprint lands and gives them real callers to organize around.
-    # TB-5 precondition #73 (2026-07-13): +46 LOC for the intercept-aware
-    # drift fix -- the new `observed_slope` (intercept-removed) and the safety
-    # property 2 rewrite explaining WHY the raw point ratio spuriously fires.
-    # Like the B5 remediation above, the invariant text IS the fix on this
-    # safety-critical loop; folded into the same emission-helper decomposition.
-    # TB-5 #74 (2026-07-13): +88 LOC for the sequential BASIS contract --
-    # `_assert_basis_matches_estimator` (the guard the two emission builders
-    # call, REQUIRED for a sequential record) + the docstring text pinning WHY
-    # the sequential basis is the working set, not total raw bytes (dividing
-    # observed_slope by the wrong basis under-states the slope, the OOM-unsafe
-    # direction). The live drift loop stays platform-owned (#74 deferred); this
-    # guard is the standing contract that wiring must satisfy, and its rationale
-    # IS the fix on this safety-critical loop. Same emission-helper
-    # decomposition target stands (extract the builders + guard into
-    # `_mem_telemetry_emit.py` when B5 production wiring gives them real callers).
+    # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
-    # DE-11 remediation (2026-07-13): restored the chunk-parity invariant
-    # explanation (a chunk with more distinct values than pool_size is still
-    # admissible in chunked mode because it is byte-identical to the
-    # full-frame run of the same rows -- pool_size controls collision rate,
-    # not admission) that a prior trim removed to slip under the cap. The
-    # invariant text IS the fix, per the same pattern as the B5/TB-5 entries
-    # above; decompose the strategy-admissibility docstring out of the
-    # module header when the conditional-admission set grows again.
-    # DE-03 (2026-07-13): +7 LOC to thread the resolved output-projection policy
-    # into the per-chunk adapter.run() so the chunked route enforces the
-    # fail-closed schema-closure gate (the security fix must be adapter-internal
-    # / bypass-resistant, so it cannot move out of this emission path). Same
-    # strategy-admissibility docstring decomposition target stands.
-    # DE-02 (2026-07-14): +2 LOC to thread the keyed-mask `key_provider` into the
-    # per-chunk adapter.run() so the chunked route rekeys off the run secret. The
-    # provider is injected at run time (never serialized), so it must flow through
-    # this emission path. Same docstring-decomposition target stands.
-    # DE-02 review round (Codex BLOCKER 4, 2026-07-14): +13 LOC -- this PUBLIC
-    # entry point now resolves the config's mask_secret_ref and runs the
-    # fail-closed gate up front, so a keyed chunked job cannot execute off
-    # job_seed at GA. Same docstring-decomposition target stands.
-    # DE-02 Codex item 6a (2026-07-14): +8 LOC -- the chunked entry also collects
-    # vault entries, so it runs the shared assert_vault_writer_keyed guard against
-    # the resolved mask key. Same docstring-decomposition target stands.
-    # DE-10 residual (2026-07-14): +14 LOC to wire the per-chunk declared-vs-real
-    # FK dtype guard into the masking loop (the compile-time gate trusts the
-    # declared FK key dtype; this validates it against the real Arrow dtype and
-    # fails closed on a misdeclaration that would silently void RI). The guard
-    # itself lives in the sibling `_chunked_fk_dtype.py`; only the read + per-chunk
-    # call live here, on the one path that sees each chunk. Same docstring-
-    # decomposition target stands.
-    # Phase 4 slice 2 (2026-08-31): +15 LOC (648 -> 663) admitting group_key
-    # onto the chunked route. All group_key-specific logic (the admitted
-    # set, both gate functions, the effective-type walk) lives in the new
-    # `_chunked_group_key.py` sibling; this file only gains the import, one
-    # term folded into the `_CHUNK_ADMITTED_STRATEGIES` union, the
-    # schema-independent `when` gate call inside `check_chunked_
-    # compatibility`, and the schema-dependent group_by-dtype gate call in
-    # `run_mask_pipeline_chunked` (once plan + the first chunk's schema
-    # exist -- `check_chunked_compatibility`'s own signature stays
-    # schema-blind, so that second gate cannot route through it without a
-    # much larger signature change for zero behavioral gain). Same
-    # FK-resolution-helper decomposition target stands.
-    # Phase 4 slice 3 (2026-09-01): +35 LOC (663 -> 698) admitting text_mask
-    # onto the chunked route. text_mask joins `CHUNK_SAFE_STRATEGIES`
-    # directly (own-value-keyed span masking, no new admitted set needed),
-    # so this file only gains the gate WIRING (both gates' logic lives in the
-    # new `_chunked_text_mask.py` sibling): the sibling import; the `when:`
-    # rejection call + comment + error-code doc in `check_chunked_compatibility`;
-    # the source-dtype gate call + comment in `run_mask_pipeline_chunked` (Codex
-    # final-gate remediation: a non-string text_mask source diverges by chunk
-    # boundary); the CHUNK_SAFE table row + module-docstring paragraph; and the
-    # honest dtype-stability precondition note on the run_mask docstring. Same
-    # FK-resolution-helper decomposition target stands.
-    # Phase 4 slice 4 (2026-09-01): +46 LOC (698 -> 744) admitting code_set
-    # mask mode onto the chunked route. All code_set-specific logic (the
-    # conditional-admission predicate, the source-dtype gate trio, the
-    # `when:` + FK-key rejections, corpus-record pinning) lives in the new
-    # `_chunked_code_set.py` sibling; this file only gains the import, one
-    # branch in `_conditional_admission_failures` dispatching to it, the
-    # `when:` + FK-key gate calls + comments in `check_chunked_compatibility`,
-    # moving the registry/graph construction earlier (needed for corpus
-    # resolution before the empty-input return) plus the corpus-pinning call
-    # itself, the source-dtype gate call on the first chunk and inside the
-    # masking loop, and threading the pinned `code_set_records` mapping into
-    # every chunk's `adapter.run()` call. Same FK-resolution-helper
-    # decomposition target stands.
-    # Phase 4 slice 5 (2026-09-01): +38 LOC (744 -> 782) admitting
-    # bucket_perturb (explicit date_format) onto the chunked route. Simpler
-    # than code_set (no corpus, no evidence), so all bucket_perturb-specific
-    # logic (the conditional-admission predicate, the source-dtype gate trio,
-    # the `when:` + FK-key rejections) lives in the new
-    # `_chunked_bucket_perturb.py` sibling; this file only gains the import,
-    # one branch in `_conditional_admission_failures`, the `when:` + FK-key
-    # gate calls + comments in `check_chunked_compatibility`, and the
-    # source-dtype gate call on the first chunk and inside the masking loop.
-    # Same FK-resolution-helper decomposition target stands.
-    # Codex final-gate LOW (2026-09-01): +7 LOC (782 -> 789) for the
-    # data-independent bucket_perturb namespace pre-check before the empty-input
-    # return (a namespace-less config with a zero-chunk input must fail closed
-    # like the oracle); the check itself is a free function in the sibling.
-    # Chunked-FK cascade-safety fix (2026-09-02): +21 LOC (789 -> 810) for
-    # predicate 12's REAL-stage dtype check on the hash-only FK self-mask
-    # allowlist -- the new `fk_hash_strategy_columns_for_table` import, the
-    # once-per-run column-set resolve, and threading it into the existing
-    # per-chunk `reject_mismatched_chunked_fk_declared_dtype` call. All of
-    # predicate 12's actual logic lives in the sibling `_chunked_fk_dtype.py` /
-    # `_chunked_fk_dtype_safety.py`; this file only gains the wiring, same as
-    # every other Phase 4 slice's split. Same FK-resolution-helper
-    # decomposition target stands.
-    # Codex final-gate P1-1 (2026-09-03): +6 LOC (810 -> 816) invoking the
-    # per-chunk FK dtype guard whenever `hash_fk_key_columns` is non-empty, not
-    # only when `declared_fk_dtypes` is (dtype is optional in config, so an
-    # undeclared hash FK key otherwise skipped predicate 12's real stage and an
-    # unsafe date64/decimal256 reached the kernel). Comment + widened condition.
-    # 2026-10-01: the oracle's eager preflight and per-chunk loop
-    # moved into `_chunked_oracle.py` (809 -> 608) so `run_mask_chunked` shares one
-    # validation path with it. The remaining bulk is the module docstring and the
-    # admission checks (`check_chunked_compatibility` and its helpers).
-    # 2026-10-02 (B8 revision 4.3): +4 for the composite-provider refusal (the helper
-    # `composite_provider_offenders` lives in `_column_access.py`); dense exception, below MAX.
-    # 2026-10-04 (C1): +4 for the non-deterministic-categorical gate call and its docstring
-    # lines; the categorical conditions live in `_chunked_categorical.py`. Dense exception.
-    # 2026-10-04 (C1b-ii): +2 for the positional-admission veto call. Dense exception.
-    # 2026-10-05 (C5b-i): +1 for per-mode truthful rejection prose. Dense exception.
+    # chunk-parity invariant text and admission gate calls; dense exception.
     "src/decoy_engine/execution/_chunked.py": 619,
-    # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
-    # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
-    # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
-    # closing Codex/dennis-reproduced RI holes (a misdeclared FK dtype silently
-    # voided referential integrity). `_dtype_family` + the decimal constants are a
-    # cohesive, self-contained unit consumed by both this module (the compile
-    # gate) and the sibling `_chunked_fk_dtype.py` (the runtime guard); decompose
-    # them into a shared `_fk_dtype_family.py` sibling when the next FK-dtype
-    # change lands (a pure move -- no circular import, since the family logic
-    # imports nothing from either consumer).
-    # HC-3b (2026-07-17): +1 LOC adding "top_code" to CHUNK_SAFE_STRATEGIES
-    # (it is value-deterministic, unkeyed, and chunk-independent, same as
-    # bucketize). Same decomposition target stands.
-    # Phase 4 slice 3 (2026-09-01): +9 LOC (651 -> 660) adding "text_mask" to
-    # CHUNK_SAFE_STRATEGIES (one entry + a one-line comment) and extending the
-    # four existing "namespace-agnostic strategies" call-outs (the module
-    # docstring, the NAMESPACE_REQUIRING_STRATEGIES docstring, and two spots
-    # in `gate_fk_child_edges`) to name text_mask alongside redact/truncate/
-    # text_redact/bucketize/top_code/passthrough, so those correctness claims
-    # stay accurate now that text_mask is a member too. Same decomposition
-    # target stands.
-    # Chunked-FK cascade-safety fix (2026-09-02): +293 LOC (660 -> 953)
-    # narrowing condition (a) to hash-only and adding predicates 8-12 (parent-
-    # not-root, parent/child `when`, endpoint `provider`, and predicate 12's
-    # declared-dtype stage), plus the `fk_hash_strategy_columns_for_table`
-    # helper predicate 12's runtime stage needs. `_chunked_fk_dtype_safety.py`
-    # carries the actual exact-dtype-set predicate as its own sibling
-    # specifically to avoid this file crossing the cap by MORE than it already
-    # has to for the gate logic itself. Same decomposition target stands.
-    # dennis final-gate LOW-1 (2026-09-03): +4 LOC (953 -> 957) for the
-    # predicate-8 single-column-tuple scope note (a composite child endpoint
-    # never matches the single-column key node; composites are rejected when
-    # their own table is gated). Docstring only. The concrete decomposition
-    # target dennis named: collapse the three near-identical both-sides-scan
-    # helpers (`fk_declared_dtypes_for_table`, `fk_hash_strategy_columns_for_
-    # table`, `fk_passthrough_columns_for_table`) into one parameterized
-    # `_fk_participant_columns_for_table(config, table, predicate=...)` in the
-    # branch-hygiene cleanup slice.
-    # Codex final-gate P1-2 (2026-09-03): +15 LOC (957 -> 972) for predicate 8's
-    # component-based rootness check -- a scalar parent that is a COMPONENT of an
-    # upstream COMPOSITE child endpoint is non-root (composite FK resolution
-    # rewrites every participating column), which the prior exact-tuple match
-    # missed. The child-endpoint-column decomposition + the corrected scope
-    # comment. Same decomposition target stands.
+    # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
-    # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
-    # routes the fail-closed output projection must guard (undeclared columns no
-    # longer leak raw). The +17 LOC are the two policy params, the per-table
-    # enforcement loop before the point of no return, and the sequential
-    # passthrough -- the security fix is adapter-internal by design (bypass-
-    # resistant), so it cannot be split out. The module was at the cap (596) when
-    # this landed; decompose the FK-resolution helpers into a sibling when the
-    # next relationship-strategy batch lands.
-    # DE-02 (2026-07-14): +8 LOC to thread the keyed-mask `key_provider` through
-    # run / run_single / run_sequential into StrategyContext.mask_key so every
-    # keyed strategy rekeys off the run secret. The provider is a run-time
-    # injection (never serialized), so the plumbing is adapter-internal by design.
-    # Same FK-resolution-helper decomposition target stands.
-    # HC-3a (2026-07-17): +31 LOC (621 -> 652) threading the date_shift group_by
-    # pre-mask anchor snapshots -- union the anchor columns into the FK-safe
-    # (lossless int+null) load set, snapshot each pre-mask keyed by (table, col),
-    # and pass them into StrategyContext so the handler anchors on immutable
-    # source ids (Codex R1 P1 #1/#2). The snapshot construction differs from the
-    # sequential route's (whole-frame dict vs per-table lifetime), so it does not
-    # factor into a shared helper without harm. Same FK-resolution-helper
-    # decomposition target stands.
-    # HC-3b (2026-07-17): +8 LOC (652 -> 660) unioning top_code columns into the
-    # lossless nullable-Int64 ingest (top_code_columns) so a large int+null value
-    # is not float64-rounded and the masked output stays chunk-boundary
-    # independent (Codex R2). Same FK-resolution-helper decomposition target.
-    # Phase 4 slice 1 (2026-08-31): +2 LOC (660 -> 662) threading the durable
-    # global row number `row_offset` through `run()` into `StrategyContext` so the
-    # position-keyed `windowed_date` strategy reads the same global index on the
-    # chunked route as the full-frame oracle does. A run-time value (never
-    # serialized), so it is adapter-internal plumbing like every keyed-value
-    # thread above; it cannot leave this signature. Same FK-resolution-helper
-    # decomposition target stands.
-    # Phase 4 slice 2 (2026-08-31): +5 LOC (662 -> 667) unioning group_key
-    # group_by columns into the lossless nullable-Int64 ingest set
-    # (`group_key_group_by_columns`, same treatment as the top_code/
-    # date_shift group anchor unions above it) so an int+null group_by cell
-    # never widens to float64 on a chunk-boundary-dependent subset of rows.
-    # Same FK-resolution-helper decomposition target stands.
-    # Phase 4 slice 4 (2026-09-01): +8 LOC (667 -> 675) adding the
-    # `code_set_records` parameter (a caller-supplied pinned corpus-record
-    # mapping, `_chunked_code_set.py`'s corpus-pinning contract) and seeding
-    # it into `StrategyContext` construction. Same FK-resolution-helper
-    # decomposition target stands.
-    # Engine-owned transforms: +1 LOC (675 -> 676), the prepared-input contract
-    # docstring on `PandasExecutionAdapter.run`. No logic added.
+    # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     "src/decoy_engine/execution/_pandas_adapter.py": 676,
-    # gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
-    # allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
-    # decomposition target, +15 more at gen-5a-faker for `_provider_
-    # snapshot` reaching 660), but that last growth's ceiling raise
-    # violated this sentry's own shrink-only rule. Remediation moved
-    # Steps 1-2 (generate-kind tables, then mask-kind tables) to
-    # `execution/_pipeline_generate_mask.py` (`run_generate_and_mask_steps`),
-    # a pure code move with no logic change, landing the file at 599 --
-    # at/under GOAL, so per this module's own docstring the entry is
-    # deleted rather than kept with a lowered ceiling. A future regrowth
-    # past GOAL re-enters the allowlist through the normal cross-goal path.
-    # A1 post-validation wiring (2026-09-24): re-crossed GOAL (599 -> 635)
-    # threading the default-OFF post-validation scan suite through run_pipeline
-    # -- the four runtime args, the sampled-values source-equality filter, the
-    # full-source leak-scan selection, and the finalize hand-off to the
-    # quarantine-aware validator, mirroring the fidelity_report seam at one
-    # site. Dense reviewed exception (<= MAX). Decompose the finalize/validator
-    # hand-off into `_pipeline_finalize.py`'s owner cluster when the next
-    # post-validation change lands (that sibling already exists).
-    # Engine-owned transforms: +44 LOC (635 -> 679) wiring `run_pipeline` to own table
-    # transforms: the explicit out-of-core preflight, the single pre-routing call that
-    # prepares resident transform-bearing tables (and refuses explicit-mode rejections
-    # first), threading the prepared set into routing and the source resolvers, and
-    # stamping the out-of-core decline telemetry. The logic lives in `_transforms_gate.py`,
-    # `_transforms_prepare.py`, `_transforms_admission.py` and `_transforms_table.py`; this
-    # file only calls them. Dense reviewed exception (<= MAX).
-    # C5a (2026-10-05): +5 lines creating the job-scoped pool cache shared by the
-    # unified lane and the oracle. Dense reviewed exception (<= MAX).
+    # routing dispatch; logic already lives in the _transforms_* siblings, dense reviewed exception.
     "src/decoy_engine/execution/_pipeline.py": 684,
-    # Track A input formats (2026-09-30): resolve_input_arrow_type prefers the
-    # resident Arrow table, threaded through the requirements and config-gate
-    # helpers. Dense reviewed exception (<= MAX). Move the resident-type
-    # resolution into its own module when the next operator gate lands.
+    # resident Arrow type resolution; move it into its own module with the next operator gate.
     "src/decoy_engine/execution/native/_requirements.py": 646,
-    # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
-    # threads `key_provider` into StrategyContext.mask_key like the other adapters
-    # (run-time injection, never serialized). Decompose the per-table
-    # mask/quarantine loop into a sibling when the next FK-route batch lands.
-    # HC-3a (2026-07-17): +32 LOC (603 -> 635) threading the date_shift group_by
-    # pre-mask anchor snapshots on the sequential route -- union the anchor
-    # columns into the FK-safe (lossless int+null) load, snapshot each table's
-    # anchors pre-mask into ctx.group_anchor_snapshots, and evict them with the
-    # frame after its node loop (same-table lifetime). Codex R1 P1 #1/#2. Same
-    # per-table mask/quarantine-loop decomposition target stands.
-    # HC-3b (2026-07-17): +6 LOC (635 -> 641) unioning top_code columns into the
-    # sequential route's lossless nullable-Int64 ingest (Codex R2 chunk-safety).
-    # Phase 4 slice 2 (2026-08-31): +7 LOC (641 -> 648) unioning group_key
-    # group_by columns into the sequential route's lossless nullable-Int64
-    # ingest, mirroring the pandas-adapter union above (group_key is not
-    # FK-key-eligible, but it can mask an ordinary column on any table in
-    # an FK job, so this route needs the same lossless typing).
-    # Engine-owned transforms: +1 LOC (648 -> 649), the prepared-input contract line
-    # on `run_sequential`'s docstring. No logic added.
+    # sequential FK route threading; split the per-table mask/quarantine loop.
     "src/decoy_engine/execution/_sequential.py": 649,
-    # DE-08 residual (2026-07-14): crossed the 600 cap (was 569) hardening the
-    # transactional quarantine publish in place -- fail-closed on a hardlink-
-    # unsupported filesystem (clear message, not an opaque OSError) and best-
-    # effort/logged cleanup of the post-link staging file so an already-successful
-    # commit is never reported as a run failure. The stage/publish/discard/finalize
-    # trio is one cohesive transactional unit that this fix extends, not appends
-    # beside; decompose that publish cluster into a `_quarantine_transaction.py`
-    # sibling when the next quarantine-sidecar change lands.
-    # A1 post-validation wiring (2026-09-24): +26 LOC (619 -> 645) adding
-    # `quarantine_row_mask` so the post-validation finalize can drop the exact
-    # rows a scan quarantines while keeping the source row-aligned for the
-    # positional scans. Same publish-cluster decomposition target stands.
+    # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
-    # HC-1 slice 1 (2026-07-17): crossed the 600 cap (639) wiring the code_set
-    # corpus provenance stamp + pinned-record lookup into the out-of-core route
-    # -- the per-chunk evidence stamp and the job-wide pinned corpus record are
-    # threaded through the streaming runner so masking and evidence cannot
-    # diverge on a mid-job corpus swap (parity with the pandas/sequential
-    # routes). Decompose the chunk-drain / evidence-merge cluster into a sibling
-    # when the next out-of-core route change lands.
-    # phase-aware build budget (2026-07-20): +24 LOC (639 -> 663) threading a
-    # `budget_bytes` param through `run_fk_out_of_core` / `_stream_table` and
-    # computing per-phase DuckDB memory_limit caps (joiner / sink-path build /
-    # resident-path build) instead of one flat cap for every connection --
-    # fixes a starved sink-path relation build that measurably OOMed under a
-    # divided-by-global-peak cap even with most of the run's budget idle. The
-    # phase-cap derivation itself lives in the sibling `_memory_estimate.py`
-    # (new module, not appended here) to avoid growing this file further; only
-    # the three call-site substitutions and the param plumbing live here. Same
-    # chunk-drain / evidence-merge decomposition target stands.
-    # round-3 Fix C SUB-FIX 2 (2026-07-20): +2 LOC (663 -> 665) passing the
-    # new `sink=sink is not None` param to `resolve_phase_memory_limits` so
-    # it computes only the opened path's pair instead of raising for the
-    # unused one. Same chunk-drain / evidence-merge decomposition target.
-    # P4-A residency honesty (2026-09-01): +11 LOC (665 -> 676) DOCSTRING ONLY --
-    # corrected the misleading "a resident source re-iterates for free" line
-    # (true for CPU, false for RAM) and documented the caller-managed residency
-    # precondition on the exported `run_fk_out_of_core` primitive (the bound
-    # holds only for LazySource sources + an incrementally-consuming sink). No
-    # logic added here; the warning itself lives in the new sibling
-    # `execution/_residency_warning.py`. Same decomposition target stands.
-    # Task 5.2 FF1 (2026-09-12): +31 LOC (676 -> 707) plumbing `sub_floor_notices`
-    # through the OOC text_mask route so it emits the same
-    # `text_mask_sub_floor_span_handled` QualityWarning as the full-frame route.
+    # code_set provenance and FF1 notice plumbing through the streaming runner.
     "src/decoy_engine/execution/out_of_core/_runner.py": 707,
-    # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
-    # schema-invariant checker (_check_corpus_schema, shared by the load path
-    # and the new standalone verify_corpus primitive), the
-    # corpus_source_version mismatch gate (_check_source_version_pin), and
-    # verify_corpus/CorpusVerifyReport themselves -- this module already owns
-    # "read a Parquet file off disk, validate it, cache it" (see its
-    # docstring), so the new checks and the new standalone primitive belong
-    # here, not split further. 610 -> 613: the two-model gate added a Path()
-    # coercion + optional-path pin signature (verify_corpus never-raises fix).
-    # Decompose verify_corpus + CorpusVerifyReport into a `_codeset_verify.py`
-    # sibling when the next standalone-check consumer (CLI/platform) lands and
-    # needs this module touched again.
+    # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 606,
-    # NOTE: transforms/code_set.py was allowlisted at 637 during the HC-2 build;
-    # the two-model-gate remediation then decomposed validate_code_set_config
-    # into transforms/_codeset_config_checks.py (mirroring _checks_top_code.py),
-    # bringing code_set.py back to 592 -- under the 600 cap, so it is no longer
-    # allowlisted here. Do not re-add it without cause.
-    # NOTE: quality/snapshot.py was allowlisted at 713 during the Option A
-    # `dp_mode` build (2026-07-20/21 gate remediation). DPS Scope B
-    # (2026-07-22) deleted `dp_mode`/`numeric_domains`/`support_origin`
-    # entirely -- the DP fit path no longer routes through this module at
-    # all (`quality.dp.fit_dp_snapshot` fits directly from the source
-    # frame) -- bringing the module back to 589 lines, under the 600 cap,
-    # so it is no longer allowlisted here. Do not re-add it without cause.
-    #
-    # Native program Task 0.1 (2026-08-27): the machine-checkable RNG draw-site
-    # inventory. This is a DATA module: 30 `DrawSite` dataclass literals, one per
-    # catalogued randomness draw, each carrying its exact seed derivation, call
-    # shape, and null rule verbatim from the code (that verbatim fidelity is the
-    # whole contract, so the entries cannot be abbreviated). Not orchestration.
-    # Decomposition target: split `DRAW_SITES` into `_draw_sites_mask.py` /
-    # `_draw_sites_gen.py` data siblings re-exported here if it grows further.
-    # Task 5.2 (2026-09-11): the FF1 cutover renamed FPE_KEY_LABEL to
-    # FF1_KEY_LABEL and updated the `mask.fpe` DrawSite's seed-derivation
-    # notes and call-site reference, pushing the module from 927 to 931.
+    # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
     "src/decoy_engine/execution/native/_determinism_protocol.py": 927,
-    # Native program Task 0.3 (2026-08-27): one determinism PROVIDER per
-    # catalogued draw site (the registry that reproduces each shipped draw off
-    # the hot path). One small class per draw mechanism plus the per-site
-    # registry; the size is the 30-site fan-out, not tangled control flow.
-    # Decomposition target: split the provider families (numpy / python_mt /
-    # faker / source_keyed) into sibling modules re-exported through the
-    # registry when the next draw-site batch lands.
-    # Task 5.2 (2026-09-11): FF1_KEY_LABEL rename touched the `mask.fpe`
-    # provider's key-derivation reference, pushing the module from 985 to 986.
+    # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
-    # Native program Task 2.3 (Phase 2 merge, 2026-08-30): the compiled-kernel
-    # loader gained a load-time known-answer self-test that pushed the module to
-    # 702, and the 2026-09-09 native-throughput program's Task 1.6 native_threads
-    # plumbing pushed it further to 718. The prescribed decomposition then ran
-    # (2026-09-10): the reference kernels + factories (_ReferenceKeyedDerivation /
-    # _ReferenceFpe / reference_keyed_derivation / reference_fpe / _row_error /
-    # _ROW_ERROR_MESSAGES) moved into the `_crypto_reference.py` sibling, bringing
-    # this module back to 530 -- under the 600 cap, so it is no longer allowlisted.
-    # Do not re-add it without cause.
-    # NOTE: execution/native/_dispatch.py was allowlisted at 653 through the
-    # Phase 3 C1 slice and the schema-drift extraction (`_chunk_schema.py`).
-    # Task 2.3 Phase 0 (2026-09-10) finished the prescribed decomposition:
-    # the faker-chunk sampling/masking (`_sample_faker_chunk` /
-    # `_mask_chunk_native` / `_resolve_faker_pools` / `_resolve_truncate_keep`)
-    # moved into the `_chunk_masking.py` sibling, bringing this module back to
-    # 454 -- under the 600 cap, so it is no longer allowlisted here. Do not
-    # re-add it without cause.
-    # Phase 4 slice 2 (2026-08-31): crossed the 600 cap (590 -> 613) wiring
-    # the group_key group_by effective-type gate (Trap E) into the
-    # auto-chunk classifier: `classify_job` now computes `ordered_work`
-    # once (the work-order-aware guard needs it, same as the manual
-    # entry's gate), threads it through `_chunked_rejection` into
-    # `_runtime_source_rejections`, which calls the shared reason-collector
-    # `_chunked_group_key.unsafe_group_key_group_by_columns` so the auto
-    # and manual routes render the identical admission judgment. Decompose
-    # the chunked-mode admissibility helpers (`_chunked_rejection` /
-    # `_whole_column_state_rejections` / `_runtime_source_rejections` /
-    # their small column-collecting siblings) into a `_planner_chunked.py`
-    # sibling when the next chunked-admission strategy lands and this
-    # module is touched again.
-    # Phase 4 slice 3 (2026-09-01): +14 LOC (613 -> 627) for the text_mask
-    # source-dtype auto-route gate (Codex final-gate remediation): the shared
-    # `_chunked_text_mask.unsafe_text_mask_source_columns` collector called from
-    # `_runtime_source_rejections` so the auto route rejects a non-string
-    # text_mask source identically to the manual entry. Same `_planner_chunked.py`
-    # decomposition target stands.
-    # Phase 4 slice 4 (2026-09-01): +11 LOC (627 -> 638) for the identical
-    # code_set source-dtype auto-route gate, via the shared
-    # `_chunked_code_set.unsafe_code_set_source_columns` collector. Same
-    # `_planner_chunked.py` decomposition target stands.
-    # Phase 4 slice 5 (2026-09-01): +14 LOC (638 -> 652) for the identical
-    # bucket_perturb source-dtype auto-route gate, via the shared
-    # `_chunked_bucket_perturb.unsafe_bucket_perturb_source_columns`
-    # collector. Same `_planner_chunked.py` decomposition target stands.
-    # Polars-masking removal (2026-09-21): deleting the polars planner mode +
-    # its rejection helper dropped this module to 587 -- under the 600 cap,
-    # so it is no longer allowlisted here. Do not re-add it without cause.
-    # P4 HIGH-1 (2026-09-03): decomposition slice itself. Extracted the DuckDB
-    # EXPLAIN-plan verification helpers into `_stream_join_plan.py` and the
-    # complete reorder/cursor/lifecycle unit (`_OrderedJoinRows` +
-    # `JoinRowCursor` + their contiguity guard) into `_stream_join_cursors.py`,
-    # bringing this module down from 1173 to 720. The residual is
-    # `StreamFkJoiner` itself plus its EXPLAIN methods (`explain_join` /
-    # `_iter_unordered_join_rows` / `_unordered_join_query` /
-    # `_run_explain_json` / `_disabled_optimizers`), which the plan gate found
-    # not cleanly liftable without changing signatures or breaking test
-    # monkeypatch seams. Decomposition target: none identified beyond this
-    # ratchet -- the plan gate found no cleaner class split worth introducing
-    # solely to reach 600 LOC.
+    # load-time self-test and native_threads plumbing; no cleaner class split identified.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
-    # gen-5a-faker (2026-09-17): crossed the 600 cap (545 -> 622) adding
-    # `snapshot_custom_faker_providers` + `has_custom_faker_override` (the
-    # registry-snapshot mechanism the shadow-parity generation admission
-    # gate needs -- see `execution/physical/_shadow_generation.py`) and
-    # threading the optional `provider_snapshot` keyword through
-    # `resolve_pool_provider` / `get_faker_providers`. Additive only: `None`
-    # (every existing caller) resolves against the live registry exactly as
-    # before. Decomposition target: none identified -- this module already
-    # owns the whole custom-provider registry + Faker-reflection surface,
-    # and the new functions are a few lines each, not a new concern.
+    # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 622,
-    # Task 5.2 (2026-09-11): crossed the 600 cap (590 -> 657) for the P3-final
-    # fpe-span rewrite: FF1 keying independent of `_span_key`
-    # (`derive(mask_key, f"text.{detector_id}", FF1_KEY_LABEL)` +
-    # `build_ff1_tweak`), plus the new `sub_floor_span` redact|synthetic
-    # policy (`_apply_sub_floor_span_policy` / `_synthetic_span_value`) for
-    # spans FF1 cannot encrypt. Decomposition target: split the sub-floor
-    # policy helpers into a `_text_mask_sub_floor.py` sibling when this
-    # module is next touched.
-    # Task 5.2 FF1 (2026-09-12): 657 -> 722 for the sub_floor_span redact|synthetic
-    # policy (deterministic valid-format synthetic PAN/NPI with checksum recompute)
-    # and the FF1-keyed span path. The `_text_mask_sub_floor.py` decomposition above
-    # is the standing target when this module is next touched.
+    # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 722,
 }
 

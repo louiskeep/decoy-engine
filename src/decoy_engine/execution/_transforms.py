@@ -63,6 +63,7 @@ from decoy_engine.config._transforms import (
     SortOp,
     TransformOp,
 )
+from decoy_engine.errors import DecoyError
 
 _log = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _eval_clamped(df: pd.DataFrame, expression: str) -> object:
     return result
 
 
-class TransformError(Exception):
+class TransformError(DecoyError):
     """Raised by apply_transforms when an op references missing columns or
     would overwrite an existing one. Carries ``code`` so the platform's
     failed-path classifier can route it to the right manifest section.

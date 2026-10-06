@@ -71,6 +71,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.internal.pandas_compat import canonical_dtype_label
 
 # Single source of truth for the DP schema version is the pandas-free
@@ -85,7 +86,7 @@ from decoy_engine.quality.dp_schema import (
 DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
 
 
-class DistributionSnapshotError(Exception):
+class DistributionSnapshotError(DecoyError):
     """Fit-time contract violation this module cannot silently degrade past.
     Machine-readable code.
 

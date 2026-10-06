@@ -426,7 +426,8 @@ class TestV2BehaviorRegressionPinsS11:
 
     def test_v2_strategies_derive_per_strategy_namespace(self, monkeypatch):
         """Q9 regression pin: each V2 strategy binds the column's namespace
-        into its `derive(job_seed, namespace, source)` call. The V1 carrier
+        into its derivation (hash: per-row `derive`; date_shift: once per column
+        via `DeriveContext.for_column`). The V1 carrier
         was `transforms/{hash, date_shift}.py` both calling
         `derive_key("mask")` with the same literal label, sharing the
         derived subkey across strategies. V2 strategies (`_hash.py:55`,
@@ -439,18 +440,22 @@ class TestV2BehaviorRegressionPinsS11:
 
         recorded = []
         original_hash_derive = _hash.derive
-        original_ds_derive = _date_shift.derive
+        # date_shift derives in one batch per column through DeriveContext (the
+        # per-column HKDF key is computed once), so record the namespace there.
+        original_for_column = _date_shift.DeriveContext.for_column.__func__
 
         def recording_hash_derive(job_seed, namespace, source_bytes):
             recorded.append(("hash", namespace))
             return original_hash_derive(job_seed, namespace, source_bytes)
 
-        def recording_ds_derive(job_seed, namespace, source_bytes):
+        def recording_for_column(cls, seed, namespace):
             recorded.append(("date_shift", namespace))
-            return original_ds_derive(job_seed, namespace, source_bytes)
+            return original_for_column(cls, seed, namespace)
 
         monkeypatch.setattr(_hash, "derive", recording_hash_derive)
-        monkeypatch.setattr(_date_shift, "derive", recording_ds_derive)
+        monkeypatch.setattr(
+            _date_shift.DeriveContext, "for_column", classmethod(recording_for_column)
+        )
 
         df_a = pd.DataFrame({"a": ["alice@example.com", "bob@example.com"]})
         plan_a = self._column_seed(namespace="A_ns", strategy="hash")

@@ -109,7 +109,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 
 | Task | Start Here |
 |---|---|
-| Current roadmap | Maintained in the commercial platform repo |
+| Current roadmap | `decoy-platform/docs/ROADMAP.md` (commercial platform repo) |
 | Engine audit | Maintained in the commercial platform repo |
 | Remediation plan | Maintained in the commercial platform repo |
 | Public exports | `src/decoy_engine/__init__.py` |
@@ -173,7 +173,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 
 | Issue | Note |
 |---|---|
-| `docs/v2/ml/baseline-report.json` path | Uses retired "v2" nomenclature. Should be relocated to `docs/ml/baseline-report.json` or similar at a future sprint. Flagged for relocation, do not move independently (shared with commercial platform schema docs). |
+| `docs/v2/ml/baseline-report.json` path | The artifact lives at this path today (it carries the retired "v2" nomenclature). A move to `docs/ml/` is not scheduled; do not move it independently (shared with commercial platform schema docs). |
 
 ## Conventions
 

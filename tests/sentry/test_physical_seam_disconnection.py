@@ -348,6 +348,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_draw_site_providers_gen_pool.py",
         "src/decoy_engine/execution/native/_draw_sites_gen_pool.py",
         "src/decoy_engine/execution/native/_index_ext.py",
+        # R0 (2026-10-06): exception roots reparented under DecoyError (base class only);
+        # neither file imports execution.physical.
+        "src/decoy_engine/execution/_errors.py",
+        "src/decoy_engine/execution/_isolated_commit.py",
         # Comment-only edits stripping polars-masking wording from the retained
         # non-pandas substrate guards (the guards themselves stay as fail-closed
         # defence; the pandas path is unchanged).

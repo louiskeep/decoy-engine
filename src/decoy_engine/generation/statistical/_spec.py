@@ -48,6 +48,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 _SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
@@ -57,7 +58,7 @@ _OTHER_MODES = ("redistribute", "emit")
 OTHER_TOKEN = "__other__"  # noqa: S105 -- a column placeholder value, not a credential
 
 
-class StatisticalSpecError(Exception):
+class StatisticalSpecError(DecoyError):
     """Config/artifact mismatch for a statistical column. Machine-readable code."""
 
     def __init__(self, *, code: str, message: str) -> None:
