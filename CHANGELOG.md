@@ -9,7 +9,7 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Security (logs no longer carry user expression text or data values, 2026-10-06)
+### Security (engine log lines stop carrying expression text and data values, 2026-10-06)
 
 - **Fallback warnings.** The numexpr-fallback warnings for `when:` predicates
   (`execution/_when_gate.py`) and table transforms (`execution/_transforms.py`) logged the full
@@ -23,6 +23,14 @@ minimum engine version it was tested against via its
   names. When a formula fails because it references an undefined name or function (simpleeval's
   `NameNotDefined` / `FunctionNotDefined`), that line also lists the names, which are config, not data.
 
+- **More log sites.**
+  - The distribution datetime sampler no longer logs unparseable snapshot bounds.
+  - The disguise loader logs validation-error locations and types instead of the full pydantic
+    error, whose input echo can hold config literals.
+  - The legacy date_shift key-derivation failure logs the exception type only.
+
+Scope: these are the log sites found in a 2026-10-06 sweep. One known site is deferred to the
+post-Phase F observability program: `geo_generalize` logs a 3-digit zip prefix at DEBUG level.
 Error messages raised to the caller are unchanged: they go to the user who wrote the config, not to
 the server log.
 

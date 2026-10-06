@@ -164,3 +164,43 @@ def test_referenced_formula_undefined_name_is_reported(caplog) -> None:
     failures = [r for r in caplog.records if "failed to evaluate" in r.getMessage()]
     assert len(failures) == 1
     assert "undefined name(s) ['nope']" in failures[0].getMessage()
+
+
+def test_disguise_loader_logs_locations_not_input_values(tmp_path, caplog) -> None:
+    from decoy_engine.disguises.loader import load_disguises
+
+    # `version` fails its date pattern, so pydantic echoes the value in its error text.
+    (tmp_path / "bad.yaml").write_text(f"id: x\nname: x\nsummary: x\nversion: '{_SECRET}'\n")
+    with caplog.at_level(logging.ERROR, logger="decoy_engine.disguises.loader"):
+        load_disguises(tmp_path)
+    assert "schema validation failed" in caplog.text
+    assert _SECRET not in caplog.text
+
+
+def test_date_shift_key_failure_logs_type_not_message(caplog) -> None:
+    import pytest
+
+    def bad_key(_label: str) -> bytes:
+        raise RuntimeError(_SECRET)
+
+    strategy = DateShiftStrategy(seed=7, derive_key=bad_key)
+    with caplog.at_level(logging.DEBUG), pytest.raises(Exception):
+        strategy.apply(pd.Series(["2024-01-01"]), {"column": "dob", "date_format": "%Y-%m-%d"})
+    assert "RuntimeError" in caplog.text
+    assert _SECRET not in caplog.text
+
+
+def test_distribution_datetime_bad_bounds_are_not_logged(caplog) -> None:
+    from decoy_engine.generators.columns import ColumnGenerator
+
+    generator = ColumnGenerator(seed=7)
+    snapshot = {
+        "min": f"not-a-date {_SECRET}",
+        "max": "2024-01-01",
+        "year_bins": [{"year": 2024, "count": 1}],
+    }
+    with caplog.at_level(logging.DEBUG):
+        out = generator._generate_distribution_datetime(3, snapshot, 7)
+    assert out.isna().all()
+    assert "unparseable min/max" in caplog.text
+    assert _SECRET not in caplog.text and "2024-01-01" not in caplog.text

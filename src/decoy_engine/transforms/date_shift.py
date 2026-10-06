@@ -244,7 +244,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
             return self.derive_key("mask")
         except Exception as exc:
             self.logger.error(
-                f"DateShift: derive_key failed for 'mask' ({type(exc).__name__}: {exc}). "
+                f"DateShift: derive_key failed for 'mask' ({type(exc).__name__}). "
                 "Refusing to silently degrade to seed-only MD5."
             )
             raise MaskKeyDerivationError(
