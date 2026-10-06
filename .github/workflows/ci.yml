@@ -27,6 +27,9 @@ on:
 jobs:
   ruff:
     runs-on: ubuntu-latest
+    # Observed 2026-10: ruff/mypy ~1 min, gates 1-4 min, regression-gate 27-44 min.
+    # A hung run otherwise burns the 6h default (failed runs reached 2h+).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -38,7 +41,7 @@ jobs:
         # previously-green code red with zero code change. Bump deliberately
         # alongside a lint pass, not implicitly on every CI run. Version
         # mirrors the [lint] dev-deps group in pyproject.toml.
-        run: pip install ruff==0.15.14
+        run: pip install ruff==0.15.22
       - name: Lint
         run: ruff check src tests testflight scripts
       - name: Format check
@@ -46,6 +49,7 @@ jobs:
 
   mypy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -84,6 +88,8 @@ jobs:
   # parity, substrate-matrix, benchmark, and docs stay as separate workflows.
   regression-gate:
     runs-on: ubuntu-latest
+    # Observed 27-44 min; see the ruff job note on why a cap is needed.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -127,7 +133,7 @@ jobs:
         # is still the pytest exit code, unaffected by the flag.
         run: >
           pytest tests -m "not benchmark and not packaging and not codspeed"
-          --tb=short --junitxml=junit-results.xml
+          --tb=short --durations=25 --junitxml=junit-results.xml
 
       # Mergify consumes this artifact for merge-queue flaky-test detection
       # once the app is installed (CAM-STEPS.md). `if: always()` so a failing
@@ -161,6 +167,7 @@ jobs:
   # without the extra.
   ml-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -181,6 +188,7 @@ jobs:
   # needs the `build` frontend and shells out; the test importorskips elsewhere.
   packaging-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -212,6 +220,7 @@ jobs:
   # exists to rule out.
   dp-certified-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
