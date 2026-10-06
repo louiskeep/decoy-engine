@@ -1,4 +1,4 @@
-Status: plan (revision 3, author = Opus). Codex plan gate: rounds 1 and 2 REVISE folded; round 3 pending.
+Status: plan (revision 3, BUILD-READY, author = Opus). Codex plan gate: rounds 1-2 REVISE folded; round 3 GO (0 findings).
 Rules consulted: 00-universal, development-loop, refactoring, architecture, testing, code-review, scope-discipline
 
 # R1b: one kernel step per operator, shared by both routes
@@ -254,3 +254,4 @@ Gates: Codex plan gate on this plan; Sonnet build; dennis; Codex final gate; ci-
   - H: the missed reader `_unified_slice_resident_types.py:58` is now in scope through one helper; an end-to-end unified group_key test was added (test 9).
   - M: marker predicates are field-sensitive and malformed-binding mapping is literal; `params=None` cases added (test 10).
   - Test 1 now enumerates all nine operators.
+- Codex round 3: GO, 0 findings.
