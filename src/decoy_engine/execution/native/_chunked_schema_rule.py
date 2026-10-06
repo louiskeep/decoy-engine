@@ -30,8 +30,9 @@ by definition the rule pins one type per column for the whole call:
 - a text_redact column whose config the native operator takes (no `ner`, a string `token`,
   list-or-null `detectors`, no `when:`): `string`, by the same cast. Its output is always
   strings or nulls, so pandas' empty -> float64 and all-null -> null are inference artifacts.
-  A config the operator rejects is a silent pass-through in the oracle (the source column and
-  type survive), so it keeps the type its route produced. Config only, so both legs agree.
+  A rejected config keeps the type its route produced: a non-string token or malformed
+  detectors is a silent pass-through in the oracle (source column and type survive), and `ner`
+  still masks but runs only on the oracle. Config only, so both legs agree.
   The whole-frame route still resolves an empty or all-null column to Arrow `null`, the same
   recorded route-dependent difference (docs/compatibility-contract.md, ROUTE-OUTPUT-CONTRACT).
 - passthrough columns (configured, or unconfigured and kept under the
@@ -75,8 +76,8 @@ def text_redact_pinned_columns(configured: dict[str, dict[str, Any]]) -> frozens
     """The text_redact columns whose output is pinned to `string`.
 
     One classifier for both schema-rule construction sites. The pin follows the same config
-    predicate admission uses, so a rejected config (a silent pass-through in the oracle) is
-    never retyped."""
+    predicate admission uses, so a rejected config (an oracle pass-through, or `ner`, which
+    masks only on the oracle) is never retyped."""
     from decoy_engine.execution.native._operator_config_rejections import (
         text_redact_config_rejection,
     )
