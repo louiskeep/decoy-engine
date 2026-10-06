@@ -1,4 +1,4 @@
-Status: plan (revision 1, author = Opus). Codex plan gate: pending.
+Status: plan (revision 2, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 pending.
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline
 
 # C6c-i: text_redact as an Arrow operator on both native routes
@@ -16,7 +16,7 @@ Today any table with a text_redact column is declined in full to pandas on both 
 C6c-i admits the plain configuration:
 - no `ner`;
 - `token` a string;
-- `detectors` absent, a list or a tuple;
+- `detectors` absent, explicitly `null`, a list or a tuple;
 - string source;
 - no `when:`.
 
@@ -25,7 +25,7 @@ The text_redact column itself runs the same Python per-cell span logic as the or
 Out of scope:
 - The Rust span kernel (C6c-ii).
 - `ner` configs (model load, version check, batching). They stay on the oracle with a coded reason.
-- The two silent pass-through configs (non-string `token`; `detectors` neither None nor a list or tuple). They leave the source column unchanged with its type, so they stay on the oracle with a coded reason.
+- The two silent pass-through configs (non-string `token`; `detectors` neither None/null nor a list or tuple). They leave the source column unchanged with its type, so they stay on the oracle with a coded reason.
 - text_mask (C6b) and FPE (C6a).
 - Out-of-core, which already runs text_redact in group (b).
 
@@ -60,31 +60,41 @@ Out of scope:
 ## 3. Decisions
 
 **3a. Kernel.** New `native_text_redact(array, *, detectors: tuple[str, ...] | None, token: str, label_token: bool) -> pa.Array` in `native/_kernels_scalar.py`, or a sibling module if the scalar module would pass 600 lines.
+- It receives `detectors` already normalized by the resolver (3b), which is the ONE owner of the normalization. The kernel passes `list(detectors) if detectors is not None else None` and does not re-apply the empty-means-all rule, so a resolver mutant that drops that rule is observable.
 - It iterates the Arrow array's Python values with the oracle's exact cell rules:
   - null stays null;
   - a non-string cell becomes `str(cell)`;
   - otherwise it calls `iter_spans(text, list(detectors) if detectors else None, extra_spans=None)` and `_splice`.
-- It imports `iter_spans`, `_splice` and `_DEFAULT_TOKEN` from their current homes. They are NOT copied, so there is one implementation.
-- Output is pinned to `pa.string()`, like `native_redact`.
+- It imports `iter_spans`, `_splice` and `_DEFAULT_TOKEN` from their current homes. They are NOT copied, so there is one implementation. No import-direction sentry forbids this (Codex round 1), so `_splice` is not moved; it keeps its out-of-core consumer.
+- Output is `pa.string()` from the kernel. Each route's assembly decides the final type (3d).
 - The oracle's per-cell `str()` of a non-string value only matters for non-string sources, which admission excludes (3c). The kernel still applies the same rule so it is correct if called directly.
-- The `_splice` import from a strategy module into `native/` must respect the import-boundary sentries. If a sentry forbids it, `_splice` moves to a neutral module (e.g. `storm/_splice.py` or `transforms/`) and the oracle imports it from there. The builder records which.
 
 **3b. Registry and params.**
-- One `OperatorSpec`: `strategy="text_redact"`, `operator_id="native_text_redact"`, `shape="kernel"`, `planned_backend=ARROW_PYTHON`, `required_kernel=None`, `positive_kernel_evidence=False`, `unified_resident_types=_STRING_ONLY`, `full_frame_assembly="tokenizing"`, no `routed_diagnostics`.
-- `TextRedactParams(detectors: tuple[str, ...] | None, token: str, label_token: bool)`. The resolver applies the oracle's exact normalization once: `token = cfg.get("token", _DEFAULT_TOKEN)`; `label_token = bool(cfg.get("label_token", False))`; `detectors = tuple(str(d) for d in raw) or None` when raw is a list or tuple, else None when absent.
+- One `OperatorSpec`: `strategy="text_redact"`, `operator_id="native_text_redact"`, `shape="kernel"`, `planned_backend=ARROW_PYTHON`, `required_kernel=None`, `positive_kernel_evidence=False`, `unified_resident_types=_STRING_ONLY`, `full_frame_assembly="null_on_empty"`, no `routed_diagnostics`. Codex round 1: the oracle assigns `dtype=object` (`_text_redact.py:187`), so an empty or all-null result is Arrow `null`, which `null_on_empty` reproduces; `tokenizing` would give `double` (`physical/_shadow_assembly.py:66`).
+- `TextRedactParams(detectors: tuple[str, ...] | None, token: str, label_token: bool)`. The resolver applies the oracle's exact normalization once: `token = cfg.get("token", _DEFAULT_TOKEN)`; `label_token = bool(cfg.get("label_token", False))`; `detectors = tuple(str(d) for d in raw) or None` when raw is a list or tuple, and None when raw is absent or explicitly None (`_text_redact.py:115`).
 - The step branch returns `StepResult(native_text_redact(...), None)`, since it is not a compiled kernel.
 - The R1b resolver single-source sentry is extended to cover the text_redact default token.
 
 **3c. Admission (both routes), one config predicate.** `text_redact_config_rejection(name, provider_config) -> str | None` in `native/_operator_config_rejections.py`:
 - `text_redact_ner_not_native:{name}` when `ner` is truthy;
 - `text_redact_token_not_string:{name}` when token is present and not a str;
-- `text_redact_detectors_malformed:{name}` when detectors is present and not a list or tuple.
+- `text_redact_detectors_malformed:{name}` when detectors is present, not None, and not a list or tuple.
 
-It is wired where the other config gates are read: `_requirements.py` (fallback policy), unified admission, and the chunked static route. The source must be `pa.string()`: unified through `unified_resident_types`, chunked through the existing first-chunk real-type check, adding text_redact to the string-source gate with code `text_redact_source_type_not_string:{col}:{type}`. A non-string source takes the existing downgrade to the chunked-oracle leg, never a hard error. `when:` is already rejected on both native routes by the generic `when_predicate_not_native` path; the builder confirms it with a test.
+It is wired into BOTH config-gate dispatchers, alongside redact and truncate:
+- `_requirements.py` (the fallback policy every route reads);
+- `native/_plan.py::_config_rejection` (`:308`, the native eligibility report). Without it, eligibility would advertise excluded configs as eligible once the registry entry exists (Codex round 1).
+
+Where the codes surface (narrowed to existing plumbing, Codex round 1):
+- The coded reason appears in the `_plan.py` eligibility report, exactly as redact's and truncate's do.
+- The chunked dispatcher records the generic `fallback_policy_not_native:{col}:{policy}` (`_dispatch.py:305`), like every other operator.
+- Unified admission declines without a code (`_unified_slice_admission.py:204`), as it does for every operator today.
+
+No new telemetry path is built in this slice. The source must be `pa.string()`: unified through `unified_resident_types`, chunked through the existing first-chunk real-type check, adding text_redact to the string-source gate with code `text_redact_source_type_not_string:{col}:{type}` in the chunked downgrade evidence. The unified resident-type and `when:` gates decline without a code, as they do today. A non-string source takes the existing downgrade to the chunked-oracle leg, never a hard error. `when:` is already rejected on both native routes by the generic `when_predicate_not_native` path; the builder confirms it with a test.
 
 **3d. Output type on the chunked route.** Add text_redact to the string pin only when its config passes 3c. A classifier (`text_redact_pinned_columns`, like `date_shift_pinned_columns`) runs inside `build_schema_rule`, so both legs and the streamed sink agree. A rejected config keeps its oracle types.
 - For admitted text_redact, both legs pin `string` per chunk.
-- Assembled output equals whole-frame `string`, except an entirely null or empty column, where whole-frame infers the type. This is the same documented exception redact and truncate already carry.
+- Unified route: the `null_on_empty` assembly makes an empty or all-null result Arrow `null`, equal to the oracle; otherwise `string`.
+- Chunked route: assembled output is `string`, which equals whole-frame except for an entirely null or empty column (whole-frame gives `null`). This is the same documented exception redact and truncate already carry on the chunked route.
 
 **3e. Evidence.** Planned and executed backend `arrow_python`. No compiled claim, no kernel calls, no `kernel_idle` entry (positive evidence is not expected for `ARROW_PYTHON`). This matches redact and truncate exactly.
 
@@ -119,11 +129,18 @@ It is wired where the other config gates are read: `_requirements.py` (fallback 
      - the empty string.
    - Null kinds in the source: None and pd.NA via Arrow nulls.
    - Chunk shapes: zero-row, all-null, single-row, ragged.
-   - Values and order equal the oracle. Types follow 3d.
+   - Values and order equal the oracle. Types follow 3d, with explicitly string-typed empty and all-null inputs.
+   - Every admitted case ALSO asserts native-route evidence (`arrow_python` backend for the column, table admitted). Without it, a fallback to the oracle would pass the parity check vacuously.
+   - Configs also include `detectors: null` and a tuple (both admitted).
 2. **Table-level lift.** A table with hash, faker and text_redact columns now takes the native route on both routes. Before the change it is declined in full. Evidence names `arrow_python` for text_redact and the compiled backends for the others.
-3. **Excluded configs stay on the oracle with their codes.** `ner: true`, `ner: {model: ...}`, a non-string token, and a malformed detectors value each give the exact 3c code, and their output equals today's.
+3. **Excluded configs stay on the oracle.** `ner: true`, `ner: {model: ...}`, a non-string token, and a malformed (non-None, non-list) detectors value each:
+   - give the exact 3c code in the `_plan.py` eligibility report;
+   - give `fallback_policy_not_native` in chunked evidence;
+   - decline unified admission;
+   - produce output equal to today's.
 4. **Non-string source.** An int64 source with text_redact takes the oracle (unified decline; chunked downgrade with `text_redact_source_type_not_string`) and equals today's output. The auto-router end to end does not crash.
 5. **`when:`.** text_redact with `when:` stays off native via the existing code. Output is unchanged.
+6a. **Direct kernel contract.** `native_text_redact` on non-string arrays (int64, float64, bool) applies `str()` per non-null cell. Nulls stay null. `detectors=None` runs all detectors; `detectors=()` runs none. This makes the `str()` and normalization mutants observable without going through admission.
 6. **Single implementation.** An AST check confirms that `native_text_redact` calls `iter_spans` and `_splice` and defines no regex of its own. The resolver sentry covers the default token.
 7. **Evidence.** `arrow_python` backend, no compiled claim, matching redact.
 8. **Determinism.** Two runs give identical output. It does not depend on `mask_key` or `job_seed`: changing either leaves the text_redact output unchanged.
@@ -134,10 +151,11 @@ It is wired where the other config gates are read: `_requirements.py` (fallback 
      - the null check inverted;
      - the `str()` coercion dropped;
      - the 3c gates removed one at a time;
-     - the pin classifier admitting rejected configs.
+     - the pin classifier admitting rejected configs. Killed by a rejected config (non-string token) over an int64 source run chunked: the oracle returns int64 unchanged, so a wrong pin changes the observable type.
+   - Any mutant shown equivalent is recorded as such, with the reason.
    - All must be killed. Record the results.
 
-Red-before: tests 1, 2, 3, 6, 7 and 9 fail on the base (no operator, no codes). Tests 4, 5 and 8 are green-before for the oracle path and must stay green.
+Red-before: tests 1, 2, 3, 6, 6a, 7 and 9 fail on the base (no operator, no codes). Tests 4, 5 and 8 are green-before for the oracle path and must stay green.
 
 Every new test also runs under the Python 3.10 mirror.
 
@@ -147,7 +165,6 @@ Every new test also runs under the Python 3.10 mirror.
 |---|---|
 | Output type differs from the oracle on degenerate chunks | Config-gated pin through `build_schema_rule`; tests 1 and 3 |
 | Silent pass-through configs admitted and stringified | Coded rejections; test 3 |
-| Import-boundary sentry blocks reusing `_splice` | Move it to a neutral module (3a), recorded |
 | Python per-cell speed mistaken for a Rust win | Evidence says `arrow_python`; docs say the column's own speed is unchanged |
 | Module size | New code is small; census exact |
 
@@ -158,3 +175,9 @@ Gates: Codex plan gate, Sonnet tests-first build, dennis, Codex final gate, ci-m
 ## 7. Plan-gate history
 
 - Rev 1: initial.
+- Codex round 1, REVISE (4 MEDIUM). Folded in rev 2:
+  - Unified assembly is `null_on_empty`, matching the oracle's object dtype.
+  - `detectors: null` is admitted.
+  - The `_plan.py` eligibility dispatcher is wired, and where codes surface is narrowed to existing plumbing.
+  - Normalization has one owner, with direct kernel tests, native-route evidence in every parity case, and an observable pin mutant.
+  - `_splice` is not moved.
