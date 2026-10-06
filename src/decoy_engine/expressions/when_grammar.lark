@@ -10,7 +10,7 @@
 //
 // Strings carry no backslash, no quote character of either kind and no control
 // character, so pandas eval and this parser read the same characters without any
-// escape processing. The parser is contextual LALR: no ambiguity, no backtracking.
+// escape processing. The parser is LALR with a basic lexer: no ambiguity, no backtracking.
 
 start: or_expr
 
@@ -44,5 +44,6 @@ NUMBER: /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/
 SQ_STRING: /'[^'"\\\x00-\x1f\x7f-\x9f  ]*'/
 DQ_STRING: /"[^'"\\\x00-\x1f\x7f-\x9f  ]*"/
 
-%import common.WS
-%ignore WS
+// Spaces and tabs only: pandas eval reads any line break (including form feed) as a
+// multi-line block.
+%ignore /[ \t]+/

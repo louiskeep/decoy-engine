@@ -367,3 +367,33 @@ def test_ordinary_numbers_still_parse_and_evaluate(predicate: str) -> None:
 
     parse_when(predicate)
     assert len(_eval_predicate(pd.DataFrame({"n": [0, 10, None]}), predicate, "hash")) == 3
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "x == 1 ory == 2",
+        "x == 1 andy == 2",
+        "x notin [1]",
+        "x == Trueand y == False",
+        "x == 1\fand x == 2",
+        "x == 1\vand x == 2",
+    ],
+    ids=["or_prefix", "and_prefix", "notin", "true_suffix", "form_feed", "vertical_tab"],
+)
+def test_keywords_need_their_own_token_and_only_spaces_separate_tokens(predicate: str) -> None:
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.expressions._when_parser import parse_when
+
+    with pytest.raises(ValidationError):
+        parse_when(predicate)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    ["x == 1 or y == 2", "x == 1\tand y == 2", "not x in [1]", "x not in [1, 2]", "x == True"],
+)
+def test_spaced_keywords_still_parse(predicate: str) -> None:
+    from decoy_engine.expressions._when_parser import parse_when
+
+    parse_when(predicate)

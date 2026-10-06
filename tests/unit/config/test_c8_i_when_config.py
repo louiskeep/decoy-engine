@@ -212,3 +212,16 @@ def test_a_multiline_predicate_is_rejected_at_its_nested_location() -> None:
     (error,) = info.value.errors()
     assert error["type"] == "when_outside_closed_grammar"
     assert error["loc"] == ("tables", 0, "columns", 0, "when")
+
+
+def test_a_keyword_without_its_space_is_rejected_at_its_nested_location() -> None:
+    import pydantic
+    import pytest
+
+    from decoy_engine.config import PipelineConfig
+
+    with pytest.raises(pydantic.ValidationError) as info:
+        PipelineConfig.model_validate(_hash_fixture(when="b == 'x' orb == 'y'"))
+    (error,) = info.value.errors()
+    assert error["type"] == "when_outside_closed_grammar"
+    assert error["loc"] == ("tables", 0, "columns", 0, "when")

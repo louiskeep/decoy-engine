@@ -29,7 +29,12 @@ WHEN_OUTSIDE_GRAMMAR_CODE = "when_outside_closed_grammar"
 
 _GRAMMAR_PATH = Path(__file__).parent / "when_grammar.lark"
 _PARSER = lark.Lark(
-    _GRAMMAR_PATH.read_text(encoding="utf-8"), parser="lalr", maybe_placeholders=False
+    _GRAMMAR_PATH.read_text(encoding="utf-8"),
+    parser="lalr",
+    # A basic lexer reads `ory` or `notin` as one identifier, as Python's tokenizer does;
+    # the contextual lexer would split a keyword off the front and accept text pandas rejects.
+    lexer="basic",
+    maybe_placeholders=False,
 )
 
 _MAX_EXPR_LENGTH = 4096
