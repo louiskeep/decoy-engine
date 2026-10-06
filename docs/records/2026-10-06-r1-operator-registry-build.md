@@ -68,5 +68,5 @@ Plan: `docs/plans/2026-10-06-r1-operator-registry.md` rev 2 (Codex plan gate GO)
 - **MEDIUM-2:** the single-source sentry derives the operator ids from `OPERATORS` (the snapshot test still pins the literals).
 - **LOW-1:** the `_STRING_SOURCE_STRATEGIES` rationale was corrected.
 - **LOW-2:** `_shadow_bindings` reads the Faker allowlist from the registry.
-- **Red-before:** all three new tests fail on the pre-fix commit `bc13aeca`.
+- **Red-before:** all three new tests fail on the pre-fix commit `bc13aeca`, but only STRUCTURALLY (the `routed_diagnostics` field and `group_key_sibling_types` did not exist yet). The behavioral evidence is dennis's round-2 mutation probe: adding a warning code to truncate's capability row makes `test_capability_diagnostics_are_routed_for_every_slice_operator` fail, and makes the real admission helper decline truncate, as on main.
 - **After the fix:** `tests/sentry tests/native tests/physical tests/unit/execution tests/parity/native`: 15165 passed, 7 skipped, 59 xfailed, 0 failed. `tests/sentry` on Python 3.10: 2286 passed, 1 skipped. ruff and mypy are clean.
