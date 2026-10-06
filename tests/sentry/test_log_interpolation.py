@@ -73,12 +73,17 @@ ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
 
 def _logger_aliases(tree: ast.AST) -> frozenset[str]:
     """Names bound to `getLogger(...)` in the module, whatever they are called."""
+    getters = {"getLogger"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "logging":
+            getters |= {a.asname or a.name for a in node.names if a.name == "getLogger"}
     aliases: set[str] = set()
     for node in ast.walk(tree):
         value = getattr(node, "value", None)
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(value, ast.Call):
             func = value.func
-            if isinstance(func, ast.Attribute) and func.attr == "getLogger":
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if called in getters:
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
                     if isinstance(target, ast.Name):
@@ -120,7 +125,14 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
     count, so adding a second risky value to an allowlisted message is still a new finding."""
     if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript)):
         root = _root_name(value)
-        return [root] if root in risky else []
+        if root is not None:
+            return [root] if root in risky else []
+        base: ast.expr = value
+        while isinstance(base, (ast.Attribute, ast.Subscript)):
+            base = base.value
+        # `str(exc)[:200]` still exposes the text; `type(exc).__name__` stays exempt because
+        # `type` is not a formatting call.
+        return _risky_in(base, risky) if isinstance(base, ast.Call) else []
     children: list[ast.expr] = []
     if isinstance(value, ast.JoinedStr):
         children = [p.value for p in value.values if isinstance(p, ast.FormattedValue)]
@@ -135,6 +147,8 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
     elif isinstance(value, ast.Dict):
         # Logging renders a dict's keys as well as its values.
         children = [k for k in value.keys if k is not None] + list(value.values)
+    elif isinstance(value, ast.DictComp):
+        children = [value.key, value.value, *(g.iter for g in value.generators)]
     elif isinstance(value, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
         # The iterable counts too: conservative on purpose, since a false positive only costs
         # an allowlist entry while `", ".join(str(x) for x in row)` must not pass.
@@ -282,6 +296,16 @@ _TB = "<exception traceback>"
         (
             "def f():\n    log.info('%s', [sanitize(x) for x in values])\n",
             {(_M, "f", "values"): 1},
+        ),
+        ("def f():\n    log.error('%s', str(exc)[:200])\n", {(_M, "f", "exc"): 1}),
+        (
+            "def f():\n    log.error('%s', {k: str(x) for k, x in row.items()})\n",
+            {(_M, "f", "row"): 1},
+        ),
+        (
+            "from logging import getLogger as gl\naudit = gl(__name__)\n"
+            "def f():\n    audit.error('%s', exc)\n",
+            {(_M, "f", "exc"): 1},
         ),
         # Safe forms.
         ("def f():\n    _log.warning('x %s', type(exc).__name__)\n", {}),
