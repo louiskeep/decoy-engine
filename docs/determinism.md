@@ -78,7 +78,10 @@ for the full model.
   the job seed and the row's position in the frame being masked, so the same seed
   and input give the same output. Two columns with no namespace draw different
   rows; two that share a namespace share a stream. It is keyed by position, not by
-  source value, so it does not preserve joins. The `unique`, `match_source_cardinality`
+  source value, so it does not preserve joins. The chunked route runs it natively with
+  the same draw, from each chunk's global row offset, so chunk size does not change the
+  output (it needs an explicit `pool_size` and a string-output provider from the
+  documented list, and no `when:`). The `unique`, `match_source_cardinality`
   and `scale_source_cardinality` modes draw one seeded whole-column stream from the
   job seed instead.
 - Non-deterministic `categorical`: seeded by the job seed and the row's position

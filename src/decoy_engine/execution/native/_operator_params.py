@@ -23,6 +23,7 @@ from typing import Any
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._operator_registry import OPERATORS
+from decoy_engine.execution._strategies._faker_positional import faker_selection_namespace
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN
 from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
@@ -39,6 +40,7 @@ __all__ = [
     "RedactParams",
     "TextRedactParams",
     "TruncateParams",
+    "is_positional_faker_seed",
     "resolve_operator_params",
     "resolve_params_by_column",
 ]
@@ -77,7 +79,12 @@ class HashParams:
 
 @dataclass(frozen=True)
 class FakerParams:
+    # The CONFIGURED namespace: the pool identity and the deterministic draw read it.
     namespace: str | None
+    # A non-deterministic REUSE column draws by row position, keyed on `job_seed`, from the
+    # selection namespace (the configured one, else the per-table default).
+    positional: bool = False
+    selection_namespace: str | None = None
 
 
 @dataclass(frozen=True)
@@ -208,11 +215,34 @@ def resolve_operator_params(
     raise AssertionError(f"no native operator parameters for strategy {strategy!r}")
 
 
+def is_positional_faker_seed(seed: Any) -> bool:
+    """The oracle's gate for the position-keyed draw: a non-deterministic REUSE faker."""
+    return bool(
+        seed.strategy == "faker" and not seed.deterministic and seed.cardinality_mode == "reuse"
+    )
+
+
+def _positional_faker_params(seed: Any, *, table: str | None, column: str) -> FakerParams:
+    """The parameters of a position-keyed faker column: the oracle's own default-namespace
+    function, so the two routes cannot spell the selection namespace differently."""
+    if table is None:  # pragma: no cover - the chunked entry always knows its table
+        raise AssertionError(
+            f"positional faker column {column!r} reached the parameter resolver with no table; "
+            "its default selection namespace is keyed on the table."
+        )
+    return FakerParams(
+        seed.namespace,
+        positional=True,
+        selection_namespace=faker_selection_namespace(table, column, seed.namespace),
+    )
+
+
 def resolve_params_by_column(
     col_seed_by_name: Mapping[str, Any],
     prepared_categoricals: Mapping[str, PreparedCategorical],
     *,
     excluded: frozenset[str],
+    table: str | None = None,
 ) -> dict[str, OperatorParams]:
     """Parameters for every configured column of one table, resolved once for the whole run
     (defaults, coercions and namespaces never change between chunks).
@@ -220,13 +250,16 @@ def resolve_params_by_column(
     A column is left out when it is `excluded` (unconfigured passthrough, stored index), when
     its strategy is not a native operator, or when it is a categorical the chunked entry did
     not prepare. The route then fails closed on the missing entry, as it did when it looked
-    these up per chunk.
+    these up per chunk. `table` keys the default selection namespace of a position-keyed faker.
     """
     params: dict[str, OperatorParams] = {}
     for name, seed in col_seed_by_name.items():
         if name in excluded or seed.strategy not in OPERATORS:
             continue
         if seed.strategy == "categorical" and name not in prepared_categoricals:
+            continue
+        if is_positional_faker_seed(seed):
+            params[name] = _positional_faker_params(seed, table=table, column=name)
             continue
         params[name] = resolve_operator_params(
             seed.strategy,

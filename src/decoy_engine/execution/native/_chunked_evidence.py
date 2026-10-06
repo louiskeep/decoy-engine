@@ -27,8 +27,8 @@ from decoy_engine.execution._operator_registry import (
     RUST_COMPANION,
     RUST_POOL_SELECT,
 )
-from decoy_engine.execution.native._categorical_positional import positional_config_for_column
 from decoy_engine.execution.native._chunked_group_key_gate import sibling_resident_sources
+from decoy_engine.execution.native._faker_positional_admission import chunked_positional_column
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 
@@ -101,10 +101,8 @@ def plan_column_backends(
     for node in plan.nodes:
         if node.table != table:
             continue
-        positional = (
-            node.kind == "scalar"
-            and node.strategy == "categorical"
-            and positional_config_for_column(config, table, node.columns[0]) is not None
+        positional = node.kind == "scalar" and chunked_positional_column(
+            config, table, node.strategy, node.columns[0]
         )
         backend = RUST_COMPANION if positional else _planned_backend(node)
         out.extend(ColumnPlan(col, node.strategy, backend) for col in node.columns)

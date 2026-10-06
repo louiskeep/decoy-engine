@@ -299,6 +299,29 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   chunked leg by one of these now gets the `string` pin only when its text_redact config is
   native-admissible, so an oracle-routed degenerate chunk of such a column is `string` where it
   was `null` or `double` before.
+  Non-deterministic `reuse` Faker joined the chunked route on 2026-10-06 (slice C5b-ii). It
+  keeps the position-keyed draw of slice C5b-i, taken at the chunk's global row offset, so
+  chunked output equals the whole-frame run for any chunk size. A column is admitted when it
+  declares an explicit `pool_size` (top level or `provider_config`), uses a provider in the C1
+  string-output allowlist (`person_first_name`, `person_last_name`), has no `when:` and is not
+  `unique`, `match_source_cardinality` or `scale_source_cardinality`; the namespace stays
+  optional. A string source runs the compiled path and any other source type runs the chunked
+  oracle leg with the same draw. A column that fails one of these conditions keeps running
+  whole-frame, and a missing `pool_size` or a provider outside the allowlist reports
+  `chunked_strategy_conditions_unmet` naming the unmet condition. A column that is admitted and
+  carries `when:` fails with `chunked_faker_nondeterministic_when_not_supported`, because the
+  oracle numbers only the matching rows. The chunked output type of an admitted column is
+  pinned to `string` on both chunked legs, with or without the companion. Under
+  ROUTE-OUTPUT-CONTRACT a whole-frame column that is empty or entirely null keeps the type
+  pandas infers there, while the chunked route yields `string`; values are unchanged. A custom
+  provider registered under an allowlisted name whose pool holds non-string values fails closed
+  with `chunked_faker_nondeterministic_pool_not_string` before any chunk is written on both
+  dispatcher legs (the legacy `chunked_dispatcher_enabled=False` lane does not run this check and
+  can instead fail later with `chunked_schema_mismatch`), which is
+  a new failure for an auto-chunked job that ran whole-frame before; disable auto-chunking or
+  register the provider under another name. A multi-table split run now dispatches an
+  above-threshold Faker table chunked like its siblings, with the same values. The unified
+  full-frame route and out-of-core still decline it (the unified route is slice C5b-iii).
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that

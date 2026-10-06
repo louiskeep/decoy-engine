@@ -575,7 +575,9 @@ class TestGenerationUnchanged:
 # ---- 8. routing is held constant ----------------------------------------------------------
 
 
-def _route_config(tmp_path: Any, mode: str, namespace: str | None) -> tuple[Any, Any]:
+def _route_config(
+    tmp_path: Any, mode: str, namespace: str | None, *, pool_size: int | None = 400
+) -> tuple[Any, Any]:
     from tests.unit.execution import _auto_chunk_support as support
     from tests.unit.execution import _multi_table_support as mt
 
@@ -584,9 +586,10 @@ def _route_config(tmp_path: Any, mode: str, namespace: str | None) -> tuple[Any,
         "strategy": "faker",
         "provider": "person_first_name",
         "deterministic": False,
-        "pool_size": 400,
         "cardinality_mode": mode,
     }
+    if pool_size is not None:
+        col["pool_size"] = pool_size
     if namespace:
         col["namespace"] = namespace
     table = pa.table(
@@ -596,13 +599,14 @@ def _route_config(tmp_path: Any, mode: str, namespace: str | None) -> tuple[Any,
 
 
 # (mode, namespace) -> the chunked conditions that stay unmet. Snapshot of engine main 4fe5de9d.
+# The REUSE rows left this table when C5b-ii admitted a REUSE column that declares a pool_size
+# to the chunked route; `_REUSE_WITHOUT_POOL_SIZE` keeps the rest of that routing pinned.
 _ROUTE_CASES = [
-    ("reuse", None, 2),
-    ("reuse", "ns_f", 1),
     ("unique", "ns_f", 2),
     ("match_source_cardinality", "ns_f", 2),
     ("scale_source_cardinality", None, 3),
 ]
+_REUSE_WITHOUT_POOL_SIZE = [None, "ns_f"]
 
 
 class TestRoutingConstant:
@@ -639,6 +643,38 @@ class TestRoutingConstant:
         assert head.count("requires ") == unmet
         assert "requires deterministic: true" in head
 
+    @pytest.mark.parametrize("namespace", _REUSE_WITHOUT_POOL_SIZE)
+    def test_a_reuse_column_without_a_pool_size_keeps_the_veto_and_runs_full_frame(
+        self, tmp_path: Any, namespace: str | None
+    ) -> None:
+        from decoy_engine.execution import run_pipeline
+        from decoy_engine.execution._planner import classify_job
+        from decoy_engine.plan import compile_plan
+        from decoy_engine.profile import profile_source
+        from tests.unit.execution import _multi_table_support as mt
+
+        cfg, src = _route_config(tmp_path, "reuse", namespace, pool_size=None)
+        plan = compile_plan(
+            cfg, profile_source(cfg, seed=42), decoy_engine_version="c5b-ii-route-test"
+        )
+        decision = classify_job(
+            cfg,
+            plan=plan,
+            registry=_REG,
+            relationship_graph=_GRAPH,
+            substrate="pandas",
+            source_tables=src,
+            auto_chunk_threshold_rows=10,
+        )
+        assert decision.mode == "pandas_fallback"
+        assert decision.rejections["chunked"].startswith(
+            "chunked_strategy_conditions_unmet: column(s) f (faker: "
+        )
+        res = run_pipeline(cfg, sources=src, **mt.kw())
+        block = res.quality_metrics["auto_chunk"]
+        assert block["mode"] == "full_frame"
+        assert block["reason"].startswith("chunked_strategy_conditions_unmet")
+
     @pytest.mark.parametrize(("mode", "namespace", "unmet"), _ROUTE_CASES[:2])
     def test_end_to_end_run_stays_full_frame_with_the_same_code(
         self, tmp_path: Any, mode: str, namespace: str | None, unmet: int
@@ -654,7 +690,7 @@ class TestRoutingConstant:
         assert block["reason"].startswith("chunked_strategy_conditions_unmet")
         assert set(res.quality_metrics) == {"auto_chunk", "execution"}
 
-    @pytest.mark.parametrize("mode", ["reuse", "unique", "match_source_cardinality"])
+    @pytest.mark.parametrize("mode", ["unique", "match_source_cardinality"])
     def test_chunked_check_still_raises_the_same_code(self, mode: str) -> None:
         from decoy_engine.execution._chunked import check_chunked_compatibility
         from decoy_engine.plan._errors import PlanCompileError
@@ -980,7 +1016,7 @@ class TestMultiTable:
             },
         )
 
-    def test_sibling_tables_still_dispatch_and_the_faker_table_stays_whole(
+    def test_sibling_tables_still_dispatch_and_the_faker_table_runs_chunked_on_the_same_ordinals(
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from decoy_engine.execution import run_pipeline
@@ -990,11 +1026,11 @@ class TestMultiTable:
         calls = mt.spy_split(monkeypatch)
         got = run_pipeline(cfg, sources=src, **mt.kw())
         assert len(calls) == 1
-        assert mt.dispatched_tables(got) == ["big", "big2"]
+        # C5b-ii: the above-threshold Faker table is dispatched like its siblings.
+        assert mt.dispatched_tables(got) == ["fk", "big", "big2"]
         off = run_pipeline(cfg, sources=src, **mt.kw(**mt.off_kw()))
-        # Dispatched siblings differ from the whole-frame run only in pandas schema metadata.
-        assert got.outputs["fk"].equals(off.outputs["fk"], check_metadata=True)
-        for name in ("big", "big2"):
+        # Dispatched tables differ from the whole-frame run only in pandas schema metadata.
+        for name in ("fk", "big", "big2"):
             assert got.outputs[name].equals(off.outputs[name]), name
         # The Faker table drew from the whole-frame ordinals, row for row.
         job_seed = _job_seed_of(cfg)

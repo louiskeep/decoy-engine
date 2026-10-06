@@ -169,8 +169,6 @@ def test_deterministic_reuse_faker_admits_on_native_pool_route() -> None:
 @pytest.mark.parametrize(
     "columns",
     [
-        pytest.param([_faker_column(deterministic=False)], id="non_deterministic"),
-        pytest.param([_faker_column(deterministic=None)], id="deterministic_omitted"),
         pytest.param(
             [_faker_column(cardinality_mode="unique")], id="unique_cardinality_deterministic"
         ),
@@ -207,6 +205,31 @@ def test_non_c1_faker_variant_stays_on_oracle(columns: list[dict]) -> None:
     assert decision.reroute_reason is not None
     assert decision.reroute_reason.startswith("fallback_policy_not_native:FIRST:python_only")
     assert all(r.route == "oracle" for r in decision.node_routes)
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize(
+    "column",
+    [
+        pytest.param(_faker_column(deterministic=False), id="non_deterministic"),
+        pytest.param(_faker_column(deterministic=None), id="deterministic_omitted"),
+    ],
+)
+def test_non_deterministic_reuse_faker_is_admitted_as_the_position_keyed_variant(
+    column: dict,
+) -> None:
+    # C5b-ii: the non-deterministic REUSE variant with an explicit pool_size and an allowlisted
+    # provider runs on the chunked native pool route, keyed on position, not source value.
+    decision = plan_native_route(
+        _config(column),
+        _profile("FIRST"),
+        table="t",
+        engine_version=_ENGINE_VERSION,
+        registry=get_default_registry(),
+    ).evidence
+
+    assert decision.native_admitted is True
+    assert {r.column: r.route for r in decision.node_routes} == {"FIRST": "native_pool"}
 
 
 def test_non_string_faker_source_reroutes_whole_table_to_oracle() -> None:
@@ -322,7 +345,7 @@ def test_one_non_c1_faker_column_reroutes_whole_table_not_just_that_column() -> 
     # on_oracle for why this does not exercise the full chunked oracle fallback).
     config = _config(
         _faker_column("FIRST"),
-        _faker_column("LAST", provider="person_last_name", deterministic=False, namespace="ns_l"),
+        _faker_column("LAST", provider="person_last_name", pool_size=None, namespace="ns_l"),
     )
     decision = plan_native_route(
         config,

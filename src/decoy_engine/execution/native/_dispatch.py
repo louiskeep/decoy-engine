@@ -46,9 +46,6 @@ import pyarrow as pa
 
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._transforms_gate import reject_per_table_transforms
-from decoy_engine.execution.native._categorical_positional import (
-    positional_config_for_column,
-)
 from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-exported for tests
     _mask_chunk_native,
     _resolve_faker_pools,
@@ -63,6 +60,7 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
 )
+from decoy_engine.execution.native._faker_positional_admission import chunked_positional_column
 from decoy_engine.execution.native._group_key_ext import (
     RawHexDerivationKernel,
     load_compiled_raw_hex_kernel,
@@ -291,12 +289,10 @@ def _static_route_decision(
                 continue
         no_kernel = node.strategy not in NATIVE_KERNEL_STRATEGIES
         no_pool_path = node.strategy not in NATIVE_POOL_STRATEGIES
-        # The seeded non-deterministic categorical resolves a non-native policy (the
-        # full-frame operator is source-keyed); this chunked-only route admits it, config only.
-        positional = (
-            node.strategy == "categorical"
-            and positional_config_for_column(config, table, column) is not None
-        )
+        # The seeded non-deterministic categorical and the non-deterministic REUSE faker resolve
+        # a non-native policy (the full-frame operators are source-keyed); this chunked-only
+        # route admits them, config only.
+        positional = chunked_positional_column(config, table, node.strategy, column)
         if node.fallback_policy != "native" and not positional:
             reasons.append(f"fallback_policy_not_native:{column}:{node.fallback_policy}")
         elif no_kernel and no_pool_path:

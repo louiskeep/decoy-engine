@@ -85,7 +85,10 @@ ALLOWLIST: dict[str, int] = {
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
-    "src/decoy_engine/execution/_chunked.py": 619,
+    "src/decoy_engine/execution/_chunked.py": 626,
+    # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
+    # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
+    "src/decoy_engine/execution/native/_chunked_entry.py": 606,
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.

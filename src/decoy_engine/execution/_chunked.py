@@ -49,6 +49,9 @@ than derived from the data:
   derive_index maps any value into [0, pool_size) with collisions
   allowed, byte-identical to the full-frame run of the same rows
   (pool_size controls collision rate, not admission).
+- faker, non-deterministic REUSE: position-keyed on `job_seed` and the row's global offset, so
+  it runs chunked with an explicit `pool_size` and a C1-allowlist provider (the namespace is
+  optional) and without `when:`. See `native/_faker_positional_admission.py`.
 - categorical: deterministic (`deterministic: true` or `allow_collisions: true`) +
   `namespace` + explicit `provider_config.categories`, and NOT `from_profile`
   (profile-derived categories would come from the first chunk only). A
@@ -89,6 +92,7 @@ Rejected at compile time (`check_chunked_compatibility`):
 - non-deterministic categorical: `categorical_nondeterministic_not_chunk_safe`;
 - faker / categorical with the conditions above unmet:
   `chunked_strategy_conditions_unmet`, naming each unmet condition;
+- non-deterministic REUSE faker with `when:`: `chunked_faker_nondeterministic_when_not_supported`;
 - FK child edges that fail the self-mask gate (see below);
 - generate tables (row_count is whole-run); tables with transforms (`per_table_transforms_present`).
 
@@ -174,6 +178,7 @@ from ._chunked_fk import (
 )
 from ._column_access import composite_provider_offenders
 from ._transforms_gate import reject_per_table_transforms
+from .native import _faker_positional_admission as faker_gate
 
 # Admitted only when the column's config pins the deterministic
 # value-keyed path (see module docstring for the per-strategy rules).
@@ -212,14 +217,13 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
         # Determinism is not a condition here: a non-deterministic column is rejected
         # earlier, under its own code (see `check_chunked_compatibility`).
         return categorical_gate.conditional_failures(col_entry)
+    if faker_gate.is_positional_faker_entry(col_entry):
+        # Non-deterministic REUSE is position-keyed, not deterministic: stage A is its whole veto.
+        return faker_gate.positional_faker_failures(col_entry)
     cfg = col_entry.get("provider_config") or {}
     failures: list[str] = []
     if not col_entry.get("deterministic"):
-        if strategy == "faker" and col_entry.get("cardinality_mode") in (None, "reuse"):
-            why = "position-keyed; chunked implementation deferred to C5b-ii"
-        else:
-            why = "whole-column draw; not chunk-safe"
-        failures.append(f"requires deterministic: true ({why})")
+        failures.append("requires deterministic: true (whole-column draw; not chunk-safe)")
     if not col_entry.get("namespace"):
         failures.append("requires a namespace (the value-keyed mapping derives from it)")
     if strategy == "faker":
@@ -256,6 +260,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         strategy_not_chunk_safe: a non-chunk-safe strategy, or a composite provider.
         categorical_nondeterministic_not_chunk_safe: a categorical column that is not deterministic.
         chunked_strategy_conditions_unmet: faker/categorical conditions unmet (listed).
+        chunked_faker_nondeterministic_when_not_supported: non-deterministic REUSE faker + `when:`.
         chunked_windowed_date_when_not_supported: `windowed_date` + `when:`.
         chunked_text_mask_when_not_supported: `text_mask` + `when:`.
         chunked_code_set_when_not_supported: `code_set` + `when:`.
@@ -301,6 +306,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
     # and so is a seeded non-deterministic `categorical` (see `_chunked_categorical.py`).
     dgrn.reject_windowed_date_when(table_cfg, table=table)
     categorical_gate.reject_nondeterministic_when(table_cfg, table=table)
+    faker_gate.reject_nondeterministic_faker_when(table_cfg, table=table)
     # `group_key` + `when:` inadmissible here too (see `_chunked_group_key.py`).
     group_key.reject_group_key_when(table_cfg, table=table)
     # `text_mask` + `when:` inadmissible here too (see `_chunked_text_mask.py`).
@@ -352,8 +358,9 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
             path=f"tables.{table}.columns",
             message=(
                 f"column(s) {details}. faker/categorical run chunked only on "
-                "their deterministic value-keyed path with all whole-run inputs "
-                "declared in config (see run_mask_pipeline_chunked docs)."
+                "their deterministic value-keyed path (a non-deterministic faker: its "
+                "position-keyed path) with all whole-run inputs declared in config "
+                "(see run_mask_pipeline_chunked docs)."
             ),
         )
 
