@@ -71,18 +71,37 @@ ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
 }
 
 
-def _is_logger_receiver(node: ast.expr) -> bool:
+def _logger_aliases(tree: ast.AST) -> frozenset[str]:
+    """Names bound to `getLogger(...)` in the module, whatever they are called."""
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        value = getattr(node, "value", None)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(value, ast.Call):
+            func = value.func
+            if isinstance(func, ast.Attribute) and func.attr == "getLogger":
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        aliases.add(target.id)
+                    elif isinstance(target, ast.Attribute):
+                        aliases.add(target.attr)
+    return frozenset(aliases)
+
+
+def _is_logger_receiver(node: ast.expr, aliases: frozenset[str] = frozenset()) -> bool:
     if isinstance(node, ast.Call):
         func = node.func
         return isinstance(func, ast.Attribute) and func.attr == "getLogger"
     name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", "")
-    return name == "logging" or name.lower().lstrip("_") in {"log", "logger"}
+    return name in aliases or name == "logging" or name.lower().lstrip("_") in {"log", "logger"}
 
 
-def _is_logger_call(node: ast.Call) -> bool:
+def _is_logger_call(node: ast.Call, aliases: frozenset[str] = frozenset()) -> bool:
     func = node.func
     return (
-        isinstance(func, ast.Attribute) and func.attr in _LEVELS and _is_logger_receiver(func.value)
+        isinstance(func, ast.Attribute)
+        and func.attr in _LEVELS
+        and _is_logger_receiver(func.value, aliases)
     )
 
 
@@ -96,54 +115,48 @@ def _root_name(value: ast.expr) -> str | None:
     return value.id if isinstance(value, ast.Name) else None
 
 
-def _risky_in(value: ast.expr, risky: frozenset[str]) -> str | None:
-    """The risky name `value` exposes as text, directly or through formatting."""
+def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
+    """Every risky name `value` exposes as text, directly or through formatting. All of them
+    count, so adding a second risky value to an allowlisted message is still a new finding."""
     if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript)):
         root = _root_name(value)
-        return root if root in risky else None
+        return [root] if root in risky else []
+    children: list[ast.expr] = []
     if isinstance(value, ast.JoinedStr):
-        for part in value.values:
-            if isinstance(part, ast.FormattedValue):
-                hit = _risky_in(part.value, risky)
-                if hit:
-                    return hit
-        return None
-    if isinstance(value, ast.BinOp):
-        return _risky_in(value.left, risky) or _risky_in(value.right, risky)
-    if isinstance(value, ast.Starred):
-        return _risky_in(value.value, risky)
-    if isinstance(value, ast.BoolOp):
-        return next((h for v in value.values if (h := _risky_in(v, risky))), None)
-    if isinstance(value, ast.IfExp):
-        return _risky_in(value.body, risky) or _risky_in(value.orelse, risky)
-    if isinstance(value, ast.Dict):
-        return next((h for v in value.values if v is not None and (h := _risky_in(v, risky))), None)
-    if isinstance(value, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
-        return _risky_in(value.elt, risky) or next(
-            (h for g in value.generators if (h := _risky_in(g.iter, risky))), None
-        )
-    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
-        for element in value.elts:
-            hit = _risky_in(element, risky)
-            if hit:
-                return hit
-        return None
-    if isinstance(value, ast.Call):
+        children = [p.value for p in value.values if isinstance(p, ast.FormattedValue)]
+    elif isinstance(value, ast.BinOp):
+        children = [value.left, value.right]
+    elif isinstance(value, ast.Starred):
+        children = [value.value]
+    elif isinstance(value, ast.BoolOp):
+        children = list(value.values)
+    elif isinstance(value, ast.IfExp):
+        children = [value.body, value.orelse]
+    elif isinstance(value, ast.Dict):
+        # Logging renders a dict's keys as well as its values.
+        children = [k for k in value.keys if k is not None] + list(value.values)
+    elif isinstance(value, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+        # The iterable counts too: conservative on purpose, since a false positive only costs
+        # an allowlist entry while `", ".join(str(x) for x in row)` must not pass.
+        children = [value.elt, *(g.iter for g in value.generators)]
+    elif isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+        children = list(value.elts)
+    elif isinstance(value, ast.Call):
         func = value.func
-        if isinstance(func, ast.Name) and func.id in {"str", "repr", "format"}:
-            return next((h for a in value.args if (h := _risky_in(a, risky))), None)
-        if isinstance(func, ast.Attribute) and func.attr in {"format", "join"}:
-            args = [*value.args, *(k.value for k in value.keywords)]
-            return next((h for a in args if (h := _risky_in(a, risky))), None)
-    return None
+        if (isinstance(func, ast.Name) and func.id in {"str", "repr", "format"}) or (
+            isinstance(func, ast.Attribute) and func.attr in {"format", "join"}
+        ):
+            children = [*value.args, *(k.value for k in value.keywords)]
+    return [hit for child in children for hit in _risky_in(child, risky)]
 
 
 def _risky_names_in_call(node: ast.Call, risky: frozenset[str]) -> list[str]:
-    found = [hit for arg in node.args if (hit := _risky_in(arg, risky))]
+    found = [hit for arg in node.args for hit in _risky_in(arg, risky)]
     found += [
         hit
         for keyword in node.keywords
-        if keyword.arg in {"msg", "extra"} and (hit := _risky_in(keyword.value, risky))
+        if keyword.arg in {"msg", "extra"}
+        for hit in _risky_in(keyword.value, risky)
     ]
     func = node.func
     logs_traceback = isinstance(func, ast.Attribute) and func.attr == "exception"
@@ -158,6 +171,7 @@ def _risky_names_in_call(node: ast.Call, risky: frozenset[str]) -> list[str]:
 
 def _findings(source: str, module: str) -> dict[tuple[str, str, str], int]:
     tree = ast.parse(source)
+    aliases = _logger_aliases(tree)
     found: dict[tuple[str, str, str], int] = {}
 
     def visit(node: ast.AST, qualname: str, risky: frozenset[str]) -> None:
@@ -167,7 +181,7 @@ def _findings(source: str, module: str) -> dict[tuple[str, str, str], int]:
                 name = child.name if qualname == "<module>" else f"{qualname}.{child.name}"
             if isinstance(child, ast.ExceptHandler) and child.name:
                 scope_risky = risky | {child.name}
-            if isinstance(child, ast.Call) and _is_logger_call(child):
+            if isinstance(child, ast.Call) and _is_logger_call(child, aliases):
                 for variable in _risky_names_in_call(child, scope_risky):
                     key = (module, name, variable)
                     found[key] = found.get(key, 0) + 1
@@ -255,6 +269,20 @@ _TB = "<exception traceback>"
         ("def f():\n    log.error('%s %s', *values)\n", {(_M, "f", "values"): 1}),
         ("def f():\n    log.exception('x', exc_info=False)\n", {}),
         ("def f():\n    log.error('%s', exc.__class__.__name__)\n", {}),
+        (
+            "def f():\n    log.error(f'{exc}: {value}')\n",
+            {(_M, "f", "exc"): 1, (_M, "f", "value"): 1},
+        ),
+        ("def f():\n    log.error({value: 'invalid'})\n", {(_M, "f", "value"): 1}),
+        (
+            "audit = logging.getLogger(__name__)\ndef f():\n    audit.error('%s', exc)\n",
+            {(_M, "f", "exc"): 1},
+        ),
+        # Conservative: the iterable of a comprehension counts even if each element is sanitized.
+        (
+            "def f():\n    log.info('%s', [sanitize(x) for x in values])\n",
+            {(_M, "f", "values"): 1},
+        ),
         # Safe forms.
         ("def f():\n    _log.warning('x %s', type(exc).__name__)\n", {}),
         ("def f():\n    _log.warning('x %s', len(values))\n", {}),
