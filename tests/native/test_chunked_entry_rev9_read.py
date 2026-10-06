@@ -107,9 +107,17 @@ def test_predicate_read_column_matches_the_public_oracle(
             out, sink, ev = run_entry(config, chunks)
     else:
         out, sink, ev = run_entry(config, chunks)
-    assert ev[0].native_admitted is False
-    assert ev[0].reroute_reason is not None
-    assert ev[0].reroute_reason.startswith("when_predicate_not_native:s")
+    if "`" in expr:
+        # Backtick quoting is outside the closed `when` grammar: the oracle leg runs it.
+        assert ev[0].native_admitted is False
+        assert (ev[0].reroute_reason or "").startswith("when_predicate_outside_native_subset:s")
+    elif forced:
+        assert ev[0].native_admitted is False
+        assert ev[0].reroute_reason == "crypto_extension_unavailable"
+    else:
+        # A grammar predicate over a string target is admitted; the read column still goes
+        # through pandas (listed below) and the output equals the oracle's.
+        assert ev[0].native_admitted is True, ev[0].reroute_reason
     for got, want in zip(out, expected, strict=True):
         assert got.column("s").to_pylist() == want.column("s").to_pylist()
         assert same_column(got.column(name), want.column(name))
@@ -387,8 +395,7 @@ def test_string_literal_equal_to_a_column_name_keeps_that_column_carried() -> No
     chunks = [_chunk(x=pa.array([1, 2, 3])) for _ in range(2)]
     out, sink, ev = run_entry(config, chunks)
     assert _read_lists(sink) == [[]] * 2
-    assert ev[0].native_admitted is False
-    assert ev[0].reroute_reason == "when_predicate_not_native:s"
+    assert ev[0].native_admitted is True, ev[0].reroute_reason
     expected = run_public(config, chunks)
     for got, src, want in zip(out, chunks, expected, strict=True):
         assert same_column(got.column("x"), src.column("x"))
@@ -626,7 +633,8 @@ def _read_x_config(*extra: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_masked_column_conversion_failure_is_not_wrapped() -> None:
-    config = make_config([truncate("m"), _when("s", "x > 1"), passthrough("x")])
+    # `x + 0` keeps the predicate outside the closed grammar, so the oracle leg runs the table.
+    config = make_config([truncate("m"), _when("s", "x + 0 > 1"), passthrough("x")])
     ints = pa.array([1, 2, 3])
     chunks = [
         _chunk(m=_T64.good, x=ints),

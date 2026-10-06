@@ -1,0 +1,49 @@
+// Closed grammar for the public ColumnConfig.when predicate.
+//
+// SECURITY CONTRACT: a predicate is a boolean combination (and, or, not,
+// parentheses) of two atom shapes only:
+//   <column> <cmp> <literal>      (or the literal first)
+//   <column> [not] in [<literal>, ...]
+// No arithmetic, calls, attributes, subscripts, ref-to-ref comparisons, chained
+// comparisons, None or empty lists. Names that pandas eval would resolve to
+// something other than a column are rejected after parsing (RESERVED_NAMES).
+//
+// Strings carry no backslash, no quote character of either kind and no control
+// character, so pandas eval and this parser read the same characters without any
+// escape processing. The parser is LALR with a basic lexer: no ambiguity, no backtracking.
+
+start: or_expr
+
+?or_expr: and_expr ("or" and_expr)*
+?and_expr: not_expr ("and" not_expr)*
+?not_expr: "not" not_expr -> not_op
+         | atom
+
+?atom: comparison
+     | membership
+     | "(" or_expr ")"
+
+comparison: IDENT CMP literal  -> col_first
+          | literal CMP IDENT  -> lit_first
+
+membership: IDENT "in" literal_list          -> in_op
+          | IDENT "not" "in" literal_list    -> not_in_op
+
+literal_list: "[" literal ("," literal)* "]"
+
+literal: NUMBER    -> number_lit
+       | SQ_STRING -> str_lit
+       | DQ_STRING -> str_lit
+       | "True"    -> true_lit
+       | "False"   -> false_lit
+
+CMP: "==" | "!=" | "<=" | ">=" | "<" | ">"
+IDENT: /[A-Za-z_][A-Za-z0-9_]*/
+// No leading zeros: pandas eval rejects `01` as a Python syntax error.
+NUMBER: /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+SQ_STRING: /'[^'"\\\x00-\x1f\x7f-\x9f  ]*'/
+DQ_STRING: /"[^'"\\\x00-\x1f\x7f-\x9f  ]*"/
+
+// Spaces and tabs only: pandas eval reads any line break (including form feed) as a
+// multi-line block.
+%ignore /[ \t]+/

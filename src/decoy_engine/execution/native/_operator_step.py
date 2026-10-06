@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.execution._positional_keys import positional_key_array
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
@@ -52,7 +53,13 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.pool import ValuePool
 
-__all__ = ["StepResult", "run_kernel_step", "sample_faker_array", "sample_faker_array_positional"]
+__all__ = [
+    "StepResult",
+    "run_kernel_step",
+    "run_kernel_step_masked",
+    "sample_faker_array",
+    "sample_faker_array_positional",
+]
 
 
 def sample_faker_array(
@@ -375,3 +382,35 @@ def run_kernel_step(
         derive_calls=derive_calls,
     )
     return StepResult(out, sum(derive_calls) > 0, positions)
+
+
+def run_kernel_step_masked(
+    params: OperatorParams,
+    source: pa.Array | pa.ChunkedArray,
+    mask: pa.Array,
+    *,
+    mask_key: bytes | None,
+    native_threads: int | None,
+    index_kernel: IndexDerivationKernel | None = None,
+) -> StepResult:
+    """`run_kernel_step` for a `when:` column: only the rows `mask` selects take the masked value.
+
+    `mask` is a non-null boolean array over `source`. With no selected row the kernel is not
+    called and `source` comes back unchanged with `ran=False`, so the adapter counts nothing
+    and credits no compiled backend for the chunk. Otherwise the kernel runs over every row and
+    `if_else` keeps the source value elsewhere. For the value-keyed operators over a string
+    source (hash, redact, truncate, deterministic categorical) that equals the oracle's run on
+    the selected subset plus its write-back, row by row, because each row's output depends only
+    on that row's value and the config. Unselected nulls stay null.
+    """
+    plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+    if not (pc.sum(mask).as_py() or 0):
+        return StepResult(plain, False)
+    result = run_kernel_step(
+        params,
+        plain,
+        mask_key=mask_key,
+        native_threads=native_threads,
+        index_kernel=index_kernel,
+    )
+    return StepResult(pc.if_else(mask, result.out, plain), result.ran)

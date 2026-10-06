@@ -351,7 +351,10 @@ def _chunked_rejection(
                 "full-frame run emits the fpe_join_group_active QualityWarning, "
                 "which the chunked entrypoint cannot carry"
             )
-        reasons.extend(_whole_column_state_rejections(config, table=table))
+        from decoy_engine.execution.native._when_admission import planner_relaxed_when_columns
+
+        relaxed = planner_relaxed_when_columns(config, registry, table, source_tables, source_facts)
+        reasons.extend(_whole_column_state_rejections(config, table=table, relaxed_when=relaxed))
         if source_tables is not None and not transforms_reject:
             reasons.extend(
                 _runtime_source_rejections(
@@ -375,7 +378,9 @@ def _table_column_entries(config: dict[str, Any], *, table: str) -> list[dict[st
     return [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)]
 
 
-def _whole_column_state_rejections(config: dict[str, Any], *, table: str) -> list[str]:
+def _whole_column_state_rejections(
+    config: dict[str, Any], *, table: str, relaxed_when: frozenset[str] = frozenset()
+) -> list[str]:
     """Config-level gates for strategies whose output can depend on state
     the whole column carries but a single chunk does not.
 
@@ -390,16 +395,15 @@ def _whole_column_state_rejections(config: dict[str, Any], *, table: str) -> lis
       value differently.
     - `when`: predicates evaluate against the frame they are handed, so a
       per-chunk frame is a different evaluation scope than the whole
-      frame (schema-validated configs cannot carry `when` today, but
-      run_pipeline does not re-validate its dict input and `when` is a
-      shipped ColumnSeed field, so the gate must see it).
+      frame. Only a `relaxed_when` column (natively admitted, every
+      referenced column a string) is exempt; raw dicts are not re-validated.
     """
     reasons: list[str] = []
     when_cols: list[str] = []
     undated_cols: list[str] = []
     for col_entry in _table_column_entries(config, table=table):
         name = str(col_entry.get("name", "?"))
-        if col_entry.get("when"):
+        if col_entry.get("when") and name not in relaxed_when:
             when_cols.append(name)
         if col_entry.get("strategy") == "date_shift" and not (
             col_entry.get("provider_config") or {}

@@ -30,7 +30,17 @@ from __future__ import annotations
 
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from decoy_engine.config._transforms import TransformOp
 
@@ -112,6 +122,56 @@ class ColumnConfig(BaseModel):
     # rejection unconditionally, so only a hand-built raw dict (bypassing
     # validation, as the gate's own unit tests did) could ever exercise it.
     dtype: str | None = None
+    # Per-row gate: only rows where the predicate is true are masked. Accepts the closed
+    # `when` grammar only (see `expressions/_when_parser`); a blank value means no gate.
+    when: str | None = None
+
+    @field_validator("when")
+    @classmethod
+    def _when_closed_grammar(cls, value: str | None) -> str | None:
+        """Validate the predicate against the closed grammar at config time.
+
+        The engine's own `ValidationError` is not a `ValueError`, so it would escape
+        pydantic and bypass the structured handler; the failure is re-raised as a
+        `PydanticCustomError` so it lands in the model's `ValidationError` with its location.
+        """
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        from decoy_engine.errors import ValidationError as EngineValidationError
+        from decoy_engine.expressions._when_parser import WHEN_OUTSIDE_GRAMMAR_CODE, parse_when
+
+        try:
+            parse_when(stripped)
+        except EngineValidationError as exc:
+            raise PydanticCustomError(
+                WHEN_OUTSIDE_GRAMMAR_CODE, "{reason}", {"reason": exc.raw_message}
+            ) from exc
+        return stripped
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        """Keep the serialization-mode JSON schema field-enumerating.
+
+        The wrap serializer below makes pydantic report this model's serialization schema as a
+        generic object; asking again without the `serialization` entry recovers the field
+        schema, as `GlobalSettings` does for its `dp` serializer.
+        """
+        schema = handler(core_schema)
+        if "properties" not in schema and "$ref" not in schema:
+            schema = handler({k: v for k, v in core_schema.items() if k != "serialization"})
+        return schema
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_when(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # An unset `when` stays out of dumps, so configs without it serialize and hash exactly
+        # as before the field existed, and an older engine can re-validate them.
+        data: dict[str, Any] = handler(self)
+        if data.get("when") is None:
+            data.pop("when", None)
+        return data
 
 
 class GenerateColumnConfig(BaseModel):

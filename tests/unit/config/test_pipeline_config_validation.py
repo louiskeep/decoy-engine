@@ -572,6 +572,18 @@ class TestGlobalSettingsSerializationSchema:
         assert "seed" in global_settings["properties"]
         assert "DpGenerateSettings" in schema["$defs"]
 
+    def test_column_config_serialization_schema_matches_validation(self):
+        """The omit-unset-`when` serializer must not collapse ColumnConfig's serialization
+        schema to a generic object."""
+        from decoy_engine.config import PipelineConfig
+
+        validation = PipelineConfig.model_json_schema(mode="validation")["$defs"]["ColumnConfig"]
+        serialization = PipelineConfig.model_json_schema(mode="serialization")["$defs"][
+            "ColumnConfig"
+        ]
+        assert serialization.get("properties"), serialization
+        assert set(serialization["properties"]) == set(validation["properties"])
+
     @pytest.mark.parametrize("mode", ["validation", "serialization"])
     def test_advertised_dp_schema_matches_what_validation_accepts(self, mode):
         """C-M-1 (Codex round 6): both schema modes advertised `dp` as

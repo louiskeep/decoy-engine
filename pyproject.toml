@@ -770,6 +770,8 @@ module = [
     "decoy_engine.expressions",
     "decoy_engine.expressions._safe_eval",
     "decoy_engine.expressions._lark_parser",
+    # C8-i: the closed `when:` predicate parser, the same grammar-as-boundary shape.
+    "decoy_engine.expressions._when_parser",
     # SP-06 / P5.INFRA.3: reference table loader.
     "decoy_engine.reference_tables",
     "decoy_engine.reference_tables._types",

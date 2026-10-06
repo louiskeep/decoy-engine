@@ -1014,6 +1014,73 @@ such a column is vaulted, the ambiguous source-to-masked pairs cannot be
 reversed and are counted in the vault's `ambiguous_dropped`. The default stays
 collision-free; this knob is purely additive.
 
+### Conditional masking (when:)
+
+Set `when:` on a column to mask only the rows a predicate selects. The other rows
+keep their source value. A blank `when:` means no condition.
+
+```yaml
+columns:
+  - name: email
+    strategy: redact
+    when: "country == 'DE' and consent != 'yes'"
+  - name: country
+    strategy: passthrough
+  - name: consent
+    strategy: passthrough
+```
+
+The predicate is checked against a closed grammar when the config loads, so a
+bad one fails at validation and not mid-run:
+
+- A comparison of one column and one literal, in either order: `==`, `!=`, `<`,
+  `<=`, `>`, `>=`. Example: `age >= 18`, `'DE' == country`.
+- Membership in a non-empty literal list: `status in ['a', 'b']`,
+  `status not in ['x']`.
+- `and`, `or`, `not` and parentheses.
+- Literals are integers in the int64 range, finite floats, `True`, `False` and
+  strings in single or double quotes. A string holds no backslash, no quote
+  character and no control character.
+
+Everything else is refused with the error code `when_outside_closed_grammar`:
+arithmetic, function and method calls, attributes, subscripts, `@` references,
+comparing two columns, chained comparisons, `None`, empty lists and bare
+references. There is no null check in the grammar. A name that pandas would not
+read as a column is reserved and refused as a reference: the numexpr function
+names (`sin`, `abs`, `where` and the rest), the pandas eval names (`inf`, `nan`,
+`index`, `columns`, `Timestamp`, `datetime`, `list`, `tuple`) and the Python
+keywords. Rename the column or compare it through another one.
+
+A null cell behaves as pandas treats it. It equals no literal, so `==`, `in` and
+the ordering tests do not select it, while `!=`, `not in` and `not (...)` do. A
+nullable column can give a missing result for a test, and a missing result
+selects nothing. The native chunked route takes the selection from the same pandas
+call the chunked oracle makes for the same chunk, so the two agree at identical
+chunking. A whole-frame run can select differently for a numeric column whose
+representation depends on the rows present (an integer column with nulls is read as
+floating point, so values above 2**53 compare differently); that is why the planner
+auto-chunks a `when:` table only when every referenced column is a string.
+
+Chunked execution runs `when:` natively for `hash`, `redact`, `truncate` and
+deterministic `categorical` columns over a string source. The predicate may read
+any column, with one condition: a column that an earlier work node masks is read
+after that mask by the pandas run, so a predicate that reads such a column keeps
+the table on the pandas leg. Work nodes run in column-name order. Every other
+strategy with `when:` runs the pandas leg, and the unified full-frame route
+declines any `when:` column. A job large enough to auto-chunk keeps a `when:`
+table chunked only when the column is native-admitted and every column the
+predicate reads is a string; otherwise it runs whole-frame. The chunked output
+type of a native-admitted `when:` column is `string` on every chunk. The
+whole-frame route keeps the type pandas infers for a column that is empty or
+entirely null (Arrow `null`).
+
+Security boundary: validation restricts a config-supplied predicate to the
+grammar above. The pandas oracle still evaluates a validated predicate with
+`DataFrame.eval` (`engine="numexpr"`, empty `local_dict` and `global_dict`), and
+the native route takes its row mask from that same call. A config that skips
+validation (a raw dict handed to `run_pipeline`) keeps today's behavior and is
+not restricted to the grammar.
+
 ## Generation strategies (generate mode)
 
 In `mode: generate`, each column declares a `type` instead of a `strategy`.

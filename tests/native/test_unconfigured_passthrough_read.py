@@ -99,9 +99,17 @@ def _when(name: str, expr: str) -> dict[str, Any]:
 def _reader_cases() -> dict[str, tuple[list[dict[str, Any]], str, str]]:
     """name -> (columns, the passthrough column read, expected reroute reason prefix)."""
     return {
-        "when_bare": ([_when("s", "x.notnull()")], "x", "when_predicate_not_native:s"),
-        "when_backtick": ([_when("s", "`x`.notnull()")], "x", "when_predicate_not_native:s"),
-        "when_nfkc": ([_when("s", "\uff58.notnull()")], "x", "when_predicate_not_native:s"),
+        "when_bare": ([_when("s", "x.notnull()")], "x", "when_predicate_outside_native_subset:s"),
+        "when_backtick": (
+            [_when("s", "`x`.notnull()")],
+            "x",
+            "when_predicate_outside_native_subset:s",
+        ),
+        "when_nfkc": (
+            [_when("s", "\uff58.notnull()")],
+            "x",
+            "when_predicate_outside_native_subset:s",
+        ),
     }
 
 

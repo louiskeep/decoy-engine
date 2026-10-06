@@ -322,6 +322,24 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   register the provider under another name. A multi-table split run now dispatches an
   above-threshold Faker table chunked like its siblings, with the same values. The unified
   full-frame route and out-of-core still decline it (the unified route is slice C5b-iii).
+  `ColumnConfig` gained an optional `when: str` field (2026-10-06, slice C8-i), additive. It accepts
+  a closed grammar only (a comparison of one column and one literal, `in` and `not in` over a
+  literal list, `and`, `or`, `not` and parentheses), validated when the config loads with the
+  error type `when_outside_closed_grammar` at `tables.<i>.columns.<j>.when`; a blank value is
+  `None`. The pandas oracle still evaluates a validated predicate with `DataFrame.eval`, and a raw
+  dict passed to `run_pipeline` is not re-validated. On the chunked route `when:` runs natively for
+  `hash`, `redact`, `truncate` and deterministic `categorical` over a `string` source: the row mask
+  is the oracle's own predicate function over the oracle's own conversion of the columns the
+  predicate reads, per chunk, so a null in a nullable boolean mask selects nothing, exactly as
+  `df.loc[mask]` does. A predicate that reads a column an earlier work node (column-name order)
+  masks, a target that is not `string`, a predicate outside the grammar and every other strategy
+  keep the oracle leg, with the codes `when_predicate_reads_masked_column`,
+  `when_predicate_not_native` and `when_predicate_outside_native_subset`. The chunked output type
+  of a native-admitted `when:` column is pinned to `string` on both chunked legs; under
+  ROUTE-OUTPUT-CONTRACT a whole-frame column that is empty or entirely null keeps the type pandas
+  infers (Arrow `null`), while the chunked route yields `string`; values are unchanged. The
+  auto-chunk planner keeps such a table chunked only when every column the predicate reads is a
+  `string`. The unified full-frame route and out-of-core still decline `when:`.
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that
