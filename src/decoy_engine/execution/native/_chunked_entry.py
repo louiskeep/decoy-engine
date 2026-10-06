@@ -73,6 +73,7 @@ from decoy_engine.execution.native._dispatch import (
     plan_native_route,
 )
 from decoy_engine.execution.native._operator_params import resolve_params_by_column
+from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
@@ -249,6 +250,9 @@ def _native_route(
         table=table,
     )
 
+    # The oracle's own predicate function decides each `when:` column's rows (see `_when_mask`).
+    when = plan_when_masks(col_seed_by_name, state, table=table)
+
     def _guard(raw: pa.Table) -> pa.Table:
         # The oracle route re-checks this on every chunk before masking; without it a
         # later null-typed chunk would be cast to string here and masked, where the
@@ -288,6 +292,7 @@ def _native_route(
                 raw_chunk=raw_chunk,
                 raw_hex_kernel=raw_hex_kernel,
                 job_seed=plan.seed_envelope.job_seed,
+                when_masks=when.for_chunk(raw_chunk, i),
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
@@ -553,10 +558,11 @@ def run_mask_chunked(
     `pool_cache` (one `PoolCache` shared by both routes and across calls).
 
     The whole table runs on the oracle when any masked column is not natively
-    capable, any column carries a nonblank `when:` predicate, `adapter` is
-    neither `None` nor the pandas adapter, a companion is missing, or, under the
-    `error` unconfigured-column policy, the source has columns the config does not
-    cover. Under `warn` (the pre-GA default) such columns are carried unchanged on the
+    capable, a `when:` column is outside what the native route admits (hash, redact,
+    truncate or deterministic categorical over a string source, with a closed-grammar
+    predicate whose references no earlier node writes), `adapter` is neither `None` nor
+    the pandas adapter, a companion is missing, or, under the `error`
+    unconfigured-column policy, the source has columns the config does not cover. Under `warn` (the pre-GA default) such columns are carried unchanged on the
     native route and each chunk's `ExecutionResult.warnings` holds the same
     `undeclared_output_columns` warning the oracle route emits. `chunk_result_sink`
     receives one `ExecutionResult` per chunk on either route, with per-column `timings`

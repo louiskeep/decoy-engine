@@ -9,6 +9,39 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (public `when:` field with a closed grammar; native `when` on the chunked route, 2026-10-06)
+
+`ColumnConfig` now has an optional `when` field, so a validated config can mask only the rows a
+predicate selects. The predicate must fit a closed grammar: a comparison of one column and one
+literal (`==`, `!=`, `<`, `<=`, `>`, `>=`, either order), `in` or `not in` over a non-empty literal
+list, and `and`, `or`, `not` and parentheses. Literals are int64 integers, finite floats, `True`,
+`False` and quoted strings with no backslash, quote or control character. Arithmetic, calls,
+attributes, subscripts, `@` references, comparing two columns, chained comparisons, `None` and
+empty lists are refused, as are names pandas would not read as a column (the numexpr function
+names, `inf`, `nan`, `index` and the Python keywords). A refusal is a pydantic validation error
+of type `when_outside_closed_grammar` at `tables.<i>.columns.<j>.when`. A blank value means no
+condition.
+
+Validation restricts the text, and nothing else about evaluation changed: the pandas oracle still
+evaluates a validated predicate with `DataFrame.eval` (numexpr, empty scopes), and a raw dict
+passed to `run_pipeline` is not re-validated.
+
+On the chunked route, `when:` now runs natively for `hash`, `redact`, `truncate` and
+deterministic `categorical` columns over a string source. The row mask is not a second
+implementation: each chunk's referenced columns go through the oracle's own pandas conversion and
+the oracle's own predicate function, so the selection equals the pandas run for any column type.
+Only the masking kernel runs natively, over every row, and the masked value replaces the source
+value only where the predicate is true. A chunk where the predicate selects no row makes no kernel
+call and is reported as idle. A predicate that reads a column an earlier work node masks, a target
+that is not a string, a predicate outside the grammar and every other strategy keep running on the
+pandas leg, with the reasons `when_predicate_reads_masked_column`, `when_predicate_not_native` and
+`when_predicate_outside_native_subset`. The auto-chunk planner now keeps such a table chunked when
+the column is native-admitted and every column its predicate reads is a string; any other `when:`
+table still runs whole-frame. The unified full-frame route and out-of-core still decline `when:`.
+
+Documented output type: a native-admitted `when:` column is `string` on every chunk, on both
+chunked legs. A whole-frame column that is empty or entirely null keeps Arrow `null`, as before.
+
 ### Security (engine log lines stop carrying expression text and data values, 2026-10-06)
 
 - **Fallback warnings.** The numexpr-fallback warnings for `when:` predicates

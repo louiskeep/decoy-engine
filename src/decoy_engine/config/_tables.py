@@ -30,7 +30,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from decoy_engine.config._transforms import TransformOp
 
@@ -112,6 +113,34 @@ class ColumnConfig(BaseModel):
     # rejection unconditionally, so only a hand-built raw dict (bypassing
     # validation, as the gate's own unit tests did) could ever exercise it.
     dtype: str | None = None
+    # Per-row gate: only rows where the predicate is true are masked. Accepts the closed
+    # `when` grammar only (see `expressions/_when_parser`); a blank value means no gate.
+    when: str | None = None
+
+    @field_validator("when")
+    @classmethod
+    def _when_closed_grammar(cls, value: str | None) -> str | None:
+        """Validate the predicate against the closed grammar at config time.
+
+        The engine's own `ValidationError` is not a `ValueError`, so it would escape
+        pydantic and bypass the structured handler; the failure is re-raised as a
+        `PydanticCustomError` so it lands in the model's `ValidationError` with its location.
+        """
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        from decoy_engine.errors import ValidationError as EngineValidationError
+        from decoy_engine.expressions._when_parser import WHEN_OUTSIDE_GRAMMAR_CODE, parse_when
+
+        try:
+            parse_when(stripped)
+        except EngineValidationError as exc:
+            raise PydanticCustomError(
+                WHEN_OUTSIDE_GRAMMAR_CODE, "{reason}", {"reason": exc.raw_message}
+            ) from exc
+        return stripped
 
 
 class GenerateColumnConfig(BaseModel):

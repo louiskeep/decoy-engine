@@ -13,6 +13,7 @@ for annotations, and mutated here via plain attribute access.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -27,7 +28,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     is_positional_faker_seed,
 )
-from decoy_engine.execution.native._operator_step import run_kernel_step
+from decoy_engine.execution.native._operator_step import run_kernel_step, run_kernel_step_masked
 from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
 from decoy_engine.generation.pool._identity import resolve_faker_pool_identity
 from decoy_engine.providers_v2 import get_default_registry
@@ -60,6 +61,7 @@ def _mask_chunk_native(
     raw_chunk: pa.Table | None = None,
     raw_hex_kernel: RawHexDerivationKernel | None = None,
     job_seed: bytes | None = None,
+    when_masks: Mapping[str, pa.Array] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -107,6 +109,10 @@ def _mask_chunk_native(
     key a null differently. `raw_hex_kernel` is the preflight-verified raw-hex kernel group_key
     derives with.
 
+    `when_masks` holds the row mask of each admitted `when:` column for this chunk (see
+    `_when_mask`); such a column goes through `run_kernel_step_masked`, and a chunk where the
+    predicate selects no row is idle and uncounted, like an empty positional chunk.
+
     `row_offset` is the global position of the chunk's first row; only the seeded
     non-deterministic categorical and the position-keyed faker key on it (the faker also on
     `job_seed`). A zero-row chunk of either makes no compiled call (idle, uncounted, typed empty
@@ -137,18 +143,29 @@ def _mask_chunk_native(
                     "native route admitted a group_key column with no raw_hex_kernel; "
                     "preflight's raw-hex probe should have loaded one for any admitted node."
                 )
-        result = run_kernel_step(
-            params,
-            source,
-            mask_key=mask_key,
-            native_threads=native_threads,
-            index_kernel=index_kernel,
-            raw_hex_kernel=raw_hex_kernel,
-            pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
-            sibling=sibling,
-            row_offset=row_offset,
-            job_seed=job_seed,
-        )
+        when_mask = (when_masks or {}).get(name)
+        if when_mask is not None:
+            result = run_kernel_step_masked(
+                params,
+                source,
+                when_mask,
+                mask_key=mask_key,
+                native_threads=native_threads,
+                index_kernel=index_kernel,
+            )
+        else:
+            result = run_kernel_step(
+                params,
+                source,
+                mask_key=mask_key,
+                native_threads=native_threads,
+                index_kernel=index_kernel,
+                raw_hex_kernel=raw_hex_kernel,
+                pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
+                sibling=sibling,
+                row_offset=row_offset,
+                job_seed=job_seed,
+            )
         out = result.out
         # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
         # for a zero-row or all-null bucket_perturb chunk (promotable when the chunks are joined)
@@ -165,7 +182,7 @@ def _mask_chunk_native(
         elif result.ran:
             evidence.compiled_kernel_executed = True
         elif result.ran is False:
-            counted = not isinstance(params, (CategoricalParams, FakerParams))
+            counted = when_mask is None and not isinstance(params, (CategoricalParams, FakerParams))
             if kernel_idle is not None:
                 kernel_idle.add(name)
         if result.format_error_positions:

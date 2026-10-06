@@ -79,6 +79,7 @@ from decoy_engine.execution.native._requirements import (
     NATIVE_KERNEL_STRATEGIES,
     NATIVE_POOL_STRATEGIES,
 )
+from decoy_engine.execution.native._when_admission import first_when_rejection
 from decoy_engine.generation.pool import PoolCache
 
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
@@ -192,25 +193,6 @@ def _table_in_declared_relationship(config: dict[str, Any], table: str) -> bool:
             if isinstance(child_info, dict) and child_info.get("table") == table:
                 return True
     return False
-
-
-def _first_when_column(config: dict[str, Any], table: str) -> str | None:
-    """The first column of `table` carrying a nonblank `when:` predicate.
-
-    A conditional column masks only the rows its predicate selects, and leaves the
-    rest with their original value and type, so the native kernels (which mask
-    every row) must not run it. A blank predicate has no effect and does not veto;
-    this is the same normalization the plan compiler applies.
-    """
-    for table_cfg in config.get("tables") or ():
-        if not isinstance(table_cfg, dict) or table_cfg.get("name") != table:
-            continue
-        for col in table_cfg.get("columns") or ():
-            if isinstance(col, dict):
-                when = col.get("when")
-                if isinstance(when, str) and when.strip():
-                    return str(col.get("name", "?"))
-    return None
 
 
 def _static_route_decision(
@@ -377,11 +359,13 @@ def plan_native_route(
     the companion probes, with no schema-based guard applied -- exactly what
     those callers assert.
 
-    A nonblank `when:` predicate on any column, or an `adapter` that is neither
-    `None` nor the pandas adapter, reroutes the whole table to the oracle right
-    after static admission (reasons `when_predicate_not_native:<column>` and
-    `adapter_requested`; the adapter reason applies only to a table that would
-    otherwise admit).
+    A `when:` column that `_when_admission.when_native_rejection` declines, or an
+    `adapter` that is neither `None` nor the pandas adapter, reroutes the whole table to the
+    oracle right after static admission (the decline's own code, and `adapter_requested`; the
+    adapter reason applies only to a table that would otherwise admit). An admitted `when:`
+    column (hash, redact, truncate or deterministic categorical over a string source, with a
+    predicate in the closed grammar) stays on the native route; `first_schema` supplies its
+    source type, so an admission-only caller without one keeps the veto.
 
     `unconfigured_policy` is the resolved `unconfigured_column_policy`. Only `"warn"`
     lets a source column the plan does not cover stay on the native route, where it is
@@ -398,12 +382,12 @@ def plan_native_route(
         registry=registry,
         first_schema=first_schema,
     )
-    # A `when:` predicate names the reroute reason even when another column would
+    # A declined `when:` column names the reroute reason even when another column would
     # have vetoed the table anyway: its meaning (leave unselected rows untouched)
     # is the one a caller can act on.
-    when_column = _first_when_column(config, table)
-    if when_column is not None:
-        decision = _downgrade_to_oracle(decision, f"when_predicate_not_native:{when_column}")
+    when_reason = first_when_rejection(config, registry, table=table, schema=first_schema)
+    if when_reason is not None:
+        decision = _downgrade_to_oracle(decision, when_reason)
     elif decision.native_admitted and adapter is not None:
         from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 
