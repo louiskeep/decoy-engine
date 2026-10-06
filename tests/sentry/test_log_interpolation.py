@@ -90,6 +90,8 @@ def _root_name(value: ast.expr) -> str | None:
     """The variable an expression reads through attributes and subscripts; None if a call
     sits on the path (`type(exc).__name__` reads the type, not the exception)."""
     while isinstance(value, (ast.Attribute, ast.Subscript)):
+        if isinstance(value, ast.Attribute) and value.attr == "__class__":
+            return None  # exc.__class__.__name__ is the type, like type(exc).__name__
         value = value.value
     return value.id if isinstance(value, ast.Name) else None
 
@@ -108,7 +110,19 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> str | None:
         return None
     if isinstance(value, ast.BinOp):
         return _risky_in(value.left, risky) or _risky_in(value.right, risky)
-    if isinstance(value, (ast.Tuple, ast.List)):
+    if isinstance(value, ast.Starred):
+        return _risky_in(value.value, risky)
+    if isinstance(value, ast.BoolOp):
+        return next((h for v in value.values if (h := _risky_in(v, risky))), None)
+    if isinstance(value, ast.IfExp):
+        return _risky_in(value.body, risky) or _risky_in(value.orelse, risky)
+    if isinstance(value, ast.Dict):
+        return next((h for v in value.values if v is not None and (h := _risky_in(v, risky))), None)
+    if isinstance(value, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+        return _risky_in(value.elt, risky) or next(
+            (h for g in value.generators if (h := _risky_in(g.iter, risky))), None
+        )
+    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
         for element in value.elts:
             hit = _risky_in(element, risky)
             if hit:
@@ -118,7 +132,7 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> str | None:
         func = value.func
         if isinstance(func, ast.Name) and func.id in {"str", "repr", "format"}:
             return next((h for a in value.args if (h := _risky_in(a, risky))), None)
-        if isinstance(func, ast.Attribute) and func.attr == "format":
+        if isinstance(func, ast.Attribute) and func.attr in {"format", "join"}:
             args = [*value.args, *(k.value for k in value.keywords)]
             return next((h for a in args if (h := _risky_in(a, risky))), None)
     return None
@@ -126,13 +140,17 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> str | None:
 
 def _risky_names_in_call(node: ast.Call, risky: frozenset[str]) -> list[str]:
     found = [hit for arg in node.args if (hit := _risky_in(arg, risky))]
+    found += [
+        hit
+        for keyword in node.keywords
+        if keyword.arg in {"msg", "extra"} and (hit := _risky_in(keyword.value, risky))
+    ]
     func = node.func
     logs_traceback = isinstance(func, ast.Attribute) and func.attr == "exception"
     for keyword in node.keywords:
-        if keyword.arg == "exc_info" and not (
-            isinstance(keyword.value, ast.Constant) and not keyword.value.value
-        ):
-            logs_traceback = True
+        if keyword.arg == "exc_info":
+            falsy = isinstance(keyword.value, ast.Constant) and not keyword.value.value
+            logs_traceback = not falsy
     if logs_traceback:
         found.append(_EXCEPTION_MARKER)
     return found
@@ -228,6 +246,15 @@ _TB = "<exception traceback>"
             {(_M, "f.g", "exc"): 1, (_M, "f", "exc"): 1},
         ),
         ("def f():\n    log.error(exc)\n    log.warning(exc)\n", {(_M, "f", "exc"): 2}),
+        ("def f():\n    log.error(', '.join(values))\n", {(_M, "f", "values"): 1}),
+        ("def f():\n    log.error(', '.join(str(x) for x in row))\n", {(_M, "f", "row"): 1}),
+        ("def f():\n    log.error('%(v)s' % {'v': exc})\n", {(_M, "f", "exc"): 1}),
+        ("def f():\n    log.error(msg=f'{exc}')\n", {(_M, "f", "exc"): 1}),
+        ("def f():\n    log.error(exc or 'x')\n", {(_M, "f", "exc"): 1}),
+        ("def f():\n    log.error('%s', value if a else b)\n", {(_M, "f", "value"): 1}),
+        ("def f():\n    log.error('%s %s', *values)\n", {(_M, "f", "values"): 1}),
+        ("def f():\n    log.exception('x', exc_info=False)\n", {}),
+        ("def f():\n    log.error('%s', exc.__class__.__name__)\n", {}),
         # Safe forms.
         ("def f():\n    _log.warning('x %s', type(exc).__name__)\n", {}),
         ("def f():\n    _log.warning('x %s', len(values))\n", {}),
