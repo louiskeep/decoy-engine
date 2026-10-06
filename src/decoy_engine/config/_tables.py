@@ -151,6 +151,19 @@ class ColumnConfig(BaseModel):
             ) from exc
         return stripped
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        """Keep the serialization-mode JSON schema field-enumerating.
+
+        The wrap serializer below makes pydantic report this model's serialization schema as a
+        generic object; asking again without the `serialization` entry recovers the field
+        schema, as `GlobalSettings` does for its `dp` serializer.
+        """
+        schema = handler(core_schema)
+        if "properties" not in schema and "$ref" not in schema:
+            schema = handler({k: v for k, v in core_schema.items() if k != "serialization"})
+        return schema
+
     @model_serializer(mode="wrap")
     def _omit_unset_when(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # An unset `when` stays out of dumps, so configs without it serialize and hash exactly
