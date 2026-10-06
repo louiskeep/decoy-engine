@@ -92,6 +92,10 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/native/_plan.py",
     "execution/native/_requirements.py",
     "execution/native/_capabilities.py",
+    # R1b: the resolved per-operator parameters and the shared kernel step both native routes
+    # call. They are leaf modules under `native/`, which must not reach the physical seam.
+    "execution/native/_operator_params.py",
+    "execution/native/_operator_step.py",
     "execution/out_of_core/_runner.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_route_policy.py",
