@@ -378,8 +378,8 @@ _DETERMINISTIC_ZERO_ROW: dict[str, tuple[Callable[[], dict[str, Any]], dict[str,
         {
             "executed": True,
             "compiled_kernel_executed": True,
-            "planned_backend": "rust_index",
-            "executed_backend": "rust_index",
+            "planned_backend": "rust_companion",
+            "executed_backend": "rust_companion",
             "calls": 1,
         },
     ),
@@ -551,43 +551,80 @@ def test_6_an_fk_participating_table_declines(tmp_path: Path, variant: str) -> N
         assert on.outputs[table].equals(off.outputs[table], check_metadata=True)
 
 
-# Verdicts of the config-only eligibility query on engine main 3e8d259e, recorded before this
-# change: (accepted, rejections). It feeds the chunked route and the eligibility report.
-_ELIGIBILITY_SNAPSHOT: dict[
-    str, tuple[Callable[[], list[dict[str, Any]]], bool, tuple[str, ...]]
-] = {
-    "cat_nd": (lambda: [cat_col()], False, ("categorical_not_deterministic:c",)),
-    "cat_nd_weighted": (
-        lambda: [cat_col(weighted=True)],
-        False,
-        ("categorical_not_deterministic:c",),
-    ),
-    "cat_det": (lambda: [cat_col(deterministic=True)], True, ()),
+# Corpus for the verdict snapshot: the same columns, asked three questions that the unified
+# binding must not change: the config-only eligibility query, the chunked compatibility veto
+# and the chunked route's native admission.
+_VERDICT_CORPUS: dict[str, Callable[[], list[dict[str, Any]]]] = {
+    "cat_nd": lambda: [cat_col()],
+    "cat_nd_weighted": lambda: [cat_col(weighted=True)],
+    "cat_nd_no_namespace": lambda: [cat_col(namespace=None)],
+    "cat_det": lambda: [cat_col(deterministic=True)],
+    "cat_det_numeric": lambda: [cat_col(categories=[1, 2], deterministic=True)],
+    "faker_nd": lambda: [nd_faker()],
+    "faker_nd_no_ns": lambda: [nd_faker(namespace=None)],
+    "faker_nd_no_pool": lambda: [nd_faker(pool_size=None)],
+    "faker_nd_provider_outside": lambda: [nd_faker(provider="person_email")],
+    "faker_det": lambda: [nd_faker(deterministic=True)],
+    "faker_det_no_pool": lambda: [nd_faker(deterministic=True, pool_size=None)],
+}
+
+# (eligible, eligibility rejections, chunked veto code, chunked native admitted, chunked reroute
+# reason), recorded on engine main 3e8d259e before this change.
+_VERDICTS: dict[str, tuple[bool, tuple[str, ...], str | None, bool, str | None]] = {
+    "cat_det": (True, (), None, True, None),
     "cat_det_numeric": (
-        lambda: [cat_col(categories=[1, 2], deterministic=True)],
         False,
         ("categorical_categories_not_all_string:c",),
-    ),
-    "faker_nd": (lambda: [nd_faker()], False, ("faker_not_deterministic_reuse_variant:c",)),
-    "faker_nd_no_ns": (
-        lambda: [nd_faker(namespace=None)],
+        None,
         False,
-        ("faker_not_deterministic_reuse_variant:c",),
+        "fallback_policy_not_native:c:python_only",
     ),
-    "faker_det": (lambda: [nd_faker(deterministic=True)], True, ()),
+    "cat_nd": (False, ("categorical_not_deterministic:c",), None, True, None),
+    "cat_nd_no_namespace": (
+        False,
+        ("categorical_not_deterministic:c",),
+        "categorical_nondeterministic_not_chunk_safe",
+        False,
+        "fallback_policy_not_native:c:python_only",
+    ),
+    "cat_nd_weighted": (False, ("categorical_not_deterministic:c",), None, True, None),
+    "faker_det": (False, ("no_native_kernel:c:faker",), None, True, None),
     "faker_det_no_pool": (
-        lambda: [nd_faker(deterministic=True, pool_size=None)],
         False,
-        ("faker_not_deterministic_reuse_variant:c",),
+        ("no_native_kernel:c:faker",),
+        "chunked_strategy_conditions_unmet",
+        False,
+        "fallback_policy_not_native:c:python_only",
+    ),
+    "faker_nd": (False, ("no_native_kernel:c:faker",), None, True, None),
+    "faker_nd_no_ns": (False, ("no_native_kernel:c:faker",), None, True, None),
+    "faker_nd_no_pool": (
+        False,
+        ("no_native_kernel:c:faker",),
+        "chunked_strategy_conditions_unmet",
+        False,
+        "fallback_policy_not_native:c:python_only",
+    ),
+    "faker_nd_provider_outside": (
+        False,
+        ("no_native_kernel:c:faker",),
+        "chunked_strategy_conditions_unmet",
+        False,
+        "fallback_policy_not_native:c:python_only",
     ),
 }
 
 
-@pytest.mark.parametrize("name", sorted(_ELIGIBILITY_SNAPSHOT))
-def test_6_native_route_eligibility_verdicts_are_unchanged(tmp_path: Path, name: str) -> None:
-    build, accepted, rejections = _ELIGIBILITY_SNAPSHOT[name]
+def _verdict(tmp_path: Path, columns: list[dict[str, Any]]) -> tuple[Any, ...]:
+    from decoy_engine.execution._chunked import check_chunked_compatibility
+    from decoy_engine.execution._chunked_profile import first_chunk_profile
+    from decoy_engine.execution.native._dispatch import plan_native_route
+    from decoy_engine.plan._errors import PlanCompileError
+    from decoy_engine.providers_v2 import get_default_registry
+
+    source = str_source(6)
     path = tmp_path / "x.parquet"
-    pq.write_table(str_source(3), path)
+    pq.write_table(source, path)
     raw = {
         "version": 1,
         "global_settings": {"seed": 5},
@@ -595,11 +632,36 @@ def test_6_native_route_eligibility_verdicts_are_unchanged(tmp_path: Path, name:
         "targets": {
             "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "o.parquet")}
         },
-        "tables": [{"name": "t", "columns": build()}],
+        "tables": [{"name": "t", "columns": columns}],
     }
     config = PipelineConfig.model_validate(raw).model_dump()
-    result = native_route_eligibility(config, table="t")
-    assert (result.accepted, tuple(result.rejections)) == (accepted, rejections)
+    eligibility = native_route_eligibility(config, table="t")
+    registry = get_default_registry()
+    try:
+        check_chunked_compatibility(config, table="t", registry=registry)
+        veto = None
+    except PlanCompileError as exc:
+        veto = exc.code
+    preflight = plan_native_route(
+        config,
+        first_chunk_profile(source, table="t", engine_version="v"),
+        table="t",
+        engine_version="v",
+        first_schema=source.schema,
+        registry=registry,
+    )
+    return (
+        eligibility.accepted,
+        tuple(eligibility.rejections),
+        veto,
+        preflight.evidence.native_admitted,
+        preflight.evidence.reroute_reason,
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_VERDICT_CORPUS))
+def test_6_route_verdicts_are_unchanged(tmp_path: Path, name: str) -> None:
+    assert _verdict(tmp_path, _VERDICT_CORPUS[name]()) == _VERDICTS[name]
 
 
 # ---------------------------------------------------------------------------
@@ -662,11 +724,17 @@ _CAT_PRED = "positional_categorical_bindable"
 _FAKER_PRED = "positional_faker_bindable"
 
 
+def _fresh(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    path.mkdir()
+    return path
+
+
 def test_8_the_positional_categorical_predicate_holds_for_the_admitted_shape(
     tmp_path: Path,
 ) -> None:
-    assert _bindable(_CAT_PRED, _cat_case(tmp_path, cat_col())) is True
-    assert _bindable(_CAT_PRED, _cat_case(tmp_path, cat_col(weighted=True))) is True
+    assert _bindable(_CAT_PRED, _cat_case(_fresh(tmp_path, "u"), cat_col())) is True
+    assert _bindable(_CAT_PRED, _cat_case(_fresh(tmp_path, "w"), cat_col(weighted=True))) is True
 
 
 _CAT_CLAUSES: dict[str, Callable[[Path], tuple[Case, dict[str, Any] | None]]] = {
@@ -710,8 +778,8 @@ def test_8_the_categorical_predicate_trusts_the_slice_not_the_config(tmp_path: P
 
 
 def test_8_the_positional_faker_predicate_holds_for_the_admitted_shape(tmp_path: Path) -> None:
-    for namespace in ("ns_faker", None, ""):
-        case = _cat_case(tmp_path / f"n{namespace}", nd_faker(namespace=namespace))
+    for index, namespace in enumerate(("ns_faker", None, "")):
+        case = _cat_case(_fresh(tmp_path, f"n{index}"), nd_faker(namespace=namespace))
         assert _bindable(_FAKER_PRED, case) is True
 
 

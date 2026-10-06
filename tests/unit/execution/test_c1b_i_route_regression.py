@@ -10,7 +10,8 @@ instead of the false "unseeded" label:
   b. out-of-core compatibility still rejects it, with the exact code and the new reason;
   c. automatic AND explicit out-of-core routes do not admit it, and the impl still raises;
   d. the chunked error code `categorical_nondeterministic_not_chunk_safe` is unchanged;
-  e. native admission still declines `deterministic=False`.
+  e. `prepare_categorical` (the value-keyed gate) still declines `deterministic=False`; the
+     full-frame binding admits the positional variant on its own (C5b-iii).
 """
 
 from __future__ import annotations
@@ -360,14 +361,34 @@ class TestNativeStillDeclines:
         )
         assert reason is None and prepared is not None
 
-    def test_physical_operator_assertion_is_unchanged(self) -> None:
-        import inspect
+    def test_the_full_frame_binding_admits_the_positional_variant_only(
+        self, tmp_path: Path
+    ) -> None:
+        """The source-keyed operator assertion is gone: a position-keyed categorical now binds
+        as `prepared.positional` params, and a deterministic one still binds source-keyed."""
+        from decoy_engine.execution.native._operator_params import CategoricalParams
+        from decoy_engine.execution.physical._compiler import compile_physical_plan
+        from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+        from tests.physical._shadow_helpers import build_config, write_read_only_fixture
 
-        from decoy_engine.execution.physical import _shadow_operators
-
-        src = inspect.getsource(_shadow_operators)
-        assert "if not binding.categorical_deterministic:" in src
-        assert "categorical node reached run_operator with categorical_deterministic=False" in src
+        src = pa.table({"c": pa.array(["a", "b", "c"], pa.string())})
+        write_read_only_fixture(tmp_path, src, "x")
+        for deterministic in (False, True):
+            col: dict[str, Any] = {
+                "name": "c",
+                "strategy": "categorical",
+                "namespace": "ns",
+                "provider_config": {"categories": ["A", "B"]},
+            }
+            if deterministic:
+                col["deterministic"] = True
+            config = build_config(tmp_path, "t", tmp_path / "x.parquet", [col])
+            inputs = capture_physical_plan_inputs(config, {"t": src}, engine_version="c5b-iii")
+            (node,) = [n for t in compile_physical_plan(inputs).tables for n in t.nodes]
+            assert node.execution is not None
+            assert isinstance(node.execution.params, CategoricalParams)
+            assert node.execution.params.prepared.positional is (not deterministic)
+            assert node.execution.categorical_deterministic is deterministic
 
 
 def test_frame_is_whole_frame_only_pandas_handler_is_what_runs() -> None:

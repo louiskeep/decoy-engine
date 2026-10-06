@@ -4,8 +4,11 @@ Called from the compiler's `_build_nodes` at compile time, for exactly the
 native-admitted slice strategies the shadow coordinator shadows: passthrough,
 redact, truncate, keyed hash (Task 4.4), (Task 4.6 slice 1) deterministic
 faker over the frozen C1 provider allowlist, and (Phase 5 Track B)
-deterministic categorical over string categories. Every other node is left
-unbound (`PhysicalNode.execution is None`) -- out of scope for this slice.
+deterministic categorical over string categories, plus the two position-keyed
+variants (the seeded non-deterministic categorical and the non-deterministic REUSE
+faker), which `positional_categorical_bindable` / `positional_faker_bindable` admit
+at this boundary because their `fallback_policy` is not native. Every other node is
+left unbound (`PhysicalNode.execution is None`) -- out of scope for this slice.
 
 Secrets never appear here: `KeyBinding` carries only the non-secret
 `KeySource` token (`native/_capabilities.py:51`) plus the namespace, and
@@ -24,15 +27,25 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._capabilities import capabilities_for
-from decoy_engine.execution.native._categorical_prepared import prepare_categorical
+from decoy_engine.execution.native._categorical_prepared import (
+    prepare_categorical,
+    prepare_positional_categorical,
+)
+from decoy_engine.execution.native._determinism_protocol import draw_site_by_id
+from decoy_engine.execution.native._faker_positional_admission import (
+    positional_faker_config_for_column,
+)
 from decoy_engine.execution.native._operator_params import (
     DateShiftParams,
+    FakerParams,
     GroupKeyParams,
     OperatorParams,
     PassthroughParams,
     RedactParams,
     TextRedactParams,
     TruncateParams,
+    is_positional_faker_seed,
+    positional_faker_params,
     resolve_operator_params,
 )
 from decoy_engine.execution.native._provider_class import classify_provider
@@ -61,10 +74,18 @@ OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
 
 _SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
 
+# The draw site each position-keyed variant runs, which names its determinism family.
+_POSITIONAL_DRAW_SITE: Final = {
+    "categorical": "mask.categorical_nondeterministic",
+    "faker": "mask.faker_nondeterministic",
+}
+
 __all__ = [
     "OPERATOR_ID_BY_STRATEGY",
     "SLICE_STRATEGIES",
     "execution_binding_for_slice_node",
+    "positional_categorical_bindable",
+    "positional_faker_bindable",
 ]
 
 
@@ -150,6 +171,44 @@ def _faker_pool_bindable(
     return not _table_in_fk_relationship(table, inputs)
 
 
+def positional_categorical_bindable(
+    plan_slice: ColumnSeed, table: str, column: str, inputs: PhysicalPlanInputs
+) -> bool:
+    """Whether a seeded non-deterministic categorical may bind natively: the config passes
+    stage A (namespace, explicit all-string categories, buildable CDF, no `from_profile`),
+    there is no `when:` gate or vault, the resident source is `string`, and the table is in
+    no FK relationship. Decided here, at the binding boundary, because the compiler binds
+    every table of a multi-table shadow run without the single-table admission in front of it.
+    """
+    if plan_slice.deterministic or plan_slice.when or plan_slice.vault:
+        return False
+    artifact, _reason = prepare_positional_categorical(
+        column,
+        namespace=plan_slice.namespace,
+        provider_config=provider_config_to_dict(plan_slice.provider_config),
+    )
+    return (
+        artifact is not None
+        and _resident_source_type(table, column, inputs) == pa.string()
+        and not _table_in_fk_relationship(table, inputs)
+    )
+
+
+def positional_faker_bindable(
+    plan_slice: ColumnSeed, table: str, column: str, inputs: PhysicalPlanInputs
+) -> bool:
+    """Whether a non-deterministic REUSE faker may bind natively: the chunked route's stage A
+    (explicit `pool_size`, allowlisted provider) over the raw config, plus the unified
+    domain's own conditions (`_faker_pool_bindable`: no `when:` or vault, a poolable
+    provider, a resident string source, no FK relationship). The slice's own determinism and
+    cardinality mode are checked too, so a config and a compiled seed that disagree decline."""
+    return (
+        is_positional_faker_seed(plan_slice)
+        and positional_faker_config_for_column(inputs.config, table, column) is not None
+        and _faker_pool_bindable(plan_slice=plan_slice, table=table, column=column, inputs=inputs)
+    )
+
+
 def _key_binding(key_source: str | None, params: OperatorParams) -> KeyBinding | None:
     """The non-secret key reference of a keyed operator. Its namespace is read from the
     resolved parameters, so the binding and the operator cannot disagree on it."""
@@ -174,7 +233,21 @@ def execution_binding_for_slice_node(
     """
     if work_node.kind != "scalar" or work_node.strategy not in SLICE_STRATEGIES:
         return None
-    if requirements.fallback_policy != "native" or requirements.output_arrow_schema is None:
+    plan_slice = work_node.plan_slice
+    if not isinstance(plan_slice, ColumnSeed):  # pragma: no cover - scalar nodes always carry one
+        return None
+
+    strategy = work_node.strategy
+    column = work_node.columns[0]
+    # A position-keyed variant resolves a non-native policy (the full-frame operators are
+    # source-keyed), so its own predicate admits it here instead.
+    positional = (
+        strategy == "categorical"
+        and positional_categorical_bindable(plan_slice, table, column, inputs)
+    ) or (strategy == "faker" and positional_faker_bindable(plan_slice, table, column, inputs))
+    if (
+        requirements.fallback_policy != "native" and not positional
+    ) or requirements.output_arrow_schema is None:
         return None
     # No slice strategy declares a prepass (every admitted strategy is
     # row-local, non-global); a future strategy added to SLICE_STRATEGIES
@@ -191,12 +264,6 @@ def execution_binding_for_slice_node(
             "slice does not support; do not add it to SLICE_STRATEGIES."
         )
 
-    plan_slice = work_node.plan_slice
-    if not isinstance(plan_slice, ColumnSeed):  # pragma: no cover - scalar nodes always carry one
-        return None
-
-    strategy = work_node.strategy
-    column = work_node.columns[0]
     cfg = provider_config_to_dict(plan_slice.provider_config)
     namespace = plan_slice.namespace
     caps = capabilities_for(strategy)
@@ -215,15 +282,16 @@ def execution_binding_for_slice_node(
             return None
     elif strategy == "faker":
         # JC-5 already guarantees deterministic + reuse + a namespace + a resolved pool_size;
-        # captured into locals so mypy narrows them instead of re-reading `plan_slice.*`
+        # the position-keyed variant needs no configured namespace (it defaults per column).
+        # Captured into locals so mypy narrows them instead of re-reading `plan_slice.*`
         # after the predicate call below, which it cannot prove leaves them unchanged.
         pool_size = plan_slice.pool_size
         provider = plan_slice.provider
-        if caps.key_source is None or namespace is None or pool_size is None:
+        if caps.key_source is None or pool_size is None or (namespace is None and not positional):
             return None  # pragma: no cover - JC-5 already guarantees these
         if not isinstance(provider, str) or not provider:
             return None  # pragma: no cover - faker always compiles a provider
-        if not _faker_pool_bindable(
+        if not positional and not _faker_pool_bindable(
             plan_slice=plan_slice, table=table, column=column, inputs=inputs
         ):
             # Any miss in the shared slice-domain predicate (§3.2) leaves the node unbound.
@@ -234,9 +302,14 @@ def execution_binding_for_slice_node(
         # `categorical_config_rejection`, which calls this same `prepare_categorical`.
         if caps.key_source is None or namespace is None:
             return None  # pragma: no cover - config gate guarantees both
-        prepared, _reason = prepare_categorical(
-            column, deterministic=True, namespace=namespace, provider_config=cfg
-        )
+        if positional:
+            prepared, _reason = prepare_positional_categorical(
+                column, namespace=namespace, provider_config=cfg
+            )
+        else:
+            prepared, _reason = prepare_categorical(
+                column, deterministic=True, namespace=namespace, provider_config=cfg
+            )
         if prepared is None:
             return None  # pragma: no cover - config gate already proved it admissible
     elif strategy in ("bucket_perturb", "date_shift"):
@@ -254,13 +327,17 @@ def execution_binding_for_slice_node(
         if caps.key_source is None:
             return None  # pragma: no cover - group_key is mask-keyed
 
-    params = resolve_operator_params(
-        strategy,
-        target=column,
-        provider_config=cfg,
-        namespace=namespace,
-        prepared_categorical=prepared,
-    )
+    params: OperatorParams
+    if positional and strategy == "faker":
+        params = positional_faker_params(plan_slice, table=table, column=column)
+    else:
+        params = resolve_operator_params(
+            strategy,
+            target=column,
+            provider_config=cfg,
+            namespace=namespace,
+            prepared_categorical=prepared,
+        )
     resolved_config: dict[str, Any] = dict(cfg)
     input_schema_column = column
     if isinstance(params, TruncateParams):
@@ -274,6 +351,11 @@ def execution_binding_for_slice_node(
         if not isinstance(params.min_days, int) or not isinstance(params.max_days, int):
             return None  # pragma: no cover - config gate guarantees int bounds
     key_binding = _key_binding(caps.key_source, params)
+    if isinstance(params, FakerParams) and params.positional:
+        # The draw keys on the job seed, from the selection namespace: the binding names that.
+        if params.selection_namespace is None:
+            return None  # pragma: no cover - positional_faker_params always sets it
+        key_binding = KeyBinding(key_source="job_seed", namespace=params.selection_namespace)
 
     # Track A Option 2: resident-Arrow-authoritative typing. `inputs.caller_sources` is the
     # same resident table BOTH the unified-slice and pandas-oracle routes actually mask, so
@@ -296,7 +378,11 @@ def execution_binding_for_slice_node(
         resolved_config=tuple(sorted(resolved_config.items())),
         input_schema=input_schema,
         output_schema=requirements.output_arrow_schema,
-        determinism_family=caps.draw_family,
+        determinism_family=(
+            draw_site_by_id(_POSITIONAL_DRAW_SITE[strategy]).family
+            if positional
+            else caps.draw_family
+        ),
         determinism_version=inputs.plan.seed_protocol_version,
         key_binding=key_binding,
         diagnostic_obligations=requirements.diagnostic_reducers,

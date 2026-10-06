@@ -352,7 +352,7 @@ def test_the_deterministic_non_string_oracle_fallback_is_unchanged(typ: pa.DataT
 
 
 # ---------------------------------------------------------------------------
-# 5. Full-frame physical stays closed (B3 no-widening).
+# 5. The unified binding admits it; the shared admission gates stay closed.
 # ---------------------------------------------------------------------------
 
 
@@ -368,13 +368,26 @@ def test_the_config_only_native_eligibility_query_still_rejects_non_deterministi
     assert "categorical_not_deterministic:c" in result.rejections
 
 
-def test_the_physical_operator_assertion_is_unchanged() -> None:
-    import inspect
+def test_the_unified_binding_admits_the_seeded_categorical_as_the_positional_variant(
+    tmp_path: Path,
+) -> None:
+    from decoy_engine.execution.native._operator_params import CategoricalParams
+    from decoy_engine.execution.physical._compiler import compile_physical_plan
+    from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+    from tests.physical._shadow_helpers import build_config, write_read_only_fixture
 
-    from decoy_engine.execution.physical import _shadow_operators
-
-    src = inspect.getsource(_shadow_operators)
-    assert "if not binding.categorical_deterministic:" in src
+    src = pa.table({"c": pa.array(["a", "b", "c"], pa.string())})
+    write_read_only_fixture(tmp_path, src, "x")
+    config = build_config(tmp_path, "t", tmp_path / "x.parquet", [_nd()])
+    inputs = capture_physical_plan_inputs(config, {"t": src}, engine_version="c5b-iii-test")
+    nodes = [n for t in compile_physical_plan(inputs).tables for n in t.nodes]
+    assert len(nodes) == 1
+    binding = nodes[0].execution
+    assert binding is not None
+    assert isinstance(binding.params, CategoricalParams)
+    assert binding.params.prepared.positional is True
+    assert binding.categorical_deterministic is False
+    assert binding.key_binding is not None and binding.key_binding.key_source == "mask_key"
 
 
 # ---------------------------------------------------------------------------

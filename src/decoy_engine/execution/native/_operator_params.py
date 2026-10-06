@@ -41,6 +41,7 @@ __all__ = [
     "TextRedactParams",
     "TruncateParams",
     "is_positional_faker_seed",
+    "positional_faker_params",
     "resolve_operator_params",
     "resolve_params_by_column",
 ]
@@ -222,10 +223,11 @@ def is_positional_faker_seed(seed: Any) -> bool:
     )
 
 
-def _positional_faker_params(seed: Any, *, table: str | None, column: str) -> FakerParams:
+def positional_faker_params(seed: Any, *, table: str | None, column: str) -> FakerParams:
     """The parameters of a position-keyed faker column: the oracle's own default-namespace
-    function, so the two routes cannot spell the selection namespace differently."""
-    if table is None:  # pragma: no cover - the chunked entry always knows its table
+    function, so every route that builds them cannot spell the selection namespace
+    differently."""
+    if table is None:  # pragma: no cover - every caller knows its table
         raise AssertionError(
             f"positional faker column {column!r} reached the parameter resolver with no table; "
             "its default selection namespace is keyed on the table."
@@ -259,7 +261,7 @@ def resolve_params_by_column(
         if seed.strategy == "categorical" and name not in prepared_categoricals:
             continue
         if is_positional_faker_seed(seed):
-            params[name] = _positional_faker_params(seed, table=table, column=name)
+            params[name] = positional_faker_params(seed, table=table, column=name)
             continue
         params[name] = resolve_operator_params(
             seed.strategy,

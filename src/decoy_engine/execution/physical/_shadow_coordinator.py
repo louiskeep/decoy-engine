@@ -72,6 +72,7 @@ from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
     load_compiled_index_kernel,
 )
+from decoy_engine.execution.native._operator_params import FakerParams
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan, SynthesisStage
 from decoy_engine.execution.physical._shadow_assembly import assemble_column
@@ -370,6 +371,7 @@ class ShadowCoordinator:
                                 index_kernel=index_kernel,
                                 group_key_sibling=group_key_sibling,
                                 column=column,
+                                row_offset=row_offset,
                             )
                         parts.append(out)
                         # Rebase batch-local indices to table-global and attribute the
@@ -531,10 +533,9 @@ class ShadowCoordinator:
         and `PoolBuilder` only on a miss on both. Uses the same
         `resolve_faker_pool_identity` as the oracle and the native chunked route.
         """
-        if binding.pool_binding is None or binding.key_binding is None:
-            # pragma: no cover - only ever called for a faker-bound node,
-            # which C0 always binds both together for.
-            raise AssertionError("_resolve_pool called without a pool_binding/key_binding")
+        params = binding.params
+        if binding.pool_binding is None or not isinstance(params, FakerParams):  # pragma: no cover
+            raise AssertionError("_resolve_pool called without a pool_binding/FakerParams")
         if self.registry is None:
             raise AssertionError(
                 "a faker node is bound but ShadowCoordinator.registry is None; the "
@@ -553,7 +554,7 @@ class ShadowCoordinator:
             builder=builder,
             provider=binding.pool_binding.provider,
             plan_pool_size=binding.pool_binding.plan_pool_size,
-            namespace=binding.key_binding.namespace,
+            namespace=params.namespace,
             job_seed=self.ctx.job_seed,
             cfg=dict(binding.resolved_config),
         )
@@ -574,7 +575,7 @@ class ShadowCoordinator:
                         job_seed=self.ctx.job_seed,
                         locale=locale,
                         config=build_config,
-                        namespace=binding.key_binding.namespace,
+                        namespace=params.namespace,
                     )
                     pool_cache.put(built)
                 except Exception as exc:

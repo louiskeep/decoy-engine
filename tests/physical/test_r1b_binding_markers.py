@@ -60,7 +60,7 @@ _NEEDS_KERNEL: list[tuple[str, OperatorParams | None, bool]] = [
     ("redact", RedactParams("X"), False),
     ("hash", HashParams("ns", None), False),
     ("categorical", _CATEGORICAL, True),
-    ("categorical_positional", _POSITIONAL, False),
+    ("categorical_positional", _POSITIONAL, True),
     ("bucket_full", _BUCKET, True),
     ("bucket_without_date_format", dataclasses.replace(_BUCKET, date_format=None), True),
     ("bucket_without_bucket", dataclasses.replace(_BUCKET, bucket=None), False),

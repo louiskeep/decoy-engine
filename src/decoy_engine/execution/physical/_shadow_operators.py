@@ -132,6 +132,9 @@ class OperatorCallEvidence:
     executed: bool = False
     compiled_kernel_executed: bool = False
     batches_run: int = 0
+    # Rows the operator was handed, summed per batch. `None` until a batch is recorded, so a
+    # hand-built record that never counted reads as non-empty and keeps the strict check.
+    rows_seen: int | None = None
 
 
 # The two operators whose kernel loads a companion of its own inside the call; the loader's
@@ -157,6 +160,7 @@ def _bound_params(
     index_kernel: IndexDerivationKernel | None,
     group_key_sibling: pa.Table | None,
     column: str | None,
+    job_seed: bytes | None,
 ) -> OperatorParams:
     """The operator's resolved parameters, after the fail-closed binding checks.
 
@@ -186,22 +190,14 @@ def _bound_params(
             )
         if not isinstance(params, FakerParams):  # pragma: no cover - C0 binds it with the key
             raise AssertionError("faker node reached run_operator with no resolved params")
+        if params.positional and not job_seed:
+            raise AssertionError("positional faker node reached run_operator with no job_seed")
     elif operator_id == _CATEGORICAL:
         if binding.key_binding is None:  # pragma: no cover - C0 always binds this
             raise AssertionError("categorical node reached run_operator with no KeyBinding")
-        if not binding.categorical_deterministic:
-            # Runtime determinism assertion (Phase 5 Track B): the unified categorical operator
-            # is always source-keyed, so a position-keyed (non-deterministic) plan must never
-            # reach it. Admission already declines it to the oracle; this fails closed if a
-            # wiring bug ever routed one here, rather than silently changing its contract.
-            raise AssertionError(
-                "categorical node reached run_operator with categorical_deterministic=False"
-            )
         if index_kernel is None:  # pragma: no cover - the coordinator loads it first
             raise AssertionError("categorical node reached run_operator with no index_kernel")
-        if not isinstance(
-            params, CategoricalParams
-        ):  # pragma: no cover - implied by the check above
+        if not isinstance(params, CategoricalParams):  # pragma: no cover - C0 binds it with the key
             raise AssertionError("categorical node reached run_operator with no resolved params")
     elif operator_id == _BUCKET_PERTURB:
         if binding.key_binding is None:  # pragma: no cover - C0 always binds this
@@ -267,6 +263,7 @@ def run_operator(
     index_kernel: IndexDerivationKernel | None = None,
     group_key_sibling: pa.Table | None = None,
     column: str | None = None,
+    row_offset: int = 0,
 ) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
@@ -278,7 +275,10 @@ def run_operator(
     the table and the batch offset, so it attributes and rebases them, the same
     split `drain_row_errors` makes for the oracle's handlers. Only date_shift
     emits any; every other operator returns `()`. `column` is the target column
-    name the records carry, required by date_shift.
+    name the records carry, required by date_shift. `row_offset` is the table-global ordinal
+    of `array`'s first row, which only the two position-keyed operators read: they draw by
+    `row_offset + i`, so a batch reproduces the whole-frame draw. The position-keyed Faker
+    keys on `ctx.job_seed`; every other operator ignores it.
 
     `pool` is used only by the faker branch; `index_kernel` by faker AND
     categorical (Phase 5 Track B): the coordinator resolves the pool once per
@@ -289,12 +289,15 @@ def run_operator(
     call each batch, which is this route's only companion probe, so an empty column still
     declines when the companion is absent.
     """
+    positional_faker = isinstance(binding.params, FakerParams) and binding.params.positional
+    job_seed = ctx.job_seed if positional_faker else None
     params = _bound_params(
         binding,
         pool=pool,
         index_kernel=index_kernel,
         group_key_sibling=group_key_sibling,
         column=column,
+        job_seed=job_seed,
     )
     try:
         result = run_kernel_step(
@@ -306,6 +309,8 @@ def run_operator(
             raw_hex_kernel=None,
             pool=pool,
             sibling=group_key_sibling,
+            row_offset=row_offset,
+            job_seed=job_seed,
         )
     except CryptoExtensionUnavailableError as exc:
         detail = _COMPANION_UNAVAILABLE_DETAIL.get(binding.operator_id)
@@ -329,4 +334,5 @@ def run_operator(
     evidence.actual_operator = binding.operator_id
     evidence.executed = True
     evidence.batches_run += 1
+    evidence.rows_seen = (evidence.rows_seen or 0) + len(array)
     return result.out, row_errors

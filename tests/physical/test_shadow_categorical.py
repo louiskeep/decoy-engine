@@ -6,8 +6,9 @@ gate, proven at two boundaries: the shadow coordinator's assembled output
 `schema.field(...).type`), and the production unified-slice `ExecutionResult`
 (flag-off vs flag-on). The seam is proven both ways: the FULL-FRAME route
 EXECUTES native categorical (positive route/kernel evidence), and the CHUNKED
-route admits it only when it is native-admissible (slice C1), declining the rest. The determinism gate is proven at
-BOTH admission boundaries plus the runtime assertion.
+route admits it only when it is native-admissible (slice C1), declining the rest. The seeded
+non-deterministic variant binds natively at the full-frame binding and runs by global row
+position; the config-only eligibility query still declines it.
 """
 
 from __future__ import annotations
@@ -197,7 +198,7 @@ def test_chunked_route_declines_non_admissible_categorical(
     assert "categorical_not_native_chunked_route" not in reason
 
 
-# ── Determinism gate: decline at BOTH admission boundaries ──────────
+# ── Determinism gate: eligibility query declines, binding admits the positional variant ──
 
 
 def _compile_plan_for(config: dict, source: pa.Table):
@@ -218,10 +219,12 @@ def test_nondeterministic_categorical_declines_on_native_route_config_query(tmp_
     assert any(r == "categorical_not_deterministic:c" for r in result.rejections), result.rejections
 
 
-def test_nondeterministic_categorical_declines_on_full_frame_binding(tmp_path: Path) -> None:
-    """Boundary 2: the compiled full-frame binding leaves the node UNBOUND
-    (`execution is None`), so the coordinator never runs it natively -- it
-    declines to the oracle."""
+def test_nondeterministic_categorical_binds_positionally_on_full_frame_binding(
+    tmp_path: Path,
+) -> None:
+    """Boundary 2: the compiled full-frame binding admits the seeded non-deterministic
+    categorical as the position-keyed variant of the native operator: positional prepared
+    categories, keyed on `mask_key`, loading the index kernel."""
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     write_read_only_fixture(tmp_path, source, "x")
     config = build_config(
@@ -233,9 +236,15 @@ def test_nondeterministic_categorical_declines_on_full_frame_binding(tmp_path: P
     plan = _compile_plan_for(config, source)
     cat_nodes = [n for tbl in plan.tables for n in tbl.nodes if n.strategy == "categorical"]
     assert cat_nodes, "expected a categorical node in the compiled plan"
-    assert all(n.execution is None for n in cat_nodes), (
-        "non-deterministic categorical must NOT bind natively (the native operator is source-keyed)"
-    )
+    for node in cat_nodes:
+        binding = node.execution
+        assert binding is not None
+        assert binding.operator_id == "native_categorical"
+        assert isinstance(binding.params, CategoricalParams)
+        assert binding.params.prepared.positional is True
+        assert binding.categorical_deterministic is False
+        assert binding.key_binding == KeyBinding(key_source="mask_key", namespace="ns")
+        assert binding.needs_index_kernel is True
 
 
 def test_missing_namespace_categorical_declines(tmp_path: Path) -> None:
@@ -259,10 +268,27 @@ def test_missing_namespace_categorical_declines(tmp_path: Path) -> None:
     )
 
 
-# ── Runtime determinism assertion (defensive, at dispatch) ──────────
+# ── Runtime dispatch of the position-keyed variant ──────────────────
 
 
-def test_run_operator_asserts_categorical_determinism() -> None:
+class _OracleCtx:
+    """The strategy context the pandas handler reads for a seeded categorical."""
+
+    job_seed = (0x42).to_bytes(8, "big")
+    mask_key = _MASK_KEY
+    row_offset = 0
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("offset", [0, 5], ids=["from_zero", "from_five"])
+def test_run_operator_draws_a_positional_categorical_by_global_position(offset: int) -> None:
+    import pandas as pd
+
+    from decoy_engine.execution._strategies._categorical import CategoricalStrategyHandler
+    from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+    from decoy_engine.plan._types import ColumnSeed
+
+    categories = tuple(_UNI)
     binding = ExecutionBinding(
         operator_id="native_categorical",
         operator_reason="test",
@@ -275,19 +301,40 @@ def test_run_operator_asserts_categorical_determinism() -> None:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
-        # The wiring-bug case the assertion guards: a position-keyed categorical.
-        params=CategoricalParams(PreparedCategorical(("a", "b"), None, positional=True), "ns"),
+        params=CategoricalParams(PreparedCategorical(categories, None, positional=True), "ns"),
     )
     ctx = SimpleNamespace(mask_key=_MASK_KEY, native_threads=None)
     evidence = OperatorCallEvidence(planned_operator="native_categorical")
-    with pytest.raises(AssertionError, match="categorical_deterministic=False"):
-        run_operator(
-            pa.array(["x", "y"], type=pa.string()),
-            binding=binding,
-            ctx=ctx,  # type: ignore[arg-type]
-            evidence=evidence,
-            index_kernel=None,
-        )
+    values = ["x"] * 12
+    out, _ = run_operator(
+        pa.array(values, type=pa.string()),
+        binding=binding,
+        ctx=ctx,  # type: ignore[arg-type]
+        evidence=evidence,
+        index_kernel=load_compiled_index_kernel(),
+        row_offset=offset,
+    )
+    seed = ColumnSeed(
+        namespace="ns",
+        strategy="categorical",
+        provider="categorical",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=False,
+        provider_config=(("categories", categories),),
+        coherent_with=(),
+    )
+    # The oracle numbers rows from its frame start, so the batch is the tail of a longer frame.
+    frame, _ = CategoricalStrategyHandler().run(
+        pd.DataFrame({"c": ["x"] * (offset + len(values))}),
+        "c",
+        seed,
+        _OracleCtx(),  # type: ignore[arg-type]
+    )
+    assert out.to_pylist() == list(frame["c"])[offset:]
+    assert len(set(out.to_pylist())) > 1
+    assert (evidence.compiled_kernel_executed, evidence.rows_seen) == (True, 12)
 
 
 # ── is_deterministic_categorical == ColumnSeed.deterministic ────────
