@@ -583,12 +583,10 @@ class ShadowCoordinator:
             pool = built
             pools_by_identity[identity] = pool
 
-        # Admission (`_faker_pool_bindable`) proves only the provider NAME is
-        # allowlisted and poolable; it never inspects what the bound adapter
-        # actually produces. A custom-registry override can rebind that name
-        # to a poolable adapter yielding non-string values, so the pool's
-        # real value type is checked here, at the one point it is known,
-        # rather than trusting admission's weaker guarantee.
+        # Admission (`_faker_pool_bindable`) proves only the provider NAME is allowlisted and
+        # poolable. A custom-registry override can rebind that name to a poolable adapter
+        # yielding non-string values, so the pool's real value type is checked here, at the
+        # one point it is known, rather than trusting admission's weaker guarantee.
         if not _pool_values_are_string_valued(pool.values):
             raise ShadowDifference(
                 code=FAKER_POOL_NON_STRING_OUTPUT,

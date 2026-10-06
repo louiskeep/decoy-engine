@@ -9,6 +9,24 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (position-keyed categorical and Faker run on the unified route, 2026-10-06)
+
+The seeded non-deterministic `categorical` and the non-deterministic `reuse` `faker` now run on
+the unified full-frame route. Single-table full-frame jobs with these columns used to fall back
+to the pandas path, and now take the unified lane with identical output: the same values, order,
+types, metadata, warnings and row errors. Each batch draws by the row's position in the whole
+table, so a table split into several batches gives the same result as one pass. The categorical
+keeps its secret-derived key and the Faker keeps the job seed, as on the pandas path.
+
+The same conditions as before decide who qualifies. A column needs a `string` source, no `when:`
+and no vault, and its table must be in no FK relationship. A categorical needs a namespace,
+explicit `string` categories without `from_profile` and weights the CDF can build. A Faker needs
+an explicit `pool_size` and an allowlisted provider (`person_first_name`, `person_last_name`), and
+cannot be `unique` or a `match_source_cardinality`/`scale_source_cardinality` mode. Anything else
+keeps running on the pandas path. A zero-row table now completes on the lane and reports
+`arrow_python` for the position-keyed node, as an idle chunked column does. Out-of-core, the
+multi-table split and the config-only eligibility report are unchanged.
+
 ### Added (public `when:` field with a closed grammar; native `when` on the chunked route, 2026-10-06)
 
 `ColumnConfig` now has an optional `when` field, so a validated config can mask only the rows a

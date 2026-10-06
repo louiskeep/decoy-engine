@@ -274,6 +274,26 @@ def test_3_positional_categorical_keys_on_mask_key_not_job_seed(tmp_path: Path) 
     assert lane_run(other).outputs["t"].column("c").to_pylist() == base
 
 
+def test_3_run_operator_refuses_a_positional_faker_without_a_job_seed(tmp_path: Path) -> None:
+    from decoy_engine.execution.physical._shadow_operators import run_operator
+    from tests.native._chunked_faker_support import pool_of
+
+    case = Case(tmp_path, str_source(4), [nd_faker()])
+    inputs = _inputs(case)
+    (node,) = [n for t in compile_physical_plan(inputs).tables for n in t.nodes]
+    assert node.execution is not None
+    ctx = ShadowContext(mask_key=b"\x09" * 32, job_seed=b"")
+    with pytest.raises(AssertionError, match="no job_seed"):
+        run_operator(
+            pa.array(["a", "b"], type=pa.string()),
+            binding=node.execution,
+            ctx=ctx,
+            evidence=OperatorCallEvidence(planned_operator=node.execution.operator_id),
+            pool=pool_of(namespace="ns_faker", job_seed=inputs.plan.seed_envelope.job_seed),
+            index_kernel=object(),  # type: ignore[arg-type]
+        )
+
+
 # ---------------------------------------------------------------------------
 # 4. Pool identity.
 # ---------------------------------------------------------------------------
@@ -358,6 +378,38 @@ def test_5_a_zero_row_table_completes_with_idle_evidence(
     assert entry["compiled_kernel_executed"] is False
     assert entry["executed_backend"] == ARROW_PYTHON
     assert entry["calls"] == 1
+
+
+@NEEDS_COMPANION
+def test_5_rows_seen_sums_across_the_batches_of_one_node(tmp_path: Path) -> None:
+    from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+    from decoy_engine.execution.physical._shadow_operators import run_operator
+
+    case = Case(tmp_path, str_source(7), [cat_col()])
+    (node,) = [n for t in compile_physical_plan(_inputs(case)).tables for n in t.nodes]
+    binding = node.execution
+    assert binding is not None
+    ctx = _ctx_for(case)
+    kernel = load_compiled_index_kernel()
+    evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
+    whole = str_source(7).column("c").combine_chunks()
+    parts: list[Any] = []
+    for start, stop in ((0, 3), (3, 7)):
+        out, _ = run_operator(
+            whole.slice(start, stop - start),
+            binding=binding,
+            ctx=ctx,
+            evidence=evidence,
+            index_kernel=kernel,
+            row_offset=start,
+        )
+        parts.extend(out.to_pylist())
+    assert (evidence.rows_seen, evidence.batches_run) == (7, 2)
+    one_pass = OperatorCallEvidence(planned_operator=binding.operator_id)
+    out, _ = run_operator(
+        whole, binding=binding, ctx=ctx, evidence=one_pass, index_kernel=kernel, row_offset=0
+    )
+    assert parts == out.to_pylist()
 
 
 # Evidence of the deterministic operators on a zero-row table, recorded on engine main
