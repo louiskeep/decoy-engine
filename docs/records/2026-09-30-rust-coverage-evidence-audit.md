@@ -42,6 +42,8 @@ Backends: **Rust** (companion kernel, `compiled_kernel_executed=True` or `pool_s
 | pooled Faker (`deterministic: true`), 150k, default routing | auto-chunk | pandas + Rust Faker selection (1 call per chunk) | R071 |
 | hash, 150k and 1M, `auto_chunk=False` | unified slice, full-frame | Rust | R020 R021 |
 
+Update 2026-10-06 (slice C6c-i): none of the runs above carried a `text_redact` column, and rows R003, R011 and R012 stay as measured (FPE and text_mask remain declined). `text_redact` with a plain config (no `ner`, a string `token`, null/list/tuple `detectors`, a string source, no `when:`) now runs as an `arrow_python` operator on both the unified slice and the chunked route, so it no longer declines its table to pandas. Its own per-cell speed is unchanged. `ner` and the two silent pass-through configs still decline.
+
 At 1M hash rows: default chunked pandas 10.79s / 457 MB; forced full-frame Rust 3.35s / 838 MB (R021, R022).
 
 ### Compiled chunked dispatcher, called directly (not reachable by any product entry point)

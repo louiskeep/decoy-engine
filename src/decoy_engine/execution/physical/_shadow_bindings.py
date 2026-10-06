@@ -31,6 +31,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextRedactParams,
     TruncateParams,
     resolve_operator_params,
 )
@@ -152,7 +153,7 @@ def _faker_pool_bindable(
 def _key_binding(key_source: str | None, params: OperatorParams) -> KeyBinding | None:
     """The non-secret key reference of a keyed operator. Its namespace is read from the
     resolved parameters, so the binding and the operator cannot disagree on it."""
-    if isinstance(params, (PassthroughParams, RedactParams, TruncateParams)):
+    if isinstance(params, (PassthroughParams, RedactParams, TruncateParams, TextRedactParams)):
         return None
     if key_source is None or params.namespace is None:
         return None  # pragma: no cover - the per-operator guards leave neither unset

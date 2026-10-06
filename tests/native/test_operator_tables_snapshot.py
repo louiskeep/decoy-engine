@@ -58,7 +58,7 @@ _NINE_STRATEGIES = frozenset(
 
 
 def test_operator_ids_and_constants() -> None:
-    assert admission.ALLOWED_OPERATOR_IDS == _NINE_IDS
+    assert _NINE_IDS | {"native_text_redact"} == admission.ALLOWED_OPERATOR_IDS
     assert type(admission.ALLOWED_OPERATOR_IDS) is frozenset
     assert admission.HASH_OPERATOR_ID == "native_keyed_hash"
     assert admission.CATEGORICAL_OPERATOR_ID == "native_categorical"
@@ -78,6 +78,7 @@ def test_backend_by_operator_id() -> None:
         "native_faker_select": "rust_pool_select",
         "native_redact": "arrow_python",
         "native_truncate": "arrow_python",
+        "native_text_redact": "arrow_python",
         "native_passthrough": "arrow_python",
     }
     assert isinstance(admission.BACKEND_BY_OPERATOR_ID, MappingProxyType)
@@ -126,7 +127,7 @@ def test_positive_kernel_evidence_operator_ids() -> None:
 
 
 def test_slice_strategies_and_operator_id_by_strategy() -> None:
-    assert bindings.SLICE_STRATEGIES == _NINE_STRATEGIES
+    assert _NINE_STRATEGIES | {"text_redact"} == bindings.SLICE_STRATEGIES
     assert type(bindings.SLICE_STRATEGIES) is frozenset
     assert bindings.OPERATOR_ID_BY_STRATEGY == {
         "passthrough": "native_passthrough",
@@ -138,11 +139,12 @@ def test_slice_strategies_and_operator_id_by_strategy() -> None:
         "bucket_perturb": "native_bucket_perturb",
         "group_key": "native_group_key",
         "date_shift": "native_date_shift",
+        "text_redact": "native_text_redact",
     }
     assert type(bindings.OPERATOR_ID_BY_STRATEGY) is dict
 
 
-def test_admitted_resident_types_has_eight_keys_and_no_group_key() -> None:
+def test_admitted_resident_types_has_nine_keys_and_no_group_key() -> None:
     assert {
         "passthrough": frozenset({pa.string(), pa.int64(), pa.bool_()}),
         "redact": frozenset({pa.string()}),
@@ -152,6 +154,7 @@ def test_admitted_resident_types_has_eight_keys_and_no_group_key() -> None:
         "bucket_perturb": frozenset({pa.string()}),
         "date_shift": frozenset({pa.string()}),
         "faker": frozenset({pa.string()}),
+        "text_redact": frozenset({pa.string()}),
     } == _ADMITTED_RESIDENT_TYPES
     assert "group_key" not in _ADMITTED_RESIDENT_TYPES
     assert type(_ADMITTED_RESIDENT_TYPES) is dict
@@ -170,6 +173,7 @@ def test_native_strategy_sets() -> None:
                 "bucket_perturb",
                 "group_key",
                 "date_shift",
+                "text_redact",
             }
         )
         == NATIVE_KERNEL_STRATEGIES
@@ -194,7 +198,7 @@ def test_assembly_strategy_sets() -> None:
         frozenset({"redact", "truncate", "hash", "faker", "categorical", "group_key", "date_shift"})
         == _TOKENIZING_STRATEGIES
     )
-    assert frozenset({"bucket_perturb"}) == _NULL_ON_EMPTY_STRATEGIES
+    assert frozenset({"bucket_perturb", "text_redact"}) == _NULL_ON_EMPTY_STRATEGIES
     assert type(_TOKENIZING_STRATEGIES) is frozenset
     assert type(_NULL_ON_EMPTY_STRATEGIES) is frozenset
 

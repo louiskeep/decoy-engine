@@ -29,6 +29,7 @@ from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
     native_redact,
+    native_text_redact,
     native_truncate,
 )
 from decoy_engine.execution.native._operator_params import (
@@ -40,6 +41,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextRedactParams,
     TruncateParams,
 )
 from decoy_engine.generation.pool import GenerationError
@@ -194,6 +196,14 @@ def run_kernel_step(
     if isinstance(params, TruncateParams):
         out = native_truncate(
             source, length=params.length, keep=params.keep, mask_char=params.mask_char
+        )
+        return StepResult(out, None)
+    if isinstance(params, TextRedactParams):
+        out = native_text_redact(
+            source,
+            detectors=params.detectors,
+            token=params.token,
+            label_token=params.label_token,
         )
         return StepResult(out, None)
     if isinstance(params, HashParams):

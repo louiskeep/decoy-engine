@@ -162,6 +162,7 @@ NATIVE_KEYS = frozenset(
         "hash",
         "redact",
         "truncate",
+        "text_redact",
         "passthrough",
         "faker:deterministic_native",
         "categorical:deterministic",
@@ -180,13 +181,15 @@ NEEDS_COMPANION_KEYS = frozenset(
         "group_key",
     }
 )
-# Output type rule: hash, truncate and redact always yield `string` on the dispatcher lane,
-# as do categorical, date_shift and group_key (their output is a string by definition).
+# Output type rule: hash, truncate, redact and text_redact always yield `string` on the
+# dispatcher lane, as do categorical, date_shift and group_key (their output is a string by
+# definition).
 STRING_OUTPUT_KEYS = frozenset(
     {
         "hash",
         "redact",
         "truncate",
+        "text_redact",
         "categorical:deterministic",
         "date_shift:explicit_format",
         "group_key",
@@ -197,6 +200,7 @@ PLANNED_BACKEND: dict[str, str] = {
     "hash": "rust_companion",
     "redact": "arrow_python",
     "truncate": "arrow_python",
+    "text_redact": "arrow_python",
     "passthrough": "arrow_python",
     "faker:deterministic_native": "rust_pool_select",
     "categorical:deterministic": "rust_companion",
@@ -210,7 +214,6 @@ PLANNED_BACKEND: dict[str, str] = {
 # B1's refusal reason (prefix) for the keys the native route does not run, as observed on main.
 REFUSAL: dict[str, str] = {
     "fpe": "fallback_policy_not_native:val",
-    "text_redact": "fallback_policy_not_native:val",
     "text_mask": "fallback_policy_not_native:val",
     "bucketize": "fallback_policy_not_native:val",
     "top_code": "fallback_policy_not_native:val",

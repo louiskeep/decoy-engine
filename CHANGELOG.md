@@ -9,6 +9,32 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (text_redact runs on both native routes, 2026-10-06)
+
+A table with a plain `text_redact` column no longer falls back to pandas for every column in it.
+The unified full-frame route and the chunked native route now run `text_redact` as an
+`arrow_python` operator, so the hash, faker, categorical and other native columns beside it keep
+their native path. The text_redact column itself is not faster: it runs the same per-cell span
+detection and splice as the pandas handler (`iter_spans` and `_splice` are called, not copied),
+so its values are identical and its own speed is unchanged. Route evidence reports it as
+`arrow_python` with no compiled-kernel claim.
+
+These configs stay on pandas, each with its own reason code on the eligibility report:
+`ner` (`text_redact_ner_not_native`), a `token` that is not a string
+(`text_redact_token_not_string`), and a `detectors` value that is neither null, a list nor a
+tuple (`text_redact_detectors_malformed`). The last two leave the source column unchanged in the
+pandas handler, so they are not admitted. A non-string source column (chunked route:
+`text_redact_source_type_not_string`) and a `when:` predicate also stay on pandas. An empty
+`detectors` list still means every detector.
+
+Documented chunked output type: an admitted text_redact column is `string` on every chunk of the
+chunked route, with or without the compiled companion. A zero-row or all-null chunk of such a
+column was not `string` before (`null` on `run_mask_chunked`); both are `string` now, including
+when another column sends the table to the oracle chunked leg. Before this change the chunk types
+of one column could mix (`string`, then `null`); now they are consistent.
+The unified full-frame route still gives Arrow `null` for an entirely empty or all-null column,
+the same route-dependent difference redact and truncate already carry. Values do not change.
+
 ### Changed (one kernel step per native operator, shared by both routes, 2026-10-06)
 
 Internal refactor, no behavior change. The unified full-frame route and the chunked route each

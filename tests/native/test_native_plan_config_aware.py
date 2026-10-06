@@ -301,7 +301,7 @@ def test_the_four_admitted_strategies_still_accept_a_valid_config() -> None:
         assert result.accepted is True, (strategy, result.rejections)
 
 
-def test_admitted_set_is_exactly_the_four_native_kernels() -> None:
+def test_admitted_set_is_exactly_the_native_kernels_a_bare_config_accepts() -> None:
     # The drift sentry the plan's Failure-modes section names: run every
     # live mask strategy through native_route_eligibility with a config
     # each gate has no objection to and an admitted input type, then assert
@@ -322,7 +322,8 @@ def test_admitted_set_is_exactly_the_four_native_kernels() -> None:
         result = native_route_eligibility(_config(col), table="t", profile=profile)
         if result.accepted:
             accepted.add(strategy)
-    assert accepted == {"passthrough", "redact", "truncate", "hash"}
+    # text_redact joined in C6c-i: its plain config needs no field this bare column omits.
+    assert accepted == {"passthrough", "redact", "truncate", "hash", "text_redact"}
 
 
 # ---------------------------------------------------------------------------

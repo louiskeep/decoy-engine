@@ -282,6 +282,23 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   route yields `string`; keys are unchanged on every route and are never null. A wider
   sibling type, a masked sibling and a self-anchor keep running on the oracle chunked leg with
   their oracle output types.
+  `text_redact` joined both native routes on 2026-10-06 (slice C6c-i) as an `arrow_python`
+  operator. A native-admissible column (no `ner`, a string `token`, `detectors` absent, null, a
+  list or a tuple, no `when:`, a `string` source) runs the oracle's own span detection and splice
+  over Arrow values, so values equal the oracle byte for byte. The column's own speed is
+  unchanged; what changes is that it no longer sends the rest of its table to pandas. Evidence
+  reports `arrow_python`, never a compiled kernel. Its chunked output type is pinned to `string`
+  on both chunked legs, with or without the companion. Under ROUTE-OUTPUT-CONTRACT the unified
+  full-frame route still resolves an empty or all-null column to `null`, while the chunked route
+  yields `string`; values are unchanged. `ner`, a non-string `token` and a `detectors` value that
+  is neither null, a list nor a tuple (the oracle leaves the source column unchanged for the last
+  two), a non-`string` source and `when:` keep their oracle path; the first three report
+  `text_redact_ner_not_native`, `text_redact_token_not_string` and
+  `text_redact_detectors_malformed` on the eligibility report, and a non-`string` chunked source
+  reports `text_redact_source_type_not_string`. A table that was already declined to the oracle
+  chunked leg by one of these now gets the `string` pin only when its text_redact config is
+  native-admissible, so an oracle-routed degenerate chunk of such a column is `string` where it
+  was `null` or `double` before.
   `run_pipeline` gains two keyword-only arguments (2026-10-01): `native_threads: int = 1`
   (1 to 1024; the kernel thread budget of the auto-chunk dispatcher lane, no output
   byte depends on it) and `chunked_dispatcher_enabled: bool = True` (the kill switch that

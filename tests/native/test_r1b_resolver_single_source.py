@@ -25,7 +25,7 @@ def _offences(tree: ast.AST) -> list[str]:
     found: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant):
-            if node.value == "REDACTED" or node.value == "month":
+            if node.value in ("REDACTED", "[REDACTED]", "month"):
                 found.append(f"line {node.lineno}: literal {node.value!r}")
             elif node.value == 16 and not isinstance(node.value, bool):
                 found.append(f"line {node.lineno}: literal 16")

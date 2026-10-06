@@ -511,6 +511,7 @@ def _config_gate_rejection(
         categorical_config_rejection,
         date_shift_config_rejection,
         group_key_config_rejection,
+        text_redact_config_rejection,
     )
 
     if strategy_name == "hash":
@@ -519,6 +520,8 @@ def _config_gate_rejection(
         return truncate_config_rejection(name, cfg)
     if strategy_name == "redact":
         return redact_config_rejection(name, cfg)
+    if strategy_name == "text_redact":
+        return text_redact_config_rejection(name, cfg)
     if strategy_name == "categorical":
         # The compiled ColumnSeed is the determinism source of truth here (the
         # native-route eligibility query, which has only raw config, uses the

@@ -36,5 +36,6 @@ def test_backend_map_pins_each_operator() -> None:
         "native_faker_select": RUST_POOL_SELECT,
         "native_redact": ARROW_PYTHON,
         "native_truncate": ARROW_PYTHON,
+        "native_text_redact": ARROW_PYTHON,
         "native_passthrough": ARROW_PYTHON,
     }

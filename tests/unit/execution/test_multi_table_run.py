@@ -247,11 +247,12 @@ def test_a_kernel_failure_on_the_second_dispatched_table_stops_everything_after_
     assert adapter_calls == []
 
 
-def _failing_text_redact(monkeypatch: pytest.MonkeyPatch, columns: set[str]) -> None:
-    """Make the `text_redact` handler fail for the named columns on every route."""
+def _failing_text_mask(monkeypatch: pytest.MonkeyPatch, columns: set[str]) -> None:
+    """Make the `text_mask` handler fail for the named columns on every route. text_mask has
+    no native operator, so every route reaches this handler."""
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
 
-    handler = SCALAR_HANDLERS["text_redact"]
+    handler = SCALAR_HANDLERS["text_mask"]
     real = handler.run
 
     def run(df: Any, column: str, plan: Any, ctx: Any) -> Any:
@@ -264,7 +265,7 @@ def _failing_text_redact(monkeypatch: pytest.MonkeyPatch, columns: set[str]) -> 
 
 def _text_table(column: str, n: int) -> mt.TableSpec:
     return (
-        [{"name": column, "strategy": "text_redact"}],
+        [{"name": column, "strategy": "text_mask", "namespace": f"tm_{column}"}],
         pa.table({column: pa.array([f"call 555-01{i % 100:02d} today" for i in range(n)])}),
     )
 
@@ -275,7 +276,7 @@ def test_first_reported_failure_among_independent_tables_follows_config_order(
     cfg, sources = mt.build_job(
         tmp_path, {"z": _text_table("zcol", N), "a": _text_table("acol", N)}
     )
-    _failing_text_redact(monkeypatch, {"zcol", "acol"})
+    _failing_text_mask(monkeypatch, {"zcol", "acol"})
     with pytest.raises(ExecutionError) as split:
         run_pipeline(cfg, sources=sources, **mt.kw())
     with pytest.raises(ExecutionError) as off:
@@ -290,7 +291,7 @@ def test_a_failing_dispatched_table_wins_over_a_failing_group_table(
     cfg, sources = mt.build_job(
         tmp_path, {"z": _text_table("zcol", N), "a": _text_table("acol", mt.SMALL)}
     )
-    _failing_text_redact(monkeypatch, {"zcol", "acol"})
+    _failing_text_mask(monkeypatch, {"zcol", "acol"})
     adapter_calls = mt.spy_adapter_run(monkeypatch)
     with pytest.raises(ExecutionError) as split:
         run_pipeline(cfg, sources=sources, **mt.kw())
