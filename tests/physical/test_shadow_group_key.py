@@ -820,6 +820,27 @@ def test_full_frame_operator_still_declines_when_the_raw_hex_loader_raises(
     with pytest.raises(ShadowDifference) as exc:
         _run_gk_operator(pa.array(rows, type=pa.string()))
     assert exc.value.code == "native_companion_unavailable"
+    assert "compiled raw-hex companion unavailable" in exc.value.detail
+
+
+@_NEEDS_COMPANION
+def test_full_frame_operator_lets_the_kernel_load_its_own_raw_hex_companion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unified route passes no preloaded raw-hex kernel: the load inside `native_group_key`
+    is its only companion probe, so a preloaded kernel would hide a missing companion."""
+    import decoy_engine.execution.native._operator_step as step_mod
+
+    seen: list[object] = []
+    real = step_mod.native_group_key
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("raw_hex_kernel", "absent"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(step_mod, "native_group_key", spy)
+    _run_gk_operator(pa.array(["a", "b"], type=pa.string()))
+    assert seen == [None]
 
 
 @_NEEDS_COMPANION

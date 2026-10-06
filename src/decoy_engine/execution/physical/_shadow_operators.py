@@ -163,13 +163,8 @@ def _bound_params(
     """
     operator_id = binding.operator_id
     params = binding.params
-    if operator_id in (_PASSTHROUGH, _REDACT, _TRUNCATE):
-        expected = {
-            _PASSTHROUGH: PassthroughParams,
-            _REDACT: RedactParams,
-            _TRUNCATE: TruncateParams,
-        }
-        if not isinstance(params, expected[operator_id]):  # pragma: no cover - compile binds them
+    if operator_id in _UNKEYED_PARAMS:
+        if not isinstance(params, _UNKEYED_PARAMS[operator_id]):  # pragma: no cover - compile binds
             raise AssertionError(f"{operator_id} node reached run_operator with no resolved params")
     elif operator_id == _KEYED_HASH:
         if binding.key_binding is None:  # pragma: no cover - C0 always binds this for hash

@@ -103,6 +103,7 @@ def test_crypto_extension_unavailable_maps_to_native_companion_unavailable(
         run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
     assert excinfo.value.code == NATIVE_COMPANION_UNAVAILABLE
     assert "native_keyed_hash" in excinfo.value.detail
+    assert "compiled hash companion unavailable" in excinfo.value.detail
     assert isinstance(excinfo.value.__cause__, CryptoExtensionUnavailableError)
     # Never falls back: no evidence of a successful call is recorded.
     assert evidence.executed is False
