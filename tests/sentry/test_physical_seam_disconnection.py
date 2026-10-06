@@ -348,13 +348,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_draw_site_providers_gen_pool.py",
         "src/decoy_engine/execution/native/_draw_sites_gen_pool.py",
         "src/decoy_engine/execution/native/_index_ext.py",
-        # Comment-only edits stripping polars-masking wording from the retained
-        # non-pandas substrate guards (the guards themselves stay as fail-closed
-        # defence; the pandas path is unchanged).
         # R0 (2026-10-06): exception roots reparented under DecoyError (base class only);
         # neither file imports execution.physical.
         "src/decoy_engine/execution/_errors.py",
         "src/decoy_engine/execution/_isolated_commit.py",
+        # Comment-only edits stripping polars-masking wording from the retained
+        # non-pandas substrate guards (the guards themselves stay as fail-closed
+        # defence; the pandas path is unchanged).
         "src/decoy_engine/execution/_unified_slice_admission.py",
         # Polars masking removal scrub (2026-09-21): comment/docstring-only edits
         # rewording stale "polars adapter/route/substrate" descriptions to the
