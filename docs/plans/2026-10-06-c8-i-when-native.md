@@ -1,4 +1,4 @@
-Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE folded (round 3: 3 MEDIUM, no HIGH). Review cap reached: round 4 needs the owner's go-ahead.
+Status: plan (revision 4, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 authorized by the owner (2026-10-06) and pending.
 Rules consulted: 00-universal, development-loop, security, testing, architecture, api-and-compatibility, code-review, scope-discipline
 
 # C8-i: a public, closed `when:` language, plus native `when` on the chunked route
