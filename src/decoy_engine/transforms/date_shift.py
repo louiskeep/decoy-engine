@@ -186,8 +186,11 @@ class DateShiftStrategy(BaseMaskingStrategy):
             # Dedupe the warning per unique value rather than per row -
             # the legacy path logged once per row which spammed the log
             # pipeline on big columns of mostly-bad data.
-            for v in column[parse_failed].dropna().unique()[:20]:
-                self.logger.warning(f"date_shift: could not parse '{v}' - leaving unchanged")
+            # One line per column with a count; the values themselves are data.
+            self.logger.warning(
+                f"date_shift: {int(parse_failed.sum())} value(s) in column "
+                f"{column_name!r} could not be parsed - leaving them unchanged"
+            )
 
         # QA-internal-synth-providers F5 (2026-06-01, MEDIUM perf):
         # only HMAC the rows we'll actually use. Pre-fix every row,

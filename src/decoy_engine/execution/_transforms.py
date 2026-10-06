@@ -64,12 +64,11 @@ from decoy_engine.config._transforms import (
     TransformOp,
 )
 from decoy_engine.errors import DecoyError
-from decoy_engine.execution._expression_fingerprint import expression_fingerprint
 
 _log = logging.getLogger(__name__)
 
 
-def _eval_clamped(df: pd.DataFrame, expression: str) -> object:
+def _eval_clamped(df: pd.DataFrame, expression: str, *, label: str) -> object:
     """df.eval pinned to numexpr with a clamped scope, fallback surfaced.
 
     Audit L1 (2026-06-12): on extension-array dtypes pandas silently
@@ -85,8 +84,9 @@ def _eval_clamped(df: pd.DataFrame, expression: str) -> object:
     for w in caught:
         if issubclass(w.category, RuntimeWarning):
             _log.warning(
-                "transform expression sha256:%s: numexpr fell back to the python engine (%s)",
-                expression_fingerprint(expression),
+                # Never the expression: it can embed literal data values.
+                "transform %s: numexpr fell back to the python engine (%s)",
+                label,
                 w.message,
             )
     return result
@@ -237,7 +237,7 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
         # scope to the DataFrame's columns. The local_dict/global_dict
         # empties block @var-style scope walks that would otherwise reach
         # module-top imports (e.g. `@pd.compat.os.system(...)`).
-        mask = _eval_clamped(df, op.expression)
+        mask = _eval_clamped(df, op.expression, label="filter")
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",
@@ -344,7 +344,7 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
         )
     try:
         # Q16 + Dennis C1 fix: see _apply_filter for the full rationale.
-        result = _eval_clamped(df, op.expression)
+        result = _eval_clamped(df, op.expression, label=f"derive {op.column!r}")
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",

@@ -9,6 +9,7 @@ extracted only to keep the generator module under the size cap.
 from __future__ import annotations
 
 import random
+from collections import Counter
 from typing import Any
 
 import pandas as pd
@@ -139,6 +140,8 @@ class _FormulaMixin:
         # .seed_instance still serializes module-level state internally (Faker
         # library limitation; see synthesize.py _FAKER_CALL_LOCK).
         row_rng = random.Random()
+        # Exception text can echo cell values, so only type names and counts are logged.
+        error_types: Counter[str] = Counter()
         for i in range(len(out)):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -158,9 +161,14 @@ class _FormulaMixin:
                 result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as exc:
-                self.logger.warning(f"Formula column {col_name!r} row {i} eval error: {exc}")
+                error_types[type(exc).__name__] += 1
                 values.append(None)
 
+        if error_types:
+            self.logger.warning(
+                f"Formula column {col_name!r}: {sum(error_types.values())} row(s) failed to "
+                f"evaluate and were set to None ({dict(error_types)!r})"
+            )
         if null_subs:
             self.logger.warning(
                 f"Formula column {col_name!r}: substituted '' for null cells in "
@@ -197,6 +205,8 @@ class _FormulaMixin:
         # RNG + keyed hash, faker for Faker) replace column_seed + i. See
         # fill_referenced_formula_column for the rationale.
         row_rng = random.Random()
+        error_types: Counter[str] = Counter()
+        missing_names: set[str] = set()
         for i in range(num_rows):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -210,15 +220,18 @@ class _FormulaMixin:
                 result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as e:
-                error_msg = str(e)
-                if "not defined" in error_msg:
-                    self.logger.warning(f"Name not available in formula for row {i}: {error_msg}")
-                    self.logger.info(f"Available names: {sorted(list(scope.keys()))}")
-                else:
-                    self.logger.warning(f"Error evaluating formula for row {i}: {error_msg}")
-                self.logger.debug(f"Formula: {formula}")
+                error_types[type(e).__name__] += 1
+                if isinstance(e, NameError) and e.name:
+                    # A name is config, not data, and is what the author needs to fix.
+                    missing_names.add(e.name)
                 values.append(None)
 
+        if error_types:
+            self.logger.warning(
+                f"Formula column {column_name!r}: {sum(error_types.values())} row(s) failed to "
+                f"evaluate and were set to None ({dict(error_types)!r})"
+                + (f"; undefined name(s) {sorted(missing_names)!r}" if missing_names else "")
+            )
         return pd.Series(values)
 
     def _formula_scope(self, local_seed: int, rng: random.Random | None = None) -> dict[str, Any]:

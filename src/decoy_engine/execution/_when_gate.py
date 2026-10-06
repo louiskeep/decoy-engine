@@ -34,7 +34,6 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._expression_fingerprint import expression_fingerprint
 from decoy_engine.execution._row_errors import RowError
 
 _log = logging.getLogger(__name__)
@@ -85,6 +84,7 @@ def _eval_predicate(
     pdf: pd.DataFrame,
     expression: str,
     strategy: str,
+    column: str | None = None,
 ) -> pd.Series[bool]:
     """Shared numexpr-pinned, scope-clamped predicate eval.
 
@@ -114,9 +114,10 @@ def _eval_predicate(
         for _w in _caught:
             if issubclass(_w.category, RuntimeWarning):
                 _log.warning(
-                    "when expression sha256:%s (strategy %s): numexpr fell back to the "
+                    # Never the expression: a predicate can embed literal data values.
+                    "when predicate on column %r (strategy %s): numexpr fell back to the "
                     "python engine (%s)",
-                    expression_fingerprint(expression),
+                    column,
                     strategy,
                     _w.message,
                 )
@@ -200,7 +201,7 @@ def run_with_when_gate(
     if preflight is not None:
         preflight(plan, ctx)
 
-    mask = _eval_predicate(df, plan.when, plan.strategy)
+    mask = _eval_predicate(df, plan.when, plan.strategy, column)
 
     if not mask.any():
         return df, []

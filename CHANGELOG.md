@@ -9,15 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Security (log lines no longer carry user expression text, 2026-10-06)
+### Security (logs no longer carry user expression text or data values, 2026-10-06)
 
-The numexpr-fallback warnings for `when:` predicates (`execution/_when_gate.py`) and table
-transforms (`execution/_transforms.py`) logged the full expression, so a predicate such as
-`email == 'bob@example.com'` wrote a literal value into server logs. Both lines now log a
-12-character SHA-256 fingerprint of the expression instead (`sha256:<hex>`; the `when` line
-also names the strategy), which still matches a log line to its config without revealing
-literals. Error messages raised to the caller are unchanged: they go to the user who wrote the
-config, not to the server log.
+- **Fallback warnings.** The numexpr-fallback warnings for `when:` predicates
+  (`execution/_when_gate.py`) and table transforms (`execution/_transforms.py`) logged the full
+  expression, so a predicate such as `email == 'bob@example.com'` wrote a literal value into server
+  logs. They now name only where the expression came from: the `when` column and strategy, or the
+  transform op (`filter`, `derive '<column>'`).
+- **date_shift.** The legacy `DateShiftStrategy` logged up to 20 unparseable source values. It now
+  logs a count and the column name.
+- **Formula errors.** Formula generation logged one warning per failing row with the exception text,
+  which can quote cell values. It now logs one line per column with a count and the exception type
+  names. An undefined-name error still reports the missing names, which are config, not data.
+
+Error messages raised to the caller are unchanged: they go to the user who wrote the config, not to
+the server log.
 
 ### Changed (text_redact runs on both native routes, 2026-10-06)
 
