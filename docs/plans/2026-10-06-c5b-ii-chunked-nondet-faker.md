@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 pending.
+Status: plan (revision 3, author = Opus). Codex plan gate: rounds 1 and 2 REVISE folded; round 3 (final before escalation) pending.
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, api-and-compatibility
 
 # C5b-ii: non-deterministic REUSE Faker on the chunked native route
@@ -13,7 +13,7 @@ Template: C1b-ii (`docs/plans/2026-10-04-c1b-ii-chunked-nondet-categorical.md`, 
 
 C5b-i made non-deterministic REUSE Faker position-keyed on the oracle: row `g` takes `pool.values[derive_index(job_seed, sel_ns, encode_int(g), pool.size)]`, where `sel_ns` is the configured namespace or `faker-nd/{len(table)}:{table}/{len(column)}:{column}`. Every route except whole-frame still vetoes it (`_chunked.py:217-222` says "deferred to C5b-ii").
 
-C5b-ii admits it to the chunked route. A string source runs natively, a non-string source runs on the chunked-oracle leg, and native chunked equals oracle chunked equals whole-frame on values, Arrow field types, column order, warnings, errors and route evidence.
+C5b-ii admits it to the chunked route for the C1 provider allowlist (string-output providers). A string source runs natively and a non-string source runs on the chunked-oracle leg. Per-chunk output is `string` on both legs. Assembled output equals whole-frame on values, column order, warnings and errors, and on Arrow field types except for the one documented degenerate case in §3f. Route evidence is asserted per route, not compared across native and oracle runs.
 
 Out of scope (vetoes stay, each with an honest reason):
 - **Unified full-frame route.** No position-keyed operator runs there yet: the coordinator keeps a per-batch table offset (`physical/_shadow_coordinator.py:344,387`) but never passes it to operators, and C1b-ii kept categorical off the route too. Opening it for both positional categorical and positional Faker is a separate slice, **C5b-iii**, added to the roadmap by this slice's DOCUMENT step. The determinism assertion in `_shadow_operators` stays.
@@ -53,9 +53,10 @@ Explicitly IN scope (Codex round 1, HIGH 2): **multi-table split per-table routi
 - `strategy == "faker"`, not deterministic, `cardinality_mode` absent or `reuse`;
 - not nested, not composite;
 - an explicit `pool_size` (top-level or provider_config; the chunked capacity declaration rule stays);
+- the provider in the C1 allowlist (`C1_PROVIDER_ALLOWLIST`, string-output providers; Codex round 2 HIGH). A non-det REUSE Faker with any other provider stays vetoed and runs whole-frame exactly as today. Its failure text names the provider and says only allowlisted providers run chunked. This keeps numeric- or date-output providers, whose oracle chunks can infer int in one chunk and float in the next and fail assembly with `chunked_schema_mismatch` (`_strategies/_faker.py:109`, `_pipeline_auto_chunk.py:143`), off the chunked route entirely;
 - the namespace is OPTIONAL (None or "" means the default selection namespace).
 
-`PositionalFakerConfig` carries the configured namespace (for pool identity) and nothing derived from the table. A REUSE non-det Faker that fails stage A keeps a `chunked_strategy_conditions_unmet` failure whose text names the missing input (pool_size), with the "deferred to C5b-ii" wording removed. The provider allowlist is NOT a stage-A condition: a provider outside it takes the chunked-oracle leg at first-chunk admission, exactly as deterministic Faker does.
+`PositionalFakerConfig` carries the configured namespace (for pool identity) and nothing derived from the table. A REUSE non-det Faker that fails stage A keeps a `chunked_strategy_conditions_unmet` failure whose text names the missing input (pool_size), with the "deferred to C5b-ii" wording removed. Unlike deterministic Faker, the provider allowlist IS a stage-A condition here: before this slice non-det Faker always ran whole-frame, so admitting a provider whose output types are not chunk-stable would turn working jobs into assembly failures.
 
 **3b. The four consumers read stage A.**
 - (1) Compat veto: `_conditional_admission_failures` skips the determinism and namespace failures for a stage-A-admissible entry.
@@ -65,7 +66,7 @@ Explicitly IN scope (Codex round 1, HIGH 2): **multi-table split per-table routi
 
 `_requirements.py`, `prepare_categorical`, `_shadow_bindings` and `_shadow_operators` are NOT touched: the full-frame route stays closed.
 
-**3c. Stage B, leg selection at the first chunk.** A string source runs native. A non-string source, a provider outside the C1 allowlist, or non-string pool output takes the existing real-type downgrade to the chunked-oracle leg with the existing codes (`faker_source_type_not_string`, `faker_provider_not_native`, `faker_provider_output_not_string`), never a hard error. The positional draw ignores source values, so a native run on non-string sources is possible, but it is deferred: the oracle leg's output type for non-string sources has to be characterized first, and C1b-ii made the same call.
+**3c. Stage B, leg selection at the first chunk.** A string source runs native. A non-string source takes the existing real-type downgrade to the chunked-oracle leg (`faker_source_type_not_string`), never a hard error; the output is the pinned `string` either way (§3f). One exotic case fails closed instead: an allowlisted provider NAME whose registered implementation returns non-string pool values (a custom provider registered under a built-in name). The pool check at `_chunked_entry.py:363-371` raises a coded `chunked_faker_nondeterministic_pool_not_string` error before any chunk is masked, naming the column and provider. The error tells the user to disable auto-chunking or use a different provider name. Downgrading would have the string pin silently change the column's type relative to whole-frame. This case is a new failure for an auto-chunked job that ran whole-frame before. It is accepted pre-GA and recorded in the CHANGELOG. The positional draw ignores source values, so a native run on non-string sources is possible, but it is deferred: the oracle leg's output type for non-string sources has to be characterized first, and C1b-ii made the same call.
 
 **3d. `when:` is rejected on the chunked route.** New `reject_nondeterministic_faker_when(table_cfg, table=)` raises `PlanCompileError(code="chunked_faker_nondeterministic_when_not_supported")` for a stage-A Faker with a non-empty `when:`. It is called next to `categorical_gate.reject_nondeterministic_when` (`_chunked.py:302`). Reason: `when:` hands the oracle only matching rows, so its ordinal is the match index, not the physical position. Columns that already fail stage A keep their existing code.
 
@@ -76,12 +77,18 @@ Explicitly IN scope (Codex round 1, HIGH 2): **multi-table split per-table routi
 - The chunked adapter passes `job_seed` (already in scope at `_chunked_entry.py:363`) and `row_offset`. Evidence: a run sets `pool_select_executed` and `pool_select_calls += 1` as deterministic Faker does; an idle zero-row chunk adds the column to `kernel_idle` and is uncounted.
 - The unified adapter never builds positional `FakerParams` (its binding requires the native fallback policy). The step asserts this: positional Faker with `job_seed is None` is an `AssertionError`.
 
-**3f. Output type: no new pin (Codex round 1, HIGH 1).** Faker is NOT in `_STRING_OUTPUT_STRATEGIES` (`native/_chunked_schema_rule.py:49`, hash, truncate and redact only), and rev 1 was wrong to say it was. Positional Faker takes exactly the type policy deterministic Faker already has on the chunked route:
-- the native leg runs only when every pool value is a string (`faker_provider_output_not_string` downgrade at `_chunked_entry.py:363-371`);
-- any other provider output stays on the chunked-oracle leg with its own types, never cast;
-- degenerate chunks go through the existing chunk-schema machinery (`cast_null_columns`, `chunked_leading_null_type`).
+**3f. Output type: a string pin for admitted positional Faker (Codex rounds 1 and 2).** Faker is not in `_STRING_OUTPUT_STRATEGIES` (`native/_chunked_schema_rule.py:49`). A new classifier `faker_positional_pinned_columns(configured)` returns the stage-A-admissible columns (no `when:`, which is rejected anyway). `build_schema_rule` adds it to `string_columns` next to `date_shift_pinned_columns` and `group_key_pinned_columns`. Both schema-rule construction sites (the dispatcher entry and the streamed sink, `_pipeline_auto_chunk.py:314`) build through `build_schema_rule`, so both legs and the sink pin identically, independent of companion availability. Because stage A admits only string-output providers and the exotic override fails closed (§3c), the pin never casts a non-string value.
 
-No schema-rule change is made, so the streamed sink's separate rule construction (`_pipeline_auto_chunk.py:314`) is unaffected. Before the change, the builder characterizes deterministic Faker's degenerate-chunk types on both chunked legs and on whole-frame (baseline test 6b). Positional Faker must reproduce that matrix. Any route-dependent all-null type is recorded as the same pre-existing exception, not a new one.
+The resulting type contract, fixed here rather than discovered at build:
+
+| Shape | Per-chunk type, native leg | Per-chunk type, oracle leg | Assembled chunked | Whole-frame |
+|---|---|---|---|---|
+| Any chunk with at least one non-null value | `string` | `string` (pinned) | `string` | `string` |
+| Zero-row chunk | `string` | `string` (pinned) | (contributes nothing) | n/a |
+| All-null non-empty chunk | `string` | `string` (pinned) | `string` if any other chunk has values | `string` |
+| Whole column empty or entirely null | `string` | `string` (pinned) | `string` | pandas inference (not `string`) |
+
+The last row is the one exception. It is the same documented route-dependent type C1 and C1b-ii accepted for pinned columns, and the CHANGELOG and compatibility contract say so.
 
 **3g. Docs.**
 - CHANGELOG under [Unreleased].
@@ -102,7 +109,7 @@ No schema-rule change is made, so the streamed sink's separate rule construction
 
 ## 5. Acceptance tests (written first; red-before recorded)
 
-Parity means native chunked == oracle chunked == whole-frame on values, column order, Arrow field types, warnings, errors and route evidence. Schema-level metadata is excluded, as in C1b-ii.
+Parity means native chunked == oracle chunked == whole-frame on values, column order, warnings and errors, with Arrow field types per the §3f contract. Route evidence is asserted per route (native: rust_companion and pool_select; oracle: the downgrade code). Schema-level metadata is excluded, as in C1b-ii.
 
 1. **Parity matrix.**
    - Namespace: configured, and None (default).
@@ -119,16 +126,25 @@ Parity means native chunked == oracle chunked == whole-frame on values, column o
    - The pool built natively equals the oracle's pool (identity and values) for a configured and a None namespace.
 4. **Stage-A agreement.** The four consumers return the same verdict for: admissible with namespace; admissible without; missing pool_size; UNIQUE; deterministic; nested; composite.
 5. **Fails closed at the veto.** Missing pool_size gives `chunked_strategy_conditions_unmet` with no "deferred to C5b-ii" text, and the oracle route is not taken. UNIQUE, MATCH and SCALE stay rejected as before.
-6. **Leg selection does not crash (C1b-ii lesson).** Each of these takes the chunked-oracle leg reproducibly and equals whole-frame on values and field types, with the existing downgrade code in evidence:
+6. **Leg selection does not crash (C1b-ii lesson).** Each of these takes the chunked-oracle leg reproducibly and equals whole-frame on values, with field types per the §3f contract and the existing downgrade code in evidence:
    - an int64 source;
    - a float64 source;
    - a dictionary source;
    - an entirely null-typed source;
-   - an off-allowlist provider with numeric output and one with date output;
-   - an ALLOWLISTED provider overridden to return non-string values (the pool-output downgrade).
-6b. **Degenerate-type baseline (green-before).** On the base, record deterministic Faker's field types for zero-row, all-null and null-block-then-values chunks on both chunked legs and on whole-frame. After the change, positional Faker must match the same matrix on both legs.
+   - (off-allowlist providers are covered by 6c, and the overridden allowlisted provider by 6d.)
+6b. **Type contract.** The §3f table, asserted literally:
+   - per-chunk types on both legs: native and oracle, the latter forced by a non-string source and by companion absence;
+   - assembled chunked output against whole-frame for every row, including the documented exception row;
+   - the streamed-sink path (`_pipeline_auto_chunk`) produces the same assembled types.
+6c. **Non-allowlisted providers stay whole-frame (Codex round 2 HIGH).** Each of these is vetoed for the chunked route, the auto-router keeps it whole-frame, the run succeeds, and the output equals today's:
+   - a non-det REUSE Faker with a numeric-output provider over a string source with mixed null and non-null rows across what would be chunk boundaries (the reported int-then-float case);
+   - the same with a date-output provider.
+6d. **Override fails closed.** A custom provider registered under an allowlisted name that returns integers gives `chunked_faker_nondeterministic_pool_not_string` before any chunk is masked; nothing is written.
 7. **`when:` rejected.** Gives the new code. Deterministic Faker with `when:` behaves as today.
-8. **FK.** A table touched by a declared relationship stays off native and runs chunked-oracle reproducibly. A Faker FK key is rejected by the existing FK gate (existing codes).
+8. **FK (Codex round 2 MEDIUM), both orientations tested separately.**
+   - Child side: a positional Faker column as a CHILD FK key is rejected by the existing child-edge gate (`_chunked_fk.py:253-275`, existing codes).
+   - Parent side, accepted: the gate checks only the executed table's child edges (`_chunked_fk.py:398`), so a parent-only chunked run may mask its parent key with positional Faker. Native preflight downgrades the table to the chunked-oracle leg (`_dispatch.py:246`). This is accepted because it is what whole-frame does for the same single-table job: whole-frame with no child table in the job also masks the parent key without remapping anything. The test asserts the parent-only chunked run equals the whole-frame run of the same config, and that the route is the chunked-oracle leg.
+   - Any table touched by a declared relationship stays off native.
 9. **Evidence.**
    - Admitted with at least one non-empty chunk: `pool_select_executed`, `pool_select_calls` per non-empty chunk, backend `rust_companion`.
    - Zero-row chunk: idle, uncounted.
@@ -154,7 +170,7 @@ Parity means native chunked == oracle chunked == whole-frame on values, column o
     - Required mutants: mask_key for job_seed; `row_offset` dropped; configured namespace used for selection when None; pool built on the selection namespace (the fixture gives the two namespaces different pool contents, so this mutant is killable); nulls not restored; `ran` on zero rows.
     - Every mutant must be killed. Record the results.
 
-Red-before: tests 1, 2, 4-7, 9, 10, 10b and 12 fail on the base (the chunked route vetoes the column or the code does not exist). Test 3's pool-identity case, test 6b and test 11 are green-before by design.
+Red-before: tests 1, 2, 4-7, 9, 10, 10b and 12 fail on the base (the chunked route vetoes the column or the code does not exist). Test 3's pool-identity case, test 6c and test 11 are green-before by design.
 
 Every new test also runs under the Python 3.10 mirror.
 
@@ -168,7 +184,7 @@ Every new test also runs under the Python 3.10 mirror.
 | Non-string or off-allowlist source crashes the auto-router | Leg selection reuses the existing downgrade; tests 6 and 10 |
 | Evidence overclaims on empty chunks | Idle path, test 9 |
 | Split per-table routing changes for above-threshold Faker tables | Accepted in scope (§1); test 10b pins route and output per table |
-| Output types drift between legs | No new pin; deterministic Faker's existing policy; tests 6 and 6b |
+| Output types drift between legs or chunks | Stage A admits only string-output providers; string pin on both legs and the sink; override fails closed; tests 6b-6d |
 | `_chunked.py` size (619 of max 700) | The new stage-A module and `when:` gate live outside it; census exact |
 | R1b changes at its gate | Rebase onto merged R1b before the final gate; rerun the full targeted set |
 
@@ -185,3 +201,7 @@ Gates: Codex plan gate, Sonnet tests-first build, dennis, Codex final gate, ci-m
   - M3: the overflow test uses the existing generic chunked code; the Faker code is tested at the sampler.
   - M4: REUSE-aware assertions with frozen discriminating fixtures; `""` parametrized; explicit-namespace equality pinned.
   - L5: draw-site inventory and native mirror registration added to DOCUMENT.
+- Codex round 2, REVISE (1 HIGH, 2 MEDIUM). Folded in rev 3:
+  - H: stage A admits only C1-allowlisted (string-output) providers, so other providers stay whole-frame as before (test 6c); an overridden allowlisted provider fails closed (test 6d).
+  - M: the type contract is fixed in §3f as a table, enforced by a string pin through `build_schema_rule` on both legs and the sink; one documented degenerate exception; route evidence asserted per route.
+  - M: FK both orientations are tested separately; parent-only positional masking is accepted as equal to whole-frame.
