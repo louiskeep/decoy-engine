@@ -31,6 +31,7 @@ from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY, UnifiedSliceInvariantError
 from decoy_engine.execution.native._chunked_evidence import ARROW_PYTHON
+from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.physical import _shadow_bindings
 from decoy_engine.execution.physical._compiler import compile_physical_plan
@@ -713,7 +714,15 @@ def _verdict(tmp_path: Path, columns: list[dict[str, Any]]) -> tuple[Any, ...]:
 
 @pytest.mark.parametrize("name", sorted(_VERDICT_CORPUS))
 def test_6_route_verdicts_are_unchanged(tmp_path: Path, name: str) -> None:
-    assert _verdict(tmp_path, _VERDICT_CORPUS[name]()) == _VERDICTS[name]
+    got = _verdict(tmp_path, _VERDICT_CORPUS[name]())
+    want = _VERDICTS[name]
+    assert got[:3] == want[:3]
+    if native_companion_status().ok or not want[3]:
+        assert got[3:] == want[3:]
+    else:
+        # Without the compiled companion an admitted column reroutes for that reason alone.
+        assert got[3] is False
+        assert "unavailable" in (got[4] or "")
 
 
 # ---------------------------------------------------------------------------
