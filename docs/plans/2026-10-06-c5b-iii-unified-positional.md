@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan gate: round 1 REVISE (4 MEDIUM, 1 LOW) folded; round 2 pending.
+Status: plan (revision 2, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (0 findings).
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, observability-and-resilience
 
 # C5b-iii: position-keyed categorical and Faker on the unified full-frame route
@@ -174,3 +174,4 @@ Gates: Codex plan gate, Sonnet tests-first build, dennis, Codex final gate, ci-m
   - Distinct mask and job keys and direct predicate tests make the mutants killable; a non-empty no-kernel evidence case still raises.
   - `determinism_family` keeps the family meaning; `KeyBinding.key_source` docs gain `job_seed`.
 
+- Codex round 2: GO, 0 findings.
