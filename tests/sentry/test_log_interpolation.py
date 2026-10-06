@@ -48,6 +48,7 @@ RISKY_NAMES = frozenset(
 )
 _LEVELS = frozenset({"debug", "info", "warning", "warn", "error", "exception", "critical", "log"})
 _EXCEPTION_MARKER = "<exception traceback>"
+_COUNT_METHODS = frozenset({"count", "nunique", "sum", "size", "__len__"})
 
 # (module path relative to decoy_engine, qualified function name, variable) -> (count, reason).
 ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
@@ -162,9 +163,13 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
         ):
             children = [*value.args, *(k.value for k in value.keywords)]
         elif isinstance(func, ast.Attribute):
-            # A method on a risky value (`row.items()`, `exc.strip()`) still exposes it.
+            if func.attr in _COUNT_METHODS:
+                return []  # `row.count()`, `values.nunique()` log a number, not the data
+            # A method on a risky value (`row.items()`, `str(exc).strip()`) still exposes it.
             root = _root_name(func.value)
-            return [root] if root in risky else []
+            if root is not None:
+                return [root] if root in risky else []
+            return _risky_in(func.value, risky)
     return [hit for child in children for hit in _risky_in(child, risky)]
 
 
@@ -311,6 +316,12 @@ _TB = "<exception traceback>"
             "def f():\n    audit.error('%s', exc)\n",
             {(_M, "f", "exc"): 1},
         ),
+        ("def f():\n    log.warning('%s', str(exc).strip())\n", {(_M, "f", "exc"): 1}),
+        (
+            "def f():\n    log.warning('%s', str(exc).replace('x', ' ')[:200])\n",
+            {(_M, "f", "exc"): 1},
+        ),
+        ("def f():\n    log.info('%s', row.count())\n", {}),
         # Safe forms.
         ("def f():\n    _log.warning('x %s', type(exc).__name__)\n", {}),
         ("def f():\n    _log.warning('x %s', len(values))\n", {}),
