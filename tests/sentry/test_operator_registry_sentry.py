@@ -110,7 +110,14 @@ def test_admission_import_does_not_pull_in_the_physical_seam() -> None:
 
 
 def test_phase3_predicate_is_gone() -> None:
-    names = ("phase3_c1_" + "eligibility", "Phase3" + "Eligibility", "_phase3_" + "eligibility")
+    # Identifiers, plus the module in an import. The permitted-diff list in
+    # `test_physical_seam_disconnection.py` keeps the deleted file's path (slash form) so
+    # the deletion is allowed against the branch point; that is not a code reference.
+    needles = (
+        "phase3_c1_" + "eligibility",
+        "Phase3" + "Eligibility",
+        "native._phase3_" + "eligibility",
+    )
     me = Path(__file__).resolve()
     hits = []
     for root in (REPO_ROOT / "src", REPO_ROOT / "tests"):
@@ -118,7 +125,7 @@ def test_phase3_predicate_is_gone() -> None:
             if path.resolve() == me:
                 continue
             text = path.read_text(encoding="utf-8")
-            hits += [f"{path.relative_to(REPO_ROOT)}: {n}" for n in names if n in text]
+            hits += [f"{path.relative_to(REPO_ROOT)}: {n}" for n in needles if n in text]
     assert not hits, "\n".join(hits)
 
 

@@ -23,6 +23,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._column_access import SIBLING_REFERENCE_KEYS
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._capabilities import (
     StrategyCapabilities,
     capabilities_for,
@@ -123,22 +124,14 @@ def is_admitted_native_hash_type(arrow_type: pa.DataType) -> bool:
 # route through this SAME constant rather than recompute its own admitted
 # set, or eligibility and dispatch could silently diverge on which
 # strategies have a kernel. Grows only when a later task lands a new kernel.
+# Derived from the operator registry (`shape == "kernel"`); edit the registry.
 NATIVE_KERNEL_STRATEGIES = frozenset(
-    {
-        "passthrough",
-        "redact",
-        "truncate",
-        "hash",
-        "categorical",
-        "bucket_perturb",
-        "group_key",
-        "date_shift",
-    }
+    spec.strategy for spec in OPERATORS.values() if spec.shape == "kernel"
 )
 
 # Strategies admitted to the native FULL-FRAME route but VETOED on the CHUNKED/streaming
-# route. Empty since slice C3; the three refusal sites that read it (`_dispatch`,
-# `_phase3_eligibility`, `_chunked_evidence`) stay as defensive consumers for a future
+# route. Empty since slice C3; the two refusal sites that read it (`_dispatch`,
+# `_chunked_evidence`) stay as defensive consumers for a future
 # strategy. How each former member left it: categorical in C1 (output pinned to string,
 # `_chunked_schema_rule.py`), bucket_perturb in C2 (its null-shape type is reproduced per
 # chunk by the masker's own reconciliation, `_chunk_masking.py`), date_shift in C4
@@ -163,7 +156,10 @@ CHUNKED_ROUTE_VETOED_STRATEGIES: frozenset[str] = frozenset()
 # per-row loop remains the ORACLE's selection mechanism and this module's own
 # reference oracle for differential testing. Grows only when a later task
 # lands another pool-backed strategy on this route.
-NATIVE_POOL_STRATEGIES = frozenset({"faker"})
+# Derived from the operator registry (`shape == "pool"`); edit the registry.
+NATIVE_POOL_STRATEGIES = frozenset(
+    spec.strategy for spec in OPERATORS.values() if spec.shape == "pool"
+)
 
 # The only cardinality mode whose deterministic selection is partition-
 # independent (JC-5): REUSE keys purely off the row's own source value, so a
@@ -203,9 +199,8 @@ def faker_pool_precondition_met(node: Any) -> bool:
     explicit `namespace`, and an explicit `pool_size`.
 
     This is the minimal safety guard Task 3.1 needs so ITS OWN admission
-    change cannot widen scope ahead of Task 3.3's `phase3_c1_eligibility`,
-    which formalizes the full coded-rejection predicate (the exact C1
-    provider allowlist, every individual rejection code) over this same
+    change cannot widen scope ahead of the chunked route's admission
+    (`_real_type_admission` holds the exact C1 provider allowlist) over this same
     precondition. A composite/group node's `plan_slice` is never a
     `ColumnSeed`, so it never satisfies this check (composites have their
     own admission path and are excluded here, matching the WorkNode split).

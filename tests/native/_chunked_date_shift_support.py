@@ -1,7 +1,8 @@
 """Shared builders for the C4 (date_shift on the chunked route) tests.
 
-The oracle leg is the same table run through `run_mask_chunked` with a still-vetoed
-`group_key` column beside the date_shift one (`force_oracle`), so the schema rule applies
+The oracle leg is the same table run through `run_mask_chunked` with a forced-oracle
+column beside the date_shift one (`force_oracle`, a numeric-category categorical that is never
+native-admitted), so the schema rule applies
 to both legs and the comparison is native-chunked vs oracle-chunked, byte for byte.
 """
 

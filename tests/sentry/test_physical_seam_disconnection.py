@@ -390,6 +390,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the dispatcher already enforces, so it cannot admit a full-frame-only
         # strategy. It imports only execution.native modules, never physical.
         "src/decoy_engine/execution/native/_phase3_eligibility.py",
+        # R1 (operator registry, 2026-10-06): the `native/` entry above is DELETED (its
+        # predicate had no production caller; `C1_PROVIDER_ALLOWLIST` moved into the
+        # registry's faker descriptor). `_operator_registry.py` is the new leaf module
+        # (stdlib + pyarrow only); the unified-slice resident-type and evidence modules read
+        # derived tables from it. None imports `execution.physical`.
+        "src/decoy_engine/execution/_operator_registry.py",
+        "src/decoy_engine/execution/_unified_slice_resident_types.py",
+        "src/decoy_engine/execution/_unified_slice_evidence.py",
         # Chunked dispatcher production contract: the public
         # `run_mask_chunked` entry point and the pieces it is built from. The
         # oracle's eager preflight and per-chunk loop move out of `_chunked.py`

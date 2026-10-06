@@ -18,7 +18,7 @@ from decoy_engine.execution._unified_slice_resident_types import _ADMITTED_RESID
 from decoy_engine.execution.native import _operator_config_rejections as rejections
 from decoy_engine.execution.native._chunked_evidence import _COMPANION_STRATEGIES
 from decoy_engine.execution.native._dispatch import _INDEX_KERNEL_STRATEGIES
-from decoy_engine.execution.native._phase3_eligibility import C1_PROVIDER_ALLOWLIST
+from decoy_engine.execution.native._real_type_admission import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import (
     NATIVE_KERNEL_STRATEGIES,
     NATIVE_POOL_STRATEGIES,

@@ -254,7 +254,7 @@ def test_faker_when_gated_column_is_unbound(tmp_path: Path) -> None:
     """`ColumnConfig` has no `when` field (`extra="forbid"`), so a validated
     config can never carry one -- but `compile_plan`/`_seed_envelope.py` read
     it straight off the raw dict, so a hand-mutated post-dump config still
-    exercises the guard for real, matching `_phase3_eligibility`'s own
+    exercises the guard for real, matching the native route's
     when-honoring contract."""
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     path = _write(tmp_path, source, "t")

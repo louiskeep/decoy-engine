@@ -27,7 +27,6 @@ from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._date_shift_ext import native_date_shift
-from decoy_engine.execution.native._phase3_eligibility import phase3_c1_eligibility
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
@@ -93,18 +92,6 @@ def _columns(agg: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def test_the_chunked_veto_set_is_empty() -> None:
     assert frozenset() == CHUNKED_ROUTE_VETOED_STRATEGIES
-
-
-def test_config_only_eligibility_mirror_admits_an_admissible_date_shift() -> None:
-    result = phase3_c1_eligibility(make_config([ds_col(), passthrough("p")]), table=TABLE)
-    assert not any("date_shift_not_native_chunked_route" in r for r in result.reasons)
-
-
-def test_config_only_eligibility_mirror_still_declines_a_non_native_column() -> None:
-    result = phase3_c1_eligibility(make_config([ds_col(), force_oracle("b")]), table=TABLE)
-    assert result.admitted is False
-    assert "categorical_categories_not_all_string:b" in result.reasons
-    assert not any(r.startswith("date_shift_not_native_chunked_route") for r in result.reasons)
 
 
 def test_static_route_decision_no_longer_emits_the_date_shift_veto() -> None:

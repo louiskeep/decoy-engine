@@ -35,16 +35,25 @@ chunk was accepted.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._chunked_group_key_gate import group_by_columns
 from decoy_engine.execution.native._operator_config_rejections import (
     group_key_sibling_type_admitted,
 )
-from decoy_engine.execution.native._phase3_eligibility import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import hash_config_rejection
+
+# The frozen C1 recipe's faker providers, from the operator registry (edit the registry). An
+# unset allowlist admits no provider, so a registry edit cannot widen admission by accident.
+C1_PROVIDER_ALLOWLIST: Final[frozenset[str]] = OPERATORS["faker"].provider_allowlist or frozenset()
+
+# The strategies whose native source domain is exactly `string` (checked by
+# `string_source_type_rejection`). Route-specific, so not an operator-registry field: the
+# unified route's domains differ for some of these operators' siblings.
+_STRING_SOURCE_STRATEGIES: Final = frozenset({"categorical", "bucket_perturb", "date_shift"})
 
 
 def _providers(config: dict[str, Any], table: str) -> dict[str, Any]:
@@ -58,32 +67,25 @@ def _providers(config: dict[str, Any], table: str) -> dict[str, Any]:
     return {}
 
 
-def categorical_source_type_rejection(column: str, schema: pa.Schema) -> str | None:
-    """The coded reason a categorical column's real source type is not the one the
-    native operator takes, or None. Slice C1 admits `string` only, the domain the
-    full-frame route proves (`_unified_slice_admission`); any other type reroutes to
-    the oracle before masking instead of failing inside the kernel."""
+def string_source_type_rejection(strategy: str, column: str, schema: pa.Schema) -> str | None:
+    """The coded reason a `strategy` column's real source type is not the one its native
+    operator takes, or None. categorical, bucket_perturb and date_shift all take exactly
+    `string`, the domain the full-frame route proves (`_unified_slice_admission`); any other
+    type, including `large_string` (which passes the upstream chunk-safety gate for the
+    oracle route), declines to the oracle before masking instead of failing inside the
+    kernel."""
     typ = schema.field(column).type
-    return None if typ == pa.string() else f"categorical_source_type_not_string:{column}:{typ}"
+    return None if typ == pa.string() else f"{strategy}_source_type_not_string:{column}:{typ}"
 
 
+# Thin per-strategy names kept only because existing tests import them (plan R1 3f); the
+# production caller uses `string_source_type_rejection` directly.
 def bucket_perturb_source_type_rejection(column: str, schema: pa.Schema) -> str | None:
-    """The coded reason a bucket_perturb column's real source type is not the one the
-    native operator takes, or None. The native domain is exactly `string`, the same
-    one the full-frame route proves (`bucket_perturb_config_rejection`); `large_string`
-    passes the upstream chunk-safety gate for the oracle route, so it declines here
-    to the oracle instead of reaching the kernel."""
-    typ = schema.field(column).type
-    return None if typ == pa.string() else f"bucket_perturb_source_type_not_string:{column}:{typ}"
+    return string_source_type_rejection("bucket_perturb", column, schema)
 
 
 def date_shift_source_type_rejection(column: str, schema: pa.Schema) -> str | None:
-    """The coded reason a date_shift column's real source type is not the one the native
-    operator takes, or None. The native domain is exactly `string` (the full-frame route's
-    domain too, `date_shift_config_rejection`); any other type declines to the oracle, which
-    runs it as it always has, instead of reaching the kernel."""
-    typ = schema.field(column).type
-    return None if typ == pa.string() else f"date_shift_source_type_not_string:{column}:{typ}"
+    return string_source_type_rejection("date_shift", column, schema)
 
 
 def group_key_sibling_type_rejection(column: str, group_by: str, schema: pa.Schema) -> str | None:
@@ -127,16 +129,8 @@ def real_type_rejection(
                 return reason
         elif node.strategy == "faker" and providers.get(node.column) not in C1_PROVIDER_ALLOWLIST:
             return f"faker_provider_not_native:{node.column}:{providers.get(node.column)}"
-        elif node.strategy == "categorical":
-            reason = categorical_source_type_rejection(node.column, first_schema)
-            if reason is not None:
-                return reason
-        elif node.strategy == "bucket_perturb":
-            reason = bucket_perturb_source_type_rejection(node.column, first_schema)
-            if reason is not None:
-                return reason
-        elif node.strategy == "date_shift":
-            reason = date_shift_source_type_rejection(node.column, first_schema)
+        elif node.strategy in _STRING_SOURCE_STRATEGIES:
+            reason = string_source_type_rejection(node.strategy, node.column, first_schema)
             if reason is not None:
                 return reason
         elif node.strategy == "group_key" and node.column in group_by_of:
