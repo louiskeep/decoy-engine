@@ -600,7 +600,8 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         provider_version=f"{_V6}; numpy NEP-19 PCG64",
         notes=(
             "Seeded but stream-positional: integers(size=n) and permutation() advance one "
-            "stream, so a partition cannot resume mid-sequence."
+            "stream, so a partition cannot resume mid-sequence. Masking reuse is "
+            "mask.faker_nondeterministic."
         ),
     ),
     # -- Generation: composite bundle-pool build -----------------------------
@@ -634,14 +635,13 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.faker",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_faker.py:102",
+        call_site="execution/_strategies/_faker.py:118",
         entropy_root="mask_key",
         seed_derivation=(
-            "select_seed = ctx.mask_key if plan.deterministic else ctx.job_seed; "
-            "PoolSampler.sample(..., seed=select_seed) -> per-row derive_index over the pool "
-            "(non-deterministic mode: np.random.default_rng off job_seed)"
+            "PoolSampler.sample(..., seed=ctx.mask_key) -> per-row "
+            "derive_index(mask_key, namespace, canonical(source), pool.size)  # deterministic mode"
         ),
-        api_operation="PoolSampler.sample (derive_index deterministic; default_rng otherwise)",
+        api_operation="PoolSampler.sample (derive_index, deterministic selection)",
         call_shape="pool_values[derive_index(mask_key, namespace, canonical(source), pool.size)]",
         consumes_variable_draws=False,
         identity="source_value",
@@ -650,10 +650,10 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+provider+pool build config",
         provider_version=_V6,
         notes=(
-            "The masking 'faker' strategy: the value-visible draw is the pool SELECTION "
-            "(mask.faker), backed by gen.pool_deterministic / gen.pool_nondeterministic; the pool "
-            "BUILD is gen.pool_build_faker. Deterministic selection re-keys onto mask_key, build "
-            "stays on job_seed. Native (2.3): derive_index_batch per chunk; oracle unchanged."
+            "The masking 'faker' strategy, deterministic selection: the draw is the pool SELECTION "
+            "(gen.pool_deterministic); the pool BUILD is gen.pool_build_faker, on job_seed. "
+            "Non-deterministic reuse is mask.faker_nondeterministic; its other modes are "
+            "whole-column numpy draws. Native (2.3): derive_index_batch per chunk."
         ),
         mirror_call_sites=("generation/pool/_sampler.py:225",),
     ),
@@ -816,7 +816,7 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
     "group_key": "mask.group_key",
     "code_set": "mask.code_set",
     "joint_mask": "mask.joint_mask_keyed_row",
-    "faker": "mask.faker",
+    "faker": "mask.faker",  # + mask.faker_nondeterministic (reuse, position-keyed)
     "formula": "mask.formula",
     "text_mask": "mask.text_mask_faker",  # + mask.text_mask_date_shift
     "grouped_series": "mask.grouped_series_monotone_walk",

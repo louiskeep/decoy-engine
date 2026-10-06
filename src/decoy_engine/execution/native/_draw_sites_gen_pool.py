@@ -8,9 +8,11 @@ decomposition-target comment ("split ``DRAW_SITES`` into ``_draw_sites_mask.py``
 here and is spliced into ``DRAW_SITES`` at the bottom of that module, instead
 of regrowing an already-capped file.
 
-Two entries: the GP2 pool BUILD and REUSE-SELECTION sites for a closed
-allowlist of scalar ``faker_type`` generate columns -- see
-``generation/_faker_pool.py`` for the mechanism these catalogue.
+Three entries: the GP2 pool BUILD and REUSE-SELECTION sites for a closed
+allowlist of scalar ``faker_type`` generate columns (see
+``generation/_faker_pool.py``), and ``mask.faker_nondeterministic``, the masking
+Faker's position-keyed reuse selection (see
+``execution/_strategies/_faker_positional.py``).
 """
 
 from __future__ import annotations
@@ -81,6 +83,34 @@ GEN_POOL_DRAW_SITES: tuple[DrawSite, ...] = (
             "collapse onto one selection stream."
         ),
         mirror_call_sites=("generation/pool/_sampler.py:136",),
+    ),
+    # -- Masking: non-deterministic reuse Faker selection (position-keyed) ----
+    # Not a generation site; it sits beside the pool sites because it is the same pool-backed
+    # Faker family and this module exists to keep `_determinism_protocol.py` at its LOC ceiling.
+    DrawSite(
+        draw_site_id="mask.faker_nondeterministic",
+        family="source_keyed_hmac",
+        call_site="execution/_strategies/_faker.py:101",
+        entropy_root="job_seed",
+        seed_derivation=(
+            "derive_index(job_seed, selection_namespace, encode_int(row_offset + i), "
+            "pool_size=pool.size)  # selection_namespace = plan.namespace or "
+            "'faker-nd/{len(table)}:{table}/{len(column)}:{column}'"
+        ),
+        api_operation="determinism.derive_index -> index in [0, pool.size)",
+        call_shape="pool.values[derive_index(...)]  # per non-null row, one batch call per column",
+        consumes_variable_draws=False,
+        identity="row_index",
+        null_draw_behavior="null rows emit null; the null still consumes its row ordinal",
+        partitionable=True,
+        config_fingerprint_source="plan.namespace or the table/column default+provider+pool build config",
+        provider_version=_V6,
+        notes=(
+            "Non-deterministic reuse Faker. i is the handler-frame ordinal, not the source value; "
+            "the pool is built from the plan namespace and the selection namespace only keys the "
+            "draw. Keyed on job_seed, not mask_key, because it generates rather than "
+            "re-identifies; see the inventory doc."
+        ),
     ),
 )
 

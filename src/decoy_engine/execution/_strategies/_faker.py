@@ -2,16 +2,22 @@
 
 Re-keyed onto S5 (NOT the legacy V1 derive_key/seed:int path). Determinism is
 the pool path (S9 spec §8 path #2): build/fetch a `ValuePool` for the provider
-via `PoolBuilder`, then call the VECTORIZED `PoolSampler.sample(...)` ONCE for
-the whole column. The sampler's deterministic branch does the per-row
-`derive_index(job_seed, namespace, _canonicalize_source(src), pool_size)` with
-null preservation internally; non-deterministic mode uses `default_rng(seed)`.
-Calling `PoolSampler.sample` once (not `PoolAdapter.generate` per row) is what
-keeps the >=10x Faker performance gate reachable.
+via `PoolBuilder`, then select from it. Three selections exist:
 
-Source nulls are preserved in both modes (the sampler preserves them in
-deterministic mode; this handler restores them in non-deterministic mode too,
-for a uniform null contract).
+- Deterministic: the VECTORIZED `PoolSampler.sample(...)` called ONCE for the whole
+  column. Its deterministic branch does the per-row
+  `derive_index(mask_key, namespace, _canonicalize_source(src), pool_size)` with null
+  preservation internally. Calling it once (not `PoolAdapter.generate` per row) is what
+  keeps the >=10x Faker performance gate reachable.
+- Non-deterministic REUSE: position-keyed on `job_seed` (`_faker_positional`). Row `g`
+  draws `pool.values[derive_index(job_seed, selection_namespace, encode_int(g), size)]`,
+  where `g` is the row's ordinal in the frame this handler receives plus `ctx.row_offset`.
+  The source value is ignored.
+- Non-deterministic UNIQUE / MATCH / SCALE: `PoolSampler.sample` with `default_rng` off
+  `job_seed`. These need whole-column state, so they stay one numpy stream per column.
+
+The pool is built identically in every mode (the selection namespace never reaches the
+build). Source nulls are preserved in all of them.
 """
 
 from __future__ import annotations
@@ -19,6 +25,10 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._strategies._faker_positional import (
+    positional_pool_indices,
+    resolve_selection_namespace,
+)
 from decoy_engine.generation.pool import CardinalityMode, PoolBuilder, PoolSampler, ValuePool
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._identity import DEFAULT_POOL_SCALE, resolve_faker_pool_identity
@@ -46,6 +56,12 @@ class FakerStrategyHandler:
         n = len(source)
         cfg = provider_config_to_dict(plan.provider_config)
         scale = plan.scale if plan.scale is not None else DEFAULT_POOL_SCALE
+        mode = CardinalityMode(plan.cardinality_mode)
+        positional = not plan.deterministic and mode is CardinalityMode.REUSE
+        # Fail before the pool build when the draw cannot be keyed.
+        selection_namespace = (
+            resolve_selection_namespace(ctx, column, plan.namespace) if positional else ""
+        )
 
         # Consult ctx.pool_cache before building. Safe for byte parity:
         # the build is RNG-seeded by the identity's pool_seed (S5 F2), so
@@ -78,15 +94,31 @@ class FakerStrategyHandler:
                 namespace=plan.namespace,
             )
             ctx.pool_cache.put(pool)
+        na_mask = source.isna().to_numpy()
+        if positional:
+            # Job-seed keyed: non-deterministic mode generates fresh synthetic values and
+            # never re-identifies a source value, so it stays off the secret-derived key.
+            idx = positional_pool_indices(
+                n,
+                row_offset=ctx.row_offset,
+                job_seed=ctx.job_seed,
+                namespace=selection_namespace,
+                pool_size=pool.size,
+            )
+            chosen = pool.values[idx]
+            df[column] = [None if na_mask[i] else chosen[i] for i in range(n)]
+            return df, []
+
         # DE-02 seam: pool BUILD stays on job_seed (fresh synthetic values); only
         # the deterministic SELECTION from a real source value re-keys onto
-        # mask_key. Non-deterministic mode ignores `source` and generates fresh
-        # values off job_seed (still generation, not re-identification surface).
+        # mask_key. The whole-column non-deterministic modes ignore `source` values
+        # for the draw and generate off job_seed (generation, not a re-identification
+        # surface).
         select_seed = ctx.mask_key if plan.deterministic else ctx.job_seed
         sampled = PoolSampler().sample(
             pool,
             n,
-            mode=CardinalityMode(plan.cardinality_mode),
+            mode=mode,
             seed=select_seed,
             source=source,
             namespace=plan.namespace,
@@ -94,7 +126,6 @@ class FakerStrategyHandler:
             scale=scale,
         )
 
-        na_mask = source.isna().to_numpy()
         values = list(sampled)
         df[column] = [None if na_mask[i] else values[i] for i in range(n)]
         return df, []

@@ -21,7 +21,13 @@ internal composite/nested handlers are listed separately below.
 Replaces each value with a synthetic value drawn from a named provider (for
 example `person_email`, `person_first_name`). In deterministic mode the same
 source value maps to the same synthetic value within a namespace, which keeps
-joins intact. Non-deterministic mode draws uniformly and differs run to run.
+joins intact. Non-deterministic mode ignores the source value. In the default
+`reuse` cardinality mode it picks from the pool by row position under the job
+seed: the same seed and input give the same output, but equal source values do
+not map to equal outputs, so it does not preserve joins. Without a `namespace`
+each column gets its own stream; columns that share a namespace share one. The
+`unique`, `match_source_cardinality` and `scale_source_cardinality` modes draw
+a seeded whole-column stream from the job seed.
 
 - `provider`: the provider name (required). Providers come from the engine's
   default registry.

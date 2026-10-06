@@ -334,6 +334,20 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_capabilities.py",
         "src/decoy_engine/execution/native/_draw_site_providers.py",
         "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
+        # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
+        # handler selects through a shared index-kernel helper and a shared uint64 position-key
+        # helper (both new, parent-level; categorical's native positional kernel now calls the
+        # latter). None imports `execution.physical`; the physical Faker operator is untouched.
+        "src/decoy_engine/execution/_positional_keys.py",
+        "src/decoy_engine/execution/_strategies/_faker.py",
+        "src/decoy_engine/execution/_strategies/_faker_positional.py",
+        # C5b-i: the `mask.faker_nondeterministic` draw site and its provider, placed in the
+        # gen_pool siblings because the capped protocol/provider modules cannot grow. Neither
+        # imports `execution.physical`. The shared reference index kernel derives its HKDF key
+        # once per call instead of once per row (byte-identical).
+        "src/decoy_engine/execution/native/_draw_site_providers_gen_pool.py",
+        "src/decoy_engine/execution/native/_draw_sites_gen_pool.py",
+        "src/decoy_engine/execution/native/_index_ext.py",
         # Comment-only edits stripping polars-masking wording from the retained
         # non-pandas substrate guards (the guards themselves stay as fail-closed
         # defence; the pandas path is unchanged).

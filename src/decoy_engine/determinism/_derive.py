@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -226,6 +227,24 @@ class DeriveContext:
             + source
         )
         return hmac.new(self._hmac_key, hmac_input, hashlib.sha256).digest()
+
+    def derive_sources(self, namespace: str, sources: Iterable[bytes]) -> Iterator[bytes]:
+        """`derive_source` for many sources under one namespace, byte-identical.
+
+        Keys the HMAC and absorbs the fixed version/namespace prefix once, then
+        copies that state per source, so per-row cost is one HMAC finish instead
+        of a re-key."""
+        namespace_bytes = namespace.encode("utf-8")
+        prefix = (
+            bytes([SEED_PROTOCOL_VERSION])
+            + len(namespace_bytes).to_bytes(4, "big")
+            + namespace_bytes
+        )
+        base = hmac.new(self._hmac_key, prefix, hashlib.sha256)
+        for source in sources:
+            mac = base.copy()
+            mac.update(len(source).to_bytes(4, "big") + source)
+            yield mac.digest()
 
 
 def derive(seed: bytes, namespace: str, source: bytes) -> bytes:

@@ -393,3 +393,15 @@ def test_missing_mask_key_raises_mask_key_required_before_output() -> None:
 
     with pytest.raises(MaskKeyRequiredError):
         kernel.derive_index_batch(array, mask_key=None, namespace="pool.city", pool_size=1000)
+
+
+def test_reference_batch_keeps_per_row_error_precedence() -> None:
+    """A bad pool size is reported at the first non-null row, ahead of a bad value
+    further down, matching the scalar path and the Rust kernel's documented order."""
+    from decoy_engine.determinism import DeterminismError
+    from decoy_engine.execution.native._index_ext import reference_index_derivation
+
+    kernel = reference_index_derivation()
+    with pytest.raises(DeterminismError) as excinfo:
+        kernel.derive_index_batch(["a", 1.5], mask_key=b"\x00" * 8, namespace="ns", pool_size=0)
+    assert excinfo.value.code == "pool_size_invalid"

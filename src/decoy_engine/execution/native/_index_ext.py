@@ -28,6 +28,7 @@ from typing import Protocol
 import pyarrow as pa
 
 from decoy_engine.determinism import DeterminismError, derive_index
+from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
@@ -286,14 +287,26 @@ class _ReferenceIndexDerivation:
         # the thread count never changes indices on either side.
         del native_threads
         key = _require_mask_key(mask_key, "index_derivation")
-        out: list[int | None] = []
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            out.append(
-                derive_index(key, namespace, _canonicalize_source(value), pool_size=pool_size)
-            )
+        # The HKDF key depends only on (key, namespace), so derive it once per call
+        # instead of once per row. Errors keep the per-row order of the scalar path
+        # (and of the Rust kernel): the first non-null row is canonicalized and run
+        # through scalar `derive_index`, so its value, pool-size, seed and namespace
+        # checks come first; later rows are canonicalized lazily, in row order, as
+        # the batched HMAC consumes them. An all-null column validates nothing.
+        pylist = _array_to_pylist(values)
+        out: list[int | None] = [None] * len(pylist)
+        first = next((i for i, v in enumerate(pylist) if not _is_missing(v)), None)
+        if first is None:
+            return pa.array(out, type=pa.uint64())
+        out[first] = derive_index(
+            key, namespace, _canonicalize_source(pylist[first]), pool_size=pool_size
+        )
+        rest = [i for i in range(first + 1, len(pylist)) if not _is_missing(pylist[i])]
+        digests = DeriveContext.for_column(key, namespace).derive_sources(
+            namespace, (_canonicalize_source(pylist[i]) for i in rest)
+        )
+        for i, digest in zip(rest, digests, strict=True):
+            out[i] = int.from_bytes(digest[:8], "big") % pool_size
         return pa.array(out, type=pa.uint64())
 
 

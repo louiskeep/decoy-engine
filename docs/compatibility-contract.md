@@ -218,6 +218,17 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   it does not preserve joins, and a namespace is now required (`categorical_requires_namespace`).
   No routing outcome changed: multi-table split, out-of-core and the native and chunked routes
   still decline it.
+  Non-deterministic `reuse` Faker became position-keyed on 2026-10-05 (slice C5b-i), a
+  determinism-contract change on the whole-frame path and a one-time pre-GA output break for every
+  such column. The draw for the non-null row at ordinal `g` is
+  `pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool.size)]`, with `g`
+  the ordinal within the frame the handler receives (same rule as categorical) and
+  `selection_namespace` the configured namespace, else `faker-nd/{len(table)}:{table}/{len(column)}:{column}`
+  (a nested child uses the outer column; `None` and `""` both mean "not configured"). The key is
+  `job_seed`. Pool identity and contents are unchanged. Columns without a namespace used to share a
+  stream and now differ. Non-deterministic `unique`, `match_source_cardinality` and
+  `scale_source_cardinality`, deterministic Faker, and generation are unchanged. No routing outcome
+  changed.
   Deterministic categorical joined the native chunked route on 2026-10-04 (slice C1).
   A native-admissible column (deterministic or `allow_collisions`, namespaced, all-string
   categories, buildable CDF, `string` source) is masked by the compiled index kernel and its

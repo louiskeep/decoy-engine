@@ -234,6 +234,9 @@ _MASK: dict[str, _Ortho] = {
         quality_obligations=_POOL_QUALITY,
         notes=(
             "Pool SELECTION is source-keyed and row-local (deterministic mode). "
+            "Non-deterministic reuse is seeded and position-keyed on job_seed (by the row "
+            "ordinal of the frame the handler receives, not the source value); that is a "
+            "config-resolved variant outside the native route, not the static row. "
             "The only handler that builds/samples a bounded value pool, so the "
             "sole class-A pool-fidelity obligation; pool warnings ride the "
             "PoolCache side channel, not the run() return tuple."
